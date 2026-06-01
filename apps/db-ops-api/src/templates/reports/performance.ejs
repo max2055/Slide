@@ -1,0 +1,26 @@
+<%
+function escapeHtml(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+const bodyContent = `
+<h2>当前性能指标</h2>
+<table>
+  <tr><th>指标</th><th>值</th></tr>
+  <tr><td>QPS</td><td>${metrics.current?.qps?.toFixed(2) || 0}</td></tr>
+  <tr><td>TPS</td><td>${metrics.current?.tps?.toFixed(2) || 0}</td></tr>
+  <tr><td>连接数</td><td>${metrics.current?.connections || 0}</td></tr>
+</table>
+
+<h2>Top 慢查询</h2>
+<table>
+  <tr><th>SQL</th><th>平均耗时 (ms)</th><th>执行次数</th><th>总耗时 (ms)</th></tr>
+  ${metrics.top_slow_queries?.map(q => `
+    <tr>
+      <td><code>${escapeHtml(q.sql_text?.substring(0, 50) || '')}${q.sql_text?.length > 50 ? '...' : ''}</code></td>
+      <td>${q.avg_time_ms?.toFixed(2) || 0}</td>
+      <td>${q.execution_count || 0}</td>
+      <td>${q.total_time_ms?.toFixed(2) || 0}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="4">暂无慢查询记录</td></tr>'}
+</table>
+`;
+%>
+<%- include('layout', { title, instanceName, generatedAt, accentColor, icon, body: bodyContent }) %>

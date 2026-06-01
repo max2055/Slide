@@ -1,0 +1,25 @@
+{
+  "name": "slide",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Slide — AI-Powered Database Operations Platform",
+  "scripts": {
+    "dev": "pnpm --filter slide-api dev & pnpm --filter slide-frontend dev",
+    "start": "pnpm --filter slide-api start",
+    "build": "pnpm --filter slide-frontend build",
+    "test": "pnpm -r test",
+    "lint": "oxlint",
+    "format": "oxfmt"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "bcrypt",
+      "esbuild",
+      "oracledb"
+    ]
+  }
+}

@@ -1,0 +1,912 @@
+import { LitElement, html, css } from "lit";
+import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
+import { customElement, state } from "lit/decorators.js";
+import { apiClient } from '../../../api/index.js';
+
+interface UserInfo {
+  id: number;
+  username: string;
+  email: string | null;
+  role: string;
+  status: string;
+  last_login_at: string | null;
+  created_at: string;
+}
+
+interface UserFormData {
+  username: string;
+  email: string;
+  password: string;
+  role: string;
+  status: string;
+}
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: '管理员',
+  dba: '数据库管理员',
+  developer: '开发者',
+  analyst: '分析师',
+  viewer: '观察者',
+  auditor: '审计员',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  active: '活跃',
+  inactive: '停用',
+  locked: '锁定',
+};
+
+@customElement("users-management")
+export class UsersManagement extends LitElement {
+  static styles = [sharedBtnStyles, css`
+    :host {
+      display: block;
+      animation: fade-in 0.25s var(--ease-out);
+    }
+
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .page {
+      padding: 0 0 24px 0;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-elevated);
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--text-strong);
+    }
+
+    .table-container {
+      overflow-x: auto;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 13px;
+    }
+
+    .table th {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 600;
+      font-size: 11px;
+      color: var(--muted);
+      background: var(--bg-elevated);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .table td {
+      padding: 14px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      vertical-align: middle;
+    }
+
+    .table tbody tr {
+      transition: background var(--duration-fast) ease;
+    }
+
+    .table tbody tr:hover {
+      background: var(--bg-hover);
+    }
+
+    .table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .role-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 10px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .role-badge.admin {
+      background: rgba(239, 68, 68, 0.12);
+      color: #ef4444;
+    }
+
+    .role-badge.dba {
+      background: rgba(59, 130, 246, 0.12);
+      color: #3b82f6;
+    }
+
+    .role-badge.developer {
+      background: rgba(34, 197, 94, 0.12);
+      color: #22c55e;
+    }
+
+    .role-badge.analyst {
+      background: rgba(168, 85, 247, 0.12);
+      color: #a855f7;
+    }
+
+    .role-badge.viewer {
+      background: rgba(139, 139, 145, 0.12);
+      color: var(--muted);
+    }
+
+    .role-badge.auditor {
+      background: rgba(245, 158, 11, 0.12);
+      color: #f59e0b;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: var(--radius-full);
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .status-badge.active {
+      background: var(--ok-subtle);
+      color: var(--ok);
+    }
+
+    .status-badge.inactive {
+      background: rgba(139, 139, 145, 0.12);
+      color: var(--muted);
+    }
+
+    .status-badge.locked {
+      background: var(--danger-subtle);
+      color: var(--danger);
+    }
+
+    .actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .action-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text);
+      background: var(--secondary);
+      cursor: pointer;
+      transition: all var(--duration-normal) var(--ease-out);
+    }
+
+    .action-btn:hover {
+      background: var(--accent);
+      color: var(--accent-foreground);
+      border-color: var(--accent);
+    }
+
+    .action-btn.danger:hover {
+      background: var(--destructive);
+      color: var(--destructive-foreground);
+      border-color: var(--destructive);
+    }
+
+    .loading, .empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 300px;
+      color: var(--muted);
+    }
+
+    .no-permission {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 300px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .error-msg {
+      color: var(--destructive);
+      font-size: 13px;
+      padding: 12px 16px;
+      background: var(--danger-subtle);
+      border-radius: var(--radius-sm);
+      margin: 12px 16px;
+    }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      animation: overlay-fade-in 0.2s ease;
+    }
+
+    @keyframes overlay-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .modal {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      width: 90%;
+      max-width: 480px;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: var(--shadow-lg);
+      animation: modal-slide-in 0.25s var(--ease-out);
+    }
+
+    @keyframes modal-slide-in {
+      from { opacity: 0; transform: translateY(-20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .modal-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-strong);
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 20px;
+      cursor: pointer;
+      color: var(--muted);
+      padding: 4px;
+      line-height: 1;
+    }
+
+    .modal-close:hover {
+      color: var(--text-strong);
+    }
+
+    .modal-body {
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
+    }
+
+    .form-group {
+      display: grid;
+      gap: 6px;
+    }
+
+    .form-group label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .form-group input,
+    .form-group select {
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      color: var(--text);
+      background: var(--card);
+      transition: all var(--duration-normal) var(--ease-out);
+    }
+
+    .form-group input:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-subtle);
+    }
+
+    .form-group input:disabled {
+      background: var(--bg-muted);
+      color: var(--muted);
+      cursor: not-allowed;
+    }
+
+    .form-error {
+      font-size: 12px;
+      color: var(--destructive);
+      margin-top: 4px;
+    }
+
+    .save-error {
+      color: var(--destructive);
+      font-size: 13px;
+      padding: 8px 12px;
+      background: var(--danger-subtle);
+      border-radius: var(--radius-sm);
+    }
+  `];
+
+  @state() private users: UserInfo[] = [];
+  @state() private loading = true;
+  @state() private error: string | null = null;
+  @state() private isAdmin = false;
+  @state() private userRoles: Map<number, {id: number, name: string, role_name: string}[]> = new Map();
+  @state() private showModal = false;
+  @state() private editingUser: UserInfo | null = null;
+  @state() private showPasswordModal = false;
+  @state() private passwordTarget: UserInfo | null = null;
+  @state() private saving = false;
+  @state() private saveError: string | null = null;
+
+  // Form state
+  @state() private formUsername = "";
+  @state() private formEmail = "";
+  @state() private formPassword = "";
+  @state() private formRole = "developer";
+  @state() private formStatus = "active";
+  @state() private formErrors: string[] = [];
+
+  // Password reset form state
+  @state() private newPassword = "";
+  @state() private confirmPassword = "";
+  @state() private passwordErrors: string[] = [];
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this._checkAdmin();
+  }
+
+  private async _checkAdmin() {
+    try {
+      await apiClient.get("/v1/rbac/roles");
+      this.isAdmin = true;
+      this._loadUsers();
+    } catch (e: any) {
+      this.isAdmin = false;
+      if (e.message?.startsWith("HTTP 403")) {
+        // 403 means not admin, no error shown
+      } else if (e.message?.startsWith("HTTP 401")) {
+        this.error = "未登录";
+      } else {
+        this.error = `权限检查失败: ${e.message}`;
+      }
+    }
+  }
+
+  private async _loadUsers() {
+    this.loading = true;
+    this.error = null;
+    try {
+      const data = await apiClient.get<any>('/users');
+      this.users = Array.isArray(data) ? data : (data.users || []);
+      this._loadUserRoles();
+    } catch (e: any) {
+      if (e.message?.startsWith("HTTP 401")) {
+        this.error = "未登录";
+        this.isAdmin = false;
+      } else if (e.message?.startsWith("HTTP 403")) {
+        this.error = "无权限访问";
+        this.isAdmin = false;
+      } else {
+        this.error = `加载失败: ${e.message}`;
+      }
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  private async _loadUserRoles() {
+    const userIds = this.users.map(u => u.id);
+    if (userIds.length === 0) return;
+    const results = await Promise.allSettled(
+      userIds.map(id =>
+        apiClient.get<any>(`/api/v1/rbac/users/${id}/roles`)
+          .then(r => r)
+      )
+    );
+    const newMap = new Map<number, {id: number; name: string; role_name: string}[]>();
+    for (let i = 0; i < userIds.length; i++) {
+      const result = results[i];
+      if (result.status === "fulfilled") {
+        const roles = Array.isArray(result.value) ? result.value : (result.value.roles || []);
+        newMap.set(userIds[i], roles);
+      } else {
+        newMap.set(userIds[i], []);
+      }
+    }
+    this.userRoles = newMap;
+  }
+
+  private _navigateToRbac(userId: number) {
+    this.dispatchEvent(new CustomEvent('navigate-to-rbac', {
+      detail: { userId },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  // Modal handling
+  private _openCreateModal() {
+    this.editingUser = null;
+    this.formUsername = "";
+    this.formEmail = "";
+    this.formPassword = "";
+    this.formRole = "developer";
+    this.formStatus = "active";
+    this.formErrors = [];
+    this.saveError = null;
+    this.showModal = true;
+  }
+
+  private _openEditModal(user: UserInfo) {
+    this.editingUser = user;
+    this.formUsername = user.username;
+    this.formEmail = user.email || "";
+    this.formPassword = "";
+    this.formRole = user.role;
+    this.formStatus = user.status;
+    this.formErrors = [];
+    this.saveError = null;
+    this.showModal = true;
+  }
+
+  private _closeModal() {
+    this.showModal = false;
+    this.editingUser = null;
+    this.formErrors = [];
+    this.saveError = null;
+  }
+
+  private async _saveUser() {
+    this.formErrors = [];
+    this.saveError = null;
+
+    // Validation
+    if (this.editingUser) {
+      // Edit mode: email required format, role required
+      if (!this.formRole) {
+        this.formErrors.push("请选择角色");
+      }
+    } else {
+      // Create mode: username and password required
+      if (!this.formUsername.trim()) {
+        this.formErrors.push("用户名不能为空");
+      }
+      if (this.formPassword.length < 8) {
+        this.formErrors.push("密码长度至少 8 位");
+      }
+      if (!this.formRole) {
+        this.formErrors.push("请选择角色");
+      }
+    }
+
+    if (this.formErrors.length > 0) return;
+
+    this.saving = true;
+
+    try {
+      if (this.editingUser) {
+        // Update
+        const body: Record<string, string> = {
+          role: this.formRole,
+          status: this.formStatus,
+        };
+        if (this.formEmail) body.email = this.formEmail;
+        await apiClient.put(`/users/${this.editingUser.id}`, body);
+      } else {
+        // Create
+        const body: Record<string, string> = {
+          username: this.formUsername.trim(),
+          password: this.formPassword,
+          role: this.formRole,
+        };
+        if (this.formEmail) body.email = this.formEmail;
+        await apiClient.post('/users', body);
+      }
+
+      this._closeModal();
+      await this._loadUsers();
+    } catch (e: any) {
+      this.saveError = `操作失败: ${e.message}`;
+    } finally {
+      this.saving = false;
+    }
+  }
+
+  // Password reset
+  private _openPasswordModal(user: UserInfo) {
+    this.passwordTarget = user;
+    this.newPassword = "";
+    this.confirmPassword = "";
+    this.passwordErrors = [];
+    this.saveError = null;
+    this.showPasswordModal = true;
+  }
+
+  private _closePasswordModal() {
+    this.showPasswordModal = false;
+    this.passwordTarget = null;
+    this.passwordErrors = [];
+    this.saveError = null;
+  }
+
+  private async _resetPassword() {
+    this.passwordErrors = [];
+    this.saveError = null;
+
+    if (!this.passwordTarget) return;
+
+    if (this.newPassword.length < 8) {
+      this.passwordErrors.push("密码长度至少 8 位");
+    }
+    if (this.newPassword !== this.confirmPassword) {
+      this.passwordErrors.push("两次输入的密码不一致");
+    }
+    if (this.passwordErrors.length > 0) return;
+
+    this.saving = true;
+
+    try {
+      await apiClient.post(`/users/${this.passwordTarget.id}/password`, { password: this.newPassword });
+      this._closePasswordModal();
+    } catch (e: any) {
+      this.saveError = `重置失败: ${e.message}`;
+    } finally {
+      this.saving = false;
+    }
+  }
+
+  // Delete user
+  private async _deleteUser(id: number, username: string) {
+    if (!confirm(`确定删除用户 "${username}"？`)) return;
+
+    try {
+      await apiClient.delete(`/users/${id}`);
+      await this._loadUsers();
+    } catch (e: any) {
+      this.error = `删除失败: ${e.message}`;
+    }
+  }
+
+  private _formatDate(dateStr: string | null): string {
+    if (!dateStr) return "-";
+    try {
+      return new Date(dateStr).toLocaleDateString("zh-CN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+    } catch {
+      return dateStr;
+    }
+  }
+
+  override render() {
+    if (!this.isAdmin) {
+      return html`
+        <div class="page">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">用户管理</span>
+            </div>
+            <div class="no-permission">
+              无权限访问此页面，需要 admin 角色
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    return html`
+      <div class="page">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">用户管理</span>
+            <button class="btn primary" @click=${this._openCreateModal}>
+              新建用户
+            </button>
+          </div>
+
+          ${this.error
+            ? html`<div class="error-msg">${this.error}</div>`
+            : ""}
+
+          ${this.loading
+            ? html`<div class="loading">加载中...</div>`
+            : this.users.length === 0
+              ? html`<div class="empty">暂无用户数据</div>`
+              : html`
+                  <div class="table-container">
+                    <table class="table">
+                      <thead>
+                        <tr>
+                          <th>用户名</th>
+                          <th>邮箱</th>
+                          <th style="text-align:center">角色</th>
+                          <th style="text-align:center">状态</th>
+                          <th style="text-align:center">创建时间</th>
+                          <th style="text-align:center">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${this.users.map(
+                          (u) => html`
+                            <tr>
+                              <td><strong>${u.username}</strong></td>
+                              <td>${u.email || "-"}</td>
+                              <td style="text-align:center">
+                                <span class="role-badge ${u.role}">
+                                  ${ROLE_LABELS[u.role] || u.role}
+                                </span>
+                              </td>
+                              <td style="text-align:center">
+                                <span class="status-badge ${u.status}">
+                                  ${STATUS_LABELS[u.status] || u.status}
+                                </span>
+                              </td>
+                              <td style="text-align:center">${this._formatDate(u.created_at)}</td>
+                              <td style="text-align:center">
+                                <div class="actions">
+                                  <button
+                                    class="action-btn"
+                                    @click=${() => this._openEditModal(u)}
+                                  >编辑</button>
+                                  <button
+                                    class="action-btn"
+                                    @click=${() => this._openPasswordModal(u)}
+                                  >重置密码</button>
+                                  <button
+                                    class="action-btn danger"
+                                    @click=${() =>
+                                      this._deleteUser(u.id, u.username)}
+                                  >删除</button>
+                                </div>
+                              </td>
+                            </tr>
+                          `
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                `}
+        </div>
+
+        <!-- Create/Edit Modal -->
+        ${this.showModal
+          ? html`
+              <div class="modal-overlay" @click=${(e: Event) => {
+                if ((e.target as HTMLElement).classList.contains("modal-overlay")) {
+                  this._closeModal();
+                }
+              }}>
+                <div class="modal">
+                  <div class="modal-header">
+                    <span class="modal-title">
+                      ${this.editingUser ? "编辑用户" : "新建用户"}
+                    </span>
+                    <button class="modal-close" @click=${this._closeModal}>&times;</button>
+                  </div>
+                  <div class="modal-body">
+                    ${this.saveError
+                      ? html`<div class="save-error">${this.saveError}</div>`
+                      : ""}
+                    ${this.formErrors.length > 0
+                      ? html`
+                          <div class="save-error">
+                            ${this.formErrors.map((e) => html`<div>${e}</div>`)}
+                          </div>
+                        `
+                      : ""}
+
+                    <div class="form-group">
+                      <label>用户名</label>
+                      <input
+                        type="text"
+                        .value=${this.formUsername}
+                        @input=${(e: Event) => {
+                          this.formUsername = (e.target as HTMLInputElement).value;
+                        }}
+                        ?disabled=${!!this.editingUser}
+                        placeholder=${this.editingUser ? "" : "请输入用户名"}
+                      />
+                    </div>
+
+                    <div class="form-group">
+                      <label>邮箱</label>
+                      <input
+                        type="email"
+                        .value=${this.formEmail}
+                        @input=${(e: Event) => {
+                          this.formEmail = (e.target as HTMLInputElement).value;
+                        }}
+                        placeholder="可选"
+                      />
+                    </div>
+
+                    ${!this.editingUser
+                      ? html`
+                          <div class="form-group">
+                            <label>密码</label>
+                            <input
+                              type="password"
+                              .value=${this.formPassword}
+                              @input=${(e: Event) => {
+                                this.formPassword = (e.target as HTMLInputElement).value;
+                              }}
+                              placeholder="至少 8 位"
+                            />
+                          </div>
+                        `
+                      : ""}
+
+                    <div class="form-group">
+                      <label>角色</label>
+                      <select
+                        .value=${this.formRole}
+                        @change=${(e: Event) => {
+                          this.formRole = (e.target as HTMLSelectElement).value;
+                        }}
+                      >
+                        <option value="admin">管理员</option>
+                        <option value="dba">数据库管理员</option>
+                        <option value="developer">开发者</option>
+                        <option value="analyst">分析师</option>
+                        <option value="viewer">观察者</option>
+                        <option value="auditor">审计员</option>
+                      </select>
+                    </div>
+
+                    ${this.editingUser
+                      ? html`
+                          <div class="form-group">
+                            <label>状态</label>
+                            <select
+                              .value=${this.formStatus}
+                              @change=${(e: Event) => {
+                                this.formStatus = (e.target as HTMLSelectElement).value;
+                              }}
+                            >
+                              <option value="active">活跃</option>
+                              <option value="inactive">停用</option>
+                              <option value="locked">锁定</option>
+                            </select>
+                          </div>
+                        `
+                      : ""}
+                  </div>
+                  <div class="modal-footer">
+                    <button class="btn" @click=${this._closeModal}>取消</button>
+                    <button
+                      class="btn primary"
+                      @click=${this._saveUser}
+                      ?disabled=${this.saving}
+                    >
+                      ${this.saving ? "保存中..." : "保存"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            `
+          : ""}
+
+        <!-- Password Reset Modal -->
+        ${this.showPasswordModal
+          ? html`
+              <div class="modal-overlay" @click=${(e: Event) => {
+                if ((e.target as HTMLElement).classList.contains("modal-overlay")) {
+                  this._closePasswordModal();
+                }
+              }}>
+                <div class="modal">
+                  <div class="modal-header">
+                    <span class="modal-title">
+                      重置密码 - ${this.passwordTarget?.username}
+                    </span>
+                    <button class="modal-close" @click=${this._closePasswordModal}>&times;</button>
+                  </div>
+                  <div class="modal-body">
+                    ${this.saveError
+                      ? html`<div class="save-error">${this.saveError}</div>`
+                      : ""}
+                    ${this.passwordErrors.length > 0
+                      ? html`
+                          <div class="save-error">
+                            ${this.passwordErrors.map((e) => html`<div>${e}</div>`)}
+                          </div>
+                        `
+                      : ""}
+
+                    <div class="form-group">
+                      <label>新密码</label>
+                      <input
+                        type="password"
+                        .value=${this.newPassword}
+                        @input=${(e: Event) => {
+                          this.newPassword = (e.target as HTMLInputElement).value;
+                        }}
+                        placeholder="至少 8 位"
+                      />
+                    </div>
+
+                    <div class="form-group">
+                      <label>确认密码</label>
+                      <input
+                        type="password"
+                        .value=${this.confirmPassword}
+                        @input=${(e: Event) => {
+                          this.confirmPassword = (e.target as HTMLInputElement).value;
+                        }}
+                        placeholder="再次输入新密码"
+                      />
+                    </div>
+                  </div>
+                  <div class="modal-footer">
+                    <button class="btn" @click=${this._closePasswordModal}>取消</button>
+                    <button
+                      class="btn primary"
+                      @click=${this._resetPassword}
+                      ?disabled=${this.saving}
+                    >
+                      ${this.saving ? "重置中..." : "确认重置"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            `
+          : ""}
+      </div>
+    `;
+  }
+}

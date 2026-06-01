@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slide 运维文档</title>
+<style>
+  :root {
+    --bg: #fff; --fg: #1a1a2e; --muted: #6b7280; --border: #e5e7eb;
+    --accent: #2563eb; --bg-code: #f3f4f6; --bg-table: #f9fafb; --radius: 6px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", monospace, sans-serif;
+    color: var(--fg); background: var(--bg); line-height: 1.7;
+    max-width: 960px; margin: 0 auto; padding: 40px 24px 80px;
+  }
+  h1 { font-size: 2rem; border-bottom: 2px solid var(--border); padding-bottom: 12px; margin: 0 0 24px; }
+  h2 { font-size: 1.5rem; margin: 40px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h3 { font-size: 1.15rem; margin: 28px 0 12px; }
+  h4 { font-size: 1rem; margin: 20px 0 8px; font-weight: 600; }
+  p { margin: 0 0 16px; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: .9rem; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+  th { background: var(--bg-table); font-weight: 600; }
+  code { font-family: "SF Mono", "Fira Code", monospace; font-size: .85rem; background: var(--bg-code); padding: 2px 6px; border-radius: 3px; }
+  pre { background: var(--bg-code); padding: 16px; border-radius: var(--radius); overflow-x: auto; margin: 16px 0; }
+  .mermaid { background: #fafafa; padding: 24px; border-radius: var(--radius); margin: 20px 0; text-align: center; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+  .footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: .85rem; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --border: #30363d; --accent: #58a6ff; --bg-code: #161b22; --bg-table: #1c2128; }
+    .mermaid { background: #161b22; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Slide 运维文档</h1>
+
+<p><strong>版本</strong>: v1.2 &nbsp;|&nbsp; <strong>目标读者</strong>: 运维人员 &nbsp;|&nbsp; <strong>最后更新</strong>: 2026-05-17</p>
+<hr>
+<p>本文档涵盖 Slide 数据库运维平台的完整运维流程，包括系统部署、配置、启动停止、Gateway 运行机制、健康检查和故障排查。</p>
+<hr>
+
+<h2>系统概览</h2>
+<p>Slide v1.2 由多个服务组件构成，各组件通过不同的网络端口提供服务和通信。</p>
+
+<table>
+<tr><th>组件</th><th>技术栈</th><th>端口</th><th>作用</th></tr>
+<tr><td>后端 API</td><td>Fastify + TypeScript</td><td>3000 (默认)</td><td>REST API 服务</td></tr>
+<tr><td>前端（开发）</td><td>Lit 3.3 + Vite</td><td>5173 (默认)</td><td>开发热重载服务器</td></tr>
+<tr><td>前端（生产）</td><td>Lit 3.3 (静态构建)</td><td>由 Web 服务器决定</td><td>Vite 构建后的静态文件</td></tr>
+<tr><td>OpenClaw Gateway</td><td>Node.js + ws</td><td>28789</td><td>WebSocket 服务，AI Agent 消息路由</td></tr>
+<tr><td>MySQL</td><td>MySQL 8</td><td>3306</td><td>主业务数据库</td></tr>
+<tr><td>Elasticsearch</td><td>ES 8</td><td>9200 (默认)</td><td>日志存储和查询分析（可选）</td></tr>
+<tr><td>Redis</td><td>Redis 7</td><td>6379 (默认)</td><td>缓存和会话存储（可选）</td></tr>
+<tr><td>MongoDB</td><td>MongoDB 7</td><td>27017 (默认)</td><td>柔性数据存储（可选）</td></tr>
+</table>
+
+<p><strong>端口来源</strong>: 端口通过 <code>.env</code> 文件中的 <code>BACKEND_PORT</code>（默认 3000）、<code>FRONTEND_PORT</code>（默认 5173）配置。Gateway 端口在 <code>server.ts</code> 中硬编码为 28789（第 3044 行）。</p>
+
+<h2>部署架构</h2>
+
+<h3>开发环境架构</h3>
+
+<pre class="mermaid">
+flowchart TB
+    subgraph User[用户端]
+        Browser[浏览器]
+    end
+    subgraph Slide[Slide 服务端 - 单机]
+        FE[前端 Lit + Vite&lt;br/&gt;:5173]
+        API[后端 Fastify&lt;br/&gt;:3000]
+        GW[Gateway&lt;br/&gt;ws://127.0.0.1:28789]
+    end
+    subgraph Data[依赖服务]
+        MySQL[(MySQL :3306)]
+        ES[(Elasticsearch :9200)]
+        Redis[(Redis :6379)]
+        MongoDB[(MongoDB :27017)]
+    end
+    subgraph LLM[AI 提供商]
+        Claude[Anthropic Claude]
+        OpenAI[OpenAI]
+        Ollama[Ollama 本地]
+    end
+    Browser --&gt;|REST :3000| API
+    Browser --&gt;|WebSocket :28789| GW
+    API --&gt; MySQL
+    API --&gt;|可选| ES
+    API --&gt;|可选| Redis
+    API --&gt;|可选| MongoDB
+    GW --&gt; Claude
+    GW --&gt; OpenAI
+    GW --&gt; Ollama
+</pre>
+
+<h3>生产环境架构</h3>
+<p>生产环境下建议将各组件分离部署：</p>
+<ul>
+  <li>后端 API + Gateway 部署在同一台服务器</li>
+  <li>前端构建为静态文件后部署到 Nginx / CDN</li>
+  <li>MySQL、ES、Redis、MongoDB 各自独立部署或使用托管服务</li>
+  <li>生产环境必须修改默认 JWT 密钥和加密密钥</li>
+</ul>
+
+<h2>前置依赖</h2>
+
+<h3>必需依赖</h3>
+<table>
+<tr><th>依赖</th><th>最低版本</th><th>检查命令</th><th>说明</th></tr>
+<tr><td>Node.js</td><td>&gt;= 20</td><td><code>node --version</code></td><td>tsx 直接执行 TypeScript</td></tr>
+<tr><td>MySQL</td><td>8.x</td><td><code>mysql --version</code></td><td>主业务数据库</td></tr>
+</table>
+
+<h3>可选依赖</h3>
+<table>
+<tr><th>依赖</th><th>最低版本</th><th>检查命令</th><th>缺失影响</th></tr>
+<tr><td>Elasticsearch</td><td>8.x</td><td><code>curl http://localhost:9200</code></td><td>QAN 和搜索不可用</td></tr>
+<tr><td>Redis</td><td>7.x</td><td><code>redis-cli ping</code></td><td>会话缓存降级</td></tr>
+<tr><td>MongoDB</td><td>7.x</td><td><code>mongosh --version</code></td><td>存档功能不可用</td></tr>
+</table>
+
+<h2>配置项说明</h2>
+<p>配置文件: <code>apps/db-ops-api/.env</code></p>
+
+<h3>数据库配置</h3>
+<table>
+<tr><th>配置项</th><th>默认值</th><th>必填</th><th>说明</th></tr>
+<tr><td><code>DB_HOST</code></td><td>localhost</td><td>是</td><td>MySQL 主机</td></tr>
+<tr><td><code>DB_PORT</code></td><td>3306</td><td>是</td><td>MySQL 端口</td></tr>
+<tr><td><code>DB_USER</code></td><td>root</td><td>是</td><td>MySQL 用户名</td></tr>
+<tr><td><code>DB_PASSWORD</code></td><td>—</td><td>是</td><td>MySQL 密码</td></tr>
+<tr><td><code>DB_NAME</code></td><td>db_ops_ai</td><td>是</td><td>MySQL 数据库名</td></tr>
+</table>
+
+<h3>LLM 配置</h3>
+<table>
+<tr><th>配置项</th><th>默认值</th><th>必填</th><th>说明</th></tr>
+<tr><td><code>ANTHROPIC_API_KEY</code></td><td>—</td><td>推荐</td><td>Anthropic Claude API Key</td></tr>
+<tr><td><code>ANTHROPIC_MODEL</code></td><td>claude-sonnet-4-20250929</td><td>否</td><td>Claude 模型名称</td></tr>
+<tr><td><code>OPENAI_API_KEY</code></td><td>—</td><td>可选</td><td>OpenAI API Key</td></tr>
+<tr><td><code>OPENAI_MODEL</code></td><td>gpt-4o</td><td>否</td><td>OpenAI 模型名称</td></tr>
+<tr><td><code>OLLAMA_URL</code></td><td>http://localhost:11434</td><td>可选</td><td>Ollama 本地服务</td></tr>
+</table>
+
+<h3>JWT 和加密配置</h3>
+<table>
+<tr><th>配置项</th><th>默认值</th><th>必填</th><th>说明</th></tr>
+<tr><td><code>JWT_SECRET_KEY</code></td><td>—</td><td>是</td><td>JWT 签名密钥，生产必须修改，至少 32 字符</td></tr>
+<tr><td><code>JWT_EXPIRATION_MINUTES</code></td><td>1440</td><td>否</td><td>令牌过期时间（分钟），默认 24h</td></tr>
+</table>
+
+<h3>AI 开关</h3>
+<table>
+<tr><th>配置项</th><th>默认值</th><th>必填</th><th>说明</th></tr>
+<tr><td><code>ENABLE_AUTO_AI_ANALYSIS</code></td><td>false</td><td>否</td><td>启用后自动对告警和新慢查询触发 AI 分析</td></tr>
+</table>
+
+<p>完整配置项（Redis、ES、MongoDB、端口、日志等）详见 <code>apps/db-ops-api/.env</code> 文件。</p>
+
+<h2>启动流程</h2>
+
+<h3>首次部署完整步骤</h3>
+
+<h4>第 1 步：确保依赖服务运行</h4>
+<p>确认 MySQL 服务已启动并可连接：</p>
+<pre><code>mysql -h localhost -u root -p -e "SELECT 1"</code></pre>
+
+<h4>第 2 步：创建并配置环境变量</h4>
+<pre><code>cd apps/db-ops-api
+cp .env.example .env</code></pre>
+<p>编辑 <code>.env</code>，至少配置：<code>DB_HOST</code>、<code>DB_PORT</code>、<code>DB_USER</code>、<code>DB_PASSWORD</code>、<code>DB_NAME</code>、<code>JWT_SECRET_KEY</code>、<code>ANTHROPIC_API_KEY</code></p>
+
+<h4>第 3 步：安装依赖</h4>
+<pre><code>cd apps/db-ops-api &amp;&amp; npm install
+cd frontend &amp;&amp; npm install</code></pre>
+
+<h4>第 4 步：初始化数据库</h4>
+<pre><code>cd apps/db-ops-api &amp;&amp; npx tsx init-db.ts</code></pre>
+
+<h4>第 5 步：启动后端</h4>
+<pre><code>cd apps/db-ops-api &amp;&amp; npx tsx server.ts</code></pre>
+<p>启动流程：加载 .env → DB 初始化 → LLM 初始化 → CORS → 注册路由 → 启动 Gateway (:28789) → 启动监控采集 (30s) → 启动告警评估 (60s)</p>
+
+<h4>第 6 步：启动前端</h4>
+<pre><code>cd frontend &amp;&amp; npm run dev</code></pre>
+
+<h4>第 7 步：访问和登录</h4>
+<p>浏览器访问 <a href="http://localhost:5173">http://localhost:5173</a></p>
+<table>
+<tr><th>用户名</th><th>密码</th></tr>
+<tr><td><code>admin</code></td><td><code>Tpam1234</code></td></tr>
+</table>
+
+<h2>Gateway 运行机制</h2>
+
+<h3>概述</h3>
+<p>OpenClaw Gateway 是 Slide AI 功能的核心通信层。在 <code>server.ts</code> 第 3044 行启动，绑定 <code>ws://127.0.0.1:28789/ws</code>。</p>
+
+<h3>WebSocket 连接生命周期</h3>
+<ol>
+  <li><strong>连接</strong>: 客户端 WebSocket 连接 /ws 端点</li>
+  <li><strong>认证</strong>: 发送 connect 消息，携带 JWT 令牌</li>
+  <li><strong>会话创建</strong>: Gateway 创建会话上下文</li>
+  <li><strong>消息交换</strong>: 客户端发送 request → Agent 处理 → 流式推送回复</li>
+  <li><strong>断开</strong>: 客户端断开或超时，清理会话资源</li>
+</ol>
+
+<h3>Agent 配置</h3>
+<p>默认 Agent: "Slide Database Assistant"，由 <code>openclaw-runtime.ts</code> 配置：</p>
+<table>
+<tr><th>参数</th><th>值</th></tr>
+<tr><td>默认模型</td><td><code>anthropic/claude-sonnet-4-20250929</code></td></tr>
+<tr><td>温度</td><td>0.7</td></tr>
+<tr><td>最大 Token</td><td>4096</td></tr>
+<tr><td>最大历史消息</td><td>100 条</td></tr>
+<tr><td>最大历史字节</td><td>1MB</td></tr>
+</table>
+
+<h3>环境变量</h3>
+<table>
+<tr><th>环境变量</th><th>值</th><th>说明</th></tr>
+<tr><td><code>OPENCLAW_STATE_DIR</code></td><td>~/.openclaw-slide/</td><td>隔离目录，避免冲突</td></tr>
+<tr><td><code>OPENCLAW_DISABLE_BUNDLED_PLUGINS</code></td><td>1</td><td>禁用 bundled 插件</td></tr>
+</table>
+
+<h2>后端组件说明</h2>
+
+<table>
+<tr><th>组件</th><th>启动方式</th><th>间隔</th><th>说明</th></tr>
+<tr><td>监控采集器</td><td><code>monitorCollector.start()</code></td><td>30 秒</td><td>采集实例性能指标</td></tr>
+<tr><td>告警引擎</td><td><code>alertEngine.startEvaluationLoop()</code></td><td>60 秒</td><td>评估告警规则</td></tr>
+<tr><td>告警升级</td><td><code>alertEscalationService.start()</code></td><td>cron</td><td>升级规则检查</td></tr>
+<tr><td>TopSQL 自动分析</td><td>CronJob</td><td>10 秒</td><td>需 ENABLE_AUTO_AI_ANALYSIS=true</td></tr>
+<tr><td>告警 RCA 自动分析</td><td>CronJob</td><td>10 秒</td><td>需 ENABLE_AUTO_AI_ANALYSIS=true</td></tr>
+</table>
+
+<h2>启停命令</h2>
+
+<table>
+<tr><th>操作</th><th>命令</th></tr>
+<tr><td>启动后端</td><td><code>cd apps/db-ops-api &amp;&amp; npx tsx server.ts</code></td></tr>
+<tr><td>启动后端 (watch)</td><td><code>cd apps/db-ops-api &amp;&amp; npx tsx watch server.ts</code></td></tr>
+<tr><td>启动前端 (dev)</td><td><code>cd frontend &amp;&amp; npm run dev</code></td></tr>
+<tr><td>初始化数据库</td><td><code>cd apps/db-ops-api &amp;&amp; npx tsx init-db.ts</code></td></tr>
+<tr><td>停止后端</td><td><code>kill $(lsof -ti:3000)</code></td></tr>
+<tr><td>停止前端</td><td><code>kill $(lsof -ti:5173)</code></td></tr>
+<tr><td>运行测试</td><td><code>cd apps/db-ops-api &amp;&amp; npm test</code></td></tr>
+<tr><td>冒烟测试</td><td><code>cd apps/db-ops-api &amp;&amp; npm run smoke</code></td></tr>
+<tr><td>前端构建</td><td><code>cd frontend &amp;&amp; npm run build</code></td></tr>
+</table>
+
+<h2>健康检查与日志</h2>
+
+<h3>健康检查</h3>
+<pre><code>curl http://localhost:3000/api/health
+# {"status":"ok","timestamp":"..."}</code></pre>
+
+<h3>日志</h3>
+<p>日志级别由 <code>LOG_LEVEL</code> 控制（DEBUG/INFO/WARN/ERROR），默认输出到 stdout。生产可重定向：</p>
+<pre><code>cd apps/db-ops-api &amp;&amp; npx tsx server.ts &gt; /var/log/slide-api.log 2&gt;&amp;1</code></pre>
+
+<h2>故障排查</h2>
+
+<table>
+<tr><th>问题</th><th>可能原因</th><th>解决方案</th></tr>
+<tr><td>后端启动失败：数据库连接失败</td><td>MySQL 未运行或 .env 配置错误</td><td>检查 MySQL 服务，验证 .env 中 DB_* 配置</td></tr>
+<tr><td>端口被占用</td><td>:3000 或 :28789 被占用</td><td><code>lsof -ti:3000 | xargs kill -9</code></td></tr>
+<tr><td>前端白屏</td><td>后端未启动或 CORS 错误</td><td>先启动后端再启动前端</td></tr>
+<tr><td>登录失败</td><td>密码错误或数据库未初始化</td><td>确认已执行 init-db.ts</td></tr>
+<tr><td>Chat AI 无响应</td><td>LLM API Key 未配置或无效</td><td>检查 ANTHROPIC_API_KEY / OPENAI_API_KEY</td></tr>
+<tr><td>Gateway 连接失败</td><td>Gateway 未启动或端口错误</td><td>确认日志中"OpenClaw Gateway 已启动"</td></tr>
+<tr><td>告警未触发</td><td>告警引擎未运行或规则未配置</td><td>检查日志和 UI 告警设置</td></tr>
+<tr><td>自动 AI 分析未执行</td><td>ENABLE_AUTO_AI_ANALYSIS 未设为 true</td><td>设置 ENABLE_AUTO_AI_ANALYSIS=true 并重启</td></tr>
+</table>
+
+<h2>文档维护</h2>
+<p>功能变更时同步更新本文档。PR Review 流程检查：新增配置项 → 配置项说明；新增组件 → 后端组件说明；端口/路径变更 → 系统概览和启停命令；新增依赖 → 前置依赖；常见问题 → 故障排查。</p>
+
+<div class="footer">
+  <p>维护参考: <code>apps/db-ops-api/.env.example</code>（配置项权威来源），<code>apps/db-ops-api/server.ts</code>（启动流程权威来源）</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });</script>
+</body>
+</html>

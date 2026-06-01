@@ -1,0 +1,3 @@
+截图待补充：Chat 助手的 Agent 选择器，显示可切换的 Agent 列表
+
+建议截图时机：在 Chat 页面点击 Agent 选择器，看到可用 Agent 列表时截图

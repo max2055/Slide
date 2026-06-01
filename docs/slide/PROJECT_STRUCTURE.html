@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slide 项目结构</title>
+<style>
+  :root {
+    --bg: #fff; --fg: #1a1a2e; --muted: #6b7280; --border: #e5e7eb;
+    --accent: #2563eb; --bg-code: #f3f4f6; --bg-table: #f9fafb; --radius: 6px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", monospace, sans-serif;
+    color: var(--fg); background: var(--bg); line-height: 1.7;
+    max-width: 960px; margin: 0 auto; padding: 40px 24px 80px;
+  }
+  h1 { font-size: 2rem; border-bottom: 2px solid var(--border); padding-bottom: 12px; margin: 0 0 24px; }
+  h2 { font-size: 1.5rem; margin: 40px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h3 { font-size: 1.15rem; margin: 28px 0 12px; }
+  p { margin: 0 0 16px; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: .9rem; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+  th { background: var(--bg-table); font-weight: 600; }
+  code { font-family: "SF Mono", "Fira Code", monospace; font-size: .85rem; background: var(--bg-code); padding: 2px 6px; border-radius: 3px; }
+  pre { background: var(--bg-code); padding: 16px; border-radius: var(--radius); overflow-x: auto; margin: 16px 0; font-size: .82rem; line-height: 1.5; }
+  .footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: .85rem; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --border: #30363d; --accent: #58a6ff; --bg-code: #161b22; --bg-table: #1c2128; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Slide 项目结构</h1>
+
+<h2>概览</h2>
+<p>Slide 是一个 AI 原生的数据库运维管理平台，基于 OpenClaw 的 Control UI 架构构建。</p>
+
+<h2>目录结构</h2>
+
+<pre><code>39-dbops/
+├── apps/
+│   └── db-ops-api/          # 后端 API (Fastify + TypeScript)
+│       ├── server.ts        # 入口文件
+│       ├── init-db.ts       # 数据库初始化
+│       ├── sql/
+│       │   └── schema.sql   # 数据库 Schema
+│       └── src/
+│           ├── db-connection.ts              # 系统数据库连接
+│           ├── auth-database-service.ts      # 认证服务
+│           ├── instance-database-service.ts  # 实例配置
+│           ├── llm-database-service.ts       # LLM 配置
+│           ├── alert-database-service.ts     # 告警
+│           ├── metrics-database-service.ts   # 指标
+│           ├── database-service.ts           # DB 连接池管理
+│           └── llm-service.ts                # LLM 提供商管理
+├── frontend/
+│   ├── src/
+│   │   ├── openclaw/        # OpenClaw 核心层
+│   │   │   └── ui/
+│   │   │       ├── app.ts              # 主应用组件
+│   │   │       ├── gateway.ts          # WebSocket 客户端
+│   │   │       ├── app-lifecycle.ts    # 生命周期钩子
+│   │   │       ├── navigation.ts       # 标签导航
+│   │   │       ├── storage.ts          # 本地存储
+│   │   │       ├── theme.ts            # 主题系统
+│   │   │       ├── i18n/               # 国际化
+│   │   │       ├── controllers/        # 状态控制器
+│   │   │       └── views/              # UI 视图
+│   │   │
+│   │   ├── slide/           # Slide 业务层
+│   │   │   ├── adapters/
+│   │   │   │   └── gateway-adapter.ts  # RPC 到 REST 适配器
+│   │   │   ├── services/
+│   │   │   │   └── index.ts            # 业务服务
+│   │   │   ├── types/
+│   │   │   │   └── index.ts            # 业务类型
+│   │   │   ├── pages/
+│   │   │   │   └── index.ts            # Slide 页面
+│   │   │   └── index.ts                # 模块入口
+│   │   │
+│   │   ├── api/             # API 客户端
+│   │   │   ├── index.ts     # HTTP 客户端
+│   │   │   └── database.ts  # 数据库 API 调用
+│   │   │
+│   │   ├── pages/           # 现有 Slide 页面
+│   │   │   ├── DashboardPage.ts
+│   │   │   ├── InstancesPage.ts
+│   │   │   ├── AlertsPage.ts
+│   │   │   └── ...
+│   │   │
+│   │   ├── components/      # 共享组件
+│   │   ├── utils/           # 工具函数
+│   │   ├── styles/          # 全局样式
+│   │   └── main.ts          # 入口文件
+│   │
+│   ├── package.json
+│   └── vite.config.ts
+│
+├── docs/slide/              # 项目文档
+├── packages/                # 共享包
+├── scripts/                 # 构建和同步脚本
+├── CLAUDE.md                # 项目指令
+└── AGENTS.md                # Agent 定义</code></pre>
+
+<h2>架构分层</h2>
+
+<h3>1. 核心层 (openclaw/)</h3>
+<p><strong>目的</strong>: 提供基础 UI 框架和通信协议。</p>
+<p><strong>关键组件</strong>:</p>
+<ul>
+  <li><code>OpenClawApp</code> — Lit 主组件，含生命周期管理</li>
+  <li><code>GatewayBrowserClient</code> — WebSocket 客户端，自动重连</li>
+  <li>Host 模式的状态管理</li>
+  <li>主题系统和 i18n</li>
+</ul>
+<p><strong>文件数</strong>: 124 个 TypeScript 文件 (<code>frontend/src/openclaw/ui/</code>)</p>
+
+<h3>2. 业务层 (slide/)</h3>
+<p><strong>目的</strong>: 实现 Slide 专属的业务逻辑。</p>
+<p><strong>服务</strong>:</p>
+<ul>
+  <li><code>DatabaseService</code> — 实例管理、健康检查、指标</li>
+  <li><code>AlertService</code> — 告警列表和确认</li>
+  <li><code>LLMService</code> — LLM 配置和测试</li>
+  <li><code>ChatService</code> — AI 对话操作</li>
+  <li><code>SkillsService</code> — 技能执行</li>
+  <li><code>ReportsService</code> — 报表生成</li>
+  <li><code>UserService</code> — 用户管理</li>
+  <li><code>AuthService</code> — 认证</li>
+</ul>
+<p><strong>适配器</strong>: <code>SlideGatewayAdapter</code> — 将 OpenClaw RPC 方法映射到 Slide REST API</p>
+
+<h3>3. 应用层 (pages/)</h3>
+<p><strong>目的</strong>: 面向用户的页面和组件。</p>
+<p><strong>页面</strong>: DashboardPage（仪表盘概览）、InstancesPage（实例管理）、AlertsPage（告警监控）、ChatPage（AI Chat）、LLMSettingsPage（LLM 配置）、ReportsPage（报表管理）、UserManagementPage（用户管理）</p>
+
+<h2>数据流</h2>
+
+<pre><code>用户操作 → OpenClaw App → Gateway Adapter → Slide API → 后端
+              ↓                                    ↓
+         Lit 组件                           Fastify Server
+              ↓                                    ↓
+         OpenClaw Core  ←  Gateway 协议  ←  Database</code></pre>
+
+<h2>RPC 方法映射</h2>
+
+<table>
+<tr><th>OpenClaw RPC 方法</th><th>Slide API 端点</th></tr>
+<tr><td><code>database:list</code></td><td>GET /api/database/instances</td></tr>
+<tr><td><code>database:get</code></td><td>GET /api/database/instance/:id</td></tr>
+<tr><td><code>health:summary</code></td><td>GET /api/health/summary</td></tr>
+<tr><td><code>metrics:query</code></td><td>GET /api/metrics/query</td></tr>
+<tr><td><code>slow-queries:list</code></td><td>GET /api/slow-queries</td></tr>
+<tr><td><code>alerts:list</code></td><td>GET /api/alerts</td></tr>
+<tr><td><code>alerts:acknowledge</code></td><td>POST /api/alerts/:id/acknowledge</td></tr>
+<tr><td><code>llm:list</code></td><td>GET /api/llm/configs</td></tr>
+<tr><td><code>llm:test</code></td><td>POST /api/llm/test</td></tr>
+<tr><td><code>chat:send</code></td><td>POST /api/chat/send</td></tr>
+<tr><td><code>chat:history</code></td><td>GET /api/chat/history</td></tr>
+<tr><td><code>skills:list</code></td><td>GET /api/skills</td></tr>
+<tr><td><code>skills:execute</code></td><td>POST /api/skills/:id/execute</td></tr>
+<tr><td><code>auth:login</code></td><td>POST /api/auth/login</td></tr>
+<tr><td><code>auth:logout</code></td><td>POST /api/auth/logout</td></tr>
+<tr><td><code>auth:me</code></td><td>GET /api/auth/me</td></tr>
+</table>
+
+<h2>开发工作流</h2>
+
+<h3>启动开发</h3>
+<pre><code># Terminal 1 - 后端
+cd apps/db-ops-api
+npm run dev
+
+# Terminal 2 - 前端
+cd frontend
+npm run dev</code></pre>
+
+<h3>新增功能</h3>
+<ol>
+  <li><strong>定义类型</strong> → <code>slide/types/index.ts</code></li>
+  <li><strong>添加服务方法</strong> → <code>slide/services/index.ts</code></li>
+  <li><strong>注册 RPC 处理器</strong> → <code>slide/adapters/gateway-adapter.ts</code></li>
+  <li><strong>创建/更新页面</strong> → <code>frontend/src/pages/</code></li>
+  <li><strong>更新导航</strong> → <code>frontend/src/openclaw/ui/navigation.ts</code></li>
+</ol>
+
+<h2>关键决策</h2>
+<ol>
+  <li><strong>Fork 模式</strong>: 维护 OpenClaw 的自定义分支而非直接复制文件</li>
+  <li><strong>三层架构</strong>: 核心层、业务层、应用层清晰分离</li>
+  <li><strong>Gateway 适配器模式</strong>: 将 RPC 翻译为 REST 实现干净集成</li>
+  <li><strong>Host 模式状态管理</strong>: 遵循 OpenClaw 的状态管理模式</li>
+  <li><strong>全栈 TypeScript</strong>: 所有层都使用完整类型安全</li>
+</ol>
+
+<div class="footer">
+  <p>现有页面保留在 <code>frontend/src/pages/</code>，API 客户端在 <code>frontend/src/api/</code> 继续可用。</p>
+</div>
+
+</body>
+</html>

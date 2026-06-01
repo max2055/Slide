@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slide 项目文档</title>
+<style>
+  :root {
+    --bg: #fff; --fg: #1a1a2e; --muted: #6b7280; --border: #e5e7eb;
+    --accent: #2563eb; --bg-code: #f3f4f6; --bg-table: #f9fafb; --radius: 6px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+    color: var(--fg); background: var(--bg); line-height: 1.7;
+    max-width: 960px; margin: 0 auto; padding: 40px 24px 80px;
+  }
+  h1 { font-size: 2rem; border-bottom: 2px solid var(--border); padding-bottom: 12px; margin: 0 0 24px; }
+  h2 { font-size: 1.5rem; margin: 40px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h3 { font-size: 1.15rem; margin: 28px 0 12px; }
+  p { margin: 0 0 16px; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: .9rem; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+  th { background: var(--bg-table); font-weight: 600; }
+  code { font-family: "SF Mono", "Fira Code", monospace; font-size: .85rem; background: var(--bg-code); padding: 2px 6px; border-radius: 3px; }
+  pre { background: var(--bg-code); padding: 16px; border-radius: var(--radius); overflow-x: auto; margin: 16px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: .85rem; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --border: #30363d; --accent: #58a6ff; --bg-code: #161b22; --bg-table: #1c2128; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Slide 项目文档</h1>
+
+<h2>项目概述</h2>
+
+<p>Slide 是一个 AI 原生的数据库运维管理平台，基于 OpenClaw Agent 框架构建。平台提供实时数据库监控、智能告警、性能分析、SQL 审核与执行、AI 辅助故障诊断等核心能力，将 DBA 从重复性运维工作中解放出来，实现数据库运维的智能化与自动化。</p>
+
+<h2>文档索引</h2>
+
+<table>
+<tr><th>文档</th><th>说明</th></tr>
+<tr><td><a href="ARCHITECTURE.html" onclick="parent.postMessage({type:'navigate',file:'ARCHITECTURE.html'},'*')">ARCHITECTURE.html</a></td><td>系统架构文档 — 面向技术团队和架构师，包含技术栈总览、系统架构图、模块职责说明、核心数据流和外部依赖</td></tr>
+<tr><td><a href="OPERATIONS.html" onclick="parent.postMessage({type:'navigate',file:'OPERATIONS.html'},'*')">OPERATIONS.html</a></td><td>运维文档 — 面向运维人员，涵盖后端部署、Gateway 运行机制、前端构建部署、依赖服务配置和启停流程</td></tr>
+<tr><td><a href="USER-GUIDE.html" onclick="parent.postMessage({type:'navigate',file:'USER-GUIDE.html'},'*')">USER-GUIDE.html</a></td><td>用户手册 — 面向 DBA 和运维用户，按功能模块提供分步骤操作说明</td></tr>
+<tr><td><a href="PROJECT_STRUCTURE.html" onclick="parent.postMessage({type:'navigate',file:'PROJECT_STRUCTURE.html'},'*')">PROJECT_STRUCTURE.html</a></td><td>项目结构说明 — 项目目录树和各模块文件分布</td></tr>
+</table>
+
+<h2>快速入门</h2>
+
+<h3>启动后端服务</h3>
+
+<pre><code>cd apps/db-ops-api
+npx tsx server.ts</code></pre>
+
+<p>后端服务运行在 <code>http://localhost:3000</code>。</p>
+
+<h3>启动前端开发服务器</h3>
+
+<pre><code>cd frontend
+npm run dev</code></pre>
+
+<p>前端开发服务器运行在 <code>http://localhost:5173</code>。</p>
+
+<h3>默认凭据</h3>
+
+<ul>
+  <li>管理员账号：<code>admin</code></li>
+  <li>默认密码：<code>Tpam1234</code></li>
+</ul>
+
+<h2>文档维护</h2>
+
+<p>文档与代码同步维护（D-15 策略）：</p>
+<ul>
+  <li><strong>功能变更时</strong>：新增或修改功能后，同步更新对应文档的相关章节</li>
+  <li><strong>PR review 中</strong>：检查文档是否与代码变更保持一致</li>
+  <li><strong>架构变更时</strong>：更新 ARCHITECTURE.html 中的架构图和模块说明</li>
+  <li><strong>运维流程变更时</strong>：更新 OPERATIONS.html 中的相关配置和步骤</li>
+</ul>
+
+<div class="footer">
+  <p>维护者：Slide 项目团队</p>
+</div>
+
+</body>
+</html>

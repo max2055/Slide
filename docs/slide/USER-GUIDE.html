@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slide 用户手册</title>
+<style>
+  :root {
+    --bg: #fff; --fg: #1a1a2e; --muted: #6b7280; --border: #e5e7eb;
+    --accent: #2563eb; --bg-code: #f3f4f6; --bg-table: #f9fafb; --radius: 6px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+    color: var(--fg); background: var(--bg); line-height: 1.7;
+    max-width: 960px; margin: 0 auto; padding: 40px 24px 80px;
+  }
+  h1 { font-size: 2rem; border-bottom: 2px solid var(--border); padding-bottom: 12px; margin: 0 0 24px; }
+  h2 { font-size: 1.5rem; margin: 40px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h3 { font-size: 1.15rem; margin: 28px 0 12px; }
+  h4 { font-size: 1rem; margin: 20px 0 8px; font-weight: 600; }
+  p { margin: 0 0 16px; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: .9rem; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+  th { background: var(--bg-table); font-weight: 600; }
+  code { font-family: "SF Mono", "Fira Code", monospace; font-size: .85rem; background: var(--bg-code); padding: 2px 6px; border-radius: 3px; }
+  pre { background: var(--bg-code); padding: 16px; border-radius: var(--radius); overflow-x: auto; margin: 16px 0; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+  ul, ol { margin: 0 0 16px 24px; }
+  li { margin-bottom: 4px; }
+  .screenshot { background: var(--bg-code); border: 1px dashed var(--border); border-radius: var(--radius); padding: 16px; margin: 16px 0; color: var(--muted); font-size: .85rem; }
+  .footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: .85rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --border: #30363d; --accent: #58a6ff; --bg-code: #161b22; --bg-table: #1c2128; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Slide 用户手册</h1>
+
+<p><strong>版本</strong>: v1.2 &nbsp;|&nbsp; <strong>目标读者</strong>: DBA / 运维用户 &nbsp;|&nbsp; <strong>最后更新</strong>: 2026-05-17</p>
+<hr>
+<p>本文档介绍 Slide 数据库运维平台的全部功能模块和操作步骤。Slide 是一款 AI 原生的数据库运维管理平台，集成了数据库监控、告警通知、性能分析、SQL 审核执行和 AI 辅助故障诊断等能力。</p>
+<hr>
+
+<h2>目录</h2>
+<ol>
+  <li><a href="#1-仪表盘">仪表盘</a></li>
+  <li><a href="#2-实例管理">实例管理</a></li>
+  <li><a href="#3-sql-控制台">SQL 控制台</a></li>
+  <li><a href="#4-告警管理">告警管理</a></li>
+  <li><a href="#5-ai-分析">AI 分析</a></li>
+  <li><a href="#6-chat-助手">Chat 助手</a></li>
+  <li><a href="#7-报表管理">报表管理</a></li>
+  <li><a href="#8-sql-审核审批">SQL 审核审批</a></li>
+  <li><a href="#9-rbac-权限管理">RBAC 权限管理</a></li>
+  <li><a href="#10-ai-设置">AI 设置</a></li>
+  <li><a href="#11-schema-管理与索引管理">Schema 管理与索引管理</a></li>
+  <li><a href="#12-常见问题-faq">常见问题 (FAQ)</a></li>
+</ol>
+<hr>
+
+<h2 id="1-仪表盘">1. 仪表盘</h2>
+<p>仪表盘是登录后的默认首页，提供系统概览视图。</p>
+
+<h3>主要功能</h3>
+<ul>
+  <li><strong>实例数量统计</strong>: 按数据库类型（MySQL、PostgreSQL、Oracle）展示实例分布</li>
+  <li><strong>告警统计卡片</strong>: 当前活跃告警数和各级别告警分布</li>
+  <li><strong>最新 AI 分析摘要</strong>: 最近完成的 AI RCA 分析和诊断结果</li>
+  <li><strong>容量趋势图</strong>: 基于历史数据的容量预测趋势线</li>
+</ul>
+
+<h3>操作步骤</h3>
+<ol>
+  <li>登录系统，自动跳转到仪表盘</li>
+  <li>顶部的统计卡片展示实时指标概览</li>
+  <li>查看容量趋势图了解实例增长情况</li>
+  <li>点击任意统计卡片可跳转到对应的详情页面</li>
+</ol>
+
+<div class="screenshot">截图待补充：dashboard-overview.png — 仪表盘全景</div>
+
+<h2 id="2-实例管理">2. 实例管理</h2>
+<p>实例管理是系统的核心功能模块，负责纳管所有数据库实例的配置、状态监控和连接管理。</p>
+
+<h3>实例列表</h3>
+<p>首页展示所有已纳管的数据库实例列表，包含实例名、类型、主机地址、端口、健康状态等信息。</p>
+
+<h3>添加实例</h3>
+<ol>
+  <li>点击右上角"添加实例"按钮</li>
+  <li>选择数据库类型（MySQL / PostgreSQL / Oracle）</li>
+  <li>填写连接信息：主机地址、端口、用户名、密码、默认数据库</li>
+  <li>点击"测试连接"按钮验证配置正确性</li>
+  <li>连接成功后点击"保存"</li>
+</ol>
+
+<h3>实例详情</h3>
+<p>点击实例列表中的实例名进入详情页，包含多个子标签页：</p>
+<ul>
+  <li><strong>概览</strong>: 实例基本信息和健康状态</li>
+  <li><strong>监控</strong>: 关键性能指标的时间序列图表（连接数、QPS、TPS、CPU、内存、IO）</li>
+  <li><strong>TopSQL</strong>: 按执行时间排序的慢查询列表</li>
+  <li><strong>QAN</strong>: 查询分析（Query Analytics）页面</li>
+  <li><strong>执行计划</strong>: Explain 执行计划可视化</li>
+  <li><strong>慢查询</strong>: 慢查询日志列表</li>
+  <li><strong>容量</strong>: 数据库容量使用趋势</li>
+  <li><strong>会话</strong>: 当前数据库连接会话列表</li>
+</ul>
+
+<div class="screenshot">截图待补充：instance-list.png, instance-add-form.png, instance-detail.png, instance-metrics.png</div>
+
+<h2 id="3-sql-控制台">3. SQL 控制台</h2>
+<p>SQL 控制台提供在浏览器中编写和执行 SQL 语句的能力，集成了 CodeMirror 编辑器，支持语法高亮和自动补全。</p>
+
+<h3>使用 SQL 控制台</h3>
+<ol>
+  <li>在左侧导航栏进入"SQL 控制台"</li>
+  <li>从下拉列表中选择目标实例和数据库</li>
+  <li>在编辑器中输入 SQL 语句（支持语法高亮、自动补全）</li>
+  <li>点击"执行"按钮（或 Ctrl+Enter）运行 SQL</li>
+  <li>在下方结果表格中查看返回数据</li>
+</ol>
+
+<h3>AI SQL 审核</h3>
+<p>在执行高风险 SQL 前，可以点击"审核"按钮，AI 会对 SQL 进行风险评估（权限越界、性能风险、数据泄露等）。</p>
+
+<div class="screenshot">截图待补充：sql-console.png, sql-audit-panel.png, sql-history.png</div>
+
+<h2 id="4-告警管理">4. 告警管理</h2>
+<p>告警管理模块提供完整的告警生命周期管理，包括告警浏览、分析、处理和设置。</p>
+
+<h3>浏览告警</h3>
+<ol>
+  <li>进入"告警"页面查看告警列表</li>
+  <li>按严重级别（warning / error / critical）、实例、时间范围筛选</li>
+  <li>点击某条告警进入详情页</li>
+</ol>
+
+<h3>AI 告警分析</h3>
+<p>已分析的告警会显示"已分析"标记，点击可查看 RCA（根因分析）和故障诊断结果。</p>
+
+<h3>告警设置</h3>
+<ul>
+  <li><strong>告警升级规则</strong>: 配置超时自动升级到更高级别</li>
+  <li><strong>维护窗口</strong>: 在计划变更期间自动静默告警</li>
+  <li><strong>静默规则</strong>: 临时静音特定指标或实例的告警</li>
+</ul>
+
+<h3>告警事件管理</h3>
+<p>每条告警都有完整的事件记录：创建 → 分配 → 调查 → 备注 → RCA 关联 → 解决 → 关闭 → 事后复盘。</p>
+
+<div class="screenshot">截图待补充：alert-list.png, alert-detail.png, alert-analysis-result.png, alert-settings.png</div>
+
+<h2 id="5-ai-分析">5. AI 分析</h2>
+<p>AI 分析模块利用 LLM 对数据库问题进行智能诊断和分析。</p>
+
+<h3>分析类型</h3>
+<ul>
+  <li><strong>RCA（根因分析）</strong>: 对告警进行深度根因分析</li>
+  <li><strong>TopSQL 分析</strong>: 对慢查询进行优化建议分析</li>
+  <li><strong>故障诊断</strong>: 对不健康实例执行全栈诊断</li>
+</ul>
+
+<h3>自动分析</h3>
+<p>当 <code>ENABLE_AUTO_AI_ANALYSIS=true</code> 时：</p>
+<ul>
+  <li>每 10 秒检查新慢查询 → 触发 TopSQL 分析</li>
+  <li>每 10 秒检查新告警 → 触发 RCA 分析</li>
+  <li>每 60 秒检查不健康实例 → 触发故障诊断</li>
+</ul>
+
+<h3>手动分析</h3>
+<p>在告警详情页点击"分析"按钮手动触发 AI 分析。</p>
+
+<div class="screenshot">截图待补充：ai-settings.png, ai-analysis-config.png</div>
+
+<h2 id="6-chat-助手">6. Chat 助手</h2>
+<p>AI Chat 是 Slide 的智能交互入口，支持自然语言问答和数据库运维操作。</p>
+
+<h3>使用 Chat</h3>
+<ol>
+  <li>在左侧导航栏进入"Chat"页面</li>
+  <li>在输入框中输入数据库运维相关问题</li>
+  <li>支持的问题类型："哪些实例有问题"、"最近的慢查询"、"当前告警状态"等</li>
+  <li>AI 实时流式回复，回复中可能包含可点击的回链导航到相关页面</li>
+</ol>
+
+<h3>Agent 选择器</h3>
+<p>如有多个 Agent，可在 Chat 界面顶部切换 Agent。</p>
+
+<div class="screenshot">截图待补充：chat-interface.png, chat-agent-selector.png</div>
+
+<h2 id="7-报表管理">7. 报表管理</h2>
+<p>报表模块提供多种类型的数据库运维报表生成和导出。</p>
+
+<h3>报表类型</h3>
+<table>
+<tr><th>报表</th><th>说明</th><th>格式</th></tr>
+<tr><td>健康检查报表</td><td>实例健康状态、告警汇总</td><td>PDF / HTML / JSON / MD</td></tr>
+<tr><td>性能报表</td><td>关键性能指标的历史趋势</td><td>PDF / HTML / JSON / MD</td></tr>
+<tr><td>慢查询报表</td><td>慢查询汇总和优化建议</td><td>PDF / HTML / JSON / MD</td></tr>
+<tr><td>容量报表</td><td>容量使用和预测</td><td>PDF / HTML / JSON / MD</td></tr>
+</table>
+
+<h3>操作步骤</h3>
+<ol>
+  <li>进入"报表"页面查看报表列表</li>
+  <li>选择报表类型和时间范围</li>
+  <li>点击"生成报表"创建新报表</li>
+  <li>选择需要的格式导出下载</li>
+</ol>
+
+<div class="screenshot">截图待补充：report-list.png, report-generate.png</div>
+
+<h2 id="8-sql-审核审批">8. SQL 审核审批</h2>
+<p>审批模块为高风险 SQL 操作提供人工审批流程保障。</p>
+
+<h3>操作步骤</h3>
+<ol>
+  <li>在 SQL 控制台中提交 SQL 审核请求</li>
+  <li>审批人在"审批"页面查看待审批列表</li>
+  <li>审查 AI 风险评价和 SQL 内容</li>
+  <li>选择"通过"或"拒绝"，可添加审批意见</li>
+  <li>支持批量审批操作</li>
+</ol>
+
+<div class="screenshot">截图待补充：approval-list.png, approval-review.png</div>
+
+<h2 id="9-rbac-权限管理">9. RBAC 权限管理</h2>
+<p>基于角色的访问控制（RBAC）提供三层权限体系。</p>
+
+<h3>组件说明</h3>
+<ul>
+  <li><strong>用户管理</strong>: 创建、编辑、删除用户</li>
+  <li><strong>角色管理</strong>: 定义角色并分配权限点</li>
+  <li><strong>实例级访问控制</strong>: 控制用户对特定数据库实例的访问权限</li>
+</ul>
+
+<h3>操作步骤</h3>
+<ol>
+  <li>管理员进入"用户管理"页面创建用户</li>
+  <li>进入"角色管理"页面定义角色并分配权限点</li>
+  <li>将用户绑定到相应角色</li>
+  <li>配置用户可访问的数据库实例列表</li>
+</ol>
+
+<div class="screenshot">截图待补充：user-management.png, role-management.png, rbac-config.png</div>
+
+<h2 id="10-ai-设置">10. AI 设置</h2>
+<p>AI 设置页面提供 AI 分析功能的全局配置。</p>
+
+<h3>配置项说明</h3>
+<p>管理 AI 分析的触发条件和范围，避免不必要的 LLM 调用消耗。</p>
+
+<h3>配置操作</h3>
+<ol>
+  <li>进入"设置" → "AI 分析"</li>
+  <li>配置：<strong>全局启用开关</strong>（开启/关闭自动分析）、<strong>分析严重级别</strong>（warning/error/critical）、<strong>实例白名单</strong>（限制 AI 分析的实例）、<strong>分析时间窗口</strong>（如 09:00-18:00）</li>
+  <li>点击"保存"，配置立即生效</li>
+</ol>
+
+<div class="screenshot">截图待补充：ai-settings-page.png — AI 设置页面</div>
+
+<h2 id="11-schema-管理与索引管理">11. Schema 管理与索引管理</h2>
+
+<h3>Schema 管理</h3>
+<p>追踪数据库表结构的变更历史。</p>
+<ol>
+  <li>在实例详情页中切换到"Schema" tab</li>
+  <li>查看实例中各数据库的表结构定义</li>
+  <li>查看表结构变更历史记录</li>
+  <li>对比不同时间点的 Schema 差异</li>
+</ol>
+
+<div class="screenshot">截图待补充：schema-changes.png — Schema 变更历史</div>
+
+<h3>索引管理</h3>
+<p>分析现有索引使用情况，帮助识别优化机会。</p>
+<ol>
+  <li>在实例详情页中切换到"索引" tab</li>
+  <li>查看实例中所有表的索引列表</li>
+  <li>系统自动检测冗余索引和未使用索引</li>
+  <li>根据建议优化索引配置</li>
+</ol>
+
+<div class="screenshot">截图待补充：index-analysis.png — 索引分析结果</div>
+
+<h2 id="12-常见问题-faq">12. 常见问题 (FAQ)</h2>
+
+<h3>Q: 如何添加新的数据库实例？</h3>
+<p><strong>A:</strong> 进入"实例管理"页面，点击右上角的"添加实例"按钮。填写数据库类型、主机地址、端口、用户名、密码和数据库名，点击"测试连接"验证配置正确性，确认连接成功后点击"保存"。</p>
+
+<h3>Q: AI 分析结果出现在哪里？</h3>
+<p><strong>A:</strong> AI 分析结果有两个入口：在告警列表中，已触发 AI 分析的告警会显示"已分析"标记，点击可查看 RCA 结果；在实例详情页的诊断 tab 中，可查看该实例相关的分析摘要。</p>
+
+<h3>Q: 为什么 Chat AI 没有反应？</h3>
+<p><strong>A:</strong> 可能的原因：(1) LLM API Key 未配置或配置错误 — 检查 <code>.env</code> 中 <code>ANTHROPIC_API_KEY</code> 或 <code>OPENAI_API_KEY</code>；(2) Gateway 未正常运行 — 检查后端启动日志；(3) Gateway WebSocket 连接失败 — 确认 28789 端口未被占用。</p>
+
+<h3>Q: ENABLE_AUTO_AI_ANALYSIS 有什么用？</h3>
+<p><strong>A:</strong> 将 <code>.env</code> 中的 <code>ENABLE_AUTO_AI_ANALYSIS</code> 设为 <code>true</code> 后，系统会自动对新告警和新慢查询触发 AI 分析，消耗 LLM token。建议生产环境结合实例白名单和时间窗口使用。</p>
+
+<h3>Q: 如何在已有实例上查看数据库列表？</h3>
+<p><strong>A:</strong> 在"SQL 控制台"页面，选择目标实例后在下拉选择器中查看数据库列表。也可以直接在编辑器中执行 <code>SHOW DATABASES;</code> 或 <code>SELECT schema_name FROM information_schema.schemata;</code>。</p>
+
+<h3>Q: 如何修改用户密码？</h3>
+<p><strong>A:</strong> 管理员进入"用户管理"页面，找到对应用户，点击编辑后设置新密码。普通用户登录后可在个人设置中修改自己的密码。</p>
+
+<h3>Q: 如何配置通知渠道？</h3>
+<p><strong>A:</strong> 在告警设置页中配置钉钉、企业微信、飞书或 Webhook 的通知目标。通知渠道配置完成后请联系管理员启用 <code>notificationService</code>。</p>
+
+<h3>Q: 报表导出格式有什么区别？</h3>
+<p><strong>A:</strong> <strong>PDF</strong>: 适合正式报告和分享，格式固定；<strong>HTML</strong>: 适合在浏览器中查看，保留交互性；<strong>JSON</strong>: 适合程序化处理和二次分析；<strong>Markdown</strong>: 适合嵌入其他文档系统。</p>
+
+<div class="footer">
+  <p>Slide v1.2 用户手册 · 文档位于 <code>docs/slide/</code> · 随代码变更同步更新</p>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,43 @@
+<%
+function escapeHtml(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+const bodyContent = `
+<div class="summary">
+  <div class="card ${metrics.health_score >= 80 ? 'ok' : metrics.health_score >= 60 ? 'warning' : 'critical'}">
+    <div class="label">健康评分</div>
+    <div class="metric">${metrics.health_score}</div>
+  </div>
+  <div class="card">
+    <div class="label">CPU 使用率</div>
+    <div class="metric">${metrics.cpu_usage.toFixed(1)}%</div>
+  </div>
+  <div class="card">
+    <div class="label">内存使用率</div>
+    <div class="metric">${metrics.memory_usage.toFixed(1)}%</div>
+  </div>
+  <div class="card">
+    <div class="label">磁盘使用率</div>
+    <div class="metric">${metrics.disk_usage.toFixed(1)}%</div>
+  </div>
+  <div class="card">
+    <div class="label">连接数</div>
+    <div class="metric">${metrics.connections}</div>
+  </div>
+  <div class="card">
+    <div class="label">QPS</div>
+    <div class="metric">${metrics.qps.toFixed(0)}</div>
+  </div>
+</div>
+
+<h2>详细指标</h2>
+<table>
+  <tr><th>指标</th><th>值</th></tr>
+  <tr><td>CPU 使用率</td><td>${metrics.cpu_usage.toFixed(2)}%</td></tr>
+  <tr><td>内存使用率</td><td>${metrics.memory_usage.toFixed(2)}%</td></tr>
+  <tr><td>磁盘使用率</td><td>${metrics.disk_usage.toFixed(2)}%</td></tr>
+  <tr><td>连接数</td><td>${metrics.connections}</td></tr>
+  <tr><td>QPS</td><td>${metrics.qps.toFixed(2)}</td></tr>
+  <tr><td>TPS</td><td>${metrics.tps.toFixed(2)}</td></tr>
+</table>
+`;
+%>
+<%- include('layout', { title, instanceName, generatedAt, accentColor, icon, body: bodyContent }) %>

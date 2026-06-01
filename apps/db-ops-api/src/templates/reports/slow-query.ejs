@@ -1,0 +1,21 @@
+<%
+function escapeHtml(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+const bodyContent = `
+<p><strong>慢查询数量:</strong> ${slowQueries.length}</p>
+
+<h2>慢查询列表</h2>
+<table>
+  <tr><th>#</th><th>SQL</th><th>平均耗时 (ms)</th><th>执行次数</th><th>rows_examined</th></tr>
+  ${slowQueries.map((q, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><code>${escapeHtml(q.sql_text?.substring(0, 80) || '')}${q.sql_text?.length > 80 ? '...' : ''}</code></td>
+      <td>${q.avg_time_ms?.toFixed(2) || 0}</td>
+      <td>${q.execution_count || 0}</td>
+      <td>${q.rows_examined || 0}</td>
+    </tr>
+  `).join('')}
+</table>
+`;
+%>
+<%- include('layout', { title, instanceName, generatedAt, accentColor, icon: '\u{1F40C}', body: bodyContent }) %>

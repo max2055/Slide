@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SystemSettingsPage 测试</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    .test-result {
+      margin: 10px 0;
+      padding: 10px;
+      border-radius: 4px;
+    }
+    .pass { background: #d4edda; color: #155724; }
+    .fail { background: #f8d7da; color: #721c24; }
+    .info { background: #d1ecf1; color: #0c5460; }
+    pre {
+      background: #f5f5f5;
+      padding: 10px;
+      border-radius: 4px;
+      overflow: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>SystemSettingsPage 测试</h1>
+  <div id="results"></div>
+
+  <h2>测试容器</h2>
+  <div id="test-container" style="border: 1px solid #ccc; height: 600px;"></div>
+
+  <script type="module">
+    const results = document.getElementById('results');
+    const tests = [];
+
+    function log(message, status = 'info') {
+      const div = document.createElement('div');
+      div.className = `test-result ${status}`;
+      div.textContent = message;
+      results.appendChild(div);
+      tests.push({ message, status });
+    }
+
+    // Test 1: 检查组件是否已定义
+    try {
+      await import('/src/pages/SystemSettingsPage.ts');
+      log('✓ SystemSettingsPage 模块加载成功', 'pass');
+    } catch (e) {
+      log('✗ SystemSettingsPage 模块加载失败：' + e.message, 'fail');
+    }
+
+    // Test 2: 检查 customElements 是否已注册
+    if (customElements.get('system-settings-page')) {
+      log('✓ system-settings-page 已注册', 'pass');
+    } else {
+      log('✗ system-settings-page 未注册', 'fail');
+    }
+
+    // Test 3: 创建实例并添加到 DOM
+    try {
+      const page = document.createElement('system-settings-page');
+      document.getElementById('test-container').appendChild(page);
+      log('✓ SystemSettingsPage 实例已创建并添加到 DOM', 'pass');
+    } catch (e) {
+      log('✗ 创建实例失败：' + e.message, 'fail');
+    }
+
+    // Test 4: 检查 localStorage
+    const savedTab = localStorage.getItem('app-settings-active-tab');
+    log('localStorage 中的 tab 值：' + (savedTab || 'null'), 'info');
+
+    // Test 5: 检查样式是否加载
+    setTimeout(() => {
+      const page = document.querySelector('system-settings-page');
+      if (page) {
+        const shadowRoot = page.shadowRoot;
+        if (shadowRoot) {
+          log('✓ Shadow DOM 存在', 'pass');
+          const nav = shadowRoot.querySelector('.settings-nav');
+          if (nav) {
+            log('✓ .settings-nav 元素存在', 'pass');
+          } else {
+            log('✗ .settings-nav 元素不存在', 'fail');
+          }
+        } else {
+          log('✗ Shadow DOM 不存在', 'fail');
+        }
+      }
+    }, 1000);
+
+    // 输出总结
+    setTimeout(() => {
+      const passCount = tests.filter(t => t.status === 'pass').length;
+      const failCount = tests.filter(t => t.status === 'fail').length;
+      log(`\n总结：${passCount} 通过，${failCount} 失败`, failCount === 0 ? 'pass' : 'fail');
+    }, 2000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slide 系统架构</title>
+<style>
+  :root {
+    --bg: #fff;
+    --fg: #1a1a2e;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --accent: #2563eb;
+    --bg-code: #f3f4f6;
+    --bg-table: #f9fafb;
+    --radius: 6px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+    color: var(--fg); background: var(--bg); line-height: 1.7;
+    max-width: 960px; margin: 0 auto; padding: 40px 24px 80px;
+  }
+  h1 { font-size: 2rem; border-bottom: 2px solid var(--border); padding-bottom: 12px; margin: 0 0 24px; }
+  h2 { font-size: 1.5rem; margin: 40px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h3 { font-size: 1.15rem; margin: 28px 0 12px; }
+  p { margin: 0 0 16px; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: .9rem; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+  th { background: var(--bg-table); font-weight: 600; }
+  code { font-family: "SF Mono", "Fira Code", monospace; font-size: .85rem; background: var(--bg-code); padding: 2px 6px; border-radius: 3px; }
+  pre { background: var(--bg-code); padding: 16px; border-radius: var(--radius); overflow-x: auto; margin: 16px 0; }
+  .mermaid { background: #fafafa; padding: 24px; border-radius: var(--radius); margin: 20px 0; text-align: center; }
+  .mermaid svg { max-width: 100%; height: auto; }
+  .arch-diagram { max-width: 100%; overflow-x: auto; }
+  strong { font-weight: 600; }
+  ul, ol { margin: 0 0 16px 24px; }
+  li { margin-bottom: 4px; }
+  .footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: .85rem; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --border: #30363d; --accent: #58a6ff; --bg-code: #161b22; --bg-table: #1c2128; }
+    .mermaid { background: #161b22; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Slide 系统架构</h1>
+
+<p>Slide 是一个 AI 原生的数据库运维管理平台（Database Ops Platform），基于 OpenClaw Agent 框架构建，集成 LLM 实现自动化数据库运维。平台覆盖数据库监控、告警、性能分析、SQL 审核与执行、AI 辅助故障诊断等全链路运维场景，通过 Agent 驱动的方式将 DBA 从重复性工作中释放。</p>
+
+<p>Slide 的核心定位是"AI 原生的数据库运维"：Agent 自动采集数据、分析问题、给出建议，同时保持人工审批和手动控制的能力。系统由四个主要部分组成：基于 Lit + Vite 的前端 SPA、基于 Fastify + TypeScript 的后端 API 服务器、基于 OpenClaw Gateway 的 AI Agent 运行时，以及 MySQL/Elasticsearch/Redis/MongoDB 等数据层。</p>
+
+<h2>技术栈总览</h2>
+
+<table>
+<tr><th>层</th><th>技术</th><th>版本</th><th>用途</th></tr>
+<tr><td>前端框架</td><td>Lit</td><td>^3.3.0</td><td>Web Components 组件化框架</td></tr>
+<tr><td>构建工具</td><td>Vite</td><td>^6.0.0</td><td>开发服务器与生产构建</td></tr>
+<tr><td>测试框架</td><td>Playwright + Vitest</td><td>-</td><td>E2E 测试与单元测试</td></tr>
+<tr><td>可视化</td><td>ECharts</td><td>^5.4.0</td><td>仪表盘、性能图表</td></tr>
+<tr><td>代码编辑器</td><td>CodeMirror</td><td>^6.x</td><td>SQL 控制台</td></tr>
+<tr><td>后端框架</td><td>Fastify</td><td>^4.24.3</td><td>HTTP API 服务器</td></tr>
+<tr><td>AI Gateway</td><td>OpenClaw</td><td>-</td><td>原生 LLM 流式通信与 Agent 调度</td></tr>
+<tr><td>主数据库</td><td>MySQL 8</td><td>mysql2 ^3.20.0</td><td>业务数据存储</td></tr>
+<tr><td>搜索引擎</td><td>Elasticsearch</td><td>^8.11.0</td><td>日志存储与分析</td></tr>
+<tr><td>缓存引擎</td><td>Redis</td><td>ioredis ^5.3.2</td><td>会话状态与缓存</td></tr>
+<tr><td>文档数据库</td><td>MongoDB</td><td>mongodb ^6.3.0</td><td>柔性数据结构存储</td></tr>
+<tr><td>关系数据库（扩展）</td><td>PostgreSQL</td><td>pg ^8.20.0</td><td>PostgreSQL 纳管支持</td></tr>
+<tr><td>关系数据库（扩展）</td><td>Oracle</td><td>oracledb ^6.10.0</td><td>Oracle 数据库纳管支持</td></tr>
+<tr><td>LLM SDK</td><td>Anthropic SDK</td><td>^0.30.0</td><td>Claude API 调用</td></tr>
+<tr><td>LLM SDK</td><td>OpenAI SDK</td><td>^4.28.0</td><td>OpenAI 兼容 API 调用</td></tr>
+<tr><td>报表生成</td><td>PDFKit</td><td>^0.18.0</td><td>PDF 报表生成</td></tr>
+<tr><td>统计分析</td><td>simple-statistics</td><td>^7.8.9</td><td>容量预测回归计算</td></tr>
+<tr><td>JWT 认证</td><td>jsonwebtoken</td><td>^9.0.2</td><td>用户认证令牌</td></tr>
+<tr><td>定时调度</td><td>cron</td><td>^4.4.0</td><td>采集任务、告警评估、基线计算</td></tr>
+<tr><td>密码哈希</td><td>bcrypt</td><td>^6.0.0</td><td>用户密码加密存储</td></tr>
+</table>
+
+<p><strong>Source:</strong> <code>apps/db-ops-api/package.json</code> (backend deps), <code>frontend/package.json</code> (frontend deps)</p>
+
+<h2>系统架构图</h2>
+
+<div class="arch-diagram">
+<pre class="mermaid">
+flowchart TB
+    subgraph Frontend[前端 - Lit 3.3 + Vite :5173]
+        OC[OpenClaw Core Layer&lt;br/&gt;WebSocket 客户端 · 路由 · 主题]
+        SL[Slide Business Layer&lt;br/&gt;适配器 · 服务 · 类型]
+        PG[Pages Layer&lt;br/&gt;仪表盘 · 实例 · 告警 · Chat · SQL]
+        OC --&gt; SL --&gt; PG
+    end
+
+    subgraph Backend[后端 - Fastify + TypeScript :3000]
+        API[HTTP API Server&lt;br/&gt;150+ 路由 · JWT 认证 · RBAC]
+        GW[Gateway Client&lt;br/&gt;chat.send RPC · 事件回调]
+    end
+
+    subgraph Gateway[AI Gateway :28789]
+        OC_GW[OpenClaw Gateway&lt;br/&gt;WebSocket 服务器 · 会话管理]
+        AGT[Slide Agent&lt;br/&gt;数据库运维助手]
+        TK[Tool Executor&lt;br/&gt;db_* 工具集 · Node Host]
+    end
+
+    subgraph Databases[数据层]
+        MQ[(MySQL&lt;br/&gt;业务数据)]
+        ES[(Elasticsearch&lt;br/&gt;日志与分析)]
+        RD[(Redis&lt;br/&gt;缓存/会话)]
+        MG[(MongoDB&lt;br/&gt;柔性数据)]
+    end
+
+    subgraph AI[AI/LLM 层]
+        AN[Anthropic Claude]
+        OI[OpenAI]
+        OL[Ollama 本地部署]
+    end
+
+    PG --&gt;|REST :3000| API
+    PG --&gt;|WebSocket :28789| OC_GW
+    API --&gt; GW
+    GW --&gt; OC_GW
+    API --&gt; MQ
+    API --&gt; ES
+    API --&gt; RD
+    API --&gt; MG
+    OC_GW --&gt; AGT
+    AGT --&gt; AN
+    AGT --&gt; OI
+    AGT --&gt; OL
+</pre>
+</div>
+
+<h2>模块职责</h2>
+
+<h3>后端核心模块 (<code>apps/db-ops-api/src/</code>)</h3>
+
+<p><strong>数据库连接管理</strong> (<code>db-connection.ts</code>)<br>
+系统数据库连接池的初始化与管理，启动时建立与 MySQL 系统库的连接，并提供连接池实例供各模块使用。</p>
+
+<p><strong>实例管理</strong> (<code>instance-database-service.ts</code>)<br>
+纳管数据库实例的 CRUD 操作、连接测试、状态管理和凭据安全存储。支持 MySQL、PostgreSQL、Oracle 等多类型数据库实例的统一纳管。</p>
+
+<p><strong>认证与权限</strong> (<code>auth-database-service.ts</code>, <code>auth/</code>)<br>
+JWT 令牌认证体系与 RBAC（基于角色的访问控制）权限模型。包含用户管理（CRUD）、角色管理、权限点分配、实例级资源访问控制。所有写操作接口通过 <code>verifyToken</code> 和 <code>requirePermission</code> 中间件进行两层权限校验。</p>
+
+<p><strong>LLM 管理</strong> (<code>llm-database-service.ts</code>, <code>llm-service.ts</code>, <code>llm/</code>)<br>
+LLM 提供商的配置管理与多模型切换。支持 Anthropic Claude、OpenAI 兼容接口、Ollama 本地部署等提供商。API 密钥加密存储在系统库中，启动时自动同步到 OpenClaw 配置文件。</p>
+
+<p><strong>告警管理</strong> (<code>alert-database-service.ts</code>, <code>alert-engine.ts</code>, <code>alert-*</code>)<br>
+告警规则持久化与定时评估引擎（每 60 秒轮询）。支持 50+ 指标规则的 3 级阈值配置，告警产生后自动关联实例状态。包含告警升级规则（escalation）、静默规则（silence）、维护窗口（maintenance-window）等配套功能。</p>
+
+<p><strong>告警事件管理</strong> (<code>alert-event-service.ts</code>, <code>event-aggregator.ts</code>)<br>
+告警事件的完整生命周期管理：创建、分配、调查、备注、RCA 关联、关闭和事后复盘。支持事件聚合和 MTTR 指标追踪。</p>
+
+<p><strong>指标采集</strong> (<code>monitor-collector.ts</code>, <code>metrics-database-service.ts</code>)<br>
+按 30 秒间隔自动采集所有活跃实例的关键性能指标（连接数、QPS、TPS、CPU、内存、IO、磁盘空间等），存储到 <code>metrics_history</code> 表供分析和可视化。</p>
+
+<p><strong>AI 分析</strong> (<code>ai-agent-bridge.ts</code>, <code>ai-analysis-*.ts</code>)<br>
+统一的 AI 分析派发入口 <code>dispatchOrReuse</code>，通过 OpenClaw Gateway 的 <code>chat.send</code> RPC 发送分析任务。支持四种分析类型：</p>
+<ul>
+  <li><strong>告警 RCA</strong> — 自动分析告警根因</li>
+  <li><strong>TopSQL 分析</strong> — 对超过 10 秒的慢查询自动触发优化建议</li>
+  <li><strong>故障诊断</strong> — 对不健康实例自动执行全栈诊断</li>
+  <li><strong>SQL 审批</strong> — AI 风险评估</li>
+</ul>
+<p>采用 TTL 缓存策略避免重复分析：RCA 30 分钟、故障诊断 60 分钟、TopSQL 24 小时。</p>
+
+<p><strong>SQL 审核与执行</strong> (<code>sql-audit-service.ts</code>, <code>sql-executor.ts</code>)<br>
+AI 驱动的 SQL 预执行审核，受控 SQL 执行引擎（默认只读，参数化查询防注入）。支持 MySQL、PostgreSQL、Oracle 方言。</p>
+
+<p><strong>Schema/索引管理</strong> (<code>schema-*.ts</code>, <code>index-*.ts</code>)<br>
+表结构变更追踪（每 30 分钟快照 + 差异检测）、索引管理（自动采集、冗余/未使用索引检测）。</p>
+
+<p><strong>报表系统</strong> (<code>report-*.ts</code>)<br>
+健康检查、性能分析、慢查询、容量等报表的生成与导出（PDF、HTML、JSON、Markdown）。</p>
+
+<p><strong>通知推送</strong> (<code>notification-*.ts</code>)<br>
+多渠道通知推送：钉钉、企业微信、飞书、通用 Webhook。内置 SSRF 防护。</p>
+
+<p><strong>基线预测</strong> (<code>baseline-calculator.ts</code>, <code>capacity-predictor.ts</code>)<br>
+指标基线计算（每天凌晨 2 点）和基于线性回归的容量趋势预测。</p>
+
+<p><strong>Gateway 运行时</strong> (<code>gateway/</code>)<br>
+OpenClaw Agent 集成层，包含 10 个模块：<code>openclaw-runtime.ts</code>（配置与 Agent 初始化）、<code>gateway-client.ts</code>（RPC 封装）、<code>chat-methods.ts</code>、<code>streaming.ts</code>、<code>server.ts</code> 等。</p>
+
+<p><strong>审计日志</strong> (<code>audit/</code>)<br>
+操作审计日志记录，追踪关键操作的来源和三方信息。</p>
+
+<h3>前端模块 (<code>frontend/src/</code>)</h3>
+
+<p><strong>OpenClaw 核心层</strong> (<code>openclaw/ui/</code>)<br>
+提供基础 UI 框架：WebSocket 客户端（含自动重连）、路由导航、主题系统（明/暗色切换）、国际化、本地存储和生命周期管理。124 个 TypeScript 文件。</p>
+
+<p><strong>Slide 业务层</strong> (<code>slide/</code>)<br>
+Gateway 适配器（RPC→REST 映射）、业务服务层、类型定义。</p>
+
+<p><strong>页面层</strong> (<code>.views/</code>, <code>pages/</code>)<br>
+仪表盘、实例管理、告警列表、Chat、SQL 控制台、审批管理、用户与 RBAC、LLM 配置、报表等业务页面。</p>
+
+<h2>核心数据流</h2>
+
+<h3>用户请求流程</h3>
+
+<pre class="mermaid">
+sequenceDiagram
+    actor User as DBA/运维用户
+    participant FE as 前端 (Lit :5173)
+    participant API as Fastify API (:3000)
+    participant GW as OpenClaw Gateway (:28789)
+    participant DB as MySQL/ES/Redis
+    participant LLM as LLM Provider
+
+    User-&gt;&gt;FE: 打开页面 / 操作 UI
+    FE-&gt;&gt;API: REST 请求（GET/POST）
+    Note over FE,API: 请求携带 JWT Bearer Token
+    API-&gt;&gt;API: verifyToken + requirePermission
+    API-&gt;&gt;DB: 查询/写入数据
+    DB--&gt;&gt;API: 返回结果
+    API--&gt;&gt;FE: JSON 响应
+    FE-&gt;&gt;User: 渲染 UI
+
+    User-&gt;&gt;FE: 发送 Chat 消息
+    FE-&gt;&gt;GW: WebSocket 连接
+    GW-&gt;&gt;GW: Agent 接收消息 + 加载上下文
+    GW-&gt;&gt;LLM: LLM 推理请求
+    LLM--&gt;&gt;GW: 流式响应
+    GW--&gt;&gt;FE: WebSocket 推送
+    FE-&gt;&gt;User: 实时显示 AI 回复
+</pre>
+
+<h3>AI 分析流程</h3>
+
+<pre class="mermaid">
+sequenceDiagram
+    actor Trigger as 告警 / 手动触发
+    participant Bridge as ai-agent-bridge
+    participant DB as MySQL (分析记录)
+    participant Client as gateway-client
+    participant GW as OpenClaw Gateway
+    participant LLM as LLM Provider
+    participant Tool as db_* 工具
+
+    Trigger-&gt;&gt;Bridge: dispatchOrReuse(type, cacheKey, ...)
+    Bridge-&gt;&gt;DB: 检查 TTL 缓存
+    alt 缓存命中
+        DB--&gt;&gt;Bridge: 返回缓存结果
+        Bridge--&gt;&gt;Trigger: { analysisId, cached: true }
+    else 未命中
+        Bridge-&gt;&gt;DB: 创建分析记录
+        DB--&gt;&gt;Bridge: analysisId
+        Bridge-&gt;&gt;Client: sendGatewayChat(sessionKey, message)
+        Client-&gt;&gt;GW: chat.send RPC
+        GW-&gt;&gt;LLM: LLM 请求 + system prompt
+        LLM-&gt;&gt;Tool: 调用 db_* 工具采集数据
+        Tool--&gt;&gt;LLM: 返回分析结果
+        LLM--&gt;&gt;GW: 流式分析结果
+        GW--&gt;&gt;Client: 响应回调
+        Note over Client,DB: Agent 调用 slide_complete_analysis&lt;br/&gt;保存结果到数据库
+        Bridge--&gt;&gt;Trigger: { analysisId, cached: false }
+    end
+</pre>
+
+<h3>监控采集流程</h3>
+
+<pre class="mermaid">
+sequenceDiagram
+    participant Cron as CronJob (30 秒)
+    participant Collector as monitor-collector
+    participant InstDB as instance-database-service
+    participant DB as MySQL (目标实例)
+    participant MetricsDB as metrics-database-service
+
+    loop 每 30 秒
+        Cron-&gt;&gt;Collector: 触发采集
+        Collector-&gt;&gt;InstDB: 获取所有活跃实例
+        InstDB--&gt;&gt;Collector: 实例列表
+        loop 每个实例
+            Collector-&gt;&gt;DB: 查询 SHOW STATUS / 系统表
+            DB--&gt;&gt;Collector: 性能指标数据
+            Collector-&gt;&gt;MetricsDB: recordMetrics(instanceId, data)
+            MetricsDB-&gt;&gt;MetricsDB: 写入 metrics_history
+        end
+        Collector--&gt;&gt;Cron: 采集完成
+    end
+</pre>
+
+<h3>告警评估流程</h3>
+
+<pre class="mermaid">
+sequenceDiagram
+    participant Cron as CronJob (60 秒)
+    participant Engine as alert-engine
+    participant Registry as metric-registry
+    participant Metrics as metrics-database-service
+    participant Alerts as alert-database-service
+    participant Notify as notification-service
+
+    loop 每 60 秒
+        Cron-&gt;&gt;Engine: evaluate()
+        Engine-&gt;&gt;Registry: 获取所有活跃规则
+        Registry--&gt;&gt;Engine: 规则列表
+        loop 每条规则
+            Engine-&gt;&gt;Metrics: 获取当前指标值
+            Metrics--&gt;&gt;Engine: 指标数据
+            Engine-&gt;&gt;Engine: 阈值比较 (warning/error/critical)
+            alt 触发告警
+                Engine-&gt;&gt;Alerts: createAlert(level, message, ...)
+                Alerts--&gt;&gt;Engine: alertId
+                Engine-&gt;&gt;Notify: 推送通知
+            end
+        end
+        Engine--&gt;&gt;Cron: 评估完成
+    end
+</pre>
+
+<h2>外部依赖</h2>
+
+<table>
+<tr><th>依赖</th><th>用途</th><th>配置项</th></tr>
+<tr><td>MySQL 8</td><td>业务数据存储</td><td>DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME</td></tr>
+<tr><td>Elasticsearch 8</td><td>慢查询日志与历史分析</td><td>ELASTICSEARCH_HOST 等</td></tr>
+<tr><td>Redis 7</td><td>会话缓存</td><td>REDIS_HOST, REDIS_PORT</td></tr>
+<tr><td>MongoDB 6</td><td>柔性数据（分析报告等）</td><td>MONGODB_HOST 等</td></tr>
+<tr><td>Anthropic Claude</td><td>AI 分析、Chat 会话</td><td>ANTHROPIC_API_KEY, ANTHROPIC_MODEL</td></tr>
+<tr><td>OpenAI 兼容 API</td><td>AI 分析备选</td><td>OPENAI_API_KEY 等</td></tr>
+<tr><td>Ollama</td><td>本地 LLM</td><td>OLLAMA_URL, OLLAMA_MODEL</td></tr>
+<tr><td>OpenClaw Gateway</td><td>Agent 运行时</td><td>ws://127.0.0.1:28789/ws</td></tr>
+<tr><td>Node.js 22+</td><td>运行时环境</td><td>.nvmrc</td></tr>
+</table>
+
+<h2>架构决策记录</h2>
+
+<table>
+<tr><th>决策</th><th>方案</th><th>理由</th><th>状态</th></tr>
+<tr><td>复用 OpenClaw Agent 框架</td><td>Gateway 原生 chat.send + dispatchInboundMessage</td><td>复用成熟的 Agent 会话管理、流式通信和工具执行，避免自建 AI 管道</td><td>已验证</td></tr>
+<tr><td>统一 AI 派发 + TTL 缓存</td><td><code>ai-agent-bridge.ts</code> 的 <code>dispatchOrReuse</code></td><td>避免重复分析，减少 LLM 调用成本</td><td>已验证</td></tr>
+<tr><td>Gateway 原生 WebSocket</td><td>WebSocket 通信，非 REST polling</td><td>流式响应低延迟，支持实时推送</td><td>已验证</td></tr>
+<tr><td>JWT + RBAC 三层权限</td><td>JWT + <code>requirePermission</code> + 实例级访问控制</td><td>统一认证，细粒度权限控制</td><td>已验证 (Phase 84)</td></tr>
+<tr><td>参数化查询防注入</td><td><code>mysql2</code> prepared statements</td><td>防止 SQL 注入</td><td>已验证</td></tr>
+<tr><td>CronJob 定时调度</td><td><code>cron</code> 库标准 crontab 语法</td><td>简洁的调度配置，内置时区支持</td><td>已验证</td></tr>
+<tr><td>ECharts 可视化</td><td>ECharts ^5.4.0</td><td>丰富的交互能力，中文生态支持优于 Chart.js</td><td>已验证</td></tr>
+<tr><td>通知渠道 SSRF 防护</td><td>URL 验证和 IP 限制</td><td>防止通知推送被用于内网探测</td><td>已验证</td></tr>
+<tr><td>单文件用户手册</td><td>USER-GUIDE.html 不拆分多文件</td><td>简化查找，减少维护成本</td><td>设计决策</td></tr>
+</table>
+
+<div class="footer">
+  <p>本文档面向技术团队和架构师，随代码变更同步更新。<br>
+  Source: <code>apps/db-ops-api/server.ts</code>, <code>apps/db-ops-api/src/</code>, <code>frontend/src/</code></p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });</script>
+</body>
+</html>

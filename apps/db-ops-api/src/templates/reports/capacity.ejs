@@ -1,0 +1,16 @@
+<%
+function escapeHtml(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+const bodyContent = `
+<div class="summary">
+  <div class="card">
+    <div class="label">磁盘使用率</div>
+    <div class="metric">${capacityData.disk_usage?.toFixed(1) || 0}%</div>
+  </div>
+  <div class="card">
+    <div class="label">增长趋势</div>
+    <div class="metric">${escapeHtml(capacityData.growth_trend || 'stable')}</div>
+  </div>
+</div>
+`;
+%>
+<%- include('layout', { title, instanceName, generatedAt, accentColor: '#9C27B0', icon: '\u{1F4C8}', body: bodyContent }) %>
