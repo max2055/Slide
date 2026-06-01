@@ -1,0 +1,11 @@
+# <type>(<scope>): <subject>
+#
+# Types: feat, fix, docs, refactor, test, chore, perf, ci
+# Scope: api, frontend, agent-core, tools, skills, cron, alerts, db, auth
+# Subject: imperative mood, no period, max 50 chars
+#
+# Examples:
+#   feat(api): add Oracle AWR report generation tool
+#   fix(frontend): resolve chat history loading race condition
+#   refactor(agent-core): extract context budget into separate module
+#   test(api): add integration tests for alert evaluation
