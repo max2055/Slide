@@ -587,7 +587,7 @@ Plans:
 **Goal:** 1) OpenClawConfig 类型重命名为 SlideConfig（~97 文件）；2) docs/ 目录更新（推迟）；3) branding 配置加入系统 Settings 页面（运行时可配置）
 **Requirements**: D-01 through D-10 (from CONTEXT.md)
 **Depends on:** Phase 116
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 **Wave 1** *(parallel)*
@@ -595,9 +595,9 @@ Plans:
 - [x] 117-02-PLAN.md -- Backend branding 配置服务 + GET/PUT /api/branding/config 路由
 
 **Wave 2** *(blocked on Wave 1)*
-- [ ] 117-03-PLAN.md -- Frontend branding.ts getter/cache 重构 + branding-settings Lit 组件 + Settings shell 集成
+- [x] 117-03-PLAN.md -- Frontend branding.ts getter/cache 重构 + branding-settings Lit 组件 + Settings shell 集成
 
 ---
 *Last updated: 2026-06-02*
 
-| 117. OpenClaw收尾 | v1.4 | 2/3 | In Progress|  |
+| 117. OpenClaw收尾 | v1.4 | 3/3 | Complete    | 2026-06-02 |
