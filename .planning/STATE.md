@@ -66,6 +66,7 @@ Progress: [░░░░░░░░░░] 0%
 
 - Phase 110 added: DirectAdapter 默认切换 & 端到端验证
 - Phase 115 added: 去 OpenClaw 迁移后清理：修复工具 TODO、清理前端残留引用、更新文档、添加 CI
+- Phase 116 added: 去 OpenClaw 运行时引用：CLI 名、环境变量、数据目录替换
 
 ### Pending Todos
 

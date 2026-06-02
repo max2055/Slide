@@ -560,5 +560,15 @@ Plans:
 **Wave 4** *(blocked on Wave 3)*
 - [x] 115-05-PLAN.md -- Create GitHub Actions CI workflow, install oxlint, add typecheck scripts, fix 88 failing tests
 
+### Phase 116: 去 OpenClaw 运行时引用：CLI 名、环境变量、数据目录替换
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 115
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 116 to break down)
+
 ---
 *Last updated: 2026-06-02*
