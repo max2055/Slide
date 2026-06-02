@@ -246,36 +246,72 @@ async function checkDatabaseConnections(): Promise<ServiceStatus[]> {
 
 /**
  * 检查 LLM 连接状态
+ *
+ * 遍历所有已配置并启用的 LLM 提供商，测试其 API 端点的可达性。
+ * 如果提供商没有配置有效的 API key 则跳过连接测试。
  */
 async function checkLlmConnection(): Promise<ServiceStatus> {
   const startTime = Date.now();
 
   try {
     const providers = getAllProviders();
-    const enabled = providers.filter(p => p.apiKey && p.apiKey !== 'your-api-key');
+    const enabled: Array<{ id: string; name: string; baseUrl: string; apiKey?: string }> = [];
+    for (const p of providers) {
+      if (p.apiKey && p.apiKey !== 'your-api-key') {
+        enabled.push(p);
+      }
+    }
 
     if (enabled.length === 0) {
       return {
         name: 'LLM 服务',
-        status: 'unknown',
-        error: '没有启用的 LLM 提供商',
+        status: 'stopped',
+        error: '没有启用的 LLM 提供商（未配置 API Key）',
       };
     }
 
-    // 检查第一个启用的提供商是否已配置 API key
-    const primary = enabled[0];
-    if (!primary.apiKey || primary.apiKey === 'your-api-key') {
+    // 逐提供商测试连接
+    const results = await Promise.allSettled(
+      enabled.map(async (p) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        try {
+          const resp = await fetch(p.baseUrl, {
+            method: 'GET',
+            signal: controller.signal,
+          });
+          // 只要能收到响应（包括 4xx/5xx），说明端点可达
+          return { id: p.id, reachable: true, httpStatus: resp.status };
+        } finally {
+          clearTimeout(timeout);
+        }
+      })
+    );
+
+    const reachable = results.filter(
+      (r): r is PromiseFulfilledResult<{ id: string; reachable: true; httpStatus: number }> =>
+        r.status === 'fulfilled' && r.value.reachable
+    );
+
+    if (reachable.length > 0) {
+      const primaryId = reachable[0].value.id;
       return {
-        name: `LLM 服务 (${primary.id})`,
-        status: 'unknown',
-        error: 'API Key 未配置',
+        name: `LLM 服务 (${primaryId})`,
+        status: 'running',
+        responseTimeMs: Date.now() - startTime,
       };
     }
 
+    // 没有提供商可达，检查是否是因为 API key 本身无效
+    const firstError = results.find(
+      (r): r is PromiseRejectedResult => r.status === 'rejected'
+    );
     return {
-      name: `LLM 服务 (${primary.id})`,
-      status: 'running',
-      responseTimeMs: Date.now() - startTime,
+      name: 'LLM 服务',
+      status: 'error',
+      error: firstError
+        ? (firstError.reason instanceof Error ? firstError.reason.message : String(firstError.reason))
+        : '所有提供商端点均不可达',
     };
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
