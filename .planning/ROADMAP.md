@@ -544,7 +544,7 @@ Plans:
 **Goal:** 清理 v1.4 OpenClaw 迁移后的遗留事项 — 删除已替换的 Agent LLM 配置工具、修复 TODO 占位、清理前端残留引用和 OpenClaw 命名、添加 GitHub Actions CI pipeline
 **Requirements**: D-01 through D-16 (from CONTEXT.md)
 **Depends on:** Phase 114
-**Plans:** 2/5 plans executed
+**Plans:** 3/5 plans executed
 
 Plans:
 **Wave 1** *(parallel)*
@@ -552,7 +552,7 @@ Plans:
 - [x] 115-02-PLAN.md -- Delete dead routing files, fix config/types.ts import for 20+ auto-reply files, rename Vite alias
 
 **Wave 2** *(blocked on Wave 1)*
-- [ ] 115-03-PLAN.md -- Fix 4 backend TODO stubs: RBAC scope (2 tools), capacity data (report-service), status check (check_status.ts)
+- [x] 115-03-PLAN.md -- Fix 4 backend TODO stubs: RBAC scope (2 tools), capacity data (report-service), status check (check_status.ts)
 
 **Wave 3** *(blocked on Wave 2)*
 - [ ] 115-04-PLAN.md -- Naming/text cleanup: remove all OpenClaw references from comments/i18n/server.ts/package.json/__openclaw markers/protocol docs
