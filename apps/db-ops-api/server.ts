@@ -192,17 +192,16 @@ async function start() {
   fastify.get('/api/version', async (_request, reply) => {
     try {
       const [rows] = await dbConnection.getPool()!.query(
-        'SELECT config_key, config_value FROM system_config WHERE config_key IN (?, ?)',
-        ['slide_version', 'gateway_version']
+        'SELECT config_key, config_value FROM system_config WHERE config_key = ?',
+        ['slide_version']
       ) as any;
       const config: Record<string, string> = {};
       for (const r of rows) config[r.config_key] = r.config_value;
       reply.send({
         version: config.slide_version || '1.2.0',
-        gateway: config.gateway_version || '',
       });
     } catch {
-      reply.send({ version: '1.2.0', gateway: '' });
+      reply.send({ version: '1.2.0' });
     }
   });
 
@@ -218,9 +217,6 @@ async function start() {
     'OPERATIONS.html': '运维部署',
     'DEVELOPMENT-HISTORY.html': '开发历程',
     'DB-OPS-AI.html': '数据库运维与 AI 交互',
-    'OPENCLAW-RELATIONSHIP.html': 'OpenClaw 关系与协作',
-    'OPENCLAW-COMPARISON.html': 'OpenClaw 功能对比',
-    'DE-OPENCLAW.html': '去 OpenClaw 化方案',
   };
   const DOC_ORDER = Object.keys(DOC_TITLES);
 

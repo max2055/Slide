@@ -1,7 +1,7 @@
 /**
  * DB-Ops 工具目录管理
  *
- * 复用 OpenClaw 的 tool-catalog 和 tool-policy 设计模式
+ * 复用上游 tool-catalog 和 tool-policy 设计模式
  * - 工具注册表管理
  * - 工具名称规范化
  * - 工具分组管理
@@ -15,7 +15,7 @@ import type {
   ToolDefinition,
 } from './types.js';
 
-// ============== 工具名称规范化（复用 OpenClaw string-coerce.ts 模式） ==============
+// ============== 工具名称规范化（复用上游 string-coerce.ts 模式） ==============
 
 /**
  * 规范化工具名称

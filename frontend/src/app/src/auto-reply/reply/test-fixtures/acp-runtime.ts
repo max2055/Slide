@@ -1,5 +1,5 @@
 import type { SessionAcpMeta } from "../../../config/sessions/types.js";
-import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import type { OpenClawConfig } from "../../../config/types.js";
 
 export function createAcpTestConfig(overrides?: Partial<OpenClawConfig>): OpenClawConfig {
   return {

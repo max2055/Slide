@@ -15,6 +15,9 @@
   "engines": {
     "node": ">=20"
   },
+  "devDependencies": {
+    "oxlint": "^0.16.0"
+  },
   "pnpm": {
     "onlyBuiltDependencies": [
       "bcrypt",

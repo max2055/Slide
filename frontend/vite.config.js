@@ -18,7 +18,7 @@ export default defineConfig({
       // Slide app aliases
       '@slide/app/src': fileURLToPath(new URL('./src/app/src', import.meta.url)),
       '@slide/app/ui': fileURLToPath(new URL('./src/app/ui', import.meta.url)),
-      'openclaw/plugin-sdk/reply-payload': fileURLToPath(new URL('./src/app/src/plugin-sdk/reply-payload.ts', import.meta.url))
+      '@agent/plugin-sdk/reply-payload': fileURLToPath(new URL('./src/app/src/plugin-sdk/reply-payload.ts', import.meta.url))
     }
   },
   server: {

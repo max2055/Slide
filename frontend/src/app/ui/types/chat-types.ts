@@ -1,6 +1,6 @@
 /**
  * Slide - Chat Message Types for UI Layer
- * Copied from OpenClaw ui/src/ui/types/chat-types.ts
+ * Derived from upstream chat-types.ts
  */
 
 /** Union type for items in the chat thread */

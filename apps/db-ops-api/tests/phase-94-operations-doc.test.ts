@@ -13,7 +13,7 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
-const OPS_PATH = join('/Users/max/Coding/39-Slide/docs/slide/OPERATIONS.html');
+const OPS_PATH = join('/Users/max/Coding/40-Slide/docs/slide/OPERATIONS.html');
 
 describe('94-02-01: Operations documentation', () => {
   it('OPERATIONS.html file exists', () => {

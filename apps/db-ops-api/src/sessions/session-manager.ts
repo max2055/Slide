@@ -1,5 +1,5 @@
 /**
- * Session Manager - 复用 OpenClaw 风格的会话管理机制
+ * Session Manager - 会话管理机制（复用上游设计）
  *
  * 核心特性：
  * 1. JSONL 会话文件格式

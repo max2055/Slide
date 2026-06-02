@@ -1,10 +1,15 @@
 /**
  * list_active_alerts — 列出活跃告警，支持按严重级别和时间过滤
+ *
+ * RBAC: 当调用方提供 request context（userId）时，只返回用户有权限访问的实例的告警。
+ *       无 context 时（service account 方式）返回所有告警，向后兼容。
  */
-// TODO(D-08): Add RBAC user-context scope when available. Current: queries all data the service account can see.
 import type { AnyAgentTool } from '../types.js';
 import { toolCatalog } from '../catalog.js';
 import { alertDatabaseService } from '../../alert-database-service.js';
+import { RbacService } from '../../auth/rbac-service.js';
+
+const rbacService = new RbacService();
 
 export const listActiveAlertsTool: AnyAgentTool = {
   name: 'list_active_alerts',
@@ -28,7 +33,7 @@ export const listActiveAlertsTool: AnyAgentTool = {
     required: [],
   },
   group: 'db_ops',
-  handler: async (args) => {
+  handler: async (args, context) => {
     try {
       const typedArgs = args as {
         severity?: string;
@@ -58,6 +63,13 @@ export const listActiveAlertsTool: AnyAgentTool = {
             return createdAt >= sinceDate;
           });
         }
+      }
+
+      // RBAC 过滤：根据用户权限缩小可见告警范围
+      if (context?.userId) {
+        const userInstances = await rbacService.getUserInstanceAccess(context.userId);
+        const allowedIds = new Set(userInstances.map(ui => ui.instance_id));
+        filtered = filtered.filter((a: any) => allowedIds.has(a.instance_id));
       }
 
       // 返回摘要数据

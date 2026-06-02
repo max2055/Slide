@@ -97,7 +97,7 @@ describe('98-T2: session-controls.ts file integrity', () => {
   });
 
   it('has the i18n import with correct relative path for ui/chat/ location', () => {
-    // File at ui/chat/session-controls.ts, i18n at frontend/src/openclaw/i18n/index.ts
+    // File at ui/chat/session-controls.ts, i18n at frontend/src/app/i18n/index.ts
     // From ui/chat/ => ../../i18n/index.ts resolves correctly
     expect(controlsContent).toMatch(
       /import\s*\{[^}]*\b[tT]\b[^}]*\}\s*from\s*"\.\.\/\.\.\/i18n\/index\.ts"/,

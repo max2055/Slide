@@ -233,7 +233,7 @@ export class DirectAdapter implements IAgentEngine {
               ws.send(JSON.stringify({ type: 'error', error: 'Session key too long' }));
               return;
             }
-            // Parse OpenClaw-style session key: agent:<agentId>:<actualKey> → actualKey
+            // Parse session key (agent format): agent:<agentId>:<actualKey> → actualKey
             const sessionKey = rawSessionKey.startsWith('agent:')
               ? rawSessionKey.split(':').slice(2).join(':') || rawSessionKey
               : rawSessionKey;
@@ -354,7 +354,7 @@ export class DirectAdapter implements IAgentEngine {
 
     // Create streaming hook that maps to ChatEvent.
     // thinkingHolder captures reasoning text from emitReasoning so it can be
-    // embedded in the final message (matching OpenClaw's <think> tag behavior).
+    // embedded in the final message (matching external <think> tag behavior).
     // streamHolder accumulates text deltas for progressive display.
     const thinkingHolder: { text: string } = { text: '' };
     const streamHolder: { text: string } = { text: '' };

@@ -3,7 +3,7 @@ import type { DirectGatewayClient } from "../direct-gateway.ts";
 import type { IconName } from "../../../icons.js";
 import { normalizeLowercaseStringOrEmpty } from "../string-coerce.ts";
 
-// Local type stubs — replaced deleted @openclaw/src/protocol imports
+// Local type stubs — replaced deleted upstream protocol imports
 interface CommandEntry {
   textAliases?: string[];
   name?: string;

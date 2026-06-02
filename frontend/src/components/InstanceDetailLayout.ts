@@ -1,5 +1,5 @@
 /**
- * 实例详情页面布局 (OpenClaw 风格)
+ * 实例详情页面布局
  * 以数据库实例为中心的功能导航框架
  */
 import { LitElement, html, css } from 'lit';

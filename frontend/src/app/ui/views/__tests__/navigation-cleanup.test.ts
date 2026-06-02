@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 
-const NAV_PATH = '/Users/max/Coding/39-Slide/frontend/src/openclaw/ui/navigation.ts';
-const RENDER_PATH = '/Users/max/Coding/39-Slide/frontend/src/openclaw/ui/app-render.ts';
+const NAV_PATH = '/Users/max/Coding/40-Slide/frontend/src/app/ui/navigation.ts';
+const RENDER_PATH = '/Users/max/Coding/40-Slide/frontend/src/app/ui/app-render.ts';
 
 // Per commit 3d6f4483c5e: only config and system were permanently removed
 // from the Tab type union. sessions, usage, skills were intentionally restored.
@@ -65,14 +65,14 @@ describe('UI-02: Removed tabs absent from navigation.ts data structures', () => 
         expect(groupsDecl).not.toContain(`"${tab}"`);
       });
     }
-    // Sessions, usage, skills kept in openclaw group
-    it('"sessions" is kept in openclaw group (intentionally restored)', () => {
+    // Sessions, usage, skills kept in their original group
+    it('"sessions" is kept in its original group (intentionally restored)', () => {
       expect(groupsDecl).toContain('"sessions"');
     });
-    it('"usage" is kept in openclaw group (intentionally restored)', () => {
+    it('"usage" is kept in its original group (intentionally restored)', () => {
       expect(groupsDecl).toContain('"usage"');
     });
-    it('"skills" is kept in openclaw group (intentionally restored)', () => {
+    it('"skills" is kept in its original group (intentionally restored)', () => {
       expect(groupsDecl).toContain('"skills"');
     });
     // Note: "appearance" is in TAB_GROUPS settings but NOT in Tab type

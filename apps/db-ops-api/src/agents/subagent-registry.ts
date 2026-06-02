@@ -1,8 +1,7 @@
 /**
  * DB-Ops 子 Agent 注册表
  *
- * 复用 OpenClaw 的 subagent-registry.ts 机制
- * 参考：openclaw_source_code/src/agents/subagent-registry.ts
+ * 复用上游 subagent-registry 机制
  */
 
 import crypto from 'node:crypto';
@@ -216,7 +215,7 @@ export class SubagentRegistry {
   }
 }
 
-// ============== 辅助函数（复用 OpenClaw） ==============
+// ============== 辅助函数 ==============
 
 /**
  * 注册子 Agent 运行

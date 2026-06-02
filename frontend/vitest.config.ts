@@ -5,7 +5,6 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
-      '@openclaw/ui': fileURLToPath(new URL('./src/openclaw/ui', import.meta.url)),
     },
   },
   test: {

@@ -1,7 +1,7 @@
 /**
  * 审计日志系统
  *
- * 复用 OpenClaw 的 before-tool-call.ts 审计日志模式
+ * 复用 upstream before-tool-call 审计日志模式
  * 记录所有危险操作和审批流程
  */
 

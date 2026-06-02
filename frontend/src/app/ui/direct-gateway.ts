@@ -151,7 +151,7 @@ export class DirectGatewayClient {
       // Fetch from REST API; API returns array, wrap as {messages: [...]} for chat controller
       const p = params as Record<string, unknown> | undefined;
       const rawSessionKey = (p?.sessionKey as string) || '';
-      // Parse OpenClaw-style session key: agent:<agentId>:<actualKey> → actualKey
+      // Parse session key (agent format): agent:<agentId>:<actualKey> → actualKey
       let sessionKey = rawSessionKey;
       if (rawSessionKey.startsWith('agent:')) {
         const parts = rawSessionKey.split(':');

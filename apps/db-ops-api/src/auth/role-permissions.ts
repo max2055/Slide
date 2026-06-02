@@ -1,7 +1,7 @@
 /**
  * DB-Ops 角色权限映射
  *
- * 复用 OpenClaw 的 tool-policy.ts 设计模式
+ * 复用 upstream tool-policy 设计模式
  * 定义系统角色和对应的工具访问权限
  */
 

@@ -69,7 +69,7 @@ import { generateUUID } from "./uuid.ts";
 
 declare global {
   interface Window {
-    __OPENCLAW_CONTROL_UI_BASE_PATH__?: string;
+    __SLIDE_CONTROL_UI_BASE_PATH__?: string;
   }
 }
 

@@ -1,7 +1,7 @@
 /**
  * Ollama 本地 LLM 提供商配置
  *
- * 复用 OpenClaw provider-catalog 模式
+ * 复用上游 provider-catalog 模式
  * 文档：https://ollama.ai/
  */
 

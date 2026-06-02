@@ -1,3 +1,4 @@
+import { STATE_DIR } from '../../branding.js';
 import path from "node:path";
 import { afterEach, beforeEach, expect, vi } from "vitest";
 import { withTempHome as withTempHomeBase } from "../../test/helpers/temp-home.js";
@@ -132,10 +133,10 @@ export async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise
     },
     {
       env: {
-        OPENCLAW_AGENT_DIR: (home) => path.join(home, ".openclaw", "agent"),
-        PI_CODING_AGENT_DIR: (home) => path.join(home, ".openclaw", "agent"),
+        SLIDE_AGENT_DIR: (home) => path.join(home, STATE_DIR, "agent"),
+        PI_CODING_AGENT_DIR: (home) => path.join(home, STATE_DIR, "agent"),
       },
-      prefix: "openclaw-reply-",
+      prefix: "slide-reply-",
     },
   );
 }
@@ -152,7 +153,7 @@ export function makeWhatsAppDirectiveConfig(
   return withFastReplyConfig({
     agents: {
       defaults: {
-        workspace: path.join(home, "openclaw"),
+        workspace: path.join(home, "slide"),
         ...defaults,
       },
     },
@@ -320,7 +321,7 @@ export function makeRestrictedElevatedDisabledConfig(home: string) {
     agents: {
       defaults: {
         model: "anthropic/claude-opus-4-6",
-        workspace: path.join(home, "openclaw"),
+        workspace: path.join(home, "slide"),
       },
       list: [
         {

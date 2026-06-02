@@ -7,7 +7,7 @@
  * - Skips duplicates (case-insensitive)
  * - Calls labelForValue callback for each new value
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { pushUniqueTrimmedSelectOption, type SelectOption } from './select-options.ts';
 
 describe('98-T1-REQ-A: pushUniqueTrimmedSelectOption', () => {
