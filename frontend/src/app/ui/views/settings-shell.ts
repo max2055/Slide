@@ -12,6 +12,7 @@ type SettingsSubTab =
   | "scoring-settings"
   | "cron-jobs"
   | "appearance"
+  | "branding"
   | "users"
   | "rbac";
 
@@ -20,6 +21,7 @@ const SUB_TABS: { id: SettingsSubTab; label: string; icon: string; requireAdmin?
   { id: "llm-config", label: "LLM 配置", icon: "brain" },
   { id: "scoring-settings", label: "评分权重", icon: "bar-chart" },
   { id: "appearance", label: "外观", icon: "spark" },
+  { id: "branding", label: "品牌", icon: "palette" },
   { id: "users", label: "用户管理", icon: "scroll-text", requireAdmin: true },
   { id: "rbac", label: "权限管理", icon: "shield", requireAdmin: true },
 ];
@@ -117,6 +119,8 @@ export class SettingsShell extends LitElement {
         return html`<scoring-settings-page></scoring-settings-page>`;
       case "appearance":
         return html`<appearance-settings></appearance-settings>`;
+      case "branding":
+        return html`<branding-settings></branding-settings>`;
       case "users":
         return html`<users-management></users-management>`;
       case "rbac":
