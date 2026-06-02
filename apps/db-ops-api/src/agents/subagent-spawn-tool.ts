@@ -1,8 +1,7 @@
 /**
  * DB-Ops 子 Agent Spawn 工具
  *
- * 复用 OpenClaw 的 sessions-spawn-tool.ts 机制
- * 参考：openclaw_source_code/src/agents/tools/sessions-spawn-tool.ts
+ * 复用上游 sessions-spawn-tool 机制
  */
 
 import type { AnyAgentTool } from '../tools/types.js';

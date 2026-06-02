@@ -1,7 +1,7 @@
 /**
  * 配置 Schema 定义
  *
- * 复用 OpenClaw 的 config schema 模式
+ * 复用 upstream config schema 模式
  * 使用 Zod 进行配置验证
  */
 

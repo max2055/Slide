@@ -2,7 +2,7 @@
  * LLM Provider Catalog
  *
  * 统一管理所有 LLM 提供商配置
- * 复用 OpenClaw provider-catalog 模式
+ * 复用上游 provider-catalog 模式
  */
 
 import {

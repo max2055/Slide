@@ -1,7 +1,7 @@
 /**
  * DB-Ops 技能加载器
  *
- * 复用 OpenClaw 的技能加载模式：
+ * 复用上游技能加载模式：
  * - 从目录扫描 SKILL.md 文件
  * - 解析 frontmatter 和验证
  * - 加载关联的 tools.ts 文件
@@ -11,7 +11,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { SkillEntry, ParsedSkillFrontmatter, SkillCommandSpec } from './types.js';
-import { parseSkillFrontmatter, normalizeFrontmatter, buildSkillEntry } from './frontmatter.js';
+import { parseSkillFrontmatter, normalizeFrontmatter, buildSkillEntry, extractSlideSkillMetadata } from './frontmatter.js';
 
 // ============== 配置常量 ==============
 
@@ -133,7 +133,7 @@ export async function loadSkillFromFile(filePath: string): Promise<SkillEntry | 
     const entry: SkillEntry = {
       skill,
       frontmatter: normalizedFrontmatter,
-      metadata: extractOpenClawMetadata(normalizedFrontmatter),
+      metadata: extractSlideSkillMetadata(normalizedFrontmatter),
       invocation: extractInvocationPolicy(normalizedFrontmatter),
       exposure: extractExposure(normalizedFrontmatter),
     };
@@ -186,21 +186,6 @@ export async function loadToolsFromFile(toolsPath: string): Promise<Array<{ name
 }
 
 // ============== 辅助函数 ==============
-
-/**
- * 提取 OpenClaw 风格元数据
- */
-function extractOpenClawMetadata(frontmatter: ParsedSkillFrontmatter) {
-  return {
-    always: frontmatter.always === true || frontmatter.always === 'true',
-    skillKey: frontmatter.skillKey?.toString(),
-    primaryEnv: frontmatter.primary_env?.toString() || frontmatter['primary-env']?.toString(),
-    emoji: frontmatter.emoji?.toString(),
-    homepage: frontmatter.homepage?.toString(),
-    os: Array.isArray(frontmatter.os) ? frontmatter.os : [],
-    requires: frontmatter.requires as Record<string, unknown> | undefined,
-  };
-}
 
 /**
  * 提取调用策略

@@ -1,7 +1,7 @@
 /**
  * DB-Ops 技能系统类型定义
  *
- * 复用 OpenClaw 的技能设计模式：
+ * 复用上游技能设计模式：
  * - SKILL.md 文件 + frontmatter 元数据
  * - 技能命令绑定
  * - 工具分发策略
@@ -12,7 +12,7 @@ import type { AnyAgentTool, ToolDefinition } from '../tools/types.js';
 // ============== 技能基础类型 ==============
 
 /**
- * 技能定义（复用 OpenClaw Skill 接口）
+ * 技能定义（复用上游 Skill 接口）
  */
 export interface Skill {
   /** 技能名称 */
@@ -52,7 +52,7 @@ export interface SourceInfo {
 }
 
 /**
- * 创建合成来源信息（复用 OpenClaw 模式）
+ * 创建合成来源信息
  */
 export function createSyntheticSourceInfo(
   path: string,
@@ -131,9 +131,9 @@ export interface ParsedSkillFrontmatter {
 }
 
 /**
- * OpenClaw 风格技能元数据
+ * 技能元数据（legacy 命名）
  */
-export interface OpenClawSkillMetadata {
+export interface SlideSkillMetadata {
   /** 是否始终启用 */
   always?: boolean;
   /** 技能键 */
@@ -203,7 +203,7 @@ export type SkillExposure = {
 // ============== 技能命令规范 ==============
 
 /**
- * 技能命令分发规范（复用 OpenClaw）
+ * 技能命令分发规范
  */
 export type SkillCommandDispatchSpec =
   /** 工具分发模式 */
@@ -222,7 +222,7 @@ export type SkillCommandDispatchSpec =
     };
 
 /**
- * 技能命令规范（复用 OpenClaw）
+ * 技能命令规范
  */
 export type SkillCommandSpec = {
   /** 命令名称（如 health-check） */
@@ -249,8 +249,8 @@ export type SkillEntry = {
   skill: Skill;
   /** 解析后的 frontmatter */
   frontmatter: ParsedSkillFrontmatter;
-  /** OpenClaw 风格元数据 */
-  metadata?: OpenClawSkillMetadata;
+  /** 元数据（legacy 命名） */
+  metadata?: SlideSkillMetadata;
   /** 调用策略 */
   invocation?: SkillInvocationPolicy;
   /** 暴露配置 */
@@ -314,7 +314,7 @@ export interface SkillWorkflowResult<T = unknown> {
   data?: T;
 }
 
-// ============== XML 格式化（复用 OpenClaw） ==============
+// ============== XML 格式化 ==============
 
 /**
  * 转义 XML 特殊字符
@@ -329,9 +329,9 @@ function escapeXml(str: string): string {
 }
 
 /**
- * 格式化技能列表为 Prompt 片段（OpenClaw 风格）
+ * 格式化技能列表为 Prompt 片段
  *
- * 复用 OpenClaw 的 formatSkillsForPrompt 函数
+ * 复用上游 formatSkillsForPrompt 函数
  */
 export function formatSkillsForPrompt(skills: Skill[]): string {
   if (skills.length === 0) {

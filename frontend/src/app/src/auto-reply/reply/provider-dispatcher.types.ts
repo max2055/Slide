@@ -1,4 +1,4 @@
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { OpenClawConfig } from "../../config/types.js";
 import type { GetReplyOptions } from "../get-reply-options.types.js";
 import type { FinalizedMsgContext, MsgContext } from "../templating.js";
 import type { DispatchFromConfigResult } from "./dispatch-from-config.types.js";

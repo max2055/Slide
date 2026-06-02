@@ -1,13 +1,12 @@
 /**
  * DB-Ops 子 Agent 能力管理
  *
- * 复用 OpenClaw 的 subagent-capabilities.ts 设计模式
- * 参考：openclaw_source_code/src/agents/subagent-capabilities.ts
+ * 复用上游 subagent-capabilities 设计模式
  */
 
 import { normalizeOptionalLowercaseString } from '../shared/string-coerce.js';
 
-// ============== 常量定义（复用 OpenClaw） ==============
+// ============== 常量定义 ==============
 
 export const DEFAULT_SUBAGENT_MAX_SPAWN_DEPTH = 3;
 
@@ -26,7 +25,7 @@ interface SessionCapabilityEntry {
   subagentControlScope?: unknown;
 }
 
-// ============== 辅助函数（复用 OpenClaw 模式） ==============
+// ============== 辅助函数 ==============
 
 /**
  * 规范化子 Agent 角色
@@ -44,12 +43,12 @@ function normalizeSubagentControlScope(value: unknown): SubagentControlScope | u
   return SUBAGENT_CONTROL_SCOPES.find((entry) => entry === trimmed);
 }
 
-// ============== 核心能力解析（复用 OpenClaw 逻辑） ==============
+// ============== 核心能力解析 ==============
 
 /**
  * 根据深度解析子 Agent 角色
  *
- * 复用 OpenClaw 的角色分配逻辑：
+ * 角色分配逻辑：
  * - depth <= 0: main
  * - 0 < depth < maxSpawnDepth: orchestrator
  * - depth >= maxSpawnDepth: leaf
@@ -74,7 +73,7 @@ export function resolveSubagentRoleForDepth(params: {
 /**
  * 根据角色解析控制范围
  *
- * 复用 OpenClaw 的控制范围逻辑：
+ * 控制范围逻辑：
  * - leaf: none (不能创建子 Agent)
  * - main/orchestrator: children (可以创建子 Agent)
  */
@@ -87,7 +86,7 @@ export function resolveSubagentControlScopeForRole(
 /**
  * 解析子 Agent 完整能力
  *
- * 复用 OpenClaw 的能力解析逻辑
+ * 能力解析逻辑
  */
 export function resolveSubagentCapabilities(params: {
   depth: number;
@@ -116,7 +115,7 @@ export function resolveSubagentCapabilities(params: {
 /**
  * 从会话存储中解析子 Agent 能力
  *
- * 复用 OpenClaw 的会话存储查询逻辑
+ * 会话存储查询逻辑
  */
 export function resolveStoredSubagentCapabilities(
   sessionKey: string | undefined | null,

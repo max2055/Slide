@@ -912,7 +912,7 @@ CREATE TABLE IF NOT EXISTS `chat_messages` (
   INDEX `idx_session_parent` (`session_id`, `parent_id`),
   INDEX `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-COMMENT = 'Chat messages with OpenClaw-compatible parent_id DAG support';
+COMMENT = 'Chat messages with DAG-compatible parent_id DAG support';
 
 -- ============================================
 -- 10. Skill 执行历史（用于模式挖掘）

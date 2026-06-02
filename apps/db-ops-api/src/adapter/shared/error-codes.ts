@@ -1,7 +1,7 @@
 /**
  * Shared Error Codes
  *
- * Extracted from gateway/error-codes.ts — non-OpenClaw-specific
+ * Extracted from gateway/error-codes.ts — adapter-shared
  * error constants and helpers shared across adapters.
  *
  * Plan 2 will migrate gateway code to use these shared types directly.

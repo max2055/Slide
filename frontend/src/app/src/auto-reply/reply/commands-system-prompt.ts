@@ -5,7 +5,6 @@ import { canExecRequestNode } from "../../agents/exec-defaults.js";
 import { resolveDefaultModelForAgent } from "../../agents/model-selection.js";
 import type { EmbeddedContextFile } from "../../agents/pi-embedded-helpers.js";
 import { resolveEmbeddedFullAccessState } from "../../agents/pi-embedded-runner/sandbox-info.js";
-import { createOpenClawCodingTools } from "../../agents/pi-tools.js";
 import { resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
 import { buildWorkspaceSkillSnapshot } from "../../agents/skills.js";
 import { getSkillsSnapshotVersion } from "../../agents/skills/refresh.js";
@@ -67,31 +66,7 @@ export async function resolveCommandsSystemPromptBundle(
     }
   })();
   const skillsPrompt = skillsSnapshot.prompt ?? "";
-  const tools = (() => {
-    try {
-      return createOpenClawCodingTools({
-        config: params.cfg,
-        agentId: sessionAgentId,
-        workspaceDir,
-        sessionKey: params.sessionKey,
-        allowGatewaySubagentBinding: true,
-        messageProvider: params.command.channel,
-        groupId: targetSessionEntry?.groupId ?? undefined,
-        groupChannel: targetSessionEntry?.groupChannel ?? undefined,
-        groupSpace: targetSessionEntry?.space ?? undefined,
-        spawnedBy: targetSessionEntry?.spawnedBy ?? undefined,
-        senderId: params.command.senderId,
-        senderName: params.ctx.SenderName,
-        senderUsername: params.ctx.SenderUsername,
-        senderE164: params.ctx.SenderE164,
-        senderIsOwner: params.command.senderIsOwner,
-        modelProvider: params.provider,
-        modelId: params.model,
-      });
-    } catch {
-      return [];
-    }
-  })();
+  const tools: Array<AgentTool> = [];
   const toolNames = tools.map((t) => t.name);
   const defaultModelRef = resolveDefaultModelForAgent({
     cfg: params.cfg,

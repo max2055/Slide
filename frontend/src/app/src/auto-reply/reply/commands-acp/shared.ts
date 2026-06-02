@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from '../../../branding.js';
 import { randomUUID } from "node:crypto";
 import { toAcpRuntimeErrorText } from "../../../acp/runtime/error-text.js";
 import type { AcpRuntimeError } from "../../../acp/runtime/errors.js";
@@ -454,7 +455,7 @@ export function resolveAcpHelpText(): string {
     "/acp sessions",
     "",
     "Notes:",
-    "- /acp spawn harness-id is an ACP runtime harness alias (for example codex), not an OpenClaw agents.list id.",
+    `- /acp spawn harness-id is an ACP runtime harness alias (for example codex), not a ${PRODUCT_NAME} agents.list id.`,
     "- Use --bind here to pin the current conversation to the ACP session without creating a child thread.",
     "- /focus and /unfocus also work with ACP session keys.",
     "- ACP dispatch of normal thread messages is controlled by acp.dispatch.enabled.",

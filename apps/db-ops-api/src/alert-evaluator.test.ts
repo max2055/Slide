@@ -1,6 +1,7 @@
 /**
  * 测试 alert-evaluator 的宏变量解析功能
  */
+import { describe, it, expect } from 'vitest';
 import { resolveThresholdTemplate, loadMetricDefaultMacros } from './alert-evaluator';
 
 describe('resolveThresholdTemplate', () => {

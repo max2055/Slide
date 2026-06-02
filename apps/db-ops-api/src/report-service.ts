@@ -604,14 +604,55 @@ class ReportService {
 
   /**
    * 收集容量数据
+   *
+   * 使用 database-service.ts 的 getCapacityInfo() 方法获取实例的真实容量数据，
+   * 结合 metrics-database-service.ts 的历史趋势和健康指标完成报表所需的字段。
    */
   private async collectCapacityData(instanceId: number): Promise<any> {
-    // TODO: 实现容量数据收集
-    return {
-      disk_usage: 0,
-      table_sizes: [],
-      growth_trend: 'stable',
-    };
+    try {
+      // 1. 获取实例信息（用于确认实例存在）
+      const instance = await instanceDatabaseService.getInstanceById(instanceId);
+      if (!instance) {
+        return { disk_usage: 0, table_sizes: [], growth_trend: 'unknown' };
+      }
+
+      // 2. 获取实时健康指标中的磁盘使用率
+      const metrics = await metricsDatabaseService.getRealtimeMetrics(instanceId);
+      const diskUsage = metrics?.disk_usage
+        ? (typeof metrics.disk_usage === 'number'
+            ? metrics.disk_usage
+            : parseFloat(String(metrics.disk_usage)) || 0)
+        : 0;
+
+      // 3. 获取真实的容量数据（底层按 db_type 分派到 getMySQLCapacity / getPostgresCapacity / getOracleCapacity / getDamengCapacity）
+      const capacityInfo = await databaseService.getCapacityInfo(instanceId);
+
+      // 4. 获取容量历史用于计算增长趋势
+      const history = await metricsDatabaseService.getCapacityHistory(instanceId, 720);
+
+      let growthTrend = 'stable';
+      if (history.length >= 3) {
+        const firstSize = history[0].total_size_gb;
+        const lastSize = history[history.length - 1].total_size_gb;
+        if (firstSize > 0) {
+          const ratio = lastSize / firstSize;
+          if (ratio > 1.1) {
+            growthTrend = 'growing';
+          } else if (ratio < 0.9) {
+            growthTrend = 'shrinking';
+          }
+        }
+      }
+
+      return {
+        disk_usage: diskUsage,
+        table_sizes: capacityInfo?.top_tables || [],
+        growth_trend: growthTrend,
+      };
+    } catch (error) {
+      console.error(`收集容量数据失败 (instanceId=${instanceId}):`, error);
+      return { disk_usage: 0, table_sizes: [], growth_trend: 'unknown' };
+    }
   }
 
   /**

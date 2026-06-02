@@ -78,7 +78,7 @@ class FaultDiagnosisService {
       // f. 更新状态为 running
       await aiAnalysisDatabaseService.updateStatus(analysisId, 'running');
 
-      // g. 通过 OpenClaw Agent 执行诊断
+      // g. 通过 Agent 执行诊断
       dispatchOrReuse({
         type: 'fault_diagnosis',
         cacheKey: `diagnosis:${instanceId}`,

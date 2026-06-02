@@ -1,7 +1,7 @@
 /**
  * DB-Ops 技能 Frontmatter 解析器
  *
- * 复用 OpenClaw 的 frontmatter 解析模式：
+ * 复用上游 frontmatter 解析模式：
  * - 解析 SKILL.md 文件头部的 YAML frontmatter
  * - 提取技能元数据
  * - 验证 frontmatter 字段
@@ -247,9 +247,9 @@ export function normalizeFrontmatter(frontmatter: ParsedSkillFrontmatter): Parse
 // ============== Frontmatter 提取 ==============
 
 /**
- * 从 frontmatter 提取 OpenClaw 风格元数据
+ * 从 frontmatter 提取元数据
  */
-export function extractOpenClawMetadata(frontmatter: ParsedSkillFrontmatter) {
+export function extractSlideSkillMetadata(frontmatter: ParsedSkillFrontmatter) {
   return {
     always: frontmatter.always === true || frontmatter.always === 'true',
     skillKey: frontmatter.skillKey?.toString(),
@@ -339,7 +339,7 @@ export function buildSkillEntry(
 ): {
   skill: Skill;
   frontmatter: ParsedSkillFrontmatter;
-  metadata: ReturnType<typeof extractOpenClawMetadata>;
+  metadata: ReturnType<typeof extractSlideSkillMetadata>;
   invocation: ReturnType<typeof extractInvocationPolicy>;
   exposure: ReturnType<typeof extractExposure>;
 } {
@@ -355,7 +355,7 @@ export function buildSkillEntry(
   return {
     skill,
     frontmatter: normalizedFrontmatter,
-    metadata: extractOpenClawMetadata(normalizedFrontmatter),
+    metadata: extractSlideSkillMetadata(normalizedFrontmatter),
     invocation: extractInvocationPolicy(normalizedFrontmatter),
     exposure: extractExposure(normalizedFrontmatter),
   };

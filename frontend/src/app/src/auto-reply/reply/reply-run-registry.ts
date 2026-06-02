@@ -1,3 +1,4 @@
+import { buildSymbolKey } from '../../branding.js';
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 
@@ -87,7 +88,7 @@ type ReplyRunState = {
   waitersByKey: Map<string, Set<ReplyRunWaiter>>;
 };
 
-const REPLY_RUN_STATE_KEY = Symbol.for("openclaw.replyRunRegistry");
+const REPLY_RUN_STATE_KEY = Symbol.for(buildSymbolKey("replyRunRegistry"));
 
 const replyRunState = resolveGlobalSingleton<ReplyRunState>(REPLY_RUN_STATE_KEY, () => ({
   activeRunsByKey: new Map<string, ReplyOperation>(),

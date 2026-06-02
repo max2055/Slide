@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Slide + OpenClaw Integration Test
+ * Slide Integration Test
  *
  * 验证完整集成：
- * 1. OpenClaw Gateway 运行在 28789
+ * 1. DirectAdapter 运行在 28888
  * 2. Slide API 运行在 3000
  * 3. 前端可以通过 Vite 代理访问 API
  * 4. 工具可以通过 API 调用
@@ -13,8 +13,8 @@ import { spawn } from "node:child_process";
 
 const TESTS = [
   {
-    name: "OpenClaw Gateway Health",
-    url: "http://127.0.0.1:28789/health",
+    name: "DirectAdapter Health",
+    url: "http://127.0.0.1:28888/health",
     expected: (data) => data.ok === true,
   },
   {
@@ -54,7 +54,7 @@ async function runTest(test) {
 }
 
 async function main() {
-  console.log("🧪 Slide + OpenClaw Integration Test\n");
+  console.log("🧪 Slide Integration Test\n");
 
   let passed = 0;
   let failed = 0;

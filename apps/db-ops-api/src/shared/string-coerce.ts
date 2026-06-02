@@ -1,14 +1,13 @@
 /**
  * DB-Ops 字符串规范化辅助函数
  *
- * 复用 OpenClaw 的 string-coerce.ts 模式
- * 参考：openclaw_source_code/src/shared/string-coerce.ts
+ * string-coerce 模式（复用上游设计）
  */
 
 /**
  * 规范化可选字符串为小写
  *
- * 复用 OpenClaw 的 normalizeOptionalLowercaseString
+ * 复用上游 normalizeOptionalLowercaseString
  */
 export function normalizeOptionalLowercaseString(value: unknown): string | undefined {
   if (typeof value === 'string') {
@@ -21,7 +20,7 @@ export function normalizeOptionalLowercaseString(value: unknown): string | undef
 /**
  * 规范化可选字符串
  *
- * 复用 OpenClaw 的 normalizeOptionalString
+ * 复用上游 normalizeOptionalString
  */
 export function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value === 'string') {

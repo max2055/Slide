@@ -11,7 +11,7 @@ import {
 } from "../../config/sessions/paths.js";
 import { resolveSessionStoreEntry } from "../../config/sessions/store.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { OpenClawConfig } from "../../config/types.js";
 import { logVerbose } from "../../globals.js";
 import { clearCommandLane, getQueueSize } from "../../process/command-queue.js";
 import { normalizeMainKey } from "../../routing/session-key.js";
@@ -236,7 +236,7 @@ export async function runPreparedReply(
   } = params;
   const useFastReplyRuntime = shouldUseReplyFastTestRuntime({
     cfg,
-    isFastTestEnv: process.env.OPENCLAW_TEST_FAST === "1",
+    isFastTestEnv: process.env.SLIDE_TEST_FAST === "1",
   });
   const fullAccessState = resolveEmbeddedFullAccessState({
     execElevated: {
@@ -427,7 +427,7 @@ export async function runPreparedReply(
     });
   };
   const skillResult =
-    process.env.OPENCLAW_TEST_FAST === "1"
+    process.env.SLIDE_TEST_FAST === "1"
       ? {
           sessionEntry,
           skillsSnapshot: sessionEntry?.skillsSnapshot,

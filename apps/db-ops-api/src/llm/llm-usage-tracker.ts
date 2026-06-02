@@ -1,7 +1,7 @@
 /**
  * LLM Token 用量追踪和 Cost 计算
  *
- * 复用 OpenClaw models-config 机制
+ * models-config 机制（复用上游设计）
  */
 
 import type { LLMUsageRecord } from './types.js';

@@ -1,7 +1,7 @@
 /**
  * Shared WebSocket Protocol Types
  *
- * Extracted from gateway/protocol.ts — non-OpenClaw-specific types
+ * Extracted from gateway/protocol.ts — adapter-shared types
  * shared across adapters. Plan 2 will migrate gateway code to use
  * these shared types directly.
  *

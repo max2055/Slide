@@ -1,9 +1,7 @@
 /**
  * DB-Ops 会话存储
  *
- * 复用 OpenClaw 的 session-store 机制
- * 参考：openclaw_source_code/src/config/sessions.ts
- *      openclaw_source_code/src/agents/session-dirs.ts
+ * 复用上游 session-store 机制
  */
 
 import fs from 'node:fs/promises';
@@ -41,7 +39,7 @@ export interface SessionStoreEntry {
  */
 export type SessionStore = Record<string, SessionStoreEntry>;
 
-// ============== 会话目录解析（复用 OpenClaw） ==============
+// ============== 会话目录解析 ==============
 
 function mapAgentSessionDirs(agentsDir: string, entries: Dirent[]): string[] {
   return entries
@@ -95,7 +93,7 @@ export async function resolveAgentSessionDirs(stateDir: string): Promise<string[
   return await resolveAgentSessionDirsFromAgentsDir(path.join(stateDir, 'agents'));
 }
 
-// ============== 会话存储加载（复用 OpenClaw） ==============
+// ============== 会话存储加载 ==============
 
 /**
  * 解析存储路径
@@ -185,7 +183,7 @@ export function pruneLegacyStoreKeys(params: {
   }
 }
 
-// ============== 会话管理（复用 OpenClaw） ==============
+// ============== 会话管理 ==============
 
 /**
  * 网关会话存储目标

@@ -1,7 +1,7 @@
 /**
  * DB-Ops 工具编排器
  *
- * 复用 OpenClaw 的 tool orchestration 机制：
+ * 复用上游 tool orchestration 机制：
  * - 链式调用多个工具
  * - 聚合工具结果
  * - 生成执行摘要
