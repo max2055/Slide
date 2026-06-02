@@ -1491,7 +1491,7 @@ export async function runAgentTurnWithFallback(params: {
             : isRoleOrderingError
               ? "⚠️ Message ordering conflict - please try again. If this persists, use /new to start a fresh session."
               : shouldSurfaceToControlUi
-                ? `⚠️ Agent failed before reply: ${trimmedMessage}.\nLogs: openclaw logs --follow`
+                ? `⚠️ Agent failed before reply: ${trimmedMessage}.\nLogs: slide logs --follow`
                 : buildExternalRunFailureText(message);
 
       params.replyOperation?.fail("run_failed", err);

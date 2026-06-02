@@ -66,31 +66,7 @@ export async function resolveCommandsSystemPromptBundle(
     }
   })();
   const skillsPrompt = skillsSnapshot.prompt ?? "";
-  const tools = (() => {
-    try {
-      return createOpenClawCodingTools({
-        config: params.cfg,
-        agentId: sessionAgentId,
-        workspaceDir,
-        sessionKey: params.sessionKey,
-        allowGatewaySubagentBinding: true,
-        messageProvider: params.command.channel,
-        groupId: targetSessionEntry?.groupId ?? undefined,
-        groupChannel: targetSessionEntry?.groupChannel ?? undefined,
-        groupSpace: targetSessionEntry?.space ?? undefined,
-        spawnedBy: targetSessionEntry?.spawnedBy ?? undefined,
-        senderId: params.command.senderId,
-        senderName: params.ctx.SenderName,
-        senderUsername: params.ctx.SenderUsername,
-        senderE164: params.ctx.SenderE164,
-        senderIsOwner: params.command.senderIsOwner,
-        modelProvider: params.provider,
-        modelId: params.model,
-      });
-    } catch {
-      return [];
-    }
-  })();
+  const tools: Array<AgentTool> = [];
   const toolNames = tools.map((t) => t.name);
   const defaultModelRef = resolveDefaultModelForAgent({
     cfg: params.cfg,
