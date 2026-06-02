@@ -1,7 +1,8 @@
 ---
 phase: 115
 slug: openclaw-todo-ci
-status: draft
+status: approved
+reviewed_at: 2026-06-02
 shadcn_initialized: false
 preset: none
 created: 2026-06-02
