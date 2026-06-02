@@ -216,6 +216,8 @@ Plans:
 - [x] **Phase 112: 前端清理 & 定时任务可配置化** — 清理 Gateway 移除后的前端 dead code，WebSocket 路径统一，定时任务从硬编码迁移到可配置系统 (completed 2026-05-27)
 - [x] **Phase 113: AI Agent Cron** — 自然语言驱动定时任务，替代 13 个硬编码 handler (completed 2026-05-27)
 - [x] **Phase 114: Verification 清账** — 执行 Phase 100/102/112 遗留的 12 项 human_needed 验证 (completed 2026-05-27)
+- [x] **Phase 115: 去 OpenClaw 迁移后清理** — 清理迁移遗留事项：删除 Agent LLM 工具、修复 TODO、清理残留引用、添加 CI (completed 2026-06-02)
+- 🚧 **Phase 116: 去 OpenClaw 运行时引用** — 替换运行时 CLI 名、环境变量、数据目录、Symbol 键、用户可见消息 (planning)
 
 ## Phase Details
 
@@ -527,6 +529,8 @@ Plans:
 | 112. 前端清理 & 定时任务 | v1.4 | 3/3 | Complete    | 2026-05-27 |
 | 113. AI Agent Cron | v1.4 | 4/4 | Complete    | 2026-05-27 |
 | 114. Verification 清账 | v1.4 | 4/4 | Complete    | 2026-05-27 |
+| 115. 去 OpenClaw 迁移后清理 | v1.4 | 5/5 | Complete    | 2026-06-02 |
+| 116. 去 OpenClaw 运行时引用 | v1.4 | 4/4 | Complete    | 2026-06-02 |
 
 ### Phase 114: Verification 清账
 
@@ -562,13 +566,21 @@ Plans:
 
 ### Phase 116: 去 OpenClaw 运行时引用：CLI 名、环境变量、数据目录替换
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** 将前端 runtime 代码中所有功能性 OpenClaw 运行时引用（CLI 名、环境变量、Symbol 键、数据目录、用户可见文本、工具分组、HTTP User-Agent）替换为 Slide 自有标识。Phase 115 清理了注释/文本引用，Phase 116 处理剩下的功能性引用。
+**Requirements**: D-01 through D-17 (from CONTEXT.md)
 **Depends on:** Phase 115
-**Plans:** 0 plans
+**Plans:** 4/4 plans complete
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 116 to break down)
+**Wave 1** *(foundation)*
+- [x] 116-01-PLAN.md -- branding.ts 集中配置 + 死代码删除 + SQL/CSS 注释 + 外部 URL + vitest 别名
+
+**Wave 2** *(parallel, independent)*
+- [x] 116-02-PLAN.md -- 环境变量 + UI base path + Symbol 键 + 数据目录 + 插件格式 + HTTP User-Agent
+- [x] 116-03-PLAN.md -- 用户可见文本 + CLI 显示 + 工具分组命名
+
+**Wave 3** *(blocked on Wave 2)*
+- [x] 116-04-PLAN.md -- 测试断言更新
 
 ---
 *Last updated: 2026-06-02*
