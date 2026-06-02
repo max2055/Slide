@@ -1,3 +1,4 @@
+import { CLI_NAME } from '../../branding.js';
 import fs from "node:fs";
 import { buildNpmInstallRecordFields } from "../../cli/npm-resolution.js";
 import {
@@ -120,8 +121,8 @@ function formatPluginsList(report: PluginStatusReport): string {
     `🔌 Plugins (${loaded}/${report.plugins.length} loaded)`,
     ...report.plugins.map((plugin) => {
       const format = plugin.bundleFormat
-        ? `${plugin.format ?? "slide"}/${plugin.bundleFormat}`
-        : (plugin.format ?? "slide");
+        ? `${plugin.format ?? CLI_NAME}/${plugin.bundleFormat}`
+        : (plugin.format ?? CLI_NAME);
       return `- ${formatPluginLabel(plugin)} [${plugin.status}] ${format}`;
     }),
   ];

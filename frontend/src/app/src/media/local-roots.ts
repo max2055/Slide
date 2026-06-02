@@ -1,3 +1,4 @@
+import { STATE_DIR } from '../branding.js';
 import os from "node:os";
 import path from "node:path";
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
@@ -11,11 +12,11 @@ import { normalizeOptionalString } from "../shared/string-coerce.js";
 import { isPassThroughRemoteMediaSource } from "./media-source-url.js";
 
 function resolveStateDir(): string {
-  return path.join(os.homedir(), ".slide");
+  return path.join(os.homedir(), STATE_DIR);
 }
 
 function resolveConfigDir(): string {
-  return path.join(os.homedir(), ".slide");
+  return path.join(os.homedir(), STATE_DIR);
 }
 
 function resolveUserPath(p: string): string {

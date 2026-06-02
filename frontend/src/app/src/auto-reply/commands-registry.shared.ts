@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from '../branding.js';
 import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
 import { COMMAND_ARG_FORMATTERS } from "./commands-args.js";
 import type {
@@ -471,7 +472,7 @@ export function buildBuiltinChatCommands(): ChatCommandDefinition[] {
     defineChatCommand({
       key: "mcp",
       nativeName: "mcp",
-      description: "Show or set Slide MCP servers.",
+      description: `Show or set ${PRODUCT_NAME} MCP servers.`,
       textAlias: "/mcp",
       category: "management",
       args: [
@@ -572,7 +573,7 @@ export function buildBuiltinChatCommands(): ChatCommandDefinition[] {
     defineChatCommand({
       key: "restart",
       nativeName: "restart",
-      description: "Restart Slide.",
+      description: `Restart ${PRODUCT_NAME}.`,
       textAlias: "/restart",
       category: "tools",
     }),

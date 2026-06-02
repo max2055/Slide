@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from '../../branding.js';
 import { resolveChannelGroupRequireMention } from "../../config/group-policy.js";
 import type { GroupKeyResolution, SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.js";
@@ -136,7 +137,7 @@ export function buildGroupIntro(params: {
       : "Activation: trigger-only (you are invoked only when explicitly mentioned; recent context may be included).";
   const silenceLine =
     activation === "always"
-      ? `If no response is needed, reply with exactly "${params.silentToken}" (and nothing else) so Slide stays silent. Do not add any other words, punctuation, tags, markdown/code blocks, or explanations.`
+      ? `If no response is needed, reply with exactly "${params.silentToken}" (and nothing else) so ${PRODUCT_NAME} stays silent. Do not add any other words, punctuation, tags, markdown/code blocks, or explanations.`
       : undefined;
   const cautionLine =
     activation === "always"

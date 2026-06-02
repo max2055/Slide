@@ -1,3 +1,4 @@
+import { buildSymbolKey } from '../../branding.js';
 import { logVerbose, shouldLogVerbose } from "../../globals.js";
 import { resolveGlobalDedupeCache, type DedupeCache } from "../../infra/dedupe.js";
 import { parseAgentSessionKey } from "../../sessions/session-key-utils.js";
@@ -15,8 +16,8 @@ const DEFAULT_INBOUND_DEDUPE_MAX = 5000;
  * Keep inbound dedupe shared across bundled chunks so the same provider
  * message cannot bypass dedupe by entering through a different chunk copy.
  */
-const INBOUND_DEDUPE_CACHE_KEY = Symbol.for("slide.inboundDedupeCache");
-const INBOUND_DEDUPE_INFLIGHT_KEY = Symbol.for("slide.inboundDedupeInflight");
+const INBOUND_DEDUPE_CACHE_KEY = Symbol.for(buildSymbolKey("inboundDedupeCache"));
+const INBOUND_DEDUPE_INFLIGHT_KEY = Symbol.for(buildSymbolKey("inboundDedupeInflight"));
 
 const inboundDedupeCache: DedupeCache = resolveGlobalDedupeCache(INBOUND_DEDUPE_CACHE_KEY, {
   ttlMs: DEFAULT_INBOUND_DEDUPE_TTL_MS,

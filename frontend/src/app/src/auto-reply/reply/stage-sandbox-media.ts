@@ -1,3 +1,4 @@
+import { STATE_DIR } from '../branding.js';
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -39,7 +40,7 @@ export async function stageSandboxMedia(params: {
 
   // For remote attachments without sandbox, use ~/.slide/media (not agent workspace for privacy)
   const remoteMediaCacheDir = ctx.MediaRemoteHost
-    ? path.join(os.homedir(), ".slide", "media", "remote-cache", sessionKey)
+    ? path.join(os.homedir(), STATE_DIR, "media", "remote-cache", sessionKey)
     : null;
   const effectiveWorkspaceDir = sandbox?.workspaceDir ?? remoteMediaCacheDir;
   if (!effectiveWorkspaceDir) {

@@ -1,3 +1,4 @@
+import { buildUserAgent } from '../branding.js';
 import { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
 import type { SsrFPolicy } from "../infra/net/ssrf.js";
 import { logWarn } from "../logger.js";
@@ -186,7 +187,7 @@ export async function fetchWithGuard(params: {
     timeoutMs: params.timeoutMs,
     policy: params.policy,
     auditContext: params.auditContext,
-    init: { headers: { "User-Agent": "Slide-Gateway/1.0" } },
+    init: { headers: { "User-Agent": buildUserAgent() } },
   });
 
   try {

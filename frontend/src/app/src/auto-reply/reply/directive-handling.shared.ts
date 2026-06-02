@@ -103,7 +103,7 @@ export function formatElevatedUnavailableText(params: {
   }
   if (params.sessionKey) {
     lines.push(
-      `See: ${formatCliCommand(`slide sandbox explain --session ${params.sessionKey}`)}`,
+      `See: ${formatCliCommand(`${CLI_NAME} sandbox explain --session ${params.sessionKey}`)}`,
     );
   }
   return lines.join("\n");

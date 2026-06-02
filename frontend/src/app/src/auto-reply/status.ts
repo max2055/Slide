@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from '../branding.js';
 import fs from "node:fs";
 import { resolveContextTokensForModel } from "../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
@@ -829,7 +830,7 @@ export function buildStatusMessage(args: StatusArgs): string {
       } (${fallbackState.reason ?? "selected model unavailable"})`
     : null;
   const commit = resolveCommitHash({ moduleUrl: import.meta.url });
-  const versionLine = `🦞 Slide ${VERSION}${commit ? ` (${commit})` : ""}`;
+  const versionLine = `🦞 ${PRODUCT_NAME} ${VERSION}${commit ? ` (${commit})` : ""}`;
   const usagePair = formatUsagePair(inputTokens, outputTokens);
   const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
   const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;

@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from '../../branding.js';
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveFastModeState } from "../../agents/fast-mode.js";
 import {

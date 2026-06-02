@@ -1,3 +1,4 @@
+import { buildSymbolKey } from '../../branding.js';
 import crypto from "node:crypto";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import { normalizeAnyChannelId } from "../../channels/registry.js";
@@ -17,8 +18,8 @@ import type { CommandContext } from "./commands-types.js";
 import { stripMentions, stripStructuralPrefixes } from "./mentions.js";
 import type { SessionInitResult } from "./session.js";
 
-const COMPLETE_REPLY_CONFIG_SYMBOL = Symbol.for("slide.reply.complete-config");
-const FULL_REPLY_RUNTIME_SYMBOL = Symbol.for("slide.reply.full-runtime");
+const COMPLETE_REPLY_CONFIG_SYMBOL = Symbol.for(buildSymbolKey("reply.complete-config"));
+const FULL_REPLY_RUNTIME_SYMBOL = Symbol.for(buildSymbolKey("reply.full-runtime"));
 
 type ReplyConfigWithMarker = OpenClawConfig & {
   [COMPLETE_REPLY_CONFIG_SYMBOL]?: true;
