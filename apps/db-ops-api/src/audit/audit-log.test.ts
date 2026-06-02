@@ -2,7 +2,7 @@
  * 审计日志单元测试
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   MemoryAuditLogStore,
   AuditLogManager,
@@ -214,7 +214,7 @@ describe('AuditLogManager', () => {
         clientIp: '192.168.1.100',
       });
 
-      const logs = await store.query({ eventType: 'tool_call' });
+      const { entries: logs } = await store.query({ eventType: 'tool_call' });
       expect(logs).toHaveLength(1);
       expect(logs[0].userId).toBe('user123');
       expect(logs[0].action).toBe('db_query');
@@ -250,7 +250,7 @@ describe('AuditLogManager', () => {
 
       await manager.logApprovalRequest(request);
 
-      const logs = await store.query({ eventType: 'approval_request' });
+      const { entries: logs } = await store.query({ eventType: 'approval_request' });
       expect(logs).toHaveLength(1);
       expect(logs[0].approvalRequestId).toBe('approval_test');
       expect(logs[0].result).toBe('pending');
@@ -275,7 +275,7 @@ describe('AuditLogManager', () => {
 
       await manager.logApprovalApproved(request, 'admin123', 'admin');
 
-      const logs = await store.query({ eventType: 'approval_approved' });
+      const { entries: logs } = await store.query({ eventType: 'approval_approved' });
       expect(logs).toHaveLength(1);
       expect(logs[0].userId).toBe('admin123');
     });
@@ -296,7 +296,7 @@ describe('AuditLogManager', () => {
 
       await manager.logApprovalRejected(request, 'admin123', 'admin', 'Security concern');
 
-      const logs = await store.query({ eventType: 'approval_rejected' });
+      const { entries: logs } = await store.query({ eventType: 'approval_rejected' });
       expect(logs).toHaveLength(1);
       expect(logs[0].level).toBe('warning');
       expect(logs[0].errorMessage).toBe('Security concern');
@@ -318,7 +318,7 @@ describe('AuditLogManager', () => {
 
       await manager.logApprovalExpired(request);
 
-      const logs = await store.query({ eventType: 'approval_expired' });
+      const { entries: logs } = await store.query({ eventType: 'approval_expired' });
       expect(logs).toHaveLength(1);
       expect(logs[0].level).toBe('warning');
     });
@@ -335,7 +335,7 @@ describe('AuditLogManager', () => {
         clientIp: '192.168.1.100',
       });
 
-      const logs = await store.query({ eventType: 'permission_denied' });
+      const { entries: logs } = await store.query({ eventType: 'permission_denied' });
       expect(logs).toHaveLength(1);
       expect(logs[0].level).toBe('warning');
       expect(logs[0].errorMessage).toBe('权限不足');
@@ -354,7 +354,7 @@ describe('AuditLogManager', () => {
         clientIp: '192.168.1.1',
       });
 
-      const logs = await store.query({ eventType: 'config_change' });
+      const { entries: logs } = await store.query({ eventType: 'config_change' });
       expect(logs).toHaveLength(1);
       expect(logs[0].resourceId).toBe('system.name');
       expect(logs[0].details).toEqual({
@@ -375,7 +375,7 @@ describe('AuditLogManager', () => {
         details: { oldRole: 'viewer', newRole: 'dba' },
       });
 
-      const logs = await store.query({ eventType: 'user_change' });
+      const { entries: logs } = await store.query({ eventType: 'user_change' });
       expect(logs).toHaveLength(1);
       expect(logs[0].resourceId).toBe('user456');
       expect(logs[0].details).toEqual({ oldRole: 'viewer', newRole: 'dba' });
@@ -393,7 +393,7 @@ describe('AuditLogManager', () => {
         details: { host: '192.168.1.100' },
       });
 
-      const logs = await store.query({ eventType: 'instance_change' });
+      const { entries: logs } = await store.query({ eventType: 'instance_change' });
       expect(logs).toHaveLength(1);
       expect(logs[0].resourceId).toBe('db-001');
     });
@@ -410,7 +410,7 @@ describe('AuditLogManager', () => {
         userAgent: 'Mozilla/5.0',
       });
 
-      const logs = await store.query({ eventType: 'login' });
+      const { entries: logs } = await store.query({ eventType: 'login' });
       expect(logs).toHaveLength(1);
       expect(logs[0].level).toBe('info');
       expect(logs[0].result).toBe('success');
@@ -425,7 +425,7 @@ describe('AuditLogManager', () => {
         clientIp: '192.168.1.100',
       });
 
-      const logs = await store.query({ eventType: 'login' });
+      const { entries: logs } = await store.query({ eventType: 'login' });
       expect(logs).toHaveLength(1);
       expect(logs[0].level).toBe('warning');
       expect(logs[0].result).toBe('failure');
@@ -440,7 +440,7 @@ describe('AuditLogManager', () => {
         clientIp: '192.168.1.100',
       });
 
-      const logs = await store.query({ eventType: 'logout' });
+      const { entries: logs } = await store.query({ eventType: 'logout' });
       expect(logs).toHaveLength(1);
       expect(logs[0].level).toBe('info');
     });

@@ -22,6 +22,7 @@
     "@elastic/elasticsearch": "^8.11.0",
     "@fastify/cors": "^8.5.0",
     "@sinclair/typebox": "^0.34.49",
+    "@slide/agent-core": "workspace:*",
     "@types/bcrypt": "^6.0.0",
     "bcrypt": "^6.0.0",
     "cron": "^4.4.0",
@@ -40,7 +41,8 @@
     "pg": "^8.20.0",
     "simple-statistics": "^7.8.9",
     "ws": "^8.20.0",
-    "@slide/agent-core": "workspace:*"
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

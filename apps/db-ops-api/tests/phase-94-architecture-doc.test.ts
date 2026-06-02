@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
-const ARCH_PATH = join('/Users/max/Coding/39-Slide/docs/slide/ARCHITECTURE.html');
+const ARCH_PATH = join('/Users/max/Coding/40-Slide/docs/slide/ARCHITECTURE.html');
 
 describe('94-01-02: Architecture documentation', () => {
   it('ARCHITECTURE.html file exists', () => {

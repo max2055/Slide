@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 
-const NAV_PATH = '/Users/max/Coding/39-Slide/frontend/src/openclaw/ui/navigation.ts';
-const RENDER_PATH = '/Users/max/Coding/39-Slide/frontend/src/openclaw/ui/app-render.ts';
+const NAV_PATH = '/Users/max/Coding/40-Slide/frontend/src/app/ui/navigation.ts';
+const RENDER_PATH = '/Users/max/Coding/40-Slide/frontend/src/app/ui/app-render.ts';
 
 // Per commit 3d6f4483c5e: only config and system were permanently removed
 // from the Tab type union. sessions, usage, skills were intentionally restored.

@@ -15,8 +15,8 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 
-const GUIDE_PATH = join('/Users/max/Coding/39-Slide/docs/slide/USER-GUIDE.html');
-const SCREENSHOTS_DIR = join('/Users/max/Coding/39-Slide/docs/slide/assets/screenshots');
+const GUIDE_PATH = join('/Users/max/Coding/40-Slide/docs/slide/USER-GUIDE.html');
+const SCREENSHOTS_DIR = join('/Users/max/Coding/40-Slide/docs/slide/assets/screenshots');
 
 const REQUIRED_MODULES = [
   '仪表盘',

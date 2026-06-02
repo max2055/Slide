@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 
-const BASE_CSS_PATH = '/Users/max/Coding/39-Slide/frontend/src/openclaw/styles/base.css';
-const VIEWS_DIR = '/Users/max/Coding/39-Slide/frontend/src/openclaw/ui/views';
+const BASE_CSS_PATH = '/Users/max/Coding/40-Slide/frontend/src/app/styles/base.css';
+const VIEWS_DIR = '/Users/max/Coding/40-Slide/frontend/src/app/ui/views';
 
 const EXPECTED_TOKENS: Record<string, string> = {
   '--text-xs': '11px',

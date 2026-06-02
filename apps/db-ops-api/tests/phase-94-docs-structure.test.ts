@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 
-const ROOT = '/Users/max/Coding/39-Slide';
+const ROOT = '/Users/max/Coding/40-Slide';
 
 describe('94-01-01: docs/slide/ directory structure and file cleanup', () => {
   // ===== Directory existence =====
