@@ -17,8 +17,8 @@ import type { CommandContext } from "./commands-types.js";
 import { stripMentions, stripStructuralPrefixes } from "./mentions.js";
 import type { SessionInitResult } from "./session.js";
 
-const COMPLETE_REPLY_CONFIG_SYMBOL = Symbol.for("openclaw.reply.complete-config");
-const FULL_REPLY_RUNTIME_SYMBOL = Symbol.for("openclaw.reply.full-runtime");
+const COMPLETE_REPLY_CONFIG_SYMBOL = Symbol.for("slide.reply.complete-config");
+const FULL_REPLY_RUNTIME_SYMBOL = Symbol.for("slide.reply.full-runtime");
 
 type ReplyConfigWithMarker = OpenClawConfig & {
   [COMPLETE_REPLY_CONFIG_SYMBOL]?: true;
@@ -27,7 +27,7 @@ type ReplyConfigWithMarker = OpenClawConfig & {
 
 function isSlowReplyTestAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
   return (
-    env.OPENCLAW_ALLOW_SLOW_REPLY_TESTS === "1" || env.OPENCLAW_STRICT_FAST_REPLY_CONFIG === "0"
+    env.SLIDE_ALLOW_SLOW_REPLY_TESTS === "1" || env.SLIDE_STRICT_FAST_REPLY_CONFIG === "0"
   );
 }
 
@@ -104,7 +104,7 @@ export function resolveGetReplyConfig(params: {
   }
   if (params.isFastTestEnv && !isCompleteReplyConfig(configOverride) && !isSlowReplyTestAllowed()) {
     throw new Error(
-      "Fast reply tests must pass with withFastReplyConfig()/markCompleteReplyConfig(); set OPENCLAW_ALLOW_SLOW_REPLY_TESTS=1 to opt out.",
+      "Fast reply tests must pass with withFastReplyConfig()/markCompleteReplyConfig(); set SLIDE_ALLOW_SLOW_REPLY_TESTS=1 to opt out.",
     );
   }
   if (params.isFastTestEnv && isCompleteReplyConfig(configOverride)) {
