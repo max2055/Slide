@@ -1,11 +1,15 @@
 /**
  * get_instance_summary — 获取数据库实例健康摘要（单个或全部）
+ *
+ * RBAC: 当调用方提供 request context（userId）时，只返回用户有权限访问的实例。
+ *       无 context 时（service account 方式）返回所有实例，向后兼容。
  */
-// TODO(D-08): Add RBAC user-context scope when available. get_instance_summary data
-// (instance names/types/status) is infrastructure metadata rather than actual data.
 import type { AnyAgentTool } from '../types.js';
 import { toolCatalog } from '../catalog.js';
 import { instanceDatabaseService } from '../../instance-database-service.js';
+import { RbacService } from '../../auth/rbac-service.js';
+
+const rbacService = new RbacService();
 
 export const getInstanceSummaryTool: AnyAgentTool = {
   name: 'get_instance_summary',
@@ -21,14 +25,28 @@ export const getInstanceSummaryTool: AnyAgentTool = {
     required: [],
   },
   group: 'db_ops',
-  handler: async (args) => {
+  handler: async (args, context) => {
     try {
       const typedArgs = args as {
         instance_id?: number;
       };
 
       if (typedArgs.instance_id !== undefined) {
-        // 查询单个实例
+        // 查询单个实例 — 检查用户是否有权限访问
+        if (context?.userId) {
+          const userInstances = await rbacService.getUserInstanceAccess(context.userId);
+          const hasAccess = userInstances.some(ui => ui.instance_id === typedArgs.instance_id);
+          if (!hasAccess) {
+            return {
+              success: true,
+              data: {
+                count: 0,
+                instances: [],
+              },
+            };
+          }
+        }
+
         const instance = await instanceDatabaseService.getInstanceById(typedArgs.instance_id);
 
         if (!instance) {
@@ -62,7 +80,14 @@ export const getInstanceSummaryTool: AnyAgentTool = {
       }
 
       // 查询所有实例
-      const instances = await instanceDatabaseService.getAllInstances();
+      let instances = await instanceDatabaseService.getAllInstances();
+
+      // RBAC 过滤：根据用户权限缩小可见实例范围
+      if (context?.userId) {
+        const userInstances = await rbacService.getUserInstanceAccess(context.userId);
+        const allowedIds = new Set(userInstances.map(ui => ui.instance_id));
+        instances = instances.filter((inst: any) => allowedIds.has(inst.id));
+      }
 
       const summaries = instances.map((inst: any) => ({
         id: inst.id,
