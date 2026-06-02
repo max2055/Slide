@@ -1,5 +1,5 @@
 import { afterAll, beforeAll } from "vitest";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { OpenClawConfig } from "../../config/types.js";
 import { defaultRuntime } from "../../runtime.js";
 import type { FollowupRun } from "./queue.js";
 

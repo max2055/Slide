@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import type { OpenClawConfig } from "../../../config/types.js";
 import { resolveBundledPluginInstallCommandHint } from "../../../plugins/bundled-sources.js";
 import {
   normalizeOptionalLowercaseString,

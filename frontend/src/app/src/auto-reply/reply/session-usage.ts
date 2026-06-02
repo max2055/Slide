@@ -10,7 +10,7 @@ import {
   type SessionEntry,
   updateSessionStoreEntry,
 } from "../../config/sessions.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { OpenClawConfig } from "../../config/types.js";
 import { logVerbose } from "../../globals.js";
 import { estimateUsageCost, resolveModelCostConfig } from "../../utils/usage-format.js";
 

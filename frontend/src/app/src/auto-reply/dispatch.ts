@@ -1,4 +1,4 @@
-import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { OpenClawConfig } from "../config/types.js";
 import { withReplyDispatcher } from "./dispatch-dispatcher.js";
 import { dispatchReplyFromConfig } from "./reply/dispatch-from-config.js";
 import type { DispatchFromConfigResult } from "./reply/dispatch-from-config.types.js";

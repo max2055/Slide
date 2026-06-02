@@ -16,7 +16,7 @@ import {
   resolveThinkingDefault,
 } from "../../agents/model-selection.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { OpenClawConfig } from "../../config/types.js";
 import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
 import { normalizeLowercaseStringOrEmpty } from "../../shared/string-coerce.js";
 import type { ThinkLevel } from "./directives.js";

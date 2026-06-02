@@ -6,7 +6,7 @@ import { resolveSessionTranscriptPath, resolveStorePath } from "../../config/ses
 import { resolveSessionKey } from "../../config/sessions/session-key.js";
 import { loadSessionStore } from "../../config/sessions/store.js";
 import type { SessionEntry, SessionScope } from "../../config/sessions/types.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { OpenClawConfig } from "../../config/types.js";
 import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,

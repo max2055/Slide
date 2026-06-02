@@ -1,5 +1,5 @@
 import type { MessagingToolSend } from "../../agents/pi-embedded-messaging.types.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { OpenClawConfig } from "../../config/types.js";
 import { stripHeartbeatToken } from "../heartbeat.js";
 import type { OriginatingChannelType } from "../templating.js";
 import type { ReplyPayload } from "../types.js";

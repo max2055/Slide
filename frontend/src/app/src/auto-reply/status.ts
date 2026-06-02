@@ -23,7 +23,7 @@ import {
   type SessionEntry,
   type SessionScope,
 } from "../config/sessions.js";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { OpenClawConfig } from "../config/types.js";
 import { readLatestSessionUsageFromTranscript } from "../gateway/session-utils.fs.js";
 import { formatTimeAgo } from "../infra/format-time/format-relative.ts";
 import { resolveCommitHash } from "../infra/git-commit.js";

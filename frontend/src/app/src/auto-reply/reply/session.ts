@@ -28,7 +28,7 @@ import {
   type SessionEntry,
   type SessionScope,
 } from "../../config/sessions/types.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { OpenClawConfig } from "../../config/types.js";
 import type { TtsAutoMode } from "../../config/types.tts.js";
 import { getSessionBindingService } from "../../infra/outbound/session-binding-service.js";
 import { deliverSessionMaintenanceWarning } from "../../infra/session-maintenance-warning.js";
