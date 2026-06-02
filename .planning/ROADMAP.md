@@ -584,15 +584,20 @@ Plans:
 
 ### Phase 117: OpenClaw收尾
 
-**Goal:** 1) OpenClawConfig 类型重命名为 SlideConfig（~97 文件）；2) docs/ 目录更新为当前 DirectAdapter 架构；3) branding 配置加入系统 Settings 页面（运行时可配置）
-**Requirements**: TBD
+**Goal:** 1) OpenClawConfig 类型重命名为 SlideConfig（~97 文件）；2) docs/ 目录更新（推迟）；3) branding 配置加入系统 Settings 页面（运行时可配置）
+**Requirements**: D-01 through D-10 (from CONTEXT.md)
 **Depends on:** Phase 116
-**Plans:** 0 plans
+**Plans:** 2/3 plans executed
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 117 to break down)
+**Wave 1** *(parallel)*
+- [x] 117-01-PLAN.md -- OpenClawConfig → SlideConfig 类型重命名 + 死字段删除 + 8 个错误 import 修复
+- [x] 117-02-PLAN.md -- Backend branding 配置服务 + GET/PUT /api/branding/config 路由
+
+**Wave 2** *(blocked on Wave 1)*
+- [ ] 117-03-PLAN.md -- Frontend branding.ts getter/cache 重构 + branding-settings Lit 组件 + Settings shell 集成
 
 ---
 *Last updated: 2026-06-02*
 
-| 117. OpenClaw收尾 | v1.4 | 0/0 | Pending | - |
+| 117. OpenClaw收尾 | v1.4 | 2/3 | In Progress|  |
