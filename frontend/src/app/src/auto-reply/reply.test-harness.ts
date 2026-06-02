@@ -1,4 +1,4 @@
-import { STATE_DIR } from '../branding.js';
+import { getStateDir } from '../branding.js';
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -170,13 +170,13 @@ export function createTempHomeHarness(options: { prefix: string; beforeEachCase?
 
   async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
     const home = path.join(fixtureRoot, `case-${++caseId}`);
-    await fs.mkdir(path.join(home, STATE_DIR, "agents", "main", "sessions"), { recursive: true });
+    await fs.mkdir(path.join(home, getStateDir(), "agents", "main", "sessions"), { recursive: true });
     const envSnapshot = snapshotHomeEnv();
     process.env.HOME = home;
     process.env.USERPROFILE = home;
-    process.env.SLIDE_STATE_DIR = path.join(home, STATE_DIR);
-    process.env.SLIDE_AGENT_DIR = path.join(home, STATE_DIR, "agent");
-    process.env.PI_CODING_AGENT_DIR = path.join(home, STATE_DIR, "agent");
+    process.env.SLIDE_STATE_DIR = path.join(home, getStateDir());
+    process.env.SLIDE_AGENT_DIR = path.join(home, getStateDir(), "agent");
+    process.env.PI_CODING_AGENT_DIR = path.join(home, getStateDir(), "agent");
 
     if (process.platform === "win32") {
       const match = home.match(/^([A-Za-z]:)(.*)$/);

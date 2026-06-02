@@ -1,4 +1,4 @@
-import { CLI_NAME } from '../../branding.js';
+import { getCliName } from '../../branding.js';
 import fs from "node:fs";
 import { buildNpmInstallRecordFields } from "../../cli/npm-resolution.js";
 import {
@@ -127,8 +127,8 @@ function formatPluginsList(report: PluginStatusReport): string {
     `🔌 Plugins (${loaded}/${report.plugins.length} loaded)`,
     ...report.plugins.map((plugin) => {
       const format = plugin.bundleFormat
-        ? `${plugin.format ?? CLI_NAME}/${plugin.bundleFormat}`
-        : (plugin.format ?? CLI_NAME);
+        ? `${plugin.format ?? getCliName()}/${plugin.bundleFormat}`
+        : (plugin.format ?? getCliName());
       return `- ${formatPluginLabel(plugin)} [${plugin.status}] ${format}`;
     }),
   ];

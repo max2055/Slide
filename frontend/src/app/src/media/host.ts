@@ -1,4 +1,4 @@
-import { CLI_NAME } from '../branding.js';
+import { getCliName } from '../branding.js';
 import fs from "node:fs/promises";
 import { formatCliCommand } from "../cli/command-format.js";
 import { ensurePortAvailable, PortInUseError } from "../infra/ports.js";
@@ -38,7 +38,7 @@ export async function ensureMediaHosted(
   if (needsServerStart && !opts.startServer) {
     await fs.rm(saved.path).catch(() => {});
     throw new Error(
-      `Media hosting requires the webhook/Funnel server. Start \`${formatCliCommand(`${CLI_NAME} webhook`)}\`/\`${formatCliCommand(`${CLI_NAME} up`)}\` or re-run with --serve-media.`,
+      `Media hosting requires the webhook/Funnel server. Start \`${formatCliCommand(`${getCliName()} webhook`)}\`/\`${formatCliCommand(`${getCliName()} up`)}\` or re-run with --serve-media.`,
     );
   }
   if (needsServerStart && opts.startServer) {

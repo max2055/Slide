@@ -1,4 +1,4 @@
-import { CLI_NAME } from '../branding.js';
+import { getCliName } from '../branding.js';
 import {
   CRON_TOOL_DISPLAY_SUMMARY,
   EXEC_TOOL_DISPLAY_SUMMARY,
@@ -340,7 +340,7 @@ function buildCoreToolGroupMap() {
     (tool) => tool.id,
   );
   return {
-    [`group:${CLI_NAME}`]: slideTools,
+    [`group:${getCliName()}`]: slideTools,
     ...Object.fromEntries(sectionToolMap.entries()),
   };
 }

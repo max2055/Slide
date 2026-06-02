@@ -1,4 +1,4 @@
-import { CLI_NAME } from '../../branding.js';
+import { getCliName } from '../../branding.js';
 import { normalizeLowercaseStringOrEmpty } from "../../shared/string-coerce.js";
 import { normalizeCommandBody } from "../commands-registry-normalize.js";
 import type { CommandNormalizeOptions } from "../commands-registry.types.js";
@@ -31,8 +31,8 @@ const ABORT_TRIGGERS = new Set([
   "hoer auf",
   "stopp",
   "pare",
-  `stop ${CLI_NAME}`,
-  `${CLI_NAME} stop`,
+  `stop ${getCliName()}`,
+  `${getCliName()} stop`,
   "stop action",
   "stop current action",
   "stop run",

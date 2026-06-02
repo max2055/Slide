@@ -1,4 +1,4 @@
-import { CLI_NAME } from '../../branding.js';
+import { getCliName } from '../../branding.js';
 import crypto from "node:crypto";
 import fs from "node:fs";
 import {
@@ -1313,7 +1313,7 @@ export async function runAgentTurnWithFallback(params: {
           const switchErrorText = shouldSurfaceToControlUi
             ? "⚠️ Agent failed before reply: model switch could not be completed. " +
               "The requested model may be temporarily unavailable.\n" +
-              `Logs: ${CLI_NAME} logs --follow`
+              `Logs: ${getCliName()} logs --follow`
             : "⚠️ Agent failed before reply: model switch could not be completed. " +
               "The requested model may be temporarily unavailable. Please try again shortly.";
           params.replyOperation?.fail("run_failed", err);
@@ -1492,7 +1492,7 @@ export async function runAgentTurnWithFallback(params: {
             : isRoleOrderingError
               ? "⚠️ Message ordering conflict - please try again. If this persists, use /new to start a fresh session."
               : shouldSurfaceToControlUi
-                ? `⚠️ Agent failed before reply: ${trimmedMessage}.\nLogs: ${CLI_NAME} logs --follow`
+                ? `⚠️ Agent failed before reply: ${trimmedMessage}.\nLogs: ${getCliName()} logs --follow`
                 : buildExternalRunFailureText(message);
 
       params.replyOperation?.fail("run_failed", err);

@@ -1,4 +1,4 @@
-import { STATE_DIR } from '../../branding.js';
+import { getStateDir } from '../../branding.js';
 import path from "node:path";
 import { afterEach, beforeEach, expect, vi } from "vitest";
 import { withTempHome as withTempHomeBase } from "../../test/helpers/temp-home.js";
@@ -133,8 +133,8 @@ export async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise
     },
     {
       env: {
-        SLIDE_AGENT_DIR: (home) => path.join(home, STATE_DIR, "agent"),
-        PI_CODING_AGENT_DIR: (home) => path.join(home, STATE_DIR, "agent"),
+        SLIDE_AGENT_DIR: (home) => path.join(home, getStateDir(), "agent"),
+        PI_CODING_AGENT_DIR: (home) => path.join(home, getStateDir(), "agent"),
       },
       prefix: "slide-reply-",
     },

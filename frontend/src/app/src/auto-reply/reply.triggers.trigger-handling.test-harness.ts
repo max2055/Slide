@@ -1,4 +1,3 @@
-import { STATE_DIR } from '../../branding.js';
 import { rmSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";

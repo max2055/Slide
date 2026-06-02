@@ -1,4 +1,4 @@
-import { STATE_DIR } from '../branding.js';
+import { getStateDir } from '../branding.js';
 import os from "node:os";
 import path from "node:path";
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
@@ -12,11 +12,11 @@ import { normalizeOptionalString } from "../shared/string-coerce.js";
 import { isPassThroughRemoteMediaSource } from "./media-source-url.js";
 
 function resolveStateDir(): string {
-  return path.join(os.homedir(), STATE_DIR);
+  return path.join(os.homedir(), getStateDir());
 }
 
 function resolveConfigDir(): string {
-  return path.join(os.homedir(), STATE_DIR);
+  return path.join(os.homedir(), getStateDir());
 }
 
 function resolveUserPath(p: string): string {
