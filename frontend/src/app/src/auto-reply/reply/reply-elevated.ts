@@ -1,6 +1,6 @@
 import { resolveAgentConfig } from "../../agents/agent-scope.js";
 import { getChannelPlugin, normalizeChannelId } from "../../channels/plugins/index.js";
-import type { AgentElevatedAllowFromConfig, SlideConfig } from "../../config/config.js";
+import type { SlideConfig } from "../../config/types.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { normalizeStringEntries } from "../../shared/string-normalization.js";
 import type { MsgContext } from "../templating.js";
@@ -15,6 +15,9 @@ import {
   stripSenderPrefix,
 } from "./elevated-allowlist-matcher.js";
 export { formatElevatedUnavailableMessage } from "./elevated-unavailable.js";
+
+// Inlined from AgentElevatedAllowFromConfig (former import from config/config.js)
+type AgentElevatedAllowFromConfig = Record<string, Array<string | number> | undefined>;
 
 function resolveElevatedAllowList(
   allowFrom: AgentElevatedAllowFromConfig | undefined,

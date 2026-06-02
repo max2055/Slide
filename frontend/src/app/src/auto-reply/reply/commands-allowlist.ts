@@ -1,12 +1,18 @@
 import { getChannelPlugin } from "../../channels/plugins/index.js";
 import type { ChannelId } from "../../channels/plugins/types.public.js";
 import { normalizeChannelId } from "../../channels/registry.js";
-import {
-  readConfigFileSnapshot,
-  validateConfigObjectWithPlugins,
-  writeConfigFile,
-} from "../../config/config.js";
 import type { SlideConfig } from "../../config/types.js";
+
+// Stubs for former CLI config-file functions (Slide web app does not use config files)
+async function readConfigFileSnapshot(): Promise<Record<string, unknown>> {
+  return { valid: false as const };
+}
+function validateConfigObjectWithPlugins<T>(config: T): { ok: boolean; issues: Array<{ path: string; message: string }>; config: T } {
+  return { ok: true, issues: [], config };
+}
+async function writeConfigFile(_config: unknown): Promise<void> {
+  /* no-op */
+}
 import {
   addChannelAllowFromStoreEntry,
   readChannelAllowFromStore,

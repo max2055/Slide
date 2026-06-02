@@ -8,12 +8,18 @@ import {
   resolveFileNpmSpecToLocalPath,
 } from "../../cli/plugins-command-helpers.js";
 import { persistPluginInstall } from "../../cli/plugins-install-persist.js";
-import {
-  readConfigFileSnapshot,
-  validateConfigObjectWithPlugins,
-  writeConfigFile,
-} from "../../config/config.js";
 import type { SlideConfig } from "../../config/types.js";
+
+// Stubs for former CLI config-file functions (Slide web app does not use config files)
+async function readConfigFileSnapshot(): Promise<Record<string, unknown>> {
+  return { valid: false as const, path: "(stub)" };
+}
+function validateConfigObjectWithPlugins<T>(config: T): { ok: boolean; issues: Array<{ path: string; message: string }>; config: T } {
+  return { ok: true, issues: [], config };
+}
+async function writeConfigFile(_config: unknown): Promise<void> {
+  /* no-op */
+}
 import type { PluginInstallRecord } from "../../config/types.plugins.js";
 import { resolveArchiveKind } from "../../infra/archive.js";
 import { parseClawHubPluginSpec } from "../../infra/clawhub.js";

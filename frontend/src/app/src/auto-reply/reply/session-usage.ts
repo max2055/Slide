@@ -4,7 +4,7 @@ import {
   hasNonzeroUsage,
   type NormalizedUsage,
 } from "../../agents/usage.js";
-import { loadConfig } from "../../config/config.js";
+import { loadConfig } from "../../config/types.js";
 import {
   type SessionSystemPromptReport,
   type SessionEntry,

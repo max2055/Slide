@@ -7,16 +7,22 @@ import {
   unsetConfigValueAtPath,
 } from "../../config/config-paths.js";
 import {
-  readConfigFileSnapshot,
-  validateConfigObjectWithPlugins,
-  writeConfigFile,
-} from "../../config/config.js";
-import {
   getConfigOverrides,
   resetConfigOverrides,
   setConfigOverride,
   unsetConfigOverride,
 } from "../../config/runtime-overrides.js";
+
+// Stubs for former CLI config-file functions (Slide web app does not use config files)
+async function readConfigFileSnapshot(): Promise<Record<string, unknown>> {
+  return { valid: false as const };
+}
+function validateConfigObjectWithPlugins<T>(config: T): { ok: boolean; issues: Array<{ path: string; message: string }>; config: T } {
+  return { ok: true, issues: [], config };
+}
+async function writeConfigFile(_config: unknown): Promise<void> {
+  /* no-op */
+}
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
 import { resolveChannelAccountId } from "./channel-context.js";

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveUserTimezone } from "../../agents/date-time.js";
-import type { SlideConfig } from "../../config/config.js";
+import type { SlideConfig } from "../../config/types.js";
 import { openBoundaryFile } from "../../infra/boundary-file-read.js";
 
 const STARTUP_MEMORY_FILE_MAX_BYTES = 16_384;
