@@ -6,7 +6,7 @@ import {
   resolveEffectiveToolFsRootExpansionAllowed,
   resolveEffectiveToolFsWorkspaceOnly,
 } from "../agents/tool-fs-policy.js";
-import type { OpenClawConfig } from "../config/types.js";
+import type { SlideConfig } from "../config/types.js";
 import { safeFileURLToPath } from "../infra/local-file-access.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 import { isPassThroughRemoteMediaSource } from "./media-source-url.js";
@@ -66,7 +66,7 @@ export function getDefaultMediaLocalRoots(): readonly string[] {
 }
 
 export function getAgentScopedMediaLocalRoots(
-  cfg: OpenClawConfig,
+  cfg: SlideConfig,
   agentId?: string,
 ): readonly string[] {
   const roots = buildMediaLocalRoots(resolveStateDir(), resolveConfigDir());
@@ -129,7 +129,7 @@ export function appendLocalMediaParentRoots(
 }
 
 export function getAgentScopedMediaLocalRootsForSources(params: {
-  cfg: OpenClawConfig;
+  cfg: SlideConfig;
   agentId?: string;
   mediaSources?: readonly string[];
 }): readonly string[] {

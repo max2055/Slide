@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveUserTimezone } from "../../agents/date-time.js";
-import type { OpenClawConfig } from "../../config/config.js";
+import type { SlideConfig } from "../../config/config.js";
 import { openBoundaryFile } from "../../infra/boundary-file-read.js";
 
 const STARTUP_MEMORY_FILE_MAX_BYTES = 16_384;
@@ -14,7 +14,7 @@ const STARTUP_MEMORY_TOTAL_MAX_CHARS_CAP = 50_000;
 const STARTUP_MEMORY_DAILY_DAYS_CAP = 14;
 
 export function shouldApplyStartupContext(params: {
-  cfg?: OpenClawConfig;
+  cfg?: SlideConfig;
   action: "new" | "reset";
 }): boolean {
   const startupContext = params.cfg?.agents?.defaults?.startupContext;
@@ -28,7 +28,7 @@ export function shouldApplyStartupContext(params: {
   return applyOn.includes(params.action);
 }
 
-function resolveStartupContextLimits(cfg?: OpenClawConfig) {
+function resolveStartupContextLimits(cfg?: SlideConfig) {
   const startupContext = cfg?.agents?.defaults?.startupContext;
   const clampInt = (value: number | undefined, fallback: number, min: number, max: number) => {
     const numeric = Number.isFinite(value) ? Math.trunc(value as number) : fallback;
@@ -192,7 +192,7 @@ async function readStartupMemoryFile(params: {
 
 export async function buildSessionStartupContextPrelude(params: {
   workspaceDir: string;
-  cfg?: OpenClawConfig;
+  cfg?: SlideConfig;
   nowMs?: number;
 }): Promise<string | null> {
   const nowMs = params.nowMs ?? Date.now();

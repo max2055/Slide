@@ -1,5 +1,5 @@
 import type { SubagentRunRecord } from "../../agents/subagent-registry.types.js";
-import type { OpenClawConfig } from "../../config/types.js";
+import type { SlideConfig } from "../../config/types.js";
 import type { handleSubagentsSendAction } from "./commands-subagents/action-send.js";
 
 export function buildSubagentRun(): SubagentRunRecord {
@@ -16,7 +16,7 @@ export function buildSubagentRun(): SubagentRunRecord {
 }
 
 export function buildSubagentsSendContext(params?: {
-  cfg?: OpenClawConfig;
+  cfg?: SlideConfig;
   handledPrefix?: string;
   requesterKey?: string;
   runs?: SubagentRunRecord[];
@@ -29,7 +29,7 @@ export function buildSubagentsSendContext(params?: {
         ({
           commands: { text: true },
           channels: { whatsapp: { allowFrom: ["*"] } },
-        } as OpenClawConfig),
+        } as SlideConfig),
       ctx: {},
       command: {
         channel: "whatsapp",

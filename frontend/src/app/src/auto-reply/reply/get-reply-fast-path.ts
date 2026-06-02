@@ -7,7 +7,7 @@ import { resolveSessionTranscriptPath, resolveStorePath } from "../../config/ses
 import { resolveSessionKey } from "../../config/sessions/session-key.js";
 import { loadSessionStore } from "../../config/sessions/store.js";
 import type { SessionEntry, SessionScope } from "../../config/sessions/types.js";
-import type { OpenClawConfig } from "../../config/types.js";
+import type { SlideConfig } from "../../config/types.js";
 import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
@@ -21,7 +21,7 @@ import type { SessionInitResult } from "./session.js";
 const COMPLETE_REPLY_CONFIG_SYMBOL = Symbol.for(buildSymbolKey("reply.complete-config"));
 const FULL_REPLY_RUNTIME_SYMBOL = Symbol.for(buildSymbolKey("reply.full-runtime"));
 
-type ReplyConfigWithMarker = OpenClawConfig & {
+type ReplyConfigWithMarker = SlideConfig & {
   [COMPLETE_REPLY_CONFIG_SYMBOL]?: true;
   [FULL_REPLY_RUNTIME_SYMBOL]?: true;
 };
@@ -57,7 +57,7 @@ function markReplyConfigRuntimeMode(
   });
 }
 
-export function markCompleteReplyConfig<T extends OpenClawConfig>(
+export function markCompleteReplyConfig<T extends SlideConfig>(
   config: T,
   options?: { runtimeMode?: "fast" | "full" },
 ): T {
@@ -70,15 +70,15 @@ export function markCompleteReplyConfig<T extends OpenClawConfig>(
   return config;
 }
 
-export function withFastReplyConfig<T extends OpenClawConfig>(config: T): T {
+export function withFastReplyConfig<T extends SlideConfig>(config: T): T {
   return markCompleteReplyConfig(config, { runtimeMode: "fast" });
 }
 
-export function withFullRuntimeReplyConfig<T extends OpenClawConfig>(config: T): T {
+export function withFullRuntimeReplyConfig<T extends SlideConfig>(config: T): T {
   return markCompleteReplyConfig(config, { runtimeMode: "full" });
 }
 
-export function isCompleteReplyConfig(config: unknown): config is OpenClawConfig {
+export function isCompleteReplyConfig(config: unknown): config is SlideConfig {
   return Boolean(
     config &&
     typeof config === "object" &&
@@ -95,10 +95,10 @@ export function usesFullReplyRuntime(config: unknown): boolean {
 }
 
 export function resolveGetReplyConfig(params: {
-  loadConfig: () => OpenClawConfig;
+  loadConfig: () => SlideConfig;
   isFastTestEnv: boolean;
-  configOverride?: OpenClawConfig;
-}): OpenClawConfig {
+  configOverride?: SlideConfig;
+}): SlideConfig {
   const { configOverride } = params;
   if (configOverride == null) {
     return params.loadConfig();
@@ -111,12 +111,12 @@ export function resolveGetReplyConfig(params: {
   if (params.isFastTestEnv && isCompleteReplyConfig(configOverride)) {
     return configOverride;
   }
-  return applyMergePatch(params.loadConfig(), configOverride) as OpenClawConfig;
+  return applyMergePatch(params.loadConfig(), configOverride) as SlideConfig;
 }
 
 export function shouldUseReplyFastTestBootstrap(params: {
   isFastTestEnv: boolean;
-  configOverride?: OpenClawConfig;
+  configOverride?: SlideConfig;
 }): boolean {
   return (
     params.isFastTestEnv &&
@@ -126,7 +126,7 @@ export function shouldUseReplyFastTestBootstrap(params: {
 }
 
 export function shouldUseReplyFastTestRuntime(params: {
-  cfg: OpenClawConfig;
+  cfg: SlideConfig;
   isFastTestEnv: boolean;
 }): boolean {
   return (
@@ -154,7 +154,7 @@ export function shouldUseReplyFastDirectiveExecution(params: {
 
 export function buildFastReplyCommandContext(params: {
   ctx: MsgContext;
-  cfg: OpenClawConfig;
+  cfg: SlideConfig;
   agentId?: string;
   sessionKey?: string;
   isGroup: boolean;
@@ -187,7 +187,7 @@ export function buildFastReplyCommandContext(params: {
 }
 
 export function shouldHandleFastReplyTextCommands(params: {
-  cfg: OpenClawConfig;
+  cfg: SlideConfig;
   commandSource?: string;
 }): boolean {
   return params.commandSource === "native" || params.cfg.commands?.text !== false;
@@ -195,7 +195,7 @@ export function shouldHandleFastReplyTextCommands(params: {
 
 export function initFastReplySessionState(params: {
   ctx: MsgContext;
-  cfg: OpenClawConfig;
+  cfg: SlideConfig;
   agentId: string;
   commandAuthorized: boolean;
   workspaceDir: string;
