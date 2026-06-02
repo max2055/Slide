@@ -237,21 +237,26 @@ export async function handleInlineActions(params: {
         resolveGatewayMessageChannel(ctx.Provider) ??
         undefined;
 
-      const { createOpenClawTools } = await import("../../agents/openclaw-tools.runtime.js");
-      const tools = createOpenClawTools({
-        agentSessionKey: sessionKey,
-        agentChannel: channel,
-        agentAccountId: (ctx as { AccountId?: string }).AccountId,
-        agentTo: ctx.OriginatingTo ?? ctx.To,
-        agentThreadId: ctx.MessageThreadId ?? undefined,
-        agentGroupId: extractExplicitGroupId(ctx.From),
-        requesterAgentIdOverride: agentId,
-        agentDir,
-        workspaceDir,
-        config: cfg,
-        allowGatewaySubagentBinding: true,
-        senderIsOwner: command.senderIsOwner,
-      });
+      let tools: Array<{ name: string; [key: string]: unknown }> = [];
+      try {
+        const { createOpenClawTools } = await import("../../agents/openclaw-tools.runtime.js");
+        tools = createOpenClawTools({
+          agentSessionKey: sessionKey,
+          agentChannel: channel,
+          agentAccountId: (ctx as { AccountId?: string }).AccountId,
+          agentTo: ctx.OriginatingTo ?? ctx.To,
+          agentThreadId: ctx.MessageThreadId ?? undefined,
+          agentGroupId: extractExplicitGroupId(ctx.From),
+          requesterAgentIdOverride: agentId,
+          agentDir,
+          workspaceDir,
+          config: cfg,
+          allowGatewaySubagentBinding: true,
+          senderIsOwner: command.senderIsOwner,
+        });
+      } catch {
+        // Module not available — no tools to dispatch
+      }
       const authorizedTools = applyOwnerOnlyToolPolicy(tools, command.senderIsOwner);
 
       const tool = authorizedTools.find((candidate) => candidate.name === dispatch.toolName);

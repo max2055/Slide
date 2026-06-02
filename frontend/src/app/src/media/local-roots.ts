@@ -1,16 +1,29 @@
+import os from "node:os";
 import path from "node:path";
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import {
   resolveEffectiveToolFsRootExpansionAllowed,
   resolveEffectiveToolFsWorkspaceOnly,
 } from "../agents/tool-fs-policy.js";
-import { resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { safeFileURLToPath } from "../infra/local-file-access.js";
-import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
-import { resolveConfigDir, resolveUserPath } from "../utils.js";
 import { isPassThroughRemoteMediaSource } from "./media-source-url.js";
+
+function resolveStateDir(): string {
+  return path.join(os.homedir(), ".slide");
+}
+
+function resolveConfigDir(): string {
+  return path.join(os.homedir(), ".slide");
+}
+
+function resolveUserPath(p: string): string {
+  if (p.startsWith("~")) {
+    return path.join(os.homedir(), p.slice(1));
+  }
+  return path.resolve(p);
+}
 
 type BuildMediaLocalRootsOptions = {
   preferredTmpDir?: string;
@@ -22,7 +35,7 @@ const WINDOWS_DRIVE_RE = /^[A-Za-z]:[\\/]/;
 
 function resolveCachedPreferredTmpDir(): string {
   if (!cachedPreferredTmpDir) {
-    cachedPreferredTmpDir = resolvePreferredOpenClawTmpDir();
+    cachedPreferredTmpDir = os.tmpdir();
   }
   return cachedPreferredTmpDir;
 }
