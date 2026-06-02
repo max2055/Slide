@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Agent 解耦与替换
-status: milestone_complete
-stopped_at: Milestone complete (Phase 116 was final phase)
-last_updated: 2026-06-02T08:38:46.424Z
-last_activity: 2026-06-02 -- Phase 116 execution started
+status: completed
+stopped_at: Phase 117 context gathered
+last_updated: "2026-06-02T14:34:59.091Z"
+last_activity: 2026-06-02
 progress:
-  total_phases: 17
-  completed_phases: 16
+  total_phases: 18
+  completed_phases: 17
   total_plans: 59
-  completed_plans: 109
+  completed_plans: 59
   percent: 94
 ---
 
@@ -99,6 +99,6 @@ Also deferred (Phase 116 discretion):
 
 ## Session Continuity
 
-Last session: 2026-06-02T08:00:00.000Z
-Stopped at: Phase 116 plans created
-Resume file: .planning/phases/116-openclaw-cli/
+Last session: 2026-06-02T14:34:59.087Z
+Stopped at: Phase 117 context gathered
+Resume file: .planning/phases/117-openclaw/117-CONTEXT.md
