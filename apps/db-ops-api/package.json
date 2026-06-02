@@ -8,6 +8,7 @@
     "init-db": "tsx init-db.ts",
     "test-db": "tsx test-db.ts",
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "smoke": "tsx tests/smoke-test.ts",
     "smoke:ci": "tsx tests/smoke-test.ts 2>&1 | tee smoke-report.txt",
     "smoke:deep": "tsx tests/deep-smoke.ts",
