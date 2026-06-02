@@ -11,7 +11,6 @@ import { isRestartEnabled } from "../../config/commands.flags.js";
 import { logVerbose } from "../../globals.js";
 import { getSessionBindingService } from "../../infra/outbound/session-binding-service.js";
 import type { SessionBindingRecord } from "../../infra/outbound/session-binding-service.js";
-import { scheduleGatewaySigusr1Restart, triggerSlideRestart } from "../../infra/restart.js";
 import { loadCostUsageSummary, loadSessionCostSummary } from "../../infra/session-cost-usage.js";
 import {
   normalizeLowercaseStringOrEmpty,
@@ -639,30 +638,10 @@ export const handleRestartCommand: CommandHandler = async (params, allowTextComm
       },
     };
   }
-  const hasSigusr1Listener = process.listenerCount("SIGUSR1") > 0;
-  if (hasSigusr1Listener) {
-    scheduleGatewaySigusr1Restart({ reason: "/restart" });
-    return {
-      shouldContinue: false,
-      reply: {
-        text: "⚙️ Restarting Slide in-process (SIGUSR1); back in a few seconds.",
-      },
-    };
-  }
-  const restartMethod = triggerSlideRestart();
-  if (!restartMethod.ok) {
-    const detail = restartMethod.detail ? ` Details: ${restartMethod.detail}` : "";
-    return {
-      shouldContinue: false,
-      reply: {
-        text: `⚠️ Restart failed (${restartMethod.method}).${detail}`,
-      },
-    };
-  }
   return {
     shouldContinue: false,
     reply: {
-      text: `⚙️ Restarting Slide via ${restartMethod.method}; give me a few seconds to come back online.`,
+      text: "⚠️ Restart is not available.",
     },
   };
 };
