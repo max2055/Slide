@@ -145,7 +145,8 @@ function parseCanvasAttributes(raw: string): Record<string, string> {
 
 function defaultCanvasEntryUrl(ref: string): string {
   const encoded = encodeURIComponent(ref.trim());
-  return `/__openclaw__/canvas/documents/${encoded}/index.html`;
+  // NOTE: no backend route serves this path as of cleanup — canvas still WIP
+  return `/__canvas__/canvas/documents/${encoded}/index.html`;
 }
 
 function previewFromShortcode(attrs: Record<string, string>): CanvasPreview | undefined {

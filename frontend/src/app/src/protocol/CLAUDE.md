@@ -1,18 +1,16 @@
-# Gateway Protocol Boundary
+# Protocol Boundary
 
-This directory defines the Gateway wire contract for operator clients and
-nodes.
+This directory defines the wire contract for DirectAdapter clients (operators,
+webchat, nodes).
 
 ## Public Contracts
 
-- Docs:
-  - `docs/gateway/protocol.md`
-  - `docs/gateway/bridge-protocol.md`
-  - `docs/concepts/architecture.md`
 - Definition files:
-  - `src/gateway/protocol/schema.ts`
-  - `src/gateway/protocol/schema/*.ts`
-  - `src/gateway/protocol/index.ts`
+  - `schema.ts` — re-exports all schema/*.ts modules
+  - `schema/protocol-schemas.ts` — versioned protocol schemas
+  - `client-info.ts` — client identity constants
+  - `connect-error-details.ts` — connection error codes
+  - `index.ts` — runtime protocol helpers
 
 ## Boundary Rules
 
@@ -21,8 +19,8 @@ nodes.
   explicitly and update all affected clients.
 - Keep schema, runtime validators, docs, tests, and generated client artifacts
   in sync.
-- New Gateway methods, events, or payload fields should land through the typed
+- New methods, events, or payload fields should land through the typed
   protocol definitions here rather than ad hoc JSON shapes elsewhere.
 - Keep protocol modules data-first and acyclic. Do not route protocol exports
-  back through heavier gateway runtime or server-method helpers that make the
-  contract surface expensive or order-dependent at import time.
+  back through heavier runtime or server-method helpers that make the contract
+  surface expensive or order-dependent at import time.
