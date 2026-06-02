@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: 系统加固与体验优化
 status: executing
-stopped_at: Phase 115 context gathered
-last_updated: "2026-06-02T01:55:15.721Z"
+stopped_at: Phase 116 context gathered
+last_updated: "2026-06-02T07:28:54.732Z"
 last_activity: 2026-06-02 -- Phase 115 planning complete
 progress:
-  total_phases: 16
-  completed_phases: 15
+  total_phases: 17
+  completed_phases: 16
   total_plans: 55
-  completed_plans: 50
-  percent: 91
+  completed_plans: 55
+  percent: 94
 ---
 
 # Slide 项目状态
@@ -89,6 +89,6 @@ From v1.2 milestone:
 
 ## Session Continuity
 
-Last session: 2026-06-02T01:20:21.827Z
-Stopped at: Phase 115 context gathered
-Resume file: .planning/phases/115-openclaw-todo-ci/115-CONTEXT.md
+Last session: 2026-06-02T07:28:54.728Z
+Stopped at: Phase 116 context gathered
+Resume file: .planning/phases/116-openclaw-cli/116-CONTEXT.md
