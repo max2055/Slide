@@ -1,6 +1,6 @@
 /**
  * Slide - Canonical Icon Library
- * Merged from frontend/src/openclaw/ui/icons.ts and frontend/src/styles/icons.ts
+ * Merged from frontend UI icons and style icons
  * All icons use kebab-case naming with complete Lucide-style SVG attributes.
  */
 import { html, type TemplateResult } from 'lit';

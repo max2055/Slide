@@ -192,7 +192,7 @@ export function stripInboundMetadata(text: string): string {
   for (let i = 0; i < strippedLeadingPrefixLines.length; i++) {
     const line = strippedLeadingPrefixLines[i];
 
-    // Channel untrusted context is appended by OpenClaw as a terminal metadata suffix.
+    // Channel untrusted context is appended as a terminal metadata suffix.
     // When this structured header appears, drop it and everything that follows.
     if (!inMetaBlock && shouldStripTrailingUntrustedContext(strippedLeadingPrefixLines, i)) {
       break;

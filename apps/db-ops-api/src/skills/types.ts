@@ -131,7 +131,7 @@ export interface ParsedSkillFrontmatter {
 }
 
 /**
- * 技能元数据（legacy OpenClaw 命名）
+ * 技能元数据（legacy 命名）
  */
 export interface OpenClawSkillMetadata {
   /** 是否始终启用 */
@@ -249,7 +249,7 @@ export type SkillEntry = {
   skill: Skill;
   /** 解析后的 frontmatter */
   frontmatter: ParsedSkillFrontmatter;
-  /** 元数据（legacy OpenClaw 命名） */
+  /** 元数据（legacy 命名） */
   metadata?: OpenClawSkillMetadata;
   /** 调用策略 */
   invocation?: SkillInvocationPolicy;

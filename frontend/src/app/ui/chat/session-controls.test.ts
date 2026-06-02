@@ -28,7 +28,7 @@ vi.mock('../../i18n/index.ts', () => ({
   t: (...args: Parameters<typeof tMock>) => tMock(...args),
 }));
 
-// Mock modules with unresolved @openclaw/src aliases to prevent cascade
+// Mock modules with unresolved upstream aliases to prevent cascade
 vi.mock('../app-chat.ts', () => ({
   CHAT_SESSIONS_ACTIVE_MINUTES: 120,
   CHAT_SESSIONS_REFRESH_LIMIT: 100,

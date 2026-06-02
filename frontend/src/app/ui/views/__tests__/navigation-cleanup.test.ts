@@ -65,14 +65,14 @@ describe('UI-02: Removed tabs absent from navigation.ts data structures', () => 
         expect(groupsDecl).not.toContain(`"${tab}"`);
       });
     }
-    // Sessions, usage, skills kept in openclaw group
-    it('"sessions" is kept in openclaw group (intentionally restored)', () => {
+    // Sessions, usage, skills kept in their original group
+    it('"sessions" is kept in its original group (intentionally restored)', () => {
       expect(groupsDecl).toContain('"sessions"');
     });
-    it('"usage" is kept in openclaw group (intentionally restored)', () => {
+    it('"usage" is kept in its original group (intentionally restored)', () => {
       expect(groupsDecl).toContain('"usage"');
     });
-    it('"skills" is kept in openclaw group (intentionally restored)', () => {
+    it('"skills" is kept in its original group (intentionally restored)', () => {
       expect(groupsDecl).toContain('"skills"');
     });
     // Note: "appearance" is in TAB_GROUPS settings but NOT in Tab type

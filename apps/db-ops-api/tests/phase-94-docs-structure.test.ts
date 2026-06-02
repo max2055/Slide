@@ -68,7 +68,7 @@ describe('94-01-01: docs/slide/ directory structure and file cleanup', () => {
     const nonSlide = allEntries.filter(e => e !== 'slide' && e !== '.DS_Store');
     // docs/reference/templates/ exists with Slide template files
     // (SOUL.dev.md, AGENTS.md, etc.). These are Slide-owned templates not
-    // covered by the D-02 OpenClaw cleanup scope. Accept as known exception.
+    // covered by the D-02 cleanup scope. Accept as known exception.
     const nonReference = nonSlide.filter(e => e !== 'reference');
     expect(nonReference).toEqual([]);
   });
