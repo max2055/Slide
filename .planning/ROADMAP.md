@@ -582,5 +582,17 @@ Plans:
 **Wave 3** *(blocked on Wave 2)*
 - [x] 116-04-PLAN.md -- 测试断言更新
 
+### Phase 117: OpenClaw收尾
+
+**Goal:** 1) OpenClawConfig 类型重命名为 SlideConfig（~97 文件）；2) docs/ 目录更新为当前 DirectAdapter 架构；3) branding 配置加入系统 Settings 页面（运行时可配置）
+**Requirements**: TBD
+**Depends on:** Phase 116
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 117 to break down)
+
 ---
 *Last updated: 2026-06-02*
+
+| 117. OpenClaw收尾 | v1.4 | 0/0 | Pending | - |
