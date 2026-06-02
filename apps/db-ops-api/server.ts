@@ -54,6 +54,7 @@ import { aiAnalysisDatabaseService } from './src/ai-analysis-database-service.js
 import { aiAnalysisConfigService } from './src/ai-analysis-config-service.js';
 import { getAgentGreeting } from './src/agent-service.js';
 import { scoringConfigService } from './src/scoring-config-service.js';
+import { brandingConfigService } from './src/branding-config-service.js';
 import { userPreferenceService } from './src/user-preference-service.js';
 import { collectionCapabilityTracker } from './src/collection-capabilities.js';
 import { sqlAuditService } from './src/sql-audit-service.js';
@@ -1390,6 +1391,37 @@ async function start() {
       try {
         const body = request.body as any;
         const result = await scoringConfigService.saveWeights(body);
+        if (result.success) {
+          reply.send({ success: true });
+        } else {
+          reply.code(400).send({ error: result.error });
+        }
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    },
+  });
+
+  // 获取品牌配置
+  fastify.get('/api/branding/config', {
+    preHandler: [verifyToken],
+    handler: async (request, reply) => {
+      try {
+        const config = await brandingConfigService.getBranding();
+        reply.send(config);
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    },
+  });
+
+  // 更新品牌配置
+  fastify.put('/api/branding/config', {
+    preHandler: [verifyToken],
+    handler: async (request, reply) => {
+      try {
+        const body = request.body as any;
+        const result = await brandingConfigService.saveBranding(body);
         if (result.success) {
           reply.send({ success: true });
         } else {
