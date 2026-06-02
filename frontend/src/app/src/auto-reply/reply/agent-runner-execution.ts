@@ -1312,7 +1312,7 @@ export async function runAgentTurnWithFallback(params: {
           const switchErrorText = shouldSurfaceToControlUi
             ? "⚠️ Agent failed before reply: model switch could not be completed. " +
               "The requested model may be temporarily unavailable.\n" +
-              "Logs: openclaw logs --follow"
+              "Logs: slide logs --follow"
             : "⚠️ Agent failed before reply: model switch could not be completed. " +
               "The requested model may be temporarily unavailable. Please try again shortly.";
           params.replyOperation?.fail("run_failed", err);

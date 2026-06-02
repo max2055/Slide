@@ -201,7 +201,7 @@ export function makeReplyConfig(home: string) {
     agents: {
       defaults: {
         model: "anthropic/claude-opus-4-6",
-        workspace: path.join(home, "openclaw"),
+        workspace: path.join(home, "slide"),
       },
     },
     channels: {

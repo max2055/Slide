@@ -249,7 +249,7 @@ export function normalizeFrontmatter(frontmatter: ParsedSkillFrontmatter): Parse
 /**
  * 从 frontmatter 提取元数据
  */
-export function extractOpenClawMetadata(frontmatter: ParsedSkillFrontmatter) {
+export function extractSlideSkillMetadata(frontmatter: ParsedSkillFrontmatter) {
   return {
     always: frontmatter.always === true || frontmatter.always === 'true',
     skillKey: frontmatter.skillKey?.toString(),
@@ -339,7 +339,7 @@ export function buildSkillEntry(
 ): {
   skill: Skill;
   frontmatter: ParsedSkillFrontmatter;
-  metadata: ReturnType<typeof extractOpenClawMetadata>;
+  metadata: ReturnType<typeof extractSlideSkillMetadata>;
   invocation: ReturnType<typeof extractInvocationPolicy>;
   exposure: ReturnType<typeof extractExposure>;
 } {
@@ -355,7 +355,7 @@ export function buildSkillEntry(
   return {
     skill,
     frontmatter: normalizedFrontmatter,
-    metadata: extractOpenClawMetadata(normalizedFrontmatter),
+    metadata: extractSlideSkillMetadata(normalizedFrontmatter),
     invocation: extractInvocationPolicy(normalizedFrontmatter),
     exposure: extractExposure(normalizedFrontmatter),
   };
