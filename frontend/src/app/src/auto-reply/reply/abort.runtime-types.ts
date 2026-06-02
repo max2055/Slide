@@ -1,4 +1,4 @@
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { OpenClawConfig } from "../../config/types.js";
 import type { FinalizedMsgContext } from "../templating.js";
 
 export type FastAbortResult = {
