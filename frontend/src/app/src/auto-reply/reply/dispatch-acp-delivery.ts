@@ -1,4 +1,4 @@
-import { hasOutboundReplyContent } from "openclaw/plugin-sdk/reply-payload";
+import { hasOutboundReplyContent } from "@agent/plugin-sdk/reply-payload";
 import type { OpenClawConfig } from "../../config/types.js";
 import type { TtsAutoMode } from "../../config/types.tts.js";
 import { logVerbose } from "../../globals.js";
