@@ -125,7 +125,7 @@ class AlertRCAService {
       // g. 更新状态为 running
       await aiAnalysisDatabaseService.updateStatus(analysisId, 'running');
 
-      // h. 通过 OpenClaw Agent 执行分析（await 确保 session 先创建）
+      // h. 通过 Agent 执行分析（await 确保 session 先创建）
       await dispatchOrReuse({
         type: 'alert_rca',
         cacheKey: `rca:${alertId}:${instanceId}`,

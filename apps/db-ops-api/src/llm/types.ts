@@ -1,7 +1,7 @@
 /**
  * LLM Provider 类型定义
  *
- * 复用 OpenClaw provider-model-shared 模式
+ * provider-model-shared 模式（复用上游设计）
  */
 
 /**

@@ -1,7 +1,7 @@
 /**
  * DB-Ops 工具访问控制策略
  *
- * 复用 OpenClaw 的 tool-policy.ts 设计模式
+ * 复用上游 tool-policy 设计模式
  * - 工具策略配置 (allow/deny)
  * - 角色权限映射
  * - Owner-only 工具控制
@@ -290,7 +290,7 @@ export function getAvailableToolsForRole(roleName: string): string[] {
   return filtered.map(tool => tool.name);
 }
 
-// ============== Owner-Only 工具控制（复用 OpenClaw） ==============
+// ============== Owner-Only 工具控制（复用上游） ==============
 
 /**
  * Owner-only 工具审批类别
@@ -454,7 +454,7 @@ export function checkToolPermission(
   };
 }
 
-// ============== 工具组合并（复用 OpenClaw） ==============
+// ============== 工具组合并（复用上游） ==============
 
 /**
  * 合并多个工具策略

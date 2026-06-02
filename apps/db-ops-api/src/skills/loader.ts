@@ -1,7 +1,7 @@
 /**
  * DB-Ops 技能加载器
  *
- * 复用 OpenClaw 的技能加载模式：
+ * 复用上游技能加载模式：
  * - 从目录扫描 SKILL.md 文件
  * - 解析 frontmatter 和验证
  * - 加载关联的 tools.ts 文件
@@ -188,7 +188,7 @@ export async function loadToolsFromFile(toolsPath: string): Promise<Array<{ name
 // ============== 辅助函数 ==============
 
 /**
- * 提取 OpenClaw 风格元数据
+ * 提取元数据
  */
 function extractOpenClawMetadata(frontmatter: ParsedSkillFrontmatter) {
   return {

@@ -1,7 +1,7 @@
 /**
  * DB-Ops 工具系统类型定义
  *
- * 复用 OpenClaw 的 AnyAgentTool 接口设计模式
+ * 复用上游 AnyAgentTool 接口设计模式
  * - 统一工具调用接口
  * - 支持链式调用和结果聚合
  * - 支持权限控制和审批流程
@@ -30,7 +30,7 @@ export interface ToolParameterSchema {
 }
 
 /**
- * 工具定义接口（OpenClaw 风格）
+ * 工具定义接口
  */
 export interface ToolDefinition {
   name: string;
@@ -86,13 +86,13 @@ export interface ToolExecutionContext {
   generateSummary?: (results: ToolResult[]) => string;
 }
 
-// ============== AnyAgentTool 接口（复用 OpenClaw） ==============
+// ============== AnyAgentTool 接口（复用上游设计） ==============
 
 /**
  * 统一工具接口（AnyAgentTool 风格）
  *
  * 设计原则：
- * 1. 与 OpenClaw 的 AnyAgentTool 接口兼容
+ * 1. 与上游 AnyAgentTool 接口兼容
  * 2. 支持工具链式调用
  * 3. 支持权限控制
  * 4. 支持结果聚合
@@ -106,7 +106,7 @@ export interface AnyAgentTool {
   parameters: ToolParameterSchema;
   /** 工具处理器 */
   handler: ToolHandler;
-  /** 是否仅限 owner 调用（OpenClaw 风格权限控制） */
+  /** 是否仅限 owner 调用（上游风格权限控制） */
   ownerOnly?: boolean;
   /** 工具分组（用于权限策略） */
   group?: string;
@@ -147,7 +147,7 @@ export interface ToolGroup {
   tools: string[];
 }
 
-// ============== 工具策略类型（复用 OpenClaw tool-policy.ts） ==============
+// ============== 工具策略类型（复用上游 tool-policy.ts） ==============
 
 /**
  * 工具策略配置
@@ -199,7 +199,7 @@ export interface SkillCommandSpec {
 // ============== 工具结果格式化 ==============
 
 /**
- * 内容块类型（OpenClaw 风格响应格式）
+ * 内容块类型
  */
 export interface ContentBlock {
   type: 'text' | 'json' | 'markdown' | 'table';

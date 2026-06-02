@@ -1,7 +1,7 @@
 /**
  * DB-Ops 审批流程
  *
- * 复用 OpenClaw 的 before-tool-call 机制
+ * 复用 upstream before-tool-call 机制
  * 实现危险操作的审批流程
  */
 

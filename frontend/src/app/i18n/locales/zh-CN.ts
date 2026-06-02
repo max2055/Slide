@@ -166,7 +166,7 @@ export const zh_CN: TranslationMap = {
     "approval": "审批管理",
     // Chat 菜单组
     chat: "对话",
-    // OpenClaw 菜单组
+    // 导航菜单组
     sessions: "会话",
     agents: "智能体",
     // Settings 菜单组
@@ -207,7 +207,7 @@ export const zh_CN: TranslationMap = {
     events: "告警聚合事件全生命周期管理",
     // Chat 菜单组
     chat: "与 AI 助手交互",
-    // OpenClaw 菜单组
+    // 导航菜单组
     sessions: "会话历史",
     agents: "Agent 配置",
     // Settings 菜单组
