@@ -89,7 +89,7 @@
   --shadow-xl: 0 24px 48px rgba(0, 0, 0, 0.1);
   --shadow-glow: 0 0 20px var(--accent-glow);
 
-  /* Radii — delegated to base.css + OpenClaw theme system */
+  /* Radii — delegated to base.css + Slide theme system */
 
   /* Transitions */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -196,7 +196,7 @@
   color-scheme: dark;
 }
 
-/* Roundness — delegated to OpenClaw theme system (app-settings.ts:applyBorderRadius).
+/* Roundness — delegated to Slide theme system (app-settings.ts:applyBorderRadius).
    The global.css :root static values in base.css serve as fallback. */
 
 /* Theme Transition Animation */

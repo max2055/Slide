@@ -1,7 +1,7 @@
 -- ============================================
 -- Database Migration: Add parent_id to chat_messages
 -- ============================================
--- Purpose: Enable OpenClaw-compatible DAG message structure
+-- Purpose: Enable DAG-compatible DAG message structure
 -- Date: 2026-04-15
 -- ============================================
 
@@ -20,7 +20,7 @@ CREATE INDEX `idx_session_parent` ON `chat_messages` (`session_id`, `parent_id`)
 
 -- Add comment to document the purpose
 ALTER TABLE `chat_messages`
-COMMENT = 'Chat messages with OpenClaw-compatible parent_id DAG support';
+COMMENT = 'Chat messages with DAG-compatible parent_id DAG support';
 
 -- Note: Existing messages will have NULL parent_id (root messages)
 -- New messages should set parent_id when replying to specific messages
