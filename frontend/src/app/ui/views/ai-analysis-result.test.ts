@@ -104,7 +104,7 @@ describe('92-02-01: ai-analysis-result component', () => {
 
     it('renders JSON fallback when status=completed and result is an object', async () => {
       el.status = 'completed';
-      el.result = { summary: 'Test summary', findings: ['Issue 1', 'Issue 2'] };
+      el.result = { summary: 'Test summary', findings: ['Issue 1', 'Issue 2'] } as any;
       await el.updateComplete;
 
       const shadow = el.shadowRoot!;

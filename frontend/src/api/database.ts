@@ -1,7 +1,7 @@
 /**
  * Slide - Database Operations API
  */
-import apiClient from './index';
+import apiClient from './index.js';
 
 // 数据库实例管理
 export const databaseAPI = {
@@ -53,7 +53,7 @@ export const databaseAPI = {
 
   // 获取实例监控指标
   getMetrics(id: string, params?: { startTime?: string; endTime?: string; metrics?: string[] }) {
-    return apiClient.get<MetricsResponse>(`/database/instances/${id}/metrics`, { params });
+    return apiClient.get<MetricsResponse>(`/database/instances/${id}/metrics`, { params: params as any });
   },
 };
 
@@ -144,7 +144,7 @@ export const monitorAPI = {
       interval?: string;
     }
   ) {
-    return apiClient.get<HistoryMetricsResponse>(`/monitor/${instanceId}/history`, { params });
+    return apiClient.get<HistoryMetricsResponse>(`/monitor/${instanceId}/history`, { params: params as any });
   },
 };
 

@@ -1,7 +1,7 @@
 /**
  * IAgentEngine — Agent abstraction layer interface contract.
  *
- * Defines the platform contract for agent adapters (DirectAdapter, OpenClawAdapter).
+ * Defines the platform contract for agent adapters (DirectAdapter).
  * Platform code depends ONLY on this interface, not on any specific adapter.
  *
  * @slide/agent-core integration:

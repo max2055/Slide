@@ -3,15 +3,14 @@
  *
  * Wraps IAgentEngine.chat() with message persistence via chatDatabaseService.
  * Used by platform code that needs to send chat messages and stream responses
- * through the active adapter (DirectAdapter or OpenClawAdapter).
+ * through the active adapter (DirectAdapter).
  *
  * Architecture:
  *   handleChatSend() → getAgentEngine('chat').chat() → onEvent callbacks
  *   handleChatHistory() → chatDatabaseService.getMessages()
  *
  * The caller is responsible for forwarding ChatEvents to the WebSocket client.
- * Adapter-specific WS servers (DirectAdapter's WS transport, OpenClawAdapter's
- * Gateway) manage client connections independently.
+ * DirectAdapter's WS transport manages client connections.
  */
 
 import { chatDatabaseService } from './chat-database-service.js';

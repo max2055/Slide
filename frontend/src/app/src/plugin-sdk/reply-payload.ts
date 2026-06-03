@@ -1,5 +1,5 @@
 /**
- * Slim reply-payload helpers — extracted from OpenClaw plugin-sdk.
+ * Slim reply-payload helpers — extracted from plugin-sdk.
  * Only contains the functions actually used by the Slide frontend.
  */
 

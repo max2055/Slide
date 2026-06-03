@@ -66,7 +66,7 @@ function applyDefaultTab(host: LifecycleHost) {
   // Only override if on root path
   if (window.location.pathname === "/" || window.location.pathname === host.basePath || window.location.pathname === host.basePath + "/") {
     if ((DEFAULT_TAB_OPTIONS as readonly string[]).includes(defaultTab)) {
-      setTab(host as Parameters<typeof setTab>[0], defaultTab as Tab);
+      setTab(host as unknown as Parameters<typeof setTab>[0], defaultTab as Tab);
     }
   }
 }

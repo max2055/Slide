@@ -22,20 +22,46 @@ export type MessageGroup = {
 };
 
 /** Content item types in a normalized message */
-export type MessageContentItem = {
-  type: "text" | "tool_call" | "tool_result";
+export type MessageContentItemBase = {
+  type: string;
   text?: string;
   name?: string;
   args?: unknown;
+  id?: string;
+  url?: string;
+  kind?: string;
+  label?: string;
+  viewId?: string;
+  rawText?: string | null;
+  preview?: { kind?: string; surface?: string; url?: string; title?: string; preferredHeight?: number; viewId?: string; [key: string]: unknown };
+  isVoiceNote?: boolean;
+  attachment?: {
+    isVoiceNote?: boolean;
+    mimeType?: string;
+    url: string;
+    kind: string;
+    label: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
 };
+
+export type MessageContentItem =
+  | (MessageContentItemBase & { type: "text" })
+  | (MessageContentItemBase & { type: "tool_call" })
+  | (MessageContentItemBase & { type: "tool_result" })
+  | (MessageContentItemBase & { type: "attachment" })
+  | (MessageContentItemBase & { type: "canvas" });
 
 /** Normalized message structure for rendering */
 export type NormalizedMessage = {
+  kind?: string;
   role: string;
   content: MessageContentItem[];
   timestamp: number;
   id?: string;
   senderLabel?: string | null;
+  replyTarget?: NormalizedMessage | null;
 };
 
 /** Tool card representation for tool calls and results */
@@ -44,4 +70,16 @@ export type ToolCard = {
   name: string;
   args?: unknown;
   text?: string;
+  id?: string;
+  outputText?: string;
+  inputText?: string;
+  preview?: {
+    kind?: string;
+    surface?: string;
+    url?: string;
+    title?: string;
+    preferredHeight?: number;
+    viewId?: string;
+    [key: string]: unknown;
+  };
 };

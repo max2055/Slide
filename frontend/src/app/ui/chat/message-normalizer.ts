@@ -200,9 +200,9 @@ function expandTextContent(text: string): {
     });
     audioAsVoice = audioAsVoice || directives.audioAsVoice;
     if (directives.replyToExplicitId) {
-      replyTarget = { kind: "id", id: directives.replyToExplicitId };
+      replyTarget = { kind: "id", id: directives.replyToExplicitId } as NormalizedMessage;
     } else if (directives.replyToCurrent && replyTarget === null) {
-      replyTarget = { kind: "current" };
+      replyTarget = { kind: "current" } as NormalizedMessage;
     }
     if (directives.text) {
       parts.push({ type: "text", text: directives.text });

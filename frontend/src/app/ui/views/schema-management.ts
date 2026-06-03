@@ -362,6 +362,7 @@ export class SchemaManagementPage extends LitElement {
   @state() private snapshotDetail: TableSchemaRow[] = [];
   @state() private activeTab: "tables" | "changes" = "tables";
   @state() private collectResult: { collected: number; tables: number; columns: number } | null = null;
+  @state() private hint: string | null = null;
 
   private get _activeInstanceId(): number | null {
     return this.instanceId ?? this.selectedInstance;

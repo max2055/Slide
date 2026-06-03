@@ -125,7 +125,7 @@ export function resolveThinkingDefaultForModel(params: {
     },
   });
   if (pluginDecision) {
-    return pluginDecision;
+    return pluginDecision as ThinkLevel;
   }
   return resolveThinkingDefaultForModelFallback(params);
 }

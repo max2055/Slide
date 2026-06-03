@@ -1,8 +1,7 @@
 /**
  * AI Agent Bridge — 统一 AI 分析入口。
  *
- * 通过 IAgentEngine.invoke() 派发 AI 分析任务，适配器（DirectAdapter
- * 或 OpenClawAdapter）负责底层执行。不再直接调用 sendGatewayChat。
+ * 通过 IAgentEngine.invoke() 派发 AI 分析任务，DirectAdapter 负责底层执行。
  *
  * Architecture:
  *   dispatchOrReuse()

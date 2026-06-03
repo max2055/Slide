@@ -43,6 +43,15 @@ interface AlertRule {
   created_by?: number;
   created_at: string;
   updated_at: string;
+  instance_id?: number;
+  from_level?: string;
+  to_level?: string;
+  trigger_condition?: string;
+  trigger_value?: string;
+  start_time?: string;
+  end_time?: string;
+  _days?: string | number[];
+  duration_minutes?: number;
 }
 
 @customElement("alerts-page")
@@ -775,7 +784,7 @@ export class AlertsPage extends LitElement {
   // ==================== Tab Navigation ====================
 
   private _renderTabs() {
-    const tabs = [
+    const tabs: Array<{ key: string; label: string; badge?: number }> = [
       { key: 'alerts' as const, label: '告警列表' },
       { key: 'rules' as const, label: '告警规则' },
       { key: 'escalation' as const, label: '升级规则' },
@@ -789,7 +798,7 @@ export class AlertsPage extends LitElement {
         ${tabs.map(tab => html`
           <button
             class="tab ${this.activeAlertTab === tab.key ? 'active' : ''}"
-            @click=${() => { this.activeAlertTab = tab.key; this._onTabSwitch(tab.key); }}
+            @click=${() => { this.activeAlertTab = tab.key as typeof this.activeAlertTab; this._onTabSwitch(tab.key); }}
           >
             ${tab.label}
             ${tab.badge > 0 ? html`<span class="tab-badge">${tab.badge}</span>` : ''}
@@ -2296,7 +2305,7 @@ export class AlertsPage extends LitElement {
         description: form.description || '',
         start_time: form.start_time || '02:00',
         end_time: form.end_time || '06:00',
-        day_of_week: (form._days || [0]).join(','),
+        day_of_week: ((Array.isArray(form._days) ? form._days : [0]) as number[]).join(','),
         enabled: form.enabled !== false,
       };
       let res: Response;
@@ -2506,7 +2515,7 @@ export class AlertsPage extends LitElement {
   }
 
   private _openSilenceModal() {
-    this.ruleForm = { instance_id: '', metric_name: '', duration_minutes: 30 };
+    this.ruleForm = { instance_id: undefined as any, metric_name: '', duration_minutes: 30 };
     this.ruleFormError = '';
     this.showSilenceModal = true;
   }

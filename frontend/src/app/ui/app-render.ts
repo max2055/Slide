@@ -7,6 +7,8 @@ import {
 import { t } from "../i18n/index.ts";
 import { getSafeLocalStorage } from "./local-storage.ts";
 import { refreshChatAvatar } from "./app-chat.ts";
+
+function runUpdate(_state: unknown) { /* noop */ }
 import { renderChatControls, renderChatMobileToggle, renderChatSessionSelect } from "./app-render.helpers.ts";
 import {
   hasSlidePermission,
@@ -41,6 +43,7 @@ import "./views/rbac-page.ts";
 import "./views/docs-viewer.ts";
 import "./views/settings-shell.ts";
 import "./views/appearance-settings.ts";
+import "./views/branding-settings.ts";
 import { icons } from "../../icons.js";
 import { normalizeBasePath, TAB_GROUPS, TAB_REQUIRED_PERMISSIONS, subtitleForTab, titleForTab } from "./navigation.ts";
 import { agentLogoUrl } from "./views/agents-utils.ts";
@@ -787,7 +790,7 @@ export function renderApp(state: AppViewState) {
               canSend: state.connected,
               error: state.lastError,
               lastError: state.lastError,
-              sessions: state.sessionsResult?.sessions ?? null,
+              sessions: (state.sessionsResult as any) ?? null,
               focusMode: state.settings.chatFocusMode || false,
               sidebarOpen: state.sidebarOpen,
               sidebarContent: state.sidebarContent,

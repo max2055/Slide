@@ -67,7 +67,7 @@ export function normalizeThinkLevel(raw?: string | null): string | undefined {
   return undefined;
 }
 
-export function listThinkingLevelLabels(provider?: string | null): readonly string[] {
+export function listThinkingLevelLabels(provider?: string | null, _model?: string | null): readonly string[] {
   return isBinaryThinkingProvider(provider) ? BINARY_THINKING_LEVELS : BASE_THINKING_LEVELS;
 }
 

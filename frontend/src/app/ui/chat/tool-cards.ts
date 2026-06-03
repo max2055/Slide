@@ -152,11 +152,12 @@ export function extractToolCards(message: unknown, prefix = "tool"): ToolCard[] 
     if (isToolCall) {
       const args = coerceArgs(item.arguments ?? item.args ?? item.input);
       cards.push({
+        kind: "call" as const,
         id: resolveToolCardId(item, m, index, prefix),
         name: (item.name as string) ?? "tool",
         args,
         inputText: serializeToolInput(args),
-      });
+      } as ToolCard);
       continue;
     }
 
@@ -172,11 +173,12 @@ export function extractToolCards(message: unknown, prefix = "tool"): ToolCard[] 
         continue;
       }
       cards.push({
+        kind: "result" as const,
         id: cardId,
         name,
-        outputText: text,
+        outputText: text as string,
         preview,
-      });
+      } as ToolCard);
     }
   }
 
@@ -195,11 +197,12 @@ export function extractToolCards(message: unknown, prefix = "tool"): ToolCard[] 
       "tool";
     const text = extractTextCached(message) ?? undefined;
     cards.push({
+      kind: "result" as const,
       id: resolveToolCardId({}, m, 0, prefix),
       name,
-      outputText: text,
+      outputText: text as string,
       preview: extractToolPreview(text, name),
-    });
+    } as ToolCard);
   }
 
   return cards;

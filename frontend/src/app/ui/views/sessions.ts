@@ -18,12 +18,19 @@ export type SessionsProps = {
   limit: string;
   includeGlobal: boolean;
   includeUnknown: boolean;
+  showArchived?: boolean;
   basePath: string;
   searchQuery: string;
   sortColumn: "key" | "kind" | "updated" | "tokens";
   sortDir: "asc" | "desc";
   page: number;
   pageSize: number;
+  selectedKeys?: Set<string>;
+  expandedCheckpointKey?: string | null;
+  checkpointItemsByKey?: Record<string, unknown[]>;
+  checkpointLoadingKey?: string | null;
+  checkpointBusyKey?: string | null;
+  checkpointErrorByKey?: Record<string, string>;
   onFiltersChange: (next: {
     activeMinutes: string;
     limit: string;
@@ -36,6 +43,15 @@ export type SessionsProps = {
   onPageSizeChange: (size: number) => void;
   onRefresh: () => void;
   onNavigateToChat?: (sessionKey: string) => void;
+  onPatch?: (sessionKey: string, patch: Record<string, unknown>) => void;
+  onToggleSelect?: (key: string) => void;
+  onSelectPage?: (keys: Iterable<string>) => void;
+  onDeselectPage?: (keys: Iterable<string>) => void;
+  onDeselectAll?: () => void;
+  onDeleteSelected?: () => void;
+  onToggleCheckpointDetails?: (key: string) => void;
+  onBranchFromCheckpoint?: (key: string) => void;
+  onRestoreCheckpoint?: (key: string) => void;
 };
 
 const PAGE_SIZES = [10, 25, 50, 100] as const;

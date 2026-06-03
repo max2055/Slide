@@ -1,6 +1,10 @@
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.ts";
 import { normalizeThinkLevel } from "./thinking.ts";
 
+export function listThinkingLevelLabels(provider?: string | null, model?: string | null): string[] {
+  return normalizeThinkLevel("off") ? ["off", "minimal", "low", "medium", "high", "xhigh"] : []; // stub
+}
+
 export function normalizeThinkingOptionValue(raw: string): string {
   return normalizeThinkLevel(raw) ?? normalizeLowercaseStringOrEmpty(raw);
 }

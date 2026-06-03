@@ -1,4 +1,4 @@
-import type { OpenClawConfig } from "../config/types.js";
+import type { SlideConfig } from "../config/types.js";
 import type { CommandArgValues } from "./commands-args.types.js";
 
 export type { CommandArgValue, CommandArgValues, CommandArgs } from "./commands-args.types.js";
@@ -17,7 +17,7 @@ export type CommandCategory =
 export type CommandArgType = "string" | "number" | "boolean";
 
 export type CommandArgChoiceContext = {
-  cfg?: OpenClawConfig;
+  cfg?: SlideConfig;
   provider?: string;
   model?: string;
   command: ChatCommandDefinition;
@@ -76,7 +76,7 @@ export type CommandDetection = {
 };
 
 export type ShouldHandleTextCommandsParams = {
-  cfg: OpenClawConfig;
+  cfg: SlideConfig;
   surface: string;
   commandSource?: "text" | "native";
 };

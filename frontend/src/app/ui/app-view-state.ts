@@ -294,6 +294,14 @@ export type AppViewState = {
     overviewLogCursor: number;
     client: DirectGatewayClient | null;
     refreshSessionsAfterChat: Set<string>;
+    channelsSnapshot: import("./types.js").ChannelsStatusSnapshot | null;
+    channelsLoading: boolean;
+    channelsError: string | null;
+    channelsLastSuccess: number | null;
+    chatModelSwitchPromises: Record<string, Promise<unknown>>;
+    sessionSwitchFlashKey: string | null;
+    sessionSwitchNotice: string | null;
+    sessionsShowArchived: boolean;
     connect: () => void;
     logout: () => void;
     setTab: (tab: Tab) => void;

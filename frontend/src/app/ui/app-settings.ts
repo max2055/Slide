@@ -48,6 +48,7 @@ type SettingsHost = {
 type SettingsAppHost = SettingsHost &
   AgentsState &
   SessionsState & {
+    lastError: string | null;
     overviewLogCursor: number | null;
     overviewLogLines: string[];
     attentionItems: AttentionItem[];

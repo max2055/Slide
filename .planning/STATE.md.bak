@@ -1,0 +1,156 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-05-09T02:21:39.802Z"
+progress:
+  total_phases: 21
+  completed_phases: 12
+  total_plans: 58
+  completed_plans: 32
+  percent: 55
+---
+
+# Slide 项目状态
+
+**最后更新**: 2026-04-29
+**当前里程碑**: M1 已完成 | 下一步: M4 功能完善
+**下一里程碑**: M4 - 功能完善（告警通知、指标可视化、表结构管理、索引采集）
+**里程碑路线图**: 参见 `.planning/ROADMAP_V2.md`
+
+---
+
+## 已完成功能
+
+### UI 优化 (Phase 0.9) ✅
+
+- [x] 菜单重组为 4 个主组：数据库运维、聊天、平台管理、设置
+- [x] 默认 Tab 改为 dashboard（仪表盘）
+- [x] 所有 Tab 使用中文标题和副标题
+- [x] 菜单组标签翻译正确
+
+### M1.Phase 1.1 - 完善后端数据采集 ✅
+
+- [x] metrics 定时采集任务（每 30 秒）
+- [x] 慢查询定时采集任务（每 5 分钟）
+- [x] 容量数据定时采集任务（每 1 小时）
+- [x] 采集任务管理 API（启动/停止/状态）
+- [x] 8 个单元测试全部通过
+
+### M1.Phase 1.2 - 报表生成功能 ✅
+
+- [x] 健康检查报表生成
+- [x] 性能分析报表生成
+- [x] 慢查询报表生成
+- [x] 容量规划报表生成
+- [x] PDF 导出功能
+- [x] Markdown 导出功能
+- [x] HTML 导出功能
+- [x] JSON 导出功能
+- [x] 报表管理 API（6 个端点）
+- [x] 前端报表页面对接
+
+### M1.Phase 1.3 - 告警规则引擎 ✅
+
+- [x] 告警规则评估器（支持 6 种操作符）
+- [x] 告警引擎服务（每 60 秒自动评估）
+- [x] 告警规则 CRUD API
+- [x] 告警引擎状态 API
+- [x] 手动触发评估 API
+- [x] 自动创建告警记录
+
+### Phase 04 - 功能验证与修复 ✅
+
+- [x] 移除对话功能死代码 (chat-methods.ts)
+- [x] 验证 OpenClaw 原生对话机制可用
+- [x] 验证监控采集正常运行
+- [x] 修复报表生成类型错误
+- [x] 验证 Skill/Tool 调用正常
+- [x] 验证告警引擎正常运行
+
+### 数据质量修复 ✅
+
+- [x] 移除所有 Math.random() 模拟数据（CPU/内存/事务数）
+- [x] 修复告警评估器的字符串比较 Bug（DECIMAL 列返回字符串导致字典序比较）
+- [x] 清理 654 条虚假告警记录
+
+---
+
+## 下一步：M4 功能完善（优先级 1）
+
+### Phase 4.1 - 告警通知推送 ✅
+
+- [x] 通知渠道管理 API（钉钉/企微/飞书/Webhook）
+- [x] 通知模板定义（4 种渠道格式）
+- [x] 通知路由规则（severity 层级匹配）
+- [x] NotificationService 异步发送（CronJob 10s 轮询）
+- [x] 通知记录与失败重试（3 次指数退避）
+- [x] 告警风暴保护（5 分钟去重窗口）
+- [x] 测试发送 API 验证渠道连通性
+- [x] 35 个单元测试全部通过
+
+### Phase 4.2 - 指标可视化 ✅
+
+- [x] 前端集成 ECharts（metric-chart 可复用 Lit 组件）
+- [x] 指标历史趋势 API（GET /instances/:id/metrics/history）
+- [x] 实例详情页嵌入图表（趋势 Tab，3 个 ECharts 趋势图）
+
+### Phase 4.3 - 表结构管理 ✅
+
+- [x] Schema 快照采集（information_schema）
+- [x] 变更检测与对比
+- [x] 变更历史展示
+- [x] Schema 管理 API（5 个端点）
+- [x] 前端 Schema 管理页面
+
+### Phase 4.4 - 索引管理 ✅
+
+- [x] 索引信息采集（information_schema.STATISTICS）
+- [x] 冗余索引检测（前缀匹配算法，排除 PRIMARY/UNIQUE）
+- [x] 未使用索引标记（performance_schema）
+- [x] 索引管理 API（6 个端点，JWT 认证）
+- [x] 前端索引管理页面（实例选择/索引列表/冗余警告/未使用标记）
+- [x] 导航注册（indexes tab + i18n）
+
+---
+
+## 后续里程碑
+
+### M5 - AI 增强（优先级 2）
+
+- [x] TopSQL AI 分析（05-02）- topsql-analysis-service.ts
+- [x] 容量预测（线性回归）（05-02）- capacity-predictor.ts
+- [x] AI 分析数据库表和服务（05-01）- ai_analysis table + aiAnalysisDatabaseService
+- [x] 告警根因分析（05-03）- alert-rca-service.ts
+- [x] 故障自动诊断（05-03）- fault-diagnosis-service.ts
+- [x] AI REST API 路由和事件驱动触发器（05-04）- server.ts 8 条 /api/ai/* 路由 + 3 个 CronJob
+- [x] 前端 AI 分析入口 — 05-05: ai-analysis-result 组件 + alerts.ts AI 分析按钮 + instance-detail.ts 一键诊断
+
+### M6 - 体系化重构（优先级 3）
+
+- [x] 数据库基础：8 个新表、指标注册表、基线计算（06-01）
+- [x] 告警规则引擎升级 - 后端：基线调度/启动初始化/告警风暴保护（62-01）
+- [x] 告警规则引擎升级 - 前端（62-02）— 6 Tab 管理页面（告警列表/规则/升级/维护/静默/基线），支持 static/dynamic 阈值
+- [x] 告警事件管理优化 — 后端 MTTR/升级通知 + 前端事件管理页（统计仪表板/时间线/复盘/AI分析）
+
+### M7 - 运维体验优化（优先级 3，已规划）
+
+- [x] Phase 07：实例详情内聚 Schema/索引 [P0] — ✅ 已完成
+  - [x] 导航精简：移除 schema/indexes 一级菜单
+  - [x] 实例详情新增「表结构」和「索引」Tab
+  - [x] schema-management 支持 instanceId 属性嵌入
+  - [x] index-management 支持 instanceId 属性嵌入
+- [x] Phase 08：指标定义与实例详情打通 [P1] — ✅ 已完成（hover tooltips/阈值线/db_type 过滤 + CR 修复）
+
+### Phase 09 - 指标注册表 CRUD 管理 ✅
+
+- [x] 09-01 后端：schema.sql 添加 is_builtin 列 + 种子数据 + metric-database-service + MetricRegistry DB 加载 + POST/PUT/DELETE 路由
+- [x] 09-02 前端：「新建指标」按钮 + 模态表单（创建/编辑）+ 删除确认 + JWT 认证 + 预定义保护
+
+### M8 - 扩展功能（优先级 4）
+
+- [x] Phase 8.1 - SQL 审核（81-01 后端 + 81-02 前端）— schema.sql + sql-audit-service.ts + 5 API 端点 + sql-audit-tab 组件 + 实例详情集成
+- [ ] Phase 8.2 - 用户权限管理
+- [x] Phase 8.3 - 日志分析（83-01 后端 + 83-02 前端）— database_logs 表 + DatabaseLogService 采集 + CronJob + 4 API + database-log-tab 组件 + 实例详情集成
+- [ ] Phase 8.3 - 日志分析（83-01 后端 ✅ / 83-02 前端 待执行）
