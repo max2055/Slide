@@ -18,6 +18,7 @@ export type Tab =
   | "ai-settings"
   | "sessions"
   | "chat"
+  | "config"
   | "cron-jobs"
   | "dashboard"
   | "docs"
@@ -31,6 +32,8 @@ export type Tab =
   | "events"
   | "users"
   | "llm-config"
+  | "llm-usage"
+  | "overview"
   | "rbac"
   | "sql-console"
   | "approval"
@@ -44,6 +47,7 @@ const TAB_PATHS: Record<Tab, string> = {
   "scoring-settings": "/scoring-settings",
   sessions: "/sessions",
   chat: "/chat",
+  config: "/config",
   "cron-jobs": "/cron-jobs",
   dashboard: "/dashboard",
   docs: "/docs",
@@ -57,6 +61,8 @@ const TAB_PATHS: Record<Tab, string> = {
   events: "/events",
   users: "/users",
   "llm-config": "/llm-config",
+  "llm-usage": "/llm-usage",
+  overview: "/overview",
   "rbac": "/rbac",
   "sql-console": "/sql-console",
   "approval": "/approval",

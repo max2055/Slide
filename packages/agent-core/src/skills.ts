@@ -208,9 +208,9 @@ export class SkillsLoader {
       meta[key] = value;
     }
 
-    // Merge nested metadata fields (desc, nanobot, openclaw)
+    // Merge nested metadata fields (desc, nanobot)
     const merged: Record<string, unknown> = { ...meta };
-    for (const ns of ['desc', 'nanobot', 'openclaw']) {
+    for (const ns of ['desc', 'nanobot']) {
       const sub = meta[ns];
       if (sub && typeof sub === 'object') {
         Object.assign(merged, sub);

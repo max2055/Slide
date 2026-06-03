@@ -94,7 +94,7 @@ export function renderChatSessionSelect(
       ${modelSelect} ${thinkingSelect}
     </div>
     <div class="chat-controls__session-notice" role="status" aria-live="polite">
-      ${state.sessionSwitchNotice?.text ?? ""}
+      ${(state.sessionSwitchNotice as any)?.text ?? state.sessionSwitchNotice ?? ""}
     </div>
   `;
 }
@@ -213,7 +213,7 @@ async function refreshSessionOptions(state: AppViewState) {
     includeUnknown: true,
     showArchived: state.sessionsShowArchived,
     agentId: resolveSessionOptionsAgentId(state),
-  });
+  } as any);
 }
 
 function resolveSessionOptionsAgentId(state: AppViewState): string {
@@ -314,13 +314,13 @@ function resolveThinkingLevelOptions(
   model: string | null,
 ): GatewayThinkingLevelOption[] {
   if (activeRow?.thinkingLevels?.length) {
-    return activeRow.thinkingLevels;
+    return activeRow.thinkingLevels as unknown as GatewayThinkingLevelOption[];
   }
   const sessionModelMatchesDefaults =
     (!activeRow?.modelProvider || activeRow.modelProvider === defaults?.modelProvider) &&
     (!activeRow?.model || activeRow.model === defaults?.model);
   if (sessionModelMatchesDefaults && defaults?.thinkingLevels?.length) {
-    return defaults.thinkingLevels;
+    return defaults.thinkingLevels as unknown as GatewayThinkingLevelOption[];
   }
   const labels =
     (activeRow?.thinkingOptions?.length ? activeRow.thinkingOptions : null) ??

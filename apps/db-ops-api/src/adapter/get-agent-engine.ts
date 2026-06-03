@@ -146,7 +146,7 @@ async function createDirectAdapter(): Promise<DirectAdapter> {
 // ── Public API ──
 
 /**
- * Always returns 'direct' — OpenClawAdapter has been removed.
+ * Get the active adapter type.
  */
 export function getAdapterType(): 'direct' {
   return 'direct';

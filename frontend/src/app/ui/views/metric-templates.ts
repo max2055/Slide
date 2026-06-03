@@ -36,6 +36,16 @@ interface AlertRule {
   threshold_template?: { warning?: number | null; error?: number | null; critical?: number | null } | null;
   threshold_type: string; duration_seconds: number; silence_minutes: number;
   template_id?: number | null;
+  instance_ids?: number[];
+  instance_id?: number;
+  from_level?: string;
+  to_level?: string;
+  trigger_condition?: string;
+  trigger_value?: string;
+  start_time?: string;
+  end_time?: string;
+  _days?: string;
+  duration_minutes?: number;
 }
 
 const DB_TYPES = ["mysql", "postgresql", "oracle", "dameng"];
@@ -122,6 +132,21 @@ export class MetricTemplatesPage extends LitElement {
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private ok: string | null = null;
+
+  @state() private editing: MetricTemplate | null = null;
+  @state() private expandedId: number | null = null;
+  @state() private form: { name: string; description: string; db_type: string; metrics: string[]; enabled: boolean } = { name: "", description: "", db_type: "", metrics: [], enabled: true };
+  @state() private formMsg: string | null = null;
+  @state() private ruleForm: { name: string; metric_name: string; warning: string; error: string; critical: string; operator?: string; severity?: string; duration_seconds?: number; silence_minutes?: number } = { name: "", metric_name: "", warning: "", error: "", critical: "" };
+  @state() private ruleFormMsg: string | null = null;
+  @state() private ruleSaving = false;
+  @state() private saving = false;
+  @state() private showLinkModal = false;
+  @state() private showModal = false;
+  @state() private showRuleModal = false;
+  @state() private linkingTemplate: MetricTemplate | null = null;
+  @state() private instanceLinks: InstanceTemplateLink[] = [];
+  @state() private templateRules: AlertRule[] = [];
 
   override connectedCallback() { super.connectedCallback(); this._load(); }
 

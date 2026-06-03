@@ -48,7 +48,7 @@ export async function loadControlUiBootstrapConfig(state: ControlUiBootstrapStat
     state.assistantName = normalized.name;
     state.assistantAvatar = normalized.avatar;
     state.assistantAgentId = normalized.agentId ?? null;
-    state.serverVersion = parsed.serverVersion ?? null;
+    state.serverVersion = (parsed.serverVersion as string) ?? null;
     state.localMediaPreviewRoots = Array.isArray(parsed.localMediaPreviewRoots)
       ? parsed.localMediaPreviewRoots.filter((value): value is string => typeof value === "string")
       : [];

@@ -318,6 +318,9 @@ export type GatewaySessionsDefaults = {
   modelProvider: string | null;
   model: string | null;
   contextTokens: number | null;
+  thinkingLevels?: string[];
+  thinkingOptions?: GatewayThinkingLevelOption[];
+  thinkingDefault?: string;
 };
 
 export type GatewayThinkingLevelOption = {
@@ -415,6 +418,10 @@ export type GatewaySessionRow = {
   systemSent?: boolean;
   abortedLastRun?: boolean;
   thinkingLevel?: string;
+  thinkingLevels?: string[];
+  thinkingOptions?: GatewayThinkingLevelOption[];
+  thinkingDefault?: string;
+  hasActiveRun?: boolean;
   fastMode?: boolean;
   verboseLevel?: string;
   reasoningLevel?: string;
@@ -717,20 +724,15 @@ export type ModelCatalogEntry = {
   input?: Array<"text" | "image" | "document">;
 };
 
-export type ToolCatalogProfile =
-  import("../protocol/schema/types.js").ToolCatalogProfile;
-export type ToolCatalogEntry =
-  import("../protocol/schema/types.js").ToolCatalogEntry;
-export type ToolCatalogGroup =
-  import("../protocol/schema/types.js").ToolCatalogGroup;
-export type ToolsCatalogResult =
-  import("../protocol/schema/types.js").ToolsCatalogResult;
-export type ToolsEffectiveEntry =
-  import("../protocol/schema/types.js").ToolsEffectiveEntry;
-export type ToolsEffectiveGroup =
-  import("../protocol/schema/types.js").ToolsEffectiveGroup;
-export type ToolsEffectiveResult =
-  import("../protocol/schema/types.js").ToolsEffectiveResult;
+export type ToolCatalogEntry = { id: string; label: string; description?: string; source?: string; pluginId?: string; optional?: boolean; defaultProfiles?: string[] };
+export type ToolCatalogGroup = { id: string; label: string; source?: string; pluginId?: string; tools: ToolCatalogEntry[] };
+export type ToolCatalogProfile = { id: string; label: string };
+export type ToolsCatalogResult = { groups?: ToolCatalogGroup[]; profiles?: ToolCatalogProfile[] };
+export type ToolsEffectiveEntry = Record<string, unknown>;
+export type ToolsEffectiveGroup = Record<string, unknown>;
+export type ToolsEffectiveResult = Record<string, unknown>;
+
+export type UpdateAvailable = { version: string; url?: string; latestVersion?: string; currentVersion?: string } | null;
 
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 

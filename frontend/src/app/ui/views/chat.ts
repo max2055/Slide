@@ -69,6 +69,8 @@ export type ChatProps = {
   fallbackStatus?: FallbackStatus | null;
   messages: unknown[];
   sideResult?: ChatSideResult | null;
+  sideResultTerminalRuns?: Set<string>;
+  runId?: string | null;
   toolMessages: unknown[];
   streamSegments: Array<{ text: string; ts: number }>;
   stream: string | null;
@@ -124,6 +126,13 @@ export type ChatProps = {
   onSplitRatioChange?: (ratio: number) => void;
   onChatScroll?: (event: Event) => void;
   basePath?: string;
+  modelCatalog?: unknown[];
+  modelsLoading?: boolean;
+  modelOverrides?: Record<string, unknown>;
+  manualRefreshInFlight?: boolean;
+  newMessagesBelow?: boolean;
+  settings?: Record<string, unknown>;
+  hello?: Record<string, unknown> | null;
 };
 
 const COMPACTION_TOAST_DURATION_MS = 5000;
@@ -191,7 +200,7 @@ function getInitializedToolCards(sessionKey: string): Set<string> {
 
 function appendCanvasBlockToAssistantMessage(
   message: unknown,
-  preview: Extract<NonNullable<ToolCard["preview"]>, { kind: "canvas" }>,
+  preview: NonNullable<ToolCard["preview"]>,
   rawText: string | null,
 ) {
   const raw = message as Record<string, unknown>;
@@ -234,7 +243,7 @@ function appendCanvasBlockToAssistantMessage(
 }
 
 function extractChatMessagePreview(toolMessage: unknown): {
-  preview: Extract<NonNullable<ToolCard["preview"]>, { kind: "canvas" }>;
+  preview: NonNullable<ToolCard["preview"]>;
   text: string | null;
   timestamp: number | null;
 } | null {

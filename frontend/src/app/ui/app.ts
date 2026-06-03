@@ -120,6 +120,7 @@ export class SlideApp extends LitElement {
   private eventLogBuffer: EventLogEntry[] = [];
   private toolStreamSyncTimer: number | null = null;
   private sidebarCloseTimer: number | null = null;
+  private globalKeydownHandler: ((e: KeyboardEvent) => void) | null = null;
 
   @state() assistantName = bootAssistantIdentity.name;
   @state() assistantAvatar = bootAssistantIdentity.avatar;
@@ -514,7 +515,7 @@ export class SlideApp extends LitElement {
   }
 
   connect() {
-    initChatClient(this);
+    initChatClient(this as unknown as Record<string, unknown>);
   }
 
   logout() {

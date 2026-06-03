@@ -276,8 +276,9 @@ export class LLMConfigPage extends LitElement {
     this.form = {
       name: tpl.name, display_name: tpl.displayName,
       api_base_url: tpl.baseUrl, default_model: tpl.defaultModel,
-      deployment_type: tpl.deploymentType, api_key: "",
+      deployment_type: tpl.deploymentType, api_format: "", api_key: "",
       enabled: true, is_default: this.providers.length === 0,
+      models: [],
     };
     this.modelSuggestions = tpl.models;
     this.viewMode = "form";

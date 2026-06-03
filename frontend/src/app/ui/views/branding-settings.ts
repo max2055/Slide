@@ -100,9 +100,16 @@ export class BrandingSettings extends LitElement {
     this._loadFromApi();
   }
 
+  private _getAuthHeaders(): Record<string, string> {
+    const token = localStorage.getItem("token");
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
   private async _loadFromApi() {
     try {
-      const resp = await fetch("/api/branding/config");
+      const resp = await fetch("/api/branding/config", {
+        headers: this._getAuthHeaders(),
+      });
       if (resp.ok) {
         const data = await resp.json();
         this.cliName = data.cli_name ?? "";
@@ -143,7 +150,7 @@ export class BrandingSettings extends LitElement {
     try {
       const resp = await fetch("/api/branding/config", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...this._getAuthHeaders() },
         body: JSON.stringify({
           cli_name: this.cliName.trim(),
           product_name: this.productName.trim(),

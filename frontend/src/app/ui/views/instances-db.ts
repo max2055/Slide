@@ -593,6 +593,7 @@ export class InstancesPage extends LitElement {
   @state() private listTestMessage = "";
   @state() private showEditDialog = false;
   @state() private showDeleteDialog = false;
+  @state() private showAddDialog = false;
   @state() private editingInstance: DatabaseInstance | null = null;
   @state() private deletingInstance: DatabaseInstance | null = null;
   @state() private formData: InstanceFormData = {

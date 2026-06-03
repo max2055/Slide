@@ -172,7 +172,7 @@ export class AppLayout extends LitElement {
     this.updatePageTitle(window.location.pathname);
     this.loadCurrentUser();
     this.loadAlertCount();
-    this.alertInterval = setInterval(() => this.loadAlertCount(), 300000);
+    this.alertInterval = window.setInterval(() => this.loadAlertCount(), 300000);
     window.addEventListener('popstate', this.handlePopState);
     document.addEventListener('click', this.handleClickOutside.bind(this));
   }

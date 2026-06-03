@@ -18,7 +18,7 @@ export type AgentToolEntry = {
   id: string;
   label: string;
   description: string;
-  source?: "core" | "plugin";
+  source?: string;
   pluginId?: string;
   optional?: boolean;
   defaultProfiles?: string[];
@@ -27,7 +27,7 @@ export type AgentToolEntry = {
 export type AgentToolSection = {
   id: string;
   label: string;
-  source?: "core" | "plugin";
+  source?: string;
   pluginId?: string;
   tools: AgentToolEntry[];
 };

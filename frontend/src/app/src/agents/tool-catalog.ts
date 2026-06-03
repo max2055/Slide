@@ -34,7 +34,7 @@ type CoreToolDefinition = {
   description: string;
   sectionId: string;
   profiles: ToolProfileId[];
-  /** @deprecated Legacy OpenClaw naming — kept for backward compatibility */
+  /** @deprecated Legacy naming — kept for backward compatibility */
   includeInSlideGroup?: boolean;
 };
 
