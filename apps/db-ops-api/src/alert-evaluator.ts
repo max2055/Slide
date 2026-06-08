@@ -325,9 +325,9 @@ export async function evaluateAllRules(): Promise<
         (Date.now() - new Date(metrics.recorded_at).getTime()) > STALE_THRESHOLD_MS
       );
 
-      // 仅当实例 health_status='critical' 且指标过期 > 10min 才创建可用性告警
+      // 仅当实例 health_status='critical' 且指标过期 > 10min（或完全缺失）才创建可用性告警
       // 避免健康实例因采集间隔差异被误报（monitor-collector 心跳 10s + 定时采集 5min）
-      if (isStale && instance.health_status === 'critical') {
+      if ((!metrics || isStale) && instance.health_status === 'critical') {
         const availabilityRule: AlertRule = {
           id: 0,
           name: 'Instance Availability',
