@@ -303,8 +303,14 @@ export async function evaluateAllRules(): Promise<
     for (const instance of instances) {
       const metrics = await metricsDatabaseService.getRealtimeMetrics(instance.id);
 
+      // 检测指标是否过期：超过 5 分钟未更新视为不可达
+      const isStale = metrics && (
+        !metrics.recorded_at ||
+        (Date.now() - new Date(metrics.recorded_at).getTime()) > 5 * 60 * 1000
+      );
+
       // 实例不可达时创建可用性告警，跳过所有指标规则
-      if (!metrics) {
+      if (!metrics || isStale) {
         const availabilityRule: AlertRule = {
           id: 0,
           name: 'Instance Availability',
@@ -336,6 +342,8 @@ export async function evaluateAllRules(): Promise<
       }
 
       for (const rule of rules) {
+        // Pre-filter: skip disabled rules
+        if (!rule.enabled) continue;
         // Pre-filter: skip if rule is scoped to specific db_types and instance type doesn't match
         if (rule.db_types && rule.db_types.length > 0) {
           const instanceDbType = (instance as any).db_type;

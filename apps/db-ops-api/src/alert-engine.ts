@@ -124,11 +124,13 @@ class AlertEngine {
         try {
           if (!alert.instance_id || !alert.metric_name) continue;
 
-          // 特殊处理：可用性告警（rule_id=0），实例恢复可达即恢复
+          // 特殊处理：可用性告警（rule_id=0），实例恢复可达且指标新鲜才恢复
           const ruleId = alert.tags?.rule_id;
           if (ruleId === 0 || alert.metric_name === '_availability') {
             const metrics = await metricsDatabaseService.getRealtimeMetrics(alert.instance_id);
-            if (metrics) {
+            const isFresh = metrics && metrics.recorded_at &&
+              (Date.now() - new Date(metrics.recorded_at).getTime()) <= 5 * 60 * 1000;
+            if (isFresh) {
               await alertDatabaseService.resolveAlert(alert.id);
               console.log(`[AlertEngine] Auto-resolved availability alert #${alert.id} (instance reachable again)`);
               await alertEventService.autoResolveByAlert(alert.id).catch(err =>
