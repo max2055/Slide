@@ -96,6 +96,21 @@ export function evaluateRuleWithLevels(
   currentValue: number,
   macros?: Record<string, number>
 ): 'warning' | 'error' | 'critical' | null {
+  // 阈值优先级：
+  //   1. 规则显式 threshold（threshold_type='static' 且 threshold > 0）→ 单阈值评估
+  //   2. 规则 threshold_template → 多级别模板评估（macros 解析 ${var} 占位符）
+  //   3. metric_definition.threshold_template → 仅作为 macro 默认值，不覆盖规则阈值
+
+  // static 规则有显式阈值时，直接使用单阈值评估，避免 threshold_template 覆盖
+  if (rule.threshold_type !== 'dynamic' && rule.threshold > 0 && rule.threshold_template) {
+    // 规则同时有显式 threshold 和 threshold_template，优先使用显式 threshold
+    const triggered = evaluateRule(rule, currentValue);
+    if (!triggered) return null;
+    return rule.severity === 'critical' ? 'critical'
+      : rule.severity === 'error' ? 'error'
+      : 'warning';
+  }
+
   // 先用 macros 解析阈值模板中的 ${var} 占位符
   const resolved = resolveThresholdTemplate(rule.threshold_template, macros);
   if (!resolved) {
@@ -303,14 +318,16 @@ export async function evaluateAllRules(): Promise<
     for (const instance of instances) {
       const metrics = await metricsDatabaseService.getRealtimeMetrics(instance.id);
 
-      // 检测指标是否过期：超过 5 分钟未更新视为不可达
+      // 检测指标是否过期：超过 10 分钟未更新视为不可达
+      const STALE_THRESHOLD_MS = 10 * 60 * 1000;
       const isStale = metrics && (
         !metrics.recorded_at ||
-        (Date.now() - new Date(metrics.recorded_at).getTime()) > 5 * 60 * 1000
+        (Date.now() - new Date(metrics.recorded_at).getTime()) > STALE_THRESHOLD_MS
       );
 
-      // 实例不可达时创建可用性告警，跳过所有指标规则
-      if (!metrics || isStale) {
+      // 仅当实例 health_status='critical' 且指标过期 > 10min 才创建可用性告警
+      // 避免健康实例因采集间隔差异被误报（monitor-collector 心跳 10s + 定时采集 5min）
+      if (isStale && instance.health_status === 'critical') {
         const availabilityRule: AlertRule = {
           id: 0,
           name: 'Instance Availability',
