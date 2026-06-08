@@ -217,7 +217,9 @@ Plans:
 - [x] **Phase 113: AI Agent Cron** — 自然语言驱动定时任务，替代 13 个硬编码 handler (completed 2026-05-27)
 - [x] **Phase 114: Verification 清账** — 执行 Phase 100/102/112 遗留的 12 项 human_needed 验证 (completed 2026-05-27)
 - [x] **Phase 115: 去 OpenClaw 迁移后清理** — 清理迁移遗留事项：删除 Agent LLM 工具、修复 TODO、清理残留引用、添加 CI (completed 2026-06-02)
-- 🚧 **Phase 116: 去 OpenClaw 运行时引用** — 替换运行时 CLI 名、环境变量、数据目录、Symbol 键、用户可见消息 (planning)
+- [x] **Phase 116: 去 OpenClaw 运行时引用** — 替换运行时 CLI 名、环境变量、数据目录、Symbol 键、用户可见消息 (completed 2026-06-02)
+- [x] **Phase 117: OpenClaw 收尾** — SlideConfig 重命名、branding 配置、死代码清理、tsc 0 error (completed 2026-06-03)
+- 🚧 **Phase 118: Agent DB 连接 + 告警机制完善** — Agent 获取 DB 连接信息、修复告警误报/漏报 (planned 2026-06-08)
 
 ## Phase Details
 
@@ -597,7 +599,20 @@ Plans:
 **Wave 2** *(blocked on Wave 1)*
 - [x] 117-03-PLAN.md -- Frontend branding.ts getter/cache 重构 + branding-settings Lit 组件 + Settings shell 集成
 
+### Phase 118: Agent DB 连接 + 告警机制完善
+
+**Goal:** 1) Agent 可通过工具获取数据库实例连接信息进行分析；2) 彻底修复告警采集/触发机制（误报、漏报、阈值绕过、API 字段缺失）
+**Requirements**: R1-R5 (from CONTEXT.md)
+**Depends on:** Phase 117
+**Plans:** 2/2 plans complete
+
+Plans:
+**Wave 1** *(parallel)*
+- [x] 118-01-PLAN.md — 告警系统 Bug 修复（可用性误报、QPS 阈值绕过、API metric_name null）
+- [x] 118-02-PLAN.md — Agent DB 连接工具（list_database_instances, get_instance_connection）
+
 ---
-*Last updated: 2026-06-02*
+*Last updated: 2026-06-08*
 
 | 117. OpenClaw收尾 | v1.4 | 3/3 | Complete    | 2026-06-02 |
+| 118. Agent DB 连接 + 告警完善 | v1.4 | 2/2 | Complete   | 2026-06-08 |
