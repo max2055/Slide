@@ -615,4 +615,4 @@ Plans:
 *Last updated: 2026-06-08*
 
 | 117. OpenClaw收尾 | v1.4 | 3/3 | Complete    | 2026-06-02 |
-| 118. Agent DB 连接 + 告警完善 | v1.4 | 2/2 | Complete   | 2026-06-08 |
+| 118. Agent DB 连接 + 告警完善 | v1.4 | 2/2 | Complete    | 2026-06-08 |
