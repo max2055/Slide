@@ -292,8 +292,21 @@ export class DirectAdapter implements IAgentEngine {
           }
 
           case 'chat.history': {
-            // Return empty history for now; will integrate with chatDatabaseService later
-            ws.send(JSON.stringify({ type: 'complete', history: [] }));
+            const historySessionKey = (msg.sessionKey as string) || '';
+            try {
+              const messages = await chatDatabaseService.getMessages(historySessionKey, 200);
+              // Map DB records to frontend-compatible message format
+              const mapped = messages.map((m) => ({
+                id: m.message_id,
+                role: m.role,
+                content: m.content,
+                createdAt: m.created_at instanceof Date ? m.created_at.toISOString() : m.created_at,
+              }));
+              ws.send(JSON.stringify({ type: 'complete', messages: mapped }));
+            } catch (dbErr) {
+              console.error('[DirectAdapter] chat.history failed:', dbErr instanceof Error ? dbErr.message : String(dbErr));
+              ws.send(JSON.stringify({ type: 'error', error: 'Failed to load chat history' }));
+            }
             break;
           }
 
