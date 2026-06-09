@@ -436,8 +436,14 @@ export class DirectAdapter implements IAgentEngine {
       ];
     }
 
-    // Persist user message
+    // Persist user message to both SessionManager (JSONL) and chatDatabaseService (MySQL)
+    const userMsgId = `msg_${Date.now()}_user`;
     session.addMessage('user', message);
+    try {
+      await chatDatabaseService.addMessage(sessionKey, userMsgId, 'user', message, null, null, null, null);
+    } catch (dbErr) {
+      console.error('[DirectAdapter] invoke() failed to persist user message to DB:', dbErr instanceof Error ? dbErr.message : String(dbErr));
+    }
 
     try {
       const result = await this.runner.run({
@@ -452,10 +458,15 @@ export class DirectAdapter implements IAgentEngine {
         maxTokens: 2048,
       });
 
-      // Persist assistant response
+      // Persist assistant response to both SessionManager (JSONL) and chatDatabaseService (MySQL)
       const finalContent = result.finalContent || '';
       if (finalContent) {
         session.addMessage('assistant', finalContent);
+        try {
+          await chatDatabaseService.addMessage(sessionKey, `msg_${Date.now()}_asst`, 'assistant', finalContent, null, null, null, null);
+        } catch (dbErr) {
+          console.error('[DirectAdapter] invoke() failed to persist assistant message to DB:', dbErr instanceof Error ? dbErr.message : String(dbErr));
+        }
       }
       await this.sessionManager.save(session);
 
@@ -463,6 +474,10 @@ export class DirectAdapter implements IAgentEngine {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(`[DirectAdapter] invoke() failed for session ${sessionKey}:`, errorMessage);
+      // Persist error as system message so it's visible in chat
+      try {
+        await chatDatabaseService.addMessage(sessionKey, `msg_${Date.now()}_error`, 'system', `分析失败: ${errorMessage}`, null, null, null, null);
+      } catch { /* best-effort */ }
       // Save session even on error so partial state is not lost
       try { await this.sessionManager.save(session); } catch { /* best-effort */ }
       throw err;
