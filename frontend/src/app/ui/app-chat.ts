@@ -446,6 +446,8 @@ function injectCommandResult(host: ChatHost, content: string) {
 }
 
 export async function refreshChat(host: ChatHost, opts?: { scheduleScroll?: boolean }) {
+  // Subscribe WS to session for invoke() completion broadcasts (e.g., RCA analysis)
+  try { (host.client as any)?.watchSession?.(host.sessionKey); } catch { /* best-effort */ }
   await Promise.all([
     loadChatHistory(host as unknown as ChatState),
     loadSessions(host as unknown as SessionsState, {

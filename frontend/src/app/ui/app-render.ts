@@ -823,6 +823,7 @@ export function renderApp(state: AppViewState) {
                   return;
                 }
                 state.chatManualRefreshInFlight = true;
+                try { (state.client as any)?.watchSession?.(state.sessionKey); } catch { /* best-effort */ }
                 void loadChatHistory(state).finally(() => {
                   state.chatManualRefreshInFlight = false;
                 });

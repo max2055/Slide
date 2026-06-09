@@ -110,6 +110,8 @@ export class DirectAdapter implements IAgentEngine {
   private skillsLoader: SkillsLoader;
   private memoryStore: MemoryStore;
   private wsServer: WebSocketServer | null = null;
+  /** Track WebSocket clients subscribed to each session for invoke() broadcast. */
+  private sessionSubscribers = new Map<string, Set<WebSocket>>();
 
   constructor(opts: DirectAdapterOptions) {
     this.runner = new AgentRunner(opts.llmProvider);
@@ -185,6 +187,10 @@ export class DirectAdapter implements IAgentEngine {
 
       ws.on('close', () => {
         clearInterval(heartbeatTimer);
+        // Unsubscribe from all session broadcasts
+        for (const [, subs] of this.sessionSubscribers) {
+          subs.delete(ws);
+        }
       });
 
       ws.on('message', async (raw: Buffer) => {
@@ -257,6 +263,12 @@ export class DirectAdapter implements IAgentEngine {
               }
             }
 
+            // Subscribe this WS to session events (for invoke() completion broadcast)
+            if (!this.sessionSubscribers.has(sessionKey)) {
+              this.sessionSubscribers.set(sessionKey, new Set());
+            }
+            this.sessionSubscribers.get(sessionKey)!.add(ws);
+
             try {
               // Persist user message
               const userId = (msg as any).userId || 1;
@@ -306,6 +318,18 @@ export class DirectAdapter implements IAgentEngine {
             } catch (dbErr) {
               console.error('[DirectAdapter] chat.history failed:', dbErr instanceof Error ? dbErr.message : String(dbErr));
               ws.send(JSON.stringify({ type: 'error', error: 'Failed to load chat history' }));
+            }
+            break;
+          }
+
+          case 'chat.watch': {
+            // Subscribe WS to session for invoke() completion broadcasts
+            const watchKey = (msg.sessionKey as string) || '';
+            if (watchKey) {
+              if (!this.sessionSubscribers.has(watchKey)) {
+                this.sessionSubscribers.set(watchKey, new Set());
+              }
+              this.sessionSubscribers.get(watchKey)!.add(ws);
             }
             break;
           }
@@ -482,6 +506,15 @@ export class DirectAdapter implements IAgentEngine {
         }
       }
       await this.sessionManager.save(session);
+
+      // Broadcast completion to WebSocket clients viewing this session
+      const subs = this.sessionSubscribers.get(sessionKey);
+      if (subs && subs.size > 0 && finalContent) {
+        const msg = JSON.stringify({ type: 'complete', finalContent });
+        for (const ws of subs) {
+          try { ws.send(msg); } catch { /* client may have disconnected */ }
+        }
+      }
 
       return { content: finalContent, usage: result.usage };
     } catch (err) {

@@ -565,6 +565,8 @@ export function switchChatSession(state: AppViewState, nextSessionKey: string) {
     true,
   );
   void loadChatHistory(state as unknown as ChatState);
+  // Subscribe WS to session for invoke() completion broadcasts (e.g., RCA analysis)
+  try { (state.client as any)?.watchSession?.(nextSessionKey); } catch { /* best-effort */ }
   void refreshSessionOptions(state);
 }
 

@@ -234,6 +234,14 @@ export class DirectGatewayClient {
     this.ws.send(JSON.stringify({ type: 'chat.history', sessionKey }));
   }
 
+  /** Subscribe to invoke() completion broadcasts for a session. */
+  watchSession(sessionKey: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    this.ws.send(JSON.stringify({ type: 'chat.watch', sessionKey }));
+  }
+
   isConnected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
   }
