@@ -578,7 +578,10 @@ class AlertDatabaseService {
       sql += ' ORDER BY name';
 
       const [rows] = await pool.query(sql, params) as any;
-      return rows as AlertRule[];
+      return rows.map((row: any) => ({
+        ...row,
+        enabled: Boolean(row.enabled),
+      })) as AlertRule[];
     } catch (error) {
       console.error('获取告警规则失败:', error);
       return [];
@@ -749,10 +752,14 @@ class AlertDatabaseService {
 
       values.push(ruleId);
 
-      await pool.execute(
+      const [result] = await pool.execute(
         `UPDATE alert_rules SET ${updates.join(', ')} WHERE id = ?`,
         values
-      );
+      ) as any;
+
+      if (result.affectedRows === 0) {
+        return { success: false, error: '规则不存在' };
+      }
 
       return { success: true };
     } catch (error: any) {
@@ -771,7 +778,10 @@ class AlertDatabaseService {
     }
 
     try {
-      await pool.execute('DELETE FROM alert_rules WHERE id = ?', [ruleId]);
+      const [result] = await pool.execute('DELETE FROM alert_rules WHERE id = ?', [ruleId]) as any;
+      if (result.affectedRows === 0) {
+        return { success: false, error: '规则不存在' };
+      }
       return { success: true };
     } catch (error: any) {
       console.error('删除告警规则失败:', error);

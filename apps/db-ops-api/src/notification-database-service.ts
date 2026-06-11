@@ -213,10 +213,14 @@ class NotificationDatabaseService {
 
       values.push(id);
 
-      await pool.execute(
+      const [result] = await pool.execute(
         `UPDATE notification_channels SET ${updates.join(', ')} WHERE id = ?`,
         values
-      );
+      ) as any;
+
+      if (result.affectedRows === 0) {
+        return { success: false, error: '通知渠道不存在' };
+      }
 
       return { success: true };
     } catch (error: any) {
@@ -235,7 +239,10 @@ class NotificationDatabaseService {
     }
 
     try {
-      await pool.execute('DELETE FROM notification_channels WHERE id = ?', [id]);
+      const [result] = await pool.execute('DELETE FROM notification_channels WHERE id = ?', [id]) as any;
+      if (result.affectedRows === 0) {
+        return { success: false, error: '通知渠道不存在' };
+      }
       return { success: true };
     } catch (error: any) {
       console.error('删除通知渠道失败:', error);

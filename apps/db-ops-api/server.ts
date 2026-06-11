@@ -16,6 +16,7 @@ import { requirePermission } from './src/auth/require-permission.js';
 import { requireInstanceAccess } from './src/auth/require-instance-access.js';
 import { RbacService } from './src/auth/rbac-service.js';
 import { rbacApiRoutes } from './src/auth/rbac-api.js';
+import { strictBody, warnUnknown } from './src/utils/strict-body.js';
 import { instanceDatabaseService } from './src/instance-database-service.js';
 import { llmDatabaseService } from './src/llm-database-service.js';
 import { resolveProviderFromBaseUrl, getProvider } from './src/llm/provider-catalog.js';
@@ -111,6 +112,13 @@ async function verifyToken(request: any, reply: any) {
 }
 
 async function start() {
+  // 安全检查：ENCRYPTION_KEY 必须配置
+  if (!process.env.ENCRYPTION_KEY || process.env.ENCRYPTION_KEY.length < 32) {
+    console.warn('⚠  ENCRYPTION_KEY 未设置或长度不足 32 字符');
+    console.warn('   请在 .env 中添加：ENCRYPTION_KEY=your-random-key-at-least-32-chars');
+    console.warn('   已加密的数据库密码仍可用旧默认值解密，但新加密数据不安全。');
+  }
+
   // 初始化数据库连接
   console.log('🔄 正在初始化数据库连接...');
   const dbInitialized = await dbConnection.initialize();
@@ -262,7 +270,10 @@ async function start() {
 
   // 登录接口
   fastify.post('/api/auth/login', async (request, reply) => {
-    const { username, password } = request.body as any;
+    const check = strictBody(request.body as Record<string, unknown>,
+      ['username', 'password'], 'POST /api/auth/login');
+    if (check.error) return reply.code(400).send(check.error);
+    const { username, password } = check.body;
 
     if (!username || !password) {
       return reply.code(400).send({ error: '用户名和密码不能为空' });
@@ -384,10 +395,17 @@ async function start() {
     }
   });
 
+  // ========== 用户管理 API ==========
+
   // 创建用户
   fastify.post('/api/users', { preHandler: [verifyToken, requirePermission('admin:*')] }, async (request, reply) => {
     try {
-      const { username, password, email } = request.body as { username: string; password: string; email?: string };
+      const check = strictBody(request.body as Record<string, unknown>,
+        ['username', 'password', 'email'],
+        'POST /api/users',
+        { role: '角色分配请使用 POST /api/v1/rbac/users/{userId}/roles' });
+      if (check.error) return reply.code(400).send(check.error);
+      const { username, password, email } = check.body;
       if (!username || !password) {
         return reply.code(400).send({ error: '用户名和密码不能为空' });
       }
@@ -409,7 +427,12 @@ async function start() {
   fastify.put('/api/users/:id', { preHandler: [verifyToken, requirePermission('admin:*')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const { status } = request.body as { status?: string };
+      const check = strictBody(request.body as Record<string, unknown>,
+        ['status', 'email'],
+        'PUT /api/users/:id',
+        { role: '角色更新请使用 POST/DELETE /api/v1/rbac/users/{userId}/roles' });
+      if (check.error) return reply.code(400).send(check.error);
+      const { status, email } = check.body;
       const validStatuses = ['active', 'inactive', 'locked'];
       if (status && !validStatuses.includes(status)) {
         return reply.code(400).send({ error: '无效的状态' });
@@ -418,6 +441,15 @@ async function start() {
       const result = await authDatabaseService.updateUserById(Number(id), { status });
       if (!result.success) {
         return reply.code(400).send(result);
+      }
+      // email update if provided
+      if (email && email !== '') {
+        try {
+          const pool = (await import('./src/db-connection.js')).dbConnection.getPool();
+          if (pool) {
+            await pool.execute('UPDATE users SET email = ? WHERE id = ?', [email, Number(id)]);
+          }
+        } catch (_) { /* non-critical */ }
       }
       reply.send(result);
     } catch (error: any) {
@@ -537,7 +569,8 @@ async function start() {
   fastify.post('/api/llm/configs', { preHandler: [verifyToken, requirePermission('llm:manage')] }, async (request, reply) => {
     try {
       const data = request.body as any;
-      const result = await llmDatabaseService.configureProvider(data);
+      const result = await llmDatabaseService.configureProvider(data)
+      warnUnknown(data, ['name','displayName','deploymentType','apiKey','apiFormat','model','baseURL','modelsSupported','contextWindow','supportsFunctionCall','supportsVision','inputCostPer1k','outputCostPer1k','enabled','temperature','maxTokens','timeoutMs','rateLimitPerMinute','dailyQuota'], 'POST /api/llm/configs');;
       await reloadChatProvider();
       reply.send(result);
     } catch (error: any) {
@@ -602,7 +635,10 @@ async function start() {
   // 测试连接
   fastify.post('/api/llm/test', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
-      const { providerName } = request.body as any;
+      const check = strictBody(request.body as Record<string, unknown>,
+          ['providerName'], 'POST /api/llm/test');
+        if (check.error) return reply.code(400).send(check.error);
+        const { providerName } = check.body;
       const provider = await llmDatabaseService.getProviderByName(providerName);
       if (!provider) return reply.code(404).send({ error: '提供商不存在' });
       const apiKey = provider.api_key_encrypted
@@ -636,6 +672,31 @@ async function start() {
   });
 
   // 根据 Base URL 查询已知模型列表
+  // 供聊天界面模型下拉框使用 — 只展示每个 provider 实际配置的 default_model
+  fastify.get('/api/models', { preHandler: [verifyToken] }, async (_request, reply) => {
+    try {
+      const providers = await llmDatabaseService.getEnabledProviders();
+      const catalog: Array<{
+        id: string; name: string; provider: string;
+        contextWindow?: number; reasoning?: boolean;
+      }> = [];
+      for (const p of providers) {
+        if (p.default_model) {
+          catalog.push({
+            id: p.default_model,
+            name: p.default_model,
+            provider: p.name,
+            contextWindow: p.context_window || undefined,
+            reasoning: false,
+          });
+        }
+      }
+      reply.send(catalog);
+    } catch (err: any) {
+      reply.code(500).send({ error: '获取模型列表失败：' + err.message });
+    }
+  });
+
   fastify.get('/api/llm/models', { preHandler: [verifyToken] }, async (request, reply) => {
     const { baseUrl } = request.query as { baseUrl?: string };
     if (!baseUrl) return reply.send({ models: [] });
@@ -703,7 +764,10 @@ async function start() {
 	  // 聊天发送 (DirectAdapter / IAgentEngine)
 	  fastify.post('/api/chat/send', { preHandler: [verifyToken] }, async (request, reply) => {
 	    try {
-	      const { message, sessionKey } = request.body as any;
+	      const check = strictBody(request.body as Record<string, unknown>,
+	        ['message', 'sessionKey'], 'POST /api/chat/send');
+	      if (check.error) return reply.code(400).send(check.error);
+	      const { message, sessionKey } = check.body;
 	      if (!message) {
 	        return reply.code(400).send({ error: 'message is required' });
 	      }
@@ -787,13 +851,29 @@ async function start() {
     }
   });
 
+  // PATCH /api/sessions/:key — 更新会话设置（model、thinkingLevel）
+  fastify.patch('/api/sessions/:key', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { key } = request.params as { key: string };
+      const body = request.body as { model?: string | null; thinkingLevel?: string | null };
+      await chatDatabaseService.updateSessionSettings(key, {
+        model: body.model,
+        thinkingLevel: body.thinkingLevel,
+      });
+      reply.send({ ok: true });
+    } catch (error: any) {
+      reply.code(500).send({ error: '更新会话设置失败：' + error.message });
+    }
+  });
+
   // ========== 数据库实例管理 API ==========
 
   // 创建实例
   fastify.post('/api/database/instances', { preHandler: [verifyToken, requirePermission('instance:create')] }, async (request, reply) => {
     try {
       const data = request.body as any;
-      const result = await instanceDatabaseService.createInstance(data);
+      const result = await instanceDatabaseService.createInstance(data)
+      warnUnknown(data, ['name','environment','db_type','host','port','username','password','database_name','max_connections','connection_timeout_ms','description','tags','created_by'], 'POST /api/database/instances');;
       if (result.success) {
         reply.send({ id: result.instanceId, message: '创建成功' });
       } else {
@@ -823,7 +903,8 @@ async function start() {
     try {
       const { id } = request.params as any;
       const data = request.body as any;
-      const result = await instanceDatabaseService.updateInstance(Number(id), data);
+      const result = await instanceDatabaseService.updateInstance(Number(id), data)
+      warnUnknown(data, ['name','environment','db_type','host','port','username','password','database_name','max_connections','connection_timeout_ms','description','tags'], 'PUT /api/database/instances/:id');;
       if (result.success) {
         reply.send({ message: '更新成功' });
       } else {
@@ -882,7 +963,10 @@ async function start() {
   // 测试连接
   fastify.post('/api/database/instances/test-connection', { preHandler: [verifyToken, requirePermission('instance:create')] }, async (request, reply) => {
     try {
-      const { host, port, username, password, database_name, db_type } = request.body as any;
+      const check = strictBody(request.body as Record<string, unknown>,
+          ['host', 'port', 'username', 'password', 'database_name', 'db_type'], 'POST /api/database/instances/test-connection');
+        if (check.error) return reply.code(400).send(check.error);
+        const { host, port, username, password, database_name, db_type } = check.body;
       const result = await instanceDatabaseService.testConnection({
         db_type,
         host,
@@ -901,7 +985,10 @@ async function start() {
   fastify.post('/api/database/instances/:id/execute', { preHandler: [verifyToken, requirePermission('instance:query'), requireInstanceAccess('read-write')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const { sql, database } = request.body as any;
+      const check = strictBody(request.body as Record<string, unknown>,
+          ['sql', 'database'], 'POST /api/database/instances/:id/execute');
+        if (check.error) return reply.code(400).send(check.error);
+        const { sql, database } = check.body;
       if (!sql) return reply.code(400).send({ error: '缺少参数：sql' });
 
       const user = (request as any).user;
@@ -923,7 +1010,10 @@ async function start() {
   // SQL 审批
   fastify.post('/api/approval/submit', { preHandler: [verifyToken, requirePermission('approval:approve')] }, async (request, reply) => {
     try {
-      const { instance_id, sql_text, database_name } = request.body as any;
+      const check = strictBody(request.body as Record<string, unknown>,
+          ['instance_id', 'sql_text', 'database_name'], 'POST /api/approval/submit');
+        if (check.error) return reply.code(400).send(check.error);
+        const { instance_id, sql_text, database_name } = check.body;
       if (!instance_id || !sql_text) return reply.code(400).send({ error: '缺少参数' });
       const user = (request as any).user;
       const result = await approvalService.submitForApproval({
@@ -940,7 +1030,10 @@ async function start() {
 
   fastify.post('/api/approval/batch-review', { preHandler: [verifyToken, requirePermission('approval:approve')] }, async (request, reply) => {
     try {
-      const { ids, action, notes, execute_ids } = request.body as any;
+      const check = strictBody(request.body as Record<string, unknown>,
+          ['ids', 'action', 'notes', 'execute_ids'], 'POST /api/approval/batch-review');
+        if (check.error) return reply.code(400).send(check.error);
+        const { ids, action, notes, execute_ids } = check.body;
       if (!Array.isArray(ids) || ids.length === 0 || !ids.every((i: any) => Number.isInteger(i) && i > 0)) {
         return reply.code(400).send({ error: 'ids 必须是非空的正整数数组' });
       }
@@ -1002,7 +1095,10 @@ async function start() {
   fastify.post('/api/approval/:id/review', { preHandler: [verifyToken, requirePermission('approval:approve')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const { action, notes, execute_after_approve } = request.body as any;
+      const check = strictBody(request.body as Record<string, unknown>,
+          ['action', 'notes', 'execute_after_approve'], 'POST /api/approval/:id/review');
+        if (check.error) return reply.code(400).send(check.error);
+        const { action, notes, execute_after_approve } = check.body;
       if (!action || !['approve', 'reject'].includes(action)) {
         return reply.code(400).send({ error: 'action 必须是 approve 或 reject' });
       }
@@ -1989,24 +2085,26 @@ async function start() {
             return;
           }
         }
-        const result = await alertDatabaseService.updateAlertRule(Number(id), {
-          name: data.name,
-          description: data.description,
-          metric_name: data.metric_name,
-          operator: data.operator,
-          threshold: Number(data.threshold),
-          duration_seconds: Number(data.duration_seconds),
-          severity: data.severity,
-          enabled: data.enabled,
-          notification_channels: data.notification_channels,
-          threshold_type: data.threshold_type,
-          threshold_template: data.threshold_template,
-          dynamic_config: data.dynamic_config,
-          silence_minutes: data.silence_minutes,
-          db_types: data.db_types,
-          instance_ids: data.instance_ids,
-          template_id: data.template_id,
-        });
+        // 只传请求体中实际存在的字段，避免 Number(undefined) → NaN 污染数据库
+        const updateData: Record<string, any> = {};
+        if (data.name !== undefined) updateData.name = data.name;
+        if (data.description !== undefined) updateData.description = data.description;
+        if (data.metric_name !== undefined) updateData.metric_name = data.metric_name;
+        if (data.operator !== undefined) updateData.operator = data.operator;
+        if (data.threshold !== undefined) updateData.threshold = Number(data.threshold);
+        if (data.duration_seconds !== undefined) updateData.duration_seconds = Number(data.duration_seconds);
+        if (data.severity !== undefined) updateData.severity = data.severity;
+        if (data.enabled !== undefined) updateData.enabled = data.enabled;
+        if (data.notification_channels !== undefined) updateData.notification_channels = data.notification_channels;
+        if (data.threshold_type !== undefined) updateData.threshold_type = data.threshold_type;
+        if (data.threshold_template !== undefined) updateData.threshold_template = data.threshold_template;
+        if (data.dynamic_config !== undefined) updateData.dynamic_config = data.dynamic_config;
+        if (data.silence_minutes !== undefined) updateData.silence_minutes = data.silence_minutes;
+        if (data.db_types !== undefined) updateData.db_types = data.db_types;
+        if (data.instance_ids !== undefined) updateData.instance_ids = data.instance_ids;
+        if (data.template_id !== undefined) updateData.template_id = data.template_id;
+
+        const result = await alertDatabaseService.updateAlertRule(Number(id), updateData);
         if (result.success) {
           reply.send({ message: '更新成功' });
         } else {
@@ -2154,7 +2252,10 @@ async function start() {
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
-        const { template_id, macro_overrides } = request.body as any;
+        const check = strictBody(request.body as Record<string, unknown>,
+          ['template_id', 'macro_overrides'], 'POST /api/instances/:id/templates');
+        if (check.error) return reply.code(400).send(check.error);
+        const { template_id, macro_overrides } = check.body;
         const result = await templateDatabaseService.linkTemplate(Number(id), template_id, macro_overrides);
         if (result.success) {
           reply.send({ message: '关联成功' });
@@ -2191,7 +2292,10 @@ async function start() {
     handler: async (request, reply) => {
       try {
         const { id, templateId } = request.params as any;
-        const { macro_overrides } = request.body as any;
+        const check = strictBody(request.body as Record<string, unknown>,
+          ['macro_overrides'], 'PUT /api/instances/:id/templates/:templateId/overrides');
+        if (check.error) return reply.code(400).send(check.error);
+        const { macro_overrides } = check.body;
         const result = await templateDatabaseService.updateInstanceOverrides(Number(id), Number(templateId), macro_overrides);
         if (result.success) {
           reply.send({ message: '覆盖已更新' });
@@ -3439,7 +3543,10 @@ async function start() {
     preHandler: [verifyToken, requirePermission('metric:write')],
   }, async (request, reply) => {
     try {
-      const { db_type, description, instance_id } = request.body as any;
+      const check = strictBody(request.body as Record<string, unknown>,
+          ['db_type', 'description', 'instance_id'], 'POST /api/metrics/generate-sql');
+        if (check.error) return reply.code(400).send(check.error);
+        const { db_type, description, instance_id } = check.body;
       if (!description) {
         reply.code(400).send({ error: '请提供指标描述' });
         return;
@@ -3542,7 +3649,10 @@ async function start() {
   fastify.post('/api/alerts/:id/escalate', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const { new_level } = request.body as any;
+      const check = strictBody(request.body as Record<string, unknown>,
+          ['new_level'], 'POST /api/alerts/:id/escalate');
+        if (check.error) return reply.code(400).send(check.error);
+        const { new_level } = check.body;
       if (!new_level) {
         reply.code(400).send({ error: '缺少 new_level 参数' });
         return;
@@ -3615,7 +3725,10 @@ async function start() {
 
   fastify.post('/api/silence', { preHandler: [verifyToken, requirePermission('silence:manage')] }, async (request, reply) => {
     try {
-      const { instance_id, metric_name, duration_minutes } = request.body as any;
+      const check = strictBody(request.body as Record<string, unknown>,
+          ['instance_id', 'metric_name', 'duration_minutes'], 'POST /api/silence');
+        if (check.error) return reply.code(400).send(check.error);
+        const { instance_id, metric_name, duration_minutes } = check.body;
       const result = await alertSilenceService.silence(instance_id, metric_name, duration_minutes);
       reply.send(result);
     } catch (error: any) {
@@ -3713,7 +3826,10 @@ async function start() {
   fastify.post('/api/alerts/events/:id/assign', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const { user_id } = request.body as any;
+      const check = strictBody(request.body as Record<string, unknown>,
+          ['user_id'], 'POST /api/alerts/events/:id/assign');
+        if (check.error) return reply.code(400).send(check.error);
+        const { user_id } = check.body;
       const result = await alertEventService.assignEvent(Number(id), user_id);
       reply.send(result);
     } catch (error: any) {
@@ -3734,7 +3850,10 @@ async function start() {
   fastify.post('/api/alerts/events/:id/note', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const { note } = request.body as any;
+      const check = strictBody(request.body as Record<string, unknown>,
+          ['note'], 'POST /api/alerts/events/:id/note');
+        if (check.error) return reply.code(400).send(check.error);
+        const { note } = check.body;
       const result = await alertEventService.addHandlerNote(Number(id), note);
       reply.send(result);
     } catch (error: any) {
@@ -3755,7 +3874,10 @@ async function start() {
   fastify.post('/api/alerts/events/:id/resolve', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const { resolution_notes } = request.body as any;
+      const check = strictBody(request.body as Record<string, unknown>,
+          ['resolution_notes'], 'POST /api/alerts/events/:id/resolve');
+        if (check.error) return reply.code(400).send(check.error);
+        const { resolution_notes } = check.body;
       const result = await alertEventService.resolveEvent(Number(id), resolution_notes);
       reply.send(result);
     } catch (error: any) {
@@ -3776,7 +3898,10 @@ async function start() {
   fastify.post('/api/alerts/events/:id/postmortem', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const { postmortem } = request.body as any;
+      const check = strictBody(request.body as Record<string, unknown>,
+          ['postmortem'], 'POST /api/alerts/events/:id/postmortem');
+        if (check.error) return reply.code(400).send(check.error);
+        const { postmortem } = check.body;
       const result = await alertEventService.addPostmortem(Number(id), postmortem);
       reply.send(result);
     } catch (error: any) {
@@ -4153,7 +4278,7 @@ async function start() {
   });
 
   // 启动 HTTP API 服务器
-  const port = process.env.API_PORT || 3000;
+  const port = process.env.BACKEND_PORT || process.env.API_PORT || 3000;
   await fastify.listen({ port: Number(port), host: '0.0.0.0' });
   console.log(`🚀 服务器已启动：http://localhost:${port}`);
 }
