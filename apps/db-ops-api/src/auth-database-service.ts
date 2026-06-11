@@ -416,10 +416,14 @@ class AuthDatabaseService {
 
       values.push(id);
 
-      await pool.execute(
+      const [result] = await pool.execute(
         `UPDATE users SET ${fields.join(', ')} WHERE id = ?`,
         values
-      );
+      ) as any;
+
+      if (result.affectedRows === 0) {
+        return { success: false, error: '用户不存在' };
+      }
 
       return { success: true };
     } catch (error: any) {

@@ -93,7 +93,7 @@ class MaintenanceWindowService {
       sql += ' ORDER BY id';
 
       const [rows] = await pool.execute(sql, params) as any;
-      return rows;
+      return (rows as any[]).map((r: any) => ({ ...r, enabled: Boolean(r.enabled) }));
     } catch (error) {
       console.error('获取维护窗口失败:', error);
       return [];
@@ -182,7 +182,10 @@ class MaintenanceWindowService {
       if (updates.length === 0) return { success: true };
       values.push(id);
 
-      await pool.execute(`UPDATE maintenance_windows SET ${updates.join(', ')} WHERE id = ?`, values);
+      const [result] = await pool.execute(`UPDATE maintenance_windows SET ${updates.join(', ')} WHERE id = ?`, values) as any;
+      if (result.affectedRows === 0) {
+        return { success: false, error: '维护窗口不存在' };
+      }
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -194,7 +197,10 @@ class MaintenanceWindowService {
     if (!pool) return { success: false, error: '数据库未连接' };
 
     try {
-      await pool.execute('DELETE FROM maintenance_windows WHERE id = ?', [id]);
+      const [result] = await pool.execute('DELETE FROM maintenance_windows WHERE id = ?', [id]) as any;
+      if (result.affectedRows === 0) {
+        return { success: false, error: '维护窗口不存在' };
+      }
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message };

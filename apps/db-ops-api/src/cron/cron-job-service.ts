@@ -38,7 +38,7 @@ export class CronJobDatabaseService {
          FROM cron_jobs
          ORDER BY name`
       ) as any;
-      return rows as CronJobConfig[];
+      return (rows as any[]).map((r: any) => ({ ...r, enabled: Boolean(r.enabled) })) as CronJobConfig[];
     } catch (error) {
       console.error('查询定时任务列表失败:', error);
       return [];
@@ -61,7 +61,7 @@ export class CronJobDatabaseService {
          WHERE enabled = 1
          ORDER BY name`
       ) as any;
-      return rows as CronJobConfig[];
+      return (rows as any[]).map((r: any) => ({ ...r, enabled: Boolean(r.enabled) })) as CronJobConfig[];
     } catch (error) {
       console.error('查询已启用定时任务失败:', error);
       return [];
@@ -86,7 +86,8 @@ export class CronJobDatabaseService {
       ) as any;
 
       if (Array.isArray(rows) && rows.length > 0) {
-        return rows[0] as CronJobConfig;
+        const r = rows[0];
+        return { ...r, enabled: Boolean(r.enabled) } as CronJobConfig;
       }
       return null;
     } catch (error) {

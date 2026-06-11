@@ -364,7 +364,10 @@ class AiAnalysisDatabaseService {
     }
 
     try {
-      await pool.execute('DELETE FROM ai_analysis WHERE id = ?', [analysisId]);
+      const [result] = await pool.execute('DELETE FROM ai_analysis WHERE id = ?', [analysisId]) as any;
+      if (result.affectedRows === 0) {
+        return { success: false, error: '分析记录不存在' };
+      }
       return { success: true };
     } catch (error: any) {
       console.error('删除分析记录失败:', error);

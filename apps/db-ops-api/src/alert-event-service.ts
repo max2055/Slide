@@ -204,10 +204,14 @@ class AlertEventService {
       }
 
       params.push(eventId);
-      await pool.execute(
+      const [result] = await pool.execute(
         `UPDATE alert_events SET ${sets.join(', ')} WHERE id = ?`,
         params
-      );
+      ) as any;
+
+      if (result.affectedRows === 0) {
+        return { success: false, error: '事件不存在' };
+      }
 
       await this._logEvent(eventId, 'note_added', undefined, { action: 'updated', fields: data });
       return { success: true };
@@ -224,6 +228,11 @@ class AlertEventService {
     if (!pool) return { success: false, error: '数据库未连接' };
 
     try {
+      // 检查事件是否存在
+      const [check] = await pool.execute('SELECT id FROM alert_events WHERE id = ?', [eventId]) as any;
+      if (!Array.isArray(check) || check.length === 0) {
+        return { success: false, error: '事件不存在' };
+      }
       // 删除关联的 members 和 logs
       await pool.execute('DELETE FROM alert_event_members WHERE event_id = ?', [eventId]);
       await pool.execute('DELETE FROM alert_event_logs WHERE event_id = ?', [eventId]);

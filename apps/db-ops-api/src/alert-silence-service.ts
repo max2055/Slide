@@ -92,7 +92,10 @@ class AlertSilenceService {
     if (!pool) return { success: false, error: '数据库未连接' };
 
     try {
-      await pool.execute('DELETE FROM silence_periods WHERE id = ?', [silenceId]);
+      const [result] = await pool.execute('DELETE FROM silence_periods WHERE id = ?', [silenceId]) as any;
+      if (result.affectedRows === 0) {
+        return { success: false, error: '静默记录不存在' };
+      }
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message };

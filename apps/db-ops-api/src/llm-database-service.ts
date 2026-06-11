@@ -158,6 +158,7 @@ class LLMDatabaseService {
 
       return (rows as any[]).map(row => ({
         ...row,
+        enabled: Boolean(row.enabled),
         models_supported: this.parseJsonField<ModelInfo[]>(row, 'models_supported'),
       }));
     } catch (error) {
@@ -180,6 +181,7 @@ class LLMDatabaseService {
 
       return (rows as any[]).map(row => ({
         ...row,
+        enabled: Boolean(row.enabled),
         models_supported: this.parseJsonField<ModelInfo[]>(row, 'models_supported'),
       }));
     } catch (error) {
@@ -204,6 +206,7 @@ class LLMDatabaseService {
         const row = rows[0];
         return {
           ...row,
+          enabled: Boolean(row.enabled),
           models_supported: this.parseJsonField<ModelInfo[]>(row, 'models_supported'),
         };
       }
@@ -231,6 +234,7 @@ class LLMDatabaseService {
         const row = rows[0];
         return {
           ...row,
+          enabled: Boolean(row.enabled),
           models_supported: this.parseJsonField<ModelInfo[]>(row, 'models_supported'),
         };
       }
@@ -258,6 +262,7 @@ class LLMDatabaseService {
         const row = rows[0];
         return {
           ...row,
+          enabled: Boolean(row.enabled),
           models_supported: this.parseJsonField<ModelInfo[]>(row, 'models_supported'),
         };
       }

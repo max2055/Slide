@@ -54,6 +54,7 @@ class TemplateDatabaseService {
     const [rows] = await pool.query(sql, params) as any;
     return rows.map((r: any) => ({
       ...r,
+      enabled: Boolean(r.enabled),
       macro_defaults: r.macro_defaults ? (typeof r.macro_defaults === 'string' ? JSON.parse(r.macro_defaults) : r.macro_defaults) : null,
       metrics: r.metrics ? (typeof r.metrics === 'string' ? JSON.parse(r.metrics) : r.metrics) : null,
     }));
@@ -71,6 +72,7 @@ class TemplateDatabaseService {
     const r = rows[0];
     return {
       ...r,
+      enabled: Boolean(r.enabled),
       macro_defaults: r.macro_defaults ? (typeof r.macro_defaults === 'string' ? JSON.parse(r.macro_defaults) : r.macro_defaults) : null,
       metrics: r.metrics ? (typeof r.metrics === 'string' ? JSON.parse(r.metrics) : r.metrics) : null,
     } as MetricTemplate;
@@ -135,9 +137,12 @@ class TemplateDatabaseService {
       if (updates.length === 0) return { success: true };
       values.push(id);
 
-      await pool.execute(
+      const [result] = await pool.execute(
         `UPDATE metric_templates SET ${updates.join(', ')} WHERE id = ?`, values
-      );
+      ) as any;
+      if (result.affectedRows === 0) {
+        return { success: false, error: '模板不存在' };
+      }
       return { success: true };
     } catch (error: any) {
       console.error('更新模板失败:', error);
@@ -150,6 +155,11 @@ class TemplateDatabaseService {
     if (!pool) return { success: false, error: '数据库未连接' };
 
     try {
+      // 检查模板是否存在
+      const [check] = await pool.execute('SELECT id FROM metric_templates WHERE id = ?', [id]) as any;
+      if (!Array.isArray(check) || check.length === 0) {
+        return { success: false, error: '模板不存在' };
+      }
       // 删除关联的 instance_templates
       await pool.execute('DELETE FROM instance_templates WHERE template_id = ?', [id]);
       // 将关联的 metric_definitions 和 alert_rules 解除模板关联
@@ -221,10 +231,13 @@ class TemplateDatabaseService {
     if (!pool) return { success: false, error: '数据库未连接' };
 
     try {
-      await pool.execute(
+      const [result] = await pool.execute(
         'DELETE FROM instance_templates WHERE instance_id = ? AND template_id = ?',
         [instanceId, templateId]
-      );
+      ) as any;
+      if (result.affectedRows === 0) {
+        return { success: false, error: '关联不存在' };
+      }
       return { success: true };
     } catch (error: any) {
       console.error('解除模板关联失败:', error);

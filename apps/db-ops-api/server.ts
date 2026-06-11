@@ -583,7 +583,9 @@ async function start() {
     try {
       const { id } = request.params as any;
       const data = request.body as any;
-      const result = await llmDatabaseService.configureProvider({ ...data, id: Number(id) });
+      const existing = await llmDatabaseService.getProviderById(Number(id));
+      if (!existing) return reply.code(404).send({ error: '提供商不存在' });
+      const result = await llmDatabaseService.configureProvider({ ...existing, ...data, id: Number(id) });
       await reloadChatProvider();
       reply.send(result);
     } catch (error: any) {

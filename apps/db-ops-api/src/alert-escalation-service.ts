@@ -186,7 +186,7 @@ class AlertEscalationService {
       sql += ' ORDER BY id';
 
       const [rows] = await pool.execute(sql, params) as any;
-      return rows.map((r: any) => r);
+      return rows.map((r: any) => ({ ...r, enabled: Boolean(r.enabled) }));
     } catch (error) {
       console.error('获取升级规则失败:', error);
       return [];
@@ -240,7 +240,10 @@ class AlertEscalationService {
       if (updates.length === 0) return { success: true };
       values.push(ruleId);
 
-      await pool.execute(`UPDATE escalation_rules SET ${updates.join(', ')} WHERE id = ?`, values);
+      const [result] = await pool.execute(`UPDATE escalation_rules SET ${updates.join(', ')} WHERE id = ?`, values) as any;
+      if (result.affectedRows === 0) {
+        return { success: false, error: '升级规则不存在' };
+      }
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -252,7 +255,10 @@ class AlertEscalationService {
     if (!pool) return { success: false, error: '数据库未连接' };
 
     try {
-      await pool.execute('DELETE FROM escalation_rules WHERE id = ?', [ruleId]);
+      const [result] = await pool.execute('DELETE FROM escalation_rules WHERE id = ?', [ruleId]) as any;
+      if (result.affectedRows === 0) {
+        return { success: false, error: '升级规则不存在' };
+      }
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message };

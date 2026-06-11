@@ -293,10 +293,14 @@ class InstanceDatabaseService {
 
       values.push(id);
 
-      await pool.execute(
+      const [result] = await pool.execute(
         `UPDATE database_instances SET ${updates.join(', ')} WHERE id = ?`,
         values
-      );
+      ) as any;
+
+      if (result.affectedRows === 0) {
+        return { success: false, error: '实例不存在' };
+      }
 
       return { success: true };
     } catch (error: any) {
@@ -419,7 +423,10 @@ class InstanceDatabaseService {
     }
 
     try {
-      await pool.execute('DELETE FROM database_instances WHERE id = ?', [id]);
+      const [result] = await pool.execute('DELETE FROM database_instances WHERE id = ?', [id]) as any;
+      if (result.affectedRows === 0) {
+        return { success: false, error: '实例不存在' };
+      }
       return { success: true };
     } catch (error: any) {
       console.error('删除实例失败:', error);

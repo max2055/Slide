@@ -240,7 +240,10 @@ class ReportDatabaseService {
     }
 
     try {
-      await pool.execute('DELETE FROM reports WHERE id = ?', [id]);
+      const [result] = await pool.execute('DELETE FROM reports WHERE id = ?', [id]) as any;
+      if (result.affectedRows === 0) {
+        throw new Error('报表不存在');
+      }
     } catch (error: any) {
       console.error('删除报表失败:', error);
       throw error;
