@@ -7,18 +7,25 @@ interface UserInfo {
   id: number;
   username: string;
   email: string | null;
-  role: string;
   status: string;
   last_login_at: string | null;
   created_at: string;
 }
 
-interface UserFormData {
-  username: string;
-  email: string;
-  password: string;
-  role: string;
-  status: string;
+/** Role from RBAC roles table */
+interface RoleInfo {
+  id: number;
+  name: string;
+  description: string | null;
+  permission_count?: number;
+  user_count?: number;
+}
+
+/** User-role binding from user_roles table */
+interface UserRoleBinding {
+  id: number;
+  role_id: number;
+  role_name: string;
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -382,7 +389,8 @@ export class UsersManagement extends LitElement {
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private isAdmin = false;
-  @state() private userRoles: Map<number, {id: number, name: string, role_name: string}[]> = new Map();
+  @state() private userRoles: Map<number, UserRoleBinding[]> = new Map();
+  @state() private allRoles: RoleInfo[] = [];
   @state() private showModal = false;
   @state() private editingUser: UserInfo | null = null;
   @state() private showPasswordModal = false;
@@ -394,7 +402,7 @@ export class UsersManagement extends LitElement {
   @state() private formUsername = "";
   @state() private formEmail = "";
   @state() private formPassword = "";
-  @state() private formRole = "developer";
+  @state() private formRoleId: number | null = null;
   @state() private formStatus = "active";
   @state() private formErrors: string[] = [];
 
@@ -412,7 +420,7 @@ export class UsersManagement extends LitElement {
     try {
       await apiClient.get("/v1/rbac/roles");
       this.isAdmin = true;
-      this._loadUsers();
+      this._init();
     } catch (e: any) {
       this.isAdmin = false;
       if (e.message?.startsWith("HTTP 403")) {
@@ -425,13 +433,25 @@ export class UsersManagement extends LitElement {
     }
   }
 
+  private async _init() {
+    await Promise.all([this._loadUsers(), this._loadAllRoles()]);
+  }
+
+  private async _loadAllRoles() {
+    try {
+      this.allRoles = await apiClient.get<RoleInfo[]>("/v1/rbac/roles");
+    } catch (_) {
+      // non-critical; dropdown will fall back to hardcoded labels
+    }
+  }
+
   private async _loadUsers() {
     this.loading = true;
     this.error = null;
     try {
-      const data = await apiClient.get<any>('/users');
-      this.users = Array.isArray(data) ? data : (data.users || []);
-      this._loadUserRoles();
+      const data = await apiClient.get<UserInfo[]>('/users');
+      this.users = Array.isArray(data) ? data : [];
+      await this._loadUserRoles();
     } catch (e: any) {
       if (e.message?.startsWith("HTTP 401")) {
         this.error = "未登录";
@@ -452,26 +472,28 @@ export class UsersManagement extends LitElement {
     if (userIds.length === 0) return;
     const results = await Promise.allSettled(
       userIds.map(id =>
-        apiClient.get<any>(`/api/v1/rbac/users/${id}/roles`)
-          .then(r => r)
+        apiClient.get<UserRoleBinding[]>(`/v1/rbac/users/${id}/roles`)
       )
     );
-    const newMap = new Map<number, {id: number; name: string; role_name: string}[]>();
+    const newMap = new Map<number, UserRoleBinding[]>();
     for (let i = 0; i < userIds.length; i++) {
       const result = results[i];
       if (result.status === "fulfilled") {
-        const roles = Array.isArray(result.value) ? result.value : (result.value.roles || []);
+        const roles = Array.isArray(result.value) ? result.value : [];
         newMap.set(userIds[i], roles);
       } else {
+        console.warn('[loadUserRoles] user id=%d failed: %o', userIds[i], result.reason);
         newMap.set(userIds[i], []);
       }
     }
+    console.log('[loadUserRoles] loaded roles: %o',
+      [...newMap].map(([uid, rs]) => ({uid, roles: rs.map(r => r.role_name)})));
     this.userRoles = newMap;
   }
 
   private _navigateToRbac(userId: number) {
-    this.dispatchEvent(new CustomEvent('navigate-to-rbac', {
-      detail: { userId },
+    window.dispatchEvent(new CustomEvent("slide-navigate", {
+      detail: { tab: "rbac", id: userId },
       bubbles: true,
       composed: true,
     }));
@@ -483,7 +505,7 @@ export class UsersManagement extends LitElement {
     this.formUsername = "";
     this.formEmail = "";
     this.formPassword = "";
-    this.formRole = "developer";
+    this.formRoleId = null;
     this.formStatus = "active";
     this.formErrors = [];
     this.saveError = null;
@@ -495,7 +517,11 @@ export class UsersManagement extends LitElement {
     this.formUsername = user.username;
     this.formEmail = user.email || "";
     this.formPassword = "";
-    this.formRole = user.role;
+    // Get current role from userRoles map — pick the first role_id if any
+    const roles = this.userRoles.get(user.id) || [];
+    console.log('[openEditModal] user id=%d, roles=%o, formRoleId=%d',
+      user.id, roles, roles.length > 0 ? roles[0].role_id : null);
+    this.formRoleId = roles.length > 0 ? roles[0].role_id : null;
     this.formStatus = user.status;
     this.formErrors = [];
     this.saveError = null;
@@ -515,10 +541,7 @@ export class UsersManagement extends LitElement {
 
     // Validation
     if (this.editingUser) {
-      // Edit mode: email required format, role required
-      if (!this.formRole) {
-        this.formErrors.push("请选择角色");
-      }
+      // Edit mode
     } else {
       // Create mode: username and password required
       if (!this.formUsername.trim()) {
@@ -526,9 +549,6 @@ export class UsersManagement extends LitElement {
       }
       if (this.formPassword.length < 8) {
         this.formErrors.push("密码长度至少 8 位");
-      }
-      if (!this.formRole) {
-        this.formErrors.push("请选择角色");
       }
     }
 
@@ -538,22 +558,38 @@ export class UsersManagement extends LitElement {
 
     try {
       if (this.editingUser) {
-        // Update
-        const body: Record<string, string> = {
-          role: this.formRole,
-          status: this.formStatus,
-        };
+        const userId = this.editingUser.id;
+        const selectedRoleId = this.formRoleId;
+        console.log('[saveUser] editing user id=%d, formRoleId=%d, currentRoles=%o',
+          userId, selectedRoleId, this.userRoles.get(userId));
+
+        // Update user status
+        const body: Record<string, string> = { status: this.formStatus };
         if (this.formEmail) body.email = this.formEmail;
-        await apiClient.put(`/users/${this.editingUser.id}`, body);
+        await apiClient.put(`/users/${userId}`, body);
+
+        // Sync role via RBAC API: remove existing roles, then add the selected one
+        await this._syncUserRole(userId, selectedRoleId);
+        console.log('[saveUser] role sync done for user id=%d, now reloading...', userId);
       } else {
-        // Create
+        // Create user
         const body: Record<string, string> = {
           username: this.formUsername.trim(),
           password: this.formPassword,
-          role: this.formRole,
         };
         if (this.formEmail) body.email = this.formEmail;
-        await apiClient.post('/users', body);
+        const result = await apiClient.post<{ success: boolean; userId?: number; error?: string }>('/users', body);
+
+        // Assign role via RBAC API
+        const userId = result?.userId;
+        if (userId && this.formRoleId !== null) {
+          try {
+            await apiClient.post(`/v1/rbac/users/${userId}/roles`, { roleId: this.formRoleId });
+          } catch (roleErr: any) {
+            // User created but role assignment failed — log but don't fail the whole operation
+            console.error('角色分配失败:', roleErr);
+          }
+        }
       }
 
       this._closeModal();
@@ -562,6 +598,35 @@ export class UsersManagement extends LitElement {
       this.saveError = `操作失败: ${e.message}`;
     } finally {
       this.saving = false;
+    }
+  }
+
+  /** Sync a user's role: remove existing roles not matching, add the selected one */
+  private async _syncUserRole(userId: number, newRoleId: number | null) {
+    const currentRoles = this.userRoles.get(userId) || [];
+
+    // No change: current role matches new role
+    if (currentRoles.length === 1 && currentRoles[0].role_id === newRoleId) {
+      return;
+    }
+    // Both empty: nothing to do
+    if (currentRoles.length === 0 && newRoleId === null) {
+      return;
+    }
+
+    // Remove all current roles
+    for (const r of currentRoles) {
+      const res = await apiClient.delete(`/v1/rbac/users/${userId}/roles/${r.role_id}`);
+      if (!res || (res as any).success === false) {
+        throw new Error(`移除角色失败: ${(res as any)?.error || '未知错误'}`);
+      }
+    }
+    // Add the new role if one is selected
+    if (newRoleId !== null) {
+      const res = await apiClient.post(`/v1/rbac/users/${userId}/roles`, { roleId: newRoleId });
+      if (!res || (res as any).success === false) {
+        throw new Error(`添加角色失败: ${(res as any)?.error || '未知错误'}`);
+      }
     }
   }
 
@@ -618,6 +683,22 @@ export class UsersManagement extends LitElement {
     } catch (e: any) {
       this.error = `删除失败: ${e.message}`;
     }
+  }
+
+  private _renderUserRoleBadges(userId: number) {
+    const roles = this.userRoles.get(userId) || [];
+    if (roles.length === 0) {
+      return html`<span class="role-badge" style="background:var(--bg-muted);color:var(--muted)">无角色</span>`;
+    }
+    return html`${roles.map(r => {
+      const roleName = r.role_name;
+      return html`<span class="role-badge ${roleName}">${ROLE_LABELS[roleName] || roleName}</span>`;
+    })}`;
+  }
+
+  /** Get the label for a role dropdown option */
+  private _roleLabel(role: RoleInfo): string {
+    return ROLE_LABELS[role.name] || `${role.name}${role.description ? ` - ${role.description}` : ''}`;
   }
 
   private _formatDate(dateStr: string | null): string {
@@ -687,9 +768,7 @@ export class UsersManagement extends LitElement {
                               <td><strong>${u.username}</strong></td>
                               <td>${u.email || "-"}</td>
                               <td style="text-align:center">
-                                <span class="role-badge ${u.role}">
-                                  ${ROLE_LABELS[u.role] || u.role}
-                                </span>
+                                ${this._renderUserRoleBadges(u.id)}
                               </td>
                               <td style="text-align:center">
                                 <span class="status-badge ${u.status}">
@@ -794,17 +873,15 @@ export class UsersManagement extends LitElement {
                     <div class="form-group">
                       <label>角色</label>
                       <select
-                        .value=${this.formRole}
                         @change=${(e: Event) => {
-                          this.formRole = (e.target as HTMLSelectElement).value;
+                          const v = (e.target as HTMLSelectElement).value;
+                          this.formRoleId = v ? Number(v) : null;
                         }}
                       >
-                        <option value="admin">管理员</option>
-                        <option value="dba">数据库管理员</option>
-                        <option value="developer">开发者</option>
-                        <option value="analyst">分析师</option>
-                        <option value="viewer">观察者</option>
-                        <option value="auditor">审计员</option>
+                        <option value="" ?selected=${this.formRoleId === null}>不分配角色</option>
+                        ${this.allRoles.map(
+                          (r) => html`<option value=${r.id} ?selected=${this.formRoleId === r.id}>${this._roleLabel(r)}</option>`
+                        )}
                       </select>
                     </div>
 

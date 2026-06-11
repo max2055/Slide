@@ -28,16 +28,28 @@ interface UserInfo {
   email: string | null;
 }
 
-type RbacSubTab = "roles" | "permissions";
+type RbacSubTab = "roles" | "permissions" | "user-roles";
 
 /* ───────── Parent: RbacAdminPage ───────── */
 
 @customElement("rbac-admin-page")
 export class RbacAdminPage extends LitElement {
+  @property({ type: Number }) targetUserId: number | null = null;
   @state() private activeSubTab: RbacSubTab = "roles";
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private hasAccess = false;
+
+  override connectedCallback() {
+    super.connectedCallback();
+    // Read target user from URL params (navigated from users-management "管理角色" button)
+    const urlParams = new URLSearchParams(window.location.search);
+    const idParam = urlParams.get("id");
+    if (idParam) {
+      this.targetUserId = Number(idParam);
+      this.activeSubTab = "user-roles";
+    }
+  }
 
   static styles = [sharedBtnStyles, css`
     :host { display: block; animation: fade-in 0.25s var(--ease-out); }
@@ -172,6 +184,7 @@ export class RbacAdminPage extends LitElement {
     const subTabs: { key: RbacSubTab; label: string }[] = [
       { key: "roles", label: "角色管理" },
       { key: "permissions", label: "权限管理" },
+      { key: "user-roles", label: "用户角色绑定" },
     ];
 
     return html`
@@ -194,6 +207,9 @@ export class RbacAdminPage extends LitElement {
           : ""}
         ${this.activeSubTab === "permissions"
           ? html`<permission-management-tab></permission-management-tab>`
+          : ""}
+        ${this.activeSubTab === "user-roles"
+          ? html`<user-role-binding-tab .targetUserId=${this.targetUserId}></user-role-binding-tab>`
           : ""}
       </div>
     `;
@@ -810,9 +826,10 @@ export class PermissionManagementTab extends LitElement {
 /* ───────── UserRoleBindingTab ───────── */
 
 interface UserRole {
-  id: number;
-  name: string;
-  description: string | null;
+  id: number;       // user_roles.id (junction table row)
+  role_id: number;  // roles.id (the actual role identifier)
+  name: string;     // role_name from join
+  description?: string | null;
 }
 
 @customElement("user-role-binding-tab")
@@ -990,8 +1007,8 @@ export class UserRoleBindingTab extends LitElement {
     this.loading = true;
     this.error = null;
     try {
-      const data = await apiClient.get<any>("/api/users");
-      this.users = Array.isArray(data) ? data : (data.users || []);
+      const data = await apiClient.get<UserInfo[]>("/users");
+      this.users = Array.isArray(data) ? data : [];
       this.filteredUsers = [...this.users];
     } catch (e: any) {
       this.error = `加载用户失败：${e.message}。请刷新页面重试。`;
@@ -1067,7 +1084,7 @@ export class UserRoleBindingTab extends LitElement {
   }
 
   private _getAvailableRoles(): UserRole[] {
-    const assignedIds = new Set(this.userRoles.map((r) => r.id));
+    const assignedIds = new Set(this.userRoles.map((r) => r.role_id));
     return this.allRoles.filter((r) => !assignedIds.has(r.id));
   }
 
@@ -1143,7 +1160,7 @@ export class UserRoleBindingTab extends LitElement {
                                     <span class="badge-x">
                                       ${r.name}
                                       <button
-                                        @click=${() => this._removeRole(r.id)}
+                                        @click=${() => this._removeRole(r.role_id)}
                                         title="移除角色"
                                       >
                                         ×
@@ -1269,8 +1286,8 @@ export class InstancePermissionsTab extends LitElement {
     this.loading = true;
     this.error = null;
     try {
-      const data = await apiClient.get<any>("/api/users");
-      this.users = Array.isArray(data) ? data : (data.users || []);
+      const data = await apiClient.get<UserInfo[]>("/users");
+      this.users = Array.isArray(data) ? data : [];
     } catch (e: any) {
       this.error = `加载用户失败：${e.message}。请刷新页面重试。`;
     } finally {
@@ -1287,7 +1304,7 @@ export class InstancePermissionsTab extends LitElement {
     this.showModal = true;
     try {
       const [instances, granted] = await Promise.all([
-        apiClient.get<DbInstance[]>("/api/database/instances"),
+        apiClient.get<DbInstance[]>("/database/instances"),
         apiClient.get<number[] | DbInstance[]>(
           `/v1/rbac/users/${user.id}/instances`
         ),
