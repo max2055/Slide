@@ -1,6 +1,6 @@
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
-import { customElement, property, state } from "lit/decorators.js";
+import { customElement, state } from "lit/decorators.js";
 import { apiClient } from '../../../api/index.js';
 
 /* ───────── Types ───────── */
@@ -28,28 +28,16 @@ interface UserInfo {
   email: string | null;
 }
 
-type RbacSubTab = "roles" | "permissions" | "user-roles";
+type RbacSubTab = "roles" | "permissions";
 
 /* ───────── Parent: RbacAdminPage ───────── */
 
 @customElement("rbac-admin-page")
 export class RbacAdminPage extends LitElement {
-  @property({ type: Number }) targetUserId: number | null = null;
   @state() private activeSubTab: RbacSubTab = "roles";
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private hasAccess = false;
-
-  override connectedCallback() {
-    super.connectedCallback();
-    // Read target user from URL params (navigated from users-management "管理角色" button)
-    const urlParams = new URLSearchParams(window.location.search);
-    const idParam = urlParams.get("id");
-    if (idParam) {
-      this.targetUserId = Number(idParam);
-      this.activeSubTab = "user-roles";
-    }
-  }
 
   static styles = [sharedBtnStyles, css`
     :host { display: block; animation: fade-in 0.25s var(--ease-out); }
@@ -184,7 +172,6 @@ export class RbacAdminPage extends LitElement {
     const subTabs: { key: RbacSubTab; label: string }[] = [
       { key: "roles", label: "角色管理" },
       { key: "permissions", label: "权限管理" },
-      { key: "user-roles", label: "用户角色绑定" },
     ];
 
     return html`
@@ -207,9 +194,6 @@ export class RbacAdminPage extends LitElement {
           : ""}
         ${this.activeSubTab === "permissions"
           ? html`<permission-management-tab></permission-management-tab>`
-          : ""}
-        ${this.activeSubTab === "user-roles"
-          ? html`<user-role-binding-tab .targetUserId=${this.targetUserId}></user-role-binding-tab>`
           : ""}
       </div>
     `;
@@ -817,383 +801,6 @@ export class PermissionManagementTab extends LitElement {
               ${this.saving ? "保存中..." : "保存"}
             </button>
           </div>
-        </div>
-      </div>
-    `;
-  }
-}
-
-/* ───────── UserRoleBindingTab ───────── */
-
-interface UserRole {
-  id: number;       // user_roles.id (junction table row)
-  role_id: number;  // roles.id (the actual role identifier)
-  name: string;     // role_name from join
-  description?: string | null;
-}
-
-@customElement("user-role-binding-tab")
-export class UserRoleBindingTab extends LitElement {
-  @property({ type: Number }) targetUserId: number | null = null;
-
-  @state() private users: UserInfo[] = [];
-  @state() private filteredUsers: UserInfo[] = [];
-  @state() private searchText = "";
-  @state() private loading = true;
-  @state() private error: string | null = null;
-  @state() private selectedUserId: number | null = null;
-  @state() private userRoles: UserRole[] = [];
-  @state() private loadingRoles = false;
-  @state() private allRoles: UserRole[] = [];
-  @state() private selectedRoleId: number | null = null;
-  @state() private addingRole = false;
-
-  static styles = [
-    RbacAdminPage.styles,
-    css`
-      .split-pane {
-        display: flex;
-        gap: var(--space-lg);
-        min-height: 400px;
-      }
-      .left-pane {
-        flex: 0 0 40%;
-        max-width: 40%;
-      }
-      .right-pane {
-        flex: 1;
-      }
-      .pane-card {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-lg);
-        overflow: hidden;
-      }
-      .pane-header {
-        padding: var(--space-md) var(--space-lg);
-        border-bottom: 1px solid var(--border);
-        background: var(--bg-elevated);
-        font-weight: 600;
-        font-size: var(--text-base);
-      }
-      .search-input {
-        width: 100%;
-        padding: var(--space-sm) var(--space-md);
-        border: none;
-        border-bottom: 1px solid var(--border);
-        font-size: var(--text-base);
-        color: var(--text);
-        background: var(--card);
-        outline: none;
-        box-sizing: border-box;
-      }
-      .search-input:focus {
-        border-bottom-color: var(--accent);
-      }
-      .user-list-scroll {
-        max-height: 350px;
-        overflow-y: auto;
-      }
-      .user-row {
-        padding: var(--space-md) var(--space-md);
-        cursor: pointer;
-        border-bottom: 1px solid var(--border);
-        transition: background var(--duration-fast) ease;
-      }
-      .user-row:hover {
-        background: var(--bg-hover);
-      }
-      .user-row--selected {
-        background: var(--accent-subtle);
-        border-left: 3px solid var(--accent);
-      }
-      .user-row:last-child {
-        border-bottom: none;
-      }
-      .user-name {
-        font-weight: 500;
-        font-size: var(--text-base);
-      }
-      .user-email {
-        font-size: var(--text-xs);
-        color: var(--muted);
-        margin-top: var(--space-xs);
-      }
-      .prompt {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 350px;
-        color: var(--muted);
-        font-size: var(--text-base);
-      }
-      .right-header {
-        padding: var(--space-md) var(--space-lg);
-        border-bottom: 1px solid var(--border);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        background: var(--bg-elevated);
-      }
-      .right-header h3 {
-        margin: 0;
-        font-size: var(--text-md);
-        font-weight: 600;
-      }
-      .roles-content {
-        padding: var(--space-lg);
-      }
-      .role-list {
-        display: flex;
-        flex-wrap: wrap;
-        gap: var(--space-sm);
-        margin-bottom: var(--space-lg);
-      }
-      .badge-x {
-        display: inline-flex;
-        align-items: center;
-        gap: var(--space-xs);
-        padding: var(--space-xs) var(--space-md);
-        border-radius: var(--radius-full);
-        font-size: var(--text-sm);
-        font-weight: 500;
-        background: var(--accent-subtle);
-        color: var(--accent);
-      }
-      .badge-x button {
-        background: none;
-        border: none;
-        cursor: pointer;
-        font-size: var(--text-md);
-        line-height: 1;
-        color: var(--accent);
-        padding: 0;
-        margin-left: var(--space-xs);
-      }
-      .badge-x button:hover {
-        color: var(--destructive);
-      }
-      .add-role-row {
-        display: flex;
-        gap: var(--space-sm);
-        align-items: center;
-      }
-      .add-role-row select {
-        flex: 1;
-        padding: var(--space-sm) var(--space-md);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        font-size: var(--text-base);
-        color: var(--text);
-        background: var(--card);
-      }
-      .empty-roles {
-        color: var(--muted);
-        font-size: var(--text-base);
-        padding: var(--space-md) 0;
-      }
-    `,
-  ];
-
-  override async firstUpdated() {
-    await Promise.all([this._loadUsers(), this._loadAllRoles()]);
-    if (this.targetUserId !== null) {
-      await this._selectUser(this.targetUserId);
-      this.targetUserId = null;
-    }
-  }
-
-  private async _loadUsers() {
-    this.loading = true;
-    this.error = null;
-    try {
-      const data = await apiClient.get<UserInfo[]>("/users");
-      this.users = Array.isArray(data) ? data : [];
-      this.filteredUsers = [...this.users];
-    } catch (e: any) {
-      this.error = `加载用户失败：${e.message}。请刷新页面重试。`;
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  private async _loadAllRoles() {
-    try {
-      this.allRoles = await apiClient.get<UserRole[]>("/v1/rbac/roles");
-    } catch (_) {
-      // silently ignore — roles loaded for dropdown are non-critical
-    }
-  }
-
-  private _onSearchInput(e: any) {
-    this.searchText = e.target.value;
-    const q = this.searchText.toLowerCase();
-    if (!q) {
-      this.filteredUsers = [...this.users];
-    } else {
-      this.filteredUsers = this.users.filter(
-        (u) =>
-          u.username.toLowerCase().includes(q) ||
-          (u.email && u.email.toLowerCase().includes(q))
-      );
-    }
-  }
-
-  private async _selectUser(userId: number) {
-    if (this.selectedUserId === userId) return;
-    this.selectedUserId = userId;
-    this.selectedRoleId = null;
-    await this._loadUserRoles(userId);
-  }
-
-  private async _loadUserRoles(userId: number) {
-    this.loadingRoles = true;
-    try {
-      this.userRoles = await apiClient.get<UserRole[]>(`/v1/rbac/users/${userId}/roles`);
-    } catch (e: any) {
-      this.error = `加载角色失败：${e.message}`;
-    } finally {
-      this.loadingRoles = false;
-    }
-  }
-
-  private async _addRole() {
-    if (this.selectedUserId === null || this.selectedRoleId === null) return;
-    this.addingRole = true;
-    this.error = null;
-    try {
-      await apiClient.post(`/v1/rbac/users/${this.selectedUserId}/roles`, { roleId: this.selectedRoleId });
-      this.selectedRoleId = null;
-      await this._loadUserRoles(this.selectedUserId);
-    } catch (e: any) {
-      this.error = `添加角色失败：${e.message}`;
-    } finally {
-      this.addingRole = false;
-    }
-  }
-
-  private async _removeRole(roleId: number) {
-    if (this.selectedUserId === null) return;
-    this.error = null;
-    try {
-      await apiClient.delete(`/v1/rbac/users/${this.selectedUserId}/roles/${roleId}`);
-      await this._loadUserRoles(this.selectedUserId);
-    } catch (e: any) {
-      this.error = `移除角色失败：${e.message}`;
-    }
-  }
-
-  private _getAvailableRoles(): UserRole[] {
-    const assignedIds = new Set(this.userRoles.map((r) => r.role_id));
-    return this.allRoles.filter((r) => !assignedIds.has(r.id));
-  }
-
-  override render() {
-    if (this.loading) {
-      return html`<div class="loading">加载中...</div>`;
-    }
-    if (this.error && this.users.length === 0) {
-      return html`<div class="error-msg">${this.error}</div>`;
-    }
-
-    return html`
-      <div class="split-pane">
-        <!-- Left pane: user list -->
-        <div class="left-pane pane-card">
-          <div class="pane-header">用户列表</div>
-          <input
-            class="search-input"
-            .value=${this.searchText}
-            @input=${this._onSearchInput}
-            placeholder="搜索用户名或邮箱..."
-          />
-          ${this.users.length === 0
-            ? html`<div class="empty">暂无用户数据。请先在「用户管理」页面创建用户。</div>`
-            : html`
-                <div class="user-list-scroll">
-                  ${this.filteredUsers.length === 0
-                    ? html`<div class="empty">无匹配用户。</div>`
-                    : this.filteredUsers.map(
-                        (u) => html`
-                          <div
-                            class="user-row ${this.selectedUserId === u.id
-                              ? "user-row--selected"
-                              : ""}"
-                            @click=${() => this._selectUser(u.id)}
-                          >
-                            <div class="user-name">${u.username}</div>
-                            <div class="user-email">${u.email || "-"}</div>
-                          </div>
-                        `
-                      )}
-                </div>
-              `}
-        </div>
-
-        <!-- Right pane: role management -->
-        <div class="right-pane pane-card">
-          ${this.selectedUserId === null
-            ? html`<div class="prompt">请选择一个用户</div>`
-            : html`
-                <div class="right-header">
-                  <h3>
-                    ${this.users.find((u) => u.id === this.selectedUserId)
-                      ?.username || ""}
-                    的角色
-                  </h3>
-                </div>
-                <div class="roles-content">
-                  ${this.error
-                    ? html`<div class="save-error">${this.error}</div>`
-                    : ""}
-                  ${this.loadingRoles
-                    ? html`<div class="loading" style="min-height:100px">加载中...</div>`
-                    : html`
-                        ${this.userRoles.length === 0
-                          ? html`<div class="empty-roles">
-                              该用户暂无角色分配。在右侧下拉选择角色后点击"添加角色"。
-                            </div>`
-                          : html`
-                              <div class="role-list">
-                                ${this.userRoles.map(
-                                  (r) => html`
-                                    <span class="badge-x">
-                                      ${r.name}
-                                      <button
-                                        @click=${() => this._removeRole(r.role_id)}
-                                        title="移除角色"
-                                      >
-                                        ×
-                                      </button>
-                                    </span>
-                                  `
-                                )}
-                              </div>
-                            `}
-                        <div class="add-role-row">
-                          <select
-                            .value=${this.selectedRoleId ?? ""}
-                            @change=${(e: any) =>
-                              (this.selectedRoleId = Number(e.target.value) || null)}
-                          >
-                            <option value="" ?disabled=${true}>选择角色...</option>
-                            ${this._getAvailableRoles().map(
-                              (r) =>
-                                html`<option value=${r.id}>${r.name}</option>`
-                            )}
-                          </select>
-                          <button
-                            class="btn primary btn--sm"
-                            @click=${this._addRole}
-                            ?disabled=${this.selectedRoleId === null ||
-                            this.addingRole}
-                          >
-                            ${this.addingRole ? "添加中..." : "添加角色"}
-                          </button>
-                        </div>
-                      `}
-                </div>
-              `}
         </div>
       </div>
     `;

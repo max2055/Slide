@@ -482,12 +482,9 @@ export class UsersManagement extends LitElement {
         const roles = Array.isArray(result.value) ? result.value : [];
         newMap.set(userIds[i], roles);
       } else {
-        console.warn('[loadUserRoles] user id=%d failed: %o', userIds[i], result.reason);
         newMap.set(userIds[i], []);
       }
     }
-    console.log('[loadUserRoles] loaded roles: %o',
-      [...newMap].map(([uid, rs]) => ({uid, roles: rs.map(r => r.role_name)})));
     this.userRoles = newMap;
   }
 
@@ -517,10 +514,7 @@ export class UsersManagement extends LitElement {
     this.formUsername = user.username;
     this.formEmail = user.email || "";
     this.formPassword = "";
-    // Get current role from userRoles map — pick the first role_id if any
     const roles = this.userRoles.get(user.id) || [];
-    console.log('[openEditModal] user id=%d, roles=%o, formRoleId=%d',
-      user.id, roles, roles.length > 0 ? roles[0].role_id : null);
     this.formRoleId = roles.length > 0 ? roles[0].role_id : null;
     this.formStatus = user.status;
     this.formErrors = [];
@@ -559,18 +553,13 @@ export class UsersManagement extends LitElement {
     try {
       if (this.editingUser) {
         const userId = this.editingUser.id;
-        const selectedRoleId = this.formRoleId;
-        console.log('[saveUser] editing user id=%d, formRoleId=%d, currentRoles=%o',
-          userId, selectedRoleId, this.userRoles.get(userId));
-
         // Update user status
         const body: Record<string, string> = { status: this.formStatus };
         if (this.formEmail) body.email = this.formEmail;
         await apiClient.put(`/users/${userId}`, body);
 
-        // Sync role via RBAC API: remove existing roles, then add the selected one
-        await this._syncUserRole(userId, selectedRoleId);
-        console.log('[saveUser] role sync done for user id=%d, now reloading...', userId);
+        // Sync role via RBAC API
+        await this._syncUserRole(userId, this.formRoleId);
       } else {
         // Create user
         const body: Record<string, string> = {
