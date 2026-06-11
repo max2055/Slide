@@ -1233,7 +1233,7 @@ export class InstancesPage extends LitElement {
               @click=${() => this._handleSubmit(isEdit)}
               ?disabled=${this.isSubmitting}
             >
-              ${this.isSubmitting ? '⏳ 保存中...' : isEdit ? '保存修改' : '创建实例'}
+              ${this.isSubmitting ? '保存中...' : isEdit ? '保存修改' : '创建实例'}
             </button>
           </div>
         </div>

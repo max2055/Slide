@@ -439,7 +439,7 @@ class LLMDatabaseService {
             config.supportsVision ? 1 : 0,
             config.inputCostPer1k || 0,
             config.outputCostPer1k || 0,
-            config.enabled ? 1 : 0,
+            config.enabled !== false ? 1 : 0,
             config.temperature ?? 0.7,
             config.maxTokens ?? 2048,
             config.timeoutMs ?? 30000,

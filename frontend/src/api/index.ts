@@ -43,6 +43,11 @@ class ApiClient {
         xhr.open('POST', '/api/auth/login');
         xhr.setRequestHeader('Content-Type', 'application/json');
         xhr.onload = () => {
+          if (xhr.status >= 500) {
+            // Backend or proxy returned a server error — server unreachable or broken
+            reject(new Error('server-error'));
+            return;
+          }
           try { resolve(JSON.parse(xhr.responseText)); }
           catch { reject(new Error('parse error')); }
         };
@@ -55,7 +60,15 @@ class ApiClient {
         return data.token;
       }
       return null;
-    } catch { return null; }
+    } catch (err) {
+      // Re-throw network/server errors so login UI can show a distinct message.
+      // Invalid credentials (null token) are returned as null.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === 'network error' || msg === 'server-error' || msg === 'parse error') {
+        throw err;
+      }
+      return null;
+    }
   }
 
   setRefreshToken(token: string | null) {
@@ -147,13 +160,15 @@ class ApiClient {
   private async fetchWithAuth<T>(url: string, options: RequestInit): Promise<T> {
     const executeFetch = (token: string | null) => {
       const headers = new Headers(options.headers || {});
-      if (!headers.has('Content-Type')) {
+      const method = (options.method || 'GET').toUpperCase();
+      const hasBody = (method === 'POST' || method === 'PUT' || method === 'PATCH') && options.body != null;
+      if (!headers.has('Content-Type') && hasBody) {
         headers.set('Content-Type', 'application/json');
       }
       if (token) {
         headers.set('Authorization', `Bearer ${token}`);
       }
-      return fetch(url, { ...options, headers });
+      return fetch(url, { ...options, headers, method });
     };
 
     let response = await executeFetch(this.getToken());

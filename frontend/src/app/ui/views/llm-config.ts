@@ -222,21 +222,33 @@ export class LLMConfigPage extends LitElement {
 
   // ── Data ─────────────────────────────────────────────────────────────────
 
-  private async _load() {
-    this.loading = true; this.error = null;
+  private async _load(silent = false) {
+    if (!silent) { this.loading = true; }
+    this.error = null;
     try {
       const data = await apiClient.get<LLMProvider[]>("/llm/configs");
       this.providers = Array.isArray(data) ? data : [];
       if (this.selectedId && !this.providers.find(p => p.id === this.selectedId)) {
         this.selectedId = null;
+        this.editing = null;
         this.viewMode = this.providers.length === 0 ? "picker" : "placeholder";
+      }
+      // 刷新 editing 引用以保持 UI 同步
+      if (this.editing) {
+        const fresh = this.providers.find(p => p.id === this.editing!.id);
+        if (fresh) {
+          this.editing = fresh;
+          this.form = { ...this.form, enabled: fresh.enabled, is_default: fresh.is_default };
+        } else {
+          this.editing = null;
+        }
       }
       // First load with no providers: show template picker directly
       if (this.providers.length === 0) {
         this.viewMode = "picker";
       }
     } catch (e: any) { this.error = e.message || "加载失败"; }
-    finally { this.loading = false; }
+    finally { if (!silent) { this.loading = false; } }
   }
 
   // ── Sidebar actions ──────────────────────────────────────────────────────
@@ -321,7 +333,7 @@ export class LLMConfigPage extends LitElement {
       this.savedOk = true;
       if (this._savedOkTimer) clearTimeout(this._savedOkTimer);
       this._savedOkTimer = setTimeout(() => { this.savedOk = false; }, 2500);
-      await this._load();
+      await this._load(true);
       // Keep the form open but update editing ref
       if (!this.editing) {
         // New provider: find it in the reloaded list
@@ -339,11 +351,33 @@ export class LLMConfigPage extends LitElement {
   }
 
   private async _toggle(p: LLMProvider) {
-    try { await apiClient.post(`/llm/configs/${p.id}/toggle`); await this._load(); } catch (_) {}
+    try {
+      await apiClient.post(`/llm/configs/${p.id}/toggle`);
+      await this._load(true);
+      // 刷新 editing 引用，否则 toggle 开关显示旧状态
+      if (this.editing && this.editing.id === p.id) {
+        const fresh = this.providers.find(prov => prov.id === p.id);
+        if (fresh) {
+          this.editing = fresh;
+          this.form = { ...this.form, enabled: fresh.enabled, is_default: fresh.is_default };
+        }
+      }
+    } catch (_) {}
   }
 
   private async _setDefault(p: LLMProvider) {
-    try { await apiClient.post(`/llm/configs/${p.id}/default`); await this._load(); } catch (_) {}
+    try {
+      await apiClient.post(`/llm/configs/${p.id}/default`);
+      await this._load(true);
+      // 刷新 editing 引用以保持 UI 同步
+      if (this.editing && this.editing.id === p.id) {
+        const fresh = this.providers.find(prov => prov.id === p.id);
+        if (fresh) {
+          this.editing = fresh;
+          this.form = { ...this.form, enabled: fresh.enabled, is_default: fresh.is_default };
+        }
+      }
+    } catch (_) {}
   }
 
   private async _delete(p: LLMProvider) {
@@ -351,7 +385,7 @@ export class LLMConfigPage extends LitElement {
     try {
       await apiClient.delete(`/llm/configs/${p.id}`);
       if (this.selectedId === p.id) { this.selectedId = null; this.viewMode = "placeholder"; this.editing = null; }
-      await this._load();
+      await this._load(true);
     } catch (e: any) { this.formMsg = e.message || "删除失败"; }
   }
 
@@ -647,7 +681,7 @@ export class LLMConfigPage extends LitElement {
           <button class="btn" @click=${() => { this.viewMode = "picker"; }}>返回模板</button>
         `}
         <button class="btn-primary ${this.savedOk ? 'btn-success' : ''}" @click=${this._save} ?disabled=${this.saving || !this.form.name}>
-          ${this.savedOk ? html`${icons['check']} 已保存` : this.saving ? '保存中...' : '保存'}
+          ${this.savedOk ? html`<span style="font-size:11px">✓ 已保存</span>` : this.saving ? '保存中...' : '保存'}
         </button>
       </div>
     `;

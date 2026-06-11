@@ -24,6 +24,7 @@ export const sharedBtnStyles = css`
 
   .btn-primary {
     display: inline-flex; align-items: center; gap: 6px;
+    white-space: nowrap;
     background: var(--btn-primary-bg, var(--accent));
     color: var(--btn-primary-color, var(--accent-foreground, #fff));
     border: 1px solid var(--btn-primary-border, var(--accent));
@@ -49,6 +50,7 @@ export const sharedBtnStyles = css`
 
   .btn {
     display: inline-flex; align-items: center; gap: 6px;
+    white-space: nowrap;
     background: var(--btn-secondary-bg, var(--secondary, var(--card)));
     border: 1px solid var(--btn-secondary-border, var(--border));
     color: var(--btn-secondary-color, var(--text));
