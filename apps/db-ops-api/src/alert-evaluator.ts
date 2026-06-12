@@ -144,6 +144,9 @@ export async function checkDuration(
   rule: AlertRule,
   seconds: number = 60
 ): Promise<boolean> {
+  // 无持续时间要求时直接返回 true，无需查询 metrics_history
+  if (seconds <= 0) return true;
+
   const endTime = new Date();
   const startTime = new Date(endTime.getTime() - seconds * 1000);
 
@@ -189,6 +192,18 @@ export async function checkRecoveryDuration(
   seconds: number = 60,
   macros?: Record<string, number>
 ): Promise<boolean> {
+  // health_score 是状态型指标（存 database_instances 表），恢复检查直接读当前值
+  if (rule.metric_name === 'health_score') {
+    try {
+      const instance = await instanceDatabaseService.getInstanceById(instanceId);
+      if (!instance || instance.health_score == null) return false;
+      return isValueHealthy(instance.health_score, rule, macros);
+    } catch (error) {
+      console.error(`检查 health_score 恢复失败 [实例 ${instanceId}]:`, error);
+      return false;
+    }
+  }
+
   const endTime = new Date();
   const startTime = new Date(endTime.getTime() - seconds * 1000);
 
@@ -205,12 +220,23 @@ export async function checkRecoveryDuration(
     }
 
     // 所有历史数据点都健康才返回 true
+    // anyValid 防止所有数据点为 null 时误返回 true（全部 continue 跳过）
+    let anyValid = false;
     for (const record of history) {
       const value = getMetricValue(rule.metric_name, record);
       if (value === null) continue;
+      anyValid = true;
       if (!isValueHealthy(value, rule, macros)) {
         return false;
       }
+    }
+    // 无有效数据点则回退到当前值检查
+    if (!anyValid) {
+      const metrics = await metricsDatabaseService.getRealtimeMetrics(instanceId);
+      if (!metrics) return false;
+      const current = getMetricValue(rule.metric_name, metrics);
+      if (current === null) return false;
+      return isValueHealthy(current, rule, macros);
     }
     return true;
   } catch (error) {
@@ -260,7 +286,8 @@ async function resolveDynamicThreshold(
  */
 export function isValueHealthy(value: number, rule: AlertRule, macros?: Record<string, number>): boolean {
   const resolved = resolveThresholdTemplate(rule.threshold_template, macros);
-  if (!resolved) return true; // no threshold = always healthy
+  // 无 threshold_template 时回退到单阈值检查（避免误判"永远健康"导致立即自动恢复）
+  if (!resolved) return !evaluateRule(rule, value);
 
   const { warning, error, critical } = resolved;
   const checkValue = (threshold: number): boolean => {
@@ -318,46 +345,6 @@ export async function evaluateAllRules(): Promise<
     for (const instance of instances) {
       const metrics = await metricsDatabaseService.getRealtimeMetrics(instance.id);
 
-      // 检测指标是否过期：超过 10 分钟未更新视为不可达
-      const STALE_THRESHOLD_MS = 10 * 60 * 1000;
-      const isStale = metrics && (
-        !metrics.recorded_at ||
-        (Date.now() - new Date(metrics.recorded_at).getTime()) > STALE_THRESHOLD_MS
-      );
-
-      // 仅当实例 health_status='critical' 且指标过期 > 10min（或完全缺失）才创建可用性告警
-      // 避免健康实例因采集间隔差异被误报（monitor-collector 心跳 10s + 定时采集 5min）
-      if ((!metrics || isStale) && instance.health_status === 'critical') {
-        const availabilityRule: AlertRule = {
-          id: 0,
-          name: 'Instance Availability',
-          description: 'Auto-detected: instance is unreachable',
-          metric_name: '_availability',
-          operator: '>=',
-          threshold: 1,
-          severity: 'critical',
-          enabled: true,
-          duration_seconds: 0,
-          silence_minutes: 5,
-          threshold_template: null,
-          threshold_type: 'static',
-          notification_channels: null,
-          dynamic_config: null,
-          created_by: null,
-          created_at: new Date(),
-          updated_at: new Date(),
-        };
-        triggeredAlerts.push({
-          rule: availabilityRule,
-          instanceId: instance.id,
-          instanceName: instance.name,
-          currentValue: 0,
-          thresholdUsed: 1,
-          triggeredLevel: 'critical',
-        });
-        continue;
-      }
-
       for (const rule of rules) {
         // Pre-filter: skip disabled rules
         if (!rule.enabled) continue;
@@ -375,7 +362,10 @@ export async function evaluateAllRules(): Promise<
           }
         }
 
-        const currentValue = getMetricValue(rule.metric_name, metrics);
+        // health_score 存在 database_instances 表而非 metrics_history 表，需特判
+        const currentValue = rule.metric_name === 'health_score'
+          ? (instance.health_score ?? null)
+          : getMetricValue(rule.metric_name, metrics);
         if (currentValue === null) continue; // 指标未采集，跳过此规则
 
         // 解析阈值（静态或动态）

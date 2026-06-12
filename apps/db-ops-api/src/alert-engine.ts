@@ -124,22 +124,7 @@ class AlertEngine {
         try {
           if (!alert.instance_id || !alert.metric_name) continue;
 
-          // 特殊处理：可用性告警（rule_id=0），实例恢复可达且指标新鲜才恢复
           const ruleId = alert.tags?.rule_id;
-          if (ruleId === 0 || alert.metric_name === '_availability') {
-            const metrics = await metricsDatabaseService.getRealtimeMetrics(alert.instance_id);
-            const isFresh = metrics && metrics.recorded_at &&
-              (Date.now() - new Date(metrics.recorded_at).getTime()) <= 5 * 60 * 1000;
-            if (isFresh) {
-              await alertDatabaseService.resolveAlert(alert.id);
-              console.log(`[AlertEngine] Auto-resolved availability alert #${alert.id} (instance reachable again)`);
-              await alertEventService.autoResolveByAlert(alert.id).catch(err =>
-                console.warn(`[AlertEngine] Event auto-resolve check failed for alert #${alert.id}:`, err)
-              );
-            }
-            continue;
-          }
-
           if (!ruleId) continue;
 
           const rule = await alertDatabaseService.getRuleById(ruleId);
@@ -228,7 +213,6 @@ class AlertEngine {
       tps: 'performance',
       health_score: 'availability',
       slow_queries: 'performance',
-      _availability: 'availability',
     };
 
     const severity = triggeredLevel || rule.severity;
