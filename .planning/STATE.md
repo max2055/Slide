@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: 打磨与优化
 status: executing
-last_updated: "2026-06-17T16:49:37.224Z"
-last_activity: 2026-06-18 -- Phase 120 Plan 04 complete (alerts.ts split into 4 subcomponents)
+last_updated: "2026-06-18T00:00:00.000Z"
+last_activity: 2026-06-18 -- Phase 120 Plan 06 complete (chat.ts split + badge rename)
 progress:
   total_phases: 21
   completed_phases: 19
   total_plans: 73
-  completed_plans: 70
-  percent: 96
+  completed_plans: 71
+  percent: 97
 ---
 
 # Slide 项目状态
@@ -26,11 +26,11 @@ progress:
 ## Current Position
 
 Phase: 120
-Plan: 06
+Plan: 07
 Status: Executing
-Last activity: 2026-06-18 -- Phase 120 Plans 04+05 complete (alerts.ts + instance-detail.ts split)
+Last activity: 2026-06-18 -- Phase 120 Plan 06 complete (chat.ts split + badge rename)
 
-Progress: [████████████] 96%
+Progress: [████████████] 97%
 
 ## Performance Metrics
 
@@ -51,6 +51,7 @@ Progress: [████████████] 96%
 | Phase 120-03 Shared Components B | ~12min | 3 tasks | 4 files |
 | Phase 120-04 alerts split | ~30min | 3 tasks | 5 files |
 | Phase 120-05 instance-detail split | ~7min | 3 tasks | 5 files |
+| Phase 120-06 chat.ts split + badge rename | ~8min | 3 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -84,6 +85,9 @@ Progress: [████████████] 96%
 - [Phase 120-04]: D-18 alerts.ts split into alert-list, alert-detail-modal, alert-rule-editor, alert-analysis-viewer
 - [Phase 120-04]: D-21 alert subcomponents <300 lines, orchestrator reduced by ~800 lines (1967 from 2805)
 - [Phase 120-04]: Feature subcomponents use Shadow DOM (not Light DOM like shared components)
+- [Phase 120-06]: D-20 chat.ts split into chat-message-list, chat-compose-area, chat-tool-result-card
+- [Phase 120-06]: D-21 chat.ts reduced from 2069 to 458 lines (target 500-700)
+- [Phase 120-06]: Completed status-badge rename to app-badge (D-10) across all views
 
 ### Roadmap Evolution
 
@@ -120,5 +124,5 @@ Also deferred (Phase 116 discretion):
 ## Session Continuity
 
 Last session: 2026-06-18
-Stopped at: Completed Phase 120 Plans 04+05 (alerts.ts + instance-detail.ts split)
+Stopped at: Completed Phase 120 Plan 06 (chat.ts split + badge rename)
 Resume file: None

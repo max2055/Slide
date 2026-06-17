@@ -648,11 +648,11 @@ Plans:
 
 
 **Wave 3 (God Component Splits, parallel)**
-- [ ] 120-04-PLAN.md — Split alerts.ts into 4 subcomponents (alert-list, alert-detail-modal, alert-rule-editor, alert-analysis-viewer)
+- [x] 120-04-PLAN.md — Split alerts.ts into 4 subcomponents (alert-list, alert-detail-modal, alert-rule-editor, alert-analysis-viewer)
 - [x] 120-05-PLAN.md — Split instance-detail.ts into 4 subcomponents (overview-tab, metrics-tab, diagnosis-modal, trend-chart)
 
 **Wave 4 (Chat Split + Badge Rename)**
-- [ ] 120-06-PLAN.md — Split chat.ts into 3 subcomponents + rename status-badge to app-badge across all views
+- [x] 120-06-PLAN.md — Split chat.ts into 3 subcomponents + rename status-badge to app-badge across all views
 
 **Wave 5 (Component Adoption)**
 - [ ] 120-07-PLAN.md — Adopt shared components in 12 remaining views (replace hand-rolled dialogs/forms/cards/tables/toast/badges)
