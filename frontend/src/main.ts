@@ -5,8 +5,6 @@
  * - Core: Gateway protocol, UI lifecycle, state management
  * - Business (slide/): Database operations, LLM integration, alerts
  */
-import './styles/global.css';
-
 // Core styles
 import './app/styles.css';
 
