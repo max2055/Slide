@@ -22,6 +22,7 @@ import "./components/app-toggle.ts";
 import "./components/app-select-field.ts";
 import "./components/app-option-group.ts";
 import "./components/status-badge.ts";
+import "./components/app-toast-container.ts";
 import "./views/dashboard.ts";
 import "./views/instances-db.ts";
 import "./views/instance-detail.ts";
@@ -844,6 +845,7 @@ export function renderApp(state: AppViewState) {
           : nothing}
       </main>
       ${renderGatewayUrlConfirmation(state)} ${nothing}
+      <app-toast-container></app-toast-container>
     </div>
   `;
 }
