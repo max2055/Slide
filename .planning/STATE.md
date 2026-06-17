@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: 打磨与优化
 status: executing
-last_updated: "2026-06-18T12:00:00.000Z"
-last_activity: 2026-06-18 -- Phase 120 Plan 02 complete (toast, dialog, form-field)
+last_updated: "2026-06-17T16:36:39.026Z"
+last_activity: 2026-06-18 -- Phase 120 Plan 03 complete (app-card, app-data-table, app-empty-state, app-badge)
 progress:
   total_phases: 21
   completed_phases: 19
   total_plans: 73
-  completed_plans: 67
-  percent: 92
+  completed_plans: 68
+  percent: 93
 ---
 
 # Slide 项目状态
@@ -26,11 +26,11 @@ progress:
 ## Current Position
 
 Phase: 120
-Plan: 02
+Plan: 03
 Status: Executing
-Last activity: 2026-06-18 -- Phase 120 Plan 02 complete (toast, dialog, form-field)
+Last activity: 2026-06-18 -- Phase 120 Plan 03 complete (app-card, app-data-table, app-empty-state, app-badge)
 
-Progress: [█████████░] 89%
+Progress: [██████████] 93%
 
 ## Performance Metrics
 
@@ -48,6 +48,7 @@ Progress: [█████████░] 89%
 | 120. 全面优化系统UI | 0/0 | Pending |
 | Phase 120-ui PCSS Architecture Reset | ~20min | 3 tasks | 9 files |
 | Phase 120-02 Shared Components A | ~15min | 3 tasks | 4 files |
+| Phase 120-03 Shared Components B | ~12min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -72,6 +73,10 @@ Progress: [█████████░] 89%
 - [Phase 120-02]: D-15 app-toast-container with showToast(), 4 types, fixed bottom-right, 3s auto-dismiss
 - [Phase 120-02]: T-120-01 Overlay click guard via e.target === e.currentTarget
 - [Phase 120-02]: T-120-02 Toast singleton fallback with console.warn
+- [Phase 120-03]: D-16 Skeleton screens in data tables (5 skeleton rows)
+- [Phase 120-03]: D-17 app-empty-state with icon + title + description + optional action button
+- [Phase 120-03]: app-badge created as parallel (not rename) of status-badge — old component remains working
+- [Phase 120-03]: Data table emits app-table-sort event — parent views handle sort logic
 
 ### Roadmap Evolution
 
@@ -107,6 +112,6 @@ Also deferred (Phase 116 discretion):
 
 ## Session Continuity
 
-Last session: 2026-06-17T16:29:20.163Z
-Stopped at: Phase 120 context gathered
+Last session: 2026-06-17
+Stopped at: Completed Phase 120 Plan 03 (Component Suite B)
 Resume file: None

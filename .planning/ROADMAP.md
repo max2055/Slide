@@ -636,7 +636,7 @@ Plans:
   6. 核心交互有平滑 transition/animation（页面切换、面板展开、hover 反馈）
   7. 可访问性基线达标：键盘导航、focus 可见、语义化 heading 层级、表单 label 关联
   8. CSS 文件从当前碎片化状态收敛到 < 10 个结构化文件（design-tokens, layout, components, themes, utilities）
-**Plans:** 2/8 plans executed
+**Plans:** 3/8 plans executed
 
 Plans:
 **Wave 1 (CSS Foundation)**
@@ -644,7 +644,7 @@ Plans:
 
 **Wave 2 (Build Shared Components, parallel)**
 - [x] 120-02-PLAN.md — Component Suite A: app-toast-container, app-dialog (4 sizes), app-form-field
-- [ ] 120-03-PLAN.md — Component Suite B: app-card, app-data-table, app-empty-state, app-badge
+- [x] 120-03-PLAN.md — Component Suite B: app-card, app-data-table, app-empty-state, app-badge
 
 
 **Wave 3 (God Component Splits, parallel)**
