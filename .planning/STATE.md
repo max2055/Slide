@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: 打磨与优化
 status: executing
-last_updated: "2026-06-17T16:30:08.773Z"
-last_activity: 2026-06-17 -- Phase 120 planning complete
+last_updated: "2026-06-18T12:00:00.000Z"
+last_activity: 2026-06-18 -- Phase 120 Plan 02 complete (toast, dialog, form-field)
 progress:
   total_phases: 21
   completed_phases: 19
   total_plans: 73
-  completed_plans: 65
-  percent: 89
+  completed_plans: 67
+  percent: 92
 ---
 
 # Slide 项目状态
 
-**最后更新**: 2026-06-17
+**最后更新**: 2026-06-18
 **当前里程碑**: v1.5 打磨与优化
 
 ## Project Reference
@@ -26,9 +26,9 @@ progress:
 ## Current Position
 
 Phase: 120
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-17 -- Phase 120 planning complete
+Plan: 02
+Status: Executing
+Last activity: 2026-06-18 -- Phase 120 Plan 02 complete (toast, dialog, form-field)
 
 Progress: [█████████░] 89%
 
@@ -47,6 +47,7 @@ Progress: [█████████░] 89%
 | 119. 代码清理 | 0/0 | Pending |
 | 120. 全面优化系统UI | 0/0 | Pending |
 | Phase 120-ui PCSS Architecture Reset | ~20min | 3 tasks | 9 files |
+| Phase 120-02 Shared Components A | ~15min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -65,6 +66,12 @@ Progress: [█████████░] 89%
 - [Phase 120]: D-07 Motion tokens: duration (100/180/300ms) and easing (out/in-out/spring)
 - [Phase 120]: D-14 --disabled-opacity: 0.45
 - [Phase 120]: D-22 z-index layers: sidebar(10)/dropdown(100)/modal(1000)/toast(1100)
+- [Phase 120-02]: D-09 Light DOM for all shared components (createRenderRoot)
+- [Phase 120-02]: D-10 app- prefix for shared components
+- [Phase 120-02]: D-11 app-dialog 4 sizes sm=400/md=520/lg=640/xl=720, 200ms scale-in+fade-in
+- [Phase 120-02]: D-15 app-toast-container with showToast(), 4 types, fixed bottom-right, 3s auto-dismiss
+- [Phase 120-02]: T-120-01 Overlay click guard via e.target === e.currentTarget
+- [Phase 120-02]: T-120-02 Toast singleton fallback with console.warn
 
 ### Roadmap Evolution
 
