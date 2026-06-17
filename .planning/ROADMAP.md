@@ -5,7 +5,8 @@
 - ✅ **v1.1 RBAC + SQL Console + Dashboard** — Phases 84-89 (shipped 2026-05-13)
 - ✅ **v1.2 UI + AI + Docs** — Phases 90-99 (shipped 2026-05-20)
 - ✅ **v1.3 系统加固与体验优化** — Phases 100-107 (shipped 2026-05-22)
-- 🚧 **v1.4 Agent 解耦与替换** — Phases 108-114 (in progress)
+- ✅ **v1.4 Agent 解耦与替换** — Phases 108-118 (shipped 2026-06-08)
+- 🚧 **v1.5 打磨与优化** — Phases 119+ (in progress)
 
 ## Phases
 
@@ -611,8 +612,55 @@ Plans:
 - [x] 118-01-PLAN.md — 告警系统 Bug 修复（可用性误报、QPS 阈值绕过、API metric_name null）
 - [x] 118-02-PLAN.md — Agent DB 连接工具（list_database_instances, get_instance_connection）
 
----
-*Last updated: 2026-06-08*
+### Phase 119: 根据代码审查报告清理代码：修复P0关键Bug、移除~9600行死代码、统一设计模式、修复前后端路由不匹配等不闭环问题
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 118
+**Plans:** 8 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 119 to break down)
+
+### Phase 120: 全面优化系统UI
+
+**Goal:** 对 Slide 全系统 UI 进行 6 维度打磨：视觉一致性、响应式布局、组件标准化、主题系统完善、交互动效、可访问性基线。消除 CSS 碎片化，统一设计语言，提升专业感与操作效率。
+**Depends on:** Phase 119
+**Requirements**: UI-OPT-01
+**Success Criteria** (what must be TRUE):
+  1. 全站 20+ 页面 visual audit 通过，无不一致字体/颜色/间距/圆角
+  2. 共享组件库完整（button, card, table, badge, modal, form, stat-card, tab, toast），所有视图统一引用
+  3. 响应式布局覆盖 desktop/tablet/mobile 三端断点，无溢出/遮挡
+  4. 全站统一浅色主题，无深色模式残留/半吊子样式，色彩体系一致
+  5. 加载态、空态、错误态有统一设计模式，全站一致
+  6. 核心交互有平滑 transition/animation（页面切换、面板展开、hover 反馈）
+  7. 可访问性基线达标：键盘导航、focus 可见、语义化 heading 层级、表单 label 关联
+  8. CSS 文件从当前碎片化状态收敛到 < 10 个结构化文件（design-tokens, layout, components, themes, utilities）
+**Plans:** 8 plans
+
+Plans:
+**Wave 1 (CSS Foundation)**
+- [ ] 120-01-PLAN.md — CSS Architecture Reset: delete old CSS, create tokens.css (blue #409eff), fix double load, z-index layers, <7 files
+
+**Wave 2 (Build Shared Components, parallel)**
+- [ ] 120-02-PLAN.md — Component Suite A: app-toast-container, app-dialog (4 sizes), app-form-field
+- [ ] 120-03-PLAN.md — Component Suite B: app-card, app-data-table, app-empty-state, app-badge
+
+
+**Wave 3 (God Component Splits, parallel)**
+- [ ] 120-04-PLAN.md — Split alerts.ts into 4 subcomponents (alert-list, alert-detail-modal, alert-rule-editor, alert-analysis-viewer)
+- [ ] 120-05-PLAN.md — Split instance-detail.ts into 4 subcomponents (overview-tab, metrics-tab, diagnosis-modal, trend-chart)
+
+**Wave 4 (Chat Split + Badge Rename)**
+- [ ] 120-06-PLAN.md — Split chat.ts into 3 subcomponents + rename status-badge to app-badge across all views
+
+**Wave 5 (Component Adoption)**
+- [ ] 120-07-PLAN.md — Adopt shared components in 12 remaining views (replace hand-rolled dialogs/forms/cards/tables/toast/badges)
+
+**Wave 6 (Final Polish)**
+- [ ] 120-08-PLAN.md — Interaction states + skeleton screens + px->token migration + console->logger replacement
+**UI hint**: yes
+
 
 | 117. OpenClaw收尾 | v1.4 | 3/3 | Complete    | 2026-06-02 |
 | 118. Agent DB 连接 + 告警完善 | v1.4 | 2/2 | Complete    | 2026-06-08 |
