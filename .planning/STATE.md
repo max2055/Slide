@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: 打磨与优化
 status: executing
-last_updated: "2026-06-17T16:23:10.566Z"
+last_updated: "2026-06-17T16:30:08.773Z"
 last_activity: 2026-06-17 -- Phase 120 planning complete
 progress:
   total_phases: 21
   completed_phases: 19
   total_plans: 73
-  completed_plans: 64
-  percent: 88
+  completed_plans: 65
+  percent: 89
 ---
 
 # Slide 项目状态
@@ -30,7 +30,7 @@ Plan: Not started
 Status: Ready to execute
 Last activity: 2026-06-17 -- Phase 120 planning complete
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█████████░] 89%
 
 ## Performance Metrics
 
@@ -46,6 +46,7 @@ Progress: [░░░░░░░░░░] 0%
 |-------|-------|--------|
 | 119. 代码清理 | 0/0 | Pending |
 | 120. 全面优化系统UI | 0/0 | Pending |
+| Phase 120-ui PCSS Architecture Reset | ~20min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -58,6 +59,12 @@ Progress: [░░░░░░░░░░] 0%
 - **ALERT-05 through ALERT-08 deferred to v2+**: AI learning thresholds and multi-session aggregation are out of v1.3 scope
 - **Phase 115 scope**: 去 OpenClaw 迁移后清理 — 注释/文本引用、TODO 修复、CI
 - **Phase 116 scope**: 去 OpenClaw 运行时引用 — CLI 名、环境变量、Symbol 键、数据目录、用户可见消息
+- [Phase 120]: D-01 Accent blue #409eff (was purple #7c5cff)
+- [Phase 120]: D-03 CSS 7-file-by-layer architecture
+- [Phase 120]: D-04 Chat CSS single-load fix (removed duplicate from components.css)
+- [Phase 120]: D-07 Motion tokens: duration (100/180/300ms) and easing (out/in-out/spring)
+- [Phase 120]: D-14 --disabled-opacity: 0.45
+- [Phase 120]: D-22 z-index layers: sidebar(10)/dropdown(100)/modal(1000)/toast(1100)
 
 ### Roadmap Evolution
 
@@ -93,6 +100,6 @@ Also deferred (Phase 116 discretion):
 
 ## Session Continuity
 
-Last session: 2026-06-17T16:04:05.445Z
+Last session: 2026-06-17T16:29:20.163Z
 Stopped at: Phase 120 context gathered
-Resume file: .planning/phases/120-ui/120-CONTEXT.md
+Resume file: None
