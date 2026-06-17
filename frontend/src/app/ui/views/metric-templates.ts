@@ -466,7 +466,7 @@ export class MetricTemplatesPage extends LitElement {
                 <td>${tpl.db_type ? html`<span class="badge badge-tag">${tpl.db_type}</span>` : html`<span style="color:var(--muted);font-size:11px">全部</span>`}</td>
                 <td><span style="font-size:12px;font-weight:500">${tpl.metrics?.length || 0}</span></td>
                 <td><span style="font-size:12px;font-weight:500">${this.allRules.filter(r => r.template_id === tpl.id).length}</span></td>
-                <td><status-badge variant=${tpl.enabled ? 'ok' : 'muted'}>${tpl.enabled ? '启用' : '禁用'}</status-badge></td>
+                <td><app-badge variant=${tpl.enabled ? 'ok' : 'muted'}>${tpl.enabled ? '启用' : '禁用'}</app-badge></td>
                 <td>
                   <button class="btn btn-sm" @click=${() => this._toggleExpand(tpl)}>${this.expandedId === tpl.id ? '收起' : '详情'}</button>
                   <button class="btn btn-sm" @click=${() => this._openEdit(tpl)} style="margin-left:4px">编辑</button>

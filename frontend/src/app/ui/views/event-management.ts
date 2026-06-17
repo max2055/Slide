@@ -659,7 +659,7 @@ export class EventManagementPage extends LitElement {
       resolved: "已解决",
       closed: "已关闭",
     };
-    return html`<status-badge variant=${variantMap[status] || "muted"}>${labelMap[status] || status}</status-badge>`;
+    return html`<app-badge variant=${variantMap[status] || "muted"}>${labelMap[status] || status}</app-badge>`;
   }
 
   private _severityColor(severity: string): string {

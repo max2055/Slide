@@ -363,7 +363,7 @@ export class ApprovalDashboard extends LitElement {
       medium: "warn",
       low: "info",
     };
-    return html`<status-badge variant=${variantMap[level] || "muted"}>${level?.toUpperCase()}</status-badge>`;
+    return html`<app-badge variant=${variantMap[level] || "muted"}>${level?.toUpperCase()}</app-badge>`;
   }
 
   override render() {

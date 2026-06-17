@@ -203,7 +203,7 @@ export class MetricRegistryViewer extends LitElement {
               <td class="col-unit"><span class="text-muted">${m.unit || '-'}</span></td>
               <td class="col-agg"><span class="text-muted">${AGG_LABELS[m.aggregation] || m.aggregation}</span></td>
               <td class="col-int"><span class="text-mono">${m.default_interval}s</span></td>
-              <td class="col-status"><status-badge variant=${m.is_collected ? 'ok' : 'muted'}>${m.is_collected ? '启用' : '禁用'}</status-badge></td>
+              <td class="col-status"><app-badge variant=${m.is_collected ? 'ok' : 'muted'}>${m.is_collected ? '启用' : '禁用'}</app-badge></td>
               <td class="col-act" @click=${(e: Event) => e.stopPropagation()}>
                 <button class="btn-sm" @click=${() => this._openEdit(m)}>编辑</button>
                 <button class="btn-sm danger" ?disabled=${m.is_builtin} @click=${() => { this.showDeleteConfirm = m; }}>删除</button>

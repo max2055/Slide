@@ -413,7 +413,7 @@ export class CronJobsSettings extends LitElement {
 
   private renderBadge(result: string | null) {
     const key = result || "na";
-    return html`<status-badge variant=${STATUS_VARIANT[key] || "muted"}>${STATUS_LABEL[key] || "未执行"}</status-badge>`;
+    return html`<app-badge variant=${STATUS_VARIANT[key] || "muted"}>${STATUS_LABEL[key] || "未执行"}</app-badge>`;
   }
 
   private renderStructuredResult(sr: Record<string, unknown> | null) {
