@@ -2,9 +2,11 @@ import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
-import "./ai-analysis-result.js";
-import "../../../components/stat-card.js";
 import { authFetch } from "../../../api/index.js";
+import "./../components/alert-list.js";
+import "./../components/alert-detail-modal.js";
+import "./../components/alert-rule-editor.js";
+import "./../components/alert-analysis-viewer.js";
 
 interface Alert {
   id: number;
@@ -144,74 +146,6 @@ export class AlertsPage extends LitElement {
       color: var(--text-strong);
     }
 
-    /* 工具栏 */
-    .toolbar {
-      display: flex;
-      align-items: center;
-      gap: var(--space-sm);
-      padding: var(--space-md) var(--space-lg);
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-elevated);
-      flex-wrap: wrap;
-    }
-
-    .filter-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: var(--space-sm);
-      padding: var(--space-sm) var(--space-md);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      font-size: var(--text-sm);
-      font-weight: 500;
-      color: var(--text);
-      background: var(--secondary);
-      cursor: pointer;
-      transition: all var(--duration-normal) var(--ease-out);
-    }
-
-    .filter-btn:hover {
-      border-color: var(--border-strong);
-      background: var(--bg-hover);
-    }
-
-    .filter-btn.active {
-      background: var(--accent);
-      color: var(--accent-foreground);
-      border-color: var(--accent);
-    }
-
-    .filter-btn svg {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: var(--space-md);
-      padding: var(--space-sm) 0;
-    }
-    .pagination {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: var(--space-md);
-      padding: var(--space-sm) 0;
-      border-top: 1px solid var(--border);
-      margin-top: var(--space-sm);
-    }
-    .pagination-info {
-      font-size: var(--text-sm);
-      color: var(--muted);
-    }
-    .pagination-jump {
-      font-size: var(--text-xs);
-      color: var(--muted);
-    }
-    .pagination-jump-input {
-      padding: 2px 4px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      background: var(--bg);
-      color: var(--text);
-    }
 
     /* 表格样式 */
     .table-wrap {
@@ -304,24 +238,6 @@ export class AlertsPage extends LitElement {
       color: var(--info);
     }
 
-    .alert-content {
-      display: flex;
-      flex-direction: column;
-      gap: var(--space-xs);
-    }
-
-    .alert-title {
-      font-weight: 600;
-      color: var(--text-strong);
-      font-size: var(--text-md);
-    }
-
-    .alert-message {
-      font-size: var(--text-sm);
-      color: var(--muted);
-      line-height: 1.5;
-      max-width: 500px;
-    }
 
     .instance-badge {
       display: inline-flex;
@@ -347,10 +263,6 @@ export class AlertsPage extends LitElement {
       letter-spacing: 0.05em;
     }
 
-    .time-ago {
-      font-size: var(--text-sm);
-      color: var(--muted);
-    }
 
     /* 操作按钮 */
     .actions {
@@ -546,55 +458,6 @@ export class AlertsPage extends LitElement {
       color: var(--muted);
     }
 
-    /* Alert status badge */
-    .alert-status-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: var(--space-xs) var(--space-sm);
-      border-radius: var(--radius-full);
-      font-size: var(--text-xs);
-      font-weight: 600;
-      white-space: nowrap;
-    }
-
-    .alert-status-badge.unread {
-      background: rgba(239, 68, 68, 0.1);
-      color: #ef4444;
-    }
-
-    .alert-status-badge.read {
-      background: rgba(107, 114, 128, 0.1);
-      color: #6b7280;
-    }
-
-    .alert-status-badge.acknowledged {
-      background: rgba(59, 130, 246, 0.1);
-      color: #3b82f6;
-    }
-
-    .alert-status-badge.resolved {
-      background: rgba(34, 197, 94, 0.1);
-      color: #22c55e;
-    }
-
-    .alert-status-badge.closed {
-      background: rgba(107, 114, 128, 0.08);
-      color: #9ca3af;
-    }
-
-    .alert-status-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-
-    .alert-status-dot.unread { background: #ef4444; }
-    .alert-status-dot.read { background: #6b7280; }
-    .alert-status-dot.acknowledged { background: #3b82f6; }
-    .alert-status-dot.resolved { background: #22c55e; }
-    .alert-status-dot.closed { background: #9ca3af; }
 
     /* Checkbox group */
     .checkbox-group {
@@ -621,50 +484,6 @@ export class AlertsPage extends LitElement {
       color: var(--accent);
     }
 
-    /* Analysis status badges */
-    .analysis-badge {
-      display: inline-flex;
-      align-items: center;
-      padding: var(--space-xs) var(--space-md);
-      border-radius: var(--radius-full);
-      font-size: var(--text-xs);
-      font-weight: 600;
-      cursor: default;
-      white-space: nowrap;
-    }
-
-    .analysis-badge--completed {
-      background: rgba(34, 197, 94, 0.08);
-      color: #22c55e;
-      cursor: pointer;
-    }
-
-    .analysis-badge--completed:hover {
-      background: rgba(34, 197, 94, 0.15);
-    }
-
-    .analysis-badge--running {
-      background: rgba(210, 190, 252, 0.15);
-      color: #d2befc;
-    }
-
-    .analysis-badge--running[clickable] {
-      cursor: pointer;
-    }
-
-    .analysis-badge--running[clickable]:hover {
-      background: rgba(210, 190, 252, 0.28);
-    }
-
-    .analysis-badge--failed {
-      background: rgba(176, 141, 245, 0.12);
-      color: #b08df5;
-      cursor: pointer;
-    }
-
-    .analysis-badge--failed:hover {
-      background: rgba(176, 141, 245, 0.2);
-    }
 
     .cfg-toggle {
       position: relative;
@@ -748,7 +567,6 @@ export class AlertsPage extends LitElement {
   @state() private editingRule: AlertRule | null = null;
   @state() private ruleForm: Partial<AlertRule> = {};
   @state() private ruleFormError = '';
-  @state() private _thresholdValidationError: string | null = null;
   @state() private _ruleToggleErrors: Map<number, string> = new Map();
   @state() private metricRegistry: any[] = [];
 
@@ -843,7 +661,7 @@ export class AlertsPage extends LitElement {
     const tabContent = (() => {
     switch (this.activeAlertTab) {
       case 'alerts':
-        return this._renderAlertsList();
+        return this._renderAlertsTab();
       case 'rules':
         return this._renderRules();
       case 'escalation':
@@ -855,14 +673,24 @@ export class AlertsPage extends LitElement {
       case 'baselines':
         return this._renderBaselines();
       default:
-        return this._renderAlertsList();
+        return this._renderAlertsTab();
     }
     })();
 
     return html`
       ${tabContent}
-      ${this.detailAlert ? this._renderAlertDetailModal() : ''}
-      ${this.activeAnalysisRecord ? this._renderAnalysisResultModal() : ''}
+      <alert-detail-modal .alert=${this.detailAlert} .open=${this.detailAlert !== null}
+        .activeRCAAnalysis=${this.activeRCAAnalysis} .diagnosisStatus=${this.diagnosisStatus}
+        .diagnosisResult=${this.diagnosisResult} .diagnosisError=${this.diagnosisError}
+        .analysisHistory=${this.analysisHistory} .analysisHistoryLoading=${this.analysisHistoryLoading}
+        @close=${this._closeAlertDetail} @alert-rca=${(e: CustomEvent) => {
+          const a = this.alerts.find(x => x.id === e.detail.id);
+          if (a) this._startRCA(a);
+        }} @alert-navigate-chat=${(e: CustomEvent) => this._navigateToChat(e.detail.sessionKey)}>
+      </alert-detail-modal>
+      <alert-analysis-viewer .analysis=${this.activeAnalysisRecord} .open=${this.activeAnalysisRecord !== null}
+        @close=${this._closeAnalysisResult}>
+      </alert-analysis-viewer>
     `;
   }
 
@@ -954,289 +782,28 @@ export class AlertsPage extends LitElement {
     };
   }
 
-  private _renderAlertsList() {
-    if (this.loading) {
-      return html`<div class="loading">加载中...</div>`;
-    }
-
-    if (this.error) {
-      return html`<div class="loading" style="color: var(--destructive);">${this.error}</div>`;
-    }
-
-    const filtered = this.filteredAlerts;
-
+  private _renderAlertsTab() {
     return html`
-      <!-- 统计概览 -->
-      <div style="display:grid;gap:var(--space-md);grid-template-columns:repeat(5,1fr);margin-bottom:var(--space-xl)">
-        <stat-card
-          label="总告警数"
-          value="${this.stats.total}"
-          hint="活跃 + 已恢复"
-        ></stat-card>
-
-        <stat-card
-          label="未处理"
-          value="${this.stats.unread}"
-          variant="warn"
-          .hint=${html`<span class="dot warn"></span>待确认`}
-        ></stat-card>
-
-        <stat-card
-          label="已恢复"
-          value="${this.stats.resolved}"
-          variant="ok"
-          .hint=${html`<span class="dot ok"></span>自动/手动`}
-        ></stat-card>
-
-        <stat-card
-          label="严重告警"
-          value="${this.stats.critical}"
-          variant="danger"
-          .hint=${html`<span class="dot danger"></span>需立即处理`}
-        ></stat-card>
-
-        <stat-card
-          label="警告告警"
-          value="${this.stats.warning}"
-          variant="warn"
-          .hint=${html`<span class="dot warn"></span>需关注`}
-        ></stat-card>
-      </div>
-
-      <!-- 活跃/已恢复 Tab -->
-      <div style="display:flex;gap:var(--space-md);margin-bottom:var(--space-lg);">
-        <button class="tab ${this.activeListTab === 'active' ? 'active' : ''}"
-          @click=${() => { this.activeListTab = 'active'; this.page = 0; this.loadAlerts(); }}>
-          活跃告警
-          <span class="tab-badge">${this._statsActiveTotal}</span>
-        </button>
-        <button class="tab ${this.activeListTab === 'recovered' ? 'active' : ''}"
-          @click=${() => { this.activeListTab = 'recovered'; this.page = 0; this.loadAlerts(); }}>
-          已恢复
-          <span class="tab-badge" style="background:var(--ok-subtle);color:var(--ok);">${this._statsResolved}</span>
-        </button>
-      </div>
-
-      <!-- 告警列表卡片 -->
-      <div class="card">
-        <div class="toolbar">
-          <select class="filter-btn" style="font-size: var(--text-sm);" @change=${(e: any) => { this.filterSeverity = e.target.value; this.requestUpdate(); }}>
-            <option value="">全部级别</option>
-            <option value="critical">严重</option>
-            <option value="warning">警告</option>
-            <option value="info">提示</option>
-          </select>
-          <input class="form-input" type="text" placeholder="搜索编号/标题/实例..." style="flex:1;max-width:240px;padding:var(--space-sm) var(--space-md);font-size: var(--text-sm);"
-            .value=${this.searchText}
-            @input=${(e: any) => { this.searchText = e.target.value; this.requestUpdate(); }} />
-          <button class="btn" @click=${() => this.loadAlerts()}>
-            刷新
-          </button>
-        </div>
-
-        ${filtered.length > 0
-          ? html`
-              <div class="table-wrap">
-                <table class="table">
-                  <thead>
-                    <tr>
-                      <th style="width:45px;text-align:center;">编号</th>
-                      <th style="width:55px;text-align:center;">级别</th>
-                      <th>告警内容</th>
-                      <th style="width:100px;text-align:center;">实例</th>
-                      <th style="width:70px;text-align:center;">类型</th>
-                      <th style="width:70px;text-align:center;">状态</th>
-                      <th style="width:90px;text-align:center;">分析状态</th>
-                      <th style="width:110px;text-align:center;">时间</th>
-                      <th style="width:100px;text-align:center;">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${filtered.map((alert) => {
-                      const isAnalyzing = this.activeRCAAnalysis?.alertId === alert.id;
-                      const analysisComplete = isAnalyzing && this.diagnosisStatus === "completed";
-                      const wasAnalyzed = this.analyzedStatuses.has(alert.id) || isAnalyzing;
-                      const isActive = alert.status === 'unread' || alert.status === 'read' || alert.status === 'acknowledged';
-                      return html`
-                      <tr class="${alert.severity}" style="white-space:nowrap;">
-                        <td style="font-size: var(--text-xs);color:var(--muted);text-align:center;">${alert.id}</td>
-                        <td style="text-align:center;">
-                          <span class="severity-badge ${alert.severity === 'info' ? 'blue' : alert.severity === 'warning' ? 'orange' : 'red'}" style="font-size: var(--text-xs);padding:var(--space-xs) var(--space-sm);">
-                            ${this._severityLabel(alert.severity)}
-                          </span>
-                        </td>
-                        <td style="overflow:hidden;" title="${this._cleanTitle(alert.title)} — ${alert.message}">
-                          <div style="display:flex;align-items:center;gap:var(--space-sm);overflow:hidden;">
-                            <span class="alert-title" style="white-space:nowrap;flex-shrink:0;">${this._cleanTitle(alert.title)}</span>
-                            <span class="alert-message" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size: var(--text-sm);">${alert.message}</span>
-                          </div>
-                        </td>
-                        <td style="text-align:center;">
-                          ${alert.instance_name
-                            ? html`<a href="#" class="instance-badge" style="font-size: var(--text-xs);text-decoration:none;cursor:pointer;"
-                                @click=${(e: Event) => { e.preventDefault(); this._navigateToInstance(alert.instance_id!); }}>${alert.instance_name}</a>`
-                            : html`<span style="color:var(--muted);">—</span>`
-                          }
-                        </td>
-                        <td style="text-align:center;"><span class="type-badge" style="font-size:10px;">${this._typeLabel(alert.alert_type)}</span></td>
-                        <td style="text-align:center;">${this._renderStatusBadge(alert)}</td>
-                        <td style="text-align:center;font-size: var(--text-sm);">
-                          ${this._renderAnalysisBadge(alert.id)}
-                        </td>
-                        <td style="text-align:center;"><span class="time-ago" style="font-size: var(--text-xs);">${this._formatTime(alert.created_at)}</span></td>
-                        <td style="text-align:center;">
-                          <div class="actions" style="flex-wrap:wrap;gap:3px;">
-                            ${alert.status === 'unread' || alert.status === 'read'
-                              ? html`<button class="action-btn primary" @click=${() => this._acknowledge(alert)}>确认</button>`
-                              : html`<button class="action-btn" @click=${() => this._openAlertDetail(alert)}>详情</button>`
-                            }
-                            ${isActive && alert.severity !== 'info' && !isAnalyzing
-                              ? html`<button class="action-btn" @click=${() => this._startRCA(alert)}>AI</button>`
-                              : ''
-                            }
-                          </div>
-                        </td>
-                      </tr>
-                    `;})}
-                  </tbody>
-                </table>
-              </div>
-              ${this._renderPagination()}
-            `
-          : html`
-              <div class="empty" style="min-height: 200px;">
-                <div class="empty__content">
-                  <div class="empty__icon">${this.activeListTab === 'recovered' ? icons['check-circle'] : icons['party-popper']}</div>
-                  <div class="empty__title">
-                    ${this.activeListTab === 'recovered' ? "没有已恢复告警" : "暂无活跃告警"}
-                  </div>
-                  <div class="empty__desc">
-                    ${this.activeListTab === 'recovered' ? "已恢复的告警会出现在这里" : "系统运行正常"}
-                  </div>
-                </div>
-              </div>
-            `
-        }
-
-      </div>
-    `;
-  }
-
-  private _renderAlertDetailModal() {
-    if (!this.detailAlert) return html``;
-    const alert = this.detailAlert;
-    const isAnalyzing = this.activeRCAAnalysis?.alertId === alert.id;
-    const analysisRunning = isAnalyzing && this.diagnosisStatus === "running";
-    const analysisComplete = isAnalyzing && this.diagnosisStatus === "completed";
-    const analysisFailed = isAnalyzing && this.diagnosisStatus === "failed";
-    const canAnalyze = alert.severity !== 'info' && !analysisRunning;
-
-    return html`
-      <div class="modal-overlay" @click=${(e: MouseEvent) => { if (e.target === e.currentTarget) this._closeAlertDetail(); }}>
-        <div class="modal" style="max-width:640px;max-height:85vh;">
-          <!-- Header -->
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:var(--space-lg);">
-            <div>
-              <span style="font-size: var(--text-xs);color:var(--muted);">${alert.id}</span>
-              <span class="severity-badge ${alert.severity === 'critical' ? 'red' : alert.severity === 'warning' ? 'orange' : 'blue'}" style="margin-left:var(--space-sm);">
-                ${this._severityLabel(alert.severity)}
-              </span>
-              <span class="type-badge" style="margin-left:var(--space-xs);">${this._typeLabel(alert.alert_type)}</span>
-              <div style="font-size: var(--text-lg);font-weight:600;margin-top:var(--space-xs);">${this._cleanTitle(alert.title)}</div>
-            </div>
-            <button class="action-btn" @click=${this._closeAlertDetail}>✕</button>
-          </div>
-
-          <!-- Metadata -->
-          <div style="display:grid;grid-template-columns:80px 1fr;gap:var(--space-sm) var(--space-md);font-size: var(--text-base);margin-bottom:var(--space-lg);padding:var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);">
-            <span style="color:var(--muted);">实例</span><span>${alert.instance_name || '—'}</span>
-            <span style="color:var(--muted);">时间</span><span>${new Date(alert.created_at).toLocaleString('zh-CN')}</span>
-            <span style="color:var(--muted);">状态</span><span>${this._renderStatusBadge(alert)}</span>
-            <span style="color:var(--muted);">描述</span><span style="line-height:1.5;">${alert.message || '—'}</span>
-          </div>
-
-          <!-- Status timeline -->
-          <div style="display:flex;align-items:center;gap:var(--space-md);margin-bottom:var(--space-lg);padding:var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);font-size:var(--text-sm);overflow-x:auto;">
-            <div style="display:flex;align-items:center;gap:var(--space-xs);flex-shrink:0;">
-              <span style="color:var(--ok);">●</span>
-              <span style="color:var(--muted);">触发</span>
-              <span>${new Date(alert.created_at).toLocaleString('zh-CN')}</span>
-            </div>
-            <span style="color:var(--border);">→</span>
-            ${alert.acknowledged_at ? html`
-              <div style="display:flex;align-items:center;gap:var(--space-xs);flex-shrink:0;">
-                <span style="color:var(--accent);">●</span>
-                <span style="color:var(--muted);">确认</span>
-                <span>${new Date(alert.acknowledged_at).toLocaleString('zh-CN')}</span>
-              </div>
-              <span style="color:var(--border);">→</span>
-            ` : ''}
-            ${alert.resolved_at ? html`
-              <div style="display:flex;align-items:center;gap:var(--space-xs);flex-shrink:0;">
-                <span style="color:var(--ok);">●</span>
-                <span style="color:var(--muted);">${alert.resolved_by === 'auto' ? '自动恢复' : '已解决'}</span>
-                <span>${new Date(alert.resolved_at).toLocaleString('zh-CN')}</span>
-              </div>
-            ` : html`
-              <span style="color:var(--muted);">—</span>
-            `}
-          </div>
-
-          <!-- AI Analysis Section -->
-          <div style="margin-bottom:var(--space-lg);padding:var(--space-md);border:1px solid var(--border);border-radius:var(--radius-md);">
-            <div style="font-weight:600;font-size: var(--text-md);margin-bottom:var(--space-md);">AI 根因分析</div>
-
-            ${analysisRunning ? html`
-              <div style="display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);">
-                <span style="color:var(--accent);">⟳</span> AI 分析运行中...
-                ${this.activeRCAAnalysis?.sessionKey ? html`<a href="#" @click=${(e: Event) => { e.preventDefault(); this._navigateToChat(this.activeRCAAnalysis!.sessionKey!); }} style="margin-left:auto;font-size: var(--text-sm);color:var(--accent);">查看过程 →</a>` : ''}
-              </div>
-            ` : analysisComplete ? html`
-              <div style="padding:var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);">
-                <div style="display:flex;align-items:center;gap:var(--space-sm);margin-bottom:var(--space-sm);">
-                  <span style="color:var(--ok);font-weight:600;">✅ 分析完成</span>
-                  ${this.activeRCAAnalysis?.sessionKey ? html`<button class="action-btn primary" @click=${() => this._navigateToChat(this.activeRCAAnalysis!.sessionKey!)}>在对话中查看详情</button>` : ''}
-                </div>
-                ${this._renderAnalysisSummary()}
-              </div>
-            ` : analysisFailed ? html`
-              <div style="padding:var(--space-md);background:var(--danger-subtle);border-radius:var(--radius-sm);color:var(--destructive);">
-                ❌ ${this.diagnosisError || 'AI 分析失败'}
-              </div>
-            ` : html`
-              <div style="color:var(--muted);font-size: var(--text-base);margin-bottom:var(--space-md);">点击「开始分析」让 AI 自动采集指标、诊断根因。</div>
-            `}
-
-            ${canAnalyze ? html`
-              <button class="btn primary" @click=${() => this._startRCA(alert)} style="margin-top:var(--space-sm);width:100%;justify-content:center;">
-                开始 AI 分析
-              </button>
-            ` : ''}
-          </div>
-
-          <!-- Analysis History -->
-          <div style="border-top:1px solid var(--border);padding-top:12px;">
-            <div style="font-weight:600;font-size: var(--text-base);margin-bottom:var(--space-sm);color:var(--muted);">分析历史</div>
-            ${this.analysisHistoryLoading ? html`<div style="color:var(--muted);font-size: var(--text-sm);">加载中...</div>`
-              : this.analysisHistory.length > 0 ? html`
-                <div style="display:flex;flex-direction:column;gap:var(--space-sm);">
-                  ${this.analysisHistory.map((record: any) => html`
-                    <div style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-sm) var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);font-size: var(--text-sm);">
-                      <span>
-                        <span style="color:var(--muted);">${new Date(record.created_at).toLocaleString('zh-CN')}</span>
-                        ${record.status === 'completed' ? html`<span style="color:var(--ok);margin-left:var(--space-sm);">已完成</span>`
-                          : record.status === 'failed' ? html`<span style="color:var(--destructive);margin-left:var(--space-sm);">失败</span>`
-                          : html`<span style="color:var(--muted);margin-left:var(--space-sm);">${record.status}</span>`}
-                      </span>
-                      ${record.session_key ? html`<a href="#" @click=${(e: Event) => { e.preventDefault(); this._navigateToChat(record.session_key); }} style="color:var(--accent);font-size: var(--text-xs);">查看 →</a>` : ''}
-                    </div>
-                  `)}
-                </div>
-              ` : html`<div style="color:var(--muted);font-size: var(--text-sm);">暂无分析记录</div>`
-            }
-          </div>
-        </div>
-      </div>
+      <alert-list .alerts=${this.filteredAlerts} .loading=${this.loading} .error=${this.error}
+        .activeListTab=${this.activeListTab} .filterSeverity=${this.filterSeverity}
+        .searchText=${this.searchText} .stats=${this.stats}
+        .statsActiveTotal=${this._statsActiveTotal} .statsResolved=${this._statsResolved}
+        .analyzedStatuses=${this.analyzedStatuses} .activeRCAAnalysis=${this.activeRCAAnalysis}
+        .diagnosisStatus=${this.diagnosisStatus} .diagnosisResult=${this.diagnosisResult}
+        .diagnosisError=${this.diagnosisError}
+        .page=${this.page} .total=${this.total} .pageSize=${this.pageSize}
+        @alert-select=${(e: CustomEvent) => { const a = this.alerts.find(x => x.id === e.detail.id); if (a) this._openAlertDetail(a); }}
+        @alert-acknowledge=${(e: CustomEvent) => { const a = this.alerts.find(x => x.id === e.detail.id); if (a) this._acknowledge(a); }}
+        @alert-rca=${(e: CustomEvent) => { const a = this.alerts.find(x => x.id === e.detail.id); if (a) this._startRCA(a); }}
+        @alert-navigate-instance=${(e: CustomEvent) => this._navigateToInstance(e.detail.id)}
+        @alert-navigate-chat=${(e: CustomEvent) => this._navigateToChat(e.detail.sessionKey)}
+        @alert-create=${() => { this.activeAlertTab = 'rules'; this._openRuleModal(); }}
+        @alert-filter-severity=${(e: CustomEvent) => { this.filterSeverity = e.detail.value; }}
+        @alert-search=${(e: CustomEvent) => { this.searchText = e.detail.value; }}
+        @alert-refresh=${() => this.loadAlerts()}
+        @alert-page-change=${(e: CustomEvent) => { this.page = e.detail.page; this.loadAlerts(); }}
+        @alert-list-tab-change=${(e: CustomEvent) => { this.activeListTab = e.detail.tab; this.page = 0; this.loadAlerts(); }}>
+      </alert-list>
     `;
   }
 
@@ -1246,130 +813,10 @@ export class AlertsPage extends LitElement {
     }));
   }
 
-  private _renderPagination() {
-    const totalPages = Math.max(1, Math.ceil(this.total / this.pageSize));
-    if (totalPages <= 1) return html``;
-    return html`
-      <div class="pagination">
-        <button class="btn" ?disabled=${this.page === 0} @click=${() => { this.page--; this.loadAlerts(); }}>← 上一页</button>
-        <span class="pagination-info">第 ${this.page + 1}/${totalPages} 页，共 ${this.total} 条</span>
-        <button class="btn" ?disabled=${this.page >= totalPages - 1} @click=${() => { this.page++; this.loadAlerts(); }}>下一页 →</button>
-        <span class="pagination-jump">
-          跳转 <input class="pagination-jump-input" type="number" min="1" max=${totalPages}
-            @keydown=${(e: KeyboardEvent) => {
-              if (e.key === 'Enter') {
-                const v = parseInt((e.target as HTMLInputElement).value);
-                if (v >= 1 && v <= totalPages) { this.page = v - 1; this.loadAlerts(); }
-              }
-            }}
-            style="width:50px;text-align:center;" placeholder=${this.page + 1} /> 页
-        </span>
-      </div>`;
-  }
-
   private _navigateToChat(sessionKey: string) {
     window.dispatchEvent(new CustomEvent("slide-navigate", {
       detail: { tab: "chat", session: sessionKey },
     }));
-  }
-
-  private _renderAnalysisSummary() {
-    const result = this.diagnosisResult;
-    if (!result) return html`<span style="color:var(--muted);font-size: var(--text-base);">无分析结果</span>`;
-
-    // Try to extract structured RCA result
-    const rootCauses: any[] = result.root_causes || [];
-    const recommendations: string[] = result.recommendations || [];
-    const summary: string = result.summary || '';
-
-    return html`
-      <div style="display:flex;flex-direction:column;gap:var(--space-md);font-size: var(--text-base);">
-        ${summary ? html`<div style="color:var(--text);line-height:1.5;">${summary}</div>` : ''}
-        ${rootCauses.length > 0 ? html`
-          <div>
-            <span style="font-weight:600;font-size: var(--text-sm);color:var(--muted);">根因分析</span>
-            ${rootCauses.slice(0, 3).map((rc: any) => html`
-              <div style="margin-top:var(--space-xs);padding:var(--space-sm) var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);font-size: var(--text-sm);">
-                <span style="font-weight:500;">${rc.cause || rc.title || ''}</span>
-                ${rc.confidence ? html`<span style="color:var(--muted);margin-left:var(--space-xs);">(${Math.round(rc.confidence * 100)}%)</span>` : ''}
-                ${rc.explanation ? html`<div style="color:var(--muted);margin-top:var(--space-xs);">${rc.explanation}</div>` : ''}
-              </div>
-            `)}
-          </div>
-        ` : ''}
-        ${recommendations.length > 0 ? html`
-          <div>
-            <span style="font-weight:600;font-size: var(--text-sm);color:var(--muted);">建议操作</span>
-            ${recommendations.slice(0, 5).map((rec: string) => html`
-              <div style="margin-top:var(--space-xs);padding:var(--space-sm) var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);font-size: var(--text-sm);color:var(--text);">${rec}</div>
-            `)}
-          </div>
-        ` : ''}
-      </div>
-    `;
-  }
-
-  // ==================== Status Badge ====================
-
-  private _renderStatusBadge(alert: Alert) {
-    const status = alert.status || 'unread';
-    const labels: Record<string, string> = {
-      unread: '未读',
-      read: '已读',
-      acknowledged: '已确认',
-      resolved: alert.resolved_by === 'auto' ? '自动恢复' : '已恢复',
-      closed: '已关闭',
-    };
-    const title = alert.resolved_at
-      ? `恢复时间: ${new Date(alert.resolved_at).toLocaleString('zh-CN')}`
-      : '';
-    return html`
-      <span class="alert-status-badge ${status}" title=${title}>
-        <span class="alert-status-dot ${status}"></span>
-        ${labels[status] || status}
-      </span>
-    `;
-  }
-
-  // ==================== Analysis Badge & Result Modal ====================
-
-  private _renderAnalysisBadge(alertId: number) {
-    // Check active running analysis first
-    const isAnalyzing = this.activeRCAAnalysis?.alertId === alertId;
-    if (isAnalyzing) {
-      if (this.diagnosisStatus === "running") {
-        const nav = this.activeRCAAnalysis?.sessionKey ? () => this._navigateToChat(this.activeRCAAnalysis!.sessionKey!) : null;
-        return nav
-          ? html`<span class="analysis-badge analysis-badge--running" clickable @click=${nav}>分析中 →</span>`
-          : html`<span class="analysis-badge analysis-badge--running">分析中</span>`;
-      }
-      if (this.diagnosisStatus === "completed") {
-        return html`<span class="analysis-badge analysis-badge--completed" @click=${() => this._openAnalysisResult(alertId)}>已分析</span>`;
-      }
-      if (this.diagnosisStatus === "failed") {
-        return html`<span class="analysis-badge analysis-badge--failed" @click=${() => this._openAnalysisResult(alertId)}>分析失败</span>`;
-      }
-    }
-
-    // Check stored analysis statuses
-    const record = this.analyzedStatuses.get(alertId);
-    if (record) {
-      if (record.status === 'completed') {
-        return html`<span class="analysis-badge analysis-badge--completed" @click=${() => this._openAnalysisResult(alertId)}>已分析</span>`;
-      }
-      if (record.status === 'running' || record.status === 'pending') {
-        const nav = record.sessionKey ? () => this._navigateToChat(record.sessionKey!) : null;
-        return nav
-          ? html`<span class="analysis-badge analysis-badge--running" clickable @click=${nav}>分析中 →</span>`
-          : html`<span class="analysis-badge analysis-badge--running">分析中</span>`;
-      }
-      if (record.status === 'failed') {
-        return html`<span class="analysis-badge analysis-badge--failed" @click=${() => this._openAnalysisResult(alertId)}>分析失败</span>`;
-      }
-    }
-
-    // No analysis record
-    return html`<span style="color:var(--muted);font-size: var(--text-xs);">—</span>`;
   }
 
   private _openAnalysisResult(alertId: number) {
@@ -1391,88 +838,6 @@ export class AlertsPage extends LitElement {
     this.activeAnalysisRecord = null;
   }
 
-  private _renderAnalysisResultModal() {
-    if (!this.activeAnalysisRecord) return html``;
-    const { alert, record } = this.activeAnalysisRecord;
-
-    return html`
-      <div class="modal-overlay" tabindex="0" @click=${(e: MouseEvent) => { if (e.target === e.currentTarget) this._closeAnalysisResult(); }} @keydown=${(e: KeyboardEvent) => { if (e.key === 'Escape') this._closeAnalysisResult(); }}>
-        <div class="modal" style="max-width:720px;max-height:85vh;">
-          <!-- Header -->
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:var(--space-lg);">
-            <div>
-              <span style="font-size: var(--text-xs);color:var(--muted);">#${alert.id}</span>
-              <span style="font-size: var(--text-lg);font-weight:600;margin-left:var(--space-sm);">AI 分析结果</span>
-              <span class="analysis-badge" style="margin-left:var(--space-sm);background:${record.trigger_type === 'auto' ? 'rgba(210,190,252,0.15)' : 'rgba(59,130,246,0.12)'};color:${record.trigger_type === 'auto' ? '#d2befc' : '#3b82f6'};display:inline-flex;font-size:10px;">
-                ${record.trigger_type === 'auto' ? '自动分析' : '手动分析'}
-              </span>
-            </div>
-            <button class="action-btn" @click=${this._closeAnalysisResult}>✕</button>
-          </div>
-
-          <!-- Alert meta -->
-          <div style="display:grid;grid-template-columns:60px 1fr;gap:var(--space-sm) var(--space-md);font-size: var(--text-sm);margin-bottom:var(--space-lg);padding:var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);">
-            <span style="color:var(--muted);">标题</span><span style="font-weight:500;">${this._cleanTitle(alert.title)}</span>
-            <span style="color:var(--muted);">实例</span><span>${alert.instance_name || '—'}</span>
-            <span style="color:var(--muted);">时间</span><span>${new Date(alert.created_at).toLocaleString('zh-CN')}</span>
-          </div>
-
-          <!-- Result content -->
-          <div style="overflow-y:auto;max-height:50vh;">
-            ${record.status === 'failed' ? html`
-              <div style="padding:var(--space-lg);background:rgba(176,141,245,0.12);border-radius:var(--radius-sm);color:#b08df5;text-align:center;">
-                <div style="font-size: var(--text-md);font-weight:600;margin-bottom:var(--space-sm);">AI 分析失败</div>
-                <div style="font-size: var(--text-sm);">${record.result?.error || '分析过程中出现错误，请稍后重试。'}</div>
-              </div>
-            ` : record.result ? html`
-              <ai-analysis-result
-                .result=${record.result}
-                analysisType="alert_rca"
-                triggerType=${record.trigger_type}
-                status="completed"
-                title="AI 根因分析"
-              ></ai-analysis-result>
-            ` : html`
-              <div style="text-align:center;padding:40px 20px;color:var(--muted);">
-                <div style="font-size: var(--text-md);margin-bottom:var(--space-sm);">暂无分析结果数据</div>
-              </div>
-            `}
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-
-  // ==================== Helper methods ====================
-
-  private _severityLabel(severity: string): string {
-    const labels: Record<string, string> = { critical: "严重", warning: "警告", info: "提示" };
-    return labels[severity] || severity;
-  }
-
-  private _cleanTitle(title: string): string {
-    return title.replace(/^\[(CRITICAL|WARNING|INFO|ERROR)\]\s*/i, '');
-  }
-
-  private _typeLabel(type: string): string {
-    const labels: Record<string, string> = {
-      health_check_failed: "健康检查",
-      slow_query: "慢查询",
-      connection_pool_exhausted: "连接池",
-      replication_lag: "复制延迟",
-      disk_space_low: "磁盘空间",
-      cpu_high: "CPU",
-      memory_high: "内存",
-    };
-    return labels[type] || type;
-  }
-
-  private _formatTime(dateStr: string): string {
-    const date = new Date(dateStr);
-    return date.toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false });
-  }
-
   private async _acknowledge(alert: Alert) {
     try {
       const res = await authFetch(`/api/alerts/${alert.id}/read`, {
@@ -1487,6 +852,10 @@ export class AlertsPage extends LitElement {
         this.requestUpdate();
       }
     } catch (e) { console.warn("确认告警失败:", e); }
+  }
+
+  private _severityLabel(s: string): string {
+    return ({ critical: "严重", warning: "警告", info: "提示" } as Record<string, string>)[s] || s;
   }
 
   @state() private detailAlert: Alert | null = null;
@@ -1672,42 +1041,15 @@ export class AlertsPage extends LitElement {
     this.editingRule = null;
     this.ruleForm = {};
     this.ruleFormError = '';
-    this._thresholdValidationError = null;
   }
 
-  private async _saveRule() {
-    const form = this.ruleForm;
-    if (!form.name || !form.metric_name) {
-      this.ruleFormError = '名称和指标不能为空';
-      return;
-    }
-    if (this._thresholdValidationError) {
-      this.ruleFormError = this._thresholdValidationError;
-      return;
-    }
+  private async _onRuleSave(e: CustomEvent) {
+    const { isEdit, id, body } = e.detail;
+    this.ruleFormError = '';
     try {
-      const body: any = {
-        name: form.name,
-        description: form.description || '',
-        metric_name: form.metric_name,
-        operator: form.operator || '>',
-        threshold: Number(form.threshold) || 0,
-        duration_seconds: Number(form.duration_seconds) || 60,
-        severity: form.severity || 'warning',
-        threshold_type: form.threshold_type || 'static',
-        threshold_template: form.threshold_template || null,
-        silence_minutes: Number(form.silence_minutes) || 5,
-        db_types: form.db_types || null,
-        instance_ids: form.instance_ids || null,
-      };
-
-      if (body.threshold_template && body.threshold_type === 'static') {
-        body.threshold = 0;
-      }
-
       let res: Response;
-      if (this.editingRule) {
-        res = await authFetch(`/api/alert-rules/${this.editingRule.id}`, {
+      if (isEdit) {
+        res = await authFetch(`/api/alert-rules/${id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -1779,30 +1121,6 @@ export class AlertsPage extends LitElement {
         this.ruleForm = { ...this.ruleForm, db_types: metric.db_types };
       }
     }
-  }
-
-  private _validateThresholds(t: { warning?: number | null; error?: number | null; critical?: number | null }): boolean {
-    const w = t.warning;
-    const e = t.error;
-    const c = t.critical;
-    if (w == null && e == null && c == null) {
-      this._thresholdValidationError = null;
-      return true;
-    }
-    if (w != null && e != null && w >= e) {
-      this._thresholdValidationError = 'Warning 必须小于 Error';
-      return false;
-    }
-    if (e != null && c != null && e >= c) {
-      this._thresholdValidationError = 'Error 必须小于 Critical';
-      return false;
-    }
-    if (w != null && c != null && w >= c) {
-      this._thresholdValidationError = 'Warning 必须小于 Critical';
-      return false;
-    }
-    this._thresholdValidationError = null;
-    return true;
   }
 
   private _renderRules() {
@@ -1888,167 +1206,11 @@ export class AlertsPage extends LitElement {
         }
       </div>
 
-      ${this.showRuleModal ? this._renderRuleFormModal() : ''}
-    `;
-  }
-
-  private _renderRuleFormModal() {
-    const form = this.ruleForm;
-
-    return html`
-      <div class="modal-overlay" @click=${(e: MouseEvent) => { if (e.target === e.currentTarget) this._closeRuleModal(); }}>
-        <div class="modal">
-          <div class="modal-title">${this.editingRule ? '编辑规则' : '新建规则'}</div>
-          ${this.ruleFormError ? html`<div style="color: var(--destructive); font-size: var(--text-base); margin-bottom: var(--space-md);">${this.ruleFormError}</div>` : ''}
-
-          <div class="form-group">
-            <label class="form-label">规则名称</label>
-            <input class="form-input" .value=${form.name || ''} @input=${(e: any) => this._updateRuleForm('name', e.target.value)} placeholder="例如：CPU 使用率过高" />
-          </div>
-          <div class="form-group">
-            <label class="form-label">指标</label>
-            <select class="form-select" .value=${form.metric_name || ''} @change=${(e: any) => this._updateRuleForm('metric_name', e.target.value)}>
-              <option value="">请选择指标</option>
-              ${this.metricRegistry.map((m: any) => html`<option value="${m.id || m.metric_name || m}">${m.name || m.id || m} (${m.unit || ''})</option>`)}
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">适用数据库类型 <span style="color:var(--muted);font-size:var(--text-xs);">（留空=所有类型）</span></label>
-            <div style="display:flex;flex-wrap:wrap;gap:var(--space-sm);">
-              ${['mysql', 'postgresql', 'oracle', 'dameng'].map(t => {
-                const selected = form.db_types ? form.db_types.includes(t) : false;
-                return html`<label style="display:flex;align-items:center;gap:4px;font-size:var(--text-sm);cursor:pointer;">
-                  <input type="checkbox" .checked=${selected}
-                    @change=${(e: any) => {
-                      const current = form.db_types ? [...form.db_types] : [];
-                      if (e.target.checked) { current.push(t); } else { const i = current.indexOf(t); if (i >= 0) current.splice(i, 1); }
-                      this._updateRuleForm('db_types', current.length > 0 ? current : null);
-                    }} /> ${t}
-                </label>`;
-              })}
-            </div>
-            <div class="help-text">选择后，此告警规则仅对指定类型的数据库实例生效</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">适用实例 <span style="color:var(--muted);font-size:var(--text-xs);">（留空=所有实例）</span></label>
-            <select class="form-select" multiple style="min-height:80px;"
-              @change=${(e: any) => {
-                const selected = Array.from(e.target.selectedOptions, (o: any) => Number(o.value));
-                this._updateRuleForm('instance_ids', selected.length > 0 ? selected : null);
-              }}>
-              <option value="" ?selected=${!form.instance_ids || form.instance_ids.length === 0}>所有实例</option>
-              ${this.instances.map((inst: any) => html`
-                <option value="${inst.id}" ?selected=${form.instance_ids && form.instance_ids.includes(inst.id)}>
-                  ${inst.name} (${inst.db_type || ''})
-                </option>
-              `)}
-            </select>
-            <div class="help-text">按住 Ctrl/Cmd 多选。选择后，此告警规则仅对指定实例生效</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">操作符</label>
-            <select class="form-select" .value=${form.operator || '>'} @change=${(e: any) => this._updateRuleForm('operator', e.target.value)}>
-              <option value=">">大于 (&gt;)</option>
-              <option value="<">小于 (&lt;)</option>
-              <option value=">=">大于等于 (&ge;)</option>
-              <option value="<=">小于等于 (&le;)</option>
-            </select>
-          </div>
-          <!-- Threshold type selector -->
-          <div class="form-group">
-            <label class="form-label">阈值类型</label>
-            <div class="toggle-group">
-              <button class="toggle-btn ${form.threshold_type === 'static' ? 'active' : ''}"
-                @click=${() => this._updateRuleForm('threshold_type', 'static')}>
-                ${icons['sliders'] || ''} 静态
-              </button>
-              <button class="toggle-btn ${form.threshold_type === 'dynamic' ? 'active' : ''}"
-                @click=${() => this._updateRuleForm('threshold_type', 'dynamic')}>
-                ${icons['activity'] || ''} 动态
-              </button>
-            </div>
-            ${form.threshold_type === 'dynamic' ? html`
-              <div class="help-text">阈值由基线算法自动计算，基于历史数据统计</div>
-            ` : ''}
-          </div>
-          <!-- Three-level threshold inputs (only shown when threshold_type === 'static') -->
-          ${form.threshold_type !== 'dynamic' ? html`
-            <div class="form-group">
-              <label class="form-label">三级阈值</label>
-              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-md);">
-                <div>
-                  <label style="font-size:var(--text-xs);color:var(--muted);margin-bottom:4px;display:block;">Warning</label>
-                  <input type="number" class="form-input" .value=${form.threshold_template?.warning ?? ''}
-                    @input=${(e: any) => {
-                      const t = { ...form.threshold_template, warning: e.target.value !== '' ? Number(e.target.value) : null };
-                      this._updateRuleForm('threshold_template', t);
-                      this._validateThresholds(t);
-                    }}
-                    placeholder="留空不启用" />
-                </div>
-                <div>
-                  <label style="font-size:var(--text-xs);color:var(--muted);margin-bottom:4px;display:block;">Error</label>
-                  <input type="number" class="form-input" .value=${form.threshold_template?.error ?? ''}
-                    @input=${(e: any) => {
-                      const t = { ...form.threshold_template, error: e.target.value !== '' ? Number(e.target.value) : null };
-                      this._updateRuleForm('threshold_template', t);
-                      this._validateThresholds(t);
-                    }}
-                    placeholder="留空不启用" />
-                </div>
-                <div>
-                  <label style="font-size:var(--text-xs);color:var(--muted);margin-bottom:4px;display:block;">Critical</label>
-                  <input type="number" class="form-input" .value=${form.threshold_template?.critical ?? ''}
-                    @input=${(e: any) => {
-                      const t = { ...form.threshold_template, critical: e.target.value !== '' ? Number(e.target.value) : null };
-                      this._updateRuleForm('threshold_template', t);
-                      this._validateThresholds(t);
-                    }}
-                    placeholder="留空不启用" />
-                </div>
-              </div>
-              ${this._thresholdValidationError ? html`
-                <div class="help-text" style="color:var(--destructive);margin-top:var(--space-xs);">
-                  ${this._thresholdValidationError}
-                </div>
-              ` : html`
-                <div class="help-text">留空表示该级别不触发。有效值需满足 warning &lt; error &lt; critical</div>
-              `}
-            </div>
-          ` : html`
-            <!-- Dynamic config hint -->
-            <div class="form-group">
-              <label class="form-label">动态阈值配置</label>
-              <div style="padding:var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);">
-                <div class="help-text">动态阈值使用基线算法，基于历史指标数据计算。留空使用默认 sigma=3, lookback_days=7。</div>
-              </div>
-            </div>
-          `}
-          <div class="form-group">
-            <label class="form-label">持续时间（秒）</label>
-            <input type="number" class="form-input" .value=${form.duration_seconds ?? 60} @input=${(e: any) => this._updateRuleForm('duration_seconds', Number(e.target.value))} />
-          </div>
-          <div class="form-group">
-            <label class="form-label">沉默期（分钟）</label>
-            <input type="number" class="form-input" min="0" .value=${form.silence_minutes ?? 5}
-              @input=${(e: any) => this._updateRuleForm('silence_minutes', Number(e.target.value))} />
-            <div class="help-text">同一规则在此时间内不重复触发告警。默认 5 分钟。</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">告警等级</label>
-            <select class="form-select" .value=${form.severity || 'warning'} @change=${(e: any) => this._updateRuleForm('severity', e.target.value)}>
-              <option value="info">提示</option>
-              <option value="warning">警告</option>
-              <option value="error">错误</option>
-              <option value="critical">严重</option>
-            </select>
-          </div>
-          <div class="form-actions">
-            <button class="btn" @click=${() => this._closeRuleModal()}>取消</button>
-            <button class="btn primary" @click=${() => this._saveRule()}>保存</button>
-          </div>
-        </div>
-      </div>
+      <alert-rule-editor .rule=${this.editingRule} .open=${this.showRuleModal}
+        .metricRegistry=${this.metricRegistry} .instances=${this.instances}
+        .error=${this.ruleFormError}
+        @save=${this._onRuleSave} @close=${this._closeRuleModal}>
+      </alert-rule-editor>
     `;
   }
 
