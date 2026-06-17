@@ -5,6 +5,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
+import "../components/app-dialog.js";
 import { authFetch } from "../../../api/index.js";
 
 interface CronJobConfig {
@@ -169,15 +170,7 @@ export class CronJobsSettings extends LitElement {
     .cron-text:hover { color: var(--accent); }
     .relative-time { font-size: 11px; color: var(--muted); white-space: nowrap; }
 
-    .dialog-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; animation: overlay-fade-in 0.15s ease; }
-    @keyframes overlay-fade-in { from { opacity: 0; } to { opacity: 1; } }
-    .dialog { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); width: 520px; max-height: 85vh; overflow-y: auto; box-shadow: var(--shadow-lg); animation: dialog-in 0.2s ease; }
-    @keyframes dialog-in { from { opacity:0; transform:scale(0.96) translateY(8px); } to { opacity:1; transform:scale(1) translateY(0); } }
-    .dialog-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
-    .dialog-title { font-size: 16px; font-weight: 600; margin: 0; color: var(--text-strong); }
-    .dialog-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
-    .dialog-footer { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
-    .dialog-error { font-size: 12px; margin: 0 20px; padding: 8px 12px; color: var(--destructive); background: var(--danger-subtle, rgba(220,38,38,0.08)); border-radius: var(--radius-sm); }
+
 
     .log-dialog { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); width: 900px; max-width: 95vw; max-height: 85vh; overflow-y: auto; box-shadow: var(--shadow-lg); animation: dialog-in 0.2s ease; display: flex; flex-direction: column; }
     .log-dialog-body { padding: 16px 20px 20px; overflow-y: auto; flex: 1; }
@@ -530,120 +523,92 @@ export class CronJobsSettings extends LitElement {
 
       <!-- Log Viewer Dialog -->
       ${this.logViewerJob ? html`
-        <div class="dialog-overlay" @click=${this.closeLogViewer}>
-          <div class="log-dialog" @click=${(e: Event) => e.stopPropagation()}>
-            <div class="dialog-header">
-              <h3 class="dialog-title">执行记录 — ${this.logViewerJob.name}</h3>
-              <button class="btn-icon" @click=${this.closeLogViewer} title="关闭">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
+        <app-dialog .open=${true} size="xl" title="执行记录 — ${this.logViewerJob.name}" @app-dialog-close=${this.closeLogViewer}>
+          ${this.viewerLoading ? html`<div class="log-empty">加载中...</div>` : nothing}
+          ${this.viewerError ? html`<div style="font-size:12px;padding:8px 12px;color:var(--destructive);background:var(--danger-subtle, rgba(220,38,38,0.08));border-radius:var(--radius-sm);margin-bottom:12px">${this.viewerError}</div>` : nothing}
+          ${!this.viewerLoading && !this.viewerError && this.viewerLogs.length === 0 ? html`<div class="log-empty">暂无执行记录</div>` : nothing}
+          ${this.viewerLogs.map(log => html`
+            <div class="log-entry">
+              <div class="log-entry__header">
+                ${this.renderBadge(log.status)}
+                <span class="log-entry__time">${formatDateTime(log.started_at)}</span>
+                <span class="log-entry__duration">耗时 ${formatDuration(log.started_at, log.finished_at)}${log.duration_ms ? ' (' + log.duration_ms + 'ms)' : ''}</span>
+              </div>
+              ${log.error_message ? html`<div class="log-entry__error">${log.error_message}</div>` : nothing}
+              ${this.renderStructuredResult(log.structured_result)}
+              ${log.result ? html`<pre class="log-entry__result">${log.result}</pre>` : log.result_summary && !log.structured_result ? html`<div class="log-entry__summary">${log.result_summary}</div>` : !log.structured_result ? html`<div class="log-empty" style="padding:8px">无输出</div>` : nothing}
             </div>
-            <div class="log-dialog-body">
-              ${this.viewerLoading ? html`<div class="log-empty">加载中...</div>` : nothing}
-              ${this.viewerError ? html`<div class="dialog-error">${this.viewerError}</div>` : nothing}
-              ${!this.viewerLoading && !this.viewerError && this.viewerLogs.length === 0 ? html`<div class="log-empty">暂无执行记录</div>` : nothing}
-              ${this.viewerLogs.map(log => html`
-                <div class="log-entry">
-                  <div class="log-entry__header">
-                    ${this.renderBadge(log.status)}
-                    <span class="log-entry__time">${formatDateTime(log.started_at)}</span>
-                    <span class="log-entry__duration">耗时 ${formatDuration(log.started_at, log.finished_at)}${log.duration_ms ? ' (' + log.duration_ms + 'ms)' : ''}</span>
-                  </div>
-                  ${log.error_message ? html`<div class="log-entry__error">${log.error_message}</div>` : nothing}
-                  ${this.renderStructuredResult(log.structured_result)}
-                  ${log.result ? html`<pre class="log-entry__result">${log.result}</pre>` : log.result_summary && !log.structured_result ? html`<div class="log-entry__summary">${log.result_summary}</div>` : !log.structured_result ? html`<div class="log-empty" style="padding:8px">无输出</div>` : nothing}
-                </div>
-              `)}
-            </div>
-          </div>
-        </div>
+          `)}
+        </app-dialog>
       ` : nothing}
 
       <!-- Create/Edit Dialog -->
       ${this.showCreateDialog ? html`
-        <div class="dialog-overlay" @click=${this.closeFormDialog}>
-          <div class="dialog" @click=${(e: Event) => e.stopPropagation()}>
-            <div class="dialog-header">
-              <h3 class="dialog-title">${this.editingJob ? '编辑任务' : '新建任务'}</h3>
-              <button class="btn-icon" @click=${this.closeFormDialog} title="关闭">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
-            ${this.formError ? html`<div class="dialog-error">${this.formError}</div>` : nothing}
-            <div class="dialog-body">
-              <div class="form-group">
-                <label class="form-label">任务名称</label>
-                <input class="form-input" .value=${this.formName} @input=${this.onNameInput} placeholder="例如：每日慢查询检查" />
-              </div>
-              <div class="form-group">
-                <label class="form-label">描述</label>
-                <input class="form-input" .value=${this.formDescription} @input=${this.onDescInput} placeholder="简要描述这个任务的用途" />
-              </div>
-              <div class="form-group">
-                <label class="form-label">任务内容（自然语言）</label>
-                <textarea class="form-input form-textarea" .value=${this.formTaskDescription} @input=${this.onTaskDescInput} placeholder="例如：每天早上9点检查生产环境的慢查询并生成摘要报告"></textarea>
-                <div class="form-hint">告诉 AI 要做什么，用自然语言描述即可</div>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Cron 表达式</label>
-                <input class="form-input form-mono" .value=${this.formCronExpr} @input=${this.onCronExprInput} placeholder="0 9 * * *" />
-                <div class="cron-presets">
-                  ${CRON_PRESETS.map(p => html`
-                    <button class="cron-preset-chip ${this.formCronExpr === p.value ? 'active' : ''}" @click=${() => { this.formCronExpr = p.value; this.requestUpdate(); }}>
-                      ${p.label}<span class="cron-preset-expr">${p.value}</span>
-                    </button>
-                  `)}
-                </div>
-              </div>
-              <div class="form-group">
-                <app-toggle .checked=${this.formEnabled} @change=${(e: CustomEvent) => { this.formEnabled = e.detail; }}>启用</app-toggle>
-              </div>
-            </div>
-            <div class="dialog-footer">
-              <button class="btn" @click=${this.closeFormDialog} ?disabled=${this.formSaving}>取消</button>
-              <button class="btn-primary" @click=${this.saveTask} ?disabled=${this.formSaving}>
-                ${this.formSaving ? '保存中...' : this.editingJob ? '保存修改' : '创建任务'}
-              </button>
+        <app-dialog .open=${true} size="md" title="${this.editingJob ? '编辑任务' : '新建任务'}" @app-dialog-close=${this.closeFormDialog}>
+          ${this.formError ? html`<div style="font-size:12px;margin-bottom:12px;padding:8px 12px;color:var(--destructive);background:var(--danger-subtle, rgba(220,38,38,0.08));border-radius:var(--radius-sm);">${this.formError}</div>` : nothing}
+          <div class="form-group">
+            <label class="form-label">任务名称</label>
+            <input class="form-input" .value=${this.formName} @input=${this.onNameInput} placeholder="例如：每日慢查询检查" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">描述</label>
+            <input class="form-input" .value=${this.formDescription} @input=${this.onDescInput} placeholder="简要描述这个任务的用途" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">任务内容（自然语言）</label>
+            <textarea class="form-input form-textarea" .value=${this.formTaskDescription} @input=${this.onTaskDescInput} placeholder="例如：每天早上9点检查生产环境的慢查询并生成摘要报告"></textarea>
+            <div class="form-hint">告诉 AI 要做什么，用自然语言描述即可</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Cron 表达式</label>
+            <input class="form-input form-mono" .value=${this.formCronExpr} @input=${this.onCronExprInput} placeholder="0 9 * * *" />
+            <div class="cron-presets">
+              ${CRON_PRESETS.map(p => html`
+                <button class="cron-preset-chip ${this.formCronExpr === p.value ? 'active' : ''}" @click=${() => { this.formCronExpr = p.value; this.requestUpdate(); }}>
+                  ${p.label}<span class="cron-preset-expr">${p.value}</span>
+                </button>
+              `)}
             </div>
           </div>
-        </div>
+          <div class="form-group">
+            <app-toggle .checked=${this.formEnabled} @change=${(e: CustomEvent) => { this.formEnabled = e.detail; }}>启用</app-toggle>
+          </div>
+          <div slot="footer">
+            <button class="btn" @click=${this.closeFormDialog} ?disabled=${this.formSaving}>取消</button>
+            <button class="btn-primary" @click=${this.saveTask} ?disabled=${this.formSaving}>
+              ${this.formSaving ? '保存中...' : this.editingJob ? '保存修改' : '创建任务'}
+            </button>
+          </div>
+        </app-dialog>
       ` : nothing}
 
       <!-- Delete Confirm Dialog -->
       ${this.deleteConfirmOpen ? html`
-        <div class="dialog-overlay" @click=${this.closeDeleteConfirm}>
-          <div class="dialog" @click=${(e: Event) => e.stopPropagation()}>
-            <div class="dialog-header"><h3 class="dialog-title">删除任务</h3></div>
-            <div class="dialog-body">
-              ${this.deleteDeleting
-                ? html`<p style="color:var(--muted);text-align:center;">正在删除...</p>`
-                : html`<p style="margin:0;">确定删除「<strong>${this.deleteConfirmJob?.name || ""}</strong>」吗？此操作不可撤销。</p>`}
-            </div>
-            <div class="dialog-footer">
-              <button class="btn" @click=${this.closeDeleteConfirm} ?disabled=${this.deleteDeleting}>取消</button>
-              <button class="btn-primary btn-danger" @click=${this.executeDelete} ?disabled=${this.deleteDeleting}>
-                ${this.deleteDeleting ? '删除中...' : '确认删除'}
-              </button>
-            </div>
+        <app-dialog .open=${true} size="sm" title="删除任务" @app-dialog-close=${this.closeDeleteConfirm}>
+          ${this.deleteDeleting
+            ? html`<p style="color:var(--muted);text-align:center;">正在删除...</p>`
+            : html`<p style="margin:0;">确定删除「<strong>${this.deleteConfirmJob?.name || ""}</strong>」吗？此操作不可撤销。</p>`}
+          <div slot="footer">
+            <button class="btn" @click=${this.closeDeleteConfirm} ?disabled=${this.deleteDeleting}>取消</button>
+            <button class="btn-primary" @click=${this.executeDelete} ?disabled=${this.deleteDeleting}>
+              ${this.deleteDeleting ? '删除中...' : '确认删除'}
+            </button>
           </div>
-        </div>
+        </app-dialog>
       ` : nothing}
 
       <!-- Trigger Confirm Dialog -->
       ${this.triggerDialogOpen ? html`
-        <div class="dialog-overlay" @click=${this.closeTriggerDialog}>
-          <div class="dialog" @click=${(e: Event) => e.stopPropagation()}>
-            <div class="dialog-header"><h3 class="dialog-title">手动触发</h3></div>
-            ${this.triggerError ? html`<div class="dialog-error">${this.triggerError}</div>` : nothing}
-            <div class="dialog-body"><p style="margin:0;">确认立即执行「<strong>${this.triggerJobName || ""}</strong>」？</p></div>
-            <div class="dialog-footer">
-              <button class="btn" @click=${this.closeTriggerDialog} ?disabled=${this.triggerRunning}>取消</button>
-              <button class="btn-primary" @click=${this.confirmTrigger} ?disabled=${this.triggerRunning}>
-                ${this.triggerRunning ? "执行中..." : "确认执行"}
-              </button>
-            </div>
+        <app-dialog .open=${true} size="sm" title="手动触发" @app-dialog-close=${this.closeTriggerDialog}>
+          ${this.triggerError ? html`<div style="font-size:12px;margin-bottom:12px;padding:8px 12px;color:var(--destructive);background:var(--danger-subtle, rgba(220,38,38,0.08));border-radius:var(--radius-sm);">${this.triggerError}</div>` : nothing}
+          <p style="margin:0;">确认立即执行「<strong>${this.triggerJobName || ""}</strong>」？</p>
+          <div slot="footer">
+            <button class="btn" @click=${this.closeTriggerDialog} ?disabled=${this.triggerRunning}>取消</button>
+            <button class="btn-primary" @click=${this.confirmTrigger} ?disabled=${this.triggerRunning}>
+              ${this.triggerRunning ? "执行中..." : "确认执行"}
+            </button>
           </div>
-        </div>
+        </app-dialog>
       ` : nothing}
     `;
   }

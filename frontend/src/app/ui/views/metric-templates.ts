@@ -4,6 +4,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
+import "../components/app-dialog.js";
 import { authFetch } from "../../../api/index.js";
 
 interface MetricTemplate {
@@ -98,12 +99,8 @@ export class MetricTemplatesPage extends LitElement {
     .inst-row:last-child { border-bottom: none; }
 
     /* Dialog */
-    .dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; display: flex; align-items: center; justify-content: center; }
-    .dialog { background: var(--card); border: 1px solid var(--border-strong); border-radius: var(--radius); width: 600px; max-height: 85vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.18); }
-    .dialog.wide { width: 700px; }
-    .dialog-header { padding: 14px 18px; border-bottom: 1px solid var(--border); font-size: 14px; font-weight: 600; color: var(--text-strong); }
-    .dialog-body { padding: 16px 18px; display: flex; flex-wrap: wrap; gap: 12px; }
-    .dialog-footer { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+
+
 
     .form-group { display: flex; flex-direction: column; gap: 3px; }
     .form-group.w50 { width: calc(50% - 6px); }
@@ -535,77 +532,74 @@ export class MetricTemplatesPage extends LitElement {
   _renderModal() {
     const isEdit = !!this.editing;
     const selectedMetrics: string[] = this.form.metrics || [];
-    return html`<div class="dialog-overlay" @click=${() => this.showModal = false}>
-      <div class="dialog" @click=${(e: Event) => e.stopPropagation()}>
-        <div class="dialog-header">${isEdit ? '编辑模板' : '新建模板'}</div>
-        <div class="dialog-body">
-          <div class="form-group w50"><label class="form-label">名称 *</label><input class="form-input" .value=${this.form.name || ''} @input=${(e: any) => this.form.name = e.target.value} placeholder="MySQL 生产模板" /></div>
-          <div class="form-group w50"><label class="form-label">适用数据库类型</label>
-            <select class="form-select" .value=${this.form.db_type || ''} @change=${(e: any) => { this.form.db_type = e.target.value; this.form.metrics = []; }}>
-              <option value="">所有类型</option>
-              ${DB_TYPES.map(t => html`<option value=${t}>${t}</option>`)}
-            </select></div>
-          <div class="form-group w100"><label class="form-label">描述</label><input class="form-input" .value=${this.form.description || ''} @input=${(e: any) => this.form.description = e.target.value} /></div>
-          ${isEdit ? html`<div class="form-group w50"><label class="form-label">状态</label>
-            <select class="form-select" .value=${String(this.form.enabled)} @change=${(e: any) => this.form.enabled = e.target.value === 'true'}>
-              <option value="true">启用</option><option value="false">禁用</option>
-            </select></div>` : ''}
+    return html`<app-dialog .open=${true} size="lg" title="${isEdit ? '编辑模板' : '新建模板'}" @app-dialog-close=${() => this.showModal = false}>
+      <div style="display:flex;flex-wrap:wrap;gap:12px">
+        <div style="width:calc(50% - 6px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">名称 *</label><input class="form-input" .value=${this.form.name || ''} @input=${(e: any) => this.form.name = e.target.value} placeholder="MySQL 生产模板" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" /></div>
+        <div style="width:calc(50% - 6px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">适用数据库类型</label>
+          <select style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" .value=${this.form.db_type || ''} @change=${(e: any) => { this.form.db_type = e.target.value; this.form.metrics = []; }}>
+            <option value="">所有类型</option>
+            ${DB_TYPES.map(t => html`<option value=${t}>${t}</option>`)}
+          </select></div>
+        <div style="width:100%"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">描述</label><input style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" .value=${this.form.description || ''} @input=${(e: any) => this.form.description = e.target.value} /></div>
+        ${isEdit ? html`<div style="width:calc(50% - 6px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">状态</label>
+          <select style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" .value=${String(this.form.enabled)} @change=${(e: any) => this.form.enabled = e.target.value === 'true'}>
+            <option value="true">启用</option><option value="false">禁用</option>
+          </select></div>` : ''}
 
-          <!-- Metrics selector -->
-          <div class="form-group w100">
-            <label class="form-label">关联指标 (选择模板管控的指标，留空则全部采集)</label>
-            <div class="chk-group">
-              ${this._filteredMetrics().map(m => html`
-                <label class="chk-label">
-                  <input type="checkbox" ?checked=${selectedMetrics.includes(m.id)} @change=${() => this._toggleMetric(m.id)} />
-                  <span>${m.id}</span><span style="color:var(--muted);font-size:10px">(${m.unit})</span>
-                </label>`)}
-            </div>
+        <!-- Metrics selector -->
+        <div style="width:100%">
+          <label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">关联指标 (选择模板管控的指标，留空则全部采集)</label>
+          <div class="chk-group">
+            ${this._filteredMetrics().map(m => html`
+              <label class="chk-label">
+                <input type="checkbox" ?checked=${selectedMetrics.includes(m.id)} @change=${() => this._toggleMetric(m.id)} />
+                <span>${m.id}</span><span style="color:var(--muted);font-size:10px">(${m.unit})</span>
+              </label>`)}
           </div>
-
-          ${isEdit ? html`
-          <!-- Rules (edit mode only) -->
-          <div class="form-group w100" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
-            <label class="form-label" style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">
-              告警规则 (${this.allRules.filter(r => r.template_id === this.editing!.id).length})
-            </label>
-            ${this.allRules.filter(r => r.template_id === this.editing!.id).map(r => html`
-              <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:11px">
-                <span>
-                  <strong>${r.name}</strong>
-                  <span style="color:var(--muted);margin:0 6px">${r.metric_name} ${r.operator}</span>
-                  ${this._ruleThresholdParts(r).map((p: string) => html`<span class="badge badge-tag" style="margin:0 2px">${p}</span>`)}
-                  <span class="badge badge-tag" style="margin-left:4px">${r.severity}</span>
-                </span>
-                <button class="btn btn-xs btn-danger" @click=${() => this._deleteRuleInModal(r.id)}>×</button>
-              </div>`)}
-            <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
-              <select style="padding:3px 6px;border:1px solid var(--border);border-radius:3px;font-size:10px;background:var(--card);color:var(--text);width:120px"
-                .value=${this.ruleForm.metric_name} @change=${(e: any) => this.ruleForm = {...this.ruleForm, metric_name: e.target.value}}>
-                <option value="">选择指标</option>
-                ${this._filteredMetrics().map(m => html`<option value=${m.id}>${m.id}</option>`)}
-              </select>
-              <input placeholder="规则名" style="padding:3px 6px;border:1px solid var(--border);border-radius:3px;font-size:10px;width:120px;background:var(--card);color:var(--text)"
-                .value=${this.ruleForm.name} @input=${(e: any) => this.ruleForm = {...this.ruleForm, name: e.target.value}} />
-              <input placeholder="W" type="number" style="padding:3px 6px;border:1px solid var(--border);border-radius:3px;font-size:10px;width:60px;background:var(--card);color:var(--text)"
-                .value=${this.ruleForm.warning || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, warning: e.target.value}} />
-              <input placeholder="E" type="number" style="padding:3px 6px;border:1px solid var(--border);border-radius:3px;font-size:10px;width:60px;background:var(--card);color:var(--text)"
-                .value=${this.ruleForm.error || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, error: e.target.value}} />
-              <input placeholder="C" type="number" style="padding:3px 6px;border:1px solid var(--border);border-radius:3px;font-size:10px;width:60px;background:var(--card);color:var(--text)"
-                .value=${this.ruleForm.critical || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, critical: e.target.value}} />
-              <button class="btn btn-xs btn-primary" @click=${this._quickAddRule} ?disabled=${this.ruleSaving}>添加规则</button>
-            </div>
-            ${this.ruleFormMsg ? html`<div class="msg-err">${this.ruleFormMsg}</div>` : ''}
-          </div>` : ''}
-
-          ${this.formMsg ? html`<div class="msg-err">${this.formMsg}</div>` : ""}
         </div>
-        <div class="dialog-footer">
-          <button class="btn" @click=${() => this.showModal = false}>取消</button>
-          <button class="btn btn-primary" @click=${this._save} ?disabled=${this.saving}>${this.saving ? '保存中...' : '保存'}</button>
-        </div>
+
+        ${isEdit ? html`
+        <!-- Rules (edit mode only) -->
+        <div style="width:100%;border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
+          <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:6px">
+            告警规则 (${this.allRules.filter(r => r.template_id === this.editing!.id).length})
+          </label>
+          ${this.allRules.filter(r => r.template_id === this.editing!.id).map(r => html`
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:11px">
+              <span>
+                <strong>${r.name}</strong>
+                <span style="color:var(--muted);margin:0 6px">${r.metric_name} ${r.operator}</span>
+                ${this._ruleThresholdParts(r).map((p: string) => html`<span class="badge badge-tag" style="margin:0 2px">${p}</span>`)}
+                <span class="badge badge-tag" style="margin-left:4px">${r.severity}</span>
+              </span>
+              <button class="btn btn-xs btn-danger" @click=${() => this._deleteRuleInModal(r.id)}>×</button>
+            </div>`)}
+          <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
+            <select style="padding:3px 6px;border:1px solid var(--border);border-radius:3px;font-size:10px;background:var(--card);color:var(--text);width:120px"
+              .value=${this.ruleForm.metric_name} @change=${(e: any) => this.ruleForm = {...this.ruleForm, metric_name: e.target.value}}>
+              <option value="">选择指标</option>
+              ${this._filteredMetrics().map(m => html`<option value=${m.id}>${m.id}</option>`)}
+            </select>
+            <input placeholder="规则名" style="padding:3px 6px;border:1px solid var(--border);border-radius:3px;font-size:10px;width:120px;background:var(--card);color:var(--text)"
+              .value=${this.ruleForm.name} @input=${(e: any) => this.ruleForm = {...this.ruleForm, name: e.target.value}} />
+            <input placeholder="W" type="number" style="padding:3px 6px;border:1px solid var(--border);border-radius:3px;font-size:10px;width:60px;background:var(--card);color:var(--text)"
+              .value=${this.ruleForm.warning || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, warning: e.target.value}} />
+            <input placeholder="E" type="number" style="padding:3px 6px;border:1px solid var(--border);border-radius:3px;font-size:10px;width:60px;background:var(--card);color:var(--text)"
+              .value=${this.ruleForm.error || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, error: e.target.value}} />
+            <input placeholder="C" type="number" style="padding:3px 6px;border:1px solid var(--border);border-radius:3px;font-size:10px;width:60px;background:var(--card);color:var(--text)"
+              .value=${this.ruleForm.critical || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, critical: e.target.value}} />
+            <button class="btn btn-xs btn-primary" @click=${this._quickAddRule} ?disabled=${this.ruleSaving}>添加规则</button>
+          </div>
+          ${this.ruleFormMsg ? html`<div class="msg-err">${this.ruleFormMsg}</div>` : ''}
+        </div>` : ''}
+
+        ${this.formMsg ? html`<div class="msg-err">${this.formMsg}</div>` : ""}
       </div>
-    </div>`;
+      <div slot="footer">
+        <button class="btn" @click=${() => this.showModal = false}>取消</button>
+        <button class="btn btn-primary" @click=${this._save} ?disabled=${this.saving}>${this.saving ? '保存中...' : '保存'}</button>
+      </div>
+    </app-dialog>`;
   }
 
   _renderRuleModal() {
@@ -613,60 +607,52 @@ export class MetricTemplatesPage extends LitElement {
     const templateMetrics = this.expandedId
       ? this._templateMetrics(this.templates.find(t => t.id === this.expandedId)!) : [];
     const availableMetrics = templateMetrics.length > 0 ? templateMetrics : this.allMetrics.filter(m => m.is_collected);
-    return html`<div class="dialog-overlay" @click=${() => this.showRuleModal = false}>
-      <div class="dialog" @click=${(e: Event) => e.stopPropagation()}>
-        <div class="dialog-header">新增告警规则</div>
-        <div class="dialog-body">
-          <div class="form-group w50"><label class="form-label">规则名称 *</label><input class="form-input" .value=${rf.name || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, name: e.target.value}} placeholder="TPS 过高告警" /></div>
-          <div class="form-group w50"><label class="form-label">指标 *</label>
-            <select class="form-select" .value=${rf.metric_name} @change=${(e: any) => this.ruleForm = {...this.ruleForm, metric_name: e.target.value}}>
-              <option value="">-- 选择指标 --</option>
-              ${availableMetrics.map(m => html`<option value=${m.id}>${m.id} (${m.unit})</option>`)}
-            </select></div>
-          <div class="form-group w33"><label class="form-label">操作符</label>
-            <select class="form-select" .value=${rf.operator} @change=${(e: any) => this.ruleForm = {...this.ruleForm, operator: e.target.value}}>
-              ${OPERATORS.map(o => html`<option value=${o}>${o}</option>`)}
-            </select></div>
-          <div class="form-group w33"><label class="form-label">严重级别</label>
-            <select class="form-select" .value=${rf.severity} @change=${(e: any) => this.ruleForm = {...this.ruleForm, severity: e.target.value}}>
-              ${SEVERITIES.map(s => html`<option value=${s}>${s}</option>`)}
-            </select></div>
-          <div class="form-group w33"><label class="form-label">持续时长 (秒)</label><input class="form-input" type="number" .value=${String(rf.duration_seconds)} @input=${(e: any) => this.ruleForm = {...this.ruleForm, duration_seconds: parseInt(e.target.value)||60}} /></div>
-          <div class="form-group w33"><label class="form-label">Warning 阈值</label><input class="form-input" type="number" .value=${rf.warning || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, warning: e.target.value}} placeholder="可选" /></div>
-          <div class="form-group w33"><label class="form-label">Error 阈值</label><input class="form-input" type="number" .value=${rf.error || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, error: e.target.value}} placeholder="可选" /></div>
-          <div class="form-group w33"><label class="form-label">Critical 阈值</label><input class="form-input" type="number" .value=${rf.critical || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, critical: e.target.value}} placeholder="可选" /></div>
-          <div class="form-group w50"><label class="form-label">静默期 (分钟)</label><input class="form-input" type="number" .value=${String(rf.silence_minutes)} @input=${(e: any) => this.ruleForm = {...this.ruleForm, silence_minutes: parseInt(e.target.value)||5}} /></div>
-          ${this.ruleFormMsg ? html`<div class="msg-err">${this.ruleFormMsg}</div>` : ""}
-        </div>
-        <div class="dialog-footer">
-          <button class="btn" @click=${() => this.showRuleModal = false}>取消</button>
-          <button class="btn btn-primary" @click=${this._saveRule} ?disabled=${this.ruleSaving}>${this.ruleSaving ? '创建中...' : '创建规则'}</button>
-        </div>
+    return html`<app-dialog .open=${true} size="lg" title="新增告警规则" @app-dialog-close=${() => this.showRuleModal = false}>
+      <div style="display:flex;flex-wrap:wrap;gap:12px">
+        <div style="width:calc(50% - 6px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">规则名称 *</label><input style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" .value=${rf.name || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, name: e.target.value}} placeholder="TPS 过高告警" /></div>
+        <div style="width:calc(50% - 6px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">指标 *</label>
+          <select style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" .value=${rf.metric_name} @change=${(e: any) => this.ruleForm = {...this.ruleForm, metric_name: e.target.value}}>
+            <option value="">-- 选择指标 --</option>
+            ${availableMetrics.map(m => html`<option value=${m.id}>${m.id} (${m.unit})</option>`)}
+          </select></div>
+        <div style="width:calc(33% - 8px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">操作符</label>
+          <select style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" .value=${rf.operator} @change=${(e: any) => this.ruleForm = {...this.ruleForm, operator: e.target.value}}>
+            ${OPERATORS.map(o => html`<option value=${o}>${o}</option>`)}
+          </select></div>
+        <div style="width:calc(33% - 8px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">严重级别</label>
+          <select style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" .value=${rf.severity} @change=${(e: any) => this.ruleForm = {...this.ruleForm, severity: e.target.value}}>
+            ${SEVERITIES.map(s => html`<option value=${s}>${s}</option>`)}
+          </select></div>
+        <div style="width:calc(33% - 8px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">持续时长 (秒)</label><input style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" type="number" .value=${String(rf.duration_seconds)} @input=${(e: any) => this.ruleForm = {...this.ruleForm, duration_seconds: parseInt(e.target.value)||60}} /></div>
+        <div style="width:calc(33% - 8px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">Warning 阈值</label><input style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" type="number" .value=${rf.warning || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, warning: e.target.value}} placeholder="可选" /></div>
+        <div style="width:calc(33% - 8px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">Error 阈值</label><input style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" type="number" .value=${rf.error || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, error: e.target.value}} placeholder="可选" /></div>
+        <div style="width:calc(33% - 8px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">Critical 阈值</label><input style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" type="number" .value=${rf.critical || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, critical: e.target.value}} placeholder="可选" /></div>
+        <div style="width:calc(50% - 6px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">静默期 (分钟)</label><input style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" type="number" .value=${String(rf.silence_minutes)} @input=${(e: any) => this.ruleForm = {...this.ruleForm, silence_minutes: parseInt(e.target.value)||5}} /></div>
+        ${this.ruleFormMsg ? html`<div class="msg-err">${this.ruleFormMsg}</div>` : ""}
       </div>
-    </div>`;
+      <div slot="footer">
+        <button class="btn" @click=${() => this.showRuleModal = false}>取消</button>
+        <button class="btn btn-primary" @click=${this._saveRule} ?disabled=${this.ruleSaving}>${this.ruleSaving ? '创建中...' : '创建规则'}</button>
+      </div>
+    </app-dialog>`;
   }
 
   _renderLinkModal() {
     const tpl = this.linkingTemplate;
     if (!tpl) return nothing;
     const available = this._availableInstances();
-    return html`<div class="dialog-overlay" @click=${() => this.showLinkModal = false}>
-      <div class="dialog" @click=${(e: Event) => e.stopPropagation()}>
-        <div class="dialog-header">关联实例 — ${tpl.name}</div>
-        <div class="dialog-body">
-          ${available.length === 0 ? html`<span style="font-size:12px;color:var(--muted);width:100%">没有可关联的实例（所有实例已关联）</span>` : ""}
-          ${available.map(inst => html`
-            <div class="inst-row" style="width:100%">
-              <div>
-                <strong>${inst.name}</strong>
-                <span style="color:var(--muted);margin-left:6px">${inst.db_type} · ${inst.environment}</span>
-                ${tpl.db_type && inst.db_type !== tpl.db_type ? html`<span style="font-size:10px;color:var(--warn);margin-left:6px">⚠ 类型不匹配</span>` : ''}
-              </div>
-              <button class="btn btn-sm btn-primary" @click=${() => this._linkInstance(inst.id)}>关联</button>
-            </div>`)}
-        </div>
-        <div class="dialog-footer"><button class="btn" @click=${() => this.showLinkModal = false}>关闭</button></div>
-      </div>
-    </div>`;
+    return html`<app-dialog .open=${true} size="lg" title="关联实例 — ${tpl.name}" @app-dialog-close=${() => this.showLinkModal = false}>
+      ${available.length === 0 ? html`<span style="font-size:12px;color:var(--muted);">没有可关联的实例（所有实例已关联）</span>` : ""}
+      ${available.map(inst => html`
+        <div class="inst-row" style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:11px">
+          <div>
+            <strong>${inst.name}</strong>
+            <span style="color:var(--muted);margin-left:6px">${inst.db_type} · ${inst.environment}</span>
+            ${tpl.db_type && inst.db_type !== tpl.db_type ? html`<span style="font-size:10px;color:var(--warn);margin-left:6px">⚠ 类型不匹配</span>` : ''}
+          </div>
+          <button class="btn btn-sm btn-primary" @click=${() => this._linkInstance(inst.id)}>关联</button>
+        </div>`)}
+      <div slot="footer"><button class="btn" @click=${() => this.showLinkModal = false}>关闭</button></div>
+    </app-dialog>`;
   }
 }

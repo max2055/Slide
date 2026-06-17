@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
+import "../components/app-dialog.js";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { sql, MySQL, PostgreSQL } from "@codemirror/lang-sql";
@@ -59,15 +60,8 @@ export class ApprovalDashboard extends LitElement {
     .back-link { color: var(--accent, #409eff); cursor: pointer; font-size: var(--text-md); text-decoration: none; }
     .back-link:hover { text-decoration: underline; }
     .detail-title { font-size: var(--text-xl); font-weight: 600; color: var(--text-strong, #1a1a1e); margin: 0; }
-    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; animation: overlay-fade-in 0.2s ease; }
-    .modal { background: var(--card, #fff); border-radius: var(--radius-lg); padding: var(--space-xl); max-width: 520px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.15); animation: modal-slide-in 0.25s ease; }
-    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-    .modal-title { font-size: var(--text-xl); font-weight: 600; color: var(--text-strong, #1a1a1e); }
-    .modal-close { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--muted, #6e6e73); padding: var(--space-xs) line-height: 1; }
-    .modal-body { margin-bottom: 20px; }
-    .modal-body-text { font-size: var(--text-md); color: var(--text, #3c3c43); margin-bottom: 12px; }
-    .modal-note { width: 100%; min-height: 80px; padding: var(--space-sm) var(--space-md); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-sm); font-size: var(--text-md); color: var(--text, #3c3c43); resize: vertical; box-sizing: border-box; font-family: inherit; }
-    .modal-footer { display: flex; justify-content: flex-end; gap: var(--space-sm); }
+
+
     .error-box { background: var(--danger-subtle, #fef2f2); color: var(--destructive, #ef4444); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); font-size: var(--text-base); margin-bottom: 12px; }
     .detail-split { display: grid; grid-template-columns: 1fr 360px; gap: 32px; align-items: start; }
     .detail-sql-panel { background: var(--card, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-md); overflow: hidden; min-height: 300px; }
@@ -512,31 +506,22 @@ export class ApprovalDashboard extends LitElement {
   private _renderBatchDialog() {
     if (!this.batchDialogOpen) return nothing;
     return html`
-      <div class="modal-overlay" tabindex="-1"
-        @click=${(e: Event) => { if ((e.target as HTMLElement).classList.contains('modal-overlay')) this._closeBatchDialog(); }}
-        @keydown=${(e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); this._closeBatchDialog(); } }}>
-        <div class="modal">
-          <div class="modal-header">
-            <span class="modal-title">${this.batchAction === 'approve' ? '批量通过' : '批量驳回'}</span>
-            <button class="modal-close" @click=${this._closeBatchDialog}>&times;</button>
-          </div>
-          <div class="modal-body">
-            <div class="modal-body-text">
-              确认对选中的 <strong>${this.batchIds.length}</strong> 项请求执行${this.batchAction === 'approve' ? '通过' : '驳回'}操作？
-            </div>
-            ${this.batchError ? html`<div class="error-box">${this.batchError}</div>` : ''}
-            <textarea class="modal-note" placeholder="审批备注（可选）" .value=${this.batchNote}
-              @input=${(e: Event) => { this.batchNote = (e.target as HTMLTextAreaElement).value; }}></textarea>
-          </div>
-          <div class="modal-footer">
-            <button class="btn" @click=${this._closeBatchDialog} ?disabled=${this.batchLoading}>取消</button>
-            <button class="btn ${this.batchAction === 'approve' ? 'btn-approve' : 'btn-reject'}"
-              @click=${this._confirmBatch} ?disabled=${this.batchLoading}>
-              ${this.batchLoading ? '处理中...' : (this.batchAction === 'approve' ? '确认通过' : '确认驳回')}
-            </button>
-          </div>
+      <app-dialog .open=${true} size="md" title="${this.batchAction === 'approve' ? '批量通过' : '批量驳回'}" @app-dialog-close=${this._closeBatchDialog}>
+        <div style="margin-bottom:12px;font-size:var(--text-md);color:var(--text, #3c3c43);">
+          确认对选中的 <strong>${this.batchIds.length}</strong> 项请求执行${this.batchAction === 'approve' ? '通过' : '驳回'}操作？
         </div>
-      </div>
+        ${this.batchError ? html`<div class="error-box">${this.batchError}</div>` : ''}
+        <textarea style="width:100%;min-height:80px;padding:var(--space-sm) var(--space-md);border:1px solid var(--border, #e5e7eb);border-radius:var(--radius-sm);font-size:var(--text-md);color:var(--text, #3c3c43);resize:vertical;box-sizing:border-box;font-family:inherit;"
+          placeholder="审批备注（可选）" .value=${this.batchNote}
+          @input=${(e: Event) => { this.batchNote = (e.target as HTMLTextAreaElement).value; }}></textarea>
+        <div slot="footer">
+          <button class="btn" @click=${this._closeBatchDialog} ?disabled=${this.batchLoading}>取消</button>
+          <button class="btn ${this.batchAction === 'approve' ? 'btn-approve' : 'btn-reject'}"
+            @click=${this._confirmBatch} ?disabled=${this.batchLoading}>
+            ${this.batchLoading ? '处理中...' : (this.batchAction === 'approve' ? '确认通过' : '确认驳回')}
+          </button>
+        </div>
+      </app-dialog>
     `;
   }
 }

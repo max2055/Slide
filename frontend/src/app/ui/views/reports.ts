@@ -349,30 +349,8 @@ export class ReportsPage extends LitElement {
       color: var(--muted);
     }
 
-    /* 弹窗样式 */
-    .modal-overlay {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.5); z-index: 1000;
-      display: flex; align-items: center; justify-content: center;
-    }
-    .modal {
-      background: var(--card); border-radius: var(--radius-lg);
-      border: 1px solid var(--border); max-width: 600px; width: 90%;
-      max-height: 80vh; overflow-y: auto;
-    }
-    .modal-header {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: var(--space-lg); border-bottom: 1px solid var(--border);
-    }
-    .modal-title { font-size: var(--text-lg); font-weight: 600; color: var(--text-strong); }
-    .modal-close {
-      background: none; border: none; cursor: pointer; color: var(--muted); padding: 4px;
-    }
-    .modal-body { padding: var(--space-lg); }
-    .modal-footer {
-      display: flex; justify-content: flex-end; gap: var(--space-md);
-      padding: var(--space-lg); border-top: 1px solid var(--border);
-    }
+
+    /* Empty states */
     .field-row {
       display: flex; flex-direction: column; gap: var(--space-xs);
       margin-bottom: var(--space-md);

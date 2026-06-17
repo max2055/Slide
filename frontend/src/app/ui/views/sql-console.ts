@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
+import "../components/app-dialog.js";
 import { basicSetup } from "codemirror";
 import { EditorView } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
@@ -281,13 +282,7 @@ export class SqlConsolePage extends LitElement {
     .tab-rename-input { font-size: var(--text-sm); padding: 1px 4px; border: 1px solid var(--accent, #7c5cff); border-radius: var(--radius-sm); background: var(--card, #fff); color: var(--text, #3c3c43); outline: none; width: 120px; }
     .tab-warning { font-size: var(--text-xs); color: var(--warn, #b45309); margin-left: 8px; white-space: nowrap; }
 
-    .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-    .modal { background: var(--card, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-lg); width: 90%; max-width: 400px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
-    .modal-header { display: flex; justify-content: space-between; align-items: center; padding: var(--space-lg) 20px; border-bottom: 1px solid var(--border, #e5e7eb); }
-    .modal-title { font-size: var(--text-lg); font-weight: 600; color: var(--text-strong, #1a1a1e); }
-    .modal-close { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--muted, #6b7280); padding: 4px; line-height: 1; }
-    .modal-body { padding: 20px; font-size: var(--text-md); color: var(--text, #3c3c43); }
-    .modal-footer { display: flex; justify-content: flex-end; gap: var(--space-sm); padding: var(--space-lg) 20px; border-top: 1px solid var(--border, #e5e7eb); }
+
 
     .toolbar { display: flex; gap: var(--space-md); align-items: center; flex-shrink: 0; flex-wrap: wrap; background: var(--bg-elevated); }
     .toolbar select { padding: var(--space-sm) var(--space-md); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-sm); font-size: var(--text-base); background: var(--card, #fff); color: var(--text, #333); min-width: 200px; }
@@ -1213,21 +1208,13 @@ export class SqlConsolePage extends LitElement {
       </div>
 
       ${this._showTabConfirm ? html`
-        <div class="modal-overlay" @click=${(e: Event) => { if ((e.target as HTMLElement).classList.contains('modal-overlay')) this._showTabConfirm = null; }}>
-          <div class="modal">
-            <div class="modal-header">
-              <span class="modal-title">确认关闭</span>
-              <button class="modal-close" @click=${() => this._showTabConfirm = null}>${icons['x']}</button>
-            </div>
-            <div class="modal-body">
-              <p>关闭标签页后将丢失未保存的 SQL 内容，确认关闭？</p>
-            </div>
-            <div class="modal-footer">
-              <button class="btn" @click=${() => this._showTabConfirm = null}>取消</button>
-              <button class="btn primary" @click=${() => { const id = this._showTabConfirm; this._showTabConfirm = null; this._closeTab(id!, true); }}>确认关闭</button>
-            </div>
+        <app-dialog .open=${true} size="sm" title="确认关闭" @app-dialog-close=${() => this._showTabConfirm = null}>
+          <p>关闭标签页后将丢失未保存的 SQL 内容，确认关闭？</p>
+          <div slot="footer">
+            <button class="btn" @click=${() => this._showTabConfirm = null}>取消</button>
+            <button class="btn-primary" @click=${() => { const id = this._showTabConfirm; this._showTabConfirm = null; this._closeTab(id!, true); }}>确认关闭</button>
           </div>
-        </div>
+        </app-dialog>
       ` : ''}
 
       <div class="toolbar">

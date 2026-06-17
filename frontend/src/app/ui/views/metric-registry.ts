@@ -4,6 +4,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
+import "../components/app-dialog.js";
 
 const API_BASE = "/api";
 
@@ -76,13 +77,7 @@ export class MetricRegistryViewer extends LitElement {
     .expand-inner code { font-size: 10px; background: var(--bg); padding: 1px 4px; border-radius: 3px; }
     .expand-actions { grid-column: 1 / -1; display: flex; gap: 6px; margin-top: 4px; }
 
-    .dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-    .dialog { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); width: 720px; max-height: 85vh; overflow-y: auto; }
-    .dialog-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
-    .dialog-title { font-size: 16px; font-weight: 600; }
-    .dialog-body { padding: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
-    .dialog-body .full-width { grid-column: 1 / -1; }
-    .dialog-footer { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+
     .form-group { display: flex; flex-direction: column; gap: 4px; }
     .form-label { font-size: 12px; font-weight: 500; color: var(--text); }
     .form-input, .form-select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; background: var(--card); color: var(--text); box-sizing: border-box; }
@@ -225,16 +220,13 @@ export class MetricRegistryViewer extends LitElement {
       </div>
       ${this.showModal ? this._renderModal() : nothing}
       ${this.showDeleteConfirm ? html`
-        <div class="dialog-overlay" @click=${() => this.showDeleteConfirm = null}>
-          <div class="dialog" @click=${(e: Event) => e.stopPropagation()}>
-            <div class="dialog-header"><span class="dialog-title">确认删除</span></div>
-            <div class="dialog-body">确定要删除指标 "${this.showDeleteConfirm.name}"？</div>
-            <div class="dialog-footer">
-              <button class="btn" @click=${() => this.showDeleteConfirm = null}>取消</button>
-              <button class="btn btn-primary" @click=${() => this._delete(this.showDeleteConfirm!)}>确认删除</button>
-            </div>
+        <app-dialog .open=${true} size="sm" title="确认删除" @app-dialog-close=${() => this.showDeleteConfirm = null}>
+          <p>确定要删除指标 "${this.showDeleteConfirm.name}"？</p>
+          <div slot="footer">
+            <button class="btn" @click=${() => this.showDeleteConfirm = null}>取消</button>
+            <button class="btn-primary" @click=${() => this._delete(this.showDeleteConfirm!)}>确认删除</button>
           </div>
-        </div>` : nothing}
+        </app-dialog>` : nothing}
     </div>`;
   }
 
@@ -255,55 +247,52 @@ export class MetricRegistryViewer extends LitElement {
     const isEdit = !!this.editing;
     const dbTypes: string[] = this.form.db_types || [];
     const collectionSqls: Record<string, string> = this.form.collection_sqls || {};
-    return html`<div class="dialog-overlay" @click=${() => this.showModal = false}>
-      <div class="dialog" @click=${(e: Event) => e.stopPropagation()}>
-        <div class="dialog-header"><span class="dialog-title">${isEdit ? '编辑指标' : '新建指标'}</span></div>
-        <div class="dialog-body">
-          <div class="form-group"><label class="form-label">指标 ID</label><input class="form-input" .value=${this.form.id || ''} @input=${(e: any) => this.form.id = e.target.value} placeholder="custom_metric" ?disabled=${isEdit} /></div>
-          <div class="form-group"><label class="form-label">名称</label><input class="form-input" .value=${this.form.name || ''} @input=${(e: any) => this.form.name = e.target.value} placeholder="指标显示名称" /></div>
-          <div class="form-group full-width"><label class="form-label">描述</label><input class="form-input" .value=${this.form.description || ''} @input=${(e: any) => this.form.description = e.target.value} /></div>
-          <div class="form-group"><label class="form-label">单位</label><input class="form-input" .value=${this.form.unit || ''} @input=${(e: any) => this.form.unit = e.target.value} placeholder="%" /></div>
-          <div class="form-group"><label class="form-label">聚合方式</label>
-            <select class="form-select" .value=${this.form.aggregation || 'avg'} @change=${(e: any) => this.form.aggregation = e.target.value}>
-              ${Object.entries(AGG_LABELS).map(([v, l]) => html`<option value=${v}>${l}</option>`)}
-            </select></div>
-          <div class="form-group"><label class="form-label">采集间隔 (秒)</label><input class="form-input" type="number" .value=${String(this.form.default_interval || 30)} @input=${(e: any) => this.form.default_interval = parseInt(e.target.value)} /></div>
-          <div class="form-group"><label class="form-label">分类</label><input class="form-input" .value=${this.form.category || ''} @input=${(e: any) => this.form.category = e.target.value} placeholder="performance" /></div>
-          <div class="form-group"><label class="form-label">值类型</label>
-            <select class="form-select" .value=${this.form.value_type || 'gauge'} @change=${(e: any) => this.form.value_type = e.target.value}>
-              ${Object.entries(VALUE_TYPE_LABELS).map(([v, l]) => html`<option value=${v}>${l}</option>`)}
-            </select></div>
+    return html`<app-dialog .open=${true} size="xl" title="${isEdit ? '编辑指标' : '新建指标'}" @app-dialog-close=${() => this.showModal = false}>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 16px">
+        <div class="form-group"><label class="form-label">指标 ID</label><input class="form-input" .value=${this.form.id || ''} @input=${(e: any) => this.form.id = e.target.value} placeholder="custom_metric" ?disabled=${isEdit} /></div>
+        <div class="form-group"><label class="form-label">名称</label><input class="form-input" .value=${this.form.name || ''} @input=${(e: any) => this.form.name = e.target.value} placeholder="指标显示名称" /></div>
+        <div class="form-group" style="grid-column:1/-1"><label class="form-label">描述</label><input class="form-input" .value=${this.form.description || ''} @input=${(e: any) => this.form.description = e.target.value} /></div>
+        <div class="form-group"><label class="form-label">单位</label><input class="form-input" .value=${this.form.unit || ''} @input=${(e: any) => this.form.unit = e.target.value} placeholder="%" /></div>
+        <div class="form-group"><label class="form-label">聚合方式</label>
+          <select class="form-select" .value=${this.form.aggregation || 'avg'} @change=${(e: any) => this.form.aggregation = e.target.value}>
+            ${Object.entries(AGG_LABELS).map(([v, l]) => html`<option value=${v}>${l}</option>`)}
+          </select></div>
+        <div class="form-group"><label class="form-label">采集间隔 (秒)</label><input class="form-input" type="number" .value=${String(this.form.default_interval || 30)} @input=${(e: any) => this.form.default_interval = parseInt(e.target.value)} /></div>
+        <div class="form-group"><label class="form-label">分类</label><input class="form-input" .value=${this.form.category || ''} @input=${(e: any) => this.form.category = e.target.value} placeholder="performance" /></div>
+        <div class="form-group"><label class="form-label">值类型</label>
+          <select class="form-select" .value=${this.form.value_type || 'gauge'} @change=${(e: any) => this.form.value_type = e.target.value}>
+            ${Object.entries(VALUE_TYPE_LABELS).map(([v, l]) => html`<option value=${v}>${l}</option>`)}
+          </select></div>
+        <div class="form-group">
+          <label class="form-label">是否采集</label>
+          <div class="toggle-row" style="padding-top:6px">
+            <input type="checkbox" ?checked=${!!this.form.is_collected} @change=${(e: any) => this.form.is_collected = e.target.checked} />
+            <label class="toggle-label">${this.form.is_collected ? '启用' : '禁用'}</label>
+          </div>
+        </div>
+        <div class="form-group" style="grid-column:1/-1">
+          <label class="form-label">适用数据库类型</label>
+          <div class="chk-group">
+            ${DB_TYPE_OPTIONS.map(t => html`
+              <label class="chk-label"><input type="checkbox" ?checked=${dbTypes.includes(t)} @change=${() => this._toggleDbType(t)} /> ${t}</label>
+            `)}
+          </div>
+        </div>
+        <div class="form-group" style="grid-column:1/-1"><label class="form-label">计算表达式</label><input class="form-input" .value=${this.form.compute_expr || ''} @input=${(e: any) => this.form.compute_expr = e.target.value} placeholder="例如: (running / max) * 60 + 20" /></div>
+        <div style="grid-column:1/-1;font-size:11px;font-weight:600;text-transform:uppercase;color:var(--muted);padding-top:8px;border-top:1px solid var(--border);margin-top:4px;letter-spacing:0.5px">采集 SQL（按数据库类型）</div>
+        ${DB_TYPE_OPTIONS.map(t => html`
           <div class="form-group">
-            <label class="form-label">是否采集</label>
-            <div class="toggle-row" style="padding-top:6px">
-              <input type="checkbox" ?checked=${!!this.form.is_collected} @change=${(e: any) => this.form.is_collected = e.target.checked} />
-              <label class="toggle-label">${this.form.is_collected ? '启用' : '禁用'}</label>
-            </div>
+            <label class="form-label" style="text-transform:uppercase">${t}</label>
+            <textarea class="sql-area" .value=${collectionSqls[t] || ''} @input=${(e: any) => this._updateCollectionSql(t, e.target.value)} placeholder="SELECT ... FROM ... WHERE ..."></textarea>
           </div>
-          <div class="form-group full-width">
-            <label class="form-label">适用数据库类型</label>
-            <div class="chk-group">
-              ${DB_TYPE_OPTIONS.map(t => html`
-                <label class="chk-label"><input type="checkbox" ?checked=${dbTypes.includes(t)} @change=${() => this._toggleDbType(t)} /> ${t}</label>
-              `)}
-            </div>
-          </div>
-          <div class="form-group full-width"><label class="form-label">计算表达式</label><input class="form-input" .value=${this.form.compute_expr || ''} @input=${(e: any) => this.form.compute_expr = e.target.value} placeholder="例如: (running / max) * 60 + 20" /></div>
-          <div class="form-section-title full-width">采集 SQL（按数据库类型）</div>
-          ${DB_TYPE_OPTIONS.map(t => html`
-            <div class="form-group">
-              <label class="form-label" style="text-transform:uppercase">${t}</label>
-              <textarea class="sql-area" .value=${collectionSqls[t] || ''} @input=${(e: any) => this._updateCollectionSql(t, e.target.value)} placeholder="SELECT ... FROM ... WHERE ..."></textarea>
-            </div>
-          `)}
-          ${this.formMsg ? html`<div class="msg-err full-width">${this.formMsg}</div>` : ''}
-        </div>
-        <div class="dialog-footer">
-          <button class="btn" @click=${() => this.showModal = false}>取消</button>
-          <button class="btn btn-primary" @click=${this._save} ?disabled=${this.saving}>${this.saving ? '保存中...' : '保存'}</button>
-        </div>
+        `)}
+        ${this.formMsg ? html`<div class="msg-err" style="grid-column:1/-1">${this.formMsg}</div>` : ''}
       </div>
-    </div>`;
+      <div slot="footer">
+        <button class="btn" @click=${() => this.showModal = false}>取消</button>
+        <button class="btn-primary" @click=${this._save} ?disabled=${this.saving}>${this.saving ? '保存中...' : '保存'}</button>
+      </div>
+    </app-dialog>`;
   }
 }
 declare global { interface HTMLElementTagNameMap { "metric-registry-viewer": MetricRegistryViewer; } }

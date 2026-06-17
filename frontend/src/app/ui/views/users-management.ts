@@ -1,6 +1,7 @@
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
+import "../components/app-dialog.js";
 import { apiClient } from '../../../api/index.js';
 
 interface UserInfo {
@@ -254,84 +255,6 @@ export class UsersManagement extends LitElement {
       margin: 12px 16px;
     }
 
-    /* Modal */
-    .modal-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.5);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
-      animation: overlay-fade-in 0.2s ease;
-    }
-
-    @keyframes overlay-fade-in {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-
-    .modal {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      width: 90%;
-      max-width: 480px;
-      max-height: 90vh;
-      overflow-y: auto;
-      box-shadow: var(--shadow-lg);
-      animation: modal-slide-in 0.25s var(--ease-out);
-    }
-
-    @keyframes modal-slide-in {
-      from { opacity: 0; transform: translateY(-20px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    .modal-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 16px 20px;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .modal-title {
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--text-strong);
-    }
-
-    .modal-close {
-      background: none;
-      border: none;
-      font-size: 20px;
-      cursor: pointer;
-      color: var(--muted);
-      padding: 4px;
-      line-height: 1;
-    }
-
-    .modal-close:hover {
-      color: var(--text-strong);
-    }
-
-    .modal-body {
-      padding: 20px;
-      display: grid;
-      gap: 16px;
-    }
-
-    .modal-footer {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      padding: 16px 20px;
-      border-top: 1px solid var(--border);
-    }
 
     .form-group {
       display: grid;
@@ -792,186 +715,78 @@ export class UsersManagement extends LitElement {
         </div>
 
         <!-- Create/Edit Modal -->
-        ${this.showModal
-          ? html`
-              <div class="modal-overlay" @click=${(e: Event) => {
-                if ((e.target as HTMLElement).classList.contains("modal-overlay")) {
-                  this._closeModal();
-                }
-              }}>
-                <div class="modal">
-                  <div class="modal-header">
-                    <span class="modal-title">
-                      ${this.editingUser ? "编辑用户" : "新建用户"}
-                    </span>
-                    <button class="modal-close" @click=${this._closeModal}>&times;</button>
-                  </div>
-                  <div class="modal-body">
-                    ${this.saveError
-                      ? html`<div class="save-error">${this.saveError}</div>`
-                      : ""}
-                    ${this.formErrors.length > 0
-                      ? html`
-                          <div class="save-error">
-                            ${this.formErrors.map((e) => html`<div>${e}</div>`)}
-                          </div>
-                        `
-                      : ""}
+        ${this.showModal ? html`
+          <app-dialog .open=${true} size="md" title="${this.editingUser ? "编辑用户" : "新建用户"}" @app-dialog-close=${this._closeModal}>
+            ${this.saveError ? html`<div class="save-error" style="margin-bottom:8px">${this.saveError}</div>` : ""}
+            ${this.formErrors.length > 0 ? html`
+              <div class="save-error" style="margin-bottom:8px">${this.formErrors.map((e) => html`<div>${e}</div>`)}</div>
+            ` : ""}
 
-                    <div class="form-group">
-                      <label>用户名</label>
-                      <input
-                        type="text"
-                        .value=${this.formUsername}
-                        @input=${(e: Event) => {
-                          this.formUsername = (e.target as HTMLInputElement).value;
-                        }}
-                        ?disabled=${!!this.editingUser}
-                        placeholder=${this.editingUser ? "" : "请输入用户名"}
-                      />
-                    </div>
+            <div class="form-group">
+              <label>用户名</label>
+              <input type="text" .value=${this.formUsername} @input=${(e: Event) => { this.formUsername = (e.target as HTMLInputElement).value; }} ?disabled=${!!this.editingUser} placeholder=${this.editingUser ? "" : "请输入用户名"} />
+            </div>
 
-                    <div class="form-group">
-                      <label>邮箱</label>
-                      <input
-                        type="email"
-                        .value=${this.formEmail}
-                        @input=${(e: Event) => {
-                          this.formEmail = (e.target as HTMLInputElement).value;
-                        }}
-                        placeholder="可选"
-                      />
-                    </div>
+            <div class="form-group">
+              <label>邮箱</label>
+              <input type="email" .value=${this.formEmail} @input=${(e: Event) => { this.formEmail = (e.target as HTMLInputElement).value; }} placeholder="可选" />
+            </div>
 
-                    ${!this.editingUser
-                      ? html`
-                          <div class="form-group">
-                            <label>密码</label>
-                            <input
-                              type="password"
-                              .value=${this.formPassword}
-                              @input=${(e: Event) => {
-                                this.formPassword = (e.target as HTMLInputElement).value;
-                              }}
-                              placeholder="至少 8 位"
-                            />
-                          </div>
-                        `
-                      : ""}
-
-                    <div class="form-group">
-                      <label>角色</label>
-                      <select
-                        @change=${(e: Event) => {
-                          const v = (e.target as HTMLSelectElement).value;
-                          this.formRoleId = v ? Number(v) : null;
-                        }}
-                      >
-                        <option value="" ?selected=${this.formRoleId === null}>不分配角色</option>
-                        ${this.allRoles.map(
-                          (r) => html`<option value=${r.id} ?selected=${this.formRoleId === r.id}>${this._roleLabel(r)}</option>`
-                        )}
-                      </select>
-                    </div>
-
-                    ${this.editingUser
-                      ? html`
-                          <div class="form-group">
-                            <label>状态</label>
-                            <select
-                              .value=${this.formStatus}
-                              @change=${(e: Event) => {
-                                this.formStatus = (e.target as HTMLSelectElement).value;
-                              }}
-                            >
-                              <option value="active">活跃</option>
-                              <option value="inactive">停用</option>
-                              <option value="locked">锁定</option>
-                            </select>
-                          </div>
-                        `
-                      : ""}
-                  </div>
-                  <div class="modal-footer">
-                    <button class="btn" @click=${this._closeModal}>取消</button>
-                    <button
-                      class="btn primary"
-                      @click=${this._saveUser}
-                      ?disabled=${this.saving}
-                    >
-                      ${this.saving ? "保存中..." : "保存"}
-                    </button>
-                  </div>
-                </div>
+            ${!this.editingUser ? html`
+              <div class="form-group">
+                <label>密码</label>
+                <input type="password" .value=${this.formPassword} @input=${(e: Event) => { this.formPassword = (e.target as HTMLInputElement).value; }} placeholder="至少 8 位" />
               </div>
-            `
-          : ""}
+            ` : ""}
+
+            <div class="form-group">
+              <label>角色</label>
+              <select @change=${(e: Event) => { const v = (e.target as HTMLSelectElement).value; this.formRoleId = v ? Number(v) : null; }}>
+                <option value="" ?selected=${this.formRoleId === null}>不分配角色</option>
+                ${this.allRoles.map((r) => html`<option value=${r.id} ?selected=${this.formRoleId === r.id}>${this._roleLabel(r)}</option>`)}
+              </select>
+            </div>
+
+            ${this.editingUser ? html`
+              <div class="form-group">
+                <label>状态</label>
+                <select .value=${this.formStatus} @change=${(e: Event) => { this.formStatus = (e.target as HTMLSelectElement).value; }}>
+                  <option value="active">活跃</option>
+                  <option value="inactive">停用</option>
+                  <option value="locked">锁定</option>
+                </select>
+              </div>
+            ` : ""}
+            <div slot="footer">
+              <button class="btn" @click=${this._closeModal}>取消</button>
+              <button class="btn primary" @click=${this._saveUser} ?disabled=${this.saving}>${this.saving ? "保存中..." : "保存"}</button>
+            </div>
+          </app-dialog>
+        ` : ""}
 
         <!-- Password Reset Modal -->
-        ${this.showPasswordModal
-          ? html`
-              <div class="modal-overlay" @click=${(e: Event) => {
-                if ((e.target as HTMLElement).classList.contains("modal-overlay")) {
-                  this._closePasswordModal();
-                }
-              }}>
-                <div class="modal">
-                  <div class="modal-header">
-                    <span class="modal-title">
-                      重置密码 - ${this.passwordTarget?.username}
-                    </span>
-                    <button class="modal-close" @click=${this._closePasswordModal}>&times;</button>
-                  </div>
-                  <div class="modal-body">
-                    ${this.saveError
-                      ? html`<div class="save-error">${this.saveError}</div>`
-                      : ""}
-                    ${this.passwordErrors.length > 0
-                      ? html`
-                          <div class="save-error">
-                            ${this.passwordErrors.map((e) => html`<div>${e}</div>`)}
-                          </div>
-                        `
-                      : ""}
+        ${this.showPasswordModal ? html`
+          <app-dialog .open=${true} size="sm" title="重置密码 - ${this.passwordTarget?.username}" @app-dialog-close=${this._closePasswordModal}>
+            ${this.saveError ? html`<div class="save-error" style="margin-bottom:8px">${this.saveError}</div>` : ""}
+            ${this.passwordErrors.length > 0 ? html`
+              <div class="save-error" style="margin-bottom:8px">${this.passwordErrors.map((e) => html`<div>${e}</div>`)}</div>
+            ` : ""}
 
-                    <div class="form-group">
-                      <label>新密码</label>
-                      <input
-                        type="password"
-                        .value=${this.newPassword}
-                        @input=${(e: Event) => {
-                          this.newPassword = (e.target as HTMLInputElement).value;
-                        }}
-                        placeholder="至少 8 位"
-                      />
-                    </div>
+            <div class="form-group">
+              <label>新密码</label>
+              <input type="password" .value=${this.newPassword} @input=${(e: Event) => { this.newPassword = (e.target as HTMLInputElement).value; }} placeholder="至少 8 位" />
+            </div>
 
-                    <div class="form-group">
-                      <label>确认密码</label>
-                      <input
-                        type="password"
-                        .value=${this.confirmPassword}
-                        @input=${(e: Event) => {
-                          this.confirmPassword = (e.target as HTMLInputElement).value;
-                        }}
-                        placeholder="再次输入新密码"
-                      />
-                    </div>
-                  </div>
-                  <div class="modal-footer">
-                    <button class="btn" @click=${this._closePasswordModal}>取消</button>
-                    <button
-                      class="btn primary"
-                      @click=${this._resetPassword}
-                      ?disabled=${this.saving}
-                    >
-                      ${this.saving ? "重置中..." : "确认重置"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            `
-          : ""}
+            <div class="form-group">
+              <label>确认密码</label>
+              <input type="password" .value=${this.confirmPassword} @input=${(e: Event) => { this.confirmPassword = (e.target as HTMLInputElement).value; }} placeholder="再次输入新密码" />
+            </div>
+            <div slot="footer">
+              <button class="btn" @click=${this._closePasswordModal}>取消</button>
+              <button class="btn primary" @click=${this._resetPassword} ?disabled=${this.saving}>${this.saving ? "重置中..." : "确认重置"}</button>
+            </div>
+          </app-dialog>
+        ` : ""}
       </div>
     `;
   }
