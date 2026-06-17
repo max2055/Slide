@@ -256,37 +256,6 @@ export class InstancesPage extends LitElement {
       letter-spacing: 0.05em;
     }
 
-    .status-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 1px 10px;
-      border-radius: var(--radius-full);
-      font-size: var(--text-xs);
-      font-weight: 500;
-      line-height: 16px;
-      height: 20px;
-    }
-
-    .status-badge.ok {
-      background: var(--ok-subtle);
-      color: var(--ok);
-    }
-
-    .status-badge.warn {
-      background: var(--warn-subtle);
-      color: var(--warn);
-    }
-
-    .status-badge.danger {
-      background: var(--danger-subtle);
-      color: var(--danger);
-    }
-
-    .status-badge.muted {
-      background: rgba(139, 139, 145, 0.12);
-      color: var(--muted);
-    }
 
     .indicator {
       width: 6px;
@@ -761,7 +730,7 @@ export class InstancesPage extends LitElement {
     };
     const s = statusMap[status] || { class: "muted", label: status };
     return html`
-      <span class="status-badge ${s.class}">${s.label}</span>
+      <app-badge variant="${status === 'healthy' ? 'ok' : status === 'warning' ? 'warn' : status === 'critical' ? 'danger' : 'muted'}">${s.label}</app-badge>
     `;
   }
 

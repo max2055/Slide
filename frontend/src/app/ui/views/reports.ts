@@ -1,6 +1,9 @@
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
+import "../components/app-card.js";
+import "../components/app-badge.js";
+import "../components/app-empty-state.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 
@@ -54,45 +57,6 @@ export class ReportsPage extends LitElement {
       padding: 0 0 var(--space-xl) 0;
     }
 
-    /* 主卡片 */
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-      margin-bottom: var(--space-lg);
-    }
-
-    .card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: var(--space-md) var(--space-lg);
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-elevated);
-    }
-
-    .card-title {
-      font-size: var(--text-lg);
-      font-weight: 600;
-      letter-spacing: -0.02em;
-      color: var(--text-strong);
-      display: flex;
-      align-items: center;
-      gap: var(--space-sm);
-    }
-
-    .card-title svg {
-      width: 16px;
-      height: 16px;
-      opacity: 0.72;
-    }
-
-    .card-sub {
-      font-size: var(--text-base);
-      color: var(--muted);
-      margin-top: var(--space-xs);
-    }
 
     /* 报表类型网格 */
     .report-types-grid {
@@ -249,30 +213,6 @@ export class ReportsPage extends LitElement {
       color: var(--text);
     }
 
-    .status-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: var(--space-xs);
-      padding: var(--space-xs) var(--space-md);
-      border-radius: var(--radius-full);
-      font-size: var(--text-xs);
-      font-weight: 500;
-    }
-
-    .status-badge.ok {
-      background: var(--ok-subtle);
-      color: var(--ok);
-    }
-
-    .status-badge.blue {
-      background: rgba(59, 130, 246, 0.12);
-      color: var(--info);
-    }
-
-    .status-badge.red {
-      background: var(--danger-subtle);
-      color: var(--danger);
-    }
 
     .time-ago {
       font-size: var(--text-sm);
@@ -482,12 +422,10 @@ export class ReportsPage extends LitElement {
     return html`
       <div class="page">
         <!-- 生成报表卡片 -->
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <div class="card-title">${icons['bar-chart']} 生成报表</div>
-              <div class="card-sub">选择报表类型生成分析报告</div>
-            </div>
+        <app-card variant="default">
+          <div slot="header">
+            ${icons['bar-chart']} 生成报表
+            <div style="font-size:var(--text-base);color:var(--muted);margin-top:var(--space-xs)">选择报表类型生成分析报告</div>
             <div style="margin-top: var(--space-md);">
               <label style="font-size: var(--text-base); color: var(--muted); margin-right: 8px;">目标实例：</label>
               <select
@@ -514,12 +452,12 @@ export class ReportsPage extends LitElement {
               </div>
             `)}
           </div>
-        </div>
+        </app-card>
 
         <!-- 历史报告卡片 -->
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">${icons['file-text']} 历史报告</div>
+        <app-card variant="default">
+          <div slot="header">
+            ${icons['file-text']} 历史报告
           </div>
 
           ${this.reports.length > 0
@@ -547,7 +485,7 @@ export class ReportsPage extends LitElement {
                               : html`<span style="color: var(--muted);">—</span>`
                             }
                           </td>
-                          <td style="text-align:center;"><span class="status-badge ${report.status === 'completed' ? 'ok' : report.status === 'running' ? 'blue' : 'red'}">${this._statusLabel(report.status)}</span></td>
+                          <td style="text-align:center;"><app-badge variant="${report.status === 'completed' ? 'ok' : report.status === 'running' ? 'info' : 'danger'}">${this._statusLabel(report.status)}</app-badge></td>
                           <td style="text-align:center;"><span class="time-ago">${this._formatTime(report.created_at)}</span></td>
                           <td style="text-align:center;">
                             <div class="actions">
@@ -562,16 +500,12 @@ export class ReportsPage extends LitElement {
                 </div>
               `
             : html`
-                <div class="empty">
-                  <div class="empty__content">
-                    <div class="empty__icon">${icons['file-text']}</div>
-                    <div class="empty__title">暂无历史报告</div>
-                    <div class="empty__desc">选择上方的报表类型生成第一份报告</div>
-                  </div>
-                </div>
+                <app-empty-state title="暂无历史报告" description="选择上方的报表类型生成第一份报告">
+                  <div slot="icon">${icons['file-text']}</div>
+                </app-empty-state>
               `
           }
-        </div>
+        </app-card>
       </div>
     `;
   }

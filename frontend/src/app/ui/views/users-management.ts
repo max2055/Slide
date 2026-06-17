@@ -2,6 +2,9 @@ import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
+import "../components/app-card.js";
+import "../components/app-badge.js";
+import "../components/app-empty-state.js";
 import { apiClient } from '../../../api/index.js';
 
 interface UserInfo {
@@ -61,30 +64,6 @@ export class UsersManagement extends LitElement {
       padding: 0 0 24px 0;
     }
 
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-    }
-
-    .card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 14px 16px;
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-elevated);
-      flex-wrap: wrap;
-      gap: 12px;
-    }
-
-    .card-title {
-      font-size: 15px;
-      font-weight: 600;
-      letter-spacing: -0.02em;
-      color: var(--text-strong);
-    }
 
     .table-container {
       overflow-x: auto;
@@ -171,30 +150,6 @@ export class UsersManagement extends LitElement {
       color: #f59e0b;
     }
 
-    .status-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 10px;
-      border-radius: var(--radius-full);
-      font-size: 11px;
-      font-weight: 500;
-    }
-
-    .status-badge.active {
-      background: var(--ok-subtle);
-      color: var(--ok);
-    }
-
-    .status-badge.inactive {
-      background: rgba(139, 139, 145, 0.12);
-      color: var(--muted);
-    }
-
-    .status-badge.locked {
-      background: var(--danger-subtle);
-      color: var(--danger);
-    }
 
     .actions {
       display: flex;
@@ -630,23 +585,21 @@ export class UsersManagement extends LitElement {
     if (!this.isAdmin) {
       return html`
         <div class="page">
-          <div class="card">
-            <div class="card-header">
-              <span class="card-title">用户管理</span>
-            </div>
+          <app-card variant="default">
+            <div slot="header">用户管理</div>
             <div class="no-permission">
               无权限访问此页面，需要 admin 角色
             </div>
-          </div>
+          </app-card>
         </div>
       `;
     }
 
     return html`
       <div class="page">
-        <div class="card">
-          <div class="card-header">
-            <span class="card-title">用户管理</span>
+        <app-card variant="default">
+          <div slot="header">
+            <span>用户管理</span>
             <button class="btn primary" @click=${this._openCreateModal}>
               新建用户
             </button>
@@ -659,7 +612,7 @@ export class UsersManagement extends LitElement {
           ${this.loading
             ? html`<div class="loading">加载中...</div>`
             : this.users.length === 0
-              ? html`<div class="empty">暂无用户数据</div>`
+              ? html`<app-empty-state title="暂无用户数据"></app-empty-state>`
               : html`
                   <div class="table-container">
                     <table class="table">
@@ -683,9 +636,9 @@ export class UsersManagement extends LitElement {
                                 ${this._renderUserRoleBadges(u.id)}
                               </td>
                               <td style="text-align:center">
-                                <span class="status-badge ${u.status}">
+                                <app-badge variant="${u.status === 'active' ? 'ok' : u.status === 'inactive' ? 'muted' : 'warn'}">
                                   ${STATUS_LABELS[u.status] || u.status}
-                                </span>
+                                </app-badge>
                               </td>
                               <td style="text-align:center">${this._formatDate(u.created_at)}</td>
                               <td style="text-align:center">
@@ -712,7 +665,7 @@ export class UsersManagement extends LitElement {
                     </table>
                   </div>
                 `}
-        </div>
+        </app-card>
 
         <!-- Create/Edit Modal -->
         ${this.showModal ? html`

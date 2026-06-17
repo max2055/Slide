@@ -7,6 +7,7 @@ import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
 import { authFetch } from "../../../api/index.js";
+import { showToast } from "../components/app-toast-container.js";
 
 interface CronJobConfig {
   id: number;
@@ -35,11 +36,6 @@ interface CronJobLog {
   duration_ms: number | null;
   stop_reason: string | null;
   error_trace: string | null;
-}
-
-interface Toast {
-  message: string;
-  type: "success" | "error";
 }
 
 const CRON_PRESETS = [
@@ -140,7 +136,6 @@ export class CronJobsSettings extends LitElement {
   @state() private triggerRunning = false;
 
   @state() private pollingJobIds = new Set<number>();
-  @state() private toast: Toast | null = null;
 
   static styles = [sharedBtnStyles, css`
     :host { display: block; }
@@ -214,19 +209,13 @@ export class CronJobsSettings extends LitElement {
     .cron-preset-chip:hover { color: var(--text); border-color: var(--accent); }
     .cron-preset-chip.active { color: var(--accent-foreground, #fff); background: var(--accent); border-color: var(--accent); }
     .cron-preset-expr { font-family: var(--mono, monospace); font-size: 10px; opacity: 0.7; }
-    .toast { position: fixed; bottom: 24px; right: 24px; z-index: 1001; padding: 10px 16px; border-radius: var(--radius-sm); font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.2); transition: opacity 0.3s; }
-    .toast--success { background: rgba(34,197,94,0.9); color: #fff; }
-    .toast--error { background: rgba(220,38,38,0.9); color: #fff; }
+
+
   `];
 
   override connectedCallback() {
     super.connectedCallback();
     this.loadCronJobs();
-  }
-
-  private showToast(message: string, type: "success" | "error" = "success") {
-    this.toast = { message, type };
-    setTimeout(() => { this.toast = null; }, 3000);
   }
 
   private async loadCronJobs() {
@@ -260,7 +249,7 @@ export class CronJobsSettings extends LitElement {
       job.enabled = prevEnabled;
       this.jobs = [...this.jobs];
       this.requestUpdate();
-      this.showToast("更新任务状态失败", "error");
+      showToast("更新任务状态失败", "error");
     }
   }
 
@@ -309,7 +298,7 @@ export class CronJobsSettings extends LitElement {
       if (!res.ok) { const errBody = await res.json().catch(() => ({})); throw new Error(errBody.error || "保存失败"); }
       this.closeFormDialog();
       this.loadCronJobs();
-      this.showToast(isEdit ? "更新成功" : "创建成功");
+      showToast(isEdit ? "更新成功" : "创建成功");
     } catch (e: any) {
       this.formError = e.message || "保存失败";
       this.formSaving = false;
@@ -331,10 +320,10 @@ export class CronJobsSettings extends LitElement {
       const res = await authFetch(`/api/cron/jobs/${this.deleteConfirmJob.id}`, { method: "DELETE" });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "删除失败");
       this.closeDeleteConfirm();
-      this.showToast("已删除");
+      showToast("已删除");
       this.loadCronJobs();
     } catch (e: any) {
-      this.showToast(`删除失败：${e.message || "未知错误"}`, "error");
+      showToast(`删除失败：${e.message || "未知错误"}`, "error");
       this.deleteDeleting = false;
     }
   }
@@ -356,7 +345,7 @@ export class CronJobsSettings extends LitElement {
       const res = await authFetch(`/api/cron/jobs/${this.triggerJobId}/run`, { method: "POST" });
       if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || "触发失败"); }
       this.closeTriggerDialog();
-      this.showToast("已触发执行");
+      showToast("已触发执行");
       this.pollJobStatus(this.triggerJobId);
     } catch (e: any) {
       this.triggerError = e.message || "触发失败";
@@ -517,9 +506,6 @@ export class CronJobsSettings extends LitElement {
           </div>
         `)}
       </div>
-
-      <!-- Toast -->
-      ${this.toast ? html`<div class="toast toast--${this.toast.type}">${this.toast.message}</div>` : nothing}
 
       <!-- Log Viewer Dialog -->
       ${this.logViewerJob ? html`

@@ -1,6 +1,8 @@
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state, property } from "lit/decorators.js";
+import "../components/app-card.js";
+import "../components/app-empty-state.js";
 import { icons } from "../../../icons.js";
 import "../../../components/stat-card.js";
 
@@ -67,31 +69,6 @@ export class SchemaManagementPage extends LitElement {
 
     .page { padding: 0 0 var(--space-xl) 0; }
 
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-      margin-bottom: var(--space-lg);
-    }
-
-    .card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: var(--space-md) var(--space-lg);
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-elevated);
-      flex-wrap: wrap;
-      gap: var(--space-md);
-    }
-
-    .card-title {
-      font-size: var(--text-lg);
-      font-weight: 600;
-      letter-spacing: -0.02em;
-      color: var(--text-strong);
-    }
 
     .toolbar {
       display: flex;
@@ -633,8 +610,8 @@ export class SchemaManagementPage extends LitElement {
         </div>
 
         <!-- 操作栏 -->
-        <div class="card">
-          <div class="toolbar">
+        <app-card variant="default">
+          <div class="toolbar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px">
             ${!this.instanceId ? html`
               <label style="font-size: var(--text-sm); font-weight: 500; color: var(--text-strong); white-space: nowrap;">
                 实例：
@@ -666,11 +643,11 @@ export class SchemaManagementPage extends LitElement {
                 </div>
               `
             : ""}
-        </div>
+        </app-card>
 
         <!-- Tab 切换 -->
-        <div class="card">
-          <div class="toolbar">
+        <app-card variant="default">
+          <div class="toolbar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px">
             <button class="btn ${this.activeTab === "tables" ? "primary" : ""}" @click=${() => { this.activeTab = "tables"; }}>
               表结构列表
             </button>
@@ -680,15 +657,13 @@ export class SchemaManagementPage extends LitElement {
           </div>
 
           ${this.activeTab === "tables" ? this._renderTables() : this._renderChanges()}
-        </div>
+        </app-card>
 
         <!-- 快照时间线 -->
         ${this.snapshotTimes.length > 0
           ? html`
-              <div class="card">
-                <div class="card-header">
-                  <span class="card-title">快照时间线</span>
-                </div>
+              <app-card variant="default">
+                <div slot="header">快照时间线</div>
                 ${this.snapshotTimes.map(
                   (st) => html`
                     <div class="snapshot-time-item">
@@ -701,7 +676,7 @@ export class SchemaManagementPage extends LitElement {
                     </div>
                   `
                 )}
-              </div>
+              </app-card>
             `
           : ""}
       </div>
@@ -711,13 +686,9 @@ export class SchemaManagementPage extends LitElement {
   private _renderTables() {
     if (this.tableList.length === 0) {
       return html`
-        <div class="empty" style="min-height: 200px;">
-          <div class="empty__content">
-            <div class="empty__icon">${icons['file-text']}</div>
-            <div class="empty__title">暂无表结构数据</div>
-            <div class="empty__desc">点击「采集快照」从数据库实例采集表结构</div>
-          </div>
-        </div>
+        <app-empty-state title="暂无表结构数据" description="点击「采集快照」从数据库实例采集表结构">
+          <div slot="icon">${icons['file-text']}</div>
+        </app-empty-state>
       `;
     }
 
@@ -801,13 +772,9 @@ export class SchemaManagementPage extends LitElement {
   private _renderChanges() {
     if (this.changes.length === 0) {
       return html`
-        <div class="empty" style="min-height: 200px;">
-          <div class="empty__content">
-            <div class="empty__icon">${icons['check-circle']}</div>
-            <div class="empty__title">暂无变更</div>
-            <div class="empty__desc">点击「检测变更」对比最近两次快照</div>
-          </div>
-        </div>
+        <app-empty-state title="暂无变更" description="点击「检测变更」对比最近两次快照">
+          <div slot="icon">${icons['check-circle']}</div>
+        </app-empty-state>
       `;
     }
 

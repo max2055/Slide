@@ -1,5 +1,8 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import "../components/app-card.js";
+import "../components/app-badge.js";
+import "../components/app-empty-state.js";
 import * as echarts from "echarts";
 import { icons } from "../../../icons.js";
 import "../../../components/stat-card.js";
@@ -181,50 +184,6 @@ export class DashboardPage extends LitElement {
       gap: var(--space-md);
     }
 
-    .status-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      padding: 18px;
-      box-shadow: var(--shadow-sm);
-    }
-
-    .status-card__header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 14px;
-      padding-bottom: 12px;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .status-card__title {
-      font-size: var(--text-md);
-      font-weight: 600;
-      color: var(--text-strong);
-      display: flex;
-      align-items: center;
-      gap: var(--space-xs);
-    }
-    .status-card__title svg {
-      width: 16px;
-      height: 16px;
-      opacity: 0.72;
-      flex-shrink: 0;
-    }
-
-    .status-card__more {
-      font-size: var(--text-sm);
-      color: var(--accent);
-      cursor: pointer;
-      padding: var(--space-xs) var(--space-sm);
-      border-radius: var(--radius-sm);
-      transition: background 0.15s ease;
-    }
-
-    .status-card__more:hover {
-      background: var(--accent-subtle);
-    }
 
     .status-list {
       display: flex;
@@ -298,65 +257,7 @@ export class DashboardPage extends LitElement {
       color: var(--muted);
     }
 
-    .status-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: var(--space-xs);
-      padding: 3px 10px;
-      border-radius: var(--radius-full);
-      font-size: var(--text-xs);
-      font-weight: 500;
-    }
 
-    .status-badge.ok {
-      background: var(--ok-subtle);
-      color: var(--ok);
-    }
-
-    .status-badge.warn {
-      background: var(--warn-subtle);
-      color: var(--warn);
-    }
-
-    .status-badge.danger {
-      background: var(--danger-subtle);
-      color: var(--danger);
-    }
-
-    .empty-state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 32px 20px;
-      color: var(--muted);
-      background: var(--bg-elevated);
-      border: 1px dashed var(--border);
-      border-radius: var(--radius-sm);
-    }
-
-    .empty-state__icon {
-      margin-bottom: 8px;
-      opacity: 0.7;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .empty-state__icon svg {
-      width: 32px;
-      height: 32px;
-    }
-
-    .empty-state__title {
-      font-size: var(--text-base);
-      font-weight: 500;
-      color: var(--text-strong);
-      margin-bottom: 2px;
-    }
-
-    .empty-state__desc {
-      font-size: var(--text-sm);
-    }
 
     .loading {
       display: flex;
@@ -811,10 +712,10 @@ export class DashboardPage extends LitElement {
 
         <!-- Row 3: Alert Panel -->
         <div class="dashboard__panels">
-          <div class="status-card">
-            <div class="status-card__header">
-              <span class="status-card__title">${icons['triangle-alert']} 待处理告警</span>
-              <span class="status-card__more" @click=${() => this._navigateTo("alerts")}>查看全部 →</span>
+          <app-card variant="default">
+            <div slot="header">
+              <span>${icons['triangle-alert']} 待处理告警</span>
+              <span style="font-size:var(--text-sm);color:var(--accent);cursor:pointer;" @click=${() => this._navigateTo("alerts")}>查看全部 →</span>
             </div>
             ${this.recentAlerts.length > 0
               ? html`
@@ -833,14 +734,12 @@ export class DashboardPage extends LitElement {
                   </div>
                 `
               : html`
-                  <div class="empty-state">
-                    <div class="empty-state__icon">${icons['check-circle']}</div>
-                    <div class="empty-state__title">暂无未处理告警</div>
-                    <div class="empty-state__desc">系统运行正常</div>
-                  </div>
+                  <app-empty-state title="暂无未处理告警" description="系统运行正常">
+                    <div slot="icon">${icons['check-circle']}</div>
+                  </app-empty-state>
                 `
             }
-          </div>
+          </app-card>
 
         </div>
       </div>

@@ -6,6 +6,7 @@ import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
 import { authFetch } from "../../../api/index.js";
+import { showToast } from "../components/app-toast-container.js";
 
 interface MetricTemplate {
   id: number; name: string; description: string | null;
@@ -111,9 +112,7 @@ export class MetricTemplatesPage extends LitElement {
     .form-input:focus, .form-select:focus { border-color: var(--accent); outline: none; }
 
     .msg-err { color: var(--destructive); font-size: 11px; width: 100%; }
-    .toast { font-size: 12px; padding: 8px 14px; border-radius: var(--radius-sm); margin-bottom: 8px; }
-    .toast-ok { background: var(--ok-subtle); color: var(--ok); }
-    .toast-err { background: var(--danger-subtle); color: var(--destructive); }
+
 
     .chk-group { display: flex; flex-wrap: wrap; gap: 8px; max-height: 200px; overflow-y: auto; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
     .chk-label { display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; min-width: 140px; }
@@ -128,7 +127,6 @@ export class MetricTemplatesPage extends LitElement {
   @state() private allRules: AlertRule[] = [];
   @state() private loading = true;
   @state() private error: string | null = null;
-  @state() private ok: string | null = null;
 
   @state() private editing: MetricTemplate | null = null;
   @state() private expandedId: number | null = null;
@@ -215,8 +213,7 @@ export class MetricTemplatesPage extends LitElement {
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "保存失败");
       this.showModal = false;
       await this._load();
-      this.ok = this.editing ? "模板已更新" : "模板已创建";
-      setTimeout(() => this.ok = null, 2500);
+      showToast(this.editing ? "模板已更新" : "模板已创建", "success");
     } catch (e: any) { this.formMsg = e.message; }
     finally { this.saving = false; }
   }
@@ -226,8 +223,7 @@ export class MetricTemplatesPage extends LitElement {
       const res = await authFetch(`/api/metric-templates/${tpl.id}`, { method: "DELETE" });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "删除失败");
       await this._load();
-      this.ok = `模板 "${tpl.name}" 已删除`;
-      setTimeout(() => this.ok = null, 2500);
+      showToast(`模板 "${tpl.name}" 已删除`, "success");
     } catch (e: any) { this.error = e.message; }
   }
 
@@ -338,8 +334,7 @@ export class MetricTemplatesPage extends LitElement {
       // Refresh template detail
       const tpl = this.templates.find(t => t.id === this.expandedId);
       if (tpl) await this._toggleExpand(tpl);
-      this.ok = "规则已创建";
-      setTimeout(() => this.ok = null, 2500);
+      showToast("规则已创建", "success");
     } catch (e: any) { this.ruleFormMsg = e.message; }
     finally { this.ruleSaving = false; }
   }
@@ -350,8 +345,7 @@ export class MetricTemplatesPage extends LitElement {
       await this._load();
       const tpl = this.templates.find(t => t.id === this.expandedId);
       if (tpl) await this._toggleExpand(tpl);
-      this.ok = "规则已删除";
-      setTimeout(() => this.ok = null, 2500);
+      showToast("规则已删除", "success");
     } catch (e: any) { this.error = e.message; }
   }
 
@@ -415,8 +409,7 @@ export class MetricTemplatesPage extends LitElement {
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "创建失败");
       await this._load();
       this.ruleForm = { name: "", metric_name: "", warning: "", error: "", critical: "" };
-      this.ok = "规则已添加";
-      setTimeout(() => this.ok = null, 2000);
+      showToast("规则已添加", "success");
     } catch (e: any) { this.ruleFormMsg = e.message; }
     finally { this.ruleSaving = false; }
   }
@@ -443,8 +436,6 @@ export class MetricTemplatesPage extends LitElement {
   override render() {
     if (this.loading) return html`<div class="loading">加载中...</div>`;
     return html`
-      ${this.ok ? html`<div class="toast toast-ok">${this.ok}</div>` : ""}
-      ${this.error ? html`<div class="toast toast-err">${this.error}</div>` : ""}
       <div class="toolbar">
         <span style="font-weight:600;font-size:13px">指标模板 (${this.templates.length})</span>
         <span class="spacer"></span>

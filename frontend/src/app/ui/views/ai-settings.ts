@@ -5,6 +5,7 @@
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
+import "../components/app-card.js";
 import { authFetch } from "../../../api/index.js";
 
 interface AiAnalysisConfig {
@@ -32,9 +33,8 @@ export class AiSettingsPage extends LitElement {
     .header { margin-bottom: 20px; }
     .header h1 { font-size: 20px; font-weight: 600; margin: 0; color: var(--text); }
     .header p { font-size: 13px; color: var(--muted); margin: 4px 0 0; }
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); }
-    .card-body { padding: 20px; }
-    .card-footer { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+
+
     .form-group { margin-bottom: 18px; }
     .form-label { display: block; font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 6px; }
     .help-text { font-size: 11px; color: var(--muted); margin-top: 4px; }
@@ -207,90 +207,88 @@ export class AiSettingsPage extends LitElement {
         ${this.successMessage ? html`<div class="msg msg-ok">${this.successMessage}</div>` : ""}
         ${this.error ? html`<div class="msg msg-err">${this.error}</div>` : ""}
 
-        <div class="card">
-          <div class="card-body">
-            <!-- Master toggle -->
-            <div class="cfg-toggle-row">
-              <span>启用自动分析</span>
-              <label class="cfg-toggle">
-                <input type="checkbox" .checked=${enabled} @change=${this._toggleEnabled} />
-                <span class="slider"></span>
-              </label>
-            </div>
-
-            <!-- Severity Levels -->
-            <div class="form-group">
-              <label class="form-label">分析级别</label>
-              <div class="checkbox-group">
-                ${allSeverities.map(level => html`
-                  <button class="checkbox-label ${severityLevels.includes(level) ? "active" : ""}" @click=${() => this._toggleSeverity(level)}>
-                    ${level === "critical" ? "严重" : level === "error" ? "错误" : level === "warning" ? "警告" : "提示"}
-                  </button>
-                `)}
-              </div>
-              <div class="help-text">至少选择一项</div>
-            </div>
-
-            <!-- Instance Whitelist -->
-            <div class="form-group">
-              <label class="form-label">实例白名单</label>
-              <div class="inst-dropdown">
-                <button type="button" class="inst-dropdown-toggle" @click=${() => { this._instanceDropdownOpen = !this._instanceDropdownOpen; this._instanceSearch = ""; }}>
-                  ${instanceWhitelist.length > 0
-                    ? html`已选 <strong>${instanceWhitelist.length}</strong> 个实例`
-                    : "全部实例参与分析"}
-                  <span class="arrow ${this._instanceDropdownOpen ? "open" : ""}">▾</span>
-                </button>
-                ${this._instanceDropdownOpen ? html`
-                  <div class="inst-dropdown-menu">
-                    <div class="inst-dropdown-search">
-                      <input type="text" .value=${this._instanceSearch} @input=${(e: Event) => { this._instanceSearch = (e.target as HTMLInputElement).value; }} placeholder="搜索实例名称或 ID..." />
-                    </div>
-                    ${this._filteredInstances.length > 0
-                      ? this._filteredInstances.map(inst => html`
-                        <label class="inst-dropdown-item" @click=${(e: Event) => { e.preventDefault(); this._toggleWhitelistInstance(inst.id); }}>
-                          <input type="checkbox" .checked=${instanceWhitelist.includes(inst.id)} @change=${() => this._toggleWhitelistInstance(inst.id)} />
-                          <span>${inst.name}</span>
-                          <span style="color:var(--muted);font-size:11px;">#${inst.id}</span>
-                        </label>
-                      `)
-                      : html`<div class="inst-dropdown-empty">${this._instances.length === 0 ? "加载实例中..." : "无匹配实例"}</div>`
-                    }
-                  </div>
-                ` : ""}
-              </div>
-              <div class="cfg-tags">
-                ${instanceWhitelist.map(id => {
-                  const inst = this._instances.find(i => i.id === id);
-                  return html`
-                    <span class="cfg-tag">
-                      ${inst ? inst.name : `#${id}`}
-                      <button @click=${() => this._removeWhitelistInstance(id)}>×</button>
-                    </span>
-                  `;
-                })}
-              </div>
-              <div class="help-text">${instanceWhitelist.length > 0 ? "点击 × 移除实例" : "留空表示全部实例参与分析"}</div>
-            </div>
-
-            <!-- Time Window -->
-            <div class="form-group">
-              <label class="form-label">时间窗口</label>
-              <div class="cfg-time-row">
-                <input class="form-input" type="time" .value=${timeWindowStart} @change=${(e: any) => this.config = { ...this.config!, timeWindowStart: e.target.value }} />
-                <span style="color:var(--muted);">~</span>
-                <input class="form-input" type="time" .value=${timeWindowEnd} @change=${(e: any) => this.config = { ...this.config!, timeWindowEnd: e.target.value }} />
-              </div>
-              <div class="help-text">在此时间段内执行自动分析</div>
-            </div>
+        <app-card variant="default">
+          <!-- Master toggle -->
+          <div class="cfg-toggle-row">
+            <span>启用自动分析</span>
+            <label class="cfg-toggle">
+              <input type="checkbox" .checked=${enabled} @change=${this._toggleEnabled} />
+              <span class="slider"></span>
+            </label>
           </div>
 
-          <div class="card-footer">
+          <!-- Severity Levels -->
+          <div class="form-group">
+            <label class="form-label">分析级别</label>
+            <div class="checkbox-group">
+              ${allSeverities.map(level => html`
+                <button class="checkbox-label ${severityLevels.includes(level) ? "active" : ""}" @click=${() => this._toggleSeverity(level)}>
+                  ${level === "critical" ? "严重" : level === "error" ? "错误" : level === "warning" ? "警告" : "提示"}
+                </button>
+              `)}
+            </div>
+            <div class="help-text">至少选择一项</div>
+          </div>
+
+          <!-- Instance Whitelist -->
+          <div class="form-group">
+            <label class="form-label">实例白名单</label>
+            <div class="inst-dropdown">
+              <button type="button" class="inst-dropdown-toggle" @click=${() => { this._instanceDropdownOpen = !this._instanceDropdownOpen; this._instanceSearch = ""; }}>
+                ${instanceWhitelist.length > 0
+                  ? html`已选 <strong>${instanceWhitelist.length}</strong> 个实例`
+                  : "全部实例参与分析"}
+                <span class="arrow ${this._instanceDropdownOpen ? "open" : ""}">▾</span>
+              </button>
+              ${this._instanceDropdownOpen ? html`
+                <div class="inst-dropdown-menu">
+                  <div class="inst-dropdown-search">
+                    <input type="text" .value=${this._instanceSearch} @input=${(e: Event) => { this._instanceSearch = (e.target as HTMLInputElement).value; }} placeholder="搜索实例名称或 ID..." />
+                  </div>
+                  ${this._filteredInstances.length > 0
+                    ? this._filteredInstances.map(inst => html`
+                      <label class="inst-dropdown-item" @click=${(e: Event) => { e.preventDefault(); this._toggleWhitelistInstance(inst.id); }}>
+                        <input type="checkbox" .checked=${instanceWhitelist.includes(inst.id)} @change=${() => this._toggleWhitelistInstance(inst.id)} />
+                        <span>${inst.name}</span>
+                        <span style="color:var(--muted);font-size:11px;">#${inst.id}</span>
+                      </label>
+                    `)
+                    : html`<div class="inst-dropdown-empty">${this._instances.length === 0 ? "加载实例中..." : "无匹配实例"}</div>`
+                  }
+                </div>
+              ` : ""}
+            </div>
+            <div class="cfg-tags">
+              ${instanceWhitelist.map(id => {
+                const inst = this._instances.find(i => i.id === id);
+                return html`
+                  <span class="cfg-tag">
+                    ${inst ? inst.name : `#${id}`}
+                    <button @click=${() => this._removeWhitelistInstance(id)}>×</button>
+                  </span>
+                `;
+              })}
+            </div>
+            <div class="help-text">${instanceWhitelist.length > 0 ? "点击 × 移除实例" : "留空表示全部实例参与分析"}</div>
+          </div>
+
+          <!-- Time Window -->
+          <div class="form-group">
+            <label class="form-label">时间窗口</label>
+            <div class="cfg-time-row">
+              <input class="form-input" type="time" .value=${timeWindowStart} @change=${(e: any) => this.config = { ...this.config!, timeWindowStart: e.target.value }} />
+              <span style="color:var(--muted);">~</span>
+              <input class="form-input" type="time" .value=${timeWindowEnd} @change=${(e: any) => this.config = { ...this.config!, timeWindowEnd: e.target.value }} />
+            </div>
+            <div class="help-text">在此时间段内执行自动分析</div>
+          </div>
+
+          <div slot="footer">
             <button class="btn btn-primary" @click=${this._save} ?disabled=${this.saving}>
               ${this.saving ? "保存中..." : "保存配置"}
             </button>
           </div>
-        </div>
+        </app-card>
       </div>
     `;
   }
