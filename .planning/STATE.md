@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: 打磨与优化
 status: executing
-last_updated: "2026-06-17T16:36:39.026Z"
-last_activity: 2026-06-18 -- Phase 120 Plan 03 complete (app-card, app-data-table, app-empty-state, app-badge)
+last_updated: "2026-06-18T00:45:00.000Z"
+last_activity: 2026-06-18 -- Phase 120 Plan 05 complete (instance-detail.ts split into 4 subcomponents)
 progress:
   total_phases: 21
   completed_phases: 19
   total_plans: 73
-  completed_plans: 68
-  percent: 93
+  completed_plans: 69
+  percent: 91
 ---
 
 # Slide 项目状态
@@ -26,11 +26,11 @@ progress:
 ## Current Position
 
 Phase: 120
-Plan: 03
+Plan: 05
 Status: Executing
-Last activity: 2026-06-18 -- Phase 120 Plan 03 complete (app-card, app-data-table, app-empty-state, app-badge)
+Last activity: 2026-06-18 -- Phase 120 Plan 05 complete (instance-detail.ts split into 4 subcomponents)
 
-Progress: [██████████] 93%
+Progress: [███████████] 95%
 
 ## Performance Metrics
 
@@ -49,6 +49,7 @@ Progress: [██████████] 93%
 | Phase 120-ui PCSS Architecture Reset | ~20min | 3 tasks | 9 files |
 | Phase 120-02 Shared Components A | ~15min | 3 tasks | 4 files |
 | Phase 120-03 Shared Components B | ~12min | 3 tasks | 4 files |
+| Phase 120-05 instance-detail split | ~7min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -77,6 +78,8 @@ Progress: [██████████] 93%
 - [Phase 120-03]: D-17 app-empty-state with icon + title + description + optional action button
 - [Phase 120-03]: app-badge created as parallel (not rename) of status-badge — old component remains working
 - [Phase 120-03]: Data table emits app-table-sort event — parent views handle sort logic
+- [Phase 120-05]: D-19 Split instance-detail.ts by tab area: overview-tab, metrics-tab, diagnosis-modal, trend-chart
+- [Phase 120-05]: D-21 Each subcomponent <300 lines (actual: max 287), orchestrator <700 lines (actual: 474)
 
 ### Roadmap Evolution
 
@@ -112,6 +115,6 @@ Also deferred (Phase 116 discretion):
 
 ## Session Continuity
 
-Last session: 2026-06-17
-Stopped at: Completed Phase 120 Plan 03 (Component Suite B)
+Last session: 2026-06-18
+Stopped at: Completed Phase 120 Plan 05 (instance-detail.ts split)
 Resume file: None
