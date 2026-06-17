@@ -98,7 +98,7 @@
   grid-area: topbar;
   position: sticky;
   top: 0;
-  z-index: 40;
+  z-index: var(--z-dropdown);
   display: flex;
   align-items: center;
   padding: 0 24px;
