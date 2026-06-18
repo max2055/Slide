@@ -3,13 +3,13 @@
    ============================================= */
 
 .chat-thinking {
-  margin-bottom: 10px;
-  padding: 10px 12px;
+  margin-bottom: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md);
   border: 1px dashed rgba(255, 255, 255, 0.18);
   background: rgba(255, 255, 255, 0.04);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   line-height: 1.4;
 }
 
@@ -19,7 +19,7 @@
 }
 
 .chat-text {
-  font-size: 14px;
+  font-size: var(--text-md);
   line-height: 1.5;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -94,7 +94,7 @@
 .chat-text :where(pre) {
   background: rgba(0, 0, 0, 0.15);
   border-radius: var(--radius-sm);
-  padding: 10px 12px;
+  padding: var(--space-sm) var(--space-md);
   overflow-x: auto;
 }
 
@@ -105,16 +105,16 @@
 
 .chat-text :where(blockquote) {
   border-left: 3px solid var(--border-strong);
-  padding-left: 12px;
+  padding-left: var(--space-md);
   margin-left: 0;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.02);
-  padding: 8px 12px;
+  padding: var(--space-sm) var(--space-md);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 .chat-text :where(blockquote blockquote) {
-  margin-top: 8px;
+  margin-top: var(--space-sm);
   border-left-color: var(--border-hover);
   background: rgba(255, 255, 255, 0.03);
 }
@@ -174,8 +174,8 @@
 
 @media (max-width: 640px) {
   .chat-text :where(pre) {
-    padding: 8px 10px;
-    font-size: 12px;
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--text-sm);
     border-radius: var(--radius-sm);
   }
 
@@ -185,6 +185,6 @@
   }
 
   .chat-text :where(blockquote) {
-    padding: 6px 10px;
+    padding: var(--space-xs) var(--space-md);
   }
 }

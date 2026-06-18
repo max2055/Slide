@@ -467,7 +467,7 @@ export class MetricTemplatesPage extends LitElement {
                   <!-- Metrics -->
                   <div class="section">
                     <div class="section-title">关联指标 (${(tpl.metrics?.length || 0)})</div>
-                    ${this._templateMetrics(tpl).length === 0 ? html`<span class="empty" style="display:block;padding:8px">未关联指标</span>` : ""}
+                    ${this._templateMetrics(tpl).length === 0 ? html`<span class="empty" style="display:block;padding:var(--space-sm)">未关联指标</span>` : ""}
                     ${this._templateMetrics(tpl).map(m => html`
                       <span class="metric-chip" style="margin:2px">${m.id}<span style="color:var(--muted);font-size:10px"> (${m.unit})</span></span>
                     `)}
@@ -478,7 +478,7 @@ export class MetricTemplatesPage extends LitElement {
                       告警规则 (${this.templateRules.length})
                       <button class="btn btn-xs btn-primary" @click=${() => this._openRuleCreate(tpl)} style="margin-left:8px">+ 新增</button>
                     </div>
-                    ${this.templateRules.length === 0 ? html`<span class="empty" style="display:block;padding:8px">无规则</span>` : ""}
+                    ${this.templateRules.length === 0 ? html`<span class="empty" style="display:block;padding:var(--space-sm)">无规则</span>` : ""}
                     ${this.templateRules.map(r => html`
                       <div class="rule-row">
                         <div>
@@ -497,7 +497,7 @@ export class MetricTemplatesPage extends LitElement {
                       关联实例 (${this.instanceLinks.length})
                       <button class="btn btn-xs btn-primary" @click=${() => this._openLinkModal(tpl)} style="margin-left:8px">+ 关联</button>
                     </div>
-                    ${this.instanceLinks.length === 0 ? html`<span class="empty" style="display:block;padding:8px">未关联实例</span>` : ""}
+                    ${this.instanceLinks.length === 0 ? html`<span class="empty" style="display:block;padding:var(--space-sm)">未关联实例</span>` : ""}
                     ${this.instanceLinks.map(link => {
                       const inst = this.instances.find(i => i.id === link.instance_id);
                       return html`

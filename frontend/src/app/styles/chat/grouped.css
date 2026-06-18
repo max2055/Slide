@@ -5,11 +5,11 @@
 /* Chat Group Layout - default (assistant/other on left) */
 .chat-group {
   display: flex;
-  gap: 10px;
+  gap: var(--space-sm);
   align-items: flex-start;
-  margin-bottom: 14px;
-  margin-left: 4px;
-  margin-right: 16px;
+  margin-bottom: var(--space-md);
+  margin-left: var(--space-xs);
+  margin-right: var(--space-lg);
 }
 
 /* User messages on right */
@@ -21,7 +21,7 @@
 .chat-group-messages {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-xs);
   flex: 1 1 auto;
   max-width: min(900px, 68%);
   align-items: flex-start;
@@ -39,19 +39,19 @@
 /* Footer at bottom of message group (role + time) */
 .chat-group-footer {
   display: flex;
-  gap: 8px;
+  gap: var(--space-sm);
   align-items: baseline;
-  margin-top: 6px;
+  margin-top: var(--space-xs);
 }
 
 .chat-sender-name {
   font-weight: 500;
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--muted);
 }
 
 .chat-group-timestamp {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--muted);
   opacity: 0.7;
 }
@@ -61,9 +61,9 @@
   background: none;
   border: none;
   cursor: pointer;
-  padding: 4px;
-  min-width: 24px;
-  min-height: 24px;
+  padding: var(--space-xs);
+  min-width: var(--space-xl);
+  min-height: var(--space-xl);
   border-radius: var(--radius-sm, 4px);
   color: var(--muted);
   opacity: 0;
@@ -111,10 +111,10 @@
 .chat-divider {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-sm);
   margin: 18px 8px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   user-select: none;
@@ -143,10 +143,10 @@
   display: grid;
   place-items: center;
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--text-base);
   flex-shrink: 0;
   align-self: flex-end;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-xs);
   border: 1px solid var(--border);
 }
 
@@ -185,7 +185,7 @@ img.chat-avatar {
   border: 1px solid var(--border);
   background: var(--card);
   border-radius: var(--radius-lg);
-  padding: 10px 14px;
+  padding: var(--space-sm) var(--space-md);
   box-shadow: none;
   transition:
     background var(--duration-fast) ease-out,
@@ -203,9 +203,9 @@ img.chat-avatar {
 .chat-bubble-actions {
   position: absolute;
   top: 6px;
-  right: 8px;
+  right: var(--space-sm);
   display: flex;
-  gap: 4px;
+  gap: var(--space-xs);
   opacity: 0;
   pointer-events: none;
   transition: opacity 120ms ease-out;
@@ -353,11 +353,11 @@ img.chat-avatar {
 .msg-meta {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 11px;
+  gap: var(--space-sm);
+  font-size: var(--text-xs);
   line-height: 1;
   color: var(--muted);
-  margin-top: 4px;
+  margin-top: var(--space-xs);
   flex-wrap: wrap;
 }
 
@@ -368,7 +368,7 @@ img.chat-avatar {
 .msg-meta__model {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-xs);
   white-space: nowrap;
 }
 
@@ -403,7 +403,7 @@ img.chat-avatar {
   background: var(--card, #1a1a1a);
   border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
   border-radius: var(--radius-md, 8px);
-  padding: 12px;
+  padding: var(--space-md);
   min-width: 200px;
   max-width: calc(100vw - 48px);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
@@ -421,7 +421,7 @@ img.chat-avatar {
 
 .chat-delete-confirm__text {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--text-base);
   font-weight: 500;
   color: var(--fg, #fff);
 }
@@ -429,10 +429,10 @@ img.chat-avatar {
 .chat-delete-confirm__remember {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: var(--space-xs);
+  font-size: var(--text-xs);
   color: var(--muted, #888);
-  margin-bottom: 10px;
+  margin-bottom: var(--space-sm);
   cursor: pointer;
   user-select: none;
 }
@@ -446,7 +446,7 @@ img.chat-avatar {
 
 .chat-delete-confirm__actions {
   display: flex;
-  gap: 6px;
+  gap: var(--space-xs);
   justify-content: flex-end;
 }
 
@@ -454,8 +454,8 @@ img.chat-avatar {
 .chat-delete-confirm__yes {
   border: none;
   border-radius: var(--radius-sm, 4px);
-  padding: 4px 12px;
-  font-size: 12px;
+  padding: var(--space-xs) var(--space-md);
+  font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
   transition: background 120ms ease-out;

@@ -145,7 +145,7 @@ export class LLMConfigPage extends LitElement {
     .sidebar-empty p { font-size: 11px; color: var(--muted); margin: 0; line-height: 1.4; }
     .sidebar-empty .add-first-btn { margin-top: 4px; padding: 6px 16px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--accent); background: var(--accent); color: #fff; transition: opacity 0.15s; }
     .sidebar-empty .add-first-btn:hover { opacity: 0.85; }
-    .sidebar-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 6px; cursor: pointer; transition: background 0.12s; }
+    .sidebar-item { display: flex; align-items: center; gap: var(--space-sm); padding: 8px 10px; border-radius: 6px; cursor: pointer; transition: background 0.12s; }
     .sidebar-item:hover { background: var(--hover); }
     .sidebar-item.selected { background: var(--active); }
     .brand-circle { width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; color: inherit; }
@@ -167,7 +167,7 @@ export class LLMConfigPage extends LitElement {
     /* Template picker */
     .picker-section-label { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 8px; margin-top: 4px; }
     .template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
-    .template-card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); cursor: pointer; text-align: center; transition: border-color 0.12s, background 0.12s; }
+    .template-card { display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); padding: 16px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); cursor: pointer; text-align: center; transition: border-color 0.12s, background 0.12s; }
     .template-card:hover { border-color: var(--accent); background: var(--bg-accent); }
     .template-card .t-circle { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; }
     .template-card .t-name { font-size: 12px; font-weight: 600; color: var(--text); }
@@ -191,7 +191,7 @@ export class LLMConfigPage extends LitElement {
     .model-remove-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; margin-top: 14px; flex-shrink: 0; border: 1px solid rgba(239,68,68,0.25); border-radius: 5px; background: transparent; color: #ef4444; cursor: pointer; transition: background 0.12s, border-color 0.12s; }
     .model-remove-btn:hover { background: rgba(239,68,68,0.1); border-color: #ef4444; }
     .model-remove-btn svg { width: 14px; height: 14px; }
-    .actions-bar { display: flex; gap: 8px; align-items: center; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+    .actions-bar { display: flex; gap: var(--space-sm); align-items: center; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
     .actions-bar .spacer { flex: 1; }
 
     /* Status toggle */
@@ -430,15 +430,19 @@ export class LLMConfigPage extends LitElement {
 
   override render() {
     if (this.loading) {
-      return html`<div style="padding:48px;text-align:center;color:var(--muted);font-size:13px">加载中...</div>`;
+      return html`<div class="loading" style="flex-direction:column;gap:16px;padding:var(--space-xl);">
+        <div class="skeleton-block" style="width:200px;height:24px;"></div>
+        <div class="skeleton-block" style="width:100%;height:200px;"></div>
+        <div class="skeleton-line skeleton-line--long"></div>
+      </div>`;
     }
     if (this.error) {
-      return html`<div style="padding:48px;text-align:center;color:var(--destructive);font-size:13px">${this.error}</div>`;
+      return html`<div style="padding:var(--space-xl);text-align:center;color:var(--destructive);font-size:var(--text-base)">${this.error}</div>`;
     }
 
     return html`
       <div style="display:flex;flex-direction:column;height:100%">
-        <div class="page-header" style="padding:0 28px 16px">
+        <div class="page-header" style="padding:0 var(--space-xl) var(--space-lg)">
           <h1>LLM 配置</h1>
           <p>管理 AI 提供商：添加、编辑、启停、测试连接</p>
         </div>
@@ -589,27 +593,27 @@ export class LLMConfigPage extends LitElement {
       </div>
 
       <!-- Models -->
-      <div style="margin-top:4px;padding-top:16px;border-top:1px solid var(--border)">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="margin-top:var(--space-xs);padding-top:var(--space-lg);border-top:1px solid var(--border)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-sm)">
           <div class="form-section-title" style="margin-bottom:0">模型列表</div>
-          <button class="btn" style="font-size:11px;padding:3px 10px" @click=${this._addModel}>+ 添加模型</button>
+          <button class="btn" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-md)" @click=${this._addModel}>+ 添加模型</button>
         </div>
         ${this.form.models.length === 0 ? html`
-          <div style="padding:16px;text-align:center;color:var(--muted);font-size:12px;border:1px dashed var(--border);border-radius:6px">
+          <div style="padding:var(--space-lg);text-align:center;color:var(--muted);font-size:var(--text-sm);border:1px dashed var(--border);border-radius:var(--radius-sm)">
             暂无模型 · 默认模型字段已指定基础模型，此处可配置更多
           </div>
         ` : this.form.models.map((m, i) => html`
-          <div style="border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:8px;background:var(--card)">
-            <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">
+          <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:var(--space-md);margin-bottom:var(--space-sm);background:var(--card)">
+            <div style="display:flex;gap:var(--space-sm);align-items:center;margin-bottom:var(--space-sm)">
               <div class="form-group" style="flex:1;margin-bottom:0">
                 <label class="form-label" style="font-size:10px">模型 ID</label>
-                <input class="form-input" style="font-size:12px;padding:5px 8px;font-family:var(--font-mono,monospace)"
+                <input class="form-input" style="font-size:var(--text-sm);padding:var(--space-xs) var(--space-sm);font-family:var(--font-mono,monospace)"
                   .value=${m.id} @input=${(e: any) => this._updateModel(i, { id: e.target.value })}
                   placeholder="claude-sonnet-4-6" />
               </div>
               <div class="form-group" style="flex:1;margin-bottom:0">
                 <label class="form-label" style="font-size:10px">显示名称</label>
-                <input class="form-input" style="font-size:12px;padding:5px 8px"
+                <input class="form-input" style="font-size:var(--text-sm);padding:var(--space-xs) var(--space-sm)"
                   .value=${m.name || ""} @input=${(e: any) => this._updateModel(i, { name: e.target.value || undefined })}
                   placeholder="Claude Sonnet 4.6" />
               </div>
@@ -617,31 +621,31 @@ export class LLMConfigPage extends LitElement {
                 ${icons['trash-2']}
               </button>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap: var(--space-sm)">
               <div class="form-group" style="margin-bottom:0">
                 <label class="form-label" style="font-size:10px">Context Window</label>
-                <input class="form-input" style="font-size:12px;padding:5px 8px" type="number"
+                <input class="form-input" style="font-size:var(--text-sm);padding:var(--space-xs) var(--space-sm)" type="number"
                   .value=${m.contextWindow !== undefined ? String(m.contextWindow) : ""}
                   @input=${(e: any) => this._updateModel(i, { contextWindow: e.target.value ? parseInt(e.target.value) : undefined })}
                   placeholder="200000" />
               </div>
               <div class="form-group" style="margin-bottom:0">
                 <label class="form-label" style="font-size:10px">Max Tokens</label>
-                <input class="form-input" style="font-size:12px;padding:5px 8px" type="number"
+                <input class="form-input" style="font-size:var(--text-sm);padding:var(--space-xs) var(--space-sm)" type="number"
                   .value=${m.maxTokens !== undefined ? String(m.maxTokens) : ""}
                   @input=${(e: any) => this._updateModel(i, { maxTokens: e.target.value ? parseInt(e.target.value) : undefined })}
                   placeholder="16384" />
               </div>
               <div class="form-group" style="margin-bottom:0">
                 <label class="form-label" style="font-size:10px">Cost Input ($/1M)</label>
-                <input class="form-input" style="font-size:12px;padding:5px 8px" type="number" step="0.01"
+                <input class="form-input" style="font-size:var(--text-sm);padding:var(--space-xs) var(--space-sm)" type="number" step="0.01"
                   .value=${m.cost?.input !== undefined ? String(m.cost.input) : ""}
                   @input=${(e: any) => this._updateModel(i, { cost: { ...m.cost, input: e.target.value ? parseFloat(e.target.value) : undefined } })}
                   placeholder="3.00" />
               </div>
               <div class="form-group" style="margin-bottom:0">
                 <label class="form-label" style="font-size:10px">Cost Output ($/1M)</label>
-                <input class="form-input" style="font-size:12px;padding:5px 8px" type="number" step="0.01"
+                <input class="form-input" style="font-size:var(--text-sm);padding:var(--space-xs) var(--space-sm)" type="number" step="0.01"
                   .value=${m.cost?.output !== undefined ? String(m.cost.output) : ""}
                   @input=${(e: any) => this._updateModel(i, { cost: { ...m.cost, output: e.target.value ? parseFloat(e.target.value) : undefined } })}
                   placeholder="15.00" />
@@ -659,9 +663,9 @@ export class LLMConfigPage extends LitElement {
             <span>${this.editing!.enabled ? '已启用' : '已禁用'}</span>
           </div>
           ${this.editing!.is_default ? html`
-            <span style="font-size:11px;color:var(--accent);font-weight:500">★ 默认提供商</span>
+            <span style="font-size:var(--text-xs);color:var(--accent);font-weight:500">★ 默认提供商</span>
           ` : html`
-            <button class="btn" style="font-size:11px;padding:4px 10px" @click=${() => this._setDefault(this.editing!)}>设为默认</button>
+            <button class="btn" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-md)" @click=${() => this._setDefault(this.editing!)}>设为默认</button>
           `}
         </div>
       ` : ''}

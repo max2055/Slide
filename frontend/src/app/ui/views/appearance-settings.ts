@@ -462,10 +462,10 @@ export class AppearanceSettings extends LitElement {
             </div>
           </div>
           <div style="display:flex;gap:8px;margin-top:8px">
-            <button class="btn-primary" style="font-size:11px;padding:4px 10px">Primary</button>
-            <button class="btn" style="font-size:11px;padding:4px 10px">Secondary</button>
-            <button class="btn-ghost" style="font-size:11px;padding:4px 8px">Ghost</button>
-            <button class="btn-primary btn-danger" style="font-size:11px;padding:4px 10px">Danger</button>
+            <button class="btn-primary" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-md)">Primary</button>
+            <button class="btn" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-md)">Secondary</button>
+            <button class="btn-ghost" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-sm)">Ghost</button>
+            <button class="btn-primary btn-danger" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-md)">Danger</button>
           </div>
         </div>
       </div>
