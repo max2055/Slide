@@ -7,7 +7,7 @@
  *   </app-form-field>
  *
  * When `error` is set, the slotted input receives aria-invalid="true"
- * via the slotchange handler.
+ * via the `updated()` lifecycle hook.
  */
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
@@ -24,19 +24,15 @@ export class AppFormField extends LitElement {
   @property({ type: Boolean }) required = false;
   @property({ type: Boolean }) inline = false;
 
-  private _onSlotChange(): void {
-    const slot = this.querySelector("slot:not([name])");
-    if (!slot) return;
-    const assigned = (slot as HTMLSlotElement).assignedElements?.() ?? [];
-    if (this.error) {
-      for (const el of assigned) {
-        if (el instanceof HTMLElement) {
-          el.setAttribute("aria-invalid", "true");
+  updated(changed: Map<string, unknown>): void {
+    if (changed.has("error")) {
+      const control = this.querySelector("input, select, textarea");
+      if (control) {
+        if (this.error) {
+          control.setAttribute("aria-invalid", "true");
+        } else {
+          control.removeAttribute("aria-invalid");
         }
-      }
-    } else {
-      for (const el of assigned) {
-        el.removeAttribute("aria-invalid");
       }
     }
   }
@@ -54,7 +50,7 @@ export class AppFormField extends LitElement {
             `
           : ""}
         <div class="form-control" part="control">
-          <slot @slotchange=${this._onSlotChange}></slot>
+          <slot></slot>
         </div>
         ${this.hint && !this.error
           ? html`<div class="form-hint" part="hint">${this.hint}</div>`
