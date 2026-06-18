@@ -423,7 +423,7 @@ export class ReportsPage extends LitElement {
     }
 
     if (this.error) {
-      return html`<div class="loading" style="color: var(--destructive);">${this.error}</div>`;
+      return html`<div class="loading" style="color: var(--danger);">${this.error}</div>`;
     }
 
     return html`
@@ -583,7 +583,7 @@ export class ReportsPage extends LitElement {
     } catch (err: any) {
       cfg.enabled = originalEnabled;
       this.requestUpdate();
-      alert(`切换状态失败：${err.message}`);
+      showToast(`Failed to toggle status: ${err.message}`, 'error');
     }
   }
 
@@ -603,14 +603,14 @@ export class ReportsPage extends LitElement {
       this.deletingConfig = null;
       this.loadConfigs();
     } catch (err: any) {
-      alert(`删除失败：${err.message}`);
+      showToast(`Failed to delete: ${err.message}`, 'error');
     }
   }
 
   private async _saveConfig() {
     const { name, cron, type, instance_id, format, enabled } = this.configForm;
     if (!name || !cron || !type || !instance_id) {
-      alert('请填写所有必填字段');
+      showToast('Please fill in all required fields', 'warning');
       return;
     }
     this.saving = true;
@@ -639,7 +639,7 @@ export class ReportsPage extends LitElement {
       this.showConfigDialog = false;
       this.loadConfigs();
     } catch (err: any) {
-      alert(`保存失败：${err.message}`);
+      showToast(`Failed to save: ${err.message}`, 'error');
     } finally {
       this.saving = false;
     }
@@ -648,7 +648,7 @@ export class ReportsPage extends LitElement {
   private async _generateReport(type: string) {
     try {
       if (!this.selectedInstanceId) {
-        alert('请先选择数据库实例');
+        showToast('Please select a database instance first', 'warning');
         return;
       }
       const instanceId = this.selectedInstanceId;
@@ -661,15 +661,15 @@ export class ReportsPage extends LitElement {
 
       if (res.ok) {
         const result = await res.json();
-        alert(`报表生成任务已创建：${result.name}`);
+        showToast(`Report generated: ${result.name}`, 'success');
         this.loadReports();
         this.loadStats();
       } else {
         const err = await res.json();
-        alert(`生成失败：${err.error}`);
+        showToast(`Generation failed: ${err.error}`, 'error');
       }
     } catch (err: any) {
-      alert(`生成失败：${err.message}`);
+      showToast(`Generation failed: ${err.message}`, 'error');
     }
   }
 
@@ -688,7 +688,7 @@ export class ReportsPage extends LitElement {
       link.click();
       URL.revokeObjectURL(url);
     } catch (err: any) {
-      alert(`下载失败：${err.message}`);
+      showToast(`Download failed: ${err.message}`, 'error');
     }
   }
 
@@ -706,11 +706,11 @@ export class ReportsPage extends LitElement {
           window.open(url, '_blank');
           setTimeout(() => URL.revokeObjectURL(url), 1000);
         } else {
-          alert('报表内容为空');
+          showToast('Report content is empty', 'warning');
         }
       }
     } catch (err: any) {
-      alert(`查看失败：${err.message}`);
+      showToast(`View failed: ${err.message}`, 'error');
     }
   }
 }

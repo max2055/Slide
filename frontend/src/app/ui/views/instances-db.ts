@@ -5,6 +5,7 @@ import "../components/app-dialog.js";
 import "../components/app-form-field.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
+import { showToast } from "../components/app-toast-container.js";
 
 interface DatabaseInstance {
   id: number;
@@ -317,9 +318,9 @@ export class InstancesPage extends LitElement {
       border-color: var(--danger);
     }
     .action-btn.danger:hover {
-      background: var(--destructive);
-      color: var(--destructive-foreground);
-      border-color: var(--destructive);
+      background: var(--danger);
+      color: var(--danger-foreground);
+      border-color: var(--danger);
     }
 
     /* 加载和空状态 */
@@ -591,7 +592,7 @@ export class InstancesPage extends LitElement {
     }
 
     if (this.error) {
-      return html`<div class="loading" style="color: var(--destructive);">${this.error}</div>`;
+      return html`<div class="loading" style="color: var(--danger);">${this.error}</div>`;
     }
 
     if (this.instances.length === 0) {
@@ -626,7 +627,7 @@ export class InstancesPage extends LitElement {
                 <span style="width: 6px; height: 6px; border-radius: 50%; display: inline-block; background: var(--warn); margin-right: 4px;"></span> 警告 (${this.stats.warning})
               </button>
               <button class="filter-btn ${this.filter === "critical" ? "active" : ""}" @click=${() => (this.filter = "critical")} style="padding: var(--space-sm) var(--space-md); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-sm); font-weight: 500; cursor: pointer; background: ${this.filter === "critical" ? 'var(--accent)' : 'var(--secondary)'}; color: ${this.filter === "critical" ? 'var(--accent-foreground)' : 'var(--text)'}; border-color: ${this.filter === "critical" ? 'var(--accent)' : 'var(--border)'};">
-                <span style="width: 6px; height: 6px; border-radius: 50%; display: inline-block; background: var(--destructive); margin-right: 4px;"></span> 异常 (${this.stats.critical})
+                <span style="width: 6px; height: 6px; border-radius: 50%; display: inline-block; background: var(--danger); margin-right: 4px;"></span> 异常 (${this.stats.critical})
               </button>
             </div>
 
@@ -737,7 +738,7 @@ export class InstancesPage extends LitElement {
   private _getHealthColor(score: number): string {
     if (score >= 80) return "var(--ok)";
     if (score >= 60) return "var(--warn)";
-    return "var(--destructive)";
+    return "var(--danger)";
   }
 
   private _viewDetail(inst: DatabaseInstance) {
@@ -819,7 +820,7 @@ export class InstancesPage extends LitElement {
     if (!this.testingInstance) return;
 
     if (!this.testPassword) {
-      alert("请输入密码");
+      showToast("Please enter password", "warning");
       return;
     }
 
@@ -895,7 +896,7 @@ export class InstancesPage extends LitElement {
 
     // Validate
     if (!this.formData.name || !this.formData.host || !this.formData.username) {
-      alert("请填写必填项：名称、主机地址、用户名");
+      showToast("Please fill in: name, host, username", "warning");
       return;
     }
 
@@ -921,9 +922,9 @@ export class InstancesPage extends LitElement {
 
       this._closeDialogs();
       await this.loadInstances();
-      alert("✅ 实例更新成功");
+      showToast("Instance updated successfully", "success");
     } catch (err: any) {
-      alert(`❌ ${err.message}`);
+      showToast(`Update failed: ${err.message}`, "error");
     } finally {
       this.isSubmitting = false;
     }
@@ -947,15 +948,15 @@ export class InstancesPage extends LitElement {
 
       this._closeDialogs();
       await this.loadInstances();
-      alert("✅ 实例删除成功");
+      showToast("Instance deleted successfully", "success");
     } catch (err: any) {
-      alert(`❌ ${err.message}`);
+      showToast(`Update failed: ${err.message}`, "error");
     }
   }
 
   private async _handleTestConnection() {
     if (!this.formData.host || !this.formData.username) {
-      alert("请填写主机地址和用户名");
+      showToast("Please fill in host and username", "warning");
       return;
     }
 
@@ -1077,7 +1078,7 @@ export class InstancesPage extends LitElement {
         </div>
         <div slot="footer" style="justify-content:center;display:flex;gap:var(--space-md)">
           <button class="btn" @click=${this._closeDialogs}>取消</button>
-          <button class="btn danger" @click=${this._handleDelete} style="background:var(--destructive);color:var(--destructive-foreground);border-color:var(--destructive);">确认删除</button>
+          <button class="btn danger" @click=${this._handleDelete} style="background:var(--danger);color:var(--danger-foreground);border-color:var(--danger);">确认删除</button>
         </div>
       </app-dialog>
     `;
@@ -1098,7 +1099,7 @@ export class InstancesPage extends LitElement {
       idle: "var(--muted)",
       testing: "var(--info)",
       success: "var(--ok)",
-      error: "var(--destructive)",
+      error: "var(--danger)",
     };
 
     return html`
