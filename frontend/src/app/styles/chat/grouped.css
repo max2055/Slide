@@ -334,10 +334,10 @@ img.chat-avatar {
 
 /* Fade-in animation for new messages */
 .chat-bubble.fade-in {
-  animation: fade-in 200ms ease-out;
+  animation: chat-message-enter 200ms ease-out;
 }
 
-@keyframes fade-in {
+@keyframes chat-message-enter {
   from {
     opacity: 0;
     transform: translateY(4px);
