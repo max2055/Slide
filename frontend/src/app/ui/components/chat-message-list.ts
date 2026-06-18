@@ -90,7 +90,7 @@ function renderWelcomeState(assistantName: string, assistantAvatar: string | nul
       <h2>${name}</h2>
       ${_agentGreeting ? html`<div class="agent-chat__badges"><div class="agent-chat__badge agent-chat__badge--greeting">${unsafeHTML(toSanitizedMarkdownHtml(_agentGreeting!))}</div></div>`
         : html`<div class="agent-chat__badges"><span class="agent-chat__badge"><img src=${logoUrl} alt="" /> Ready to chat</span></div><p class="agent-chat__hint">Type a message below &middot; <kbd>/</kbd> for commands</p>`}
-      <div class="agent-chat__suggestions">${WELCOME_SUGGESTIONS.map(text => html`<button type="button" class="agent-chat__suggestion" @click=${() => { this?.dispatchEvent?.(new CustomEvent("suggest", { detail: { text }, bubbles: true, composed: true })); }}>${text}</button>`)}</div>
+      <div class="agent-chat__suggestions">${WELCOME_SUGGESTIONS.map(text => html`<button type="button" class="agent-chat__suggestion" @click=${(e: Event) => { (e.currentTarget as HTMLElement).dispatchEvent(new CustomEvent("suggest", { detail: { text }, bubbles: true, composed: true })); }}>${text}</button>`)}</div>
     </div>`;
 }
 

@@ -333,6 +333,7 @@ export function renderChat(props: ChatProps) {
             .onScrollToBottom=${() => props.onScrollToBottom?.()}
             .onToggleToolExpanded=${toggleToolCardExpanded}
             .onDeleteMessage=${(key: string) => { deleted.delete(key); requestUpdate(); }}
+            @suggest=${(e: CustomEvent) => { props.onDraftChange?.(e.detail.text); }}
           ></chat-message-list>
         </div>
 
