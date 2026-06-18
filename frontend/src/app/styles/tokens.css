@@ -71,6 +71,7 @@
   --danger-muted: rgba(220, 38, 38, 0.75);
   --danger-subtle: rgba(220, 38, 38, 0.12);
   --info: #2563eb;
+  --info-subtle: rgba(37, 99, 235, 0.08);
 
   /* Focus */
   --focus: rgba(64, 158, 255, 0.15);
@@ -214,6 +215,7 @@
   --danger-muted: rgba(248, 113, 113, 0.75);
   --danger-subtle: rgba(248, 113, 113, 0.08);
   --info: #60a5fa;
+  --info-subtle: rgba(96, 165, 250, 0.08);
 
   --focus: rgba(96, 165, 250, 0.2);
   --focus-ring: 0 0 0 2px var(--bg), 0 0 0 3px color-mix(in srgb, var(--ring) 70%, transparent);
