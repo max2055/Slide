@@ -14,10 +14,6 @@ import { customElement, property } from "lit/decorators.js";
 
 @customElement("app-form-field")
 export class AppFormField extends LitElement {
-  createRenderRoot() {
-    return this;
-  }
-
   @property() label = "";
   @property() hint = "";
   @property() error = "";

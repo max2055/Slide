@@ -22,10 +22,6 @@ let _instance: ToastContainer | null = null;
 
 @customElement("app-toast-container")
 export class ToastContainer extends LitElement {
-  createRenderRoot() {
-    return this;
-  }
-
   @state() private _toasts: Toast[] = [];
 
   addToast(message: string, type: ToastType = "info"): void {

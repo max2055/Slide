@@ -24,10 +24,6 @@ const SIZE_MAP: Record<DialogSize, string> = {
 
 @customElement("app-dialog")
 export class AppDialog extends LitElement {
-  createRenderRoot() {
-    return this;
-  }
-
   @property({ type: Boolean }) open = false;
   @property() size: DialogSize = "md";
   @property() title = "";
