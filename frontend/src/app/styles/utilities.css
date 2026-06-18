@@ -39,6 +39,14 @@
   50% { box-shadow: 0 0 20px var(--accent-glow); }
 }
 
+/* Page transition crossfade */
+.page-transition-enter {
+  animation: fade-in 0.2s var(--ease-out);
+}
+.page-transition-exit {
+  animation: fade-in 0.1s var(--ease-out) reverse;
+}
+
 /* Skeleton loading */
 .skeleton {
   background: linear-gradient(90deg, var(--bg-muted) 25%, var(--bg-hover) 50%, var(--bg-muted) 75%);

@@ -20,7 +20,8 @@ export const sharedBtnStyles = css`
     transition: all 0.15s var(--ease-out);
   }
   .btn-ghost:hover { color: var(--btn-ghost-hover-color, var(--accent)); border-color: var(--border); background: var(--btn-ghost-hover-bg, var(--bg-hover)); }
-  .btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-ghost:active { transform: translateY(0px); background: var(--bg-hover); }
+  .btn-ghost:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; }
 
   .btn-primary {
     display: inline-flex; align-items: center; gap: 6px;
@@ -41,8 +42,8 @@ export const sharedBtnStyles = css`
     box-shadow: 0 2px 6px rgba(0,0,0,0.1), 0 0 0 3px var(--accent-glow);
     transform: translateY(-1px);
   }
-  .btn-primary:active { transform: translateY(0); }
-  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; transform: none; }
+  .btn-primary:active { transform: translateY(1px) scale(0.98); }
+  .btn-primary:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; box-shadow: none; transform: none; }
   .btn-primary.btn-danger { background: var(--btn-danger-bg, var(--danger)); border-color: var(--btn-danger-border, var(--danger)); color: var(--btn-danger-color, #fff); }
   .btn-primary.btn-danger:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.1), 0 0 0 3px var(--danger-subtle); }
   .btn-primary.btn-success { background: var(--ok); border-color: var(--ok); }
@@ -64,7 +65,7 @@ export const sharedBtnStyles = css`
   }
   .btn:hover { background: var(--bg-hover); border-color: var(--border-strong); box-shadow: 0 2px 4px rgba(0,0,0,0.06); }
   .btn:active { background: var(--bg-elevated); }
-  .btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+  .btn:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; box-shadow: none; }
 
   .btn-icon {
     display: inline-flex; align-items: center; justify-content: center;
@@ -77,7 +78,8 @@ export const sharedBtnStyles = css`
     transition: all 0.15s var(--ease-out);
   }
   .btn-icon:hover { color: var(--accent); background: var(--accent-subtle); border-color: color-mix(in srgb, var(--accent) 20%, transparent); }
-  .btn-icon:disabled { opacity: 0.3; cursor: not-allowed; }
+  .btn-icon:active { transform: scale(0.95); }
+  .btn-icon:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; }
 
   .btn-sm {
     display: inline-flex; align-items: center; gap: 4px;
@@ -112,6 +114,7 @@ export const sharedBtnStyles = css`
     transition: all 0.15s var(--ease-out);
   }
   .btn-xs:hover { background: var(--accent); color: var(--accent-foreground, #fff); border-color: var(--accent); }
+  .btn-xs:active { transform: translateY(0px); }
 
   .btn-danger-outline {
     display: inline-flex; align-items: center; gap: 4px;
@@ -126,4 +129,5 @@ export const sharedBtnStyles = css`
     transition: all 0.15s var(--ease-out);
   }
   .btn-danger-outline:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+  .btn-danger-outline:active { transform: translateY(0px); }
 `;

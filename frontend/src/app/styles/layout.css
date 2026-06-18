@@ -675,6 +675,11 @@
   opacity: 1;
 }
 
+.nav-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .nav-item.active,
 .nav-item--active {
   color: var(--text-strong);
