@@ -33,6 +33,28 @@ interface AlertRule {
 
 @customElement("alert-rule-editor")
 export class AlertRuleEditor extends LitElement {
+  static styles = css`
+    .form-input {
+      width: 100%;
+      padding: var(--space-sm) var(--space-md);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: var(--text-base);
+      color: var(--text);
+      background: var(--card);
+      box-sizing: border-box;
+      outline: none;
+      transition: border-color var(--duration-fast) ease;
+    }
+    .form-input:focus {
+      border-color: var(--ring);
+      box-shadow: var(--focus-ring);
+    }
+    .active {
+      background: var(--accent) !important;
+      color: var(--accent-foreground) !important;
+    }
+  `;
   @property({ type: Object }) rule: AlertRule | null = null;
   @property({ type: Boolean }) open = false;
   @property({ type: Array }) metricRegistry: any[] = [];
