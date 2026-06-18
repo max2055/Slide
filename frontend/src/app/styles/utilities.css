@@ -3,6 +3,14 @@
    Animation keyframes, skeleton classes, stagger, reduced-motion, density.
    =========================================== */
 
+/* Prevent SVG icons from stretching in flex/grid containers.
+   Icons rendered via the icons.js library lack explicit width/height. */
+svg:not([width]):not([height]) {
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+}
+
 /* Animations */
 @keyframes rise {
   from { opacity: 0; transform: translateY(8px); }
