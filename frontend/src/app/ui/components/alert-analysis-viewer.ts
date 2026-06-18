@@ -77,5 +77,3 @@ export class AlertAnalysisViewer extends LitElement {
     return t.replace(/^\[(CRITICAL|WARNING|INFO|ERROR)\]\s*/i, '');
   }
 }
-
-try { customElements.define("alert-analysis-viewer", AlertAnalysisViewer); } catch (e: any) { if (!(e instanceof DOMException)) throw e; }

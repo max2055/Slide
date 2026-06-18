@@ -178,5 +178,3 @@ export class AlertDetailModal extends LitElement {
     return ({ unread: 'danger', read: 'muted', acknowledged: 'info', resolved: 'ok', closed: 'muted' } as Record<string, string>)[s] || 'muted';
   }
 }
-
-try { customElements.define("alert-detail-modal", AlertDetailModal); } catch (e: any) { if (!(e instanceof DOMException)) throw e; }

@@ -246,5 +246,3 @@ export class AlertRuleEditor extends LitElement {
     `;
   }
 }
-
-try { customElements.define("alert-rule-editor", AlertRuleEditor); } catch (e: any) { if (!(e instanceof DOMException)) throw e; }
