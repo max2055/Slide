@@ -636,7 +636,7 @@ Plans:
   6. 核心交互有平滑 transition/animation（页面切换、面板展开、hover 反馈）
   7. 可访问性基线达标：键盘导航、focus 可见、语义化 heading 层级、表单 label 关联
   8. CSS 文件从当前碎片化状态收敛到 < 10 个结构化文件（design-tokens, layout, components, themes, utilities）
-**Plans:** 4/8 plans executed
+**Plans:** 5/8 plans executed
 
 Plans:
 **Wave 1 (CSS Foundation)**
@@ -655,7 +655,7 @@ Plans:
 - [x] 120-06-PLAN.md — Split chat.ts into 3 subcomponents + rename status-badge to app-badge across all views
 
 **Wave 5 (Component Adoption)**
-- [ ] 120-07-PLAN.md — Adopt shared components in 12 remaining views (replace hand-rolled dialogs/forms/cards/tables/toast/badges)
+- [x] 120-07-PLAN.md — Adopt shared components in 12 remaining views (replace hand-rolled dialogs/forms/cards/tables/toast/badges)
 
 **Wave 6 (Final Polish)**
 - [ ] 120-08-PLAN.md — Interaction states + skeleton screens + px->token migration + console->logger replacement

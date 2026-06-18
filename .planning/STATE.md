@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: 打磨与优化
 status: executing
-last_updated: "2026-06-18T00:00:00.000Z"
-last_activity: 2026-06-18 -- Phase 120 Plan 06 complete (chat.ts split + badge rename)
+last_updated: "2026-06-18T07:36:00.000Z"
+last_activity: 2026-06-18 -- Phase 120 Plan 07 complete (component adoption in 12 views)
 progress:
   total_phases: 21
   completed_phases: 19
   total_plans: 73
-  completed_plans: 71
-  percent: 97
+  completed_plans: 72
+  percent: 98
 ---
 
 # Slide 项目状态
@@ -28,7 +28,7 @@ progress:
 Phase: 120
 Plan: 07
 Status: Executing
-Last activity: 2026-06-18 -- Phase 120 Plan 06 complete (chat.ts split + badge rename)
+Last activity: 2026-06-18 -- Phase 120 Plan 07 complete (component adoption in 12 views)
 
 Progress: [████████████] 97%
 
@@ -52,6 +52,7 @@ Progress: [████████████] 97%
 | Phase 120-04 alerts split | ~30min | 3 tasks | 5 files |
 | Phase 120-05 instance-detail split | ~7min | 3 tasks | 5 files |
 | Phase 120-06 chat.ts split + badge rename | ~8min | 3 tasks | 11 files |
+| Phase 120-07 Component Adoption in 12 Views | ~15min | 2 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -124,5 +125,5 @@ Also deferred (Phase 116 discretion):
 ## Session Continuity
 
 Last session: 2026-06-18
-Stopped at: Completed Phase 120 Plan 06 (chat.ts split + badge rename)
+Stopped at: Completed Phase 120 Plan 07 (component adoption in 12 views)
 Resume file: None
