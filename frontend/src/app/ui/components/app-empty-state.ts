@@ -8,7 +8,7 @@
  *          <button slot="actions" class="btn-primary">Add</button>
  *        </app-empty-state>
  */
-import { LitElement, html } from "lit";
+import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
 
@@ -67,15 +67,19 @@ export class AppEmptyState extends LitElement {
         }
       </style>
       <div class="empty-state">
-        ${this.icon
-          ? html`<div class="empty-state-icon">${this._renderIcon()}</div>`
-          : html`<slot name="icon"></slot>`}
+        <slot name="icon">
+          ${this.icon
+            ? html`<div class="empty-state-icon">${this._renderIcon()}</div>`
+            : nothing}
+        </slot>
         ${this.title
           ? html`<div class="empty-state-title">${this.title}</div>`
           : ""}
-        ${this.description
-          ? html`<div class="empty-state-description">${this.description}</div>`
-          : html`<slot></slot>`}
+        <slot>
+          ${this.description
+            ? html`<div class="empty-state-description">${this.description}</div>`
+            : nothing}
+        </slot>
         <div class="empty-state-actions">
           <slot name="actions"></slot>
         </div>

@@ -3,6 +3,7 @@ import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
+import { showToast } from "../components/app-toast-container.js";
 import "./../components/alert-list.js";
 import "./../components/alert-detail-modal.js";
 import "./../components/alert-rule-editor.js";
@@ -743,7 +744,7 @@ export class AlertsPage extends LitElement {
         this.analyzedStatuses = statusMap;
       }
     } catch (err) {
-      console.warn('[Alerts] _loadAnalyzedStatuses failed:', err);
+      showToast('Failed to load analyzed statuses', 'error');
     }
   }
 
@@ -851,7 +852,7 @@ export class AlertsPage extends LitElement {
         alert.acknowledged_at = new Date().toISOString();
         this.requestUpdate();
       }
-    } catch (e) { console.warn("确认告警失败:", e); }
+    } catch (e) { showToast('Failed to acknowledge alert', 'error'); }
   }
 
   private _severityLabel(s: string): string {
@@ -883,7 +884,7 @@ export class AlertsPage extends LitElement {
         this.analysisHistory = await res.json();
       }
     } catch (err) {
-      console.warn('[Alerts] _loadAnalysisHistory failed:', err);
+      showToast('Failed to load analysis history', 'error');
     }
     this.analysisHistoryLoading = false;
     this.requestUpdate();

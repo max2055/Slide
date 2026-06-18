@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
 import "../components/metric-chart.js";
+import { showToast } from "../components/app-toast-container.js";
 import "../components/app-badge.js";
 import "../components/app-card.js";
 import "../components/instance-overview-tab.js";
@@ -217,7 +218,7 @@ export class InstanceDetailPage extends LitElement {
       const mp = collected.length > 0 ? `&metrics=${collected.join(',')}` : '';
       const res = await authFetch(`/api/database/instances/${this.instanceId}/metrics/history?period=${period}&interval=5m${mp}`);
       if (res.ok) { const d = await res.json(); this.trendData = { time: d.time || [], metrics: d.metrics || {} }; this.trendLoaded = true; }
-    } catch { /* ignore trend errors */ }
+    } catch (err: any) { const msg = err?.message || 'Failed to load trend data'; this.error = msg; showToast(msg, 'error'); }
     this.trendLoading = false;
   }
 

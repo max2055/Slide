@@ -226,7 +226,7 @@ export class SqlAuditTab extends LitElement {
     }
 
     .badge-risk-p0 {
-      background: #7c3aed;
+      background: var(--accent, #409eff);
       color: white;
     }
 
