@@ -9,7 +9,7 @@
  * When `error` is set, the slotted input receives aria-invalid="true"
  * via the `updated()` lifecycle hook.
  */
-import { LitElement, html, css } from "lit";
+import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 
 @customElement("app-form-field")
@@ -39,6 +39,63 @@ export class AppFormField extends LitElement {
 
   render() {
     return html`
+      <style>
+        :host {
+          display: block;
+          margin-bottom: var(--space-md, 12px);
+        }
+        :host([inline]) {
+          display: flex;
+          align-items: baseline;
+          gap: var(--space-md, 12px);
+        }
+        :host([inline]) .form-label {
+          margin-bottom: 0;
+          white-space: nowrap;
+          min-width: 100px;
+          flex-shrink: 0;
+        }
+        :host([inline]) .form-control {
+          flex: 1;
+        }
+        .form-field {
+          width: 100%;
+        }
+        .form-label {
+          display: block;
+          font-size: var(--text-sm, 12px);
+          font-weight: 500;
+          color: var(--text-strong, #1a1a1e);
+          margin-bottom: var(--space-xs, 4px);
+          line-height: 1.4;
+        }
+        :host([error]) .form-label {
+          color: var(--danger, #dc2626);
+        }
+        .required-mark {
+          color: var(--danger, #dc2626);
+          margin-left: 2px;
+        }
+        .form-control {
+          position: relative;
+        }
+        :host([error]) .form-control {
+          box-shadow: 0 0 0 2px var(--danger-subtle, rgba(220, 38, 38, 0.12));
+          border-radius: var(--radius-sm, 6px);
+        }
+        .form-hint {
+          font-size: var(--text-xs, 11px);
+          color: var(--muted, #6e6e73);
+          margin-top: var(--space-xs, 4px);
+          line-height: 1.4;
+        }
+        .form-error {
+          font-size: var(--text-xs, 11px);
+          color: var(--danger, #dc2626);
+          margin-top: var(--space-xs, 4px);
+          line-height: 1.4;
+        }
+      </style>
       <div class="form-field" part="field">
         ${this.label
           ? html`
@@ -63,62 +120,4 @@ export class AppFormField extends LitElement {
       </div>
     `;
   }
-
-  static styles = css`
-    :host {
-      display: block;
-      margin-bottom: var(--space-md, 12px);
-    }
-    :host([inline]) {
-      display: flex;
-      align-items: baseline;
-      gap: var(--space-md, 12px);
-    }
-    :host([inline]) .form-label {
-      margin-bottom: 0;
-      white-space: nowrap;
-      min-width: 100px;
-      flex-shrink: 0;
-    }
-    :host([inline]) .form-control {
-      flex: 1;
-    }
-    .form-field {
-      width: 100%;
-    }
-    .form-label {
-      display: block;
-      font-size: var(--text-sm, 12px);
-      font-weight: 500;
-      color: var(--text-strong, #1a1a1e);
-      margin-bottom: var(--space-xs, 4px);
-      line-height: 1.4;
-    }
-    :host([error]) .form-label {
-      color: var(--danger, #dc2626);
-    }
-    .required-mark {
-      color: var(--danger, #dc2626);
-      margin-left: 2px;
-    }
-    .form-control {
-      position: relative;
-    }
-    :host([error]) .form-control {
-      box-shadow: 0 0 0 2px var(--danger-subtle, rgba(220, 38, 38, 0.12));
-      border-radius: var(--radius-sm, 6px);
-    }
-    .form-hint {
-      font-size: var(--text-xs, 11px);
-      color: var(--muted, #6e6e73);
-      margin-top: var(--space-xs, 4px);
-      line-height: 1.4;
-    }
-    .form-error {
-      font-size: var(--text-xs, 11px);
-      color: var(--danger, #dc2626);
-      margin-top: var(--space-xs, 4px);
-      line-height: 1.4;
-    }
-  `;
 }

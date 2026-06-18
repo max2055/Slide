@@ -10,7 +10,7 @@
  *     </div>
  *   </app-dialog>
  */
-import { LitElement, html, css, nothing } from "lit";
+import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 
 export type DialogSize = "sm" | "md" | "lg" | "xl";
@@ -89,6 +89,79 @@ export class AppDialog extends LitElement {
     const width = SIZE_MAP[this.size] ?? SIZE_MAP.md;
 
     return html`
+      <style>
+        .dialog-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.3);
+          z-index: var(--z-modal, 1000);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: var(--space-xl, 24px);
+          animation: fade-in 200ms var(--ease-out) both;
+        }
+        .dialog {
+          background: var(--card, #fff);
+          border-radius: var(--radius-lg);
+          box-shadow: var(--shadow-xl);
+          width: 100%;
+          max-width: 520px;
+          max-height: 85vh;
+          display: flex;
+          flex-direction: column;
+          animation: scale-in 200ms var(--ease-out) both;
+        }
+        .dialog-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: var(--space-lg) var(--space-xl);
+          border-bottom: 1px solid var(--border);
+          flex-shrink: 0;
+        }
+        .dialog-title {
+          font-size: var(--text-lg, 16px);
+          font-weight: 600;
+          color: var(--text-strong);
+          line-height: 1.3;
+        }
+        .dialog-close {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px;
+          height: 32px;
+          flex-shrink: 0;
+          background: none;
+          border: 1px solid transparent;
+          cursor: pointer;
+          color: var(--muted);
+          font-size: 20px;
+          line-height: 1;
+          border-radius: var(--radius-sm);
+          transition: all var(--duration-fast, 100ms) var(--ease-out);
+        }
+        .dialog-close:hover {
+          color: var(--text-strong);
+          background: var(--bg-hover);
+          border-color: var(--border);
+        }
+        .dialog-body {
+          padding: var(--space-xl);
+          overflow-y: auto;
+          flex: 1;
+        }
+        .dialog-footer {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: var(--space-sm);
+          padding: var(--space-lg) var(--space-xl);
+          border-top: 1px solid var(--border);
+          flex-shrink: 0;
+        }
+      </style>
       <div
         class="dialog-overlay"
         @click=${this._onOverlayClick}
@@ -126,78 +199,4 @@ export class AppDialog extends LitElement {
       </div>
     `;
   }
-
-  static styles = css`
-    .dialog-overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.3);
-      z-index: var(--z-modal, 1000);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: var(--space-xl, 24px);
-      animation: fade-in 200ms var(--ease-out) both;
-    }
-    .dialog {
-      background: var(--card, #fff);
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow-xl);
-      width: 100%;
-      max-width: 520px;
-      max-height: 85vh;
-      display: flex;
-      flex-direction: column;
-      animation: scale-in 200ms var(--ease-out) both;
-    }
-    .dialog-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: var(--space-lg) var(--space-xl);
-      border-bottom: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-    .dialog-title {
-      font-size: var(--text-lg, 16px);
-      font-weight: 600;
-      color: var(--text-strong);
-      line-height: 1.3;
-    }
-    .dialog-close {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 32px;
-      height: 32px;
-      flex-shrink: 0;
-      background: none;
-      border: 1px solid transparent;
-      cursor: pointer;
-      color: var(--muted);
-      font-size: 20px;
-      line-height: 1;
-      border-radius: var(--radius-sm);
-      transition: all var(--duration-fast, 100ms) var(--ease-out);
-    }
-    .dialog-close:hover {
-      color: var(--text-strong);
-      background: var(--bg-hover);
-      border-color: var(--border);
-    }
-    .dialog-body {
-      padding: var(--space-xl);
-      overflow-y: auto;
-      flex: 1;
-    }
-    .dialog-footer {
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: var(--space-sm);
-      padding: var(--space-lg) var(--space-xl);
-      border-top: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-  `;
 }
