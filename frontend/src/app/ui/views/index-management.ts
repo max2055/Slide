@@ -741,7 +741,13 @@ export class IndexManagementPage extends LitElement {
           </div>
 
           ${this.loading
-            ? html`<div class="loading">加载中...</div>`
+            ? html`<div class="loading" style="flex-direction:column;gap:12px;padding:var(--space-xl);">
+                <div class="skeleton-line skeleton-line--long"></div>
+                <div class="skeleton-line skeleton-line--long"></div>
+                <div class="skeleton-line skeleton-line--long"></div>
+                <div class="skeleton-line skeleton-line--long"></div>
+                <div class="skeleton-line skeleton-line--long"></div>
+              </div>`
             : groupedIndexes.size === 0
               ? html`
                   <div class="empty">

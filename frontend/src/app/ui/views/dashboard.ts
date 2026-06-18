@@ -618,7 +618,21 @@ export class DashboardPage extends LitElement {
 
   override render() {
     if (this.loading) {
-      return html`<div class="loading">加载中...</div>`;
+      return html`<div class="loading" style="flex-direction:column;gap:16px;padding:40px;">
+          <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:var(--space-md);">
+            <div class="skeleton-stat" style="width:100%;height:80px;"></div>
+            <div class="skeleton-stat" style="width:100%;height:80px;"></div>
+            <div class="skeleton-stat" style="width:100%;height:80px;"></div>
+            <div class="skeleton-stat" style="width:100%;height:80px;"></div>
+            <div class="skeleton-stat" style="width:100%;height:80px;"></div>
+            <div class="skeleton-stat" style="width:100%;height:80px;"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);">
+            <div class="skeleton-block" style="height:320px;"></div>
+            <div class="skeleton-block" style="height:320px;"></div>
+          </div>
+          <div class="skeleton-block" style="height:200px;"></div>
+        </div>`;
     }
 
     if (this.error) {

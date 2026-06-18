@@ -610,7 +610,13 @@ export class UsersManagement extends LitElement {
             : ""}
 
           ${this.loading
-            ? html`<div class="loading">加载中...</div>`
+            ? html`<div class="loading" style="flex-direction:column;gap:12px;padding:var(--space-xl);">
+                <div class="skeleton-line skeleton-line--long"></div>
+                <div class="skeleton-line skeleton-line--long"></div>
+                <div class="skeleton-line skeleton-line--long"></div>
+                <div class="skeleton-line skeleton-line--long"></div>
+                <div class="skeleton-line skeleton-line--long"></div>
+              </div>`
             : this.users.length === 0
               ? html`<app-empty-state title="暂无用户数据"></app-empty-state>`
               : html`

@@ -588,7 +588,16 @@ export class SchemaManagementPage extends LitElement {
 
   override render() {
     if (this.loading) {
-      return html`<div class="loading">加载中...</div>`;
+      return html`<div class="loading" style="flex-direction:column;gap:16px;">
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-md);width:100%;">
+            <div class="skeleton-block" style="height:70px;"></div>
+            <div class="skeleton-block" style="height:70px;"></div>
+            <div class="skeleton-block" style="height:70px;"></div>
+            <div class="skeleton-block" style="height:70px;"></div>
+          </div>
+          <div class="skeleton-block" style="height:100px;"></div>
+          <div class="skeleton-block" style="height:200px;"></div>
+        </div>`;
     }
 
     // Error is shown inline as a dismissible banner below

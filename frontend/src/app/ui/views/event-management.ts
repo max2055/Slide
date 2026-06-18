@@ -693,7 +693,20 @@ export class EventManagementPage extends LitElement {
 
   override render() {
     if (this.loading) {
-      return html`<div class="page"><div class="loading">加载事件数据...</div></div>`;
+      return html`<div class="page"><div class="loading" style="flex-direction:column;gap:16px;">
+          <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:var(--space-md);width:100%;">
+            <div class="skeleton-stat" style="width:100%;height:70px;"></div>
+            <div class="skeleton-stat" style="width:100%;height:70px;"></div>
+            <div class="skeleton-stat" style="width:100%;height:70px;"></div>
+            <div class="skeleton-stat" style="width:100%;height:70px;"></div>
+            <div class="skeleton-stat" style="width:100%;height:70px;"></div>
+            <div class="skeleton-stat" style="width:100%;height:70px;"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);width:100%;">
+            <div class="skeleton-block" style="height:300px;"></div>
+            <div class="skeleton-block" style="height:300px;"></div>
+          </div>
+        </div></div>`;
     }
     if (this.error) {
       return html`<div class="page"><div class="error">加载失败: ${this.error}</div></div>`;

@@ -412,7 +412,13 @@ export class ReportsPage extends LitElement {
 
   override render() {
     if (this.loading) {
-      return html`<div class="loading">加载中...</div>`;
+      return html`<div class="loading" style="flex-direction:column;gap:12px;padding:var(--space-xl);">
+          <div class="skeleton-block" style="width:100%;"></div>
+          <div class="skeleton-block" style="width:100%;"></div>
+          <div class="skeleton-block" style="width:100%;"></div>
+          <div class="skeleton-block" style="width:100%;"></div>
+          <div class="skeleton-block" style="width:100%;"></div>
+        </div>`;
     }
 
     if (this.error) {
