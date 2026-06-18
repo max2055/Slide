@@ -1,4 +1,14 @@
 /* ===========================================
+   Phase 120: Light DOM subcomponents
+   display:contents removes the custom element wrapper
+   from the layout tree, preserving original flex/grid.
+   =========================================== */
+
+chat-message-list, chat-compose-area, chat-tool-result-card,
+alert-list, alert-detail-modal, alert-rule-editor, alert-analysis-viewer,
+instance-overview-tab, instance-metrics-tab, instance-diagnosis-modal, instance-trend-chart { display: contents; }
+
+/* ===========================================
    Login Gate
    =========================================== */
 

@@ -297,6 +297,9 @@ export function renderChat(props: ChatProps) {
   return html`
     <section class="card chat" @drop=${(e: DragEvent) => handleDrop(e, props)} @dragover=${(e: DragEvent) => e.preventDefault()}>
       <style>
+        /* Phase 120: chat-message-list and chat-compose-area are Light DOM custom elements.
+           display:contents removes their layout wrapper so the original flex layout works. */
+        chat-message-list, chat-compose-area { display: contents; }
         .card.chat .chat-link-row { display:flex; gap:8px; padding:4px 12px; }
         .card.chat .chat-link-btn { font-size:12px; color:var(--accent); text-decoration:underline; background:none; border:none; cursor:pointer; }
         .connection-status { display:flex; align-items:center; gap:8px; padding:8px 16px; font-size:12px; color:var(--muted); border-top:1px solid var(--border); }

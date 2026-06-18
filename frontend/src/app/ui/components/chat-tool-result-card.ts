@@ -26,7 +26,7 @@ export class ChatToolResultCard extends LitElement {
 
     return html`
       <div class="chat-tool-result-card" style="margin:4px 0;border:1px solid var(--border);border-radius:var(--radius-md);overflow:hidden;">
-        <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-subtle);border-bottom:1px solid var(--border);font-size:13px;">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-muted);border-bottom:1px solid var(--border);font-size:13px;">
           <span style="font-weight:600;flex:1;">${card.name}</span>
           <app-badge variant=${status}>${card.kind}</app-badge>
           ${this.collapsible ? html`<button class="btn btn--ghost" style="padding:2px 6px;font-size:12px;" @click=${() => this.dispatchEvent(new CustomEvent("collapse-toggle", { detail: { id: card.id }, bubbles: true, composed: true }))}>${icons["chevron-down"]}</button>` : nothing}
