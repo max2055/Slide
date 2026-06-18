@@ -6,6 +6,7 @@ import "../components/app-badge.js";
 import "../components/app-empty-state.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
+import { showToast } from "../components/app-toast-container.js";
 
 interface Report {
   id: number;
@@ -363,7 +364,7 @@ export class ReportsPage extends LitElement {
         this.instances = await res.json();
       }
     } catch (err: any) {
-      console.error('加载实例列表失败:', err);
+      showToast('Failed to load instance list', 'error');
     }
   }
 
@@ -375,11 +376,11 @@ export class ReportsPage extends LitElement {
         // next_run is pre-computed by the API — no client-side CronJob needed
         this.configs = data;
       } else {
-        console.error('加载定时配置失败:', res.status, res.statusText);
+        showToast('Failed to load schedule config', 'error');
       }
       this.configsLoading = false;
     } catch (err: any) {
-      console.error('加载定时配置失败:', err);
+      showToast('Failed to load schedule config', 'error');
       this.configsLoading = false;
     }
   }
@@ -391,7 +392,7 @@ export class ReportsPage extends LitElement {
         this.stats = await res.json();
       }
     } catch (err: any) {
-      console.error('加载统计失败:', err);
+      showToast('Failed to load statistics', 'error');
     }
   }
 

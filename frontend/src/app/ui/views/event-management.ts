@@ -4,6 +4,7 @@ import { customElement, state } from "lit/decorators.js";
 import { nothing } from "lit-html";
 import { icons, renderIcon } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
+import { showToast } from "../components/app-toast-container.js";
 
 const API_BASE = "/api";
 
@@ -514,7 +515,7 @@ export class EventManagementPage extends LitElement {
       }
       this.eventLogs = logsRes.ok ? await logsRes.json() : [];
     } catch (e: any) {
-      console.error("Failed to load event details:", e);
+      showToast('Failed to load event details', 'error');
     }
   }
 

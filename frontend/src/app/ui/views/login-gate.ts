@@ -5,6 +5,7 @@ import { icons } from "../../../icons.js";
 import { normalizeBasePath } from "../navigation.ts";
 import { agentLogoUrl } from "./agents-utils.ts";
 import { renderConnectCommand } from "./connect-command.ts";
+import { showToast } from "../components/app-toast-container.js";
 
 export function renderLoginGate(state: AppViewState) {
   const basePath = normalizeBasePath(state.basePath ?? "");
@@ -21,9 +22,17 @@ export function renderLoginGate(state: AppViewState) {
     }
     state.lastError = null;
     const { apiClient } = await import("../../../api/index.js");
-    const token = await apiClient.directLogin(u, p);
+    let token: string | null;
+    try {
+      token = await apiClient.directLogin(u, p);
+    } catch (err) {
+      // Network or server error — backend unreachable, not a credential issue
+      state.lastError = '无法连接服务器。请确认后端服务已启动（http://localhost:3000），然后刷新页面重试。';
+      showToast('Server unreachable', 'error');
+      return;
+    }
     if (!token) {
-      state.lastError = '登录失败，请检查用户名和密码';
+      state.lastError = '用户名或密码错误，请重试。';
       return;
     }
     fetch('/api/auth/permissions', {

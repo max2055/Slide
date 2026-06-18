@@ -2,6 +2,7 @@ import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state, property } from "lit/decorators.js";
 import { renderIcon } from "../../../icons.js";
+import { showToast } from "../components/app-toast-container.js";
 
 interface QanRow {
   fingerprint: string;
@@ -138,7 +139,7 @@ export class QueryAnalysisTab extends LitElement {
         headers: this._authHeaders(),
       });
       if (res.ok) this.qanData = await res.json();
-    } catch (e) { console.error("QAN load failed:", e); }
+    } catch (e) { showToast('Failed to load query analysis', 'error'); }
     this.loading = false;
   }
 
@@ -150,7 +151,7 @@ export class QueryAnalysisTab extends LitElement {
         { headers: this._authHeaders() }
       );
       if (res.ok) this.explainPlan = await res.json();
-    } catch (e) { console.error("EXPLAIN load failed:", e); }
+    } catch (e) { showToast('Failed to load EXPLAIN plan', 'error'); }
     this.explainLoading = false;
   }
 

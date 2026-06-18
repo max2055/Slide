@@ -1,6 +1,7 @@
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state, property } from "lit/decorators.js";
+import { showToast } from "../components/app-toast-container.js";
 
 interface DatabaseInstance {
   id: number;
@@ -410,7 +411,7 @@ export class IndexManagementPage extends LitElement {
         }
       }
     } catch (e) {
-      console.error("加载实例列表失败:", e);
+      showToast('Failed to load instance list', 'error');
     }
   }
 
@@ -431,7 +432,7 @@ export class IndexManagementPage extends LitElement {
         }
       }
     } catch (e) {
-      console.error("加载索引数据失败:", e);
+      showToast('Failed to load index data', 'error');
     }
 
     // 加载冗余报告
@@ -443,7 +444,7 @@ export class IndexManagementPage extends LitElement {
         this.redundancyReport = await res.json();
       }
     } catch (e) {
-      console.error("加载冗余报告失败:", e);
+      showToast('Failed to load redundancy report', 'error');
     }
 
     // 加载未使用索引
@@ -455,7 +456,7 @@ export class IndexManagementPage extends LitElement {
         this.unusedIndexes = await res.json();
       }
     } catch (e) {
-      console.error("加载未使用索引失败:", e);
+      showToast('Failed to load unused indexes', 'error');
     }
 
     this.loading = false;

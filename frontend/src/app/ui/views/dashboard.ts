@@ -7,6 +7,7 @@ import * as echarts from "echarts";
 import { icons } from "../../../icons.js";
 import "../../../components/stat-card.js";
 import { authFetch } from "../../../api/index.js";
+import { showToast } from "../components/app-toast-container.js";
 
 interface InstanceSummary {
   total: number;
@@ -471,7 +472,7 @@ export class DashboardPage extends LitElement {
       const data = await res.json();
       this.capacityTrend = data;
     } catch (err: any) {
-      console.error("容量趋势加载失败:", err);
+      showToast('Failed to load capacity trend', 'error');
     } finally {
       this.trendLoading = false;
     }

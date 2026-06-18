@@ -6,6 +6,7 @@ import "../components/app-card.js";
 import "../components/app-badge.js";
 import "../components/app-empty-state.js";
 import { apiClient } from '../../../api/index.js';
+import { showToast } from "../components/app-toast-container.js";
 
 interface UserInfo {
   id: number;
@@ -454,7 +455,7 @@ export class UsersManagement extends LitElement {
             await apiClient.post(`/v1/rbac/users/${userId}/roles`, { roleId: this.formRoleId });
           } catch (roleErr: any) {
             // User created but role assignment failed — log but don't fail the whole operation
-            console.error('角色分配失败:', roleErr);
+            showToast('Role assignment failed', 'error');
           }
         }
       }

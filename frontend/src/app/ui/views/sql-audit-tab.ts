@@ -1,6 +1,7 @@
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, property, state } from "lit/decorators.js";
+import { showToast } from "../components/app-toast-container.js";
 
 const API_BASE = "";
 
@@ -428,7 +429,7 @@ export class SqlAuditTab extends LitElement {
         this.history = await res.json();
       }
     } catch (err) {
-      console.error("Failed to load audit history:", err);
+      showToast('Failed to load audit history', 'error');
     } finally {
       this.historyLoading = false;
     }
