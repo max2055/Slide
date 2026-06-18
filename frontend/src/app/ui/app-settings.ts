@@ -269,7 +269,7 @@ export function syncThemeWithSettings(host: SettingsHost) {
   host.themeMode = host.settings.themeMode ?? "system";
   applyResolvedTheme(host, resolveTheme(host.theme, host.themeMode));
   applyBorderRadius(host.settings.borderRadius ?? 50);
-  applyAccentColor(host.settings.accentColor ?? "#7c5cff");
+  applyAccentColor(host.settings.accentColor ?? "#409eff");
   applyDensity(host.settings.fontDensity ?? "standard");
   applySidebarPosition(host.settings.sidebarPosition ?? "left");
   applyReduceAnimations(host.settings.reduceAnimations ?? false);

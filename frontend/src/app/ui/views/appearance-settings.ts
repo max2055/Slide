@@ -21,7 +21,7 @@ const TIMEZONES = [
 ];
 
 const ACCENT_PRESETS: { name: string; hex: string }[] = [
-  { name: "Violet", hex: "#7c5cff" },
+  { name: "Default Blue", hex: "#409eff" },
   { name: "Cyan", hex: "#22d3ee" },
   { name: "Emerald", hex: "#34d399" },
   { name: "Amber", hex: "#fbbf24" },
@@ -78,9 +78,9 @@ function dispatchSettingsChange(partial: Record<string, unknown>) {
 
 function readStoredAccent(): string {
   try {
-    return localStorage.getItem("slide-accent") || "#7c5cff";
+    return localStorage.getItem("slide-accent") || "#409eff";
   } catch {
-    return "#7c5cff";
+    return "#409eff";
   }
 }
 
@@ -126,7 +126,7 @@ export class AppearanceSettings extends LitElement {
   @state() private notifySeverity: string[] = ["critical", "warning"];
   @state() private defaultModel: string = "";
 
-  @state() private btnPalPrimaryBg: string = "#7c5cff";
+  @state() private btnPalPrimaryBg: string = "#409eff";
   @state() private btnPalPrimaryColor: string = "#ffffff";
   @state() private btnPalSecondaryBg: string = "#f1f3f5";
   @state() private btnPalDangerBg: string = "#f87171";
@@ -196,7 +196,7 @@ export class AppearanceSettings extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     // Read current visual state from DOM
-    this.accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#7c5cff";
+    this.accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#409eff";
     const r = getComputedStyle(document.documentElement).getPropertyValue("--radius").trim();
     const rn = parseInt(r, 10);
     this.radius = !isNaN(rn) && rn > 0 && rn <= 20 ? Math.round((rn / 10) * 50) : readStoredRadius();
@@ -220,7 +220,7 @@ export class AppearanceSettings extends LitElement {
     // Button palette
     const savedPalette = readSettingsField("btnPalette", null);
     if (savedPalette) {
-      this.btnPalPrimaryBg = savedPalette.primaryBg || "#7c5cff";
+      this.btnPalPrimaryBg = savedPalette.primaryBg || "#409eff";
       this.btnPalPrimaryColor = savedPalette.primaryColor || "#ffffff";
       this.btnPalSecondaryBg = savedPalette.secondaryBg || "#f1f3f5";
       this.btnPalDangerBg = savedPalette.dangerBg || "#f87171";

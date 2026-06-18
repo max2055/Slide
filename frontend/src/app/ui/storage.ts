@@ -184,7 +184,7 @@ export function loadSettings(): UiSettings {
     fontDensity: "standard",
     sidebarPosition: "left",
     reduceAnimations: false,
-    accentColor: "#7c5cff",
+    accentColor: "#409eff",
     // Layer 2 — Layout
     defaultTab: "dashboard",
     visibleTabs: [],

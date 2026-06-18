@@ -19,14 +19,14 @@ export interface ButtonPalette {
 }
 
 export const DEFAULT_PALETTE: ButtonPalette = {
-  primaryBg: "#7c5cff",
+  primaryBg: "#409eff",
   primaryColor: "#ffffff",
-  primaryBorder: "#7c5cff",
+  primaryBorder: "#409eff",
   secondaryBg: "#f1f3f5",
   secondaryColor: "#3c3c43",
   secondaryBorder: "#e5e5ea",
   ghostColor: "#6e6e73",
-  ghostHoverColor: "#7c5cff",
+  ghostHoverColor: "#409eff",
   ghostHoverBg: "#eceef0",
   dangerBg: "#f87171",
   dangerColor: "#ffffff",
