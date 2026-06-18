@@ -558,11 +558,11 @@ export class DashboardPage extends LitElement {
         data: data.values,
         smooth: true,
         showSymbol: false,
-        lineStyle: { width: 2, color: "#7c5cff" },
+        lineStyle: { width: 2, color: "#409eff" },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: "rgba(210, 190, 252, 0.3)" },
-            { offset: 1, color: "rgba(210, 190, 252, 0.05)" },
+            { offset: 0, color: "rgba(64, 158, 255, 0.3)" },
+            { offset: 1, color: "rgba(64, 158, 255, 0.05)" },
           ]),
         },
       }],

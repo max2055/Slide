@@ -278,8 +278,8 @@ export class SqlConsolePage extends LitElement {
     .tab-close { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; border: none; background: none; cursor: pointer; color: var(--muted, #9ca3af); padding: 0; font-size: var(--text-md); border-radius: var(--radius-sm); }
     .tab-close:hover { background: var(--danger-subtle, rgba(239,68,68,0.1)); color: var(--destructive, #ef4444); }
     .tab-add { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: none; background: none; cursor: pointer; color: var(--muted, #6b7280); font-size: 16px; font-weight: 600; border-radius: var(--radius-sm); flex-shrink: 0; }
-    .tab-add:hover { background: var(--accent-subtle, rgba(124,92,255,0.12)); color: var(--accent, #7c5cff); }
-    .tab-rename-input { font-size: var(--text-sm); padding: 1px 4px; border: 1px solid var(--accent, #7c5cff); border-radius: var(--radius-sm); background: var(--card, #fff); color: var(--text, #3c3c43); outline: none; width: 120px; }
+    .tab-add:hover { background: var(--accent-subtle, rgba(64,158,255,0.12)); color: var(--accent, #409eff); }
+    .tab-rename-input { font-size: var(--text-sm); padding: 1px 4px; border: 1px solid var(--accent, #409eff); border-radius: var(--radius-sm); background: var(--card, #fff); color: var(--text, #3c3c43); outline: none; width: 120px; }
     .tab-warning { font-size: var(--text-xs); color: var(--warn, #b45309); margin-left: 8px; white-space: nowrap; }
 
 
@@ -331,13 +331,13 @@ export class SqlConsolePage extends LitElement {
     /* Browser tabs (Schema/History toggle) */
     .browser-tabs { display: flex; border-bottom: 1px solid var(--border, #e5e7eb); flex-shrink: 0; }
     .browser-tab { flex: 1; padding: var(--space-sm) var(--space-md); font-size: var(--text-sm); font-weight: 600; cursor: pointer; border: none; background: none; color: var(--muted, #6b7280); border-bottom: 2px solid transparent; }
-    .browser-tab.active { color: var(--accent, #7c5cff); border-bottom-color: var(--accent, #7c5cff); background: var(--accent-subtle, rgba(124,92,255,0.06)); }
+    .browser-tab.active { color: var(--accent, #409eff); border-bottom-color: var(--accent, #409eff); background: var(--accent-subtle, rgba(64,158,255,0.06)); }
 
     /* History panel */
     .history-panel { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
     .history-search { padding: var(--space-sm); flex-shrink: 0; }
     .history-search-input { width: 100%; padding: var(--space-sm) var(--space-md); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-sm); font-size: var(--text-sm); background: var(--bg-elevated, #f9fafb); color: var(--text, #333); outline: none; box-sizing: border-box; }
-    .history-search-input:focus { border-color: var(--accent, #7c5cff); }
+    .history-search-input:focus { border-color: var(--accent, #409eff); }
     .history-instance-filter { width: 100%; padding: var(--space-sm) var(--space-md); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-sm); font-size: var(--text-sm); background: var(--bg-elevated, #f9fafb); color: var(--text, #333); outline: none; box-sizing: border-box; margin-top: 6px; }
     .history-list { flex: 1; overflow-y: auto; padding: var(--space-xs) 0; }
     .history-item { padding: var(--space-sm) var(--space-md); cursor: pointer; border-bottom: 1px solid var(--border, #e5e7eb); transition: background .15s; }
@@ -1410,7 +1410,7 @@ export class SqlConsolePage extends LitElement {
                           style="cursor:pointer;user-select:none;white-space:nowrap;text-align:center">
                         ${c}
                         ${this.sortColumn === c
-                          ? html`<span style="margin-left:4px;color:var(--accent, #7c5cff);font-size:10px">${this.sortDirection === 'asc' ? '▲' : '▼'}</span>`
+                          ? html`<span style="margin-left:4px;color:var(--accent, #409eff);font-size:10px">${this.sortDirection === 'asc' ? '▲' : '▼'}</span>`
                           : ''}
                       </th>`)}</tr></thead>
                     <tbody>
