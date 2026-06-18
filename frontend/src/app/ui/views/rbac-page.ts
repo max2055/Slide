@@ -2,6 +2,8 @@ import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
 import { apiClient } from '../../../api/index.js';
+import "../components/app-dialog.js";
+import "../components/app-form-field.js";
 
 /* ───────── Types ───────── */
 
@@ -104,19 +106,6 @@ export class RbacAdminPage extends LitElement {
     .action-btn.danger:hover { background: var(--destructive); color: var(--destructive-foreground); border-color: var(--destructive); }
 
     .empty { display: flex; align-items: center; justify-content: center; min-height: 200px; color: var(--muted); font-size: var(--text-base); padding: 40px 20px; text-align: center; }
-
-    /* Modal */
-    .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; animation: overlay-fade-in 0.2s ease; }
-    @keyframes overlay-fade-in { from { opacity: 0; } to { opacity: 1; } }
-    @keyframes modal-slide-in { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
-    .modal { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); width: 90%; max-width: 520px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); animation: modal-slide-in 0.25s var(--ease-out); }
-    .modal-wide { max-width: 640px; }
-    .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border); }
-    .modal-title { font-size: var(--text-lg); font-weight: 600; color: var(--text-strong); }
-    .modal-close { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--muted); padding: 4px; line-height: 1; }
-    .modal-close:hover { color: var(--text-strong); }
-    .modal-body { padding: var(--space-xl); display: grid; gap: var(--space-lg); }
-    .modal-footer { display: flex; justify-content: flex-end; gap: var(--space-sm); padding: 16px 20px; border-top: 1px solid var(--border); }
 
     .form-group { display: grid; gap: var(--space-sm); }
     .form-group label { font-size: var(--text-sm); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
@@ -454,118 +443,80 @@ export class RoleManagementTab extends LitElement {
     if (!this.showFormModal) return nothing;
     const isEdit = !!this.editingRole;
     return html`
-      <div
-        class="modal-overlay"
-        @click=${(e: Event) => {
-          if ((e.target as HTMLElement).classList.contains("modal-overlay"))
-            this._closeFormModal();
-        }}
-      >
-        <div class="modal">
-          <div class="modal-header">
-            <span class="modal-title">${isEdit ? "编辑角色" : "新建角色"}</span>
-            <button class="modal-close" @click=${this._closeFormModal}>×</button>
-          </div>
-          <div class="modal-body">
-            ${this.saveError
-              ? html`<div class="save-error">${this.saveError}</div>`
-              : ""}
-            <div class="form-group">
-              <label>角色名称</label>
-              <input
-                .value=${this.formName}
-                @input=${(e: any) => (this.formName = e.target.value)}
-                placeholder="如：高级 DBA"
-              />
-            </div>
-            <div class="form-group">
-              <label>描述</label>
-              <textarea
-                .value=${this.formDescription}
-                @input=${(e: any) => (this.formDescription = e.target.value)}
-                placeholder="可选角色说明"
-              ></textarea>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button class="btn" @click=${this._closeFormModal}>取消</button>
-            <button class="btn primary" @click=${this._saveRole} ?disabled=${this.saving}>
-              ${this.saving ? "保存中..." : "保存"}
-            </button>
-          </div>
+      <app-dialog .open=${true} size="md" title="${isEdit ? '编辑角色' : '新建角色'}" @app-dialog-close=${this._closeFormModal}>
+        ${this.saveError
+          ? html`<div class="save-error">${this.saveError}</div>`
+          : ""}
+        <app-form-field label="角色名称" required>
+          <input .value=${this.formName} @input=${(e: any) => (this.formName = e.target.value)} placeholder="如：高级 DBA" />
+        </app-form-field>
+        <app-form-field label="描述">
+          <textarea .value=${this.formDescription} @input=${(e: any) => (this.formDescription = e.target.value)} placeholder="可选角色说明"></textarea>
+        </app-form-field>
+        <div slot="footer">
+          <button class="btn" @click=${this._closeFormModal}>取消</button>
+          <button class="btn primary" @click=${this._saveRole} ?disabled=${this.saving}>
+            ${this.saving ? "保存中..." : "保存"}
+          </button>
         </div>
-      </div>
+      </app-dialog>
     `;
   }
 
   private _renderPermModal() {
     if (!this.showPermModal) return nothing;
     return html`
-      <div
-        class="modal-overlay"
-        @click=${(e: Event) => {
-          if ((e.target as HTMLElement).classList.contains("modal-overlay"))
-            this._closePermModal();
-        }}
-      >
-        <div class="modal modal-wide">
-          <div class="modal-header">
-            <span class="modal-title">编辑权限 - ${this.permRoleName}</span>
-            <button class="modal-close" @click=${this._closePermModal}>×</button>
-          </div>
-          <div class="modal-body">
-            ${this.permError
-              ? html`<div class="save-error">${this.permError}</div>`
-              : ""}
-            ${this.permLoading
-              ? html`<div class="empty">加载中...</div>`
-              : this.allPermissions.length === 0
-                ? html`<div class="empty">暂无权限数据。</div>`
-                : html`
-                    ${[...this._groupByResource(this.allPermissions).entries()].map(
-                      ([resource, perms]) => html`
-                        <details class="perm-group">
-                          <summary>
-                            ${resource}
-                            <span class="count-badge"
-                              >已选 ${this._permCountForResource(resource)}/${perms.length}</span
-                            >
-                          </summary>
-                          <div class="perm-group-content">
-                            ${perms.map(
-                              (p) => html`
-                                <div class="perm-checkbox">
-                                  <input
-                                    type="checkbox"
-                                    .checked=${this.checkedPermIds.has(p.id)}
-                                    @change=${() => this._togglePerm(p.id)}
-                                    id="perm-${p.id}"
-                                  />
-                                  <label for="perm-${p.id}">
-                                    <div>${p.name}</div>
-                                    <div class="perm-code">${p.code}</div>
-                                  </label>
-                                </div>
-                              `
-                            )}
-                          </div>
-                        </details>
-                      `
-                    )}
-                  `}
-          </div>
-          <div class="modal-footer">
-            <button class="btn" @click=${this._closePermModal}>取消</button>
-            <button
-              class="btn primary"
-              @click=${this._savePermissions}
-              ?disabled=${this.permSaving || this.permLoading}
-            >
-              ${this.permSaving ? "保存中..." : "保存权限"}
-            </button>
-          </div>
+      <app-dialog .open=${true} size="lg" title="编辑权限 - ${this.permRoleName}" @app-dialog-close=${this._closePermModal}>
+        ${this.permError
+          ? html`<div class="save-error">${this.permError}</div>`
+          : ""}
+        ${this.permLoading
+          ? html`<div class="empty">加载中...</div>`
+          : this.allPermissions.length === 0
+            ? html`<div class="empty">暂无权限数据。</div>`
+            : html`
+                ${[...this._groupByResource(this.allPermissions).entries()].map(
+                  ([resource, perms]) => html`
+                    <details class="perm-group">
+                      <summary>
+                        ${resource}
+                        <span class="count-badge"
+                          >已选 ${this._permCountForResource(resource)}/${perms.length}</span
+                        >
+                      </summary>
+                      <div class="perm-group-content">
+                        ${perms.map(
+                          (p) => html`
+                            <div class="perm-checkbox">
+                              <input
+                                type="checkbox"
+                                .checked=${this.checkedPermIds.has(p.id)}
+                                @change=${() => this._togglePerm(p.id)}
+                                id="perm-${p.id}"
+                              />
+                              <label for="perm-${p.id}">
+                                <div>${p.name}</div>
+                                <div class="perm-code">${p.code}</div>
+                              </label>
+                            </div>
+                          `
+                        )}
+                      </div>
+                    </details>
+                  `
+                )}
+              `}
+        <div slot="footer">
+          <button class="btn" @click=${this._closePermModal}>取消</button>
+          <button
+            class="btn primary"
+            @click=${this._savePermissions}
+            ?disabled=${this.permSaving || this.permLoading}
+          >
+            ${this.permSaving ? "保存中..." : "保存权限"}
+          </button>
         </div>
-      </div>
+      </app-dialog>
     `;
   }
 }

@@ -1,89 +1,94 @@
 import { describe, it, expect } from 'vitest';
+import '../sql-console.js';
 
-describe('SQL Console Upgrade', () => {
+describe('SQL Console', () => {
+  it('custom element is registered', () => {
+    expect(customElements.get('sql-console-page')).toBeDefined();
+  });
+
   describe('SQLC-01: Schema-driven autocomplete', () => {
-    it('provides table and column names from loaded schema in autocomplete suggestions', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 02
+    it.skip('provides table and column names from loaded schema in autocomplete suggestions', () => {
+      // TODO: requires component test setup with mock schema data
     });
 
-    it('filters completions based on cursor context (FROM clause, after JOIN, etc.)', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 02
+    it.skip('filters completions based on cursor context (FROM clause, after JOIN, etc.)', () => {
+      // TODO: requires CodeMirror test integration
     });
   });
 
   describe('SQLC-02: Sortable result table', () => {
-    it('sorts column ascending on first click, descending on second, unsorted on third', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 03
+    it.skip('sorts column ascending on first click, descending on second, unsorted on third', () => {
+      // TODO: requires result table rendering with mock data
     });
 
-    it('places null values at end regardless of sort direction', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 03
+    it.skip('places null values at end regardless of sort direction', () => {
+      // TODO: requires result table rendering with null data
     });
   });
 
   describe('SQLC-03: Client-side pagination', () => {
-    it('shows correct page of results based on currentPage and pageSize', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 03
+    it.skip('shows correct page of results based on currentPage and pageSize', () => {
+      // TODO: requires paginated result data fixture
     });
 
-    it('renders all rows when pageSize is "All"', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 03
+    it.skip('renders all rows when pageSize is "All"', () => {
+      // TODO: requires result data fixture
     });
   });
 
   describe('SQLC-04: CSV export', () => {
-    it('generates CSV string with column headers as first row', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 03
+    it.skip('generates CSV string with column headers as first row', () => {
+      // TODO: requires CSV export utility test
     });
 
-    it('escapes cells containing commas, double-quotes, and newlines per RFC 4180', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 03
+    it.skip('escapes cells containing commas, double-quotes, and newlines per RFC 4180', () => {
+      // TODO: requires CSV export utility test with special chars
     });
 
-    it('writes null values as empty string in exported CSV', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 03
+    it.skip('writes null values as empty string in exported CSV', () => {
+      // TODO: requires CSV export utility test
     });
   });
 
   describe('SQLC-05: Multi-tab editor', () => {
-    it('creates and switches between tabs preserving independent editor content', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 02
+    it.skip('creates and switches between tabs preserving independent editor content', () => {
+      // TODO: requires CodeMirror multi-tab test setup
     });
 
-    it('persists tabs across page reload via localStorage', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 02
+    it.skip('persists tabs across page reload via localStorage', () => {
+      // TODO: requires localStorage mock
     });
 
-    it('shows confirmation dialog when closing a tab with non-empty SQL', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 02
+    it.skip('shows confirmation dialog when closing a tab with non-empty SQL', () => {
+      // TODO: requires dialog interaction test
     });
   });
 
   describe('SQLC-06: Query history', () => {
-    it('displays history items with SQL preview, instance, duration, row count, and timestamp', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 04
+    it.skip('displays history items with SQL preview, instance, duration, row count, and timestamp', () => {
+      // TODO: requires history data fixture
     });
 
-    it('filters history items by SQL text search', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 04
+    it.skip('filters history items by SQL text search', () => {
+      // TODO: requires history data fixture with search
     });
 
-    it('loads next batch on infinite scroll', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 04
+    it.skip('loads next batch on infinite scroll', () => {
+      // TODO: requires scroll interaction test
     });
   });
 
   describe('SQLC-07: EXPLAIN visualization', () => {
-    it('normalizes MySQL EXPLAIN FORMAT=JSON to unified PlanNode format', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 05
+    it.skip('normalizes MySQL EXPLAIN FORMAT=JSON to unified PlanNode format', () => {
+      // TODO: requires EXPLAIN parser test
     });
 
-    it('renders EXPLAIN plan as collapsible tree view with operation, rows, cost', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 05
+    it.skip('renders EXPLAIN plan as collapsible tree view with operation, rows, cost', () => {
+      // TODO: requires EXPLAIN render component test
     });
 
-    it('renders EXPLAIN plan as flat sortable table when toggle is Table view', () => {
-      expect(true).toBe(true); // TODO — implement in Plan 05
+    it.skip('renders EXPLAIN plan as flat sortable table when toggle is Table view', () => {
+      // TODO: requires EXPLAIN render component test
     });
   });
 });
