@@ -1,5 +1,14 @@
 {
   "workflow": {
-    "_auto_chain_active": false
-  }
+    "_auto_chain_active": true
+  },
+  "metrics": [
+    {
+      "phase": "120-ui",
+      "plan": "120-08",
+      "duration": "420s",
+      "tasks": 4,
+      "files": 25
+    }
+  ]
 }
