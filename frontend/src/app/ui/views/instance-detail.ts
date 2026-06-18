@@ -459,7 +459,7 @@ export class InstanceDetailPage extends LitElement {
     if (!this.capacity) return html`<app-card><div class="empty-state"><div class="empty-title">暂无容量数据</div><div class="empty-desc">实例可能未连接或暂无数据</div></div></app-card>`;
     const cap = this.capacity;
     return html`
-      ${this.capHistory.time.length > 0 ? html`<metric-chart title="存储增长趋势 (过去7天)" height="220px" yAxisLabel="GB" .timeData=${this.capHistory.time} .series=${[{ name: "容量", data: this.capHistory.size, color: "#8b5cf6" }]}></metric-chart><div style="height:16px"></div>` : nothing}
+      ${this.capHistory.time.length > 0 ? html`<metric-chart title="存储增长趋势 (过去7天)" height="220px" yAxisLabel="GB" .timeData=${this.capHistory.time} .series=${[{ name: "容量", data: this.capHistory.size, color: "var(--accent)" }]}></metric-chart><div style="height:16px"></div>` : nothing}
       <app-card>
         <span slot="header">存储总览：${cap.total_size_gb.toFixed(2)} GB</span>
         ${cap.databases && cap.databases.length > 0 ? html`<h4 style="font-size:var(--text-md);color:var(--text-strong);margin:0 0 16px 0;">数据库</h4><div class="capacity-list">${cap.databases.map(db => html`<div class="capacity-item"><div class="capacity-icon">${icons['database']}</div><div class="capacity-info"><div class="capacity-name">${db.name}</div><div class="capacity-meta">${db.size_gb.toFixed(2)} GB${db.table_count ? ` · ${db.table_count} 张表` : ""}</div></div></div>`)}</div>` : ""}

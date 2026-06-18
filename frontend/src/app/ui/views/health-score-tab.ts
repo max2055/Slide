@@ -472,7 +472,7 @@ export class HealthScoreTab extends LitElement {
         title="健康评分趋势"
         .timeData=${timeData}
         .series=${[
-          { name: "总分", data: totalScores, color: "#8b5cf6" },
+          { name: "总分", data: totalScores, color: "var(--accent)" },
         ]}
         percentage
         height="320px"

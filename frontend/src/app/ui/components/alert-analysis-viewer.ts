@@ -51,7 +51,7 @@ export class AlertAnalysisViewer extends LitElement {
         <!-- Result content -->
         <div style="overflow-y:auto;max-height:50vh;">
           ${record.status === 'failed' ? html`
-            <div style="padding:var(--space-lg);background:rgba(176,141,245,0.12);border-radius:var(--radius-sm);color:#b08df5;text-align:center;">
+            <div style="padding:var(--space-lg);background:var(--danger-subtle);border-radius:var(--radius-sm);color:var(--danger);text-align:center;">
               <div style="font-size:var(--text-md);font-weight:600;margin-bottom:var(--space-sm);">AI 分析失败</div>
               <div style="font-size:var(--text-sm);">${record.result?.error || '分析过程中出现错误，请稍后重试。'}</div>
             </div>

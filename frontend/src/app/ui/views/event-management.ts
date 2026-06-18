@@ -668,7 +668,7 @@ export class EventManagementPage extends LitElement {
       info: "var(--info, #3b82f6)",
       warning: "var(--warn, #f59e0b)",
       error: "var(--destructive, #ef4444)",
-      critical: "#8b5cf6",
+      critical: "var(--danger)",
     };
     return colors[severity] || "var(--muted)";
   }

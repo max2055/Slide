@@ -91,7 +91,7 @@ export class InstanceMetricsTab extends LitElement {
   `;
 
   private _getChartColor(metricId: string): string {
-    const palette = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+    const palette = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#409eff', '#ec4899', '#14b8a6', '#f97316'];
     let hash = 0;
     for (let i = 0; i < metricId.length; i++) {
       hash = ((hash << 5) - hash) + metricId.charCodeAt(i);
