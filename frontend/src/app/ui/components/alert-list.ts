@@ -77,6 +77,12 @@ export class AlertList extends LitElement {
     .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
     .tab-badge { position: absolute; top: 8px; right: 4px; min-width: 16px; height: 16px; padding: 0 var(--space-xs); background: var(--accent); color: var(--accent-foreground); border-radius: var(--radius-full); font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
     .form-input { padding: var(--space-sm) var(--space-md); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-base); color: var(--text); background: var(--card); box-sizing: border-box; }
+    .skeleton { background: var(--skeleton, var(--border)); border-radius: var(--radius-sm); animation: skeleton-pulse 1.5s ease-in-out infinite; }
+    .skeleton-line { height: 14px; border-radius: var(--radius-sm); }
+    .skeleton-line--short { width: 40%; }
+    .skeleton-line--medium { width: 65%; }
+    .skeleton-line--long { width: 85%; }
+    @keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
   `];
 
   @property({ type: Array }) alerts: Alert[] = [];
@@ -102,7 +108,17 @@ export class AlertList extends LitElement {
   }
 
   override render() {
-    if (this.loading) return html`<div class="loading">加载中...</div>`;
+    if (this.loading) return html`
+      <div style="padding:var(--space-lg);">
+        ${[1,2,3,4,5].map(() => html`
+          <div style="display:flex;gap:var(--space-md);padding:var(--space-md);border-bottom:1px solid var(--border);">
+            <div class="skeleton skeleton-line skeleton-line--short"></div>
+            <div class="skeleton skeleton-line skeleton-line--short"></div>
+            <div class="skeleton skeleton-line skeleton-line--long"></div>
+            <div class="skeleton skeleton-line skeleton-line--medium"></div>
+          </div>
+        `)}
+      </div>`;
     if (this.error) return html`<div class="loading" style="color:var(--destructive);">${this.error}</div>`;
 
     const filtered = this.alerts;
