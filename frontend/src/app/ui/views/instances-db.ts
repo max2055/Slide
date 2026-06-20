@@ -384,6 +384,7 @@ export class InstancesPage extends LitElement {
     .form-select,
     .form-textarea {
       width: 100%;
+      box-sizing: border-box;
       padding: var(--space-md) var(--space-md);
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
