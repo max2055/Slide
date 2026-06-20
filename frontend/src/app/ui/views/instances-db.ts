@@ -400,7 +400,7 @@ export class InstancesPage extends LitElement {
       border-radius: var(--radius-sm);
       font-size: var(--text-base);
       color: var(--muted);
-      background: var(--bg-elevated);
+      background: var(--bg-app);
     }
 
     .form-input:focus,
@@ -1105,20 +1105,21 @@ export class InstancesPage extends LitElement {
   private _renderTestDialog() {
     if (!this.showTestDialog || !this.testingInstance) return html``;
 
-    const statusText = {
-      idle: "输入密码后点击测试",
-      testing: "正在测试连接...",
-      success: "✅ " + this.listTestMessage,
-      error: "❌ " + this.listTestMessage,
-    };
-
     const isConnected = this.listTestStatus === "success" && this.listTestMessage !== "";
+    const isTesting = this.listTestStatus === "testing";
+    const hasError = this.listTestStatus === "error";
+
     const statusColor = {
       idle: "var(--muted)",
       testing: "var(--info)",
       success: "var(--ok)",
       error: "var(--danger)",
     };
+
+    const statusIcon = isTesting ? icons['loader']
+      : hasError ? icons['x-circle']
+      : this.listTestStatus === "success" ? icons['check-circle']
+      : null;
 
     return html`
       <app-dialog .open=${true} size="sm" title="测试连接 - ${this.testingInstance.name}" @app-dialog-close=${this._closeDialogs}>
@@ -1132,22 +1133,30 @@ export class InstancesPage extends LitElement {
           <div class="form-value">${this.testingInstance.username || '-'}</div>
         </app-form-field>
         ${isConnected
-          ? html`<div style="padding: 12px; background: var(--ok-subtle); border-radius: var(--radius-sm); margin-top: 16px; text-align: center; color: var(--ok); font-weight: 500;">✅ 实例已连接，无需重新输入密码</div>`
+          ? html`<div style="display:flex;align-items:center;gap:8px;padding:12px;background:var(--ok-subtle);border-radius:var(--radius-sm);margin-top:16px;color:var(--ok);font-size:var(--text-sm);font-weight:500;">
+              ${icons['check-circle']} 实例已连接，无需重新输入密码
+            </div>`
           : html`
             <app-form-field label="密码" required>
               <input class="form-input" type="password" autocomplete="new-password" .value=${this.testPassword} @input=${(e: any) => (this.testPassword = e.target.value)} placeholder="请输入数据库密码" />
             </app-form-field>
           `
         }
-        <div style="padding: 12px; background: var(--bg-elevated); border-radius: var(--radius-sm); margin-top: 16px;">
-          <div style="font-size: var(--text-sm); color: ${statusColor[this.listTestStatus]}; text-align: center;">
-            ${this.listTestStatus === "testing" ? "⏳ " : ""}${statusText[this.listTestStatus]}
-          </div>
-        </div>
-        <div slot="footer">
+        ${!isConnected
+          ? html`<div style="padding:12px;background:var(--bg-elevated);border-radius:var(--radius-sm);margin-top:${isConnected ? 0 : 16}px;">
+              <div style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:var(--text-sm);color:${statusColor[this.listTestStatus]};">
+                ${statusIcon ? html`<span style="display:flex;width:14px;height:14px;">${statusIcon}</span>` : ''}
+                ${isTesting ? '正在测试连接...'
+                : hasError ? this.listTestMessage
+                : this.listTestStatus === "success" ? this.listTestMessage
+                : '输入密码后点击测试'}
+              </div>
+            </div>`
+          : ''}
+        <div slot="footer" style="display:flex;justify-content:${isConnected ? 'center' : 'space-between'};align-items:center">
           <button class="btn" @click=${this._closeDialogs}>关闭</button>
-          ${isConnected ? nothing : html`<button class="btn primary" @click=${this._handleListTestConnection} ?disabled=${this.listTestStatus === "testing"}>
-            ${this.listTestStatus === "testing" ? "⏳ 测试中..." : "🔗 测试连接"}
+          ${isConnected ? nothing : html`<button class="btn primary" @click=${this._handleListTestConnection} ?disabled=${isTesting}>
+            ${isTesting ? html`${icons['loader']} 测试中...` : html`${icons['link']} 测试连接`}
           </button>`}
         </div>
       </app-dialog>
