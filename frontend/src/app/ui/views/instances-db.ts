@@ -367,7 +367,8 @@ export class InstancesPage extends LitElement {
     .form-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: var(--space-lg);
+      gap: var(--space-md) var(--space-lg);
+      margin-bottom: var(--space-md);
     }
 
 
@@ -1030,9 +1031,11 @@ export class InstancesPage extends LitElement {
           </app-form-field>
         </div>
 
-        <app-form-field label="主机地址" required>
-          <input class="form-input" type="text" .value=${this.formData.host} @input=${(e: any) => this._updateForm("host", e.target.value)} placeholder="如：localhost 或 192.168.1.100" />
-        </app-form-field>
+        <div class="form-row">
+          <app-form-field label="主机地址" required style="grid-column: 1 / -1;">
+            <input class="form-input" type="text" .value=${this.formData.host} @input=${(e: any) => this._updateForm("host", e.target.value)} placeholder="如：localhost 或 192.168.1.100" />
+          </app-form-field>
+        </div>
 
         <div class="form-row">
           <app-form-field label="用户名" required>
@@ -1043,23 +1046,27 @@ export class InstancesPage extends LitElement {
           </app-form-field>
         </div>
 
-        <app-form-field label="${this.formData.db_type === 'oracle' ? 'Oracle 数据库标识 (SID/Service Name)' : '数据库名'}" hint="${this.formData.db_type === 'oracle' ? '用于 Easy Connect 格式的数据库标识，支持 SID 或 Service Name' : '连接后默认使用的数据库'}">
-          <input class="form-input" type="text" .value=${this.formData.database_name} @input=${(e: any) => this._updateForm("database_name", e.target.value)} placeholder=${this.formData.db_type === 'oracle' ? '如：ORCL 或 pdb1.subnet.vcn.oraclevcn.com' : '默认数据库名'} />
-        </app-form-field>
+        <div class="form-row">
+          <app-form-field label="${this.formData.db_type === 'oracle' ? 'Oracle 数据库标识 (SID/Service Name)' : '数据库名'}" hint="${this.formData.db_type === 'oracle' ? '用于 Easy Connect 格式的数据库标识，支持 SID 或 Service Name' : '连接后默认使用的数据库'}" style="grid-column: 1 / -1;">
+            <input class="form-input" type="text" .value=${this.formData.database_name} @input=${(e: any) => this._updateForm("database_name", e.target.value)} placeholder=${this.formData.db_type === 'oracle' ? '如：ORCL 或 pdb1.subnet.vcn.oraclevcn.com' : '默认数据库名'} />
+          </app-form-field>
+        </div>
 
-        <app-form-field label="描述">
-          <textarea class="form-textarea" .value=${this.formData.description} @input=${(e: any) => this._updateForm("description", e.target.value)} placeholder="可选：添加实例描述信息"></textarea>
-        </app-form-field>
+        <div class="form-row">
+          <app-form-field label="描述" style="grid-column: 1 / -1;">
+            <textarea class="form-textarea" .value=${this.formData.description} @input=${(e: any) => this._updateForm("description", e.target.value)} placeholder="可选：添加实例描述信息"></textarea>
+          </app-form-field>
+        </div>
 
-        <div style="margin-bottom:var(--space-lg)">
-          <button class="btn-test ${this.testStatus === 'success' ? 'success' : this.testStatus === 'error' ? 'error' : ''}" @click=${this._handleTestConnection} ?disabled=${this.testStatus === 'testing'}>
+        ${this.testMessage ? html`<div class="test-result ${this.testStatus}">${this.testStatus === 'success' ? icons['check-circle'] : icons['x-circle']} ${this.testMessage}</div>` : ''}
+        <div slot="footer" style="display:flex;justify-content:space-between;align-items:center">
+          <button class="btn" @click=${this._handleTestConnection} ?disabled=${this.testStatus === 'testing'}>
             ${this.testStatus === 'testing' ? html`${icons['loader']} 测试中...` : html`${icons['link']} 测试连接`}
           </button>
-          ${this.testMessage ? html`<div class="test-result ${this.testStatus}">${this.testStatus === 'success' ? icons['check-circle'] : icons['x-circle']} ${this.testMessage}</div>` : ''}
-        </div>
-        <div slot="footer">
-          <button class="btn" @click=${this._closeDialogs}>取消</button>
-          <button class="btn primary" @click=${() => this._handleSubmit(isEdit)} ?disabled=${this.isSubmitting}>${this.isSubmitting ? '保存中...' : isEdit ? '保存修改' : '创建实例'}</button>
+          <div style="display:flex;gap:var(--space-md)">
+            <button class="btn" @click=${this._closeDialogs}>取消</button>
+            <button class="btn primary" @click=${() => this._handleSubmit(isEdit)} ?disabled=${this.isSubmitting}>${this.isSubmitting ? '保存中...' : isEdit ? '保存修改' : '创建实例'}</button>
+          </div>
         </div>
       </app-dialog>
     `;

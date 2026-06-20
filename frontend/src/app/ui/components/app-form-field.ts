@@ -70,7 +70,8 @@ export class AppFormField extends LitElement {
         }
         .required-mark {
           color: var(--danger, #dc2626);
-          margin-left: 2px;
+          margin-left: 4px;
+          vertical-align: middle;
         }
         .form-control {
           position: relative;
@@ -81,8 +82,8 @@ export class AppFormField extends LitElement {
         }
         .form-hint {
           font-size: var(--text-xs, 11px);
-          color: var(--muted, #6e6e73);
-          margin-top: var(--space-xs, 4px);
+          color: #999;
+          margin-top: 6px;
           line-height: 1.4;
         }
         .form-error {
