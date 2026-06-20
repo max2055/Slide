@@ -410,8 +410,18 @@ export class InstancesPage extends LitElement {
       box-shadow: 0 0 0 3px var(--accent-subtle);
     }
 
+    /* Override browser autofill light-blue background */
+    .form-input:-webkit-autofill,
+    .form-input:-webkit-autofill:hover,
+    .form-input:-webkit-autofill:focus {
+      -webkit-box-shadow: 0 0 0 30px var(--card, #fff) inset !important;
+      -webkit-text-fill-color: var(--text, #1a1a1e) !important;
+      caret-color: var(--text, #1a1a1e);
+      transition: background-color 5000s ease-in-out 0s;
+    }
+
     .form-textarea {
-      resize: vertical;
+      resize: none;
       min-height: 80px;
     }
 
