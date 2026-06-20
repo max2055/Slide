@@ -6,7 +6,7 @@
 - ✅ **v1.2 UI + AI + Docs** — Phases 90-99 (shipped 2026-05-20)
 - ✅ **v1.3 系统加固与体验优化** — Phases 100-107 (shipped 2026-05-22)
 - ✅ **v1.4 Agent 解耦与替换** — Phases 108-118 (shipped 2026-06-08)
-- 🚧 **v1.5 打磨与优化** — Phases 119+ (in progress)
+- 🚧 **v1.5 打磨与优化** — Phases 119+ (Phases 119-120 complete)
 
 ## Phases
 
@@ -612,15 +612,17 @@ Plans:
 - [x] 118-01-PLAN.md — 告警系统 Bug 修复（可用性误报、QPS 阈值绕过、API metric_name null）
 - [x] 118-02-PLAN.md — Agent DB 连接工具（list_database_instances, get_instance_connection）
 
-### Phase 119: 根据代码审查报告清理代码：修复P0关键Bug、移除~9600行死代码、统一设计模式、修复前后端路由不匹配等不闭环问题
+### Phase 119: 代码清理 — P0 Bug 修复 + ~9,600 行死代码移除 + 前后端路由修复
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** 根据 2026-06-10 代码审查报告，修复关键 Bug、移除死代码、统一设计模式、修复前后端路由不匹配
+**Requirements**: P0-BUG-01, P1-ROUTE-01, P1-SEC-01
 **Depends on:** Phase 118
-**Plans:** 8 plans
+**Plans:** 1/1 plan complete
+**Completed:** 2026-06-10
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 119 to break down)
+- [x] 119-01-PLAN.md — P0 Bug 修复（backfill 无限循环、db_version 列缺失、API_PORT 兼容）+ P1 修复（路由匹配、ENCRYPTION_KEY 安全、this 绑定、streamIdleTimeoutS、skills 路径）+ 死代码清理（-9,247 行）+ UAT（8/9 passed, sessions.patch 发现并修复）
+**UI hint**: no
 
 ### Phase 120: 全面优化系统UI
 
@@ -664,3 +666,5 @@ Plans:
 
 | 117. OpenClaw收尾 | v1.4 | 3/3 | Complete    | 2026-06-02 |
 | 118. Agent DB 连接 + 告警完善 | v1.4 | 2/2 | Complete    | 2026-06-08 |
+| 119. 代码清理 (P0 Bug + 死代码) | v1.5 | 1/1 | Complete    | 2026-06-10 |
+| 120. 全面优化系统 UI | v1.5 | 8/8 | Complete    | 2026-06-20 |
