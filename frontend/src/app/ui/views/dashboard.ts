@@ -744,8 +744,8 @@ export class DashboardPage extends LitElement {
 
         <!-- Row 3: Alert Panel -->
         <div class="dashboard__panels">
-          <app-card variant="default">
-            <div slot="header">
+          <div class="chart-card">
+            <div class="chart-card__header">
               <span class="chart-card__title">${icons['triangle-alert']} 待处理告警</span>
               <span style="font-size:var(--text-sm);color:var(--accent);cursor:pointer;" @click=${() => this._navigateTo("alerts")}>查看全部 →</span>
             </div>
@@ -771,7 +771,7 @@ export class DashboardPage extends LitElement {
                   </app-empty-state>
                 `
             }
-          </app-card>
+          </div>
 
         </div>
       </div>
