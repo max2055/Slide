@@ -14,8 +14,8 @@ export class StatCard extends LitElement {
 
     .stat-card {
       display: grid;
-      gap: 6px;
-      padding: 16px;
+      gap: 4px;
+      padding: 14px 16px;
       border: 1px solid var(--border);
       border-radius: var(--radius-lg);
       background: var(--card);
@@ -81,7 +81,7 @@ export class StatCard extends LitElement {
 
     .dot.ok { background: var(--ok); }
     .dot.warn { background: var(--warn); }
-    .dot.danger { background: var(--destructive); }
+    .dot.danger { background: var(--danger); }
 
     /* Variant indicator dot (left border style) */
     .stat-card.variant-ok {
@@ -93,7 +93,7 @@ export class StatCard extends LitElement {
     }
 
     .stat-card.variant-danger {
-      border-left: 3px solid var(--destructive);
+      border-left: 3px solid var(--danger);
     }
 
     .stat-card.variant-info {
@@ -113,7 +113,7 @@ export class StatCard extends LitElement {
 
     @media (max-width: 640px) {
       .stat-card {
-        padding: 12px;
+        padding: 12px 14px;
       }
       .stat-card__value {
         font-size: 18px;

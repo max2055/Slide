@@ -92,7 +92,7 @@ export class DashboardPage extends LitElement {
     .chart-card__controls {
       display: flex;
       align-items: center;
-      gap: var(--space-sm);
+      gap: var(--space-md);
     }
 
     .chart-container {
@@ -112,9 +112,23 @@ export class DashboardPage extends LitElement {
     }
 
     .chart-current-total {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
       font-size: var(--text-sm);
       color: var(--muted);
       padding: var(--space-xs) 0 0 0;
+    }
+
+    .chart-current-total .total-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 10px;
+      background: var(--accent-subtle);
+      border-radius: var(--radius-sm);
+      font-weight: 600;
+      font-size: var(--text-md);
+      color: var(--accent);
     }
 
     .chart-current-total strong {
@@ -183,6 +197,7 @@ export class DashboardPage extends LitElement {
       display: grid;
       grid-template-columns: 1fr;
       gap: var(--space-md);
+      margin-top: var(--space-sm);
     }
 
 
@@ -196,7 +211,7 @@ export class DashboardPage extends LitElement {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 10px var(--space-md);
+      padding: 8px var(--space-md);
       background: var(--bg-elevated);
       border-radius: var(--radius-sm);
       transition: background 0.15s ease;
@@ -256,6 +271,9 @@ export class DashboardPage extends LitElement {
     .status-item__time {
       font-size: var(--text-sm);
       color: var(--muted);
+      flex-shrink: 0;
+      min-width: 72px;
+      text-align: right;
     }
 
 
@@ -491,13 +509,13 @@ export class DashboardPage extends LitElement {
         },
       },
       legend: {
-        orient: "vertical",
-        right: 0,
-        top: "middle",
-        itemGap: 8,
+        orient: "horizontal",
+        left: "center",
+        bottom: 0,
+        itemGap: 16,
         itemWidth: 8,
         itemHeight: 8,
-        textStyle: { color: "#999", fontSize: 12 },
+        textStyle: { color: "#777", fontSize: 12 },
         formatter: (name: string) => {
           const item = data.find(d => d.name === name);
           const pct = item ? ((item.value / total) * 100).toFixed(1) : "0";
@@ -506,8 +524,8 @@ export class DashboardPage extends LitElement {
       },
       series: [{
         type: "pie",
-        radius: "70%",
-        center: ["50%", "50%"],
+        radius: "75%",
+        center: ["50%", "48%"],
         avoidLabelOverlap: true,
         itemStyle: { borderRadius: 4, borderColor: "#fff", borderWidth: 2 },
         label: { show: false },
@@ -544,14 +562,14 @@ export class DashboardPage extends LitElement {
         type: "category",
         data: data.time,
         boundaryGap: false,
-        axisLabel: { color: "#999", fontSize: 11 },
-        axisLine: { lineStyle: { color: "#e0e0e0" } },
+        axisLabel: { color: "#777", fontSize: 11 },
+        axisLine: { lineStyle: { color: "#d0d0d0" } },
       },
       yAxis: {
         type: "value",
         name: "GB",
-        axisLabel: { color: "#999", fontSize: 11 },
-        splitLine: { lineStyle: { color: "#e0e0e0", type: "dashed" } },
+        axisLabel: { color: "#777", fontSize: 11 },
+        splitLine: { lineStyle: { color: "#d0d0d0", type: "dashed" } },
       },
       series: [{
         type: "line",
@@ -674,7 +692,6 @@ export class DashboardPage extends LitElement {
             label="活跃告警"
             value="${this.alertSummary?.unread ?? 0}"
             hint="严重 ${this.alertSummary?.critical ?? 0} · 警告 ${this.alertSummary?.warning ?? 0}"
-            variant="warn"
           ></stat-card>
           <stat-card
             label="AI 分析总数"
@@ -717,7 +734,7 @@ export class DashboardPage extends LitElement {
             </div>
             ${this.capacityTrend && this.capacityTrend.trend.length > 0
               ? html`
-                  <div class="chart-current-total">当前总量: <strong>${this._formatBytes(this.capacityTrend.current_total_gb)}</strong></div>
+                  <div class="chart-current-total">当前总量 <span class="total-badge">${this._formatBytes(this.capacityTrend.current_total_gb)}</span></div>
                   <div class="chart-container trend-chart-container"></div>
                 `
               : html`<div class="chart-empty-state">暂无容量数据，请确保监控采集已启用</div>`
