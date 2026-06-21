@@ -17,7 +17,7 @@ export type CardVariant = "default" | "elevated" | "bordered";
 export class AppCard extends LitElement {
   @property() variant: CardVariant = "default";
 
-  createRenderRoot() { return this; }
+  createRenderRoot() { return this.attachShadow({ mode: "open" }); }
 
   private _hasHeader = false;
   private _hasFooter = false;
@@ -37,7 +37,7 @@ export class AppCard extends LitElement {
   render() {
     return html`
       <style>
-        app-card { display: block; }
+        :host { display: block; }
         .card {
           background: var(--card);
           border: 1px solid var(--border);
