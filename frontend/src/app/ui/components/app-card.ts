@@ -19,19 +19,15 @@ export class AppCard extends LitElement {
 
   createRenderRoot() { return this.attachShadow({ mode: "open" }); }
 
-  private _hasHeader = false;
-  private _hasFooter = false;
-
-  private _onSlotChange(e: Event, which: "header" | "footer") {
+  private _onHeaderSlotChange(e: Event) {
     const slot = e.target as HTMLSlotElement;
-    const has = slot.assignedNodes().length > 0;
-    if (which === "header" && has !== this._hasHeader) {
-      this._hasHeader = has;
-      this.requestUpdate();
-    } else if (which === "footer" && has !== this._hasFooter) {
-      this._hasFooter = has;
-      this.requestUpdate();
-    }
+    const container = slot.parentElement;
+    if (container) container.classList.toggle("empty", slot.assignedNodes().length === 0);
+  }
+  private _onFooterSlotChange(e: Event) {
+    const slot = e.target as HTMLSlotElement;
+    const container = slot.parentElement;
+    if (container) container.classList.toggle("empty", slot.assignedNodes().length === 0);
   }
 
   render() {
@@ -63,7 +59,6 @@ export class AppCard extends LitElement {
           padding-bottom: var(--space-md);
           margin-bottom: var(--space-md);
         }
-        .card-header[hidden] { display: none; }
         .card-footer {
           border-top: 1px solid var(--border);
           padding-top: var(--space-md);
@@ -72,15 +67,15 @@ export class AppCard extends LitElement {
           justify-content: flex-end;
           gap: var(--space-sm);
         }
-        .card-footer[hidden] { display: none; }
+        .card-footer.empty { display: none; }
       </style>
       <div class="card card--${this.variant}">
-        <div class="card-header" ?hidden=${!this._hasHeader}>
-          <slot name="header" @slotchange=${(e: Event) => this._onSlotChange(e, "header")}></slot>
+        <div class="card-header">
+          <slot name="header" @slotchange=${this._onHeaderSlotChange}></slot>
         </div>
         <div class="card-body"><slot></slot></div>
-        <div class="card-footer" ?hidden=${!this._hasFooter}>
-          <slot name="footer" @slotchange=${(e: Event) => this._onSlotChange(e, "footer")}></slot>
+        <div class="card-footer">
+          <slot name="footer" @slotchange=${this._onFooterSlotChange}></slot>
         </div>
       </div>
     `;
