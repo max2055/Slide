@@ -52,6 +52,13 @@ export class AppCard extends LitElement {
           box-shadow: none;
         }
         .card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: var(--space-sm);
+          font-size: var(--text-md);
+          font-weight: 600;
+          color: var(--text-strong);
           border-bottom: 1px solid var(--border);
           padding-bottom: var(--space-md);
           margin-bottom: var(--space-md);
