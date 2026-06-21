@@ -55,39 +55,74 @@ export class InstanceOverviewTab extends LitElement {
   @property({ type: Object }) metricsHistory: Record<string, number[]> = {};
 
   static styles = css`
+    /* Hero KPIs */
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: var(--space-lg);
+      margin-bottom: var(--space-lg);
+    }
+    .hero-stat {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-xl);
+      text-align: center;
+    }
+    .hero-stat__value {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+      margin-bottom: 4px;
+    }
+    .hero-stat__label {
+      font-size: var(--text-sm);
+      color: var(--muted);
+      font-weight: 500;
+    }
+    /* Instance Info */
     .overview-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      gap: var(--space-lg);
+      gap: var(--space-md);
     }
     .overview-item {
       display: flex;
       flex-direction: column;
-      gap: var(--space-sm);
-      padding: var(--space-lg);
+      gap: 4px;
+      padding: var(--space-md) var(--space-lg);
       background: var(--bg-elevated);
-      border-radius: var(--radius-md);
+      border-radius: var(--radius-sm);
       border: 1px solid var(--border);
     }
     .overview-label {
-      font-size: var(--text-sm);
+      font-size: 11px;
       color: var(--muted);
       text-transform: uppercase;
-      letter-spacing: 0.02em;
+      letter-spacing: 0.04em;
+      font-weight: 600;
     }
     .overview-value {
-      font-size: var(--text-lg);
+      font-size: var(--text-md);
       font-weight: 600;
       color: var(--text-strong);
     }
     .overview-value svg { width: 14px; height: 14px; vertical-align: -1px; }
     .overview-value.ok { color: var(--ok); }
     .overview-value.warn { color: var(--warn); }
-    .overview-value.danger { color: var(--destructive); }
+    .overview-value.danger { color: var(--danger); }
+    /* Mini charts row */
+    .mini-charts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-md);
+      margin-top: var(--space-lg);
+    }
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: var(--space-lg);
+      gap: var(--space-md);
     }
     .stat-box {
       background: var(--bg-elevated);
@@ -97,14 +132,17 @@ export class InstanceOverviewTab extends LitElement {
       text-align: center;
     }
     .stat-value {
-      font-size: var(--text-2xl);
+      font-size: 22px;
       font-weight: 700;
-      color: var(--text-strong);
-      margin-bottom: var(--space-xs);
+      line-height: 1.15;
+      margin-bottom: 2px;
     }
     .stat-label {
-      font-size: var(--text-sm);
+      font-size: 11px;
       color: var(--muted);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
     }
     .stat-label-wrapper {
       position: relative;
@@ -203,6 +241,25 @@ export class InstanceOverviewTab extends LitElement {
     };
 
     return html`
+      <!-- Hero KPIs -->
+      ${this.metrics ? html`
+        <div class="hero-stats">
+          <div class="hero-stat">
+            <div class="hero-stat__value" style="color: var(--info);">${(this.metrics.qps ?? 0).toLocaleString()}</div>
+            <div class="hero-stat__label">QPS · 每秒查询</div>
+          </div>
+          <div class="hero-stat">
+            <div class="hero-stat__value" style="color: var(--warn);">${(this.metrics.tps ?? 0).toLocaleString()}</div>
+            <div class="hero-stat__label">TPS · 每秒事务</div>
+          </div>
+          <div class="hero-stat">
+            <div class="hero-stat__value" style="color: var(--ok);">${(this.metrics.connections ?? 0).toLocaleString()}</div>
+            <div class="hero-stat__label">活跃连接</div>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Instance Info -->
       <app-card>
         <span slot="header">${icons['database']} 实例信息</span>
         <div class="overview-grid">
@@ -248,36 +305,27 @@ export class InstanceOverviewTab extends LitElement {
           ` : ''}
         </div>
         ${inst.description ? html`
-          <div style="margin-top:20px;padding-top:20px;border-top:1px solid var(--border);">
+          <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
             <span class="overview-label">描述</span>
-            <p style="margin:8px 0 0;font-size:var(--text-md);color:var(--text);line-height:1.6;">${inst.description}</p>
+            <p style="margin:6px 0 0;font-size:var(--text-sm);color:var(--text);line-height:1.6;">${inst.description}</p>
           </div>` : ""}
       </app-card>
 
-      ${this.metrics ? html`
-        <app-card style="margin-top: var(--space-lg);">
-          <span slot="header">${icons['trending-up']} 实时指标</span>
-          <div class="stats-grid">
-            ${this._renderStatBox(this.metrics.qps, "var(--info)", "QPS", "qps")}
-            ${this._renderStatBox(this.metrics.tps, "var(--warn)", "TPS", "tps")}
-            ${this._renderStatBox(this.metrics.connections, "var(--ok)", "活跃连接", "connections")}
-          </div>
-          ${this.overviewHistory && this.overviewHistory.time.length > 0 ? html`
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:var(--space-lg)">
-              ${this.metricRegistry.filter(d => d.is_collected).slice(0, 4).map(def => {
-                const data = this.overviewHistory!.metrics[def.id];
-                if (!data || data.length === 0) return nothing;
-                return html`
-                  <metric-chart compact height="60px"
-                    .timeData=${this.overviewHistory!.time}
-                    .series=${[{ name: def.name, data, color: this._getChartColor(def.id) }]}
-                  ></metric-chart>
-                `;
-              })}
-            </div>
-          ` : nothing}
-        </app-card>
-      ` : ""}
+      <!-- Mini time-series charts -->
+      ${this.overviewHistory && this.overviewHistory.time.length > 0 ? html`
+        <div class="mini-charts">
+          ${this.metricRegistry.filter(d => d.is_collected).slice(0, 4).map(def => {
+            const data = this.overviewHistory!.metrics[def.id];
+            if (!data || data.length === 0) return nothing;
+            return html`
+              <metric-chart compact height="80px"
+                .timeData=${this.overviewHistory!.time}
+                .series=${[{ name: def.name, data, color: this._getChartColor(def.id) }]}
+              ></metric-chart>
+            `;
+          })}
+        </div>
+      ` : nothing}
     `;
   }
 }

@@ -84,7 +84,7 @@ export class InstanceDetailPage extends LitElement {
     .progress-fill { height:100%;border-radius:var(--radius-full); }
     .progress-fill.ok { background:linear-gradient(90deg,var(--ok),#22c55e); }
     .progress-fill.warn { background:linear-gradient(90deg,var(--warn),#f59e0b); }
-    .progress-fill.danger { background:linear-gradient(90deg,var(--destructive),#ef4444); }
+    .progress-fill.danger { background:linear-gradient(90deg,var(--danger),#ef4444); }
   `;
 
   @state() private instanceId: number | null = null;
@@ -373,28 +373,27 @@ export class InstanceDetailPage extends LitElement {
   }
 
   private _renderDiagnosisHistory() {
-    if (this.diagnosisHistoryLoading) return html`<app-card style="margin-bottom:var(--space-lg);"><span slot="header">AI 诊断历史</span><div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:40px;color:var(--muted);"><div class="spinner"></div><span>加载中...</span></div></app-card>`;
+    // Only show when there's history or an active diagnosis
+    if (this.diagnosisHistory.length === 0 && this.diagnosisStatus !== "running") return nothing;
+
+    if (this.diagnosisHistoryLoading) return html`<app-card style="margin-bottom:var(--space-lg);"><span slot="header">AI 诊断历史</span><div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:24px;color:var(--muted);"><div class="spinner"></div><span>加载中...</span></div></app-card>`;
 
     return html`
       <app-card style="margin-bottom:var(--space-lg);">
         <span slot="header">AI 诊断历史 <span style="font-size:var(--text-xs);color:var(--muted);">最近 ${this.diagnosisHistory.length} 条</span></span>
-        ${this.diagnosisHistory.length === 0 ? html`
-          <div style="text-align:center;padding:40px;color:var(--muted);"><span style="font-size:var(--text-md);">暂无诊断记录</span></div>
-        ` : html`
-          <div class="diagnosis-history-list">
-            ${this.diagnosisHistory.map((r: any) => {
-              const statusStyle = r.status === "completed" ? { cls: "ok", label: "已完成" } : r.status === "failed" ? { cls: "danger", label: "分析失败" } : { cls: "info", label: "进行中" };
-              const raw = typeof r.result === 'string' ? r.result : "";
-              const summary = raw.replace(/^#+\s*/gm, "").trim().substring(0, 80);
-              return html`<div class="diagnosis-history-item" @click=${() => { this.activeDiagnosisRecord = r; this.showDiagnosisModal = true; }}>
-                <app-badge variant=${statusStyle.cls} style="font-size:var(--text-xs);padding:2px 8px;flex-shrink:0;">${statusStyle.label}</app-badge>
-                <span class="diagnosis-time">${this._formatDiagnosisTime(r.updated_at || r.created_at)}</span>
-                <span class="diagnosis-summary-text" title="${summary}">${summary}${raw.length > 80 ? "..." : ""}</span>
-                ${icons['chevron-right']}
-              </div>`;
-            })}
-          </div>
-        `}
+        <div class="diagnosis-history-list">
+          ${this.diagnosisHistory.map((r: any) => {
+            const statusStyle = r.status === "completed" ? { cls: "ok", label: "已完成" } : r.status === "failed" ? { cls: "danger", label: "分析失败" } : { cls: "info", label: "进行中" };
+            const raw = typeof r.result === 'string' ? r.result : "";
+            const summary = raw.replace(/^#+\s*/gm, "").trim().substring(0, 80);
+            return html`<div class="diagnosis-history-item" @click=${() => { this.activeDiagnosisRecord = r; this.showDiagnosisModal = true; }}>
+              <app-badge variant=${statusStyle.cls} style="font-size:var(--text-xs);padding:2px 8px;flex-shrink:0;">${statusStyle.label}</app-badge>
+              <span class="diagnosis-time">${this._formatDiagnosisTime(r.updated_at || r.created_at)}</span>
+              <span class="diagnosis-summary-text" title="${summary}">${summary}${raw.length > 80 ? "..." : ""}</span>
+              ${icons['chevron-right']}
+            </div>`;
+          })}
+        </div>
       </app-card>`;
   }
 
@@ -427,7 +426,7 @@ export class InstanceDetailPage extends LitElement {
             <thead><tr><th>SQL 语句</th><th style="width:100px;text-align:center;">平均耗时</th><th style="width:100px;text-align:center;">最大耗时</th><th style="width:90px;text-align:center;">执行次数</th><th style="width:140px;text-align:center;">最后出现</th></tr></thead>
             <tbody>${this.slowQueries.map(q => html`<tr>
               <td><div class="sql-code" title="${q.sql_text}">${q.sql_text.substring(0, 80)}${q.sql_text.length > 80 ? "..." : ""}</div></td>
-              <td style="text-align:center;"><span style="color:${Number(q.avg_time_ms) > 1000 ? 'var(--destructive)' : Number(q.avg_time_ms) > 100 ? 'var(--warn)' : 'var(--ok)'};font-weight:600;">${Number(q.avg_time_ms).toFixed(2)} ms</span></td>
+              <td style="text-align:center;"><span style="color:${Number(q.avg_time_ms) > 1000 ? 'var(--danger)' : Number(q.avg_time_ms) > 100 ? 'var(--warn)' : 'var(--ok)'};font-weight:600;">${Number(q.avg_time_ms).toFixed(2)} ms</span></td>
               <td style="text-align:center;">${Number(q.max_time_ms).toFixed(2)} ms</td>
               <td style="text-align:center;">${Number(q.execution_count).toLocaleString()}</td>
               <td style="text-align:center;">${new Date(q.last_seen).toLocaleString("zh-CN")}</td>
@@ -448,7 +447,7 @@ export class InstanceDetailPage extends LitElement {
             <tbody>${this.sessions.map(s => html`<tr>
               <td style="text-align:center;">${s.id}</td><td>${s.user}</td><td>${s.host}</td><td style="text-align:center;">${s.database || "—"}</td>
               <td style="text-align:center;"><span style="padding:2px 8px;background:var(--bg-muted);border-radius:var(--radius-sm);font-size:var(--text-xs);">${s.command}</span></td>
-              <td style="text-align:center;"><span style="color:${s.time_seconds > 60 ? 'var(--destructive)' : s.time_seconds > 10 ? 'var(--warn)' : 'var(--ok)'};font-weight:600;">${s.time_seconds}s</span></td>
+              <td style="text-align:center;"><span style="color:${s.time_seconds > 60 ? 'var(--danger)' : s.time_seconds > 10 ? 'var(--warn)' : 'var(--ok)'};font-weight:600;">${s.time_seconds}s</span></td>
               <td><div class="sql-code" title="${s.query||""}">${s.query ? (s.query.substring(0, 40) + (s.query.length > 40 ? "..." : "")) : "—"}</div></td>
             </tr>`)}</tbody>
           </table>
@@ -464,7 +463,7 @@ export class InstanceDetailPage extends LitElement {
       <app-card>
         <span slot="header">存储总览：${cap.total_size_gb.toFixed(2)} GB</span>
         ${cap.databases && cap.databases.length > 0 ? html`<h4 style="font-size:var(--text-md);color:var(--text-strong);margin:0 0 16px 0;">数据库</h4><div class="capacity-list">${cap.databases.map(db => html`<div class="capacity-item"><div class="capacity-icon">${icons['database']}</div><div class="capacity-info"><div class="capacity-name">${db.name}</div><div class="capacity-meta">${db.size_gb.toFixed(2)} GB${db.table_count ? ` · ${db.table_count} 张表` : ""}</div></div></div>`)}</div>` : ""}
-        ${cap.tablespaces && cap.tablespaces.length > 0 ? html`<h4 style="font-size:var(--text-md);color:var(--text-strong);margin:24px 0 16px 0;">表空间</h4><div class="capacity-list">${cap.tablespaces.map(ts => html`<div class="capacity-item"><div class="capacity-icon">${icons['package']}</div><div class="capacity-info"><div class="capacity-name">${ts.name}</div><div class="capacity-meta">${ts.size_gb.toFixed(2)} GB / ${ts.max_size_gb?.toFixed(2) || "∞"} GB</div></div>${ts.usage_percent !== undefined ? html`<div class="capacity-bar-wrap"><div class="capacity-percent" style="color:${ts.usage_percent > 90 ? 'var(--destructive)' : ts.usage_percent > 70 ? 'var(--warn)' : 'var(--ok)'}">${ts.usage_percent.toFixed(1)}%</div><div class="progress-bar"><div class="progress-fill ${ts.usage_percent > 90 ? 'danger' : ts.usage_percent > 70 ? 'warn' : 'ok'}" style="width:${ts.usage_percent}%"></div></div></div>` : ""}</div>`)}</div>` : ""}
+        ${cap.tablespaces && cap.tablespaces.length > 0 ? html`<h4 style="font-size:var(--text-md);color:var(--text-strong);margin:24px 0 16px 0;">表空间</h4><div class="capacity-list">${cap.tablespaces.map(ts => html`<div class="capacity-item"><div class="capacity-icon">${icons['package']}</div><div class="capacity-info"><div class="capacity-name">${ts.name}</div><div class="capacity-meta">${ts.size_gb.toFixed(2)} GB / ${ts.max_size_gb?.toFixed(2) || "∞"} GB</div></div>${ts.usage_percent !== undefined ? html`<div class="capacity-bar-wrap"><div class="capacity-percent" style="color:${ts.usage_percent > 90 ? 'var(--danger)' : ts.usage_percent > 70 ? 'var(--warn)' : 'var(--ok)'}">${ts.usage_percent.toFixed(1)}%</div><div class="progress-bar"><div class="progress-fill ${ts.usage_percent > 90 ? 'danger' : ts.usage_percent > 70 ? 'warn' : 'ok'}" style="width:${ts.usage_percent}%"></div></div></div>` : ""}</div>`)}</div>` : ""}
         <h4 style="font-size:var(--text-md);color:var(--text-strong);margin:24px 0 16px 0;">最大表（Top ${cap.top_tables.length}）</h4><div class="capacity-list">${cap.top_tables.map(t => html`<div class="capacity-item"><div class="capacity-icon">${icons['file-text']}</div><div class="capacity-info"><div class="capacity-name">${t.name}</div><div class="capacity-meta">${t.size_gb.toFixed(2)} GB${t.row_count ? ` · ${t.row_count.toLocaleString()} 行` : ""}</div></div></div>`)}</div>
       </app-card>`;
   }
