@@ -26,8 +26,8 @@ export class InstanceMetricsTab extends LitElement {
   static styles = css`
     .metrics-dashboard {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: var(--space-lg);
+      grid-template-columns: repeat(3, 1fr);
+      gap: var(--space-md);
     }
     .metric-card {
       background: var(--card);
@@ -83,7 +83,7 @@ export class InstanceMetricsTab extends LitElement {
     }
     .progress-fill.ok { background: linear-gradient(90deg, var(--ok), #22c55e); }
     .progress-fill.warn { background: linear-gradient(90deg, var(--warn), #f59e0b); }
-    .progress-fill.danger { background: linear-gradient(90deg, var(--destructive), #ef4444); }
+    .progress-fill.danger { background: linear-gradient(90deg, var(--danger), #ef4444); }
     .empty-state { text-align: center; padding: 60px var(--space-xl); }
     .empty-title { font-size: var(--text-lg); font-weight: 600; color: var(--text-strong); margin-bottom: var(--space-sm); }
     .empty-desc { font-size: var(--text-md); color: var(--muted); }
@@ -109,13 +109,13 @@ export class InstanceMetricsTab extends LitElement {
 
   private _getMetricColor(value: number, metricDef?: MetricDef): string {
     if (!metricDef?.threshold_template) {
-      return value > 80 ? 'var(--destructive)' : value > 60 ? 'var(--warn)' : 'var(--text-strong)';
+      return value > 80 ? 'var(--danger)' : value > 60 ? 'var(--warn)' : 'var(--text-strong)';
     }
     const tpl = metricDef.threshold_template;
     const higherIsWorse = metricDef.higher_is_worse ?? true;
     const exceeds = higherIsWorse ? (v: number, t: number) => v >= t : (v: number, t: number) => v <= t;
-    if (tpl.critical != null) { const cv = this._parseThresholdValue(tpl.critical); if (cv !== null && exceeds(value, cv)) return 'var(--destructive)'; }
-    if (tpl.error != null) { const ev = this._parseThresholdValue(tpl.error); if (ev !== null && exceeds(value, ev)) return 'var(--destructive)'; }
+    if (tpl.critical != null) { const cv = this._parseThresholdValue(tpl.critical); if (cv !== null && exceeds(value, cv)) return 'var(--danger)'; }
+    if (tpl.error != null) { const ev = this._parseThresholdValue(tpl.error); if (ev !== null && exceeds(value, ev)) return 'var(--danger)'; }
     if (tpl.warning != null) { const wv = this._parseThresholdValue(tpl.warning); if (wv !== null && exceeds(value, wv)) return 'var(--warn)'; }
     return 'var(--text-strong)';
   }
@@ -197,7 +197,7 @@ export class InstanceMetricsTab extends LitElement {
 
     return html`
       ${Array.from(groups.entries()).map(([category, defs]) => html`
-        <app-card>
+        <app-card style="margin-bottom:var(--space-lg);">
           <span slot="header">${icons['bar-chart']} ${category}</span>
           <div class="metrics-dashboard">
             ${defs.map(def => this._renderDynamicCard(def))}
