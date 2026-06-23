@@ -38,8 +38,8 @@ export class AppCard extends LitElement {
           background: var(--card);
           border: 1px solid var(--border);
           border-radius: var(--radius-md);
-          padding: var(--space-lg);
           box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+          overflow: hidden;
         }
         .card--elevated {
           box-shadow: var(--shadow-md);
@@ -56,23 +56,27 @@ export class AppCard extends LitElement {
           font-size: var(--text-md);
           font-weight: 600;
           color: var(--text-strong);
+          background: var(--bg-elevated);
           border-bottom: 1px solid var(--border);
-          padding-bottom: var(--space-md);
-          margin-bottom: var(--space-md);
+          padding: var(--space-md) var(--space-lg);
         }
+        .card-header.empty { display: none; }
         .card-header ::slotted(svg) {
           width: 16px;
           height: 16px;
           opacity: 0.72;
           vertical-align: -2px;
         }
+        .card-body {
+          padding: var(--space-lg);
+        }
         .card-footer {
           border-top: 1px solid var(--border);
-          padding-top: var(--space-md);
-          margin-top: var(--space-md);
+          padding: var(--space-md) var(--space-lg);
           display: flex;
           justify-content: flex-end;
           gap: var(--space-sm);
+          background: var(--bg-elevated);
         }
         .card-footer.empty { display: none; }
       </style>
