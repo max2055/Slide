@@ -147,7 +147,7 @@ export class InstanceTrendChart extends LitElement {
                       .timeData=${this.trendData!.time}
                       .series=${[{ name: def.name, data, color: this._getChartColor(def.id) }]}
                       .thresholds=${this._buildThresholds(def.id)}
-                      percentage=${def.unit === '%'}
+                      .percentage=${def.unit === '%'}
                       height="280px"
                       yAxisLabel=${def.unit}
                     ></metric-chart>
