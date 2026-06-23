@@ -95,6 +95,11 @@ export class InstanceOverviewTab extends LitElement {
       background: var(--bg-elevated);
       border-radius: var(--radius-sm);
       border: 1px solid var(--border);
+      transition: all 0.15s ease;
+    }
+    .overview-item:hover {
+      border-color: var(--border-strong);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
     }
     .overview-label {
       font-size: 11px;

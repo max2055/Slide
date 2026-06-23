@@ -39,6 +39,7 @@ export class AppCard extends LitElement {
           border: 1px solid var(--border);
           border-radius: var(--radius-md);
           padding: var(--space-lg);
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
         }
         .card--elevated {
           box-shadow: var(--shadow-md);
@@ -58,6 +59,12 @@ export class AppCard extends LitElement {
           border-bottom: 1px solid var(--border);
           padding-bottom: var(--space-md);
           margin-bottom: var(--space-md);
+        }
+        .card-header ::slotted(svg) {
+          width: 16px;
+          height: 16px;
+          opacity: 0.72;
+          vertical-align: -2px;
         }
         .card-footer {
           border-top: 1px solid var(--border);

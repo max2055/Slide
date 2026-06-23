@@ -35,6 +35,12 @@ export class InstanceMetricsTab extends LitElement {
       border-radius: var(--radius-lg);
       padding: var(--space-xl);
       overflow: hidden;
+      position: relative;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .metric-card:hover {
+      border-color: var(--border-strong);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
     }
     .metric-card::before {
       content: '';
@@ -42,6 +48,11 @@ export class InstanceMetricsTab extends LitElement {
       top: 0; left: 0; right: 0; height: 3px;
       background: var(--accent);
     }
+    .metric-card.cat-performance::before { background: var(--info); }
+    .metric-card.cat-resource::before { background: var(--warn); }
+    .metric-card.cat-storage::before { background: var(--danger); }
+    .metric-card.cat-availability::before { background: var(--ok); }
+    .metric-card.cat-security::before { background: var(--accent); }
     .metric-header {
       display: flex;
       justify-content: space-between;
@@ -146,10 +157,11 @@ export class InstanceMetricsTab extends LitElement {
   private _renderDynamicCard(def: MetricDef) {
     const value = this.metrics?.[def.id] ?? this.metrics?.metrics_data?.[def.id];
     const chartColor = this._getChartColor(def.id);
+    const catClass = def.category ? `cat-${def.category.toLowerCase().replace(/\s+/g, '-')}` : '';
 
     if (value == null) {
       return html`
-        <div class="metric-card" style="opacity:0.5;position:relative;">
+        <div class="metric-card ${catClass}" style="opacity:0.5;">
           <div class="metric-header"><span class="metric-label">${def.name}</span></div>
           <div class="metric-value-row"><span class="metric-value" style="color:var(--muted);font-size:16px;">暂无数据</span></div>
           ${this.metricsHistory[def.id]?.length >= 2 ? this._renderSparkline(this.metricsHistory[def.id], chartColor) : html`<div style="height:40px"></div>`}
@@ -161,7 +173,7 @@ export class InstanceMetricsTab extends LitElement {
     const isPercent = def.unit === '%';
 
     return html`
-      <div class="metric-card" style="position:relative;">
+      <div class="metric-card ${catClass}">
         <div class="metric-header"><span class="metric-label">${def.name}</span></div>
         <div class="metric-value-row">
           <span class="metric-value" style="color:${this._getMetricColor(val, def)};">${val.toFixed(1)}</span>

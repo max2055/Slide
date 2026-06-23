@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
 import "./metric-chart.js";
+import "./app-card.js";
 
 interface MetricDef {
   id: string;
@@ -112,50 +113,44 @@ export class InstanceTrendChart extends LitElement {
     const collected = this.metricRegistry.filter(d => d.is_collected);
 
     return html`
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:var(--space-lg);">
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:var(--space-lg) var(--space-xl);border-bottom:1px solid var(--border);background:var(--bg-elevated);">
-          <span style="font-size:var(--text-lg);font-weight:600;color:var(--text-strong);display:flex;align-items:center;gap:var(--space-sm);">
-            ${icons['trending-up']} 指标趋势
-          </span>
-          <div style="display:flex;gap:var(--space-xs);">
-            ${periods.map(p => html`
-              <button class="trend-period-btn ${this.activePeriod === p.key ? 'active' : ''}"
-                @click=${() => this._dispatchPeriodChange(p.key)}
-                ?disabled=${this.loading}>${p.label}</button>
-            `)}
-          </div>
+      <app-card>
+        <span slot="header">${icons['trending-up']} 指标趋势</span>
+        <div style="display:flex;justify-content:flex-end;gap:var(--space-xs);margin-bottom:var(--space-md);">
+          ${periods.map(p => html`
+            <button class="trend-period-btn ${this.activePeriod === p.key ? 'active' : ''}"
+              @click=${() => this._dispatchPeriodChange(p.key)}
+              ?disabled=${this.loading}>${p.label}</button>
+          `)}
         </div>
-        <div style="padding:var(--space-xl);">
-          ${this.loading
-            ? html`<div class="loading loading-pulse">加载趋势数据...</div>`
-            : !this.trendData || this.trendData.time.length === 0
-              ? html`<div style="text-align:center;padding:40px;color:var(--muted);">
-                  <div style="font-size:var(--text-lg);font-weight:600;color:var(--text-strong);margin-bottom:var(--space-sm);">暂无趋势数据</div>
-                  <div style="font-size:var(--text-md);">当前时间范围内没有采集到指标数据</div>
-                </div>`
-              : collected.map(def => {
-                  const data = this.trendData!.metrics[def.id];
-                  if (!data || data.length === 0) {
-                    return html`
-                      <div style="margin-bottom:var(--space-md);border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;padding:20px;color:var(--muted);">
-                        <div style="font-weight:600;">${def.name} — 暂无趋势数据</div>
-                      </div>`;
-                  }
+        ${this.loading
+          ? html`<div class="loading loading-pulse">加载趋势数据...</div>`
+          : !this.trendData || this.trendData.time.length === 0
+            ? html`<div style="text-align:center;padding:40px;color:var(--muted);">
+                <div style="font-size:var(--text-lg);font-weight:600;color:var(--text-strong);margin-bottom:var(--space-sm);">暂无趋势数据</div>
+                <div style="font-size:var(--text-md);">当前时间范围内没有采集到指标数据</div>
+              </div>`
+            : collected.map(def => {
+                const data = this.trendData!.metrics[def.id];
+                if (!data || data.length === 0) {
                   return html`
-                    <div class="chart-wrap">
-                      <metric-chart
-                        title="${def.name} (${def.unit})"
-                        .timeData=${this.trendData!.time}
-                        .series=${[{ name: def.name, data, color: this._getChartColor(def.id) }]}
-                        .thresholds=${this._buildThresholds(def.id)}
-                        percentage=${def.unit === '%'}
-                        height="280px"
-                        yAxisLabel=${def.unit}
-                      ></metric-chart>
+                    <div style="margin-bottom:var(--space-md);border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;padding:20px;color:var(--muted);">
+                      <div style="font-weight:600;">${def.name} — 暂无趋势数据</div>
                     </div>`;
-                })}
-        </div>
-      </div>
+                }
+                return html`
+                  <div class="chart-wrap">
+                    <metric-chart
+                      title="${def.name} (${def.unit})"
+                      .timeData=${this.trendData!.time}
+                      .series=${[{ name: def.name, data, color: this._getChartColor(def.id) }]}
+                      .thresholds=${this._buildThresholds(def.id)}
+                      percentage=${def.unit === '%'}
+                      height="280px"
+                      yAxisLabel=${def.unit}
+                    ></metric-chart>
+                  </div>`;
+              })}
+      </app-card>
     `;
   }
 }
