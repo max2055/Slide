@@ -44,6 +44,7 @@ export class InstanceDetailPage extends LitElement {
     .header-left { display:flex;align-items:center;gap:var(--space-lg); }
     .back-btn { display:inline-flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm) var(--space-md);border:1px solid var(--border);border-radius:var(--radius-md);font-size:var(--text-base);font-weight:500;color:var(--text);background:var(--secondary);cursor:pointer; }
     .back-btn:hover { background:var(--bg-hover);border-color:var(--border-strong); }
+    .back-btn svg, .refresh-btn svg { width:16px;height:16px;flex-shrink:0; }
     .instance-title { font-size:var(--text-2xl);font-weight:600;color:var(--text-strong); }
     .header-right { display:flex;align-items:center;gap:var(--space-md); }
     .last-updated { font-size:var(--text-sm);color:var(--muted); }
@@ -330,7 +331,7 @@ export class InstanceDetailPage extends LitElement {
       <div class="page">
         <div class="header">
           <div class="header-left">
-            <button class="back-btn" @click=${this._goBack}>← 返回列表</button>
+            <button class="back-btn" @click=${this._goBack}>${icons['chevron-left']} 返回列表</button>
             <span class="instance-title">${this.instance.name}</span>
             ${this._healthBadge()}
           </div>
@@ -338,10 +339,10 @@ export class InstanceDetailPage extends LitElement {
             <span class="last-updated">${this._formatTimeAgo(this.lastUpdated)}</span>
             <button class="refresh-btn" @click=${() => { this.showDiagnosisModal = true; if (this.diagnosisStatus === "idle") this._startDiagnosis(); }}
               style="${this.diagnosisStatus === "running" ? "border-color:var(--warn);color:var(--warn);" : ""}">
-              ${this.diagnosisStatus === "running" ? "诊断中..." : "一键诊断"}
+              ${this.diagnosisStatus === "running" ? html`${icons['loader']} 诊断中...` : html`${icons['activity']} 一键诊断`}
             </button>
             <button class="refresh-btn" @click=${this._manualRefresh} ?disabled=${this.isRefreshing}>
-              ${this.isRefreshing ? "⟳" : "↻"} 刷新
+              ${this.isRefreshing ? html`<span class="spinner" style="width:14px;height:14px;border-width:1.5px;"></span>` : icons['refresh']} 刷新
             </button>
           </div>
         </div>

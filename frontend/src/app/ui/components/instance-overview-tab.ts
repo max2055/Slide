@@ -318,7 +318,8 @@ export class InstanceOverviewTab extends LitElement {
             const data = this.overviewHistory!.metrics[def.id];
             if (!data || data.length === 0) return nothing;
             return html`
-              <metric-chart compact height="80px"
+              <metric-chart compact title="${def.name} (近24h)"
+                height="120px"
                 .timeData=${this.overviewHistory!.time}
                 .series=${[{ name: def.name, data, color: this._getChartColor(def.id) }]}
               ></metric-chart>

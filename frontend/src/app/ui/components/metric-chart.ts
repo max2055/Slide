@@ -64,6 +64,16 @@ export class MetricChart extends LitElement {
       color: var(--muted);
       font-size: 13px;
     }
+    :host([compact]) .chart-header {
+      padding: 8px 12px;
+    }
+    :host([compact]) .chart-title {
+      font-size: 12px;
+      font-weight: 600;
+    }
+    :host([compact]) .chart-container {
+      padding: 4px 8px 8px;
+    }
   `;
 
   @property({ type: Array }) timeData: string[] = [];
@@ -74,6 +84,7 @@ export class MetricChart extends LitElement {
   @property({ type: String }) yAxisLabel = "";
   @property({ type: Number }) yAxisMax = 100;
   @property({ type: Boolean }) percentage = false;
+  @property({ type: Boolean }) compact = false;
 
   private _chartContainer: HTMLDivElement | null = null;
   private _chart: echarts.ECharts | null = null;
