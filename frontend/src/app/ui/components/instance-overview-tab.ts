@@ -1,4 +1,4 @@
-import { LitElement, html, css, nothing } from "lit";
+import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
 import "./app-card.js";
@@ -54,7 +54,9 @@ export class InstanceOverviewTab extends LitElement {
   @property({ type: Object }) overviewHistory: { time: string[]; metrics: Record<string, number[]> } | null = null;
   @property({ type: Object }) metricsHistory: Record<string, number[]> = {};
 
-  static styles = css`
+  // Light DOM: static styles via adoptedStyleSheets does not work on plain
+  // elements, so inject styles inline in render() instead.
+  private static stylesText = `
     /* Hero KPIs */
     .hero-stats {
       display: grid;
@@ -237,7 +239,7 @@ export class InstanceOverviewTab extends LitElement {
   override render() {
     const inst = this.instance;
     if (!inst) {
-      return html`<div class="loading loading-pulse">加载中...</div>`;
+      return html`<style>${InstanceOverviewTab.stylesText}</style><div class="loading loading-pulse">加载中...</div>`;
     }
 
     const envLabels: Record<string, string> = {
@@ -246,6 +248,7 @@ export class InstanceOverviewTab extends LitElement {
     };
 
     return html`
+      <style>${InstanceOverviewTab.stylesText}</style>
       <!-- Hero KPIs -->
       ${this.metrics ? html`
         <div class="hero-stats">

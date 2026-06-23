@@ -1,4 +1,4 @@
-import { LitElement, html, css, nothing } from "lit";
+import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
 import "./app-card.js";
@@ -23,7 +23,9 @@ export class InstanceMetricsTab extends LitElement {
   @property({ type: Object }) metrics: Record<string, any> | null = null;
   @property({ type: Object }) metricsHistory: Record<string, number[]> = {};
 
-  static styles = css`
+  // Light DOM: static styles via adoptedStyleSheets does not work on plain
+  // elements, so inject styles inline in render() instead.
+  private static stylesText = `
     .metrics-dashboard {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -191,6 +193,7 @@ export class InstanceMetricsTab extends LitElement {
 
     if (!this.metrics || collected.length === 0) {
       return html`
+        <style>${InstanceMetricsTab.stylesText}</style>
         <app-card>
           <div class="empty-state">
             <div class="empty-icon" style="color:var(--muted);margin-bottom:var(--space-lg);">${icons['monitor']}</div>
@@ -208,6 +211,7 @@ export class InstanceMetricsTab extends LitElement {
     }
 
     return html`
+      <style>${InstanceMetricsTab.stylesText}</style>
       ${Array.from(groups.entries()).map(([category, defs]) => html`
         <app-card style="margin-bottom:var(--space-lg);">
           <span slot="header">${icons['bar-chart']} ${category}</span>

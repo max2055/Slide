@@ -1,4 +1,4 @@
-import { LitElement, html, css, nothing } from "lit";
+import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
 import "./metric-chart.js";
@@ -29,7 +29,9 @@ export class InstanceTrendChart extends LitElement {
   @property() activePeriod = "1h";
   @property({ type: Array }) metricRegistry: MetricDef[] = [];
 
-  static styles = css`
+  // Light DOM: static styles via adoptedStyleSheets does not work on plain
+  // elements, so inject styles inline in render() instead.
+  private static stylesText = `
     .trend-period-btn {
       padding: var(--space-xs) var(--space-md);
       font-size: var(--text-sm);
@@ -113,6 +115,7 @@ export class InstanceTrendChart extends LitElement {
     const collected = this.metricRegistry.filter(d => d.is_collected);
 
     return html`
+      <style>${InstanceTrendChart.stylesText}</style>
       <app-card>
         <span slot="header">${icons['trending-up']} 指标趋势</span>
         <div style="display:flex;justify-content:flex-end;gap:var(--space-xs);margin-bottom:var(--space-md);">
