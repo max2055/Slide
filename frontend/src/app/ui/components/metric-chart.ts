@@ -108,10 +108,14 @@ export class MetricChart extends LitElement {
     if (changedProperties.has("timeData") || changedProperties.has("series") || changedProperties.has("thresholds")) {
       if (this._chart) {
         this._updateChart();
+        // Force resize after data update — fixes blank chart when component
+        // was initialized while hidden (e.g. inactive tab, display:none)
+        this._chart.resize();
       }
     }
     if (changedProperties.has("height")) {
       this._applyHeight();
+      if (this._chart) this._chart.resize();
     }
   }
 
@@ -128,6 +132,14 @@ export class MetricChart extends LitElement {
 
   private _initChart() {
     if (!this._chartContainer) return;
+
+    // If container has no dimensions yet (e.g. component is inside an
+    // inactive tab with display:none), defer init until it becomes visible.
+    const rect = this._chartContainer.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      requestAnimationFrame(() => this._initChart());
+      return;
+    }
 
     this._chart = echarts.init(this._chartContainer, undefined, {
       renderer: "canvas",
