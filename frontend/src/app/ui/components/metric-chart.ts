@@ -134,10 +134,24 @@ export class MetricChart extends LitElement {
     if (!this._chartContainer) return;
 
     // If container has no dimensions yet (e.g. component is inside an
-    // inactive tab with display:none), defer init until it becomes visible.
+    // inactive tab with display:none), use ResizeObserver to wait until
+    // it becomes visible before initializing.
     const rect = this._chartContainer.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) {
-      requestAnimationFrame(() => this._initChart());
+      const observer = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.contentRect.width > 0 && entry.contentRect.height > 0) {
+            observer.disconnect();
+            this._chart = echarts.init(this._chartContainer, undefined, {
+              renderer: "canvas",
+            });
+            this._setupResizeObserver();
+            this._updateChart();
+            break;
+          }
+        }
+      });
+      observer.observe(this._chartContainer);
       return;
     }
 
