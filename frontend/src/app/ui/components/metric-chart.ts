@@ -269,6 +269,8 @@ export class MetricChart extends LitElement {
           axisLabel: {
             color: "#888",
             fontSize: 11,
+            interval: 'auto',
+            rotate: this.timeData.length > 20 ? 30 : 0,
             formatter: (val: string) => {
               // Show only time portion if present
               const parts = val.split(" ");
