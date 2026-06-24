@@ -195,55 +195,6 @@ export class SqlAuditTab extends LitElement {
       color: white;
     }
 
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: var(--radius-sm);
-      font-size: 11px;
-      font-weight: 600;
-      white-space: nowrap;
-    }
-
-    .badge-risk-p0 {
-      background: var(--accent, #409eff);
-      color: white;
-    }
-
-    .badge-risk-p1 {
-      background: #ea580c;
-      color: white;
-    }
-
-    .badge-risk-p2 {
-      background: #2563eb;
-      color: white;
-    }
-
-    .badge-risk-none {
-      background: var(--ok);
-      color: white;
-    }
-
-    .badge-status-pending {
-      background: var(--muted);
-      color: var(--text);
-    }
-
-    .badge-status-running {
-      background: #2563eb;
-      color: white;
-    }
-
-    .badge-status-completed {
-      background: var(--ok);
-      color: white;
-    }
-
-    .badge-status-failed {
-      background: var(--danger);
-      color: white;
-    }
-
     .history-table {
       width: 100%;
       border-collapse: collapse;
@@ -576,17 +527,22 @@ export class SqlAuditTab extends LitElement {
     }
   }
 
-  private _getRiskBadgeClass(riskLevel: string): string {
+  private _getRiskBadgeVariant(riskLevel: string): string {
     switch (riskLevel) {
-      case "P0": return "badge-risk-p0";
-      case "P1": return "badge-risk-p1";
-      case "P2": return "badge-risk-p2";
-      default: return "badge-risk-none";
+      case "P0": return "danger";
+      case "P1": return "warn";
+      case "P2": return "info";
+      default: return "muted";
     }
   }
 
-  private _getStatusBadgeClass(status: string): string {
-    return `badge-status-${status}`;
+  private _getStatusBadgeVariant(status: string): string {
+    switch (status) {
+      case "completed": return "ok";
+      case "failed": return "danger";
+      case "running": return "info";
+      default: return "muted";
+    }
   }
 
   private _formatTimeAgo(dateStr: string): string {
@@ -807,10 +763,10 @@ export class SqlAuditTab extends LitElement {
                           </div>
                         </td>
                         <td style="text-align:center;">
-                          <span class="badge ${this._getRiskBadgeClass(item.risk_level)}">${item.risk_level}</span>
+                          <app-badge variant=${this._getRiskBadgeVariant(item.risk_level)}>${item.risk_level}</app-badge>
                         </td>
                         <td style="text-align:center;">
-                          <span class="badge ${this._getStatusBadgeClass(item.status)}">${item.status}</span>
+                          <app-badge variant=${this._getStatusBadgeVariant(item.status)}>${item.status}</app-badge>
                         </td>
                         <td style="text-align:center;">${this._formatTimeAgo(item.created_at)}</td>
                       </tr>

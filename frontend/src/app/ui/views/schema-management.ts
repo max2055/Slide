@@ -3,6 +3,7 @@ import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state, property } from "lit/decorators.js";
 import "../components/app-card.js";
 import "../components/app-empty-state.js";
+import "../components/app-badge.js";
 import { icons } from "../../../icons.js";
 import "../../../components/stat-card.js";
 
@@ -159,35 +160,6 @@ export class SchemaManagementPage extends LitElement {
 
     .table tbody tr:last-child td {
       border-bottom: none;
-    }
-
-    .tag {
-      display: inline-flex;
-      align-items: center;
-      padding: var(--space-xs) var(--space-sm);
-      border-radius: var(--radius-sm);
-      font-size: var(--text-xs);
-      font-weight: 600;
-    }
-
-    .tag.green {
-      background: rgba(34, 197, 94, 0.12);
-      color: #22c55e;
-    }
-
-    .tag.orange {
-      background: var(--warn-subtle);
-      color: var(--warn);
-    }
-
-    .tag.red {
-      background: var(--danger-subtle);
-      color: var(--danger);
-    }
-
-    .tag.blue {
-      background: rgba(59, 130, 246, 0.12);
-      color: var(--info);
     }
 
     .change-detail {
@@ -743,7 +715,7 @@ export class SchemaManagementPage extends LitElement {
                                       (col) => html`
                                         <tr>
                                           <td style="font-weight: 500;">${col.column_name}</td>
-                                          <td><span class="tag blue">${col.column_type}</span></td>
+                                          <td><app-badge variant="info">${col.column_type}</app-badge></td>
                                           <td style="text-align: center;">${col.column_key === "PRI" ? "🔑" : ""}</td>
                                           <td style="text-align: center;">${col.is_nullable === "YES" ? "YES" : "NO"}</td>
                                           <td style="text-align: center; font-size: var(--text-sm); color: var(--muted);">${col.column_default || "—"}</td>
@@ -794,10 +766,10 @@ export class SchemaManagementPage extends LitElement {
                 <tr>
                   <td style="text-align: center;">
                     ${change.type === "added"
-                      ? html`<span class="tag green">新增</span>`
+                      ? html`<app-badge variant="ok">新增</app-badge>`
                       : change.type === "modified"
-                        ? html`<span class="tag orange">修改</span>`
-                        : html`<span class="tag red">删除</span>`
+                        ? html`<app-badge variant="warn">修改</app-badge>`
+                        : html`<app-badge variant="danger">删除</app-badge>`
                     }
                   </td>
                   <td>

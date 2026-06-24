@@ -292,14 +292,6 @@ export class EventManagementPage extends LitElement {
       color: var(--muted);
     }
 
-    .badge {
-      display: inline-block;
-      padding: var(--space-xs) var(--space-sm);
-      border-radius: var(--radius-full);
-      font-size: var(--text-xs);
-      font-weight: 500;
-    }
-
     .detail-panel {
       padding: var(--space-lg);
     }

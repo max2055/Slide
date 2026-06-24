@@ -5,6 +5,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
+import "../components/app-badge.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
 
@@ -78,9 +79,6 @@ export class MetricTemplatesPage extends LitElement {
     .table-wrap td { padding: 7px 12px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; }
     .table-wrap tr:last-child td { border-bottom: none; }
     .table-wrap tr:hover td { background: var(--bg-elevated); }
-
-    .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; }
-    .badge-tag { background: var(--accent-subtle); color: var(--accent); }
 
     .expand-row td { padding: 0; background: var(--bg-accent); border-bottom: 1px solid var(--border); }
     .expand-inner { padding: 14px 18px; display: flex; flex-wrap: wrap; gap: 16px; }
@@ -451,7 +449,7 @@ export class MetricTemplatesPage extends LitElement {
             ${this.templates.map(tpl => html`
               <tr>
                 <td><span style="font-weight:500">${tpl.name}</span>${tpl.description ? html`<br/><span style="font-size:10px;color:var(--muted)">${tpl.description}</span>` : ""}</td>
-                <td>${tpl.db_type ? html`<span class="badge badge-tag">${tpl.db_type}</span>` : html`<span style="color:var(--muted);font-size:11px">全部</span>`}</td>
+                <td>${tpl.db_type ? html`<app-badge variant="info">${tpl.db_type}</app-badge>` : html`<span style="color:var(--muted);font-size:11px">全部</span>`}</td>
                 <td><span style="font-size:12px;font-weight:500">${tpl.metrics?.length || 0}</span></td>
                 <td><span style="font-size:12px;font-weight:500">${this.allRules.filter(r => r.template_id === tpl.id).length}</span></td>
                 <td><app-badge variant=${tpl.enabled ? 'ok' : 'muted'}>${tpl.enabled ? '启用' : '禁用'}</app-badge></td>
@@ -485,7 +483,7 @@ export class MetricTemplatesPage extends LitElement {
                           <span class="rule-metric">${r.name}</span>
                           <span style="color:var(--muted);margin-left:6px">${r.metric_name} ${r.operator}</span>
                           <span class="rule-thresholds" style="margin-left:4px">${this._ruleThresholdStr(r)}</span>
-                          <span class="badge badge-tag" style="margin-left:6px">${r.severity}</span>
+                          <app-badge variant="info" style="margin-left:6px">${r.severity}</app-badge>
                         </div>
                         <button class="btn btn-xs btn-danger" @click=${() => this._deleteRule(r.id)}>删除</button>
                       </div>
@@ -560,8 +558,8 @@ export class MetricTemplatesPage extends LitElement {
               <span>
                 <strong>${r.name}</strong>
                 <span style="color:var(--muted);margin:0 6px">${r.metric_name} ${r.operator}</span>
-                ${this._ruleThresholdParts(r).map((p: string) => html`<span class="badge badge-tag" style="margin:0 2px">${p}</span>`)}
-                <span class="badge badge-tag" style="margin-left:4px">${r.severity}</span>
+                ${this._ruleThresholdParts(r).map((p: string) => html`<app-badge variant="info" style="margin:0 2px">${p}</app-badge>`)}
+                <app-badge variant="info" style="margin-left:4px">${r.severity}</app-badge>
               </span>
               <button class="btn btn-xs btn-danger" @click=${() => this._deleteRuleInModal(r.id)}>×</button>
             </div>`)}
