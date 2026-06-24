@@ -952,10 +952,10 @@
 /* Content header */
 .content-header {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-lg);
-  padding: var(--space-xs) var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
   overflow: hidden;
   transform-origin: top center;
   transition:
@@ -963,7 +963,7 @@
     transform var(--shell-focus-duration) var(--shell-focus-ease),
     max-height var(--shell-focus-duration) var(--shell-focus-ease),
     padding var(--shell-focus-duration) var(--shell-focus-ease);
-  max-height: 80px;
+  max-height: 48px;
 }
 
 .shell--chat-focus .content-header {

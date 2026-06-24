@@ -497,22 +497,21 @@ export function renderApp(state: AppViewState) {
               </button>
             </div>`
           : nothing}
-        ${state.tab === "config"
-          ? nothing
-          : html`<section class="content-header">
+        ${isChat
+          ? html`<section class="content-header">
               <div>
-                ${isChat
-                  ? renderChatSessionSelect(state)
-                  : html`<div class="page-title">${titleForTab(state.tab)}</div>`}
-                ${isChat ? nothing : html`<div class="page-sub">${subtitleForTab(state.tab)}</div>`}
+                ${renderChatSessionSelect(state)}
               </div>
               <div class="page-meta">
                 ${state.lastError
                   ? html`<div class="pill danger">${state.lastError}</div>`
                   : nothing}
-                ${isChat ? renderChatControls(state) : nothing}
+                ${renderChatControls(state)}
               </div>
-            </section>`}
+            </section>`
+          : state.tab === "config"
+            ? nothing
+            : nothing}
         ${state.tab === "sessions"
           ? lazyRender(lazySessions, (m) =>
               m.renderSessions({
