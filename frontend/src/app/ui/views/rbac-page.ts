@@ -86,11 +86,8 @@ export class RbacAdminPage extends LitElement {
       background: var(--accent);
     }
 
-    /* Shared card/table/modal styles */
+    /* Shared styles */
     .page { padding: 0; }
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
-    .card-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--bg-elevated); flex-wrap: wrap; gap: var(--space-md); }
-    .card-title { font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.02em; color: var(--text-strong); }
 
     .table-container { overflow-x: auto; }
     .table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--text-base); }
@@ -392,11 +389,10 @@ export class RoleManagementTab extends LitElement {
     if (this.error) return html`<div class="error-msg">${this.error}</div>`;
 
     return html`
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">角色列表</span>
-          <button class="btn-primary" @click=${this._openCreateModal}>＋ 新建角色</button>
-        </div>
+      <app-card>
+        <span slot="header">角色列表
+          <button class="btn-primary" @click=${this._openCreateModal} style="margin-left:auto">＋ 新建角色</button>
+        </span>
         ${this._renderFormModal()}
         ${this._renderPermModal()}
         ${this.roles.length === 0
@@ -649,11 +645,10 @@ export class PermissionManagementTab extends LitElement {
     if (this.error) return html`<div class="error-msg">${this.error}</div>`;
 
     return html`
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">权限列表</span>
-          <button class="btn-primary" @click=${this._openCreateModal}>＋ 新建权限</button>
-        </div>
+      <app-card>
+        <span slot="header">权限列表
+          <button class="btn-primary" @click=${this._openCreateModal} style="margin-left:auto">＋ 新建权限</button>
+        </span>
         ${this._renderModal()}
         ${this.permissions.length === 0
           ? html`<div class="empty">暂无权限数据。点击"新建权限"创建第一个权限。</div>`
