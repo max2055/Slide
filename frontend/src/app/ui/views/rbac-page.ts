@@ -395,7 +395,7 @@ export class RoleManagementTab extends LitElement {
       <div class="card">
         <div class="card-header">
           <span class="card-title">角色列表</span>
-          <button class="btn primary" @click=${this._openCreateModal}>＋ 新建角色</button>
+          <button class="btn-primary" @click=${this._openCreateModal}>＋ 新建角色</button>
         </div>
         ${this._renderFormModal()}
         ${this._renderPermModal()}
@@ -455,7 +455,7 @@ export class RoleManagementTab extends LitElement {
         </app-form-field>
         <div slot="footer">
           <button class="btn" @click=${this._closeFormModal}>取消</button>
-          <button class="btn primary" @click=${this._saveRole} ?disabled=${this.saving}>
+          <button class="btn-primary" @click=${this._saveRole} ?disabled=${this.saving}>
             ${this.saving ? "保存中..." : "保存"}
           </button>
         </div>
@@ -509,7 +509,7 @@ export class RoleManagementTab extends LitElement {
         <div slot="footer">
           <button class="btn" @click=${this._closePermModal}>取消</button>
           <button
-            class="btn primary"
+            class="btn-primary"
             @click=${this._savePermissions}
             ?disabled=${this.permSaving || this.permLoading}
           >
@@ -652,7 +652,7 @@ export class PermissionManagementTab extends LitElement {
       <div class="card">
         <div class="card-header">
           <span class="card-title">权限列表</span>
-          <button class="btn primary" @click=${this._openCreateModal}>＋ 新建权限</button>
+          <button class="btn-primary" @click=${this._openCreateModal}>＋ 新建权限</button>
         </div>
         ${this._renderModal()}
         ${this.permissions.length === 0
@@ -698,62 +698,44 @@ export class PermissionManagementTab extends LitElement {
   private _renderModal() {
     if (!this.showModal) return nothing;
     return html`
-      <div
-        class="modal-overlay"
-        @click=${(e: Event) => {
-          if ((e.target as HTMLElement).classList.contains("modal-overlay"))
-            this._closeModal();
-        }}
-      >
-        <div class="modal">
-          <div class="modal-header">
-            <span class="modal-title">新建权限</span>
-            <button class="modal-close" @click=${this._closeModal}>×</button>
-          </div>
-          <div class="modal-body">
-            ${this.saveError
-              ? html`<div class="save-error">${this.saveError}</div>`
-              : ""}
-            <div class="form-group">
-              <label>权限码</label>
-              <input
-                .value=${this.formCode}
-                @input=${this._handleCodeInput}
-                placeholder="resource:action（如 instance:list）"
-              />
-              ${this.formCodeError
-                ? html`<div class="form-error">${this.formCodeError}</div>`
-                : ""}
-            </div>
-            <div class="form-group">
-              <label>名称</label>
-              <input
-                .value=${this.formName}
-                @input=${(e: any) => (this.formName = e.target.value)}
-                placeholder="如：查看实例列表"
-              />
-            </div>
-            <div class="form-group">
-              <label>描述</label>
-              <textarea
-                .value=${this.formDescription}
-                @input=${(e: any) => (this.formDescription = e.target.value)}
-                placeholder="可选描述"
-              ></textarea>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button class="btn" @click=${this._closeModal}>取消</button>
-            <button
-              class="btn primary"
-              @click=${this._savePermission}
-              ?disabled=${this.saving}
-            >
-              ${this.saving ? "保存中..." : "保存"}
-            </button>
-          </div>
+      <app-dialog .open=${true} size="md" title="新建权限" @app-dialog-close=${this._closeModal}>
+        ${this.saveError
+          ? html`<div class="save-error">${this.saveError}</div>`
+          : ""}
+        <div class="form-group">
+          <label>权限码</label>
+          <input
+            .value=${this.formCode}
+            @input=${this._handleCodeInput}
+            placeholder="resource:action（如 instance:list）"
+          />
+          ${this.formCodeError
+            ? html`<div class="form-error">${this.formCodeError}</div>`
+            : ""}
         </div>
-      </div>
+        <div class="form-group">
+          <label>名称</label>
+          <input
+            .value=${this.formName}
+            @input=${(e: any) => (this.formName = e.target.value)}
+            placeholder="如：查看实例列表"
+          />
+        </div>
+        <div class="form-group">
+          <label>描述</label>
+          <textarea
+            .value=${this.formDescription}
+            @input=${(e: any) => (this.formDescription = e.target.value)}
+            placeholder="可选描述"
+          ></textarea>
+        </div>
+        <div slot="footer" style="display:flex;justify-content:flex-end;gap:var(--space-md)">
+          <button class="btn" @click=${this._closeModal}>取消</button>
+          <button class="btn-primary" @click=${this._savePermission} ?disabled=${this.saving}>
+            ${this.saving ? "保存中..." : "保存"}
+          </button>
+        </div>
+      </app-dialog>
     `;
   }
 }
@@ -990,76 +972,55 @@ export class InstancePermissionsTab extends LitElement {
 
   private _renderModal() {
     if (!this.showModal) return nothing;
+    const title = `实例权限 - ${this.modalUserName}`;
     return html`
-      <div
-        class="modal-overlay"
-        @click=${(e: Event) => {
-          if ((e.target as HTMLElement).classList.contains("modal-overlay"))
-            this._closeModal();
-        }}
-      >
-        <div class="modal modal-wide">
-          <div class="modal-header">
-            <span class="modal-title">实例权限 - ${this.modalUserName}</span>
-            <button class="modal-close" @click=${this._closeModal}>×</button>
-          </div>
-          <div class="modal-body">
-            ${this.saveError
-              ? html`<div class="save-error">${this.saveError}</div>`
-              : ""}
-            ${this.loadingInstances
-              ? html`<div class="empty">加载中...</div>`
-              : this.allInstances.length === 0
-                ? html`<div class="empty">
-                    暂无实例数据。请先在「实例管理」中添加数据库实例。
-                  </div>`
-                : html`
-                    <input
-                      class="instance-search"
-                      .value=${this.instanceFilter}
-                      @input=${(e: any) =>
-                        (this.instanceFilter = e.target.value)}
-                      placeholder="搜索实例名称..."
-                    />
-                    ${this.grantedInstanceIds.size === 0
-                      ? html`<div class="empty">
-                          该用户暂无实例访问权限。选择实例后点击"保存权限"。
-                        </div>`
-                      : ""}
-                    <div class="instance-list">
-                      ${this._filteredInstances.length === 0
-                        ? html`<div class="empty">无匹配实例。</div>`
-                        : this._filteredInstances.map(
-                            (inst) => html`
-                              <div class="instance-check-row">
-                                <input
-                                  type="checkbox"
-                                  .checked=${this.grantedInstanceIds.has(
-                                    inst.id
-                                  )}
-                                  @change=${() =>
-                                    this._toggleInstance(inst.id)}
-                                  id="inst-${inst.id}"
-                                />
-                                <label for="inst-${inst.id}">${inst.name}</label>
-                              </div>
-                            `
-                          )}
-                    </div>
-                  `}
-          </div>
-          <div class="modal-footer">
-            <button class="btn" @click=${this._closeModal}>取消</button>
-            <button
-              class="btn primary"
-              @click=${this._saveInstancePerms}
-              ?disabled=${this.saving || this.loadingInstances}
-            >
-              ${this.saving ? "保存中..." : "保存权限"}
-            </button>
-          </div>
+      <app-dialog .open=${true} size="lg" title=${title} @app-dialog-close=${this._closeModal}>
+        ${this.saveError
+          ? html`<div class="save-error">${this.saveError}</div>`
+          : ""}
+        ${this.loadingInstances
+          ? html`<div class="empty">加载中...</div>`
+          : this.allInstances.length === 0
+            ? html`<div class="empty">
+                暂无实例数据。请先在「实例管理」中添加数据库实例。
+              </div>`
+            : html`
+                <input
+                  class="instance-search"
+                  .value=${this.instanceFilter}
+                  @input=${(e: any) => (this.instanceFilter = e.target.value)}
+                  placeholder="搜索实例名称..."
+                />
+                ${this.grantedInstanceIds.size === 0
+                  ? html`<div class="empty">
+                      该用户暂无实例访问权限。选择实例后点击"保存权限"。
+                    </div>`
+                  : ""}
+                <div class="instance-list">
+                  ${this._filteredInstances.length === 0
+                    ? html`<div class="empty">无匹配实例。</div>`
+                    : this._filteredInstances.map(
+                        (inst) => html`
+                          <div class="instance-check-row">
+                            <input
+                              type="checkbox"
+                              .checked=${this.grantedInstanceIds.has(inst.id)}
+                              @change=${() => this._toggleInstance(inst.id)}
+                              id="inst-${inst.id}"
+                            />
+                            <label for="inst-${inst.id}">${inst.name}</label>
+                          </div>
+                        `
+                      )}
+                </div>
+              `}
+        <div slot="footer" style="display:flex;justify-content:flex-end;gap:var(--space-md)">
+          <button class="btn" @click=${this._closeModal}>取消</button>
+          <button class="btn-primary" @click=${this._saveInstancePerms} ?disabled=${this.saving || this.loadingInstances}>
+            ${this.saving ? "保存中..." : "保存权限"}
+          </button>
         </div>
-      </div>
+      </app-dialog>
     `;
   }
 }
