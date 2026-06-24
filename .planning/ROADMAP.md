@@ -663,6 +663,67 @@ Plans:
 - [x] 120-08-PLAN.md — Interaction states + skeleton screens + px->token migration + console->logger replacement
 **UI hint**: yes
 
+### Phase 120 后续打磨 (2026-06-20 ~ 2026-06-24)
+
+Phase 120 的 8 个 plans 于 2026-06-20 完成并标记 shipped。之后进行了多轮 UI 审计和修复，解决了拆分和组件化过程中遗留的问题：
+
+**添加数据库实例弹窗** (3 commits):
+- 必填项星号间距 2→4px + vertical-align
+- Hint 文字颜色 #999 + 间距加大，区分于 placeholder
+- 表单栅格：全宽字段用 grid-column: 1/-1 统一包裹
+- 底部按钮：测试连接移入 footer，space-between 布局
+- Autofill 蓝色背景覆盖（:-webkit-autofill）
+- Textarea resize: none（防止破坏弹窗布局）
+- form-select box-sizing: border-box（修复列宽不对齐）
+
+**测试连接弹窗** (1 commit):
+- 成功提示去重（隐藏冗余状态行）
+- 只读字段背景色区分（var(--bg-app)）
+- Emoji 图标替换为 SVG（check-circle/x-circle/loader）
+- 单按钮居中，双按钮 space-between
+
+**Dashboard** (2 commits):
+- KPI 卡片间距收紧（gap 6→4px, padding 16→14px）
+- 活跃告警卡片去掉橙色左边框（统一外观）
+- 饼图 legend 竖→横放底部，radius 70→75%
+- 筛选控件间距加大
+- Y 轴文字对比度 #999→#777
+- "当前总量" 改为 accent 色 badge
+- 告警时间列固定宽度 + 右对齐
+- 告警行高压缩（padding 10→8px）
+- 告警区域统一为 chart-card 容器
+
+**实例详情页** (8 commits):
+- 诊断历史空态完全隐藏（Progressive Disclosure）
+- 概览页 Bento Grid 布局（Hero KPIs → 实例信息 → mini-charts）
+- 实时监控 4→3 列，按 category 分组间距加大
+- Header 按钮 emoji→SVG icons（chevron-left/refresh/activity/loader）
+- Mini-charts 加标题 + compact 模式（metric-chart 新增 compact 属性）
+- 恢复历史版本丢失的设计细节：
+  - app-card 微阴影（0 1px 3px rgba(0,0,0,0.04)）
+  - overview-item hover 效果
+  - metric-card 分类色顶边（performance/resource/storage/availability/security）
+  - 趋势页从 inline style div 改回 app-card
+- **关键修复**：app-card 恢复结构化标题栏（bg-elevated 背景 + 独立 padding）
+- **关键修复**：子组件 Light DOM + static styles 样式静默失效 → 改为 inline `<style>` 注入
+- **关键修复**：趋势页 `percentage=${expr}` 属性绑定 boolean 陷阱 → `.percentage=${expr}` property binding
+- **关键修复**：metric-chart 在隐藏容器中初始化 0×0 canvas → ResizeObserver 等待可见
+- X 轴标签重叠修复（interval: auto + rotate 30°）
+
+**app-card 组件** (3 commits):
+- Light DOM → Shadow DOM（slot 投影需要 shadow root）
+- 简化 slot 可见性逻辑（默认显示，slotchange 切换 .empty class）
+- 恢复结构化标题栏（bg-elevated + overflow:hidden）
+
+**metric-chart 组件** (2 commits):
+- 新增 compact 模式（更小的 header padding + 12px 标题）
+- ResizeObserver 等待容器可见再初始化 ECharts
+
+**ROADMAP 更新**:
+- v1.5 里程碑标记为 shipped (2026-06-20)
+
+**UI hint**: yes
+
 
 | 117. OpenClaw收尾 | v1.4 | 3/3 | Complete    | 2026-06-02 |
 | 118. Agent DB 连接 + 告警完善 | v1.4 | 2/2 | Complete    | 2026-06-08 |
