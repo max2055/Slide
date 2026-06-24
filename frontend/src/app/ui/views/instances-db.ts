@@ -478,13 +478,16 @@ export class InstancesPage extends LitElement {
     .confirm-icon {
       width: 48px;
       height: 48px;
-      margin-bottom: var(--space-md);
+      margin: 0 auto var(--space-md);
       opacity: 0.6;
       color: var(--warn);
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     .confirm-icon svg {
-      width: 16px;
-      height: 16px;
+      width: 32px;
+      height: 32px;
     }
 
     .confirm-title {
@@ -1096,7 +1099,7 @@ export class InstancesPage extends LitElement {
         </div>
         <div slot="footer" style="justify-content:center;display:flex;gap:var(--space-md)">
           <button class="btn" @click=${this._closeDialogs}>取消</button>
-          <button class="btn danger" @click=${this._handleDelete} style="background:var(--danger);color:var(--danger-foreground);border-color:var(--danger);">确认删除</button>
+          <button class="btn danger" @click=${this._handleDelete} style="background:var(--danger);color:white;border-color:var(--danger);">确认删除</button>
         </div>
       </app-dialog>
     `;
