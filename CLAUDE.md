@@ -44,6 +44,52 @@ JWT_SECRET_KEY=your-secret-key-min-32-chars
 2. 完整开发 → 验证 → 修复循环，自动验证不等待确认
 3. 遇到问题先排查根因再修复
 
+## 前端共享组件规则
+
+### 核心原则
+
+**第一次出现**：可以用自定义样式实现。
+**第二次出现**：必须提取为共享组件，或者检查是否已有共享组件可复用。
+
+### 已有共享组件清单
+
+新增 UI 时，**优先查此表**，避免手写同类样式：
+
+| 元素类型 | 共享组件/样式 | 禁止做法 |
+|---------|-------------|---------|
+| Primary 按钮 | `class="btn-primary"` (shared-btn-styles.ts) | ❌ `class="btn primary"`, ❌ 内联 `background:var(--accent)` |
+| 次要按钮 | `class="btn"` | ❌ 手写 `.my-btn` |
+| Ghost 按钮 | `class="btn-ghost"` | |
+| 卡片容器 | `<app-card>` | ❌ `.card` CSS 类, ❌ `<div class="card">` |
+| 弹窗/对话框 | `<app-dialog>` | ❌ `.modal-overlay`, ❌ `.dialog` |
+| 表单字段 | `<app-form-field>` | ❌ 手写 label+input 布局 |
+| 数据表格 | `<app-data-table>` | ❌ 手写 `<table class="table">` |
+| 空状态 | `<app-empty-state>` | ❌ `<div>暂无数据</div>` |
+| 徽章/标签 | `<app-badge>` | ❌ `.badge`, `.tag`, `.status-badge` |
+| Toast 通知 | `showToast()` (app-toast-container) | ❌ `alert()`, ❌ 手写 toast |
+| 统计卡片 | `<stat-card>` | |
+| 加载态 | `.skeleton` 类 | ❌ `<div>加载中...</div>` (表格场景) |
+
+### 样式变量
+
+- **主色调**：`var(--accent)` = `#409eff`（蓝色），不用紫色 `#7c5cff`
+- **圆角**：`var(--radius-sm)` / `var(--radius-md)` / `var(--radius-lg)`（不用硬编码 px）
+- **间距**：`var(--space-xs)` ~ `var(--space-xl)`（不用硬编码 px）
+- **颜色**：`var(--text)` / `var(--text-strong)` / `var(--muted)` / `var(--border)`（不用 `#000`, `#ccc`）
+
+### Lit 组件规范
+
+- **共享组件**（app-card, app-dialog 等）：用 Shadow DOM + inline `<style>` 在 render 内
+- **视图子组件**（instance-overview-tab 等）：如用 Light DOM (`createRenderRoot() { return this; }`)，样式必须用 inline `<style>` 在 render 开头注入，**不能用 `static styles`**（adoptedStyleSheets 不支持普通 HTMLElement）
+- **Boolean 属性绑定**：必须用 `.property=${value}`（property binding），不用 `property=${value}`（attribute binding 会把 `"false"` 字符串转成 true）
+
+### 代码审查要点
+
+- 新视图是否使用了已有共享组件？
+- 是否有重复的 CSS 模式应该提取为共享组件？
+- 颜色是否使用了 token 而非硬编码？
+- Boolean 属性是否用了 `.` 前缀？
+
 ## Karpathy 编码指南
 
 ### 1. 编码前思考
