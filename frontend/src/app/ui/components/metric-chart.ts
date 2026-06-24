@@ -93,6 +93,17 @@ export class MetricChart extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
+    // Re-initialize when component is re-inserted into DOM (e.g. tab switch)
+    if (this._chartContainer && !this._chart && this.timeData.length > 0 && this.series.length > 0) {
+      this._initChart();
+    }
+    // If chart exists but was initialized at 0 size (hidden tab), force resize
+    // now that we're visible again
+    if (this._chart) {
+      requestAnimationFrame(() => {
+        if (this._chart) this._chart.resize();
+      });
+    }
   }
 
   override firstUpdated() {
@@ -111,6 +122,13 @@ export class MetricChart extends LitElement {
         // Force resize after data update — fixes blank chart when component
         // was initialized while hidden (e.g. inactive tab, display:none)
         this._chart.resize();
+      } else if (this.timeData.length > 0 && this.series.length > 0) {
+        // Chart not yet initialized (container was hidden or not yet laid out).
+        // Disconnect any pending observer and re-init — _initChart will check
+        // dimensions and either create immediately or set up a new observer.
+        this._resizeObserver?.disconnect();
+        this._resizeObserver = null;
+        this._initChart();
       }
     }
     if (changedProperties.has("height")) {
@@ -126,6 +144,7 @@ export class MetricChart extends LitElement {
       this._rafId = null;
     }
     this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
     this._chart?.dispose();
     this._chart = null;
   }
@@ -133,15 +152,19 @@ export class MetricChart extends LitElement {
   private _initChart() {
     if (!this._chartContainer) return;
 
-    // If container has no dimensions yet (e.g. component is inside an
-    // inactive tab with display:none), use ResizeObserver to wait until
-    // it becomes visible before initializing.
     const rect = this._chartContainer.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) {
+      // Container is hidden or not yet laid out.
+      // Use ResizeObserver to wait for actual visibility — more reliable
+      // than requestAnimationFrame which may fire before layout recalculates.
+      if (this._resizeObserver) return; // already waiting
+
       const observer = new ResizeObserver((entries) => {
         for (const entry of entries) {
           if (entry.contentRect.width > 0 && entry.contentRect.height > 0) {
             observer.disconnect();
+            this._resizeObserver = null;
+            if (!this.isConnected) return;
             this._chart = echarts.init(this._chartContainer, undefined, {
               renderer: "canvas",
             });
@@ -151,6 +174,7 @@ export class MetricChart extends LitElement {
           }
         }
       });
+      this._resizeObserver = observer;
       observer.observe(this._chartContainer);
       return;
     }
