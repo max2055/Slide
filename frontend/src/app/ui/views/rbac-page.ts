@@ -46,7 +46,7 @@ export class RbacAdminPage extends LitElement {
     @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
     .loading { display: flex; align-items: center; justify-content: center; min-height: 300px; color: var(--muted); }
-    .error-msg { color: var(--destructive); font-size: var(--text-base); padding: var(--space-md) var(--space-lg); background: var(--danger-subtle); border-radius: var(--radius-sm); margin: 12px 16px; }
+    .error-msg { color: var(--danger); font-size: var(--text-base); padding: var(--space-md) var(--space-lg); background: var(--danger-subtle); border-radius: var(--radius-sm); margin: 12px 16px; }
     .no-permission { display: flex; align-items: center; justify-content: center; min-height: 300px; color: var(--muted); font-size: var(--text-md); }
 
     .sub-tabs {
@@ -87,7 +87,7 @@ export class RbacAdminPage extends LitElement {
     }
 
     /* Shared card/table/modal styles */
-    .page { padding: 0 0 var(--space-xl) 0; }
+    .page { padding: 0; }
     .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
     .card-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--bg-elevated); flex-wrap: wrap; gap: var(--space-md); }
     .card-title { font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.02em; color: var(--text-strong); }
@@ -103,7 +103,7 @@ export class RbacAdminPage extends LitElement {
     .actions { display: flex; gap: var(--space-sm); flex-wrap: wrap; }
     .action-btn { display: inline-flex; align-items: center; justify-content: center; padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-xs); font-weight: 500; color: var(--text); background: var(--secondary); cursor: pointer; transition: all var(--duration-normal) var(--ease-out); }
     .action-btn:hover { background: var(--accent); color: var(--accent-foreground); border-color: var(--accent); }
-    .action-btn.danger:hover { background: var(--destructive); color: var(--destructive-foreground); border-color: var(--destructive); }
+    .action-btn.danger:hover { background: var(--danger); color: var(--danger-foreground); border-color: var(--danger); }
 
     .empty { display: flex; align-items: center; justify-content: center; min-height: 200px; color: var(--muted); font-size: var(--text-base); padding: 40px 20px; text-align: center; }
 
@@ -112,8 +112,8 @@ export class RbacAdminPage extends LitElement {
     .form-group input, .form-group select, .form-group textarea { padding: var(--space-sm) var(--space-md); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-base); color: var(--text); background: var(--card); transition: all var(--duration-normal) var(--ease-out); }
     .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
     .form-group textarea { min-height: 80px; resize: vertical; }
-    .form-error { font-size: var(--text-sm); color: var(--destructive); margin-top: var(--space-xs); }
-    .save-error { color: var(--destructive); font-size: var(--text-base); padding: var(--space-sm) var(--space-md); background: var(--danger-subtle); border-radius: var(--radius-sm); }
+    .form-error { font-size: var(--text-sm); color: var(--danger); margin-top: var(--space-xs); }
+    .save-error { color: var(--danger); font-size: var(--text-base); padding: var(--space-sm) var(--space-md); background: var(--danger-subtle); border-radius: var(--radius-sm); }
 
     /* Accordion for permission groups */
     .perm-group { border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: var(--space-sm); overflow: hidden; }
@@ -827,7 +827,7 @@ export class InstancePermissionsTab extends LitElement {
         flex: 1;
       }
       .save-error {
-        color: var(--destructive);
+        color: var(--danger);
         font-size: var(--text-base);
         padding: var(--space-sm) var(--space-md);
         background: var(--danger-subtle);

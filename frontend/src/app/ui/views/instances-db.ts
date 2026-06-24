@@ -51,7 +51,7 @@ export class InstancesPage extends LitElement {
     }
 
     .page {
-      padding: 0 0 24px 0;
+      padding: 0;
     }
 
     /* 主卡片 */

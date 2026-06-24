@@ -67,8 +67,8 @@ export class MetricTemplatesPage extends LitElement {
   // Instance linking modal
 
     :host { display: block; }
-    .page { padding: 0 0 24px; }
-    .toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-elevated); }
+    .page { padding: 0; }
+    .toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-elevated); border-radius: var(--radius-md); }
     .spacer { flex: 1; }
 
     .table-wrap { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); overflow: hidden; margin-top: 8px; }

@@ -71,7 +71,7 @@ export class EventManagementPage extends LitElement {
     }
 
     .page {
-      padding: var(--space-xl) 0 0 0;
+      padding: 0;
       display: flex;
       flex-direction: column;
       flex: 1;
@@ -125,7 +125,7 @@ export class EventManagementPage extends LitElement {
       margin-top: var(--space-xs);
     }
 
-    .stat-card.stat-open { border-left: 3px solid var(--destructive, #ef4444); }
+    .stat-card.stat-open { border-left: 3px solid var(--danger, #ef4444); }
     .stat-card.stat-investigating { border-left: 3px solid var(--warn, #f59e0b); }
     .stat-card.stat-resolved { border-left: 3px solid var(--success, #22c55e); }
     .stat-card.stat-closed { border-left: 3px solid var(--muted); }
@@ -409,7 +409,7 @@ export class EventManagementPage extends LitElement {
     .error {
       text-align: center;
       padding: var(--space-xl);
-      color: var(--destructive);
+      color: var(--danger);
     }
 
     .note-input {
@@ -667,7 +667,7 @@ export class EventManagementPage extends LitElement {
     const colors: Record<string, string> = {
       info: "var(--info, #3b82f6)",
       warning: "var(--warn, #f59e0b)",
-      error: "var(--destructive, #ef4444)",
+      error: "var(--danger, #ef4444)",
       critical: "var(--danger)",
     };
     return colors[severity] || "var(--muted)";

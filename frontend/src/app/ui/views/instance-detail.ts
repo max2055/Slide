@@ -32,7 +32,7 @@ export class InstanceDetailPage extends LitElement {
     @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .page { padding: 0 0 24px 0; }
+    .page { padding: 0; }
     .loading,.empty { display:flex;align-items:center;justify-content:center;min-height:300px;color:var(--muted); }
     .empty-state { text-align:center;padding:60px var(--space-xl); }
     .empty-icon svg { width:48px;height:48px;opacity:0.5; }

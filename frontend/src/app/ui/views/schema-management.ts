@@ -67,7 +67,7 @@ export class SchemaManagementPage extends LitElement {
       to { opacity: 1; transform: translateY(0); }
     }
 
-    .page { padding: 0 0 var(--space-xl) 0; }
+    .page { padding: 0; }
 
 
     .toolbar {
@@ -605,7 +605,7 @@ export class SchemaManagementPage extends LitElement {
     return html`
       <div class="page">
         ${this.error ? html`
-          <div class="card" style="background: rgba(239, 68, 68, 0.06); border-color: rgba(239, 68, 68, 0.3); padding: var(--space-md) var(--space-lg); margin-bottom: var(--space-md); font-size: var(--text-base); color: var(--destructive); display: flex; align-items: center; gap: var(--space-md);">
+          <div class="card" style="background: rgba(239, 68, 68, 0.06); border-color: rgba(239, 68, 68, 0.3); padding: var(--space-md) var(--space-lg); margin-bottom: var(--space-md); font-size: var(--text-base); color: var(--danger); display: flex; align-items: center; gap: var(--space-md);">
             <span style="flex: 1;">${this.error}</span>
             <button class="btn small" @click=${() => { this.error = null; }} style="flex-shrink: 0;">&times;</button>
           </div>

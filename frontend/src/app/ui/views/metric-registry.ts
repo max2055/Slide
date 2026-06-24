@@ -37,8 +37,8 @@ export class MetricRegistryViewer extends LitElement {
   static styles = [sharedBtnStyles, css`
 
     :host { display: block; }
-    .page { padding: 0 0 24px; }
-    .toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-elevated); }
+    .page { padding: 0; }
+    .toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-elevated); border-radius: var(--radius-md); }
     .toolbar .spacer { flex: 1; }
     .filter-select { padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; background: var(--card); color: var(--text); }
     .count { font-size: 12px; color: var(--muted); }
@@ -82,7 +82,7 @@ export class MetricRegistryViewer extends LitElement {
     .form-label { font-size: 12px; font-weight: 500; color: var(--text); }
     .form-input, .form-select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; background: var(--card); color: var(--text); box-sizing: border-box; }
     .form-input:focus { outline: none; border-color: var(--accent); }
-    .msg-err { font-size: 12px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--danger-subtle); color: var(--destructive); }
+    .msg-err { font-size: 12px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--danger-subtle); color: var(--danger); }
     .form-section-title { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); padding-top: 8px; border-top: 1px solid var(--border); margin-top: 4px; letter-spacing: 0.5px; }
     .chk-group { display: flex; gap: 12px; flex-wrap: wrap; }
     .chk-label { display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; }
@@ -159,7 +159,7 @@ export class MetricRegistryViewer extends LitElement {
 
   override render() {
     if (this.loading) return html`<div style="padding:48px;text-align:center;color:var(--muted)">加载中...</div>`;
-    if (this.error) return html`<div style="padding:48px;text-align:center;color:var(--destructive)">${this.error}</div>`;
+    if (this.error) return html`<div style="padding:48px;text-align:center;color:var(--danger)">${this.error}</div>`;
 
     const filtered = this._filtered();
     return html`<div class="page">

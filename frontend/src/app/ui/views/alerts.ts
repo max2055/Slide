@@ -71,7 +71,7 @@ export class AlertsPage extends LitElement {
     }
 
     .page {
-      padding: 0 0 var(--space-xl) 0;
+      padding: 0;
     }
 
     /* Tabs */
@@ -1187,7 +1187,7 @@ export class AlertsPage extends LitElement {
                         </td>
                         <td style="text-align:center;">
                           <button class="action-btn" @click=${() => this._openRuleModal(rule)}>编辑</button>
-                          <button class="action-btn" style="color:var(--destructive);border-color:var(--destructive);margin-left:4px;" @click=${() => this._deleteRule(rule)}>删除</button>
+                          <button class="action-btn" style="color:var(--danger);border-color:var(--danger);margin-left:4px;" @click=${() => this._deleteRule(rule)}>删除</button>
                         </td>
                       </tr>
                     `)}
@@ -1362,7 +1362,7 @@ export class AlertsPage extends LitElement {
                         <td style="text-align:center;">
                           <div class="actions">
                             <button class="action-btn" @click=${() => this._openEscalationModal(rule)}>编辑</button>
-                            <button class="action-btn" style="color:var(--destructive);border-color:var(--destructive);" @click=${() => this._deleteEscalation(rule)}>删除</button>
+                            <button class="action-btn" style="color:var(--danger);border-color:var(--danger);" @click=${() => this._deleteEscalation(rule)}>删除</button>
                           </div>
                         </td>
                       </tr>
@@ -1397,7 +1397,7 @@ export class AlertsPage extends LitElement {
         <div class="modal">
           <div class="modal-title">${this.editingEscalation ? '编辑升级规则' : '新建升级规则'}</div>
 
-          ${this.ruleFormError ? html`<div style="color: var(--destructive); font-size: var(--text-base); margin-bottom: var(--space-md);">${this.ruleFormError}</div>` : ''}
+          ${this.ruleFormError ? html`<div style="color: var(--danger); font-size: var(--text-base); margin-bottom: var(--space-md);">${this.ruleFormError}</div>` : ''}
 
           <div class="form-group">
             <label class="form-label">从等级</label>
@@ -1576,7 +1576,7 @@ export class AlertsPage extends LitElement {
                           <td style="text-align:center;">
                             <div class="actions">
                               <button class="action-btn" @click=${() => this._openMaintenanceModal(win)}>编辑</button>
-                              <button class="action-btn" style="color:var(--destructive);border-color:var(--destructive);" @click=${() => this._deleteMaintenance(win)}>删除</button>
+                              <button class="action-btn" style="color:var(--danger);border-color:var(--danger);" @click=${() => this._deleteMaintenance(win)}>删除</button>
                             </div>
                           </td>
                         </tr>
@@ -1612,7 +1612,7 @@ export class AlertsPage extends LitElement {
         <div class="modal">
           <div class="modal-title">${this.editingMaintenance ? '编辑维护窗口' : '新建维护窗口'}</div>
 
-          ${this.ruleFormError ? html`<div style="color: var(--destructive); font-size: var(--text-base); margin-bottom: var(--space-md);">${this.ruleFormError}</div>` : ''}
+          ${this.ruleFormError ? html`<div style="color: var(--danger); font-size: var(--text-base); margin-bottom: var(--space-md);">${this.ruleFormError}</div>` : ''}
 
           <div class="form-group">
             <label class="form-label">名称</label>
@@ -1785,7 +1785,7 @@ export class AlertsPage extends LitElement {
                         </td>
                         <td style="text-align:center;">
                           <div class="actions">
-                            <button class="action-btn" style="color:var(--destructive);border-color:var(--destructive);" @click=${() => this._cancelSilence(s)}>取消</button>
+                            <button class="action-btn" style="color:var(--danger);border-color:var(--danger);" @click=${() => this._cancelSilence(s)}>取消</button>
                           </div>
                         </td>
                       </tr>
@@ -1818,7 +1818,7 @@ export class AlertsPage extends LitElement {
         <div class="modal">
           <div class="modal-title">新建静默期</div>
 
-          ${this.ruleFormError ? html`<div style="color: var(--destructive); font-size: var(--text-base); margin-bottom: var(--space-md);">${this.ruleFormError}</div>` : ''}
+          ${this.ruleFormError ? html`<div style="color: var(--danger); font-size: var(--text-base); margin-bottom: var(--space-md);">${this.ruleFormError}</div>` : ''}
 
           <div class="form-group">
             <label class="form-label">实例</label>

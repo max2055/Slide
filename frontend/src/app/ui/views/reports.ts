@@ -55,7 +55,7 @@ export class ReportsPage extends LitElement {
     }
 
     .page {
-      padding: 0 0 var(--space-xl) 0;
+      padding: 0;
     }
 
 

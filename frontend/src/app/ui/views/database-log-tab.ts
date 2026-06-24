@@ -37,7 +37,7 @@ export class DatabaseLogTab extends LitElement {
     }
 
     .page {
-      padding: 0 0 24px 0;
+      padding: 0;
     }
 
     .header {
@@ -250,7 +250,7 @@ export class DatabaseLogTab extends LitElement {
     .error {
       text-align: center;
       padding: 40px;
-      color: var(--destructive);
+      color: var(--danger);
     }
 
     .loading-state {
@@ -650,7 +650,7 @@ export class DatabaseLogTab extends LitElement {
 
     if (this.analysisStatus === "failed") {
       return html`
-        <div style="margin-top: 16px; padding: 12px; background: var(--danger-subtle); border: 1px solid var(--destructive); border-radius: var(--radius-md); color: var(--destructive); font-size: 14px; display: flex; align-items: center; justify-content: space-between;">
+        <div style="margin-top: 16px; padding: 12px; background: var(--danger-subtle); border: 1px solid var(--danger); border-radius: var(--radius-md); color: var(--danger); font-size: 14px; display: flex; align-items: center; justify-content: space-between;">
           <span>AI 分析失败: ${this.analysisError || "未知错误"}</span>
           <button class="btn" @click=${this._closeAnalysisResult}>关闭</button>
         </div>

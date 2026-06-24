@@ -52,7 +52,7 @@ export class IndexManagementPage extends LitElement {
       to { opacity: 1; transform: translateY(0); }
     }
 
-    .page { padding: 0 0 var(--space-xl) 0; }
+    .page { padding: 0; }
 
     .card {
       background: var(--card);

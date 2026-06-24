@@ -62,7 +62,7 @@ export class UsersManagement extends LitElement {
     }
 
     .page {
-      padding: 0 0 24px 0;
+      padding: 0;
     }
 
 
@@ -180,9 +180,9 @@ export class UsersManagement extends LitElement {
     }
 
     .action-btn.danger:hover {
-      background: var(--destructive);
-      color: var(--destructive-foreground);
-      border-color: var(--destructive);
+      background: var(--danger);
+      color: var(--danger-foreground);
+      border-color: var(--danger);
     }
 
     .loading, .empty {
@@ -203,7 +203,7 @@ export class UsersManagement extends LitElement {
     }
 
     .error-msg {
-      color: var(--destructive);
+      color: var(--danger);
       font-size: 13px;
       padding: 12px 16px;
       background: var(--danger-subtle);
@@ -251,12 +251,12 @@ export class UsersManagement extends LitElement {
 
     .form-error {
       font-size: 12px;
-      color: var(--destructive);
+      color: var(--danger);
       margin-top: 4px;
     }
 
     .save-error {
-      color: var(--destructive);
+      color: var(--danger);
       font-size: 13px;
       padding: 8px 12px;
       background: var(--danger-subtle);
