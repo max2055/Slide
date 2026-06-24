@@ -151,6 +151,12 @@ export class MetricChart extends LitElement {
 
     this._setupResizeObserver();
     this._updateChart();
+
+    // Force resize after layout completes — fixes blank charts when component
+    // is rendered during tab switch before container has final dimensions.
+    requestAnimationFrame(() => {
+      if (this._chart) this._chart.resize();
+    });
   }
 
   private _setupResizeObserver() {
