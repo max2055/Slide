@@ -197,13 +197,13 @@ export class CronJobsSettings extends LitElement {
     .sr-failure-reason { color: var(--muted); }
 
     .form-group { display: flex; flex-direction: column; gap: 4px; }
-    .form-label { font-size: 12px; font-weight: 600; color: var(--text); }
-    .form-input { width: 100%; padding: 8px 10px; font-size: 13px; font-family: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); outline: none; box-sizing: border-box; transition: border-color 0.15s; }
-    .form-input:focus { border-color: var(--accent); }
+    .form-label { font-size: var(--text-sm); font-weight: 600; color: var(--text); }
+    .form-input { width: 100%; padding: var(--space-sm) var(--space-md); font-size: var(--text-base); font-family: inherit; color: var(--text); background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); outline: none; box-sizing: border-box; transition: border-color 0.15s; }
+    .form-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
     .form-input::placeholder { color: var(--muted); }
     .form-textarea { min-height: 80px; line-height: 1.5; resize: vertical; max-height: 240px; }
-    .form-mono { font-family: var(--mono, monospace); font-size: 12px; }
-    .form-hint { font-size: 10px; color: var(--muted); }
+    .form-mono { font-family: var(--mono, monospace); font-size: var(--text-sm); }
+    .form-hint { font-size: var(--text-xs); color: var(--muted); }
     .cron-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
     .cron-preset-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; font-size: 11px; font-family: inherit; color: var(--muted); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; transition: all 0.15s; }
     .cron-preset-chip:hover { color: var(--text); border-color: var(--accent); }
@@ -511,7 +511,7 @@ export class CronJobsSettings extends LitElement {
       ${this.logViewerJob ? html`
         <app-dialog .open=${true} size="xl" title="执行记录 — ${this.logViewerJob.name}" @app-dialog-close=${this.closeLogViewer}>
           ${this.viewerLoading ? html`<div class="log-empty">加载中...</div>` : nothing}
-          ${this.viewerError ? html`<div style="font-size:12px;padding:8px 12px;color:var(--destructive);background:var(--danger-subtle, rgba(220,38,38,0.08));border-radius:var(--radius-sm);margin-bottom:12px">${this.viewerError}</div>` : nothing}
+          ${this.viewerError ? html`<div style="font-size:12px;padding:8px 12px;color:var(--danger);background:var(--danger-subtle, rgba(220,38,38,0.08));border-radius:var(--radius-sm);margin-bottom:12px">${this.viewerError}</div>` : nothing}
           ${!this.viewerLoading && !this.viewerError && this.viewerLogs.length === 0 ? html`<div class="log-empty">暂无执行记录</div>` : nothing}
           ${this.viewerLogs.map(log => html`
             <div class="log-entry">
@@ -531,7 +531,7 @@ export class CronJobsSettings extends LitElement {
       <!-- Create/Edit Dialog -->
       ${this.showCreateDialog ? html`
         <app-dialog .open=${true} size="md" title="${this.editingJob ? '编辑任务' : '新建任务'}" @app-dialog-close=${this.closeFormDialog}>
-          ${this.formError ? html`<div style="font-size:12px;margin-bottom:12px;padding:8px 12px;color:var(--destructive);background:var(--danger-subtle, rgba(220,38,38,0.08));border-radius:var(--radius-sm);">${this.formError}</div>` : nothing}
+          ${this.formError ? html`<div style="font-size:12px;margin-bottom:12px;padding:8px 12px;color:var(--danger);background:var(--danger-subtle, rgba(220,38,38,0.08));border-radius:var(--radius-sm);">${this.formError}</div>` : nothing}
           <div class="form-group">
             <label class="form-label">任务名称</label>
             <input class="form-input" .value=${this.formName} @input=${this.onNameInput} placeholder="例如：每日慢查询检查" />
@@ -586,7 +586,7 @@ export class CronJobsSettings extends LitElement {
       <!-- Trigger Confirm Dialog -->
       ${this.triggerDialogOpen ? html`
         <app-dialog .open=${true} size="sm" title="手动触发" @app-dialog-close=${this.closeTriggerDialog}>
-          ${this.triggerError ? html`<div style="font-size:12px;margin-bottom:12px;padding:8px 12px;color:var(--destructive);background:var(--danger-subtle, rgba(220,38,38,0.08));border-radius:var(--radius-sm);">${this.triggerError}</div>` : nothing}
+          ${this.triggerError ? html`<div style="font-size:12px;margin-bottom:12px;padding:8px 12px;color:var(--danger);background:var(--danger-subtle, rgba(220,38,38,0.08));border-radius:var(--radius-sm);">${this.triggerError}</div>` : nothing}
           <p style="margin:0;">确认立即执行「<strong>${this.triggerJobName || ""}</strong>」？</p>
           <div slot="footer">
             <button class="btn" @click=${this.closeTriggerDialog} ?disabled=${this.triggerRunning}>取消</button>

@@ -175,13 +175,13 @@ export class LLMConfigPage extends LitElement {
     .template-card.custom .t-circle { border: 1.5px dashed var(--border); background: transparent; color: var(--muted); }
 
     /* Form */
-    .form-section-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+    .form-section-title { font-size: var(--text-xs); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
     .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
-    .form-label { font-size: 12px; font-weight: 500; color: var(--text); }
-    .form-input, .form-select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: var(--card); color: var(--text); box-sizing: border-box; transition: border-color 0.15s; }
-    .form-input:focus, .form-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-subtle); }
+    .form-label { font-size: var(--text-sm); font-weight: 500; color: var(--text); }
+    .form-input, .form-select { width: 100%; padding: var(--space-sm) var(--space-md); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-base); background: var(--card); color: var(--text); box-sizing: border-box; transition: border-color 0.15s; }
+    .form-input:focus, .form-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
     .form-input:disabled { opacity: 0.5; background: var(--bg-elevated); cursor: not-allowed; }
-    .form-hint { font-size: 10px; color: var(--muted); margin-top: 2px; }
+    .form-hint { font-size: var(--text-xs); color: var(--muted); margin-top: 2px; }
     .form-row { display: flex; gap: 10px; }
     .form-row > .form-group { flex: 1; }
     .key-wrapper { position: relative; }
@@ -205,7 +205,7 @@ export class LLMConfigPage extends LitElement {
     /* Messages */
     .msg { font-size: 12px; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; }
     .msg-ok { background: var(--ok-subtle); color: var(--ok); }
-    .msg-err { background: var(--danger-subtle); color: var(--destructive); }
+    .msg-err { background: var(--danger-subtle); color: var(--danger); }
 
     /* Placeholder */
     .placeholder { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); text-align: center; padding: 40px; gap: 12px; }
@@ -437,7 +437,7 @@ export class LLMConfigPage extends LitElement {
       </div>`;
     }
     if (this.error) {
-      return html`<div style="padding:var(--space-xl);text-align:center;color:var(--destructive);font-size:var(--text-base)">${this.error}</div>`;
+      return html`<div style="padding:var(--space-xl);text-align:center;color:var(--danger);font-size:var(--text-base)">${this.error}</div>`;
     }
 
     return html`
@@ -543,7 +543,7 @@ export class LLMConfigPage extends LitElement {
 
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">标识名 ${!isEdit ? html`<span style="color:var(--destructive)">*</span>` : ''}</label>
+          <label class="form-label">标识名 ${!isEdit ? html`<span style="color:var(--danger)">*</span>` : ''}</label>
           <input class="form-input" .value=${this.form.name} @input=${(e: any) => this.form.name = e.target.value} placeholder="anthropic" ?disabled=${isEdit} style="font-family:var(--font-mono,monospace)" />
         </div>
         <div class="form-group">

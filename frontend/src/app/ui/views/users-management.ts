@@ -214,11 +214,11 @@ export class UsersManagement extends LitElement {
 
     .form-group {
       display: grid;
-      gap: 6px;
+      gap: var(--space-xs);
     }
 
     .form-group label {
-      font-size: 12px;
+      font-size: var(--text-sm);
       font-weight: 600;
       color: var(--muted);
       text-transform: uppercase;
@@ -227,10 +227,10 @@ export class UsersManagement extends LitElement {
 
     .form-group input,
     .form-group select {
-      padding: 8px 12px;
+      padding: var(--space-sm) var(--space-md);
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      font-size: 13px;
+      font-size: var(--text-base);
       color: var(--text);
       background: var(--card);
       transition: all var(--duration-normal) var(--ease-out);
@@ -601,7 +601,7 @@ export class UsersManagement extends LitElement {
         <app-card variant="default">
           <div slot="header">
             <span>用户管理</span>
-            <button class="btn primary" @click=${this._openCreateModal}>
+            <button class="btn-primary" @click=${this._openCreateModal}>
               新建用户
             </button>
           </div>
@@ -719,7 +719,7 @@ export class UsersManagement extends LitElement {
             ` : ""}
             <div slot="footer">
               <button class="btn" @click=${this._closeModal}>取消</button>
-              <button class="btn primary" @click=${this._saveUser} ?disabled=${this.saving}>${this.saving ? "保存中..." : "保存"}</button>
+              <button class="btn-primary" @click=${this._saveUser} ?disabled=${this.saving}>${this.saving ? "保存中..." : "保存"}</button>
             </div>
           </app-dialog>
         ` : ""}
@@ -743,7 +743,7 @@ export class UsersManagement extends LitElement {
             </div>
             <div slot="footer">
               <button class="btn" @click=${this._closePasswordModal}>取消</button>
-              <button class="btn primary" @click=${this._resetPassword} ?disabled=${this.saving}>${this.saving ? "重置中..." : "确认重置"}</button>
+              <button class="btn-primary" @click=${this._resetPassword} ?disabled=${this.saving}>${this.saving ? "重置中..." : "确认重置"}</button>
             </div>
           </app-dialog>
         ` : ""}

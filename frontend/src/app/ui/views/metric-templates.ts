@@ -105,9 +105,9 @@ export class MetricTemplatesPage extends LitElement {
     .form-group.w50 { width: calc(50% - 6px); }
     .form-group.w100 { width: 100%; }
     .form-group.w33 { width: calc(33% - 8px); }
-    .form-label { font-size: 11px; font-weight: 500; color: var(--muted); }
-    .form-input, .form-select { width: 100%; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; background: var(--card); color: var(--text); box-sizing: border-box; }
-    .form-input:focus, .form-select:focus { border-color: var(--accent); outline: none; }
+    .form-label { font-size: var(--text-sm); font-weight: 500; color: var(--muted); }
+    .form-input, .form-select { width: 100%; padding: var(--space-sm) var(--space-md); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-sm); background: var(--card); color: var(--text); box-sizing: border-box; }
+    .form-input:focus, .form-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); outline: none; }
 
     .msg-err { color: var(--danger); font-size: 11px; width: 100%; }
 
