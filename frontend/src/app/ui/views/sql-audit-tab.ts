@@ -99,7 +99,7 @@ export class SqlAuditTab extends LitElement {
     }
 
     .char-counter.over-limit {
-      color: var(--destructive);
+      color: var(--danger);
     }
 
     .submit-row {
@@ -109,33 +109,12 @@ export class SqlAuditTab extends LitElement {
       margin-top: 12px;
     }
 
-    .btn.primary {
-      padding: 8px 20px;
-      border-radius: var(--radius-md);
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      border: 1px solid var(--accent);
-      background: var(--accent);
-      color: white;
-      transition: all var(--duration-normal) var(--ease-out);
-    }
-
-    .btn.primary:hover:not(:disabled) {
-      opacity: 0.9;
-    }
-
-    .btn.primary:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
     .error-msg {
       padding: 10px 14px;
       background: var(--danger-subtle);
-      border: 1px solid var(--destructive);
+      border: 1px solid var(--danger);
       border-radius: var(--radius-md);
-      color: var(--destructive);
+      color: var(--danger);
       font-size: 13px;
       margin-top: 12px;
     }
@@ -192,8 +171,8 @@ export class SqlAuditTab extends LitElement {
 
     .risk-item.error {
       background: var(--danger-subtle);
-      border: 1px solid var(--destructive);
-      color: var(--destructive);
+      border: 1px solid var(--danger);
+      color: var(--danger);
     }
 
     .risk-badge {
@@ -212,7 +191,7 @@ export class SqlAuditTab extends LitElement {
     }
 
     .risk-badge.error {
-      background: var(--destructive);
+      background: var(--danger);
       color: white;
     }
 
@@ -261,7 +240,7 @@ export class SqlAuditTab extends LitElement {
     }
 
     .badge-status-failed {
-      background: var(--destructive);
+      background: var(--danger);
       color: white;
     }
 
@@ -739,7 +718,7 @@ export class SqlAuditTab extends LitElement {
             </div>
             <div class="submit-row">
               <button
-                class="btn primary"
+                class="btn-primary"
                 ?disabled=${!this.sqlText.trim() || this.loading}
                 @click=${() => this._submitAudit()}
               >

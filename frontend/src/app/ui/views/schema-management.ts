@@ -105,16 +105,6 @@ export class SchemaManagementPage extends LitElement {
       cursor: not-allowed;
     }
 
-    .btn.primary {
-      background: var(--accent);
-      color: var(--accent-foreground);
-      border-color: var(--accent);
-    }
-
-    .btn.primary:hover {
-      background: var(--accent-hover);
-    }
-
     .select {
       padding: var(--space-sm) var(--space-md);
       border-radius: var(--radius-sm);
@@ -632,7 +622,7 @@ export class SchemaManagementPage extends LitElement {
               </select>
             ` : html`<span style="font-size: var(--text-sm); font-weight: 500; color: var(--text-strong);">实例 ID: ${this.instanceId}</span>`}
 
-            <button class="btn primary" @click=${this.handleCollect} ?disabled=${this.collecting || !this._activeInstanceId}>
+            <button class="btn-primary" @click=${this.handleCollect} ?disabled=${this.collecting || !this._activeInstanceId}>
               ${this.collecting ? html`<span class="spinner"></span> 采集中...` : "采集快照"}
             </button>
 
