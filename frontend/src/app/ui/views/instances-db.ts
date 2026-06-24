@@ -524,9 +524,9 @@ export class InstancesPage extends LitElement {
   @state() private formData: InstanceFormData = {
     name: "",
     environment: "development",
-    db_type: "mysql",
+    db_type: "",
     host: "",
-    port: 3306,
+    port: 0,
     username: "",
     password: "",
     database_name: "",
@@ -1055,8 +1055,8 @@ export class InstancesPage extends LitElement {
           <app-form-field label="用户名" required>
             <input class="form-input" type="text" autocomplete="off" .value=${this.formData.username} @input=${(e: any) => this._updateForm("username", e.target.value)} />
           </app-form-field>
-          <app-form-field label="密码${isEdit ? ' (留空不修改)' : ''}">
-            <input class="form-input" type="password" .value=${this.formData.password} @input=${(e: any) => this._updateForm("password", e.target.value)} placeholder=${isEdit ? "留空表示不修改" : ""} />
+          <app-form-field label="密码${isEdit ? ' (留空不修改)' : ''}" required=${!isEdit}>
+            <input class="form-input" type="password" autocomplete="new-password" .value=${this.formData.password} @input=${(e: any) => this._updateForm("password", e.target.value)} placeholder=${isEdit ? "留空表示不修改" : ""} />
           </app-form-field>
         </div>
 
