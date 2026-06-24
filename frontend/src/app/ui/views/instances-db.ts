@@ -1075,11 +1075,11 @@ export class InstancesPage extends LitElement {
         ${this.testMessage ? html`<div class="test-result ${this.testStatus}">${this.testStatus === 'success' ? icons['check-circle'] : icons['x-circle']} ${this.testMessage}</div>` : ''}
         <div slot="footer" style="display:flex;justify-content:space-between;align-items:center">
           <button class="btn" @click=${this._handleTestConnection} ?disabled=${this.testStatus === 'testing'}>
-            ${this.testStatus === 'testing' ? html`${icons['loader']} 测试中...` : html`${icons['link']} 测试连接`}
+            ${this.testStatus === 'testing' ? '测试中...' : '测试连接'}
           </button>
           <div style="display:flex;gap:var(--space-md)">
             <button class="btn" @click=${this._closeDialogs}>取消</button>
-            <button class="btn primary" @click=${() => this._handleSubmit(isEdit)} ?disabled=${this.isSubmitting}>${this.isSubmitting ? '保存中...' : isEdit ? '保存修改' : '创建实例'}</button>
+            <button class="btn primary" @click=${() => this._handleSubmit(isEdit)} ?disabled=${this.isSubmitting}>${this.isSubmitting ? '保存中...' : isEdit ? '保存修改' : '添加实例'}</button>
           </div>
         </div>
       </app-dialog>
