@@ -3,6 +3,7 @@ import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { Marked } from "marked";
+import "../components/app-card.js";
 
 const marked = new Marked();
 
@@ -77,32 +78,6 @@ export class AIAnalysisResult extends LitElement {
       display: block;
     }
 
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-    }
-
-    .card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 14px 16px;
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-elevated);
-    }
-
-    .card-title {
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--text-strong);
-    }
-
-    .card-body {
-      padding: 16px;
-    }
-
     .loading-state {
       display: flex;
       align-items: center;
@@ -129,9 +104,9 @@ export class AIAnalysisResult extends LitElement {
     .error-state {
       padding: 16px;
       background: var(--danger-subtle);
-      border: 1px solid var(--destructive);
+      border: 1px solid var(--danger);
       border-radius: var(--radius-md);
-      color: var(--destructive);
+      color: var(--danger);
       font-size: 14px;
       display: flex;
       align-items: center;
@@ -216,7 +191,7 @@ export class AIAnalysisResult extends LitElement {
       margin: 8px 0;
       padding: 8px 12px;
       border-left: 3px solid var(--accent);
-      background: rgba(210, 190, 252, 0.06);
+      background: rgba(64, 158, 255, 0.06);
       color: var(--text);
       font-style: italic;
     }
@@ -233,103 +208,79 @@ export class AIAnalysisResult extends LitElement {
     }
 
     .source-tag.auto {
-      background: rgba(210, 190, 252, 0.15);
-      color: #d2befc;
+      background: rgba(64, 158, 255, 0.12);
+      color: var(--accent);
     }
 
     .source-tag.manual {
       background: rgba(59, 130, 246, 0.12);
       color: #3b82f6;
     }
-
-    .header-right {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
   `];
 
   override render() {
     if (this.loading) {
       return html`
-        <div class="card">
-          <div class="card-body">
-            <div class="loading-state">
-              <div class="spinner"></div>
-              <span>AI 分析中，请稍候...</span>
-            </div>
+        <app-card>
+          <div class="loading-state">
+            <div class="spinner"></div>
+            <span>AI 分析中，请稍候...</span>
           </div>
-        </div>
+        </app-card>
       `;
     }
 
     if (this.status === "running") {
       return html`
-        <div class="card">
-          <div class="card-body">
-            <div class="loading-state">
-              <div class="spinner"></div>
-              <span>分析中...</span>
-            </div>
+        <app-card>
+          <div class="loading-state">
+            <div class="spinner"></div>
+            <span>分析中...</span>
           </div>
-        </div>
+        </app-card>
       `;
     }
 
     if (this.status === "failed") {
       return html`
-        <div class="card">
-          <div class="card-header">
-            <span class="card-title">AI 分析失败</span>
+        <app-card>
+          <span slot="header">AI 分析失败</span>
+          <div class="error-state">
+            <span>!</span>
+            <span>${this.errorMessage || "Unknown error"}</span>
           </div>
-          <div class="card-body">
-            <div class="error-state">
-              <span>!</span>
-              <span>${this.errorMessage || "Unknown error"}</span>
-            </div>
-          </div>
-        </div>
+        </app-card>
       `;
     }
 
     // completed + null result
     if (this.status === "completed" && this.result === null) {
       return html`
-        <div class="card">
-          <div class="card-header">
-            <span class="card-title">${this.title}</span>
-            <div class="header-right">
-              <span class="source-tag ${this.triggerType}">
-                ${this.triggerType === "auto" ? "自动分析" : "手动分析"}
-              </span>
-            </div>
-          </div>
-          <div class="card-body">
-            <p style="color:var(--muted);font-size:14px;">分析完成，但暂无结果数据</p>
-          </div>
-        </div>
+        <app-card>
+          <span slot="header">${this.title}
+            <span class="source-tag ${this.triggerType}" style="margin-left:auto">
+              ${this.triggerType === "auto" ? "自动分析" : "手动分析"}
+            </span>
+          </span>
+          <p style="color:var(--muted);font-size:14px;">分析完成，但暂无结果数据</p>
+        </app-card>
       `;
     }
 
     // completed + result string or object
     return html`
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">${this.title}</span>
-          <div class="header-right">
-            <span class="source-tag ${this.triggerType}">
-              ${this.triggerType === "auto" ? "自动分析" : "手动分析"}
-            </span>
-          </div>
+      <app-card>
+        <span slot="header">${this.title}
+          <span class="source-tag ${this.triggerType}" style="margin-left:auto">
+            ${this.triggerType === "auto" ? "自动分析" : "手动分析"}
+          </span>
+        </span>
+        <div class="result-content">
+          ${this.result
+            ? html`<div>${unsafeHTML(renderResult(this.result))}</div>`
+            : html`<p style="color:var(--muted);">分析完成，但暂无结果数据</p>`}
         </div>
-        <div class="card-body">
-          <div class="result-content">
-            ${this.result
-              ? html`<div>${unsafeHTML(renderResult(this.result))}</div>`
-              : html`<p style="color:var(--muted);">分析完成，但暂无结果数据</p>`}
-          </div>
-        </div>
-      </div>
+      </app-card>
     `;
   }
 }
