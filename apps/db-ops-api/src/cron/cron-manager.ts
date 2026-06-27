@@ -11,6 +11,8 @@ import { CronJob } from 'cron';
 import { CronJobDatabaseService } from './cron-job-service';
 import { CronJobConfig } from './types';
 import { CronExecutor } from './cron-executor';
+import { sqlExecutor } from '../sql-executor';
+import { dbConnection } from '../db-connection';
 
 export class CronManager {
   /** 数据库服务 */
@@ -102,12 +104,20 @@ export class CronManager {
       config.timezone || 'Asia/Shanghai'
     );
     this.jobs.set(config.id, cronJob);
+
+    // 记录初始 next_run_at
+    const firstNext = cronJob.nextDate();
+    if (firstNext) {
+      this.jobService.updateNextRun(config.id, firstNext.toJSDate()).catch(err => {
+        console.warn(`CronManager: 初始 next_run_at 更新失败 #${config.id}:`, err.message);
+      });
+    }
   }
 
   /**
    * 执行任务（含并发守卫和日志记录）
    */
-  private async executeJob(config: CronJobConfig): Promise<void> {
+  public async executeJob(config: CronJobConfig): Promise<void> {
     if (this.runningFlags.has(config.id)) {
       console.warn(`CronManager: 任务 #${config.id} "${config.name}" 跳过（正在执行中）`);
       return;
@@ -118,8 +128,25 @@ export class CronManager {
     let logId: number | null = null;
 
     try {
+      // 记录下次执行时间
+      const cronJob = this.jobs.get(config.id);
+      if (cronJob) {
+        const nextDate = cronJob.nextDate();
+        if (nextDate) {
+          this.jobService.updateNextRun(config.id, nextDate.toJSDate()).catch(err => {
+            console.warn(`CronManager: 更新任务 #${config.id} next_run_at 失败:`, err.message);
+          });
+        }
+      }
+
       logId = await this.jobService.startLog(config.id);
       console.log(`CronManager: 执行任务 #${config.id} "${config.name}"`);
+
+      // 分支：script 类型任务直接执行 SQL，不走 Agent
+      if (config.task_type === 'script') {
+        await this.executeScriptJob(config, logId);
+        return;
+      }
 
       const result = await this.cronExecutor.execute(
         config.id,
@@ -158,6 +185,79 @@ export class CronManager {
       await this.jobService.updateRunResult(config.id, 'error');
     } finally {
       this.runningFlags.delete(config.id);
+    }
+  }
+
+  /**
+   * 执行 script 类型任务（直接执行 SQL，不走 AI Agent）
+   */
+  private async executeScriptJob(config: CronJobConfig, logId: number): Promise<void> {
+    if (!config.script_id) throw new Error(`任务 #${config.id} 没有绑定脚本`);
+    const { scriptService } = await import('./script-service');
+    const script = await scriptService.getScriptById(config.script_id!);
+    if (!script) throw new Error(`脚本 #${config.script_id} 不存在`);
+
+    let result: { success: boolean; columns?: string[]; rows?: any[]; rowCount?: number; duration_ms?: number; error?: string };
+
+    if (config.target_instance_id) {
+      // Per Pitfall 3: Set timeout guard before execution
+      const timeoutMs = (config.timeout_seconds || 300) * 1000;
+      const preparedSql = script.content;
+      // For MySQL: prefix with SET max_execution_time
+      let timeoutSql = '';
+      if (script.target_db_type === 'mysql') {
+        timeoutSql = `SET SESSION max_execution_time = ${timeoutMs};\n`;
+      }
+      const execSql = timeoutSql + preparedSql;
+      result = await sqlExecutor.executeSql(config.target_instance_id, execSql);
+    } else {
+      // Per Pitfall 4: Execute against Slide's own MySQL DB (no target instance)
+      result = await this.executeInternalSql(script.content);
+    }
+
+    // Unified structured_result format matching agent mode
+    const structuredResult = {
+      success: result.success,
+      rowCount: result.rowCount ?? 0,
+      columns: result.columns ?? [],
+      duration_ms: result.duration_ms ?? 0,
+      error: result.error ?? null,
+    };
+
+    const status = result.success ? 'success' : 'error';
+
+    await this.jobService.completeLog(
+      logId, status,
+      result.success ? `Script executed: ${result.rowCount} rows in ${result.duration_ms}ms`
+                    : `Script failed: ${result.error}`,
+      result.error || undefined,
+      structuredResult,
+      { duration_ms: result.duration_ms ?? 0 },
+    );
+
+    await this.jobService.updateRunResult(config.id, status);
+  }
+
+  /**
+   * 对 Slide 自身 MySQL DB 执行 SQL（target_instance_id 为 null 时使用）
+   */
+  private async executeInternalSql(sql: string): Promise<{
+    success: boolean; columns?: string[]; rows?: any[]; rowCount?: number; duration_ms?: number; error?: string;
+  }> {
+    const startTime = Date.now();
+    try {
+      const pool = dbConnection.getPool();
+      if (!pool) return { success: false, error: '数据库未连接', duration_ms: Date.now() - startTime };
+      const [rows] = await pool.execute(sql) as any;
+      return {
+        success: true,
+        columns: rows.length > 0 ? Object.keys(rows[0]) : [],
+        rows,
+        rowCount: Array.isArray(rows) ? rows.length : 0,
+        duration_ms: Date.now() - startTime,
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message, duration_ms: Date.now() - startTime };
     }
   }
 

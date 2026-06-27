@@ -56,6 +56,7 @@ import { aiAnalysisConfigService } from './src/ai-analysis-config-service.js';
 import { getAgentGreeting } from './src/agent-service.js';
 import { scoringConfigService } from './src/scoring-config-service.js';
 import { brandingConfigService } from './src/branding-config-service.js';
+import { consistencyChecker } from './src/consistency-checker.js';
 import { userPreferenceService } from './src/user-preference-service.js';
 import { collectionCapabilityTracker } from './src/collection-capabilities.js';
 import { sqlAuditService } from './src/sql-audit-service.js';
@@ -68,6 +69,7 @@ import * as path from 'path';
 import { CronJobDatabaseService, cronJobService } from './src/cron/cron-job-service';
 import { CronManager } from './src/cron/cron-manager';
 import { CronExecutor } from './src/cron/cron-executor';
+import { ScriptService, scriptService } from './src/cron/script-service';
 import { CronJob } from 'cron';
 import { getAgentEngine, createLLMProvider, loadPlatformTools } from './src/adapter/get-agent-engine.js';
 import { DirectAdapter } from './src/adapter/direct-adapter.js';
@@ -189,6 +191,26 @@ async function start() {
       status: 'ok',
       timestamp: new Date().toISOString(),
     });
+  });
+
+  // 一致性健康检查（认证保护）
+  fastify.get('/api/health/consistency', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const result = await consistencyChecker.runAllChecks();
+      reply.send(result);
+    } catch (err: any) {
+      reply.code(500).send({ error: err.message });
+    }
+  });
+
+  // 手动触发容量采集（认证保护）
+  fastify.post('/api/monitor/collect-capacity', { preHandler: [verifyToken] }, async (_request, reply) => {
+    try {
+      await (monitorCollector as any).collectCapacity();
+      reply.send({ message: '容量采集完成' });
+    } catch (err: any) {
+      reply.code(500).send({ error: err.message });
+    }
   });
 
   // 注册 verifyToken 装饰器供 rbac-api.ts 使用
@@ -4025,6 +4047,21 @@ async function start() {
   const cronManager = new CronManager(cronJobService, cronExecutor);
   await cronManager.start();
 
+  // 清理崩溃残留的 running 日志
+  try {
+    const reaperPool = (await import('./src/db-connection')).dbConnection.getPool();
+    if (reaperPool) {
+      const [reaperResult] = await reaperPool.execute(
+        "UPDATE cron_job_logs SET status = 'error', error_message = 'Server 重启，任务被中断', finished_at = NOW() WHERE status = 'running'"
+      ) as any;
+      if (reaperResult.affectedRows > 0) {
+        console.log(`[CronManager] 清理了 ${reaperResult.affectedRows} 条残留 running 日志`);
+      }
+    }
+  } catch (err: any) {
+    console.warn('[CronManager] 清理残留 running 日志失败 (非致命):', err.message);
+  }
+
   // 维护窗口缓存刷新 - 每 5 分钟
   maintenanceWindowService.startCacheRefresh(5);
 
@@ -4092,9 +4129,13 @@ async function start() {
           name: body.name,
           task_description: body.task_description,
           cron_expr: body.cron_expr,
+          task_type: body.task_type,
+          script_id: body.script_id,
+          target_instance_id: body.target_instance_id,
           timezone: body.timezone,
           description: body.description,
           timeout_seconds: body.timeout_seconds,
+          retry_count: body.retry_count,
         });
 
         await cronManager.reload();
@@ -4129,6 +4170,9 @@ async function start() {
           task_description: body.task_description,
           cron_expr: body.cron_expr,
           enabled: body.enabled,
+          task_type: body.task_type,
+          script_id: body.script_id,
+          target_instance_id: body.target_instance_id,
           timezone: body.timezone,
           description: body.description,
           timeout_seconds: body.timeout_seconds,
@@ -4176,46 +4220,22 @@ async function start() {
     }
   });
 
-  // 手动触发定时任务（通过 CronExecutor 执行）
+  // 手动触发定时任务（通过 CronManager.executeJob 处理 script/agent 分支）
   fastify.post('/api/cron/jobs/:id/run', {
     preHandler: [verifyToken, requirePermission('cron:manage')],
     handler: async (request, reply) => {
-      let logId: number | null = null;
       const startTime = Date.now();
       try {
         const { id } = request.params as any;
         const config = await cronJobService.getJobById(Number(id));
         if (!config) return reply.code(404).send({ error: '定时任务不存在' });
 
-        logId = await cronJobService.startLog(config.id);
+        // Route through CronManager.executeJob() which handles task_type branching:
+        // script jobs → executeScriptJob() (SqlExecutor), agent jobs → cronExecutor.execute()
+        await cronManager.executeJob(config);
 
-        const result = await cronExecutor.execute(
-          config.id,
-          config.task_description,
-          config.timeout_seconds || 300,
-          config.output_schema,
-        );
-
-        const status = result.error ? 'error' : result.stopReason === 'max_iterations' ? 'partial' : 'success';
-        await cronJobService.completeLog(logId, status,
-          result.finalContent || '手动触发执行成功',
-          result.error || undefined,
-          result.structuredResult || null,
-          {
-            tools_used: result.toolsUsed,
-            tool_events: result.toolEvents,
-            usage: result.usage,
-            stop_reason: result.stopReason,
-            duration_ms: Date.now() - startTime,
-          },
-        );
-        reply.send({ logId, status });
+        reply.send({ message: '执行完成' });
       } catch (error: any) {
-        if (logId !== null) {
-          await cronJobService.completeLog(logId, 'error', `执行失败`, error.message, {
-            error_trace: error.stack,
-          }).catch(() => {});
-        }
         reply.code(500).send({ error: error.message });
       }
     }
@@ -4272,6 +4292,132 @@ async function start() {
         const offset = Math.max(Number(query.offset) || 0, 0);
 
         const result = await cronJobService.getLogs(Number(id), limit, offset);
+        reply.send(result);
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    }
+  });
+
+  // ========== Script管理 API ==========
+
+  // 获取所有脚本
+  fastify.get('/api/cron/scripts', {
+    preHandler: [verifyToken, requirePermission('cron:view')],
+    handler: async (request, reply) => {
+      try {
+        const scripts = await scriptService.getAllScripts();
+        reply.send(scripts);
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    }
+  });
+
+  // 新建脚本
+  fastify.post('/api/cron/scripts', {
+    preHandler: [verifyToken, requirePermission('cron:manage')],
+    handler: async (request, reply) => {
+      try {
+        const body = request.body as any;
+
+        if (!body.name || typeof body.name !== 'string') {
+          return reply.code(400).send({ error: '缺少必要参数：name' });
+        }
+        if (!body.content || typeof body.content !== 'string' || !body.content.trim()) {
+          return reply.code(400).send({ error: '缺少必要参数：content' });
+        }
+        const validDbTypes = ['mysql', 'postgresql', 'oracle', 'dameng', 'mongodb', 'redis', 'elasticsearch'];
+        if (!body.target_db_type || !validDbTypes.includes(body.target_db_type)) {
+          return reply.code(400).send({ error: `无效的 target_db_type，可选值：${validDbTypes.join(', ')}` });
+        }
+
+        const id = await scriptService.createScript({
+          name: body.name,
+          description: body.description,
+          content: body.content,
+          target_db_type: body.target_db_type,
+          script_type: body.script_type || 'sql',
+        });
+
+        reply.code(201).send({ id, message: '创建成功' });
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    }
+  });
+
+  // 更新脚本
+  fastify.put('/api/cron/scripts/:id', {
+    preHandler: [verifyToken, requirePermission('cron:manage')],
+    handler: async (request, reply) => {
+      try {
+        const { id } = request.params as any;
+        const body = request.body as any;
+
+        const existing = await scriptService.getScriptById(Number(id));
+        if (!existing) return reply.code(404).send({ error: '脚本不存在' });
+
+        const updated = await scriptService.updateScript(Number(id), {
+          name: body.name,
+          description: body.description,
+          content: body.content,
+          target_db_type: body.target_db_type,
+          script_type: body.script_type,
+        });
+
+        if (!updated) {
+          return reply.code(400).send({ error: '没有可更新的字段' });
+        }
+
+        reply.send({ message: '更新成功' });
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    }
+  });
+
+  // 删除脚本
+  fastify.delete('/api/cron/scripts/:id', {
+    preHandler: [verifyToken, requirePermission('cron:manage')],
+    handler: async (request, reply) => {
+      try {
+        const { id } = request.params as any;
+
+        const existing = await scriptService.getScriptById(Number(id));
+        if (!existing) return reply.code(404).send({ error: '脚本不存在' });
+
+        await scriptService.deleteScript(Number(id));
+        reply.send({ message: '删除成功' });
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    }
+  });
+
+  // 测试执行脚本（dry-run，结果限制100行）
+  fastify.post('/api/cron/scripts/:id/test', {
+    preHandler: [verifyToken, requirePermission('cron:manage')],
+    handler: async (request, reply) => {
+      try {
+        const { id } = request.params as any;
+        const body = request.body as any;
+
+        if (!body.instance_id || typeof body.instance_id !== 'number') {
+          return reply.code(400).send({ error: '缺少必要参数：instance_id（数字类型）' });
+        }
+
+        const script = await scriptService.getScriptById(Number(id));
+        if (!script) return reply.code(404).send({ error: '脚本不存在' });
+
+        const result = await sqlExecutor.executeSql(body.instance_id, script.content);
+
+        // Limit rows returned to 100 to avoid large payloads
+        if (result.rows && result.rows.length > 100) {
+          result.rows = result.rows.slice(0, 100);
+          result.rowCount = result.rows.length;
+        }
+
         reply.send(result);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });

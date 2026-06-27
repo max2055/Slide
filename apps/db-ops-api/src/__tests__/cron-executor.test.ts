@@ -112,8 +112,8 @@ describe('slide_complete_cron tool', () => {
     it('has no unexpected parameters', () => {
       const props = completeCronTool.parameters.properties;
       const keys = Object.keys(props);
-      expect(keys).toEqual(expect.arrayContaining(['status', 'summary', 'details']));
-      expect(keys.length).toBe(3);
+      expect(keys).toEqual(expect.arrayContaining(['status', 'summary', 'details', 'result']));
+      expect(keys.length).toBe(4);
     });
   });
 

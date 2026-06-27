@@ -32,7 +32,7 @@ export class CronJobDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, task_description, cron_expr, enabled, timezone, description,
+        `SELECT id, name, task_description, cron_expr, enabled, task_type, script_id, target_instance_id, timezone, description,
                 last_run_at, next_run_at, last_result, timeout_seconds, retry_count,
                 created_at, updated_at
          FROM cron_jobs
@@ -54,7 +54,7 @@ export class CronJobDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, task_description, cron_expr, enabled, timezone, description,
+        `SELECT id, name, task_description, cron_expr, enabled, task_type, script_id, target_instance_id, timezone, description,
                 last_run_at, next_run_at, last_result, timeout_seconds, retry_count,
                 created_at, updated_at
          FROM cron_jobs
@@ -77,7 +77,7 @@ export class CronJobDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, task_description, output_schema, cron_expr, enabled, timezone, description,
+        `SELECT id, name, task_description, output_schema, cron_expr, enabled, task_type, script_id, target_instance_id, timezone, description,
                 last_run_at, next_run_at, last_result, timeout_seconds, retry_count,
                 created_at, updated_at
          FROM cron_jobs
@@ -99,7 +99,7 @@ export class CronJobDatabaseService {
   /**
    * 更新任务配置（仅更新非 undefined 的字段）
    */
-  async updateJob(id: number, data: Partial<Pick<CronJobConfig, 'task_description' | 'cron_expr' | 'enabled' | 'timezone' | 'description' | 'timeout_seconds' | 'retry_count'>>): Promise<boolean> {
+  async updateJob(id: number, data: Partial<Pick<CronJobConfig, 'task_description' | 'cron_expr' | 'enabled' | 'task_type' | 'script_id' | 'target_instance_id' | 'timezone' | 'description' | 'timeout_seconds' | 'retry_count'>>): Promise<boolean> {
     const pool = this.getPool();
     if (!pool) throw new Error('数据库未连接');
 
@@ -120,6 +120,21 @@ export class CronJobDatabaseService {
       if (data.enabled !== undefined) {
         updates.push('enabled = ?');
         values.push(data.enabled ? 1 : 0);
+      }
+
+      if (data.task_type !== undefined) {
+        updates.push('task_type = ?');
+        values.push(data.task_type);
+      }
+
+      if (data.script_id !== undefined) {
+        updates.push('script_id = ?');
+        values.push(data.script_id);
+      }
+
+      if (data.target_instance_id !== undefined) {
+        updates.push('target_instance_id = ?');
+        values.push(data.target_instance_id);
       }
 
       if (data.timezone !== undefined) {
@@ -201,6 +216,9 @@ export class CronJobDatabaseService {
     name: string;
     task_description: string;
     cron_expr: string;
+    task_type?: 'script' | 'agent';
+    script_id?: number;
+    target_instance_id?: number;
     timezone?: string;
     description?: string;
     timeout_seconds?: number;
@@ -210,12 +228,15 @@ export class CronJobDatabaseService {
 
     try {
       const [result] = await pool.execute(
-        `INSERT INTO cron_jobs (name, task_description, cron_expr, timezone, description, timeout_seconds)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO cron_jobs (name, task_description, cron_expr, task_type, script_id, target_instance_id, timezone, description, timeout_seconds)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           data.name,
           data.task_description,
           data.cron_expr,
+          data.task_type || 'agent',
+          data.script_id || null,
+          data.target_instance_id || null,
           data.timezone || 'Asia/Shanghai',
           data.description || null,
           data.timeout_seconds || 300,

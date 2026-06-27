@@ -13,6 +13,9 @@ export interface CronJobConfig {
   output_schema: Record<string, unknown> | null;
   cron_expr: string;
   enabled: boolean;
+  task_type: 'script' | 'agent';
+  script_id: number | null;
+  target_instance_id: number | null;
   timezone: string;
   description: string | null;
   last_run_at: string | null;
@@ -50,5 +53,35 @@ export interface CronJobParam {
   job_id: number;
   param_key: string;
   param_value: string | null;
+}
+
+/** cron_scripts 表映射 */
+export interface CronScript {
+  id: number;
+  name: string;
+  description: string | null;
+  script_type: 'sql' | 'shell';
+  content: string;
+  target_db_type: 'mysql' | 'postgresql' | 'oracle' | 'dameng' | 'mongodb' | 'redis' | 'elasticsearch';
+  created_at: string;
+  updated_at: string;
+}
+
+/** POST /api/cron/scripts request body */
+export interface CreateScriptInput {
+  name: string;
+  description?: string;
+  content: string;
+  target_db_type: 'mysql' | 'postgresql' | 'oracle' | 'dameng' | 'mongodb' | 'redis' | 'elasticsearch';
+  script_type?: 'sql' | 'shell';
+}
+
+/** PUT /api/cron/scripts/:id request body */
+export interface UpdateScriptInput {
+  name?: string;
+  description?: string;
+  content?: string;
+  target_db_type?: 'mysql' | 'postgresql' | 'oracle' | 'dameng' | 'mongodb' | 'redis' | 'elasticsearch';
+  script_type?: 'sql' | 'shell';
 }
 

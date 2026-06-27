@@ -19,8 +19,8 @@ CREATE TABLE IF NOT EXISTS `users` (
   `username` VARCHAR(50) NOT NULL UNIQUE,
   `password_hash` VARCHAR(255) NOT NULL,
   `email` VARCHAR(100) DEFAULT NULL,
-  `role` ENUM('admin', 'dba', 'developer', 'analyst', 'viewer', 'auditor') NOT NULL DEFAULT 'viewer',
   `status` ENUM('active', 'inactive', 'locked') NOT NULL DEFAULT 'active',
+  `role_backup` VARCHAR(20) DEFAULT NULL COMMENT 'Phased out: roles moved to user_roles table via RBAC',
   `last_login_at` DATETIME DEFAULT NULL,
   `last_login_ip` VARCHAR(45) DEFAULT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -78,6 +78,8 @@ CREATE TABLE IF NOT EXISTS `database_instances` (
   `username` VARCHAR(100) NOT NULL,
   `password_encrypted` VARCHAR(255) NOT NULL,
   `database_name` VARCHAR(100) DEFAULT NULL,
+  `db_version` VARCHAR(50) DEFAULT NULL COMMENT '数据库版本号',
+  `data_size_gb` DECIMAL(10,2) DEFAULT NULL COMMENT '数据总大小 GB',
   `connection_string` VARCHAR(500) DEFAULT NULL,
   `max_connections` INT DEFAULT 100,
   `connection_timeout_ms` INT DEFAULT 30000,
@@ -815,9 +817,9 @@ CREATE TABLE IF NOT EXISTS `system_config` (
 -- TODO: 改为在应用初始化代码中使用 bcrypt 创建用户（参见 apps/db-ops-api/CLAUDE.md 认证章节）
 -- 测试/开发环境下保留以下种子数据以支持 init-db.ts 引导
 -- 密码使用 SHA256 哈希：4f32fc2ba7f8dfa43328d1ee7e5eb7607c78ab2e73c5cd001979aeaf5532c817
-INSERT INTO `users` (`username`, `password_hash`, `email`, `role`, `status`) VALUES
-('admin', '4f32fc2ba7f8dfa43328d1ee7e5eb7607c78ab2e73c5cd001979aeaf5532c817', 'admin@example.com', 'admin', 'active'),
-('user', '4f32fc2ba7f8dfa43328d1ee7e5eb7607c78ab2e73c5cd001979aeaf5532c817', 'user@example.com', 'viewer', 'active');
+INSERT INTO `users` (`username`, `password_hash`, `email`, `status`, `role_backup`) VALUES
+('admin', '4f32fc2ba7f8dfa43328d1ee7e5eb7607c78ab2e73c5cd001979aeaf5532c817', 'admin@example.com', 'active', 'admin'),
+('user', '4f32fc2ba7f8dfa43328d1ee7e5eb7607c78ab2e73c5cd001979aeaf5532c817', 'user@example.com', 'active', 'viewer');
 
 -- 插入默认 LLM 提供商配置
 INSERT INTO `llm_providers` (`name`, `display_name`, `deployment_type`, `default_model`, `models_supported`, `context_window`, `supports_function_call`, `supports_vision`, `input_cost_per_1k`, `output_cost_per_1k`, `enabled`, `is_default`, `temperature`, `max_tokens`) VALUES
