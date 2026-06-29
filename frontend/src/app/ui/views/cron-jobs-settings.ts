@@ -364,17 +364,25 @@ export class CronJobsSettings extends LitElement {
     this.selectedScriptTemplate = null;
     this.testResult = null;
     this.showCreateDialog = true;
-    // Load scripts/instances and try to populate editor content
-    this.loadScriptsAndInstances().then(() => {
-      if (this.formTaskType === "script" && this.formScriptId) {
-        const tmpl = this.scripts.find((s) => s.id === this.formScriptId);
-        if (tmpl) {
-          this.scriptEditorContent = tmpl.content;
-          this.scriptEditorDbType = tmpl.target_db_type;
-          this.selectedScriptTemplate = tmpl;
-        }
-      }
-    });
+    // Load scripts list and instance list for dropdowns
+    this.loadScriptsAndInstances();
+    // For script mode, directly fetch the script content by ID
+    if (job.task_type === "script" && job.script_id) {
+      this.loadScriptContent(job.script_id);
+    }
+  }
+
+  private async loadScriptContent(scriptId: number) {
+    try {
+      const res = await authFetch(`/api/cron/scripts/${scriptId}`);
+      if (!res.ok) return;
+      const script: CronScript = await res.json();
+      this.scriptEditorContent = script.content;
+      this.scriptEditorDbType = script.target_db_type;
+      this.selectedScriptTemplate = script;
+    } catch {
+      // Swallow
+    }
   }
 
   private closeFormDialog() {

@@ -4314,6 +4314,21 @@ async function start() {
     }
   });
 
+  // 获取单个脚本详情
+  fastify.get('/api/cron/scripts/:id', {
+    preHandler: [verifyToken, requirePermission('cron:view')],
+    handler: async (request, reply) => {
+      try {
+        const { id } = request.params as any;
+        const script = await scriptService.getScriptById(Number(id));
+        if (!script) return reply.code(404).send({ error: '脚本不存在' });
+        reply.send(script);
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    }
+  });
+
   // 新建脚本
   fastify.post('/api/cron/scripts', {
     preHandler: [verifyToken, requirePermission('cron:manage')],
