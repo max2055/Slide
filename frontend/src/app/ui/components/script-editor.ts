@@ -286,14 +286,16 @@ export class ScriptEditor extends LitElement {
   }
 
   override updated(changedProperties: Map<string, unknown>) {
-    if (changedProperties.has("dbType") || changedProperties.has("content")) {
-      // Re-mount editor when content or dialect changes
+    if (changedProperties.has("content")) {
+      // Content changed: use the new property value directly
+      this._destroyEditor();
+      this._mountEditor(this.content, this.dbType, this.readonly);
+    } else if (changedProperties.has("dbType")) {
+      // Only dialect changed: preserve current editor content
       const currentContent = this.editorView?.state.doc.toString() ?? this.content;
       this._destroyEditor();
       this._mountEditor(currentContent, this.dbType, this.readonly);
-    }
-    if (changedProperties.has("readonly") && this.editorView) {
-      // Re-mount if readonly changes
+    } else if (changedProperties.has("readonly") && this.editorView) {
       const currentContent = this.editorView.state.doc.toString();
       this._destroyEditor();
       this._mountEditor(currentContent, this.dbType, this.readonly);
