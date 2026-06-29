@@ -175,6 +175,13 @@ export class CronJobsSettings extends LitElement {
   @state() private testResult: string | null = null;
   @state() private testRunning = false;
 
+  @state() private filterMode: "all" | "script" | "agent" = "all";
+
+  private get filteredJobs(): CronJobConfig[] {
+    if (this.filterMode === "all") return this.jobs;
+    return this.jobs.filter(j => j.task_type === this.filterMode);
+  }
+
   static styles = [sharedBtnStyles, css`
     :host { display: block; }
     .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
@@ -191,6 +198,7 @@ export class CronJobsSettings extends LitElement {
     .table-row:hover { background: var(--bg-elevated, rgba(255,255,255,0.03)); }
     .table-cell { padding: 10px; display: flex; align-items: center; gap: 6px; overflow: hidden; }
     .cell-status { width: 48px; justify-content: center; }
+    .cell-index { width: 40px; min-width: 40px; justify-content: center; font-size: 11px; color: var(--muted); }
     .cell-name { flex: 1; min-width: 0; }
     .cell-desc { flex: 2; min-width: 0; }
     .cell-expr { width: 180px; min-width: 180px; }
@@ -745,9 +753,19 @@ export class CronJobsSettings extends LitElement {
         </div>
         <button class="btn-primary" @click=${this.openCreateDialog}>+ 新建任务</button>
       </div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+        <label style="font-size:12px;color:var(--muted);">筛选模式：</label>
+        <select class="form-input" style="width:auto;min-width:140px;" .value=${this.filterMode} @change=${(e: Event) => { this.filterMode = (e.target as HTMLSelectElement).value as "all" | "script" | "agent"; }}>
+          <option value="all">全部</option>
+          <option value="script">Script</option>
+          <option value="agent">Agent</option>
+        </select>
+        <span style="font-size:12px;color:var(--muted);">共 ${this.filteredJobs.length} 个任务</span>
+      </div>
       <app-card variant="default" style="overflow-x:auto;">
         <div class="table-head">
           <div class="table-head-cell cell-status"></div>
+          <div class="table-head-cell cell-index" style="width:40px;min-width:40px;">#</div>
           <div class="table-head-cell cell-name">任务名称</div>
           <div class="table-head-cell cell-mode" style="width:70px;min-width:70px;">模式</div>
           <div class="table-head-cell cell-desc">描述</div>
@@ -757,11 +775,12 @@ export class CronJobsSettings extends LitElement {
           <div class="table-head-cell cell-result">结果</div>
           <div class="table-head-cell cell-actions"></div>
         </div>
-        ${this.jobs.map((job) => html`
+        ${this.filteredJobs.map((job, idx) => html`
           <div class="table-row">
             <div class="table-cell cell-status">
               <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${job.enabled ? 'var(--ok)' : 'var(--muted)'}" title=${job.enabled ? "已启用" : "已停用"}></span>
             </div>
+            <div class="table-cell cell-index">${idx + 1}</div>
             <div class="table-cell cell-name">
               <span class="job-name ${job.enabled ? "" : "job-name--disabled"}"
                 @click=${() => this.openLogViewer(job)}
