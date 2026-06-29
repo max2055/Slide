@@ -193,12 +193,15 @@ export class CronJobsSettings extends LitElement {
     .error-state p { font-size: 12px; color: var(--muted); margin: 0 0 16px; }
 
     .table-head { display: flex; width: 100%; border-bottom: 1px solid var(--border); background: var(--bg-elevated); }
-    .table-head-cell { padding: 8px 10px; font-weight: 600; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .table-head-cell { padding: 8px 10px; font-weight: 600; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; text-align: center; }
+    .table-head-cell.cell-name { text-align: left; }
+    .table-head-cell.cell-desc { text-align: left; }
     .table-row { display: flex; width: 100%; border-bottom: 1px solid var(--border); transition: background 0.15s; }
     .table-row:hover { background: var(--bg-elevated, rgba(255,255,255,0.03)); }
-    .table-cell { padding: 10px; display: flex; align-items: center; gap: 6px; overflow: hidden; }
-    .cell-status { width: 48px; justify-content: center; }
-    .cell-index { width: 40px; min-width: 40px; justify-content: center; font-size: 11px; color: var(--muted); }
+    .table-cell { padding: 10px; display: flex; align-items: center; gap: 6px; overflow: hidden; justify-content: center; }
+    .table-cell.cell-name { justify-content: flex-start; }
+    .table-cell.cell-desc { justify-content: flex-start; }
+    .cell-index { width: 40px; min-width: 40px; font-size: 11px; color: var(--muted); }
     .cell-name { flex: 1; min-width: 0; }
     .cell-desc { flex: 2; min-width: 0; }
     .cell-expr { width: 180px; min-width: 180px; }
@@ -764,8 +767,7 @@ export class CronJobsSettings extends LitElement {
       </div>
       <app-card variant="default" style="overflow-x:auto;">
         <div class="table-head">
-          <div class="table-head-cell cell-status"></div>
-          <div class="table-head-cell cell-index" style="width:40px;min-width:40px;">#</div>
+          <div class="table-head-cell cell-index">#</div>
           <div class="table-head-cell cell-name">任务名称</div>
           <div class="table-head-cell cell-mode" style="width:70px;min-width:70px;">模式</div>
           <div class="table-head-cell cell-desc">描述</div>
@@ -777,9 +779,6 @@ export class CronJobsSettings extends LitElement {
         </div>
         ${this.filteredJobs.map((job, idx) => html`
           <div class="table-row">
-            <div class="table-cell cell-status">
-              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${job.enabled ? 'var(--ok)' : 'var(--muted)'}" title=${job.enabled ? "已启用" : "已停用"}></span>
-            </div>
             <div class="table-cell cell-index">${idx + 1}</div>
             <div class="table-cell cell-name">
               <span class="job-name ${job.enabled ? "" : "job-name--disabled"}"
