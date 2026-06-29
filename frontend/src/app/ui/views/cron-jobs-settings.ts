@@ -794,8 +794,7 @@ export class CronJobsSettings extends LitElement {
               <span class="job-desc">${job.description || "—"}</span>
               ${job.task_type === "script" && job.script_id ? html`
                 <div class="script-info" style="font-size:11px;color:var(--muted);white-space:nowrap;">
-                  脚本ID: ${job.script_id}
-                  ${job.target_instance_id ? html` · 实例ID: ${job.target_instance_id}` : html` · 目标: Slide自身DB`}
+                  ${job.target_instance_id ? html`实例ID: ${job.target_instance_id}` : html`目标: Slide自身DB`}
                 </div>
               ` : nothing}
             </div>
