@@ -203,11 +203,11 @@ export class CronJobsSettings extends LitElement {
     .table-cell.cell-desc { justify-content: flex-start; }
     .cell-index { width: 40px; min-width: 40px; font-size: 11px; color: var(--muted); }
     .cell-name { flex: 1; min-width: 0; }
-    .cell-desc { flex: 2; min-width: 0; }
-    .cell-expr { width: 180px; min-width: 180px; }
-    .cell-next { width: 150px; min-width: 150px; }
-    .cell-last { width: 150px; min-width: 150px; }
-    .cell-result { width: 100px; min-width: 100px; }
+    .cell-desc { flex: 3; min-width: 0; white-space: nowrap; }
+    .cell-expr { width: 140px; min-width: 140px; }
+    .cell-next { width: 110px; min-width: 110px; }
+    .cell-last { width: 110px; min-width: 110px; }
+    .cell-result { width: 80px; min-width: 80px; }
     .cell-actions { width: 150px; min-width: 150px; justify-content: flex-end; gap: 4px; flex-shrink: 0; overflow: visible; }
     .job-name { font-weight: 600; color: var(--text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; user-select: none; }
     .job-name:hover { color: var(--accent); }
@@ -793,7 +793,7 @@ export class CronJobsSettings extends LitElement {
             <div class="table-cell cell-desc">
               <span class="job-desc">${job.description || "—"}</span>
               ${job.task_type === "script" && job.script_id ? html`
-                <div class="script-info" style="font-size:11px;color:var(--muted);margin-top:4px;">
+                <div class="script-info" style="font-size:11px;color:var(--muted);white-space:nowrap;">
                   脚本ID: ${job.script_id}
                   ${job.target_instance_id ? html` · 实例ID: ${job.target_instance_id}` : html` · 目标: Slide自身DB`}
                 </div>
