@@ -98,16 +98,20 @@ Deferred to future milestone.
 | ALERT-02 | Phase 104 | Pending |
 | ALERT-03 | Phase 104 | Pending |
 | ALERT-04 | Phase 104 | Pending |
+| ALERT-05 | Phase 104 | Pending |
+| ALERT-06 | Phase 104 | Pending |
+| ALERT-07 | Phase 104 | Pending |
+| ALERT-08 | Phase 104 | Pending |
 | QUAL-01 | Phase 105 | Pending |
 | QUAL-02 | Phase 105 | Pending |
 | QUAL-03 | Phase 105 | Pending |
 | QUAL-04 | Phase 105 | Pending |
 
 **Coverage:**
-- v1.3 requirements: 26 total
-- Mapped to phases: 26
+- v1.3 requirements: 30 total
+- Mapped to phases: 30
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-05-20*
-*Last updated: 2026-05-20 after research and scoping*
+*Last updated: 2026-06-29 after adding ALERT-05~08 to Traceability table*
