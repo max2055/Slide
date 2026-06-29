@@ -286,8 +286,8 @@ export class ScriptEditor extends LitElement {
   }
 
   override updated(changedProperties: Map<string, unknown>) {
-    if (changedProperties.has("dbType")) {
-      // Destroy and recreate editor with new dialect
+    if (changedProperties.has("dbType") || changedProperties.has("content")) {
+      // Re-mount editor when content or dialect changes
       const currentContent = this.editorView?.state.doc.toString() ?? this.content;
       this._destroyEditor();
       this._mountEditor(currentContent, this.dbType, this.readonly);
