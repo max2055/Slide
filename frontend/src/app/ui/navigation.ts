@@ -16,6 +16,9 @@ export const TAB_GROUPS = [
 export type Tab =
   | "agents"
   | "ai-settings"
+  | "agent-sessions"
+  | "agent-skills"
+  | "agent-tools"
   | "sessions"
   | "chat"
   | "config"
@@ -44,6 +47,9 @@ export type Tab =
 const TAB_PATHS: Record<Tab, string> = {
   agents: "/agents",
   "ai-settings": "/ai-settings",
+  "agent-sessions": "/agent-sessions",
+  "agent-skills": "/agent-skills",
+  "agent-tools": "/agent-tools",
   "scoring-settings": "/scoring-settings",
   sessions: "/sessions",
   chat: "/chat",
@@ -85,6 +91,7 @@ export const DEFAULT_TAB_OPTIONS: Tab[] = [
   "events", "approval", "cron-jobs", "sessions",
   "schema", "indexes", "settings", "ai-settings",
   "llm-config", "scoring-settings",
+  "agent-sessions", "agent-skills", "agent-tools",
 ];
 
 export const TAB_REQUIRED_PERMISSIONS: Partial<Record<Tab, string>> = {
@@ -98,6 +105,9 @@ export const TAB_REQUIRED_PERMISSIONS: Partial<Record<Tab, string>> = {
   'metric-templates': 'metric:view',
   'events': 'alert:view',
   'ai-settings': 'ai:view',
+  'agent-sessions': 'ai:view',
+  'agent-skills': 'ai:view',
+  'agent-tools': 'ai:view',
   'dashboard': 'instance:view',
   'instances-db': 'instance:view',
   'sql-console': 'instance:query',
@@ -192,6 +202,10 @@ export function iconForTab(tab: Tab): IconName {
       return "bot";
     case "ai-settings":
       return "sparkles";
+    case "agent-sessions":
+    case "agent-skills":
+    case "agent-tools":
+      return "settings";
     case "chat":
       return "message-square";
     case "cron-jobs":

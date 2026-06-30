@@ -28,6 +28,9 @@ import "./views/instances-db.ts";
 import "./views/instance-detail.ts";
 import "./views/llm-config.ts";
 import "./views/ai-settings.ts";
+import "./views/agent-sessions.ts";
+import "./views/agent-skills.ts";
+import "./views/agent-tools.ts";
 import "./views/scoring-settings.ts";
 import "./views/cron-jobs-settings.ts";
 import "./views/health-center.ts";
@@ -726,6 +729,15 @@ export function renderApp(state: AppViewState) {
           : nothing}
         ${state.tab === "scoring-settings"
           ? html`<scoring-settings-page></scoring-settings-page>`
+          : nothing}
+        ${state.tab === "agent-sessions"
+          ? html`<agent-sessions-page></agent-sessions-page>`
+          : nothing}
+        ${state.tab === "agent-skills"
+          ? html`<agent-skills-page></agent-skills-page>`
+          : nothing}
+        ${state.tab === "agent-tools"
+          ? html`<agent-tools-page></agent-tools-page>`
           : nothing}
         ${state.tab === "cron-jobs"
           ? html`<cron-jobs-settings></cron-jobs-settings>`
