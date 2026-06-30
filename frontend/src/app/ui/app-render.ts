@@ -782,6 +782,8 @@ export function renderApp(state: AppViewState) {
               streamSegments: state.chatStreamSegments,
               streamStartedAt: state.chatStreamStartedAt,
               runId: state.chatRunId,
+              thinkingText: state.chatThinkingText,
+              thinkingComplete: state.chatThinkingComplete,
               sideResult: state.chatSideResult,
               sideResultTerminalRuns: state.chatSideResultTerminalRuns,
               compactionStatus: state.compactionStatus,

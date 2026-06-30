@@ -43,6 +43,8 @@ export type ChatHost = {
   sessionsResult?: SessionsListResult | null;
   updateComplete?: Promise<unknown>;
   refreshSessionsAfterChat: Set<string>;
+  chatThinkingText?: string;
+  chatThinkingComplete?: boolean;
   /** Callback for slash-command side effects that need app-level access. */
   onSlashAction?: (action: string) => void;
 };
@@ -149,6 +151,9 @@ async function sendChatMessageNow(
   resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
   // Reset scroll state before sending to ensure auto-scroll works for the response
   resetChatScroll(host as unknown as Parameters<typeof resetChatScroll>[0]);
+  // Reset thinking state for new message
+  host.chatThinkingText = '';
+  host.chatThinkingComplete = false;
   const runId = await sendChatMessage(host as unknown as ChatState, message, opts?.attachments);
   const ok = Boolean(runId);
   if (!ok && opts?.previousDraft != null) {
@@ -473,6 +478,13 @@ async function refreshChatModels(host: ChatHost) {
   }
   host.chatModelsLoading = true;
   try {
+    const catalog = await host.client.request<Array<{
+      id: string; name: string; provider: string; alias?: string;
+      contextWindow?: number; reasoning?: boolean;
+      input?: Array<"text" | "image" | "document">;
+    }>>("models.list");
+    host.chatModelCatalog = Array.isArray(catalog) ? catalog : [];
+  } catch {
     host.chatModelCatalog = [];
   } finally {
     host.chatModelsLoading = false;
