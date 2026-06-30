@@ -24,13 +24,13 @@ export async function dispatchOrReuse(params: {
   sessionKey: string; userMessage: string; systemPrompt?: string;
   triggerType?: 'manual' | 'auto'; onCacheHit?: (result: any) => void;
   existingAnalysisId?: number;
-}): Promise<{ analysisId: number; cached: boolean }> {
+}): Promise<{ analysisId: number; cached: boolean; success?: boolean; status?: string }> {
   const ttl = DEFAULT_TTL[params.type] ?? 30 * 60 * 1000;
   if (ttl !== Infinity) {
     const existing = await aiAnalysisDatabaseService.findRecentCompleted(params.cacheKey, ttl);
     if (existing) {
       params.onCacheHit?.(existing.result);
-      return { analysisId: existing.analysisId!, cached: true };
+      return { analysisId: existing.analysisId!, cached: true, success: true, status: 'completed' };
     }
   }
 
@@ -51,12 +51,12 @@ export async function dispatchOrReuse(params: {
   const basePrompt = params.systemPrompt || buildDefaultPrompt(params.type);
   const fullMessage = `${basePrompt}\n\n分析完成后必须调用 slide_complete_analysis 保存结果，analysisId = ${analysisId}。\n\n${params.userMessage}`;
 
-  // Fire-and-forget: invoke runs on the active analysis adapter
+  // Fire-and-forget the Agent invoke, then poll for completion with timeout fallback
   getAgentEngine()
     .then((engine) =>
       engine.invoke(params.sessionKey, fullMessage, params.systemPrompt).then((result) => {
         if (result.content) {
-          console.log(`[AI Bridge] Analysis completed: ${analysisId}`);
+          console.log(`[AI Bridge] Analysis agent completed: ${analysisId}`);
         }
       }),
     )
@@ -64,6 +64,15 @@ export async function dispatchOrReuse(params: {
       console.error(`[AI Bridge] Analysis failed:`, err.message);
       aiAnalysisDatabaseService.failAnalysis(analysisId, err.message).catch(() => {});
     });
+
+  // Poll for completion with timeout — caller can await or fire-and-forget
+  aiAnalysisDatabaseService.waitForCompletion(analysisId, 120_000).then((record) => {
+    if (record?.status === 'completed') {
+      console.log(`[AI Bridge] Analysis ${analysisId} completed successfully`);
+    } else if (record?.status === 'failed') {
+      console.warn(`[AI Bridge] Analysis ${analysisId} failed: ${record.error_message}`);
+    }
+  }).catch(() => {});
 
   return { analysisId, cached: false };
 }

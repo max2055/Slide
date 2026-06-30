@@ -410,6 +410,30 @@ class AiAnalysisDatabaseService {
   }
 
   /**
+   * 轮询分析状态直到完成或失败，超时自动标记失败。
+   * 用于捕获 Agent 未调用 slide_complete_analysis 的情况。
+   */
+  async waitForCompletion(
+    analysisId: number,
+    timeoutMs: number = 120_000
+  ): Promise<AiAnalysisRecord | null> {
+    const pollInterval = 2000;
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      const record = await this.getAnalysisById(analysisId);
+      if (!record) return null;
+      if (record.status === 'completed') return record;
+      if (record.status === 'failed') return record;
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+
+    // Timeout: auto-fail
+    await this.failAnalysis(analysisId, '分析超时：Agent 未在规定时间内完成');
+    return this.getAnalysisById(analysisId);
+  }
+
+  /**
    * 解析行数据，处理 JSON 字段
    */
   private _parseRow(row: any): AiAnalysisRecord {
