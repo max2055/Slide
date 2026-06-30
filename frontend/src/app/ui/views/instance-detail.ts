@@ -275,24 +275,26 @@ export class InstanceDetailPage extends LitElement {
     this._stopDiagnosisPolling(); this.diagnosisPollingStart = Date.now();
     this.diagnosisPollTimer = setInterval(async () => {
       try {
-        if (Date.now() - this.diagnosisPollingStart > 5 * 60 * 1000) { this._stopDiagnosisPolling(); this.diagnosisStatus = "failed"; this.diagnosisError = "诊断超时"; return; }
-        const res = await authFetch(`/api/ai/analysis/${analysisId}/status`);
+        if (Date.now() - this.diagnosisPollingStart > 3 * 60 * 1000) { this._stopDiagnosisPolling(); this.diagnosisStatus = "failed"; this.diagnosisError = "诊断超时"; this.requestUpdate(); return; }
+        const res = await authFetch(`/api/ai/analysis/status/${analysisId}`);
         if (!res.ok) return;
         const data = await res.json();
-        if (data.status === "completed") {
+        if (!data.ok || !data.record) return;
+        const record = data.record;
+        if (record.status === "completed") {
           this.diagnosisStatus = "completed";
-          const fr = await authFetch(`/api/ai/analysis/${analysisId}`);
-          if (fr.ok) this.diagnosisResult = await fr.json();
+          this.diagnosisResult = record.result;
           this._stopDiagnosisPolling(); this.loadDiagnosisHistory();
-        } else if (data.status === "failed") { this.diagnosisStatus = "failed"; this.diagnosisError = data.error_message || "诊断失败"; this._stopDiagnosisPolling(); }
+        } else if (record.status === "failed") { this.diagnosisStatus = "failed"; this.diagnosisError = record.error_message || "诊断失败"; this._stopDiagnosisPolling(); }
+        this.requestUpdate();
       } catch { /* ignore */ }
-    }, 3000);
+    }, 2000);
   }
   private _stopDiagnosisPolling() { if (this.diagnosisPollTimer) { clearInterval(this.diagnosisPollTimer); this.diagnosisPollTimer = null; } }
   private async loadDiagnosisHistory() {
     if (!this.instanceId) return;
     this.diagnosisHistoryLoading = true;
-    try { const r = await authFetch(`/api/ai/analysis/recent?instance_id=${this.instanceId}&analysis_type=fault_diagnosis&limit=5`); if (r.ok) this.diagnosisHistory = await r.json(); }
+    try { const r = await authFetch(`/api/ai/analysis/history?instance_id=${this.instanceId}&analysis_type=fault_diagnosis&limit=10`); if (r.ok) { const data = await r.json(); this.diagnosisHistory = data.records || []; } }
     catch { /* ignore */ }
     finally { this.diagnosisHistoryLoading = false; }
   }
