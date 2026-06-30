@@ -74,6 +74,7 @@ import { CronJob } from 'cron';
 import { getAgentEngine, createLLMProvider, loadPlatformTools } from './src/adapter/get-agent-engine.js';
 import { DirectAdapter } from './src/adapter/direct-adapter.js';
 import { AgentRunner } from '@slide/agent-core';
+import { agentManagementService } from './src/agent-management-service.js';
 
 const fastify = Fastify({
   logger: false,
@@ -129,6 +130,16 @@ async function start() {
     throw new Error('数据库连接失败');
   }
   console.log('✅ 数据库连接成功');
+
+  // 自动应用必要的数据表迁移
+  if (pool) {
+    try {
+      const fs = await import('fs');
+      const migrationPath = new URL('./sql/migrations/014_add_user_preferences.sql', import.meta.url).pathname;
+      const sql = fs.readFileSync(migrationPath, 'utf8');
+      await pool.query(sql);
+    } catch { /* migration may already exist */ }
+  }
 
   // 初始化 SQL 执行历史持久化存储
   const pool = dbConnection.getPool();
@@ -862,11 +873,17 @@ async function start() {
         : (sessions || []);
       reply.send({
         ok: true,
-        sessions: filtered.map((s: any) => ({
-          key: s.session_id,
-          kind: 'direct',
-          label: s.title || s.session_id,
-          updatedAt: s.last_message_at ? new Date(s.last_message_at).getTime() : null,
+        sessions: await Promise.all(filtered.map(async (s: any) => {
+          const metadata = s.metadata ? (typeof s.metadata === 'string' ? JSON.parse(s.metadata) : s.metadata) : null;
+          return {
+            key: s.session_id,
+            kind: 'direct',
+            label: s.title || s.session_id,
+            updatedAt: s.last_message_at ? new Date(s.last_message_at).getTime() : null,
+            message_count: s.message_count ?? 0,
+            status: metadata?.status || 'active',
+            instance_id: s.instance_id ?? null,
+          };
         })),
         defaults: {},
       });
@@ -887,6 +904,96 @@ async function start() {
       reply.send({ ok: true });
     } catch (error: any) {
       reply.code(500).send({ error: '更新会话设置失败：' + error.message });
+    }
+  });
+
+  // DELETE /api/sessions/:key — 删除会话及其消息
+  fastify.delete('/api/sessions/:key', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { key } = request.params as { key: string };
+      const session = await chatDatabaseService.getSessionBySessionId(key);
+      if (!session) {
+        return reply.code(404).send({ ok: false, error: 'Session not found' });
+      }
+      const deleted = await chatDatabaseService.deleteSession(key);
+      return { ok: deleted };
+    } catch (error: any) {
+      reply.code(500).send({ error: '删除会话失败：' + error.message });
+    }
+  });
+
+  // POST /api/sessions/:key/cap — 强制限制会话消息数量
+  fastify.post('/api/sessions/:key/cap', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { key } = request.params as { key: string };
+      const { maxMessages } = request.body as { maxMessages: number };
+      if (!maxMessages || maxMessages < 1) {
+        return reply.code(400).send({ ok: false, error: 'maxMessages must be a positive number' });
+      }
+      const session = await chatDatabaseService.getSessionBySessionId(key);
+      if (!session) {
+        return reply.code(404).send({ ok: false, error: 'Session not found' });
+      }
+      const deleted = await chatDatabaseService.enforceMessageCap(key, maxMessages);
+      return { ok: true, deleted };
+    } catch (error: any) {
+      reply.code(500).send({ error: '限制消息数量失败：' + error.message });
+    }
+  });
+
+  // ========== Agent Management API ==========
+
+  // GET /api/agent/skills — 列出所有技能
+  fastify.get('/api/agent/skills', { preHandler: [verifyToken] }, async (_request, reply) => {
+    try {
+      const skills = agentManagementService.listSkills();
+      return { ok: true, skills };
+    } catch (error: any) {
+      reply.code(500).send({ error: '获取技能列表失败：' + error.message });
+    }
+  });
+
+  // POST /api/agent/skills/:name/toggle — 启用/禁用技能
+  fastify.post('/api/agent/skills/:name/toggle', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { name } = request.params as { name: string };
+      const { enabled } = request.body as { enabled: boolean };
+      const success = agentManagementService.toggleSkill(name, enabled);
+      if (!success) {
+        return reply.code(404).send({ ok: false, error: 'Skill not found' });
+      }
+      return { ok: true };
+    } catch (error: any) {
+      reply.code(500).send({ error: '切换技能状态失败：' + error.message });
+    }
+  });
+
+  // GET /api/agent/tools — 列出所有工具
+  fastify.get('/api/agent/tools', { preHandler: [verifyToken] }, async (_request, reply) => {
+    try {
+      const tools = await agentManagementService.listTools();
+      return { ok: true, tools };
+    } catch (error: any) {
+      reply.code(500).send({ error: '获取工具列表失败：' + error.message });
+    }
+  });
+
+  // GET /api/agent/status — 获取 Agent 运行时状态
+  fastify.get('/api/agent/status', { preHandler: [verifyToken] }, async (_request, reply) => {
+    try {
+      const engine = await getAgentEngine();
+      const caps = engine.capabilities();
+      return {
+        ok: true,
+        status: {
+          streaming: caps.streaming,
+          toolCalling: caps.toolCalling,
+          maxContextTokens: caps.maxContextTokens,
+          supportsCustomSystemPrompt: caps.supportsCustomSystemPrompt,
+        },
+      };
+    } catch (error: any) {
+      reply.code(500).send({ error: '获取 Agent 状态失败：' + error.message });
     }
   });
 
@@ -4425,7 +4532,9 @@ async function start() {
         const script = await scriptService.getScriptById(Number(id));
         if (!script) return reply.code(404).send({ error: '脚本不存在' });
 
-        const result = await sqlExecutor.executeSql(body.instance_id, script.content);
+        const result = await sqlExecutor.executeSql(body.instance_id, script.content, {
+          database: body.database || undefined,
+        });
 
         // Limit rows returned to 100 to avoid large payloads
         if (result.rows && result.rows.length > 100) {
