@@ -76,6 +76,7 @@ import { DirectAdapter } from './src/adapter/direct-adapter.js';
 import { AgentRunner } from '@slide/agent-core';
 import { agentManagementService } from './src/agent-management-service.js';
 import { startSessionCleanup } from './src/session-cleanup.js';
+import { loadPredefinedSkills, skillRegistry } from './src/skills/loader.js';
 
 const fastify = Fastify({
   logger: false,
@@ -148,6 +149,19 @@ async function start() {
       const sql = fs.readFileSync(migrationPath, 'utf8');
       await pool.query(sql);
     } catch { /* migration may already exist */ }
+  }
+
+  // 加载预定义技能到 skillRegistry
+  try {
+    const skills = await loadPredefinedSkills();
+    for (const entry of skills) {
+      skillRegistry.register(entry);
+    }
+    if (skills.length > 0) {
+      console.log(`✅ 已加载 ${skills.length} 个 AI 技能`);
+    }
+  } catch (err) {
+    console.warn('⚠️ 加载技能失败:', (err as Error).message);
   }
 
   // 启动会话清理服务（自动清理过期会话 + 消息数量限制）
