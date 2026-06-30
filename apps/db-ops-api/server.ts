@@ -75,6 +75,7 @@ import { getAgentEngine, createLLMProvider, loadPlatformTools } from './src/adap
 import { DirectAdapter } from './src/adapter/direct-adapter.js';
 import { AgentRunner } from '@slide/agent-core';
 import { agentManagementService } from './src/agent-management-service.js';
+import { startSessionCleanup } from './src/session-cleanup.js';
 
 const fastify = Fastify({
   logger: false,
@@ -148,6 +149,9 @@ async function start() {
     auditLogManager.setPersistentStore(dbAuditLogStore);
     console.log('✅ SQL 执行历史持久化存储已就绪');
   }
+
+  // 启动会话清理服务（自动清理过期会话 + 消息数量限制）
+  startSessionCleanup();
 
   // 初始化 LLM 服务（加载已启用的提供商）
   await llmService.initialize();
@@ -2733,6 +2737,58 @@ async function start() {
   });
 
   // 轮询分析状态
+  fastify.get('/api/ai/analysis/status/:id', {
+    preHandler: [verifyToken, requirePermission('ai:view')],
+    handler: async (request, reply) => {
+      try {
+        const { id } = request.params as any;
+        const record = await aiAnalysisDatabaseService.getAnalysisById(Number(id));
+        if (!record) {
+          return reply.code(404).send({ ok: false, error: '分析记录不存在' });
+        }
+        reply.send({
+          ok: true,
+          record: {
+            id: record.id,
+            analysis_type: record.analysis_type,
+            instance_id: record.instance_id,
+            status: record.status,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+            result: record.result,
+            error_message: record.error_message,
+            duration_ms: record.duration_ms,
+          }
+        });
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    }
+  });
+
+  // 获取分析历史记录
+  fastify.get('/api/ai/analysis/history', {
+    preHandler: [verifyToken, requirePermission('ai:view')],
+    handler: async (request, reply) => {
+      try {
+        const { instance_id, analysis_type, limit } = request.query as {
+          instance_id?: string;
+          analysis_type?: string;
+          limit?: string;
+        };
+        const filters: Record<string, any> = {};
+        if (instance_id) filters.instance_id = parseInt(instance_id);
+        if (analysis_type) filters.analysis_type = analysis_type;
+        if (limit) filters.limit = parseInt(limit);
+        const records = await aiAnalysisDatabaseService.getAnalysisList(filters);
+        return { ok: true, records };
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    }
+  });
+
+  // 轮询分析状态（旧路径，保留兼容）
   fastify.get('/api/ai/analysis/:id/status', {
     preHandler: [verifyToken, requirePermission('ai:view')],
     handler: async (request, reply) => {
