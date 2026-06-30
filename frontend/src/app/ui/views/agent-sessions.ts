@@ -115,7 +115,7 @@ export class AgentSessionsPage extends LitElement {
 
     const rows = this.sessions.map((s) => ({
       ...s,
-      label: s.label || s.key,
+      label: s.label ? `${s.label} ${s.key}` : s.key,
       message_count: s.message_count || 0,
       status: html`<app-badge variant=${s.status === 'active' ? 'ok' : 'muted'}>${s.status}</app-badge>`,
       updatedAt: s.updatedAt ? new Date(s.updatedAt).toLocaleString('zh-CN') : '-',
