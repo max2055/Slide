@@ -54,7 +54,7 @@ export async function dispatchOrReuse(params: {
   // Fire-and-forget the Agent invoke, then poll for completion with timeout fallback
   getAgentEngine()
     .then((engine) =>
-      engine.invoke(params.sessionKey, fullMessage, params.systemPrompt).then((result) => {
+      engine.invoke(params.sessionKey, fullMessage, basePrompt).then((result) => {
         if (result.content) {
           console.log(`[AI Bridge] Analysis agent completed: ${analysisId}`);
         }

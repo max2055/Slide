@@ -136,7 +136,7 @@ export class InstanceDetailPage extends LitElement {
 
   private loadFromUrl() {
     const id = new URLSearchParams(window.location.search).get("id");
-    if (id) { this.instanceId = parseInt(id); this.loadData(); }
+    if (id) { this.instanceId = parseInt(id, 10); this.loadData(); }
   }
   private startAutoRefresh() {
     this.stopAutoRefresh();

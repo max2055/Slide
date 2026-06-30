@@ -132,6 +132,14 @@ async function start() {
   }
   console.log('✅ 数据库连接成功');
 
+  // 初始化 SQL 执行历史持久化存储
+  const pool = dbConnection.getPool();
+  if (pool) {
+    const dbAuditLogStore = new DatabaseAuditLogStore(pool);
+    auditLogManager.setPersistentStore(dbAuditLogStore);
+    console.log('✅ SQL 执行历史持久化存储已就绪');
+  }
+
   // 自动应用必要的数据表迁移
   if (pool) {
     try {
@@ -140,14 +148,6 @@ async function start() {
       const sql = fs.readFileSync(migrationPath, 'utf8');
       await pool.query(sql);
     } catch { /* migration may already exist */ }
-  }
-
-  // 初始化 SQL 执行历史持久化存储
-  const pool = dbConnection.getPool();
-  if (pool) {
-    const dbAuditLogStore = new DatabaseAuditLogStore(pool);
-    auditLogManager.setPersistentStore(dbAuditLogStore);
-    console.log('✅ SQL 执行历史持久化存储已就绪');
   }
 
   // 启动会话清理服务（自动清理过期会话 + 消息数量限制）

@@ -48,8 +48,9 @@ async function runCleanup(retentionDays: number, maxMessages: number): Promise<v
       console.log(`[SessionCleanup] Deleted ${deleted} expired sessions`);
     }
 
-    // 2. Enforce message cap on active sessions
-    const activeSessions = await chatDatabaseService.getSessions(null, 100);
+    // 2. Enforce message cap on active sessions (paginated, up to 1000)
+    const MAX_SESSIONS = parseInt(process.env.SESSION_CLEANUP_BATCH_SIZE || '1000', 10);
+    const activeSessions = await chatDatabaseService.getSessions(null, MAX_SESSIONS);
     for (const session of activeSessions) {
       const capDeleted = await chatDatabaseService.enforceMessageCap(session.session_id, maxMessages);
       if (capDeleted > 0) {

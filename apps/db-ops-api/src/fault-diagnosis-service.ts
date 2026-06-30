@@ -109,8 +109,8 @@ class FaultDiagnosisService {
             analysisIds.push(result.analysisId);
           }
         }
-      } catch {
-        // 无法获取健康状态，跳过
+      } catch (err) {
+        console.debug(`[FaultDiagnosis] Skipping instance ${instance.id}: health check failed`);
       }
     }
 
