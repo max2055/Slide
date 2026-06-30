@@ -14,7 +14,11 @@ type SettingsSubTab =
   | "appearance"
   | "branding"
   | "users"
-  | "rbac";
+  | "rbac"
+  | "health-center"
+  | "agent-sessions"
+  | "agent-skills"
+  | "agent-tools";
 
 const SUB_TABS: { id: SettingsSubTab; label: string; icon: string; requireAdmin?: boolean }[] = [
   { id: "ai-settings", label: "AI 设置", icon: "sparkles" },
@@ -24,11 +28,38 @@ const SUB_TABS: { id: SettingsSubTab; label: string; icon: string; requireAdmin?
   { id: "branding", label: "品牌", icon: "palette" },
   { id: "users", label: "用户管理", icon: "scroll-text", requireAdmin: true },
   { id: "rbac", label: "权限管理", icon: "shield", requireAdmin: true },
+  { id: "health-center", label: "闭环健康", icon: "activity" },
+  { id: "agent-sessions", label: "Agent 会话", icon: "message-square" },
+  { id: "agent-skills", label: "Agent Skills", icon: "book" },
+  { id: "agent-tools", label: "Agent Tools", icon: "wrench" },
 ];
 
 @customElement("settings-shell")
 export class SettingsShell extends LitElement {
   @state() private activeTab: SettingsSubTab = "ai-settings";
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this._navHandler = (e: any) => {
+      const { settingsSubTab } = e.detail || {};
+      if (settingsSubTab) {
+        const target = settingsSubTab.replace('#/settings/', '');
+        if (this._isValidTab(target)) this.activeTab = target as SettingsSubTab;
+      }
+    };
+    window.addEventListener("slide-navigate", this._navHandler);
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._navHandler) window.removeEventListener("slide-navigate", this._navHandler);
+  }
+
+  private _navHandler: ((e: any) => void) | null = null;
+
+  private _isValidTab(tab: string): boolean {
+    return SUB_TABS.some(t => t.id === tab);
+  }
 
   static styles = css`
     :host {
@@ -125,6 +156,14 @@ export class SettingsShell extends LitElement {
         return html`<users-management></users-management>`;
       case "rbac":
         return html`<rbac-admin-page></rbac-admin-page>`;
+      case "health-center":
+        return html`<health-center-page></health-center-page>`;
+      case "agent-sessions":
+        return html`<agent-sessions-page></agent-sessions-page>`;
+      case "agent-skills":
+        return html`<agent-skills-page></agent-skills-page>`;
+      case "agent-tools":
+        return html`<agent-tools-page></agent-tools-page>`;
       default:
         return html``;
     }
