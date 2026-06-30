@@ -33,9 +33,20 @@ export class AgentSessionsPage extends LitElement {
   @state() private showDialog = false;
 
   static styles = [sharedBtnStyles, css`
-    :host { display: block; padding: var(--space-lg); }
-    .page-header { margin-bottom: var(--space-lg); }
-    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 var(--space-xs); color: var(--text-strong); }
+    :host {
+      display: block;
+      animation: fade-in 0.25s var(--ease-out);
+    }
+
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .page { padding: 0; }
+
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
     .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
     .message-list { max-height: 500px; overflow-y: auto; padding: var(--space-md); }
     .message-item { margin-bottom: var(--space-sm); padding: var(--space-sm); background: var(--card); border-radius: var(--radius-sm); }
@@ -115,10 +126,13 @@ export class AgentSessionsPage extends LitElement {
     }));
 
     return html`
-      <div class="page-header">
-        <h1>Agent 会话管理</h1>
-        <p>查看和管理 Agent 对话会话</p>
-      </div>
+      <div class="page">
+        <div class="page-header">
+          <div>
+            <h1>Agent 会话管理</h1>
+            <p>查看和管理 Agent 对话会话</p>
+          </div>
+        </div>
 
       ${this.loading
         ? html`<div class="skeleton">加载中...</div>`
@@ -142,6 +156,7 @@ export class AgentSessionsPage extends LitElement {
                 )}
         </div>
       </app-dialog>
+      </div>
     `;
   }
 }

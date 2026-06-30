@@ -18,9 +18,20 @@ export class AgentToolsPage extends LitElement {
   @state() private expandedTool: string | null = null;
 
   static styles = [sharedBtnStyles, css`
-    :host { display: block; padding: var(--space-lg); }
-    .page-header { margin-bottom: var(--space-lg); }
-    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 var(--space-xs); color: var(--text-strong); }
+    :host {
+      display: block;
+      animation: fade-in 0.25s var(--ease-out);
+    }
+
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .page { padding: 0; }
+
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
     .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
     .tool-description { max-width: 400px; }
     .schema-toggle { font-size: 12px; padding: 2px 8px; }
@@ -69,14 +80,18 @@ export class AgentToolsPage extends LitElement {
     }));
 
     return html`
-      <div class="page-header">
-        <h1>Agent 工具列表</h1>
-        <p>查看 Agent 注册的所有工具及其 Schema 定义</p>
-      </div>
+      <div class="page">
+        <div class="page-header">
+          <div>
+            <h1>Agent 工具列表</h1>
+            <p>查看 Agent 注册的所有工具及其 Schema 定义</p>
+          </div>
+        </div>
 
       ${this.loading
         ? html`<div class="skeleton">加载中...</div>`
         : html`<app-data-table .columns=${columns} .rows=${rows}></app-data-table>`}
+      </div>
     `;
   }
 }

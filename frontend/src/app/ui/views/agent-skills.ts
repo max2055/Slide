@@ -20,9 +20,20 @@ export class AgentSkillsPage extends LitElement {
   @state() private loading = true;
 
   static styles = [sharedBtnStyles, css`
-    :host { display: block; padding: var(--space-lg); }
-    .page-header { margin-bottom: var(--space-lg); }
-    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 var(--space-xs); color: var(--text-strong); }
+    :host {
+      display: block;
+      animation: fade-in 0.25s var(--ease-out);
+    }
+
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .page { padding: 0; }
+
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
     .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
     .skill-description { max-width: 400px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .skill-path { font-size: 11px; color: var(--muted); font-family: monospace; }
@@ -73,14 +84,18 @@ export class AgentSkillsPage extends LitElement {
     }));
 
     return html`
-      <div class="page-header">
-        <h1>Agent 技能管理</h1>
-        <p>查看和管理 Agent 加载的技能文件</p>
-      </div>
+      <div class="page">
+        <div class="page-header">
+          <div>
+            <h1>Agent 技能管理</h1>
+            <p>查看和管理 Agent 加载的技能文件</p>
+          </div>
+        </div>
 
       ${this.loading
         ? html`<div class="skeleton">加载中...</div>`
         : html`<app-data-table .columns=${columns} .rows=${rows}></app-data-table>`}
+      </div>
     `;
   }
 }
