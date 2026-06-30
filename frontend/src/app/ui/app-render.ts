@@ -30,6 +30,7 @@ import "./views/llm-config.ts";
 import "./views/ai-settings.ts";
 import "./views/scoring-settings.ts";
 import "./views/cron-jobs-settings.ts";
+import "./views/health-center.ts";
 import "./views/sql-console.ts";
 import "./views/approval-dashboard.ts";
 import "./views/alerts.ts";
