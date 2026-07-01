@@ -60,6 +60,12 @@ export async function dispatchOrReuse(params: {
         // If not, this saves the agent's response as the diagnosis result
         aiAnalysisDatabaseService.completeAnalysis(analysisId, {
           result: result.content || '',
+          executionTrace: result.toolEvents ? {
+            tools_used: [...new Set((result.toolEvents || []).map(e => e.name))],
+            tool_events: result.toolEvents,
+            stop_reason: result.stopReason || 'completed',
+            iteration_count: result.iterationCount || 0,
+          } : null,
         }).then(() => {
           console.log(`[AI Bridge] Persisted analysis ${analysisId} result (length=${(result.content || '').length})`);
         });

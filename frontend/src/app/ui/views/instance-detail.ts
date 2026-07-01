@@ -111,6 +111,7 @@ export class InstanceDetailPage extends LitElement {
   @state() private diagnosisHistoryLoading = false;
   @state() private activeDiagnosisRecord: any = null;
   @state() private showDiagnosisModal = false;
+  @state() private diagnosisExecutionTrace: any = null;
   @state() private trendTab = "1h";
   @state() private trendLoading = false;
   @state() private trendData: { time: string[]; metrics: Record<string, number[]> } | null = null;
@@ -286,8 +287,13 @@ export class InstanceDetailPage extends LitElement {
         const record = data.record;
         if (record.status === "completed") {
           this.diagnosisStatus = "completed";
-          this.diagnosisResult = record.result;
+          this.diagnosisResult = record;
+          this.diagnosisExecutionTrace = record.execution_trace || null;
           this._stopDiagnosisPolling(); this.loadDiagnosisHistory();
+        } else if (record.status === "running") {
+          // Update execution trace during running for live progress display
+          this.diagnosisExecutionTrace = record.execution_trace || null;
+          this.requestUpdate();
         } else if (record.status === "failed") { this.diagnosisStatus = "failed"; this.diagnosisError = record.error_message || "诊断失败"; this._stopDiagnosisPolling(); }
         this.requestUpdate();
       } catch { /* ignore */ }
@@ -309,6 +315,21 @@ export class InstanceDetailPage extends LitElement {
     const d = Math.floor(h / 24); return d < 7 ? `${d} 天前` : new Date(dateStr).toLocaleDateString("zh-CN");
   }
   private _closeDiagnosisModal() { this.showDiagnosisModal = false; this.activeDiagnosisRecord = null; }
+  private _continueInChat(e: CustomEvent) {
+    const { analysisId, diagnosisSummary } = e.detail || {};
+    const summary = typeof diagnosisSummary === 'string'
+      ? diagnosisSummary.replace(/^#+\s*/gm, "").trim().substring(0, 200)
+      : '';
+    window.dispatchEvent(new CustomEvent('slide-navigate', {
+      detail: {
+        tab: 'chat',
+        sessionKey: analysisId ? `diagnosis-${analysisId}` : undefined,
+        autoMessage: analysisId
+          ? `关于实例 ${this.instance?.name || `#${this.instanceId}`} 的 AI 诊断结果，我有疑问：\n\n诊断结论：${summary}\n\n请帮我进一步分析以上问题。`
+          : undefined,
+      },
+    }));
+  }
   private _onPeriodChange(e: CustomEvent) { this.loadTrendData(e.detail.period); }
 
   private _formatTimeAgo(date: Date | null): string {
@@ -367,12 +388,16 @@ export class InstanceDetailPage extends LitElement {
 
         <instance-diagnosis-modal
           .instanceId=${this.instanceId}
+          .instanceName=${this.instance?.name || null}
           .open=${this.showDiagnosisModal}
           .diagnosis=${this.diagnosisResult}
+          .diagnosisRecord=${this.activeDiagnosisRecord}
+          .executionTrace=${this.diagnosisExecutionTrace}
           .loading=${this.diagnosisStatus === "running"}
           .error=${this.diagnosisError}
           @close=${this._closeDiagnosisModal}
           @request-diagnosis=${this._startDiagnosis}
+          @continue-in-chat=${this._continueInChat}
         ></instance-diagnosis-modal>
       </div>`;
   }

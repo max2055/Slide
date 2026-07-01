@@ -98,6 +98,12 @@ export interface InvokeResult {
   content: string | null;
   /** Token usage stats */
   usage?: Record<string, number>;
+  /** Tool events from agent execution (name, status, detail) */
+  toolEvents?: Array<{ name: string; status: string; detail: string }>;
+  /** Runner stop reason: completed, max_iterations, error, etc. */
+  stopReason?: string;
+  /** Number of LLM iterations executed */
+  iterationCount?: number;
 }
 
 // ── IAgentEngine interface ──

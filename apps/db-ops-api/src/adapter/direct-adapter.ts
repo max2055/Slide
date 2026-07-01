@@ -548,7 +548,13 @@ export class DirectAdapter implements IAgentEngine {
         }
       }
 
-      return { content: finalContent, usage: result.usage };
+      return {
+        content: finalContent,
+        usage: result.usage,
+        toolEvents: result.toolEvents,
+        stopReason: result.stopReason,
+        iterationCount: result.messages ? Math.ceil(result.messages.length / 2) : 0,
+      };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(`[DirectAdapter] invoke() failed for session ${sessionKey}:`, errorMessage);

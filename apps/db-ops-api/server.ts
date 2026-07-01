@@ -143,12 +143,17 @@ async function start() {
 
   // 自动应用必要的数据表迁移
   if (pool) {
-    try {
-      const fs = await import('fs');
-      const migrationPath = new URL('./sql/migrations/014_add_user_preferences.sql', import.meta.url).pathname;
-      const sql = fs.readFileSync(migrationPath, 'utf8');
-      await pool.query(sql);
-    } catch { /* migration may already exist */ }
+    for (const migration of [
+      '014_add_user_preferences.sql',
+      '018_add_execution_trace.sql',
+    ]) {
+      try {
+        const fs = await import('fs');
+        const migrationPath = new URL(`./sql/migrations/${migration}`, import.meta.url).pathname;
+        const sql = fs.readFileSync(migrationPath, 'utf8');
+        await pool.query(sql);
+      } catch { /* migration may already exist */ }
+    }
   }
 
   // 加载预定义技能到 skillRegistry

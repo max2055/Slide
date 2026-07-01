@@ -147,7 +147,7 @@ class AiAnalysisDatabaseService {
    */
   async completeAnalysis(
     analysisId: number,
-    data: { result: any; usage?: any; duration_ms?: number }
+    data: { result: any; usage?: any; duration_ms?: number; executionTrace?: any }
   ): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
     if (!pool) {
@@ -163,12 +163,14 @@ class AiAnalysisDatabaseService {
         `UPDATE ai_analysis SET
          status = 'completed',
          result = ?,
+         execution_trace = ?,
          \`usage\` = ?,
          duration_ms = ?,
          completed_at = NOW()
          WHERE id = ?`,
         [
           resultValue,
+          data.executionTrace ? JSON.stringify(data.executionTrace) : null,
           data.usage ? JSON.stringify(data.usage) : null,
           data.duration_ms || null,
           analysisId,
