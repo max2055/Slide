@@ -352,7 +352,6 @@ export class InstanceDetailPage extends LitElement {
           </div>
         </div>
 
-        ${this._renderDiagnosisHistory()}
 
         <div class="tabs">
           ${["overview","metrics","topsql","trend","health","sessions","capacity","schema","indexes","sqlaudit","logs","qan","diagnosis"].map(t => html`
