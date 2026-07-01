@@ -155,10 +155,8 @@ class AiAnalysisDatabaseService {
     }
 
     try {
-      // Store strings as-is (Markdown), JSON-encode objects for backward compat
-      const resultValue = typeof data.result === 'string'
-        ? data.result
-        : JSON.stringify(data.result);
+      // Store strings as JSON (column type is JSON), JSON-encode objects
+      const resultValue = JSON.stringify(data.result);
       try {
         await pool.execute(
           `UPDATE ai_analysis SET
