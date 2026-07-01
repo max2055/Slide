@@ -358,11 +358,9 @@ async function dispatchSlashCommand(
       await handleAbortChat(host);
       return;
     case "new":
-      await sendChatMessageNow(host, "/new", {
-        refreshSessions: true,
-        previousDraft: sendOpts?.previousDraft,
-        restoreDraft: sendOpts?.restoreDraft,
-      });
+      // Generate a new session key and switch to it locally
+      const newKey = `chat_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      host.onSlashAction?.(`switch-session:${newKey}`);
       return;
     case "reset":
       await sendChatMessageNow(host, "/reset", {

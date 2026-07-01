@@ -432,6 +432,12 @@ export class SlideApp extends LitElement {
         case "export":
           exportChatMarkdown(this.chatMessages, this.assistantName);
           break;
+        default:
+          if (action.startsWith("switch-session:")) {
+            const newKey = action.slice("switch-session:".length);
+            switchChatSession(this as unknown as AppViewState, newKey);
+          }
+          break;
       }
     };
     document.addEventListener("keydown", this.globalKeydownHandler);
@@ -466,7 +472,7 @@ export class SlideApp extends LitElement {
         const pendingMsg = (window as any).__pendingChatMessage;
         if (tab === "chat" && pendingMsg) {
           delete (window as any).__pendingChatMessage;
-          // Send "/new" to create a fresh session, then the pending message
+          // First create new session via /new, then send the diagnosis context
           Promise.resolve().then(async () => {
             await handleSendChatInternal(this as any, "/new");
             await handleSendChatInternal(this as any, pendingMsg.text);
