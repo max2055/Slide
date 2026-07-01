@@ -159,18 +159,41 @@ class AiAnalysisDatabaseService {
       const resultValue = typeof data.result === 'string'
         ? data.result
         : JSON.stringify(data.result);
-      await pool.execute(
-        `UPDATE ai_analysis SET
-         status = 'completed',
-         result = ?,
-         execution_trace = ?,
-         \`usage\` = ?,
-         duration_ms = ?,
-         completed_at = NOW()
-         WHERE id = ?`,
-        [
-          resultValue,
-          data.executionTrace ? JSON.stringify(data.executionTrace) : null,
+      try {
+        await pool.execute(
+          `UPDATE ai_analysis SET
+           status = 'completed',
+           result = ?,
+           execution_trace = ?,
+           \`usage\` = ?,
+           duration_ms = ?,
+           completed_at = NOW()
+           WHERE id = ?`,
+          [
+            resultValue,
+            data.executionTrace ? JSON.stringify(data.executionTrace) : null,
+            data.usage ? JSON.stringify(data.usage) : null,
+            data.duration_ms || null,
+            analysisId,
+          ]
+        );
+      } catch (err: any) {
+        // If execution_trace column doesn't exist yet (migration pending), retry without it
+        if (err?.message?.includes?.(`Unknown column 'execution_trace'`)) {
+          await pool.execute(
+            `UPDATE ai_analysis SET
+             status = 'completed',
+             result = ?,
+             \`usage\` = ?,
+             duration_ms = ?,
+             completed_at = NOW()
+             WHERE id = ?`,
+            [resultValue, data.usage ? JSON.stringify(data.usage) : null, data.duration_ms || null, analysisId]
+          );
+        } else {
+          throw err;
+        }
+      }
           data.usage ? JSON.stringify(data.usage) : null,
           data.duration_ms || null,
           analysisId,
