@@ -46,9 +46,9 @@ class FaultDiagnosisService {
     };
 
     try {
-      // d. 缓存检查
+      // d. 缓存检查（跳过空结果的无效缓存）
       const cached = await aiAnalysisDatabaseService.findByCacheKey(cacheKey);
-      if (cached) {
+      if (cached && cached.result) {
         releaseLock();
         return { success: true, analysisId: cached.id };
       }

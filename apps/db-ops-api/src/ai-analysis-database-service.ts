@@ -155,6 +155,10 @@ class AiAnalysisDatabaseService {
     }
 
     try {
+      // Store strings as-is (Markdown), JSON-encode objects for backward compat
+      const resultValue = typeof data.result === 'string'
+        ? data.result
+        : JSON.stringify(data.result);
       await pool.execute(
         `UPDATE ai_analysis SET
          status = 'completed',
@@ -164,7 +168,7 @@ class AiAnalysisDatabaseService {
          completed_at = NOW()
          WHERE id = ?`,
         [
-          JSON.stringify(data.result),
+          resultValue,
           data.usage ? JSON.stringify(data.usage) : null,
           data.duration_ms || null,
           analysisId,
@@ -437,12 +441,13 @@ class AiAnalysisDatabaseService {
    * 解析行数据，处理 JSON 字段
    */
   private _parseRow(row: any): AiAnalysisRecord {
-    try {
-      if (typeof row.result === 'string') {
+    // result: stored as JSON string (old format) or raw string (new format)
+    if (typeof row.result === 'string') {
+      try {
         row.result = JSON.parse(row.result);
+      } catch {
+        // Not JSON — store as-is (raw Markdown string)
       }
-    } catch {
-      row.result = null;
     }
 
     try {
