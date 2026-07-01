@@ -359,10 +359,10 @@ async function dispatchSlashCommand(
       return;
     case "new":
     case "reset":
-      // Generate a new session key and switch to it locally
-      const sessionKey = name === "new"
-        ? `chat_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
-        : `chat_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      // Generate a new session key with readable prefix
+      const hasPendingMsg = !!(window as any).__pendingChatMessage;
+      const prefix = hasPendingMsg ? 'diagnosis-analysis' : 'chat';
+      const sessionKey = `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       host.onSlashAction?.(`switch-session:${sessionKey}`);
       return;
     case "clear":
