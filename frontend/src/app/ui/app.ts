@@ -471,11 +471,14 @@ export class SlideApp extends LitElement {
         // Handle pending chat message from diagnosis "继续分析"
         const pendingMsg = (window as any).__pendingChatMessage;
         if (tab === "chat" && pendingMsg) {
-          delete (window as any).__pendingChatMessage;
           // First create new session via /new, then send the diagnosis context
+          // Don't delete pendingMsg yet — dispatchSlashCommand checks it for key prefix
           Promise.resolve().then(async () => {
             await handleSendChatInternal(this as any, "/new");
-            await handleSendChatInternal(this as any, pendingMsg.text);
+            // Now safe to delete — /new has consumed the flag
+            const msg = (window as any).__pendingChatMessage;
+            delete (window as any).__pendingChatMessage;
+            if (msg) await handleSendChatInternal(this as any, msg.text);
           });
         }
         // Update URL
