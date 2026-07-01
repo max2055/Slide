@@ -32,6 +32,10 @@ import {
 import type { AgentHook, AgentHookContext, Message, ToolSchema, RuntimeCheckpoint } from '@slide/agent-core';
 import type { IAgentEngine, ChatEvent, AgentCapabilities, ChatResult, InvokeResult } from './types.js';
 import { chatDatabaseService } from '../chat-database-service.js';
+import { SubagentManager } from '../agents/subagent-manager.js';
+import { setSubagentManager } from '../agents/subagent-spawn-tool.js';
+
+let _subagentManagerInitialized = false;
 
 // ── Helper: maps Hook tool events to ChatEvent ──
 
@@ -87,6 +91,19 @@ function mapHookEventToChatEvent(
   };
 }
 
+// ── Helper: normalize frontend thinking level to LLM reasoningEffort ──
+
+/**
+ * Map frontend thinking level value to OpenAI/Anthropic reasoning_effort parameter.
+ *   "" / "off" / "adaptive" → undefined (not passed → model default)
+ *   "minimal" / "low" / "medium" / "high" → pass through
+ */
+function normalizeThinkingLevel(level?: string): string | undefined {
+  if (!level || level === '' || level === 'off' || level === 'adaptive') return undefined;
+  const valid = new Set(['minimal', 'low', 'medium', 'high']);
+  return valid.has(level) ? level : undefined;
+}
+
 // ── DirectAdapter Options ──
 
 export interface DirectAdapterOptions {
@@ -131,6 +148,14 @@ export class DirectAdapter implements IAgentEngine {
   // ── start() — minimal WS transport (D-25 Option B) ──
 
   async start(): Promise<void> {
+    // Initialize SubagentManager so spawn_subagent tool can actually execute subagents
+    if (!_subagentManagerInitialized) {
+      const subagentManager = new SubagentManager(this.runner, this.registry);
+      setSubagentManager(subagentManager);
+      _subagentManagerInitialized = true;
+      console.log(`[DirectAdapter] SubagentManager initialized with ${this.registry.toolNames.length} parent tools`);
+    }
+
     // Idempotent guard
     if (this.wsServer) {
       console.log('[DirectAdapter] WS transport already running, skipping start()');
@@ -373,6 +398,13 @@ export class DirectAdapter implements IAgentEngine {
     // Push user message
     session.addMessage('user', message);
 
+    // Read session settings (model, thinkingLevel) from DB metadata.
+    // The frontend stores these via sessions.patch → chat_sessions.metadata.
+    const sessMeta = await chatDatabaseService.getSessionMetadata(sessionKey);
+    const sessModel = (sessMeta?.model as string) || undefined;
+    const sessThinkingLevel = (sessMeta?.thinkingLevel as string) || undefined;
+    const reasoningEffort = normalizeThinkingLevel(sessThinkingLevel);
+
     // Build messages with ContextBuilder (D-12)
     const skillNames = this.skillsLoader.listSkills().map(s => s.name);
     const contextMessages = await this.contextBuilder.buildMessages(
@@ -401,11 +433,11 @@ export class DirectAdapter implements IAgentEngine {
       const result = await this.runner.run({
         initialMessages: contextMessages as Message[],
         tools: this.registry,
-        model: this.provider.getDefaultModel(),
-        maxIterations: 10,
+        model: sessModel || this.provider.getDefaultModel(),
+        maxIterations: 200,
         maxToolResultChars: 20000,
         temperature: 0.0,
-        reasoningEffort: 'medium',
+        reasoningEffort,
         hook,
         checkpointCallback,
         contextWindowTokens: 200_000,
@@ -487,12 +519,12 @@ export class DirectAdapter implements IAgentEngine {
         initialMessages: messages,
         tools: this.registry,
         model: this.provider.getDefaultModel(),
-        maxIterations: 5,
+        maxIterations: 200,
         maxToolResultChars: 20000,
         temperature: 0.0,
         hook: new NoopHook(),
         contextWindowTokens: 200_000,
-        maxTokens: 2048,
+        maxTokens: 100_000,
       });
 
       // Persist assistant response to both SessionManager (JSONL) and chatDatabaseService (MySQL)
