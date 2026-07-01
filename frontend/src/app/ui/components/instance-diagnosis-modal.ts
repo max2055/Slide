@@ -102,8 +102,8 @@ export class InstanceDiagnosisModal extends LitElement {
       return html`
         <div class="empty-state">
           <div class="spinner" style="margin:0 auto var(--space-lg);"></div>
-          <div class="empty-title">AI 诊断分析中...</div>
-          <div class="empty-desc">Agent 正在采集数据并分析实例运行状态</div>
+          <div class="empty-title">AI 诊断${this.diagnosisRecord ? '执行中' : '分析中...'}</div>
+          <div class="empty-desc">${this.diagnosisRecord ? '诊断任务正在后台执行' : 'Agent 正在采集数据并分析实例运行状态'}</div>
           ${events.length > 0 ? html`
             <div class="trace-list">
               ${events.map((e: any) => html`
@@ -137,6 +137,9 @@ export class InstanceDiagnosisModal extends LitElement {
     }
 
     if (this.diagnosis) {
+      const hasResult = typeof this.diagnosis === 'string'
+        ? !!this.diagnosis
+        : !!(this.diagnosis?.result || this.diagnosis?.result === 0);
       return html`
         <ai-analysis-result
           .result=${typeof this.diagnosis === 'string' ? this.diagnosis : (this.diagnosis?.result || null)}
@@ -146,12 +149,14 @@ export class InstanceDiagnosisModal extends LitElement {
           .errorMessage=${null}
           title="AI 诊断结果"
         ></ai-analysis-result>
-        <div class="continue-section">
-          <p>对诊断结果有疑问？可以到 Chat 中进一步分析</p>
-          <button class="btn-ghost" @click=${this._continueInChat}>
-            在 Chat 中继续分析 →
-          </button>
-        </div>
+        ${hasResult ? html`
+          <div class="continue-section">
+            <p>对诊断结果有疑问？可以到 Chat 中进一步分析</p>
+            <button class="btn-ghost" @click=${this._continueInChat}>
+              在 Chat 中继续分析 →
+            </button>
+          </div>
+        ` : ''}
       `;
     }
 

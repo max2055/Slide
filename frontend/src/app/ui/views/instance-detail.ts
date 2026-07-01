@@ -414,7 +414,7 @@ export class InstanceDetailPage extends LitElement {
             const statusStyle = r.status === "completed" ? { cls: "ok", label: "已完成" } : r.status === "failed" ? { cls: "danger", label: "分析失败" } : { cls: "info", label: "进行中" };
             const raw = typeof r.result === 'string' ? r.result : "";
             const summary = raw.replace(/^#+\s*/gm, "").trim().substring(0, 80);
-            return html`<div class="diagnosis-history-item" @click=${() => { this.activeDiagnosisRecord = r; this.diagnosisResult = r; this.diagnosisStatus = r.status === "failed" ? "failed" : "completed"; this.diagnosisError = r.error_message || null; this.showDiagnosisModal = true; }}>
+            return html`<div class="diagnosis-history-item" @click=${() => { this.activeDiagnosisRecord = r; this.diagnosisResult = r; this.diagnosisStatus = r.status; this.diagnosisError = r.error_message || null; this.diagnosisExecutionTrace = r.execution_trace || null; this.showDiagnosisModal = true; }}>
               <app-badge variant=${statusStyle.cls} style="font-size:var(--text-xs);padding:2px 8px;flex-shrink:0;">${statusStyle.label}</app-badge>
               <span class="diagnosis-time">${this._formatDiagnosisTime(r.updated_at || r.created_at)}</span>
               <span class="diagnosis-summary-text" title="${summary}">${summary}${raw.length > 80 ? "..." : ""}</span>
