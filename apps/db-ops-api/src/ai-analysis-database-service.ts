@@ -194,11 +194,6 @@ class AiAnalysisDatabaseService {
           throw err;
         }
       }
-          data.usage ? JSON.stringify(data.usage) : null,
-          data.duration_ms || null,
-          analysisId,
-        ]
-      );
       return { success: true };
     } catch (error: any) {
       console.error('完成分析失败:', error);
