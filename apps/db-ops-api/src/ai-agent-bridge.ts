@@ -51,12 +51,22 @@ export async function dispatchOrReuse(params: {
   const basePrompt = params.systemPrompt || buildDefaultPrompt(params.type);
   const fullMessage = `${basePrompt}\n\n分析完成后必须调用 slide_complete_analysis 保存结果，analysisId = ${analysisId}。\n\n${params.userMessage}`;
 
-  // Fire-and-forget the Agent invoke, then poll for completion with timeout fallback
+  // Invoke Agent, then auto-save result if Agent didn't call slide_complete_analysis
   getAgentEngine()
     .then((engine) =>
       engine.invoke(params.sessionKey, fullMessage, basePrompt).then((result) => {
         if (result.content) {
           console.log(`[AI Bridge] Analysis agent completed: ${analysisId}`);
+          // Auto-save agent response if slide_complete_analysis wasn't called
+          aiAnalysisDatabaseService.getAnalysisById(analysisId).then(record => {
+            if (record && record.status === 'running' && !record.result) {
+              aiAnalysisDatabaseService.completeAnalysis(analysisId, {
+                result: result.content,
+              }).then(() => {
+                console.log(`[AI Bridge] Auto-saved analysis ${analysisId} result (Agent did not call slide_complete_analysis)`);
+              });
+            }
+          });
         }
       }),
     )
