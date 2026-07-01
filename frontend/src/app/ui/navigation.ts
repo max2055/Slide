@@ -16,6 +16,7 @@ export const TAB_GROUPS = [
 export type Tab =
   | "agents"
   | "ai-settings"
+  | "prompt-settings"
   | "agent-sessions"
   | "agent-skills"
   | "agent-tools"
@@ -47,6 +48,7 @@ export type Tab =
 const TAB_PATHS: Record<Tab, string> = {
   agents: "/agents",
   "ai-settings": "/ai-settings",
+  "prompt-settings": "/prompt-settings",
   "agent-sessions": "/agent-sessions",
   "agent-skills": "/agent-skills",
   "agent-tools": "/agent-tools",

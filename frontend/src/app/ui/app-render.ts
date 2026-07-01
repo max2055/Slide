@@ -31,6 +31,7 @@ import "./views/ai-settings.ts";
 import "./views/agent-sessions.ts";
 import "./views/agent-skills.ts";
 import "./views/agent-tools.ts";
+import "./views/prompt-settings.ts";
 import "./views/scoring-settings.ts";
 import "./views/cron-jobs-settings.ts";
 import "./views/health-center.ts";

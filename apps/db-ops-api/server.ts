@@ -77,6 +77,7 @@ import { AgentRunner } from '@slide/agent-core';
 import { agentManagementService } from './src/agent-management-service.js';
 import { startSessionCleanup } from './src/session-cleanup.js';
 import { loadPredefinedSkills, skillRegistry } from './src/skills/loader.js';
+import { promptManager } from './src/prompts/prompt-manager.js';
 
 const fastify = Fastify({
   logger: false,
@@ -167,6 +168,14 @@ async function start() {
     }
   } catch (err) {
     console.warn('⚠️ 加载技能失败:', (err as Error).message);
+  }
+
+  // 加载 AI 分析提示词（支持 PROMPT_VERSION 切换）
+  await promptManager.initialize();
+
+  // 启动文件监听，支持热重载
+  if (process.env.PROMPT_HOT_RELOAD !== 'false') {
+    promptManager.startWatch();
   }
 
   // 启动会话清理服务（自动清理过期会话 + 消息数量限制）
@@ -1017,6 +1026,127 @@ async function start() {
       };
     } catch (error: any) {
       reply.code(500).send({ error: '获取 Agent 状态失败：' + error.message });
+    }
+  });
+
+  // ========== 提示词管理 API ==========
+
+  // GET /api/ai/prompts — 列出所有提示词类型和版本
+  fastify.get('/api/ai/prompts', { preHandler: [verifyToken, requirePermission('ai:view')] }, async (_request, reply) => {
+    try {
+      const types = promptManager.getAllTypes();
+      return { ok: true, types };
+    } catch (error: any) {
+      reply.code(500).send({ error: '获取提示词列表失败：' + error.message });
+    }
+  });
+
+  // GET /api/ai/prompts/:type — 获取单个类型的版本信息
+  fastify.get('/api/ai/prompts/:type', { preHandler: [verifyToken, requirePermission('ai:view')] }, async (request, reply) => {
+    try {
+      const { type } = request.params as { type: string };
+      const info = promptManager.getTypeInfo(type);
+      if (!info) return reply.code(404).send({ error: '提示词类型不存在' });
+      return { ok: true, ...info };
+    } catch (error: any) {
+      reply.code(500).send({ error: '获取提示词失败：' + error.message });
+    }
+  });
+
+  // POST /api/ai/prompts/:type/switch — 切换活跃版本
+  fastify.post('/api/ai/prompts/:type/switch', { preHandler: [verifyToken, requirePermission('ai:manage')] }, async (request, reply) => {
+    try {
+      const { type } = request.params as { type: string };
+      const { version } = request.body as { version: number };
+      if (!version || version < 1) return reply.code(400).send({ error: '版本号无效' });
+      const info = promptManager.getTypeInfo(type);
+      if (!info) return reply.code(404).send({ error: '提示词类型不存在' });
+      const exists = info.versions.some(v => v.version === version);
+      if (!exists) return reply.code(404).send({ error: `版本 v${version} 不存在` });
+      promptManager.setActiveVersion(version);
+      return { ok: true, activeVersion: version };
+    } catch (error: any) {
+      reply.code(500).send({ error: '切换版本失败：' + error.message });
+    }
+  });
+
+  // PUT /api/ai/prompts/:type/versions/:version — 更新版本内容
+  fastify.put('/api/ai/prompts/:type/versions/:version', { preHandler: [verifyToken, requirePermission('ai:manage')] }, async (request, reply) => {
+    try {
+      const { type, version: versionStr } = request.params as { type: string; version: string };
+      const version = parseInt(versionStr, 10);
+      const { content } = request.body as { content: string };
+      if (!content) return reply.code(400).send({ error: '内容不能为空' });
+      const ok = await promptManager.setVersionContent(type, version, content);
+      if (!ok) return reply.code(404).send({ error: '版本不存在或保存失败' });
+      return { ok: true, type, version, length: content.length };
+    } catch (error: any) {
+      reply.code(500).send({ error: '保存提示词失败：' + error.message });
+    }
+  });
+
+  // POST /api/ai/prompts/:type/versions — 创建新版本
+  fastify.post('/api/ai/prompts/:type/versions', { preHandler: [verifyToken, requirePermission('ai:manage')] }, async (request, reply) => {
+    try {
+      const { type } = request.params as { type: string };
+      const { content } = request.body as { content: string };
+      if (!content) return reply.code(400).send({ error: '内容不能为空' });
+      const result = await promptManager.createVersion(type, content);
+      if (!result) return reply.code(500).send({ error: '创建版本失败' });
+      return { ok: true, ...result, type };
+    } catch (error: any) {
+      reply.code(500).send({ error: '创建版本失败：' + error.message });
+    }
+  });
+
+  // POST /api/ai/prompts/:type/optimize — AI 辅助优化提示词
+  fastify.post('/api/ai/prompts/:type/optimize', { preHandler: [verifyToken, requirePermission('ai:manage')] }, async (request, reply) => {
+    try {
+      const { type } = request.params as { type: string };
+      const { version, focus } = request.body as { version?: number; focus?: string };
+
+      const info = promptManager.getTypeInfo(type);
+      if (!info) return reply.code(404).send({ error: '提示词类型不存在' });
+
+      const v = version ?? info.activeVersion;
+      const currentContent = promptManager.getVersionContent(type, v);
+      if (!currentContent) return reply.code(404).send({ error: '版本内容不存在' });
+
+      const displayType = { 'fault-diagnosis': '故障诊断', 'alert-rca': '告警根因分析', 'topsql-analysis': 'SQL 优化' }[type] || type;
+
+      const optimizePrompt = `你是一个 AI 提示词优化专家。请分析下面这条用于指导 AI Agent 执行${displayType}任务的提示词，给出优化建议。
+
+## 需要保持的要点
+- 面向 AI Agent（不是人）的指令
+- 必须包含可用的工具列表和工具说明
+- 必须包含执行流程
+- 必须要求最后调用 slide_complete_analysis 保存结果
+- 输出 Markdown 格式要求
+
+## 当前提示词
+\`\`\`markdown
+${currentContent}
+\`\`\`
+
+${focus ? `## 优化重点\n${focus}\n` : ''}
+## 要求
+1. 分析当前提示词的不足（具体指出哪些地方可以改进）
+2. 给出优化后的完整提示词（直接可用）
+3. 用一句话说明优化要点`;
+
+      const engine = await getAgentEngine();
+      const sessionKey = `prompt-optimize-${type}-${Date.now()}`;
+      const result = await engine.invoke(sessionKey, optimizePrompt);
+      const optimizedContent = result.content || '';
+
+      return {
+        ok: true,
+        analysis: optimizedContent,
+        type,
+        currentVersion: v,
+      };
+    } catch (error: any) {
+      reply.code(500).send({ error: 'AI 优化失败：' + error.message });
     }
   });
 

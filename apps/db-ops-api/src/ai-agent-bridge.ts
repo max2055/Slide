@@ -8,9 +8,15 @@
  *     ├── cache lookup (TTL per analysis type)
  *     ├── create analysis record
  *     └── getAgentEngine('analysis').invoke()  (fire-and-forget)
+ *
+ * Prompt 管理：
+ *   - 默认从 prompts/versions/ 加载 v2 版提示词
+ *   - 通过 PROMPT_VERSION 环境变量切换版本（export PROMPT_VERSION=1）
+ *   - 通过 PROMPT_AB_TEST=true 启用 A/B 测试（v1/v2 随机各 50%）
  */
 import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
 import { getAgentEngine } from './adapter/get-agent-engine.js';
+import { promptManager } from './prompts/prompt-manager.js';
 
 const DEFAULT_TTL: Record<string, number> = {
   alert_rca: 30 * 60 * 1000,
@@ -89,10 +95,20 @@ export async function dispatchOrReuse(params: {
 }
 
 function buildDefaultPrompt(type: string): string {
+  // 转换类型名：underscore → hyphen，与 prompts/versions/ 目录文件名匹配
+  const promptType = type.replace(/_/g, '-');
+  const managed = promptManager.getPrompt(promptType);
+  if (managed) return managed;
+
+  // 再试原始类型名
+  const managed2 = promptManager.getPrompt(type);
+  if (managed2) return managed2;
+
+  // 兜底：没有 prompt 文件时的默认提示
   const prompts: Record<string, string> = {
-    alert_rca: `你是数据库运维专家。使用 db_health_check、db_performance_analysis、db_sql_execute、db_slow_queries 等工具采集数据，对告警进行根因分析。`,
-    fault_diagnosis: `你是数据库故障诊断专家。使用 db_* 工具全面检查实例状态，诊断故障原因。`,
-    topsql_analysis: `你是 SQL 优化专家。使用 db_slow_queries、db_sql_explain 等工具分析慢查询，给出索引和重写建议。`,
+    alert_rca: `你是数据库运维专家。分析告警的根因并给出修复建议。`,
+    fault_diagnosis: `你是数据库故障诊断专家。对数据库实例进行全面诊断，分析故障原因并给出修复建议。`,
+    topsql_analysis: `你是 SQL 优化专家。分析慢查询数据并给出优化建议。`,
     sql_approval: `你是数据库安全审核专家。评估 SQL 风险并给出审批建议(approve/reject)。`,
   };
   return prompts[type] || prompts.alert_rca;

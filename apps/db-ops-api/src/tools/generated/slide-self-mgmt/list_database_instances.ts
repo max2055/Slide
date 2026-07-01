@@ -11,7 +11,7 @@ import { instanceDatabaseService } from '../../../instance-database-service.js';
 
 export const listDatabaseInstancesTool: AnyAgentTool = {
   name: 'list_database_instances',
-  description: '列出所有数据库实例的基本信息（id, name, db_type, host, port, health_status），不返回密码',
+  description: '列出所有数据库实例的基本信息（id, name, db_type, host, port, health_status, environment）。用于获取可用实例列表和实例 ID。不返回密码等敏感信息。',
   parameters: {
     type: 'object',
     properties: {

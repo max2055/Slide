@@ -176,6 +176,7 @@ export const zh_CN: TranslationMap = {
     users: "用户管理",
     "llm-config": "LLM 配置",
     "ai-settings": "AI 设置",
+    "prompt-settings": "提示词管理",
     "scoring-settings": "评分权重配置",
     "cron-jobs": "定时任务",
     rbac: "权限管理",

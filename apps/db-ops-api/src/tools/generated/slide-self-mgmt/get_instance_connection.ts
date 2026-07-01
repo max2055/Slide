@@ -11,7 +11,7 @@ import { instanceDatabaseService } from '../../../instance-database-service.js';
 
 export const getInstanceConnectionTool: AnyAgentTool = {
   name: 'get_instance_connection',
-  description: '获取指定数据库实例的完整连接信息，包含 host、port、username、password（解密后）、db_type、database_name、connection_string',
+  description: '获取指定数据库实例的完整连接信息，包含解密后的密码。用于获取连接字符串以直接连接数据库进行分析。注意：仅限管理员用户调用（dangerLevel=4），返回的密码为明文。',
   parameters: {
     type: 'object',
     properties: {

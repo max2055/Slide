@@ -179,6 +179,7 @@ export const en: TranslationMap = {
     logs: "Logs",
     dreams: "Dreaming",
     "ai-settings": "AI Settings",
+    "prompt-settings": "Prompt Management",
     "scoring-settings": "Scoring Weights",
     "cron-jobs": "Cron Jobs",
   },

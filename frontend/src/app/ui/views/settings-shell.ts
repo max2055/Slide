@@ -8,6 +8,7 @@ import { icons } from "../../../icons.js";
 
 type SettingsSubTab =
   | "ai-settings"
+  | "prompt-settings"
   | "llm-config"
   | "scoring-settings"
   | "cron-jobs"
@@ -22,6 +23,7 @@ type SettingsSubTab =
 
 const SUB_TABS: { id: SettingsSubTab; label: string; icon: string; requireAdmin?: boolean }[] = [
   { id: "ai-settings", label: "AI 设置", icon: "sparkles" },
+  { id: "prompt-settings", label: "提示词管理", icon: "book" },
   { id: "llm-config", label: "LLM 配置", icon: "brain" },
   { id: "scoring-settings", label: "评分权重", icon: "bar-chart" },
   { id: "appearance", label: "外观", icon: "spark" },
@@ -144,6 +146,8 @@ export class SettingsShell extends LitElement {
     switch (this.activeTab) {
       case "ai-settings":
         return html`<ai-settings-page></ai-settings-page>`;
+      case "prompt-settings":
+        return html`<prompt-settings-page></prompt-settings-page>`;
       case "llm-config":
         return html`<llm-config-page></llm-config-page>`;
       case "scoring-settings":

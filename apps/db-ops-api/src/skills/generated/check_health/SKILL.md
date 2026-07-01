@@ -1,85 +1,38 @@
 ---
 name: check_health
-description: 检查health的快速命令
+description: 快速检查数据库实例的健康状态、基本信息和关键指标
 metadata: {}
 ---
 
-# check_health
+# Check Health
 
-检查health的快速命令
+快速检查数据库实例的健康状态。包含三个子命令，分别用于检查整体健康、实例信息和关键指标。
 
-**自动生成时间**: 2026-04-12T13:57:59.929Z
-
-## 何时使用
-
-- 当需要重复执行相同或相似的任务时
-- 当想要快速完成某个操作时
-
-## 工具列表
+## 子命令
 
 ### check_health_health
+检查实例整体健康状态，返回健康评分和状态描述。
 
-检查health的快速命令
-
-**参数**:
-- `instance_id`: 实例 ID
-- `include_details`: boolean
-
-**返回值**:
-```json
-{
-  "success": boolean,
-  "results": array,
-  "summary": string
-}
-```
+**适用场景**：
+- 快速了解实例是否健康
+- 在诊断或分析前先做健康检查
 
 ### check_health_instance
+获取实例基本信息，包括数据库类型、主机地址、端口、运行环境等。
 
-检查health的快速命令
-
-**参数**:
-- `instance_id`: 实例 ID
-
-**返回值**:
-```json
-{
-  "success": boolean,
-  "results": array,
-  "summary": string
-}
-```
+**适用场景**：
+- 了解实例的配置信息
+- 确认实例类型后再选择合适的工具
 
 ### check_health_metrics
+获取实例最近的关键性能指标（CPU 使用率、内存使用率、活跃连接数、QPS 等）。
 
-检查health的快速命令
+**适用场景**：
+- 快速查看实例的实时运行状态
+- 在排查问题前收集基础数据
 
-**参数**:
-- `instance_id`: 实例 ID
+## 使用建议
 
-**返回值**:
-```json
-{
-  "success": boolean,
-  "results": array,
-  "summary": string
-}
-```
-
-
-## 使用示例
-
-```
-check_health()
-```
-
-## 相关工具
-
-- `db_check_health`
-- `db_get_instance`
-- `db_get_metrics`
-
-## 注意事项
-
-> ⚠️ 此技能由 AI 自动生成，请根据实际需求调整实现
-
+- 按 health → instance → metrics 的顺序依次调用
+- health 返回异常时，用 metrics 获取更详细的数据
+- 获取到基础数据后，可以结合其他工具进一步诊断

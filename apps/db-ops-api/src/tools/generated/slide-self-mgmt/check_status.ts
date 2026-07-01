@@ -33,7 +33,7 @@ interface SlideStatus {
 
 export const checkStatusTool: AnyAgentTool = {
   name: 'slide_check_status',
-  description: '检查 Slide 平台整体状态，包括前后端服务、数据库连接、LLM 连接等',
+  description: '检查 Slide 平台整体状态，包括后端 API 服务（:3000）、前端服务（:5173）、数据库连接、LLM 连接等。用于快速了解系统各个组件是否正常运行。可选参数：include_details（返回详情）、test_db_connections（测试DB连接）、test_llm（测试LLM连接）',
   parameters: {
     type: 'object',
     properties: {

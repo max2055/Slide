@@ -6,13 +6,14 @@ metadata: {}
 
 # Alert Root Cause Analysis
 
-Performs root cause analysis on database alerts using db_* tools.
+Performs root cause analysis on database alerts using health metrics, instance status, and alert history.
 
 ## Tool Flow
 
-1. Use `db_health_check` to get current instance health status
-2. Use `db_performance_analysis` to get metric trends
-3. Use `db_slow_queries` to check slow query data
+1. Use `list_active_alerts` to view alert details with severity and time filters
+2. Use `get_instance_summary` to get the affected instance's current health status
+3. Use `query_metrics` with `mode='realtime'` to check current metric values
+4. Use `query_metrics` with `mode='history', period='24h'` to see metric trends before alert
 
 ## Output Format
 
@@ -30,9 +31,9 @@ Brief summary of findings including alert severity and affected components.
 2. Include estimated impact and effort for each action
 
 ## 关键指标
-| Metric | Value | Status |
-|--------|-------|--------|
-| Example | 95% | Normal |
+| 指标 | 触发前 | 当前值 | 阈值 | 状态 |
+|------|--------|--------|------|------|
+| Example | 45% | 92% | 80% | 异常 |
 
 ## Completion
 

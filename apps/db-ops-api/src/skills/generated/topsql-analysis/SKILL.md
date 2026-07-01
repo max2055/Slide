@@ -6,38 +6,38 @@ metadata: {}
 
 # TopSQL Analysis
 
-Analyzes top slow queries and provides optimization recommendations using db_* tools.
+Analyzes top slow queries and provides optimization recommendations using metric data and instance health.
 
 ## Tool Flow
 
-1. Use `db_slow_queries` to get top slow queries by elapsed time
-2. Use `db_performance_analysis` to correlate with system metrics
-3. Use `db_health_check` to verify overall instance health
+1. Use `get_instance_summary` to check overall instance health
+2. Use `query_metrics` with `mode='realtime', metric_ids=['slow_queries', 'qps', 'cpu_usage']` to check current performance
+3. Use `query_metrics` with `mode='history', period='24h'` to view historical trends
+4. Use `list_active_alerts` to check for performance-related alerts
 
 ## Output Format
 
 Use the following Markdown structure:
 
 ## SQL 概述
-- Query ID and fingerprint
-- Execution frequency and average latency
-- Affected tables and indexes
+- Instance name and type
+- Slow query count and trend
+- Analysis time window
 
 ## 性能分析
-- Execution plan analysis (full table scan, index usage, join order)
-- Resource consumption (CPU, IO, memory)
-- Bottleneck identification
+- Root cause analysis (CPU bottleneck / IO wait / lock contention)
+- Correlated metric observations (QPS, connections, CPU)
+- Index or query pattern issues
 
 ## 优化建议
-1. Index optimization recommendations with expected improvement
-2. Query rewrite suggestions with before/after examples
-3. Configuration tuning if applicable
+1. Index optimization with expected improvement
+2. Configuration tuning recommendations
+3. Application-side optimization suggestions
 
 ## 预期收益
-| Metric | Before | After (Est.) |
-|--------|--------|-------------|
-| Avg latency | X ms | Y ms |
-| Calls/min | N | N |
+| 指标 | 当前值 | 优化后估算 |
+|------|--------|-----------|
+| Slow queries/min | N | N/2 |
 
 ## Completion
 

@@ -514,6 +514,33 @@ export class DirectAdapter implements IAgentEngine {
       console.error('[DirectAdapter] invoke() failed to persist user message to DB:', dbErr instanceof Error ? dbErr.message : String(dbErr));
     }
 
+    const thinkingHolder: { text: string } = { text: '' };
+    const toolCalls: Array<{ name: string; args: any; result?: string; status: string }> = [];
+
+    const invokeHook: AgentHook = {
+      wantsStreaming: () => true,
+      beforeIteration: async () => {},
+      onStream: async (_ctx: any, delta: string) => { thinkingHolder.text += delta; },
+      onStreamEnd: async () => {},
+      beforeExecuteTools: async (ctx: any) => {
+        for (const tc of ctx.toolCalls) {
+          toolCalls.push({ name: tc.name, args: tc.arguments, status: 'running' });
+        }
+      },
+      afterIteration: async (ctx: any) => {
+        for (const te of ctx.toolEvents) {
+          const existing = toolCalls.find(t => t.name === te.name && t.status === 'running');
+          if (existing) {
+            existing.status = te.status || 'ok';
+            existing.result = typeof te.detail === 'string' ? te.detail.slice(0, 500) : JSON.stringify(te.detail).slice(0, 500);
+          }
+        }
+      },
+      emitReasoning: async (text: string | null) => { if (text) thinkingHolder.text += text; },
+      emitReasoningEnd: async () => {},
+      finalizeContent: (_ctx: any, c: string | null) => c,
+    };
+
     try {
       const result = await this.runner.run({
         initialMessages: messages,
@@ -522,13 +549,18 @@ export class DirectAdapter implements IAgentEngine {
         maxIterations: 200,
         maxToolResultChars: 20000,
         temperature: 0.0,
-        hook: new NoopHook(),
+        hook: invokeHook as any,
         contextWindowTokens: 200_000,
         maxTokens: 100_000,
       });
 
-      // Persist assistant response to both SessionManager (JSONL) and chatDatabaseService (MySQL)
-      const finalContent = result.finalContent || '';
+      // Embed thinking as <think> tags so chat UI renders collapsible thinking section
+      const thinkingContent = thinkingHolder.text || '';
+      const finalContent = thinkingContent
+        ? `<think>${thinkingContent}</think>
+
+${result.finalContent || ''}`
+        : (result.finalContent || '');
       if (finalContent) {
         session.addMessage('assistant', finalContent);
         try {

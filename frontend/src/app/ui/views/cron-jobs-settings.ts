@@ -163,15 +163,16 @@ export class CronJobsSettings extends LitElement {
 
   @state() private pollingJobIds = new Set<number>();
   private _pollInterval: ReturnType<typeof setInterval> | null = null;
+  private _refreshInterval: ReturnType<typeof setInterval> | null = null;
 
   @state() private formTaskType: "agent" | "script" = "agent";
   @state() private formScriptId: number | null = null;
   @state() private formTargetInstanceId: number | null = null;
+  @state() private formTargetDatabase = "";
   @state() private scripts: CronScript[] = [];
   @state() private instances: DatabaseInstance[] = [];
   @state() private scriptEditorContent = "";
   @state() private scriptEditorDbType = "mysql";
-  @state() private selectedScriptTemplate: CronScript | null = null;
   @state() private testResult: string | null = null;
   @state() private testRunning = false;
 
@@ -209,7 +210,7 @@ export class CronJobsSettings extends LitElement {
     .cell-last { width: 110px; min-width: 110px; }
     .cell-result { width: 80px; min-width: 80px; }
     .cell-actions { width: 150px; min-width: 150px; justify-content: flex-end; gap: 4px; flex-shrink: 0; overflow: visible; }
-    .job-name { font-weight: 600; color: var(--text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; user-select: none; }
+    .job-name { font-weight: 600; color: var(--text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
     .job-name:hover { color: var(--accent); }
     .job-name--disabled { color: var(--muted); }
     .job-desc { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -282,6 +283,7 @@ export class CronJobsSettings extends LitElement {
   override connectedCallback() {
     super.connectedCallback();
     this.loadCronJobs();
+    this._refreshInterval = setInterval(() => this.refreshCronJobs(), 15000);
   }
 
   override disconnectedCallback() {
@@ -289,6 +291,10 @@ export class CronJobsSettings extends LitElement {
     if (this._pollInterval) {
       clearInterval(this._pollInterval);
       this._pollInterval = null;
+    }
+    if (this._refreshInterval) {
+      clearInterval(this._refreshInterval);
+      this._refreshInterval = null;
     }
   }
 
@@ -303,6 +309,16 @@ export class CronJobsSettings extends LitElement {
       this.error = e.message || "加载定时任务失败";
     } finally {
       this.loading = false;
+    }
+  }
+
+  /** 静默刷新，不触发 loading 闪屏 */
+  private async refreshCronJobs() {
+    try {
+      const res = await authFetch("/api/cron/jobs");
+      if (res.ok) this.jobs = await res.json();
+    } catch {
+      // 静默失败，下次刷新重试
     }
   }
 
@@ -339,8 +355,8 @@ export class CronJobsSettings extends LitElement {
     this.formTaskType = "agent";
     this.formScriptId = null;
     this.formTargetInstanceId = null;
+    this.formTargetDatabase = "";
     this.scriptEditorContent = "";
-    this.selectedScriptTemplate = null;
     this.testResult = null;
     this.showCreateDialog = true;
     // Fetch scripts and instances in background
@@ -372,7 +388,6 @@ export class CronJobsSettings extends LitElement {
     this.formTaskType = job.task_type || "agent";
     this.formScriptId = job.script_id ?? null;
     this.formTargetInstanceId = job.target_instance_id ?? null;
-    this.selectedScriptTemplate = null;
     this.testResult = null;
     this.showCreateDialog = true;
     // Load scripts list and instance list for dropdowns
@@ -390,7 +405,6 @@ export class CronJobsSettings extends LitElement {
       const script: CronScript = await res.json();
       this.scriptEditorContent = script.content;
       this.scriptEditorDbType = script.target_db_type;
-      this.selectedScriptTemplate = script;
     } catch {
       // Swallow
     }
@@ -405,8 +419,8 @@ export class CronJobsSettings extends LitElement {
     this.formTaskType = "agent";
     this.formScriptId = null;
     this.formTargetInstanceId = null;
+    this.formTargetDatabase = "";
     this.scriptEditorContent = "";
-    this.selectedScriptTemplate = null;
     this.testResult = null;
   }
 
@@ -421,22 +435,35 @@ export class CronJobsSettings extends LitElement {
     this.formError = null;
     try {
       let scriptId = this.formScriptId;
-      // For custom SQL (no template selected), create script first
-      if (this.formTaskType === "script" && !scriptId && this.scriptEditorContent.trim()) {
-        const scriptRes = await authFetch("/api/cron/scripts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: this.formName + " (custom)",
-            description: this.formDescription || "Custom SQL script for cron job",
-            script_type: "sql",
-            content: this.scriptEditorContent,
-            target_db_type: this.scriptEditorDbType,
-          }),
-        });
-        if (!scriptRes.ok) { const errBody = await scriptRes.json().catch(() => ({})); throw new Error(errBody.error || "创建脚本失败"); }
-        const newScript = await scriptRes.json();
-        scriptId = newScript.id;
+      if (this.formTaskType === "script" && this.scriptEditorContent.trim()) {
+        if (scriptId) {
+          // Update existing script content
+          const updateRes = await authFetch(`/api/cron/scripts/${scriptId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              content: this.scriptEditorContent,
+              target_db_type: this.scriptEditorDbType,
+            }),
+          });
+          if (!updateRes.ok) { const errBody = await updateRes.json().catch(() => ({})); throw new Error(errBody.error || "更新脚本失败"); }
+        } else {
+          // Create new script for custom SQL
+          const scriptRes = await authFetch("/api/cron/scripts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: this.formName + " (custom)",
+              description: this.formDescription || "Custom SQL script for cron job",
+              script_type: "sql",
+              content: this.scriptEditorContent,
+              target_db_type: this.scriptEditorDbType,
+            }),
+          });
+          if (!scriptRes.ok) { const errBody = await scriptRes.json().catch(() => ({})); throw new Error(errBody.error || "创建脚本失败"); }
+          const newScript = await scriptRes.json();
+          scriptId = newScript.id;
+        }
       }
 
       const body: Record<string, unknown> = {
@@ -452,6 +479,7 @@ export class CronJobsSettings extends LitElement {
         body.task_description = this.scriptEditorContent;
         body.script_id = scriptId;
         body.target_instance_id = this.formTargetInstanceId;
+        body.target_database = this.formTargetDatabase || null;
       }
 
       const isEdit = !!this.editingJob;
@@ -476,22 +504,6 @@ export class CronJobsSettings extends LitElement {
     this.formTaskType = (e.target as HTMLSelectElement).value as "agent" | "script";
   }
 
-  private onScriptTemplateChange(e: Event) {
-    const select = e.target as HTMLSelectElement;
-    const id = parseInt(select.value, 10);
-    if (!id) {
-      this.selectedScriptTemplate = null;
-      this.formScriptId = null;
-      return;
-    }
-    const tmpl = this.scripts.find((s) => s.id === id);
-    if (tmpl) {
-      this.selectedScriptTemplate = tmpl;
-      this.formScriptId = tmpl.id;
-      this.scriptEditorContent = tmpl.content;
-      this.scriptEditorDbType = tmpl.target_db_type;
-    }
-  }
 
   private onInstanceChange(e: Event) {
     const select = e.target as HTMLSelectElement;
@@ -500,6 +512,9 @@ export class CronJobsSettings extends LitElement {
     const inst = this.instances.find((i) => i.id === id);
     if (inst) {
       this.scriptEditorDbType = inst.db_type;
+      if (inst.db_type !== "mysql") {
+        this.formTargetDatabase = "";
+      }
     }
   }
 
@@ -508,14 +523,53 @@ export class CronJobsSettings extends LitElement {
   }
 
   private async onTestExecute() {
-    if (!this.formScriptId || !this.formTargetInstanceId) return;
-    this.testRunning = true;
-    this.testResult = null;
+    if (!this.formTargetInstanceId) { this.testResult = "请先选择目标实例"; return; }
+    if (!this.scriptEditorContent.trim()) { this.testResult = "请先编写 SQL 脚本内容"; return; }
+    this.testResult = "准备中...";
+    let scriptId = this.formScriptId;
     try {
-      const res = await authFetch(`/api/cron/scripts/${this.formScriptId}/test`, {
+      if (scriptId) {
+        this.testResult = "正在更新脚本...";
+        const updateRes = await authFetch(`/api/cron/scripts/${scriptId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: this.scriptEditorContent,
+            target_db_type: this.scriptEditorDbType || "mysql",
+          }),
+        });
+        if (!updateRes.ok) throw new Error((await updateRes.json().catch(() => ({}))).error || "更新脚本失败");
+      } else {
+        this.testResult = "正在创建脚本...";
+        const createRes = await authFetch("/api/cron/scripts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: `test_${Date.now()}`,
+            content: this.scriptEditorContent,
+            target_db_type: this.scriptEditorDbType || "mysql",
+          }),
+        });
+        if (!createRes.ok) throw new Error((await createRes.json().catch(() => ({}))).error || "创建脚本失败");
+        const created = await createRes.json();
+        scriptId = created.id;
+        this.formScriptId = scriptId;
+      }
+    } catch (e: any) {
+      this.testResult = `错误：${e.message || "未知错误"}`;
+      return;
+    }
+    if (!scriptId) return;
+    this.testRunning = true;
+    this.testResult = "执行中...";
+    try {
+      const res = await authFetch(`/api/cron/scripts/${scriptId}/test`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instance_id: this.formTargetInstanceId }),
+        body: JSON.stringify({
+          instance_id: this.formTargetInstanceId,
+          database: this.formTargetDatabase || null,
+        }),
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
@@ -754,7 +808,7 @@ export class CronJobsSettings extends LitElement {
           <h1>定时任务</h1>
           <p>管理定时采集和分析任务的调度与监控</p>
         </div>
-        <button class="btn-primary" @click=${this.openCreateDialog}>+ 新建任务</button>
+        <button class="btn" @click=${this.openCreateDialog}>+ 新建任务</button>
       </div>
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
         <label style="font-size:12px;color:var(--muted);">筛选模式：</label>
@@ -848,7 +902,7 @@ export class CronJobsSettings extends LitElement {
 
       <!-- Create/Edit Dialog -->
       ${this.showCreateDialog ? html`
-        <app-dialog .open=${true} size="md" title="${this.editingJob ? '编辑任务' : '新建任务'}" @app-dialog-close=${this.closeFormDialog}>
+        <app-dialog .open=${true} size="md" title="${this.editingJob ? '编辑任务' : '新建任务'}" .closeOnOverlay=${false} @app-dialog-close=${this.closeFormDialog}>
           ${this.formError ? html`<div style="font-size:12px;margin-bottom:12px;padding:8px 12px;color:var(--danger);background:var(--danger-subtle, rgba(220,38,38,0.08));border-radius:var(--radius-sm);">${this.formError}</div>` : nothing}
           <div class="form-group">
             <label class="form-label">任务名称</label>
@@ -896,6 +950,12 @@ export class CronJobsSettings extends LitElement {
                 </button>
               ` : nothing}
             </div>
+            ${this.formTargetInstanceId && this.scriptEditorDbType === "mysql" ? html`
+              <div class="form-group">
+                <label class="form-label">目标数据库 <span style="font-weight:400;color:var(--muted);font-size:12px;">（MySQL 需要指定库名）</span></label>
+                <input class="form-input" placeholder="例如：information_schema" .value=${this.formTargetDatabase} @input=${(e: any) => { this.formTargetDatabase = e.target.value; }} />
+              </div>
+            ` : nothing}
             ${this.testResult !== null ? html`
               <div class="form-group">
                 <label class="form-label">测试结果</label>

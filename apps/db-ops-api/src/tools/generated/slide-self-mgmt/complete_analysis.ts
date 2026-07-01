@@ -7,7 +7,7 @@ import { aiAnalysisDatabaseService } from '../../../ai-analysis-database-service
 
 export const completeAnalysisTool: AnyAgentTool = {
   name: 'slide_complete_analysis',
-  description: '完成 AI 分析并将结果保存到数据库。分析结束后必须调用，否则分析不会保存。',
+  description: '完成 AI 分析并将结果保存到数据库。**必须在分析完成后调用**，否则分析结果不会保存。参数：analysisId（分析记录ID）、markdown（Markdown 格式的分析结果）',
   parameters: {
     type: 'object',
     properties: {
