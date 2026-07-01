@@ -317,17 +317,15 @@ export class InstanceDetailPage extends LitElement {
   private _closeDiagnosisModal() { this.showDiagnosisModal = false; this.activeDiagnosisRecord = null; }
   private _continueInChat(e: CustomEvent) {
     const { analysisId, diagnosisSummary } = e.detail || {};
-    const summary = typeof diagnosisSummary === 'string'
-      ? diagnosisSummary.replace(/^#+\s*/gm, "").trim().substring(0, 200)
-      : '';
+    const diagnosisText = typeof diagnosisSummary === 'string' ? diagnosisSummary : '';
+    if (analysisId && diagnosisText) {
+      // Store pending message for chat page to pick up
+      (window as any).__pendingChatMessage = {
+        text: `我有关于实例 ${this.instance?.name || `#${this.instanceId}`} 的 AI 诊断结果，想深入分析。\n\n诊断详情：\n${diagnosisText}`,
+      };
+    }
     window.dispatchEvent(new CustomEvent('slide-navigate', {
-      detail: {
-        tab: 'chat',
-        sessionKey: analysisId ? `diagnosis-${analysisId}` : undefined,
-        autoMessage: analysisId
-          ? `关于实例 ${this.instance?.name || `#${this.instanceId}`} 的 AI 诊断结果，我有疑问：\n\n诊断结论：${summary}\n\n请帮我进一步分析以上问题。`
-          : undefined,
-      },
+      detail: { tab: 'chat' },
     }));
   }
   private _onPeriodChange(e: CustomEvent) { this.loadTrendData(e.detail.period); }

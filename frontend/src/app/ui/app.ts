@@ -142,6 +142,8 @@ export class SlideApp extends LitElement {
   @state() chatStream: string | null = null;
   @state() chatStreamStartedAt: number | null = null;
   @state() chatRunId: string | null = null;
+  @state() chatThinkingText: string = "";
+  @state() chatThinkingComplete: boolean = false;
   @state() refreshSessionsAfterChat: Set<string> = new Set();
   @state() chatSideResult: ChatSideResult | null = null;
   @state() compactionStatus: CompactionStatus | null = null;
@@ -460,6 +462,16 @@ export class SlideApp extends LitElement {
           switchChatSession(this as unknown as AppViewState, session);
         }
         this.setTab(tab as Tab);
+        // Handle pending chat message from diagnosis "继续分析"
+        const pendingMsg = (window as any).__pendingChatMessage;
+        if (tab === "chat" && pendingMsg) {
+          delete (window as any).__pendingChatMessage;
+          // Send "/new" to create a fresh session, then the pending message
+          Promise.resolve().then(async () => {
+            await handleSendChatInternal(this as any, "/new");
+            await handleSendChatInternal(this as any, pendingMsg.text);
+          });
+        }
         // Update URL
         const url = new URL(window.location.href);
         url.searchParams.set("tab", tab);
