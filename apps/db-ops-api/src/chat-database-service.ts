@@ -245,17 +245,30 @@ class ChatDatabaseService {
    * 更新会话统计
    */
   private async updateSessionStats(pool: any, sessionId: string): Promise<void> {
-    const sql = `
-      UPDATE chat_sessions
-      SET message_count = (
-        SELECT COUNT(*) FROM chat_messages WHERE session_id = ?
-      ),
-      last_message_at = (
-        SELECT MAX(created_at) FROM chat_messages WHERE session_id = ?
-      )
-      WHERE session_id = ?
-    `;
-    await pool.query(sql, [sessionId, sessionId, sessionId]);
+    // Update existing session row
+    const [result] = await pool.query<ResultSetHeader>(
+      `UPDATE chat_sessions
+       SET message_count = (SELECT COUNT(*) FROM chat_messages WHERE session_id = ?),
+           last_message_at = (SELECT MAX(created_at) FROM chat_messages WHERE session_id = ?)
+       WHERE session_id = ?`,
+      [sessionId, sessionId, sessionId]
+    );
+    // Auto-create missing session row if UPDATE affected 0 rows
+    if (result.affectedRows === 0) {
+      await pool.query(
+        `INSERT IGNORE INTO chat_sessions (session_id, user_id, title, message_count, last_message_at)
+         VALUES (?, 1, ?, 0, NOW())`,
+        [sessionId, sessionId]
+      );
+      // Retry the update now that the row exists
+      await pool.query(
+        `UPDATE chat_sessions
+         SET message_count = (SELECT COUNT(*) FROM chat_messages WHERE session_id = ?),
+             last_message_at = (SELECT MAX(created_at) FROM chat_messages WHERE session_id = ?)
+         WHERE session_id = ?`,
+        [sessionId, sessionId, sessionId]
+      );
+    }
   }
 
   /**
