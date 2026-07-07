@@ -78,6 +78,7 @@ import { agentManagementService } from './src/agent-management-service.js';
 import { startSessionCleanup } from './src/session-cleanup.js';
 import { loadPredefinedSkills, skillRegistry } from './src/skills/loader.js';
 import { promptManager } from './src/prompts/prompt-manager.js';
+import { serverDatabaseService } from './src/server-database-service.js';
 
 const fastify = Fastify({
   logger: false,
@@ -1262,6 +1263,117 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: '测试连接失败：' + error.message });
+    }
+  });
+
+  // ========== 服务器管理 API ==========
+
+  // 获取所有服务器
+  fastify.get('/api/servers', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
+    try {
+      const servers = await serverDatabaseService.getAllServers();
+      reply.send(servers);
+    } catch (error: any) {
+      reply.code(500).send({ error: '获取服务器列表失败：' + error.message });
+    }
+  });
+
+  // 获取服务器详情
+  fastify.get('/api/servers/:id', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
+    try {
+      const { id } = request.params as any;
+      const server = await serverDatabaseService.getServerById(Number(id));
+      if (!server) {
+        return reply.code(404).send({ error: '服务器不存在' });
+      }
+      // Strip credential_encrypted from response — never send encrypted blob to frontend
+      const { credential_encrypted, ...safeServer } = server;
+      reply.send(safeServer);
+    } catch (error: any) {
+      reply.code(500).send({ error: '获取服务器详情失败：' + error.message });
+    }
+  });
+
+  // 创建服务器
+  fastify.post('/api/servers', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
+    try {
+      const data = request.body as any;
+      warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','created_by'], 'POST /api/servers');
+      if (!data.host) return reply.code(400).send({ error: '缺少必填字段：host' });
+      if (!data.os_type) return reply.code(400).send({ error: '缺少必填字段：os_type' });
+      if (!data.credential_type) return reply.code(400).send({ error: '缺少必填字段：credential_type' });
+      if (!data.credential_username) return reply.code(400).send({ error: '缺少必填字段：credential_username' });
+      if (!data.credential_value) return reply.code(400).send({ error: '缺少必填字段：credential_value' });
+      const result = await serverDatabaseService.createServer(data);
+      if (result.success) {
+        reply.send({ id: result.serverId, message: '创建成功' });
+      } else {
+        reply.code(400).send({ error: result.error });
+      }
+    } catch (error: any) {
+      reply.code(500).send({ error: '创建服务器失败：' + error.message });
+    }
+  });
+
+  // 更新服务器
+  fastify.put('/api/servers/:id', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
+    try {
+      const { id } = request.params as any;
+      const data = request.body as any;
+      warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','collection_enabled'], 'PUT /api/servers/:id');
+      const result = await serverDatabaseService.updateServer(Number(id), data);
+      if (result.success) {
+        reply.send({ message: '更新成功' });
+      } else {
+        reply.code(400).send({ error: result.error });
+      }
+    } catch (error: any) {
+      reply.code(500).send({ error: '更新服务器失败：' + error.message });
+    }
+  });
+
+  // 删除服务器
+  fastify.delete('/api/servers/:id', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
+    try {
+      const { id } = request.params as any;
+      const result = await serverDatabaseService.deleteServer(Number(id));
+      if (result.success) {
+        reply.send({ message: '删除成功' });
+      } else {
+        reply.code(400).send({ error: result.error });
+      }
+    } catch (error: any) {
+      reply.code(500).send({ error: '删除服务器失败：' + error.message });
+    }
+  });
+
+  // 测试连接（stateless — accepts raw credentials, not encrypted）
+  fastify.post('/api/servers/test-connection', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
+    try {
+      const check = strictBody(request.body as Record<string, unknown>,
+          ['host', 'port', 'credential_type', 'credential_username', 'credential_value'], 'POST /api/servers/test-connection');
+        if (check.error) return reply.code(400).send(check.error);
+        const { host, port, credential_type, credential_username, credential_value } = check.body;
+      const result = await serverDatabaseService.testConnection(host, Number(port), credential_type, credential_value, credential_username);
+      reply.send(result);
+    } catch (error: any) {
+      reply.code(500).send({ error: '测试连接失败：' + error.message });
+    }
+  });
+
+  // 轮换密钥
+  fastify.post('/api/servers/:id/rotate-key', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
+    try {
+      const { id } = request.params as any;
+      const data = request.body as any;
+      warnUnknown(data, ['credential_type','credential_username','credential_value'], 'POST /api/servers/:id/rotate-key');
+      if (!data.credential_type) return reply.code(400).send({ error: '缺少必填字段：credential_type' });
+      if (!data.credential_username) return reply.code(400).send({ error: '缺少必填字段：credential_username' });
+      if (!data.credential_value) return reply.code(400).send({ error: '缺少必填字段：credential_value' });
+      const result = await serverDatabaseService.rotateKey(Number(id), data.credential_type, data.credential_username, data.credential_value);
+      reply.send(result);
+    } catch (error: any) {
+      reply.code(500).send({ error: '密钥轮换失败：' + error.message });
     }
   });
 
