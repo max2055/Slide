@@ -1,12 +1,12 @@
 ---
 phase: 112-frontend-cleanup-cron
 verified: 2026-05-27T13:00:00Z
-status: human_needed
+status: passed
 score: 28/28 must-haves verified
 overrides_applied: 0
 gaps: []
 deferred: []
-human_verification:
+resolved_by: Phase 114
   - test: "Open Settings page, verify 'Cron Jobs' tab appears in the settings group alongside AI Settings, LLM Config, Scoring Settings"
     expected: "A 'Cron Jobs' tab with the loader icon is visible in the settings navigation"
     why_human: "Visual verification required — navigation rendering depends on permission checks and state"

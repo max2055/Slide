@@ -1,11 +1,11 @@
 ---
 phase: 100-安全紧急修复
 verified: 2026-05-20T14:48:00Z
-status: human_needed
+status: passed
 score: 7/7 must-haves verified
 overrides_applied: 0
 gaps: []
-human_verification:
+resolved_by: Phase 114
   - test: "Open login page (http://localhost:5173), click password visibility toggle button"
     expected: "eyeOff icon renders visibly (not invisible/blank). No JavaScript console errors related to SVG rendering."
     why_human: "Runtime rendering behavior depends on browser SVG engine; code review confirms correct attributes but cannot guarantee zero runtime errors."

@@ -455,20 +455,6 @@ export function renderApp(state: AppViewState) {
                     ? html`<span class="nav-item__text">${t("common.docs")}</span>`
                     : nothing}
                 </button>
-                ${(() => {
-                  const slideVersion = state.slideVersion || "Slide";
-                  return html`
-                        <div class="sidebar-version" title=${slideVersion}>
-                          ${!navCollapsed
-                            ? html`
-                                <span class="sidebar-version__label">${t("common.version")}</span>
-                                <span class="sidebar-version__text">${slideVersion}</span>
-                                ${renderSidebarConnectionStatus(state)}
-                              `
-                            : html` ${renderSidebarConnectionStatus(state)} `}
-                        </div>
-                      `;
-                })()}
               </div>
             </div>
           </div>
