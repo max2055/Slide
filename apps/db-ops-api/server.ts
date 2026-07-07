@@ -1272,7 +1272,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.get('/api/servers', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
     try {
       const servers = await serverDatabaseService.getAllServers();
-      reply.send(servers);
+      // Strip credential_encrypted from list response — never send encrypted blob to frontend
+      const safeServers = servers.map(({ credential_encrypted, ...rest }: any) => rest);
+      reply.send(safeServers);
     } catch (error: any) {
       reply.code(500).send({ error: '获取服务器列表失败：' + error.message });
     }

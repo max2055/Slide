@@ -5,6 +5,8 @@ import "../components/app-dialog.js";
 import "../components/app-form-field.js";
 import "../components/app-badge.js";
 import "../components/app-empty-state.js";
+import "../components/app-data-table.js";
+import "../components/app-card.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
@@ -54,104 +56,6 @@ export class ServersPage extends LitElement {
 
     .page {
       padding: 0;
-    }
-
-    /* Main card */
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-    }
-
-    .card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: var(--space-md) var(--space-lg);
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-elevated);
-      flex-wrap: wrap;
-      gap: var(--space-md);
-    }
-
-    .card-title {
-      font-size: var(--text-lg);
-      font-weight: 600;
-      letter-spacing: -0.02em;
-      color: var(--text-strong);
-    }
-
-    /* Table styles */
-    .table-container {
-      overflow-x: auto;
-    }
-
-    .table {
-      width: 100%;
-      border-collapse: separate;
-      border-spacing: 0;
-      font-size: var(--text-base);
-    }
-
-    .table th {
-      position: sticky;
-      top: 0;
-      z-index: 3;
-      padding: var(--space-md) var(--space-md);
-      text-align: center;
-      font-weight: 600;
-      font-size: var(--text-xs);
-      color: var(--muted);
-      background: var(--bg-elevated);
-      border-bottom: 1px solid var(--border);
-      white-space: nowrap;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-
-    .table th:first-child {
-      text-align: left;
-    }
-
-    .table td {
-      padding: var(--space-md);
-      border-bottom: 1px solid var(--border);
-      color: var(--text);
-      vertical-align: middle;
-      text-align: center;
-    }
-
-    .table td:first-child {
-      text-align: left;
-    }
-
-    .table tbody tr {
-      transition: background var(--duration-fast) ease;
-    }
-
-    .table tbody tr:hover {
-      background: var(--bg-hover);
-    }
-
-    .table tbody tr:last-child td {
-      border-bottom: none;
-    }
-
-    .server-host {
-      font-weight: 600;
-      color: var(--text-strong);
-      font-size: var(--text-md);
-    }
-
-    .server-label {
-      font-size: var(--text-sm);
-      color: var(--muted);
-      margin-top: var(--space-xs);
-    }
-
-    .host-cell {
-      text-align: left;
     }
 
     /* Form styles */
@@ -256,8 +160,8 @@ export class ServersPage extends LitElement {
       display: block;
     }
 
-    /* Loading and empty state */
-    .loading, .empty {
+    /* Loading state */
+    .loading {
       display: flex;
       align-items: center;
       justify-content: center;
@@ -330,6 +234,13 @@ export class ServersPage extends LitElement {
     .test-result.error {
       background: var(--danger-subtle);
       color: var(--danger);
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: flex-end;
+      padding: var(--space-md) var(--space-lg);
+      border-bottom: 1px solid var(--border);
     }
   `];
 
@@ -589,6 +500,41 @@ export class ServersPage extends LitElement {
     }
   }
 
+  private _getColumns() {
+    return [
+      { key: "host", label: "主机" },
+      { key: "label", label: "标签" },
+      { key: "os_type", label: "操作系统" },
+      { key: "port", label: "端口" },
+      { key: "status", label: "状态" },
+      { key: "actions", label: "操作" },
+    ];
+  }
+
+  private _getRows() {
+    return this._servers.map((srv) => ({
+      host: html`
+        <div style="font-weight:600;color:var(--text-strong);font-size:var(--text-md);">${srv.host}</div>
+        ${srv.label ? html`<div style="font-size:var(--text-sm);color:var(--muted);margin-top:var(--space-xs);">${srv.label}</div>` : nothing}`,
+      label: srv.label || html`<span style="color:var(--muted);">—</span>`,
+      os_type: html`<app-badge variant="muted">${srv.os_type}</app-badge>`,
+      port: srv.port,
+      status: html`<app-badge variant="${this._statusBadgeVariant(srv.status)}">${this._statusLabel(srv.status)}</app-badge>`,
+      actions: html`
+        <div class="actions">
+          <button class="action-btn icon-btn" @click=${() => this._openEditDialog(srv)} title="编辑">
+            ${icons['edit']}
+          </button>
+          <button class="action-btn icon-btn" @click=${() => this._openKeyRotation(srv)} title="密钥轮换">
+            ${icons['refresh-cw']}
+          </button>
+          <button class="action-btn icon-btn danger" @click=${() => this._confirmDelete(srv)} title="删除">
+            ${icons['trash']}
+          </button>
+        </div>`,
+    }));
+  }
+
   override render() {
     if (this._loading) {
       return html`<div class="page"><div class="loading">加载中...</div></div>`;
@@ -597,101 +543,51 @@ export class ServersPage extends LitElement {
     if (this._servers.length === 0) {
       return html`
         <div class="page">
-          <div class="card">
-            <div class="card-header">
-              <div class="card-title">服务器管理</div>
-              <div>
-                <button class="btn-primary" @click=${this._openAddDialog}>
-                  + 添加服务器
-                </button>
-              </div>
-            </div>
-            <div class="empty">
-              <app-empty-state
-                title="暂无服务器"
-                description="点击添加按钮创建第一个服务器"
-                icon="server"
-              >
-                <button slot="actions" class="btn-primary" @click=${this._openAddDialog}>
-                  + 添加服务器
-                </button>
-              </app-empty-state>
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
-    return html`
-      <div class="page">
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">服务器管理</div>
-            <div>
+          <app-card>
+            <span slot="header">服务器管理</span>
+            <div class="toolbar">
               <button class="btn-primary" @click=${this._openAddDialog}>
                 + 添加服务器
               </button>
             </div>
-          </div>
-
-          <div class="table-container">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th style="text-align:left;">主机</th>
-                  <th>标签</th>
-                  <th>操作系统</th>
-                  <th>端口</th>
-                  <th>状态</th>
-                  <th style="width:180px;">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${this._servers.map((srv) => html`
-                  <tr>
-                    <td class="host-cell">
-                      <div class="server-host">${srv.host}</div>
-                      ${srv.label ? html`<div class="server-label">${srv.label}</div>` : nothing}
-                    </td>
-                    <td>${srv.label || html`<span style="color:var(--muted);">—</span>`}</td>
-                    <td>
-                      <app-badge variant="muted">${srv.os_type}</app-badge>
-                    </td>
-                    <td>${srv.port}</td>
-                    <td>
-                      <app-badge variant="${this._statusBadgeVariant(srv.status)}">
-                        ${this._statusLabel(srv.status)}
-                      </app-badge>
-                    </td>
-                    <td>
-                      <div class="actions">
-                        <button class="action-btn icon-btn" @click=${() => this._openEditDialog(srv)} title="编辑">
-                          ${icons['edit']}
-                        </button>
-                        <button class="action-btn icon-btn" @click=${() => this._openKeyRotation(srv)} title="密钥轮换">
-                          ${icons['refresh-cw']}
-                        </button>
-                        <button class="action-btn icon-btn danger" @click=${() => this._confirmDelete(srv)} title="删除">
-                          ${icons['trash']}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                `)}
-              </tbody>
-            </table>
-          </div>
+            <app-empty-state
+              title="暂无服务器"
+              description="点击添加按钮创建第一个服务器"
+              icon="server"
+            >
+              <button slot="actions" class="btn-primary" @click=${this._openAddDialog}>
+                + 添加服务器
+              </button>
+            </app-empty-state>
+          </app-card>
         </div>
+      `;
+    }
+
+    const columns = this._getColumns();
+    const rows = this._getRows();
+
+    return html`
+      <div class="page">
+        <app-card>
+          <span slot="header">服务器管理</span>
+          <div class="toolbar">
+            <button class="btn-primary" @click=${this._openAddDialog}>
+              + 添加服务器
+            </button>
+          </div>
+          <app-data-table .columns=${columns} .rows=${rows}></app-data-table>
+        </app-card>
+
+        <!-- Add/Edit Dialog -->
+        ${this._renderFormDialog()}
+
+        <!-- Delete Confirmation Dialog -->
+        ${this._renderDeleteDialog()}
+
+        <!-- Key Rotation Dialog -->
+        ${this._renderKeyRotationDialog()}
       </div>
-
-      <!-- Add/Edit Dialog -->
-      ${this._renderFormDialog()}
-
-      <!-- Delete Confirmation Dialog -->
-      ${this._renderDeleteDialog()}
-
-      <!-- Key Rotation Dialog -->
-      ${this._renderKeyRotationDialog()}
     `;
   }
 
