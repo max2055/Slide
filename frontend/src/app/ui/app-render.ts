@@ -25,6 +25,7 @@ import "./components/app-badge.ts";
 import "./components/app-toast-container.ts";
 import "./views/dashboard.ts";
 import "./views/instances-db.ts";
+import "./views/servers-page.ts";
 import "./views/instance-detail.ts";
 import "./views/llm-config.ts";
 import "./views/ai-settings.ts";
@@ -692,6 +693,9 @@ export function renderApp(state: AppViewState) {
           : nothing}
         ${state.tab === "instances-db"
           ? html`<instances-page></instances-page>`
+          : nothing}
+        ${state.tab === "servers"
+          ? html`<servers-page></servers-page>`
           : nothing}
         ${state.tab === "instance-detail"
           ? html`<instance-detail-page></instance-detail-page>`

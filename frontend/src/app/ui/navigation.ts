@@ -5,7 +5,7 @@ import { normalizeLowercaseStringOrEmpty } from "./string-coerce.ts";
 export const TAB_GROUPS = [
   {
     label: "slide",
-    tabs: ["chat", "dashboard", "instances-db", "sql-console", "approval", "alerts", "metric-registry", "metric-templates", "reports", "events", "cron-jobs"],
+    tabs: ["chat", "dashboard", "servers", "instances-db", "sql-console", "approval", "alerts", "metric-registry", "metric-templates", "reports", "events", "cron-jobs"],
   },
   {
     label: "settings",
@@ -27,6 +27,7 @@ export type Tab =
   | "dashboard"
   | "docs"
   | "instances-db"
+  | "servers"
   | "alerts"
   | "schema"
   | "indexes"
@@ -60,6 +61,7 @@ const TAB_PATHS: Record<Tab, string> = {
   dashboard: "/dashboard",
   docs: "/docs",
   "instances-db": "/instances-db",
+  servers: "/servers",
   alerts: "/alerts",
   schema: "/schema",
   indexes: "/indexes",
@@ -88,7 +90,7 @@ const PATH_TO_TAB = new Map<string, Tab>([
  */
 /** Tabs suitable as a default landing page (excludes context-dependent tabs). */
 export const DEFAULT_TAB_OPTIONS: Tab[] = [
-  "chat", "dashboard", "instances-db", "sql-console",
+  "chat", "dashboard", "instances-db", "servers", "sql-console",
   "alerts", "metric-registry", "metric-templates", "reports",
   "events", "approval", "cron-jobs", "sessions",
   "schema", "indexes", "settings", "ai-settings",
@@ -112,6 +114,7 @@ export const TAB_REQUIRED_PERMISSIONS: Partial<Record<Tab, string>> = {
   'agent-tools': 'ai:view',
   'dashboard': 'instance:view',
   'instances-db': 'instance:view',
+  'servers': 'servers:view',
   'sql-console': 'instance:query',
   'schema': 'schema:view',
   'approval': 'approval:view',
@@ -218,6 +221,8 @@ export function iconForTab(tab: Tab): IconName {
       return "book";
     case "instances-db":
       return "database";
+    case "servers":
+      return "server";
     case "alerts":
       return "bell";
     case "schema":

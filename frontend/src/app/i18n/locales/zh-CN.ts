@@ -4,10 +4,11 @@ import type { TranslationMap } from "../lib/types.ts";
 export const zh_CN: TranslationMap = {
   nav: {
     // 菜单组
-    slide: "数据库运维",
+    slide: "运维",
     chat: "聊天",
     platform: "平台管理",
     settings: "设置",
+    servers: "服务器管理",
     // 其他
     control: "控制",
     agent: "代理",
@@ -153,7 +154,8 @@ export const zh_CN: TranslationMap = {
     // Slide 菜单组
     dashboard: "仪表盘",
     docs: "文档",
-    "instances-db": "实例管理",
+    "instances-db": "数据库管理",
+    servers: "服务器管理",
     "instance-detail": "实例详情",
     alerts: "告警中心",
     schema: "表结构管理",
@@ -196,7 +198,8 @@ export const zh_CN: TranslationMap = {
   subtitles: {
     // Slide 菜单组
     dashboard: "AI 数据库运维",
-    "instances-db": "数据库实例管理",
+    "instances-db": "纳管数据库实例",
+    servers: "纳管服务器与SSH凭据管理",
     docs: "项目文档",
     "instance-detail": "数据库实例详细信息和监控",
     alerts: "告警列表与确认",
