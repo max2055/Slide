@@ -946,7 +946,7 @@ Phase 120 的 8 个 plans 于 2026-06-20 完成并标记 shipped。之后进行�
 
 - [x] **Phase 124: 服务器注册与凭据管理** - 服务器 CRUD、SSH 凭据加密存储、连接测试、服务器列表导航 (completed 2026-07-07)
 - [ ] **Phase 125: SSH 指标采集与监控视图** - SshSessionPool、核心指标采集、KV 存储、服务器详情页与 ECharts 趋势图
-- [ ] **Phase 126: 服务器告警规则** - 服务器告警规则 CRUD、不可达检测、现有告警引擎扩展
+- [x] **Phase 126: 服务器告警规则** - 服务器告警规则 CRUD、不可达检测、现有告警引擎扩展 (completed 2026-07-07)
 - [ ] **Phase 127: 定时自动化巡检** - 服务器健康巡检报告（PDF/HTML/MD）
 - [x] **Phase 128: AI 服务器分析** - Agent 工具、自然语言查询、告警 RCA 集成 (completed 2026-07-07)
 
@@ -1008,7 +1008,10 @@ Plans:
   4. Server alerts are delivered via configured notification channels (DingTalk, WeCom, Feishu, Webhook) through the existing notification service
   5. User can view active and historical server alerts in the server detail page's alert tab
 
-**Plans**: TBD
+**Plans**: 1/1 plans complete
+
+- [x] 126-01-PLAN.md
+
 **UI hint**: yes
 
 ### Phase 127: 定时自动化巡检
@@ -1045,6 +1048,6 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 124. 服务器注册与凭据管理 | v0.8 | 2/2 | Complete    | 2026-07-07 |
 | 125. SSH 指标采集与监控视图 | v0.8 | 1/2 | In Progress|  |
-| 126. 服务器告警规则 | v0.8 | 0/0 | Not started | - |
+| 126. 服务器告警规则 | v0.8 | 1/1 | Complete   | 2026-07-07 |
 | 127. 定时自动化巡检 | v0.8 | 0/0 | Not started | - |
 | 128. AI 服务器分析 | v0.8 | 1/1 | Complete   | 2026-07-07 |
