@@ -809,8 +809,12 @@ Phase 120 的 8 个 plans 于 2026-06-20 完成并标记 shipped。之后进行�
   3. User can test SSH connection before saving, seeing pass/fail result with error details on failure
   4. User sees server list with online/offline/error status indicators
   5. Navigation sidebar shows "Servers" entry, and all server views reuse existing shared components (app-card, app-data-table, app-dialog, app-form-field)
-**Plans**: TBD
+**Plans**: 2 plans
 **UI hint**: yes
+
+Plans:
+- [ ] 124-01-PLAN.md — Backend: servers table, CRUD service, encrypted credentials, SSH test, API routes
+- [ ] 124-02-PLAN.md — Frontend: server management view, navigation restructure, i18n
 
 ### Phase 125: SSH 指标采集与监控视图
 **Goal**: 系统通过 SSH 定时采集服务器核心指标，用户在详情页以趋势图形式可视化
@@ -862,7 +866,7 @@ Phase 120 的 8 个 plans 于 2026-06-20 完成并标记 shipped。之后进行�
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 124. 服务器注册与凭据管理 | v0.8 | 0/0 | Not started | - |
+| 124. 服务器注册与凭据管理 | v0.8 | 2/2 | In Planning | - |
 | 125. SSH 指标采集与监控视图 | v0.8 | 0/0 | Not started | - |
 | 126. 服务器告警规则 | v0.8 | 0/0 | Not started | - |
 | 127. 定时自动化巡检 | v0.8 | 0/0 | Not started | - |
