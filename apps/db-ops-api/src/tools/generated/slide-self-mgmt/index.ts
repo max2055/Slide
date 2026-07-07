@@ -11,6 +11,10 @@ export { updateDbConfigTool } from './update_db_config.js';
 export { completeAnalysisTool } from './complete_analysis.js';
 export { listDatabaseInstancesTool } from './list_database_instances.js';
 export { getInstanceConnectionTool } from './get_instance_connection.js';
+export { listServerInstancesTool } from './server_tools.js';
+export { getServerMetricsTool } from './server_tools.js';
+export { getServerAlertsTool } from './server_tools.js';
+export { analyzeServerHealthTool } from './server_tools.js';
 
 // 导出工具数组，方便批量注册
 import { checkStatusTool } from './check_status.js';
@@ -20,6 +24,10 @@ import { updateDbConfigTool } from './update_db_config.js';
 import { completeAnalysisTool } from './complete_analysis.js';
 import { listDatabaseInstancesTool } from './list_database_instances.js';
 import { getInstanceConnectionTool } from './get_instance_connection.js';
+import { listServerInstancesTool } from './server_tools.js';
+import { getServerMetricsTool } from './server_tools.js';
+import { getServerAlertsTool } from './server_tools.js';
+import { analyzeServerHealthTool } from './server_tools.js';
 
 export const slideSelfMgmtTools = [
   checkStatusTool,
@@ -29,4 +37,8 @@ export const slideSelfMgmtTools = [
   completeAnalysisTool,
   listDatabaseInstancesTool,
   getInstanceConnectionTool,
+  listServerInstancesTool,
+  getServerMetricsTool,
+  getServerAlertsTool,
+  analyzeServerHealthTool,
 ];
