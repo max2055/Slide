@@ -16,6 +16,7 @@
     "node": ">=20"
   },
   "devDependencies": {
+    "@types/ssh2": "^1.15.5",
     "oxlint": "^0.16.0"
   },
   "pnpm": {
@@ -24,5 +25,8 @@
       "esbuild",
       "oracledb"
     ]
+  },
+  "dependencies": {
+    "ssh2": "^1.17.0"
   }
 }
