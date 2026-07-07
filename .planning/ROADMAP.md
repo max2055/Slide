@@ -963,13 +963,13 @@ Phase 120 的 8 个 plans 于 2026-06-20 完成并标记 shipped。之后进行�
   4. User sees server list with online/offline/error status indicators
   5. Navigation sidebar shows "Servers" entry, and all server views reuse existing shared components (app-card, app-data-table, app-dialog, app-form-field)
 
-**Plans**: 2 plans
+**Plans**: 1/2 plans executed
 **UI hint**: yes
 
 Plans:
 **Wave 1**
 
-- [ ] 124-01-PLAN.md — Backend: servers table migration, CRUD service (server-database-service.ts), SSH test via ssh2, encrypted credentials (encryptData/decryptData), key rotation API, 7 routes (Wave 1)
+- [x] 124-01-PLAN.md — Backend: servers table migration, CRUD service (server-database-service.ts), SSH test via ssh2, encrypted credentials (encryptData/decryptData), key rotation API, 7 routes (Wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -1037,7 +1037,7 @@ Plans:
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 124. 服务器注册与凭据管理 | v0.8 | 2/2 | In Planning | - |
+| 124. 服务器注册与凭据管理 | v0.8 | 1/2 | In Progress|  |
 | 125. SSH 指标采集与监控视图 | v0.8 | 0/0 | Not started | - |
 | 126. 服务器告警规则 | v0.8 | 0/0 | Not started | - |
 | 127. 定时自动化巡检 | v0.8 | 0/0 | Not started | - |
