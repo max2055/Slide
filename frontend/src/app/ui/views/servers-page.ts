@@ -41,6 +41,18 @@ interface KeyRotationForm {
   credential_value: string;
 }
 
+interface MetricSummaryEntry {
+  server_id: number;
+  metric_name: string;
+  metric_value: number;
+  recorded_at: string;
+}
+
+interface MetricSummaryData {
+  servers: Record<number, { metrics: MetricSummaryEntry[]; recorded_at: string | null }>;
+  recorded_at: string | null;
+}
+
 @customElement("servers-page")
 export class ServersPage extends LitElement {
   static styles = [sharedBtnStyles, css`
@@ -270,6 +282,7 @@ export class ServersPage extends LitElement {
   };
   @state() private _testConnectionMessage = "";
   @state() private _testConnectionSuccess: boolean | null = null;
+  @state() private _metricSummary: MetricSummaryData | null = null;
 
   override firstUpdated() {
     this._loadServers();
@@ -278,14 +291,20 @@ export class ServersPage extends LitElement {
   private async _loadServers() {
     this._loading = true;
     try {
-      const res = await authFetch("/api/servers");
-      if (res.status === 401) {
+      const [serversRes, metricsRes] = await Promise.all([
+        authFetch("/api/servers"),
+        authFetch("/api/servers/metrics/summary"),
+      ]);
+      if (serversRes.status === 401) {
         alert("请先登录");
         window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "chat" } }));
         return;
       }
-      if (!res.ok) throw new Error("加载服务器列表失败");
-      this._servers = await res.json();
+      if (!serversRes.ok) throw new Error("加载服务器列表失败");
+      this._servers = await serversRes.json();
+      if (metricsRes.ok) {
+        this._metricSummary = await metricsRes.json();
+      }
     } catch (err: any) {
       showToast(err.message || "网络错误", "error");
     } finally {
@@ -500,39 +519,92 @@ export class ServersPage extends LitElement {
     }
   }
 
+  private _usageVariant(value: number | null): string {
+    if (value === null) return "muted";
+    if (value >= 80) return "danger";
+    if (value >= 50) return "warn";
+    return "ok";
+  }
+
+  private _getServerMetric(serverId: number, metricName: string): MetricSummaryEntry | null {
+    if (!this._metricSummary) return null;
+    const serverMetrics = this._metricSummary.servers[serverId];
+    if (!serverMetrics) return null;
+    return serverMetrics.metrics.find(m => m.metric_name === metricName) || null;
+  }
+
+  private _navigateToDetail(serverId: number) {
+    window.dispatchEvent(new CustomEvent("slide-navigate", {
+      detail: { tab: "server-detail", serverId },
+    }));
+  }
+
   private _getColumns() {
     return [
       { key: "host", label: "主机" },
       { key: "label", label: "标签" },
       { key: "os_type", label: "操作系统" },
-      { key: "port", label: "端口" },
+      { key: "cpu", label: "CPU" },
+      { key: "memory", label: "内存" },
+      { key: "disk", label: "磁盘" },
       { key: "status", label: "状态" },
+      { key: "last_collection", label: "上次采集" },
       { key: "actions", label: "操作" },
     ];
   }
 
   private _getRows() {
-    return this._servers.map((srv) => ({
-      host: html`
-        <div style="font-weight:600;color:var(--text-strong);font-size:var(--text-md);">${srv.host}</div>
-        ${srv.label ? html`<div style="font-size:var(--text-sm);color:var(--muted);margin-top:var(--space-xs);">${srv.label}</div>` : nothing}`,
-      label: srv.label || html`<span style="color:var(--muted);">—</span>`,
-      os_type: html`<app-badge variant="muted">${srv.os_type}</app-badge>`,
-      port: srv.port,
-      status: html`<app-badge variant="${this._statusBadgeVariant(srv.status)}">${this._statusLabel(srv.status)}</app-badge>`,
-      actions: html`
-        <div class="actions">
-          <button class="action-btn icon-btn" @click=${() => this._openEditDialog(srv)} title="编辑">
-            ${icons['edit']}
-          </button>
-          <button class="action-btn icon-btn" @click=${() => this._openKeyRotation(srv)} title="密钥轮换">
-            ${icons['refresh-cw']}
-          </button>
-          <button class="action-btn icon-btn danger" @click=${() => this._confirmDelete(srv)} title="删除">
-            ${icons['trash']}
-          </button>
-        </div>`,
-    }));
+    return this._servers.map((srv) => {
+      const cpuMetric = this._getServerMetric(srv.id, "cpu_usage");
+      const memMetric = this._getServerMetric(srv.id, "memory_usage");
+      const diskMetric = this._getServerMetric(srv.id, "disk_usage");
+      const cpuValue = cpuMetric?.metric_value ?? null;
+      const memValue = memMetric?.metric_value ?? null;
+      const diskValue = diskMetric?.metric_value ?? null;
+
+      return {
+        host: html`
+          <div style="font-weight:600;color:var(--text-strong);font-size:var(--text-md);cursor:pointer;"
+               @click=${() => this._navigateToDetail(srv.id)}
+               title="查看服务器详情">
+            ${srv.host}
+          </div>
+          ${srv.label ? html`<div style="font-size:var(--text-sm);color:var(--muted);margin-top:var(--space-xs);">${srv.label}</div>` : nothing}`,
+        label: srv.label || html`<span style="color:var(--muted);">—</span>`,
+        os_type: html`<app-badge variant="muted">${srv.os_type}</app-badge>`,
+        cpu: html`<app-badge variant="${this._usageVariant(cpuValue)}">CPU ${cpuValue != null ? cpuValue.toFixed(1) + "%" : "--"}</app-badge>`,
+        memory: html`<app-badge variant="${this._usageVariant(memValue)}">内存 ${memValue != null ? memValue.toFixed(1) + "%" : "--"}</app-badge>`,
+        disk: html`<app-badge variant="${this._usageVariant(diskValue)}">磁盘 ${diskValue != null ? diskValue.toFixed(1) + "%" : "--"}</app-badge>`,
+        status: html`<app-badge variant="${this._statusBadgeVariant(srv.status)}">${this._statusLabel(srv.status)}</app-badge>`,
+        last_collection: html`<span style="font-size:var(--text-sm);color:var(--muted);">${this._formatLastCheck(srv.last_check_at)}</span>`,
+        actions: html`
+          <div class="actions">
+            <button class="action-btn icon-btn" @click=${() => this._openEditDialog(srv)} title="编辑">
+              ${icons['edit']}
+            </button>
+            <button class="action-btn icon-btn" @click=${() => this._openKeyRotation(srv)} title="密钥轮换">
+              ${icons['refresh-cw']}
+            </button>
+            <button class="action-btn icon-btn danger" @click=${() => this._confirmDelete(srv)} title="删除">
+              ${icons['trash']}
+            </button>
+          </div>`,
+      };
+    });
+  }
+
+  private _formatLastCheck(lastCheckAt: string | null): string {
+    if (!lastCheckAt) return "--";
+    const diffMs = Date.now() - new Date(lastCheckAt).getTime();
+    const seconds = Math.floor(diffMs / 1000);
+    if (seconds < 60) return "刚刚";
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} 分钟前`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} 小时前`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days} 天前`;
+    return new Date(lastCheckAt).toLocaleDateString("zh-CN");
   }
 
   override render() {
