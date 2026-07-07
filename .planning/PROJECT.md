@@ -217,7 +217,22 @@ AgentRunner (agent-core)
 - No OS-level access (log collection via SQL queries only)
 - LLM available for AI features (Anthropic/OpenAI/Ollama)
 
-## Current Milestone: v0.7 打磨与优化 ✅ Complete
+## Current Milestone: v0.8 服务器纳管 🚧
+
+**Goal:** 支持通用服务器 SSH 无 Agent 纳管 + 定时自动化巡检
+
+**Target features:**
+- 服务器注册与管理 — 添加服务器、配置 SSH 连接（IP/端口/凭据）
+- SSH 指标采集 — 采集 CPU、内存、磁盘、网络等系统指标
+- 服务器监控界面 — 列表页、详情页、指标趋势图
+- 服务器告警规则 — 服务器指标超出阈值时触发告警
+- 定时自动化服务器巡检 — 定期生成服务器健康巡检报告
+
+---
+
+## Previous Milestones
+
+### v0.7 打磨与优化 ✅ Complete
 
 **Goal:** 对 Slide 全系统进行 UI 打磨、产品功能完善、Cron Script Agent Mode、AI 功能打磨和代码清理，使平台达到产品级可用状态。
 
