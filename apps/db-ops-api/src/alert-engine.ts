@@ -12,6 +12,7 @@ import { alertSilenceService } from './alert-silence-service';
 import { eventAggregator } from './event-aggregator';
 import { alertEventService } from './alert-event-service';
 import { dbConnection } from './db-connection';
+import { serverAlertEvaluator } from './server-alert-evaluator';
 
 interface AlertEngineStatus {
   running: boolean;
@@ -149,6 +150,20 @@ class AlertEngine {
       }
     } catch (error) {
       console.warn('[AlertEngine] Auto-recovery loop failed:', error);
+    }
+
+    // 服务器告警规则评估（独立于 DB 实例评估）
+    try {
+      await serverAlertEvaluator.evaluateServerRules();
+    } catch (error) {
+      console.error('[AlertEngine] Server rule evaluation failed:', error);
+    }
+
+    // 服务器不可达检测
+    try {
+      await serverAlertEvaluator.checkUnreachable();
+    } catch (error) {
+      console.error('[AlertEngine] Server unreachable check failed:', error);
     }
 
     return {

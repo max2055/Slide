@@ -98,6 +98,7 @@ class AlertDatabaseService {
    */
   async createAlert(data: {
     instance_id?: number;
+    server_id?: number;
     alert_type: string;
     level: string;
     title: string;
@@ -117,10 +118,11 @@ class AlertDatabaseService {
     try {
       const [result] = await pool.execute(
         `INSERT INTO alerts
-         (instance_id, alert_type, level, title, message, description, source, metric_name, metric_value, threshold_value, tags)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (instance_id, server_id, alert_type, level, title, message, description, source, metric_name, metric_value, threshold_value, tags)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           data.instance_id || null,
+          data.server_id || null,
           data.alert_type,
           data.level,
           data.title,
@@ -469,6 +471,39 @@ class AlertDatabaseService {
       return fallbackRows.length > 0 ? this._rowToAlert(fallbackRows[0]) : null;
     } catch (error) {
       console.error('查找活跃告警失败:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 查找未解决的服务器告警（去重用）
+   */
+  async findActiveServerAlert(serverId: number, metricName: string, ruleId: number): Promise<Alert | null> {
+    const pool = this.getPool();
+    if (!pool) return null;
+
+    try {
+      const [rows] = await pool.query<mysql.RowDataPacket[]>(
+        `SELECT * FROM alerts
+         WHERE server_id = ? AND metric_name = ?
+         AND JSON_EXTRACT(tags, '$.rule_id') = ?
+         AND status IN ('unread', 'read', 'acknowledged')
+         ORDER BY created_at DESC LIMIT 1`,
+        [serverId, metricName, ruleId]
+      );
+      if (rows.length > 0) return this._rowToAlert(rows[0]);
+
+      // Fallback: match by server+metric without rule_id
+      const [fallbackRows] = await pool.query<mysql.RowDataPacket[]>(
+        `SELECT * FROM alerts
+         WHERE server_id = ? AND metric_name = ?
+         AND status IN ('unread', 'read', 'acknowledged')
+         ORDER BY created_at DESC LIMIT 1`,
+        [serverId, metricName]
+      );
+      return fallbackRows.length > 0 ? this._rowToAlert(fallbackRows[0]) : null;
+    } catch (error) {
+      console.error('查找活跃服务器告警失败:', error);
       return null;
     }
   }
