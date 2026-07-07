@@ -969,11 +969,11 @@ Phase 120 的 8 个 plans 于 2026-06-20 完成并标记 shipped。之后进行�
 Plans:
 **Wave 1**
 
-- [ ] 124-01-PLAN.md — Backend: servers table, CRUD service, encrypted credentials, SSH test, API routes (IN PLANNING, Wave 1)
+- [ ] 124-01-PLAN.md — Backend: servers table migration, CRUD service (server-database-service.ts), SSH test via ssh2, encrypted credentials (encryptData/decryptData), key rotation API, 7 routes (Wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 124-02-PLAN.md — Frontend: server management view, navigation restructure, i18n (IN PLANNING, Wave 2)
+- [ ] 124-02-PLAN.md — Frontend: servers-page.ts (app-data-table + app-dialog + test-connection + key-rotation), navigation restructure (D-10/D-11/D-12), i18n update, app-render.ts wiring (Wave 2)
 
 ### Phase 125: SSH 指标采集与监控视图
 
