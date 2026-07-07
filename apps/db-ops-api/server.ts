@@ -1382,6 +1382,42 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // ========== 服务器指标 API ==========
 
+  // 批量获取所有服务器最新指标摘要
+  fastify.get('/api/servers/metrics/summary', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
+    try {
+      const pool = (await import('./src/db-connection.js')).dbConnection.getPool();
+      if (!pool) {
+        return reply.code(500).send({ error: '数据库未连接' });
+      }
+
+      const [rows] = await pool.execute(
+        `SELECT sm.server_id, sm.metric_name, sm.metric_value, sm.recorded_at
+         FROM server_metrics sm
+         INNER JOIN (
+           SELECT server_id, metric_name, MAX(recorded_at) AS max_time
+           FROM server_metrics
+           GROUP BY server_id, metric_name
+         ) latest ON sm.server_id = latest.server_id AND sm.metric_name = latest.metric_name AND sm.recorded_at = latest.max_time
+         ORDER BY sm.server_id, sm.metric_name`
+      ) as any;
+
+      // Group by server_id
+      const grouped: Record<number, { metrics: any[]; recorded_at: string | null }> = {};
+      for (const row of rows) {
+        const sid = row.server_id;
+        if (!grouped[sid]) grouped[sid] = { metrics: [], recorded_at: null };
+        grouped[sid].metrics.push(row);
+        if (!grouped[sid].recorded_at || row.recorded_at > grouped[sid].recorded_at) {
+          grouped[sid].recorded_at = row.recorded_at;
+        }
+      }
+
+      reply.send({ servers: grouped, recorded_at: rows.length > 0 ? rows[0].recorded_at : null });
+    } catch (error: any) {
+      reply.code(500).send({ error: '获取指标摘要失败：' + error.message });
+    }
+  });
+
   // 获取服务器最新指标
   fastify.get('/api/servers/:id/metrics', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
     try {
