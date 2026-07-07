@@ -945,7 +945,7 @@ Phase 120 的 8 个 plans 于 2026-06-20 完成并标记 shipped。之后进行�
 ## 📋 v0.8 服务器纳管 (In Progress)
 
 - [x] **Phase 124: 服务器注册与凭据管理** - 服务器 CRUD、SSH 凭据加密存储、连接测试、服务器列表导航 (completed 2026-07-07)
-- [ ] **Phase 125: SSH 指标采集与监控视图** - SshSessionPool、核心指标采集、KV 存储、服务器详情页与 ECharts 趋势图
+- [x] **Phase 125: SSH 指标采集与监控视图** - SshSessionPool、核心指标采集、KV 存储、服务器详情页与 ECharts 趋势图 (completed 2026-07-07)
 - [x] **Phase 126: 服务器告警规则** - 服务器告警规则 CRUD、不可达检测、现有告警引擎扩展 (completed 2026-07-07)
 - [ ] **Phase 127: 定时自动化巡检** - 服务器健康巡检报告（PDF/HTML/MD）
 - [x] **Phase 128: AI 服务器分析** - Agent 工具、自然语言查询、告警 RCA 集成 (completed 2026-07-07)
@@ -988,10 +988,10 @@ Plans:
   4. Collection results are stored in `server_metrics` KV table (server_id + metric_name + metric_value + recorded_at)
   5. User can view server detail page with overview cards (latest metrics) and ECharts trend charts with 1h/6h/24h/7d/30d time range selector; server list shows CPU/memory/disk badges and last collection time
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans complete
 
 - [x] 125-01-PLAN.md
-- [ ] 125-02-PLAN.md
+- [x] 125-02-PLAN.md
 
 **UI hint**: yes
 
@@ -1047,7 +1047,7 @@ Plans:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 124. 服务器注册与凭据管理 | v0.8 | 2/2 | Complete    | 2026-07-07 |
-| 125. SSH 指标采集与监控视图 | v0.8 | 1/2 | In Progress|  |
+| 125. SSH 指标采集与监控视图 | v0.8 | 2/2 | Complete   | 2026-07-07 |
 | 126. 服务器告警规则 | v0.8 | 1/1 | Complete   | 2026-07-07 |
 | 127. 定时自动化巡检 | v0.8 | 0/0 | Not started | - |
 | 128. AI 服务器分析 | v0.8 | 1/1 | Complete   | 2026-07-07 |
