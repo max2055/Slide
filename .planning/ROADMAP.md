@@ -7,6 +7,7 @@
 - ✅ **v0.5 系统加固与体验优化** — Phases 100-107 (shipped 2026-05-22)
 - ✅ **v0.6 Agent 解耦与替换** — Phases 108-118 (shipped 2026-06-08)
 - ✅ **v0.7 打磨与优化** — Phases 119-123 (shipped 2026-07-01)
+- 🚧 **v0.8 服务器纳管** — Phases 124-128 (in progress)
 
 ## Phases
 
@@ -790,3 +791,79 @@ Phase 120 的 8 个 plans 于 2026-06-20 完成并标记 shipped。之后进行�
 
 **UI hint:** yes
 
+## 📋 v0.8 服务器纳管 (In Progress)
+
+- [ ] **Phase 124: 服务器注册与凭据管理** - 服务器 CRUD、SSH 凭据加密存储、连接测试、服务器列表导航
+- [ ] **Phase 125: SSH 指标采集与监控视图** - SshSessionPool、核心指标采集、KV 存储、服务器详情页与 ECharts 趋势图
+- [ ] **Phase 126: 服务器告警规则** - 服务器告警规则 CRUD、不可达检测、现有告警引擎扩展
+- [ ] **Phase 127: 定时自动化巡检** - 服务器健康巡检报告（PDF/HTML/MD）
+- [ ] **Phase 128: AI 服务器分析** - Agent 工具、自然语言查询、告警 RCA 集成
+
+### Phase 124: 服务器注册与凭据管理
+**Goal**: 用户可以纳管服务器并配置 SSH 凭据，查看服务器列表
+**Depends on**: Nothing (infrastructure foundation)
+**Requirements**: SRV-01, SRV-02, SRV-03, SRV-04, SRV-06, UI-01, UI-05
+**Success Criteria** (what must be TRUE):
+  1. User can add a server with IP, hostname, SSH port, tags, and OS type via a form dialog, storing data in the `servers` table
+  2. User can configure SSH credentials (password or private key), which are encrypted with AES-256-CBC; re-entering passwords overwrites existing ones
+  3. User can test SSH connection before saving, seeing pass/fail result with error details on failure
+  4. User sees server list with online/offline/error status indicators
+  5. Navigation sidebar shows "Servers" entry, and all server views reuse existing shared components (app-card, app-data-table, app-dialog, app-form-field)
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 125: SSH 指标采集与监控视图
+**Goal**: 系统通过 SSH 定时采集服务器核心指标，用户在详情页以趋势图形式可视化
+**Depends on**: Phase 124
+**Requirements**: COL-01, COL-02, COL-03, COL-04, COL-05, COL-06, COL-07, COL-08, SRV-05, UI-02, UI-03
+**Success Criteria** (what must be TRUE):
+  1. System collects CPU, memory (including swap), disk (per mount point), system load (1/5/15min), and uptime metrics via SSH at configurable intervals (default 5 min)
+  2. SshSessionPool reuses persistent SSH connections across collection cycles; batch commands execute on a single connection to reduce overhead
+  3. Server status automatically transitions to UNREACHABLE after N consecutive failures (SSH command timeout 15s) and recovers to online on next successful collection
+  4. Collection results are stored in `server_metrics` KV table (server_id + metric_name + metric_value + recorded_at)
+  5. User can view server detail page with overview cards (latest metrics) and ECharts trend charts with 1h/6h/24h/7d/30d time range selector; server list shows CPU/memory/disk badges and last collection time
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 126: 服务器告警规则
+**Goal**: 用户可为服务器设置告警规则，系统在指标越界或服务器不可达时触发告警
+**Depends on**: Phase 125
+**Requirements**: ALR-01, ALR-02, ALR-03, ALR-04, UI-04
+**Success Criteria** (what must be TRUE):
+  1. User can create server alert rules with configurable thresholds for CPU usage %, memory usage %, disk usage % (per mount point or any), and system load
+  2. System triggers "server unreachable" alert after 2 consecutive failed collection cycles
+  3. Server alerts reuse existing alert engine (alert-rules → alerts → alert-events) by adding `target_type = 'server'` and `server_id` fields to existing tables
+  4. Server alerts are delivered via configured notification channels (DingTalk, WeCom, Feishu, Webhook) through the existing notification service
+  5. User can view active and historical server alerts in the server detail page's alert tab
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 127: 定时自动化巡检
+**Goal**: 系统定期生成服务器健康巡检报告，管理员可配置报告周期和通知方式
+**Depends on**: Phase 125
+**Requirements**: RPT-01, RPT-02, RPT-03, RPT-04
+**Success Criteria** (what must be TRUE):
+  1. System generates scheduled server health inspection reports on configurable intervals covering all managed servers
+  2. Report includes health status summary for each server with CPU, memory, disk, and load dimension scores
+  3. Report supports PDF, HTML, and Markdown output formats via existing report-service
+  4. Administrator can configure the inspection schedule (cron expression) and delivery channel (DingTalk, WeCom, Feishu, Webhook)
+**Plans**: TBD
+
+### Phase 128: AI 服务器分析
+**Goal**: Agent 可以通过工具查询服务器数据，在对话中回答问题，并集成到现有 AI 分析流程
+**Depends on**: Phase 125, Phase 126
+**Requirements**: AI-01, AI-02, AI-03, AI-04
+**Success Criteria** (what must be TRUE):
+  1. Agent can query server instances, metrics, and alerts through new Platform Tools (list_server_instances, get_server_metrics, get_server_alerts)
+  2. User can ask natural language questions about server status in Chat (e.g., "show all servers with disk > 80%", "analyze this server's CPU trend") and receive meaningful responses
+  3. Agent automatically generates analysis summaries with server context (current metrics + historical trends) when server alerts trigger RCA
+  4. Server metrics and alerts are integrated into existing AI analysis flows (fault-diagnosis, alert-rca), enabling cross-referencing between server and database context
+**Plans**: TBD
+
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|----------------|--------|-----------|
+| 124. 服务器注册与凭据管理 | v0.8 | 0/0 | Not started | - |
+| 125. SSH 指标采集与监控视图 | v0.8 | 0/0 | Not started | - |
+| 126. 服务器告警规则 | v0.8 | 0/0 | Not started | - |
+| 127. 定时自动化巡检 | v0.8 | 0/0 | Not started | - |
+| 128. AI 服务器分析 | v0.8 | 0/0 | Not started | - |

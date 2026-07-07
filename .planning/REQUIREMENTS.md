@@ -90,42 +90,42 @@ Deferred to future milestones.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SRV-01 | TBD | Pending |
-| SRV-02 | TBD | Pending |
-| SRV-03 | TBD | Pending |
-| SRV-04 | TBD | Pending |
-| SRV-05 | TBD | Pending |
-| SRV-06 | TBD | Pending |
-| COL-01 | TBD | Pending |
-| COL-02 | TBD | Pending |
-| COL-03 | TBD | Pending |
-| COL-04 | TBD | Pending |
-| COL-05 | TBD | Pending |
-| COL-06 | TBD | Pending |
-| COL-07 | TBD | Pending |
-| COL-08 | TBD | Pending |
-| ALR-01 | TBD | Pending |
-| ALR-02 | TBD | Pending |
-| ALR-03 | TBD | Pending |
-| ALR-04 | TBD | Pending |
-| UI-01 | TBD | Pending |
-| UI-02 | TBD | Pending |
-| UI-03 | TBD | Pending |
-| UI-04 | TBD | Pending |
-| UI-05 | TBD | Pending |
-| RPT-01 | TBD | Pending |
-| RPT-02 | TBD | Pending |
-| RPT-03 | TBD | Pending |
-| RPT-04 | TBD | Pending |
-| AI-01 | TBD | Pending |
-| AI-02 | TBD | Pending |
-| AI-03 | TBD | Pending |
-| AI-04 | TBD | Pending |
+| SRV-01 | Phase 124 | Pending |
+| SRV-02 | Phase 124 | Pending |
+| SRV-03 | Phase 124 | Pending |
+| SRV-04 | Phase 124 | Pending |
+| SRV-05 | Phase 125 | Pending |
+| SRV-06 | Phase 124 | Pending |
+| COL-01 | Phase 125 | Pending |
+| COL-02 | Phase 125 | Pending |
+| COL-03 | Phase 125 | Pending |
+| COL-04 | Phase 125 | Pending |
+| COL-05 | Phase 125 | Pending |
+| COL-06 | Phase 125 | Pending |
+| COL-07 | Phase 125 | Pending |
+| COL-08 | Phase 125 | Pending |
+| ALR-01 | Phase 126 | Pending |
+| ALR-02 | Phase 126 | Pending |
+| ALR-03 | Phase 126 | Pending |
+| ALR-04 | Phase 126 | Pending |
+| UI-01 | Phase 124 | Pending |
+| UI-02 | Phase 125 | Pending |
+| UI-03 | Phase 125 | Pending |
+| UI-04 | Phase 126 | Pending |
+| UI-05 | Phase 124 | Pending |
+| RPT-01 | Phase 127 | Pending |
+| RPT-02 | Phase 127 | Pending |
+| RPT-03 | Phase 127 | Pending |
+| RPT-04 | Phase 127 | Pending |
+| AI-01 | Phase 128 | Pending |
+| AI-02 | Phase 128 | Pending |
+| AI-03 | Phase 128 | Pending |
+| AI-04 | Phase 128 | Pending |
 
 **Coverage:**
 - v0.8 requirements: 31 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 31
+- Mapped to phases: 31 (roadmap defined)
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-07*

@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v0.8
 milestone_name: 服务器纳管
-status: planning
+status: roadmap_defined
 last_updated: "2026-07-07T08:46:24.171Z"
 last_activity: 2026-07-07
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -15,10 +15,10 @@ progress:
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 124 — 服务器注册与凭据管理 (planning)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-07-07 — Milestone v0.8 started
+Status: Roadmap defined, awaiting /gsd-plan-phase 124
+Last activity: 2026-07-07 — v0.8 roadmap created (Phases 124-128)
 
 ## v0.7 验收状态
 
@@ -72,9 +72,19 @@ Last activity: 2026-07-07 — Milestone v0.8 started
 | 2026-07-07 | Button style consistency check | ✅ Complete (analysis only) |
 | 2026-07-07 | Remove sidebar version display | ✅ Complete (committed efa10a7) |
 
+## v0.8 Phase Structure
+
+| Phase | Goal | Requirements | Status |
+|-------|------|--------------|--------|
+| 124. 服务器注册与凭据管理 | 用户可以纳管服务器并配置 SSH 凭据，查看服务器列表 | SRV-01, SRV-02, SRV-03, SRV-04, SRV-06, UI-01, UI-05 | Planning |
+| 125. SSH 指标采集与监控视图 | 系统通过 SSH 定时采集服务器核心指标，用户在详情页以趋势图形式可视化 | COL-01~08, SRV-05, UI-02, UI-03 | Not started |
+| 126. 服务器告警规则 | 用户可为服务器设置告警规则，系统在指标越界或服务器不可达时触发告警 | ALR-01~04, UI-04 | Not started |
+| 127. 定时自动化巡检 | 系统定期生成服务器健康巡检报告，管理员可配置报告周期和通知方式 | RPT-01~04 | Not started |
+| 128. AI 服务器分析 | Agent 可以通过工具查询服务器数据，在对话中回答问题，并集成到现有 AI 分析流程 | AI-01~04 | Not started |
+
 ## Deferred Items
 
-Items acknowledged and deferred at milestone close on 2026-07-07:
+Items acknowledged and deferred at v0.7 milestone close on 2026-07-07:
 
 | Category | Item | Status |
 |----------|------|--------|
