@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v0.7
 milestone_name: 打磨与优化
-status: milestone_active
-last_updated: 2026-07-07T03:05:00.000Z
-last_activity: 2026-07-07 -- Phase 123 verified + dead code cleanup + AutoCompact port
+status: milestone_complete
+last_updated: 2026-07-07T07:50:00.000Z
+last_activity: 2026-07-07 -- v0.7 milestone archived and tagged
 progress:
   total_phases: 23
   completed_phases: 23
@@ -65,3 +65,22 @@ Last activity: 2026-07-01
 |------|------|--------|
 | 2026-07-07 | Button style consistency check | ✅ Complete (analysis only) |
 | 2026-07-07 | Remove sidebar version display | ✅ Complete (committed efa10a7) |
+
+## Deferred Items
+
+Items acknowledged and deferred at milestone close on 2026-07-07:
+
+| Category | Item | Status |
+|----------|------|--------|
+| debug | cron-jobs-all-disabled | investigating |
+| debug | dashboard-capacity-and-alert-events | investigating |
+| debug | null-metrics-database-instances | investigating |
+| debug | rbac-403-forbidden-RESOLVED | investigated |
+| debug | rbac-403-forbidden | investigated |
+| uat_gaps | Phase 110 | testing (6 pending) |
+| uat_gaps | Phase 95 | testing (4 pending) |
+| uat_gaps | Phase 109 | passed |
+| uat_gaps | Phase 84 | partial |
+| uat_gaps | Phase 94 | passed |
+| verification_gaps | Phase 94 | gaps_found |
+| todos | cron-tasks-configurable-not-hardcoded | backend |

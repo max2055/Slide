@@ -1,7 +1,7 @@
 # Slide — AI 驱动的数据库运维平台
 
-**Shipped:** v1.4 (2026-06-09)
-**Status:** Complete — v1.4 Agent 解耦与替换 shipped (Phases 108-118)
+**Shipped:** v0.7 (2026-07-07)
+**Status:** Complete — v0.7 打磨与优化 shipped (Phases 119-123)
 
 ## What This Is
 
@@ -198,7 +198,7 @@ AgentRunner (agent-core)
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| nanobot → @slide/agent-core 移植 | 自研可控，TypeScript 原生，无 Python 依赖 | ✓ Shipped in v1.4 |
+| nanobot → @slide/agent-core 移植 | 自研可控，TypeScript 原生，无 Python 依赖 | ✓ Shipped in v0.6 |
 | DirectAdapter 自管理 WS | 不依赖外部 Gateway，~100 行独立 WS server | ✓ Working |
 | IAgentEngine 抽象层 | 平台代码只依赖接口，Agent 实现可替换 | ✓ Validated in Phase 108 |
 | JWT + requireRole middleware | Consistent auth pattern across all write endpoints | ✓ Working |
@@ -207,6 +207,9 @@ AgentRunner (agent-core)
 | AI Agent Cron (Phase 113) | Natural language cron tasks replace 13 hardcoded handlers | ✓ Validated in Phase 113 |
 | Subagent depth-based scoping | Prevent infinite recursive spawn; 3-level max depth | ✓ Working |
 | LLM Provider 动态切换 | `setProvider()` 运行时更换模型，无需重启 | ✓ Working |
+| CSS 设计系统 tokens.css | 统一蓝色 #409eff 色系，z-index 分层，CSS 文件 ≤7 | ✓ Shipped in v0.7 |
+| Light DOM 共享组件 | app-card/dialog/data-table/badge/empty-state/toast/form-field | ✓ Shipped in v0.7 |
+| Prompt 版本管理 | 多版本加载/切换/热重载/A-B 测试，文件写回 | ✓ Shipped in v0.7 |
 
 ## Constraints
 
@@ -214,20 +217,16 @@ AgentRunner (agent-core)
 - No OS-level access (log collection via SQL queries only)
 - LLM available for AI features (Anthropic/OpenAI/Ollama)
 
-## Current Milestone: v1.4 Agent 解耦与替换 ✅ Complete
+## Current Milestone: v0.7 打磨与优化 ✅ Complete
 
-**Goal:** 将 OpenClaw Agent 框架替换为自研 @slide/agent-core（nanobot TS 移植），实现完全自主可控
+**Goal:** 对 Slide 全系统进行 UI 打磨、产品功能完善、Cron Script Agent Mode、AI 功能打磨和代码清理，使平台达到产品级可用状态。
 
-**Shipped features (Phases 108-118):**
-- Phase 108: IAgentEngine 抽象层 + DirectAdapter 基础
-- Phase 109: Agent 引擎补全（Session/Context/Memory/Checkpoint/Subagent/Skills）
-- Phase 110: DirectAdapter 默认切换 + 端到端验证
-- Phase 111: Gateway 简化（删除失效 controller/view/slash command）
-- Phase 112: 前端清理 + 定时任务可配置化
-- Phase 113: AI Agent Cron（自然语言驱动定时任务）
-- Phase 114: Verification 清账（12 项遗留验证）
-- Phase 115-117: 去 OpenClaw 清理、运行时引用替换、收尾
-- Phase 118: Agent DB 连接工具 + 告警机制完善
+**Shipped features (Phases 119-123):**
+- Phase 119: P0 Bug 修复 + ~9,600 行死代码移除（backfill 循环、db_version 列、路由修复）
+- Phase 120: 全系统 UI 打磨—tokens.css 设计系统 + 8 个共享组件 + God Component 拆分 + 所有视图重构 + 交互状态/skeleton screens
+- Phase 121: 闭环健康中心（10 项一致性检查 API + 前端 readiness 仪表板）+ 设置页模板化 + 演示准备度
+- Phase 122: Cron Script Agent Mode — cron_scripts 表 + ScriptService + SQL 脚本执行 + CodeMirror 编辑器
+- Phase 123: AI Agent 管理界面（sessions/skills/tools）+ Chat UX（thinking 可视化 + session cleanup）+ AI 分析诊断完善 + Prompt 版本管理 + invoke() 流式 hook + AutoCompact port
 
 ## Known Issues / Tech Debt
 
@@ -256,4 +255,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-*Last updated: 2026-06-09 — 架构文档全面更新，新增系统分层架构和数据流全景*
+*Last updated: 2026-07-07 — v0.7 打磨与优化里程碑归档*

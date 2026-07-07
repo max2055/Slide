@@ -1,6 +1,44 @@
 # Milestones
 
-## v1.2 UI + AI + Docs (Shipped: 2026-05-20)
+## v0.7 打磨与优化 (Shipped: 2026-07-07)
+
+**Phases completed:** 5 phases (119-123), 21 plans
+
+**Verification type:** override_closeout (12 deferred items recorded in STATE.md)
+
+**Key accomplishments:**
+
+1. P0 Bug 修复 + 死代码清理 — 修复 backfill 无限循环、db_version 列缺失、API_PORT 兼容 + ~9,600 行死代码移除
+2. 全系统 UI 打磨 — tokens.css 设计系统（蓝色 #409eff）+ 8 个共享组件（app-card/dialog/data-table/badge/empty-state/toast/form-field/stat-card）+ God Component 拆分（alerts/instance-detail/chat）+ 所有视图交互状态/skeleton screens
+3. 闭环健康中心 — 后端 10 项一致性检查 API + 前端 readiness 仪表板（启动检查 + 修复建议）
+4. Cron Script Agent Mode — cron_scripts 表 + ScriptService CRUD + SQL 脚本执行 + CodeMirror SQL 编辑器 + Agent 自然语言驱动
+5. AI Agent 管理界面 — sessions/skills/tools 后端 CRUD + 前端管理页 + LLM Provider 配置
+6. Chat UX 改进 — thinking 可视化 + session cleanup 服务 + 错误重连 + 超时回退
+7. AI 提示词管理 — PromptManager（多版本 + 热重载 + A/B 测试）+ invoke() 流式 hook + AutoCompact port + SKILL.md 工具引用修复
+
+**Known verification overrides: 12 (see STATE.md Deferred Items)**
+
+---
+
+## v1.2 Roadmap: Slide — AI 驱动的数据库运维平台 (Backfilled: 2026-06-30)
+
+**Note:** Synthesized from archive snapshot by `/gsd-health --backfill`. Original completion date unknown.
+
+---
+
+## v1.1 Slide 项目路线图 (Backfilled: 2026-06-30)
+
+**Note:** Synthesized from archive snapshot by `/gsd-health --backfill`. Original completion date unknown.
+
+---
+
+## v1.0 Slide 项目路线图 (Backfilled: 2026-06-30)
+
+**Note:** Synthesized from archive snapshot by `/gsd-health --backfill`. Original completion date unknown.
+
+---
+
+## v0.4 UI + AI + Docs (Shipped: 2026-05-20)
 
 **Phases completed:** 9 phases, 27 plans, 54 tasks
 
@@ -29,7 +67,7 @@
 
 ---
 
-## v1.1 RBAC + SQL Console + Dashboard (Shipped: 2026-05-13)
+## v0.3 RBAC + SQL Console + Dashboard (Shipped: 2026-05-13)
 
 **Phases completed:** 5 phases, 17 plans, 34 tasks
 
@@ -53,7 +91,7 @@
 
 ---
 
-## v1.0 Slide 数据库运维平台 MVP (Shipped: 2026-05-09)
+## v0.2 Slide 数据库运维平台 MVP (Shipped: 2026-05-09)
 
 **Phases completed:** 21 phases, 58 plans, 62 tasks
 
