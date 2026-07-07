@@ -58,3 +58,10 @@ Last activity: 2026-07-01
 
 ### 其他修复
 - 定时任务页面 15s 自动刷新闪屏修复（拆分 loadCronJobs / refreshCronJobs）
+
+## Quick Tasks Completed
+
+| Date | Task | Status |
+|------|------|--------|
+| 2026-07-07 | Button style consistency check | ✅ Complete (analysis only) |
+| 2026-07-07 | Remove sidebar version display | ✅ Complete (committed efa10a7) |
