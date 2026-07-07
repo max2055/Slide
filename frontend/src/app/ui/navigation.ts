@@ -28,6 +28,7 @@ export type Tab =
   | "docs"
   | "instances-db"
   | "servers"
+  | "server-detail"
   | "alerts"
   | "schema"
   | "indexes"
@@ -54,6 +55,7 @@ const TAB_PATHS: Record<Tab, string> = {
   "agent-skills": "/agent-skills",
   "agent-tools": "/agent-tools",
   "scoring-settings": "/scoring-settings",
+  "server-detail": "/server-detail",
   sessions: "/sessions",
   chat: "/chat",
   config: "/config",
