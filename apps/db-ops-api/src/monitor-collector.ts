@@ -13,6 +13,7 @@ import { instanceDatabaseService } from './instance-database-service';
 import { metricRegistry } from './metric-registry';
 import { collectionCapabilityTracker } from './collection-capabilities';
 import { unifiedCollector } from './collector';
+import serverCollector from './server-collector';
 
 interface InstanceSchedule {
   lastCollected: number;
@@ -72,6 +73,9 @@ class MonitorCollector {
       this.collectCapacity().catch((e) => console.error('容量数据采集失败:', e));
     }, 60 * 60 * 1000);
 
+    // 服务器 SSH 指标采集（独立定时器）
+    serverCollector.start();
+
     this.running = true;
     console.log('✅ 监控采集已启动（Zabbix 心跳模型）');
     console.log(`   - 心跳: 每 ${this.config.heartbeatMs / 1000}s`);
@@ -89,6 +93,9 @@ class MonitorCollector {
     if (this.heartbeatTimer) { clearInterval(this.heartbeatTimer); this.heartbeatTimer = null; }
     if (this.slowQueryTimer) { clearInterval(this.slowQueryTimer); this.slowQueryTimer = null; }
     if (this.capacityTimer) { clearInterval(this.capacityTimer); this.capacityTimer = null; }
+
+    // 服务器 SSH 指标采集
+    serverCollector.stop();
     this.schedule.clear();
     this.running = false;
     console.log('⏹️  监控采集已停止');

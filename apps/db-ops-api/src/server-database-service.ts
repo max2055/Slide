@@ -102,6 +102,60 @@ class ServerDatabaseService {
   }
 
   /**
+   * Get servers with collection enabled
+   */
+  async getCollectionEnabledServers(): Promise<ServerRow[]> {
+    const pool = this.getPool();
+    if (!pool) {
+      return [];
+    }
+
+    try {
+      const [rows] = await pool.execute(
+        `SELECT id, host, port, label, os_type, credential_type,
+                credential_encrypted, host_key_fingerprint, status,
+                last_check_at, collection_enabled, created_at, updated_at
+         FROM servers
+         WHERE collection_enabled = 1
+         ORDER BY host`
+      ) as any;
+
+      return rows as ServerRow[];
+    } catch (error) {
+      console.error('获取启用采集的服务器列表失败:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Update server status and last_check_at timestamp
+   */
+  async updateServerStatus(
+    id: number,
+    status: 'online' | 'offline' | 'error' | 'unreachable'
+  ): Promise<{ success: boolean; error?: string }> {
+    const pool = this.getPool();
+    if (!pool) {
+      return { success: false, error: '数据库未连接' };
+    }
+
+    try {
+      const [result] = await pool.execute(
+        `UPDATE servers SET status = ?, last_check_at = NOW() WHERE id = ?`,
+        [status, id]
+      ) as any;
+
+      if (result.affectedRows === 0) {
+        return { success: false, error: '服务器不存在' };
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
    * Create a server
    */
   async createServer(data: {
