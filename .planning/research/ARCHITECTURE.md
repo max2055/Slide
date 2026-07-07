@@ -1,842 +1,916 @@
-# Architecture Research: v1.3 New Features
+# Architecture Research: SSH-Based Server Monitoring
 
-**Domain:** AI-Powered Database Operations Platform
-**Researched:** 2026-05-20
-**Confidence:** HIGH
+**Domain:** SSH agentless server monitoring integrated into DB Ops platform
+**Researched:** 2026-07-07
+**Confidence:** HIGH — patterns adapted from existing Slide architectures (collector/registry, cron/alert/report)
 
-## Current System Architecture
+## Standard Architecture
 
 ### System Overview
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                        Frontend (Lit 3.3 + Vite)                      │
-│  :5173                                                                │
-│  ┌─────────┐  ┌─────────┐  ┌───────────┐  ┌────────────┐             │
-│  │ Alerts  │  │ Reports │  │ Rbac Page │  │ Events     │             │
-│  │ View    │  │ View    │  │           │  │ Management │             │
-│  └────┬────┘  └────┬────┘  └─────┬─────┘  └──────┬─────┘             │
-│       │            │             │               │                    │
-│  ┌────┴────────────┴─────────────┴───────────────┴────────────────┐   │
-│  │                 HTTP REST (Authorization: Bearer <JWT>)         │   │
-│  └─────────────────────────────┬──────────────────────────────────┘   │
-│                                │                                      │
-└────────────────────────────────┼──────────────────────────────────────┘
-                                 │
-┌────────────────────────────────┼──────────────────────────────────────┐
-│                     Backend (Fastify + TypeScript)                     │
-│  :3000                                                                 │
-│  ┌──────────────────────────────────────────────────────────────┐     │
-│  │  Middleware Chain                                              │     │
-│  │  verifyToken -> requirePermission(code) -> requireInstanceAccess│   │
-│  └──────────────────────────┬───────────────────────────────────┘     │
-│                              │                                         │
-│  ┌──────────────────────────┴───────────────────────────────────┐     │
-│  │                    Route Handlers (server.ts)                  │     │
-│  │  /api/auth/*  /api/alerts/*  /api/reports/*  /api/users/*     │     │
-│  │  /api/alert-rules/*  /api/notification/*  /api/rbac/*          │     │
-│  │  /api/metrics/*  /api/database/instances/*                     │     │
-│  └──────────────────────────┬───────────────────────────────────┘     │
-│                              │                                         │
-│  ┌──────────────────────────┴───────────────────────────────────┐     │
-│  │                    Service Layer                               │     │
-│  │  ┌────────────┐  ┌───────────┐  ┌──────────┐  ┌───────────┐  │     │
-│  │  |Alert Engine|  |Notification|  |  Report  |  |  RBAC     |  │     │
-│  │  |(Cron 60s)  |  |(Cron 10s)  |  | Service  |  |  Service  |  │     │
-│  │  └────────────┘  └───────────┘  └──────────┘  └───────────┘  │     │
-│  │  ┌────────────┐  ┌───────────┐  ┌──────────┐                 │     │
-│  │  | Escalation |  |  Event    |  | Baseline |                 │     │
-│  │  | (Cron 5m)  |  |Aggregator |  |Calculator|                 │     │
-│  │  └────────────┘  └───────────┘  └──────────┘                 │     │
-│  │  ┌────────────┐  ┌───────────┐  ┌──────────┐                 │     │
-│  │  | Alert RCA  |  | AI Config |  |  Skills  |                 │     │
-│  │  |  Service   |  |  Service  |  |  Service |                 │     │
-│  │  └────────────┘  └───────────┘  └──────────┘                 │     │
-│  │  ┌────────────┐  ┌───────────┐                               │     │
-│  │  |  Monitor   |  |  Metrics  |                               │     │
-│  │  | Collector  |  |DatabaseSvc|                               │     │
-│  │  └────────────┘  └───────────┘                               │     │
-│  └──────────────────────────┬───────────────────────────────────┘     │
-│                              │                                         │
-│  ┌──────────────────────────┴───────────────────────────────────┐     │
-│  │                    Database Services                           │     │
-│  │  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌───────────┐   │     │
-│  │  | auth-    |  | alert-    |  | report-  |  | metrics-  |   │     │
-│  │  | db-svc   |  | db-svc    |  | db-svc   |  | db-svc    |   │     │
-│  │  └──────────┘  └───────────┘  └──────────┘  └───────────┘   │     │
-│  │  ┌──────────┐  ┌───────────┐  ┌──────────┐                 │     │
-│  │  | instance-|  |notificatio|  | llm-     |                 │     │
-│  │  | db-svc   |  |n-db-svc   |  | db-svc   |                 │     │
-│  │  └──────────┘  └───────────┘  └──────────┘                 │     │
-│  └──────────────────────────┬───────────────────────────────────┘     │
-│                              │                                         │
-│  ┌──────────────────────────┴───────────────────────────────────┐     │
-│  │                      Data Stores                              │     │
-│  │  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌───────────┐   │     │
-│  │  |  MySQL   |  | Elastic   |  | MongoDB  |  |  Redis    |   │     │
-│  │  | (primary)|  | (logs)    |  | (metrics)|  | (cache)   |   │     │
-│  │  └──────────┘  └───────────┘  └──────────┘  └───────────┘   │     │
-│  └──────────────────────────────────────────────────────────────┘     │
-│                                                                        │
-│  ┌──────────────────────────────────────────────────────────────┐     │
-│  |         Gateway / AI Layer (OpenClaw native, :28789)          |     │
-│  |  WebSocket -> SessionManager -> dispatchInboundMessage -> AI  |     │
-│  └──────────────────────────────────────────────────────────────┘     │
-└──────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                     Existing Slide Architecture                    │
+│                                                                   │
+│  ┌─────────────────────┐  ┌──────────────────────────────────┐   │
+│  │   MonitorCollector   │  │        AlertEngine                │   │
+│  │   (cron heartbeat)   │  │   (cron 60s evaluation)          │   │
+│  └──────┬──────────────┘  └────────┬─────────────────────────┘   │
+│         │                          │                             │
+│  ┌──────▼──────────────┐  ┌────────▼─────────────────────────┐   │
+│  │  UnifiedCollector    │  │  evaluateAllRules → alerts       │   │
+│  │  → metrics_history   │  │  → alert_events                  │   │
+│  └──────────────────────┘  └──────────────────────────────────┘   │
+│                                                                   │
+├─────────────────────── NEW BLOCK ────────────────────────────────┤
+│                                                                   │
+│  ┌─────────────────────┐  ┌──────────────────────────────────┐   │
+│  │  ServerCollector     │  │  ServerAlertEvaluator            │   │
+│  │  (cron heartbeat)    │  │  (dedicated cron loop)           │   │
+│  └──────┬──────────────┘  └────────┬─────────────────────────┘   │
+│         │                          │                             │
+│  ┌──────▼──────────────┐  ┌────────▼─────────────────────────┐   │
+│  │  SshSessionPool      │  │  AlertEngine (shared, extended)  │   │
+│  │  (ssh2 wrapper)      │  │  → server_id on alerts table     │   │
+│  └──────┬──────────────┘  └──────────────────────────────────┘   │
+│         │                                                        │
+│  ┌──────▼──────────────┐  ┌──────────────────────────────────┐   │
+│  │  server_metrics      │  │  ServerMetricProvider            │   │
+│  │  (key-value table)   │  │  (commands + parsers registry)   │   │
+│  └──────────────────────┘  └──────────────────────────────────┘   │
+│                                                                   │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐        │
+│   │  Servers  │  │ Database  │  │  Alerts  │  │  Events  │        │
+│   │  (table)  │  │Instances │  │  (table) │  │  (table) │        │
+│   └──────────┘  └──────────┘  └──────────┘  └──────────┘        │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### Existing Component Inventory by Feature Area
+### Component Responsibilities
 
-#### Alert System (already built)
+| Component | Responsibility | Implementation |
+|-----------|---------------|----------------|
+| `servers` table | Server entity storage (IP, hostname, SSH config, credential ref, status, tags) | MySQL table, distinct from `database_instances` |
+| `server_metrics` table | OS-level metric time series (key-value format) | MySQL table, metric_name + metric_value + recorded_at |
+| `SshSessionPool` | SSH connection lifecycle: connect, keepalive, pool/reuse, auto-reconnect | Singleton wrapping `ssh2` Client pool |
+| `ServerCollector` | Schedule-driven collection loop: heartbeat, tick check, batch collect per server | Class instantiated by `monitor-collector.ts` or standalone |
+| `ServerMetricProvider` | Command definitions + output parsers for each OS metric | Registry of command definitions (command string + parse function) |
+| `ServerDatabaseService` | CRUD for servers table, SSH key encryption, connection test | New service analogous to `instance-database-service.ts` |
+| `ServerAlertEvaluator` | Evaluate rules for server metrics, reuse AlertEngine infrastructure | Extended `evaluateAllRules()` with server-scoped filtering |
 
-| Component | Status | Purpose |
-|-----------|--------|---------|
-| `alert-engine.ts` | PRODUCTION | Cron (60s) -- evaluates all rules, creates alerts |
-| `alert-evaluator.ts` | PRODUCTION | Rule evaluation with threshold templates (warning/error/critical) |
-| `alert-database-service.ts` | PRODUCTION | CRUD for alerts, alert_rules, alert metadata |
-| `alert-rca-service.ts` | PRODUCTION | AI-powered root cause analysis per alert |
-| `alert-escalation-service.ts` | PRODUCTION | Cron (5m) -- auto escalate unresolved alerts |
-| `alert-silence-service.ts` | PRODUCTION | Instance+metric silence periods after alert creation |
-| `alert-event-service.ts` | PRODUCTION | Event lifecycle (open -> investigating -> handled -> resolved -> closed) |
-| `event-aggregator.ts` | PRODUCTION | Groups same-type alerts from same instance into events |
-| `notification-service.ts` | PRODUCTION | Cron (10s) -- sends alerts to dingtalk/wecom/feishu/webhook |
-| `notification-database-service.ts` | PRODUCTION | CRUD for notification channels and records |
-| `maintenance-window-service.ts` | PRODUCTION | Maintenance window suppression |
-| Tables: `alerts`, `alert_rules`, `alert_events`, `alert_event_members`, `alert_event_logs`, `escalation_rules`, `maintenance_windows`, `silence_periods`, `notification_channels`, `notification_records` | EXIST | All alert-related tables exist |
+## Entity Model
 
-#### Auth and Permissions (already built)
-
-| Component | Status | Purpose |
-|-----------|--------|---------|
-| `auth-database-service.ts` | PRODUCTION | User CRUD, login/password (bcrypt), login/action logging |
-| `auth/rbac-service.ts` | PRODUCTION | Role/Permission/User-Role/Instance-Permission CRUD + permission lookup |
-| `auth/rbac-api.ts` | PRODUCTION | REST API routes for RBAC management |
-| `auth/require-permission.ts` | PRODUCTION | Middleware factory with wildcard support (resource:*, *:action, *) |
-| `auth/require-instance-access.ts` | PRODUCTION | Instance-level access check middleware |
-| `auth-middleware.ts` | DEPRECATED | Replaced by require-permission.ts, kept as marker |
-| Tables: `users`, `user_login_logs`, `user_action_logs`, `roles`, `permissions`, `role_permissions`, `user_roles`, `instance_permissions` | EXIST | Full RBAC schema migrated |
-
-#### Report System (already built)
-
-| Component | Status | Purpose |
-|-----------|--------|---------|
-| `report-service.ts` | PRODUCTION | Generates health/performance/slow-query/capacity HTML reports |
-| `report-database-service.ts` | PRODUCTION | CRUD for reports and templates |
-| `report-exporter.ts` | PRODUCTION | Export/download reports |
-| `frontend views/reports.ts` | PRODUCTION | Reports page UI (uses ov-card pattern) |
-| Tables: `reports`, `report_templates` | EXIST | Report data schema |
-
-#### Data Quality / Metrics (already built)
-
-| Component | Status | Purpose |
-|-----------|--------|---------|
-| `monitor-collector.ts` | PRODUCTION | Zabbix-like heartbeat collection (10s tick, per-instance interval) |
-| `metrics-database-service.ts` | PRODUCTION | CRUD for metrics_history and realtime metrics |
-| `metric-registry.ts` | PRODUCTION | Metric definition registry (DB-backed + memory fallback) |
-| `metric-database-service.ts` | PRODUCTION | CRUD for metric_definitions table |
-| `baseline-calculator.ts` | PRODUCTION | Mean/stddev baseline from metrics_history (SQL STDDEV_POP + simple-statistics fallback) |
-| Tables: `metrics_history`, `metric_definitions`, `metric_baselines`, `capacity_history`, `instance_pool_stats` | EXIST | All metric-related tables exist |
-
-#### UI Icon System (already built)
-
-| Component | Status | Purpose |
-|-----------|--------|---------|
-| `frontend icons.ts` | PRODUCTION | ~50 Lucide-style SVG icons as Lit TemplateResults |
-| `frontend navigation.ts` | PRODUCTION | Tab group definitions (slide, openclaw, settings) |
-| `frontend views/*` | PRODUCTION | 25+ view components |
-
----
-
-## v1.3 Feature Architecture Analysis
-
-### 1. Alert System Enhancements
-
-#### 1.1 Threshold Editing (current missing)
-
-**Current state:** Alert rules have a flat `threshold` field set on creation via POST /api/alert-rules. The `PUT /api/alert-rules/:id` route handler at `server.ts:1496` only accepts a flat `threshold` and does not write to the `threshold_template` JSON column. The `alertDatabaseService.updateAlertRule()` method lacks `threshold_template` support.
-
-**Problem location:**
-
-- `server.ts` lines 1496-1522: PUT route body parsing does not extract `threshold_template`
-- `alert-database-service.ts` `updateAlertRule()` signature: accepts `{ name, description, metric_name, operator, threshold, duration_seconds, severity, enabled, notification_channels }` -- no `threshold_template`
-
-**Data flow gap:**
-
-```
-Frontend wants to edit threshold_template
-  -> PUT /api/alert-rules/:id  { threshold_template: {warning: 80, error: 90, critical: 95} }
-  -> alert_rules table has JSON column `threshold_template`
-  -> Currently no code path writes to this column from the API
-```
-
-**Required changes:**
-
-1. `alert-database-service.ts` -- add `threshold_template` to `updateAlertRule()` params, write to JSON column via `JSON_SET` or direct stringify
-2. `server.ts` PUT route -- extract `threshold_template` from request body, pass to service
-3. Frontend `alerts.ts` -- add inline threshold editor (sliders or number inputs for warning/error/critical)
-
-#### 1.2 AI Learning Thresholds (current missing)
-
-**Current state:** `baseline-calculator.ts` computes `mean +/- sigma * stddev` from `metrics_history` using SQL `STDDEV_POP`. `alert-evaluator.ts` has `evaluateRuleWithLevels()` that reads `threshold_template` from the rule. But there is NO automatic mechanism to update `threshold_template` based on baseline calculations.
-
-**Data flow needed:**
-
-```
-BaselineCalculator.computeBaselineForMetric(instanceId, metricName)
-  -> returns { mean, stddev, upperBound, lowerBound }
-  -> AlertThresholdLearner (NEW)
-    -> computes new thresholds as mean +/- sigma * stddev
-    -> updates alert_rules.threshold_template
-    -> stores learning result in alert_threshold_learning_log (NEW TABLE)
-    -> fires notification if adjustment exceeds max_change_pct
-```
-
-**New component: `alert-threshold-learner.ts`**
-
-```
-class AlertThresholdLearner {
-  // Cron: daily (configurable)
-  async learn(): Promise<{ adjusted: number; skipped: number }>
-
-  // Per-rule learning
-  async learnForRule(ruleId: number): Promise<{ adjusted: boolean; newThreshold?: any }>
-
-  // Learning history
-  async getLearningHistory(ruleId: number, limit?: number): Promise<LearningLogEntry[]>
-}
-```
-
-**Integration points:**
-
-- New cron job in `server.ts` (alongside alertEngine, escalationService)
-- Reads enabled rules that have `dynamic_config.sigma` set (JSON field on `alert_rules`)
-- Calls `BaselineCalculator.computeBaselineForMetric()`
-- Computes new thresholds as `mean +/- sigma * stddev`
-- Updates `threshold_template` in `alert_rules`
-- Logs adjustment in new table
-
-**New DB table needed:**
+### servers Table
 
 ```sql
-CREATE TABLE IF NOT EXISTS `alert_threshold_learning_log` (
-  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `rule_id` INT UNSIGNED NOT NULL,
-  `instance_id` INT UNSIGNED DEFAULT NULL,
-  `previous_threshold` JSON NOT NULL,
-  `new_threshold` JSON NOT NULL,
-  `baseline_mean` DECIMAL(12,4) NOT NULL,
-  `baseline_stddev` DECIMAL(12,4) NOT NULL,
-  `sigma` DECIMAL(4,2) NOT NULL,
-  `adjustment_pct` DECIMAL(8,4) NOT NULL,
-  `applied` BOOLEAN NOT NULL DEFAULT FALSE,
-  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  INDEX `idx_rule_id` (`rule_id`),
-  INDEX `idx_instance_id` (`instance_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
-
-#### 1.3 Multi-Session Event Aggregation (current limited)
-
-**Current state:** `event-aggregator.ts` groups alerts within a 5-minute window by `instance_id + alert_type + metric_name`. This is single-instance, single-metric aggregation only.
-
-**Gaps:**
-
-- No cross-instance aggregation (e.g., all MySQL instances with high CPU simultaneously)
-- No cross-metric correlation (e.g., high CPU + high connections = load spike event)
-- Events are purely time-window based, not correlation-based
-
-**Required changes to `event-aggregator.ts`:**
-
-- Add multi-instance aggregation mode: group events by `alert_type` across instances (add optional `multi_instance` boolean to `alert_events`)
-- Add correlation aggregation: new method `correlateAndMerge()` that looks for related metrics firing simultaneously within a configurable window and merges them into a single correlation event
-- Add AI-powered correlation: accept optional `ai_analysis_id` FK on `alert_events` to link AI-generated correlation analysis
-
-**Frontend impact:**
-
-- Event detail view needs to display correlated alerts across instances
-- Add "correlation map" view showing which metrics/instances are linked
-
-#### 1.4 Data Flow: Alert System v1.3
-
-```
-MonitorCollector (10s tick)
-  -> writes to metrics_history
-
-AlertEngine.evaluateAndCreateAlerts() (cron 60s)
-  -> reads metrics_history, evaluates rules
-  -> alert-database-service.createAlert() -> alerts table
-  ->
-  EventAggregator.aggregate() -> alert_events + alert_event_members
-    (new) MultiInstanceAggregator.correlateAndMerge()
-  ->
-  (new) AlertThresholdLearner.learn() (cron daily)
-    -> reads baseline, adjusts alert_rules.threshold_template
-  ->
-  AlertEscalationService.checkEscalations() (cron 5m)
-    -> escalate unresolved alert levels
-  ->
-  NotificationService.pollLoop() (cron 10s)
-    -> send via notification channels
-```
-
----
-
-### 2. Auth and Permissions Enhancements
-
-#### 2.1 Token Refresh (current missing)
-
-**Current state:** `server.ts` lines 254-296 -- `POST /api/auth/login` generates a single JWT with `{ userId, username }` and a hardcoded `expiresIn` (from `auth.jwt_expiration_minutes` in `system_config`, default 1440 minutes = 24 hours). There is NO refresh token mechanism. When the JWT expires, the user must re-login.
-
-Frontend stores the token in `localStorage` (seen in `event-management.ts` `authHeaders()` pattern). No refresh logic exists.
-
-**Data flow needed:**
-
-```
-Login:
-  Frontend -> POST /api/auth/login { username, password }
-    -> AuthDatabaseService.verifyPassword() [bcrypt]
-    -> Generate JWT (15m short-lived) + Refresh Token (30d)
-    -> Return { token, refreshToken, user }
-    -> Frontend stores both in localStorage
-
-API request:
-  Frontend -> GET /api/alerts [Authorization: Bearer <token>]
-    -> verifyToken: jwt.verify(), decode userId
-    -> requirePermission -> route handler
-    -> If response 401:
-      -> POST /api/auth/refresh { refreshToken }
-        -> Hash refreshToken, lookup in refresh_tokens table
-        -> Check not revoked, not expired
-        -> Revoke old refresh token (rotation)
-        -> Issue new JWT (15m) + new refresh token (30d)
-        -> Return { token, refreshToken }
-      -> Retry original request with new token
-```
-
-**New backend components:**
-
-- New table: `refresh_tokens`
-  ```sql
-  CREATE TABLE IF NOT EXISTS `refresh_tokens` (
-    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `user_id` INT UNSIGNED NOT NULL,
-    `token_hash` VARCHAR(64) NOT NULL,
-    `expires_at` DATETIME NOT NULL,
-    `revoked` BOOLEAN NOT NULL DEFAULT FALSE,
-    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    INDEX `idx_token_hash` (`token_hash`),
-    INDEX `idx_user_id` (`user_id`),
-    INDEX `idx_expires_at` (`expires_at`)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  ```
-
-- New backend service: extend `auth-database-service.ts` with refresh token methods
-  - `createRefreshToken(userId, ttlMinutes)` -> stores hash, returns raw token
-  - `validateRefreshToken(rawToken)` -> checks hash, expiry, revocation; returns userId
-  - `revokeRefreshToken(rawToken)` -> one-time rotation
-
-- New route in `server.ts`:
-  ```typescript
-  fastify.post('/api/auth/refresh', async (request, reply) => {
-    const { refreshToken } = request.body;
-    // validate -> issue new tokens -> revoke old -> respond
-  });
-  ```
-
-**New frontend component: `api/client.ts`**
-
-```typescript
-class ApiClient {
-  private token: string | null = localStorage.getItem('token');
-  private refreshToken: string | null = localStorage.getItem('refreshToken');
-  private refreshing: Promise<void> | null = null;
-
-  async fetch(url: string, options?: RequestInit): Promise<Response> {
-    const res = await fetch(url, {
-      ...options,
-      headers: { ...options?.headers, Authorization: `Bearer ${this.token}` }
-    });
-    if (res.status === 401 && this.refreshToken) {
-      // Deduplicate concurrent refresh attempts
-      if (!this.refreshing) {
-        this.refreshing = this.doRefresh();
-      }
-      await this.refreshing;
-      this.refreshing = null;
-      return this.fetch(url, options); // retry with new token
-    }
-    return res;
-  }
-}
-```
-
-#### 2.2 Permission Granularity (enhancement)
-
-**Current state:** `require-permission.ts` uses `resource:action` code format with wildcard support. This is already reasonably granular for role-based access. The gaps for v1.3:
-
-1. No **session-scoped** permissions -- temporary grants that expire
-2. No **deny rules** -- only allow rules via `role_permissions`
-3. No per-instance permission level differentiation (read vs write vs admin)
-
-**v1.3 recommendations:**
-
-- Add `grant_expires_at` column to `user_roles` for time-bound role assignments
-- Add `access_level` ENUM to `instance_permissions` (`read | write | admin`)
-- Keep deny rules OUT OF SCOPE -- not needed for current feature set, would require re-architecting the middleware chain
-
-**New DB migration:**
-
-```sql
-ALTER TABLE user_roles ADD COLUMN expires_at DATETIME DEFAULT NULL
-  COMMENT 'NULL = permanent, otherwise grant expires at this time';
-
-ALTER TABLE instance_permissions ADD COLUMN access_level ENUM('read', 'write', 'admin') NOT NULL DEFAULT 'read';
-```
-
-**Modified middleware:**
-
-- `require-permission.ts` -- add `expires_at` check: if grant has expired, treat as no permission
-- `require-instance-access.ts` -- add `access_level` parameter variant: `requireInstanceAccess('admin')` for destructive operations
-
----
-
-### 3. Report Refactoring
-
-#### 3.1 Current Architecture Problems
-
-**Problem 1: ov-card pattern in frontend** -- The `reports.ts` view uses `.ov-cards` / `.ov-card` CSS classes, a legacy pattern from early development. Other views have migrated to more consistent `.card` based styling. This is a visual inconsistency.
-
-**Problem 2: Report/Report concept conflation** -- The app uses both `reports` (HTML document content stored in DB) and `report_templates` (table exists but unused). The distinction between a report definition (config) and a report run (instance) is unclear.
-
-**Problem 3: Report types are rigid** -- Only 4 hardcoded types: `health`, `performance`, `slow-query`, `capacity`. No extensibility mechanism.
-
-**Problem 4: HTML generation in service layer** -- `report-service.ts` has ~250 lines of inline HTML templates as JavaScript template strings. This is unmaintainable -- cannot be edited without code changes, no syntax highlighting, no testing.
-
-#### 3.2 Recommended Architecture Changes
-
-**Consolidate report concepts:**
-
-```
-OLD: reports (one-off HTML docs) + report_templates (unused table)
-NEW: report_configs (definitions) -> report_runs (execution instances)
-```
-
-**Old table adaptation:**
-
-Rather than renaming `reports`, add `config_id` FK column and repurpose:
-
-```sql
-ALTER TABLE reports ADD COLUMN config_id INT UNSIGNED DEFAULT NULL AFTER id;
-ALTER TABLE reports ADD COLUMN params JSON DEFAULT NULL AFTER data;
-ALTER TABLE reports ADD INDEX idx_config_id (config_id);
-
-CREATE TABLE IF NOT EXISTS `report_configs` (
+CREATE TABLE IF NOT EXISTS `servers` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `name` VARCHAR(200) NOT NULL,
-  `type` VARCHAR(50) NOT NULL,
-  `schedule_cron` VARCHAR(100) DEFAULT NULL,
-  `params` JSON DEFAULT NULL,
-  `template` TEXT DEFAULT NULL,
-  `enabled` BOOLEAN NOT NULL DEFAULT TRUE,
+  `name` VARCHAR(100) NOT NULL COMMENT '服务器名称/别名',
+  `host` VARCHAR(255) NOT NULL COMMENT 'IP 或主机名',
+  `port` INT NOT NULL DEFAULT 22 COMMENT 'SSH 端口',
+  `username` VARCHAR(100) NOT NULL COMMENT 'SSH 登录用户名',
+  `auth_method` ENUM('password', 'key', 'key_passphrase') NOT NULL DEFAULT 'key' COMMENT '认证方式',
+  `password_encrypted` VARCHAR(500) DEFAULT NULL COMMENT '加密密码（password 模式）',
+  `private_key_encrypted` TEXT DEFAULT NULL COMMENT '加密私钥内容（key 模式）',
+  `passphrase_encrypted` VARCHAR(500) DEFAULT NULL COMMENT '加密私钥密码短语（key_passphrase 模式）',
+  `fingerprint` VARCHAR(64) DEFAULT NULL COMMENT '服务器 SSH 指纹（host key）',
+  `os_type` VARCHAR(50) DEFAULT NULL COMMENT '操作系统类型：linux, windows',
+  `os_distro` VARCHAR(100) DEFAULT NULL COMMENT '发行版：ubuntu, centos, debian',
+  `os_kernel` VARCHAR(100) DEFAULT NULL COMMENT '内核版本',
+  `cpu_cores` INT DEFAULT NULL COMMENT 'CPU 核心数',
+  `memory_total_mb` BIGINT DEFAULT NULL COMMENT '总内存 MB',
+  `disk_total_gb` DECIMAL(10,2) DEFAULT NULL COMMENT '总磁盘 GB',
+  `status` ENUM('active', 'inactive', 'error', 'unreachable') NOT NULL DEFAULT 'active',
+  `reachable` BOOLEAN NOT NULL DEFAULT FALSE COMMENT 'SSH 是否可达',
+  `last_reachable_at` DATETIME DEFAULT NULL COMMENT '最后可达时间',
+  `tags` JSON DEFAULT NULL COMMENT '标签数组',
+  `description` TEXT DEFAULT NULL,
   `created_by` INT UNSIGNED DEFAULT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  INDEX `idx_type` (`type`),
-  INDEX `idx_enabled` (`enabled`),
-  INDEX `idx_created_by` (`created_by`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  UNIQUE KEY `idx_name` (`name`),
+  UNIQUE KEY `idx_host_port` (`host`, `port`),
+  INDEX `idx_status` (`status`),
+  INDEX `idx_reachable` (`reachable`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+COMMENT = 'SSH 纳管服务器';
 ```
 
-**Service refactoring:**
+### Relationship: database_instances to servers
 
-```
-report-service.ts
-  ->
-  ReportConfigService (NEW) - CRUD for report_configs
-    - createConfig, getConfig, listConfigs, updateConfig, deleteConfig
-    - runConfig: generate a report from a config
-
-  ReportExecutionService (EXTRACT from existing report-service.ts)
-    - generateReport(type, instanceId, options) -- keeps existing per-type methods
-    - runScheduled() -- check configs with matching cron, execute
-    - generateFromConfig(configId, options) -- new unified entry point
-
-  report-templates/ (NEW DIRECTORY)
-    - health.html (template file, not inline)
-    - performance.html
-    - slow-query.html
-    - capacity.html
-    Using a simple {{ variable }} replacement engine (NO heavy template lib needed for v1.3)
-```
-
-**Frontend changes:**
-
-- `reports.ts` -- replace `.ov-card` with standard `.card` pattern (shared CSS class)
-- Add report config management UI (create/edit/re-run existing configs)
-- Separate list view (past runs) from config view (definitions with schedules)
-- Remove inline SVGs/emojis for report type icons, use shared `icons.ts`
-
-#### 3.3 Data Flow: Reports v1.3
-
-```
-Create config:
-  Frontend -> POST /api/report/configs { name, type, params, schedule_cron }
-    -> ReportConfigService.createConfig()
-    -> INSERT INTO report_configs
-
-Generate report from config:
-  Frontend -> POST /api/reports/generate { config_id }
-    -> OR Cron trigger on schedule
-    -> ReportExecutionService.generateFromConfig(config_id)
-      -> Load config, merge with template
-      -> Collect data (existing: collectHealthMetrics / collectPerformanceMetrics)
-      -> Render template with data
-      -> INSERT INTO reports (config_id, type, status='completed', content, data)
-    -> Return report_id
-
-Migrate existing reports to config_id:
-  Existing one-off reports get config_id = NULL (backward compatible)
-
-Remove ov-card:
-  Frontend reports.ts -> change CSS class from ov-cards/ov-card to standard card pattern
-```
-
----
-
-### 4. Data Quality Enhancements
-
-#### 4.1 Instance Scoring Algorithm (current missing)
-
-**Current state:** `report-service.ts` line 321 -- `health_score` is hardcoded to `100` with a TODO comment `TODO: implement health scoring logic`. The `health_check_history` table exists but is rarely used.
-
-**New component: `instance-score-service.ts`**
-
-```typescript
-interface InstanceScore {
-  instanceId: number;
-  overall: number;               // 0-100 composite
-  categoryScores: {
-    availability: number;         // 0-100
-    performance: number;          // 0-100
-    capacity: number;             // 0-100
-    security: number;             // 0-100
-  };
-  categoryWeights: {
-    availability: number;         // default 0.35
-    performance: number;          // default 0.35
-    capacity: number;             // default 0.20
-    security: number;             // default 0.10
-  };
-  trend: 'improving' | 'stable' | 'declining';
-  computedAt: Date;
-}
-
-class InstanceScoreService {
-  async computeScore(instanceId: number): Promise<InstanceScore>;
-  async getScoreHistory(instanceId: number, days: number): Promise<InstanceScore[]>;
-  async getScoreBreakdown(instanceId: number): Promise<ScoreBreakdown>;
-}
-```
-
-**Scoring algorithm:**
-
-```
-overall = SUM(categoryWeight * categoryScore) / SUM(weights)   [0-100]
-
-Availability (weight 0.35):
-  Base: 100
-  -5 per unresolved critical alert in last 24h
-  -2 per unresolved warning alert
-  -10 if any maintenance window is active (planned degredation)
-  +5 if no alerts in last 7 days
-  Min: 0
-
-Performance (weight 0.35):
-  Average of individual metric scores:
-  - cpu_usage, memory_usage, connections, qps, slow_queries
-  - Each metric: 100 - normalized distance from baseline threshold
-    - metric > critical threshold -> 0
-    - metric > warning threshold -> linear 70->0
-    - metric < warning threshold -> 100
-  - slow_queries: 100 - (count * 5), min 0
-
-Capacity (weight 0.20):
-  - disk_usage < 70% -> 100
-  - disk_usage 70-85% -> linear decline 100 -> 50
-  - disk_usage > 85% -> 50 - (disk-85)*3, min 0
-  - connection headroom: 100 - (current/max*100)
-  - Average of both
-
-Security (weight 0.10):
-  Base: 100
-  -10 per failed login attempt on instance in last hour
-  -20 per privilege change detected
-  -5 per schema change without approval
-  Min: 0
-```
-
-**Integration points:**
-
-- `report-service.ts` -- replace `health_score: 100` with `await instanceScoreService.computeScore(instanceId).overall`
-- `monitor-collector.ts` -- optional: record score in `health_check_history` after each collection tick
-- `alert-engine.ts` -- optional: create alert if score drops below configurable threshold
-- New route: `GET /api/instances/:id/score`
-
-#### 4.2 CPU/Memory Collection Permissions (current problem)
-
-**Current state:** `monitor-collector.ts` collects CPU/memory metrics via `databaseService.getRealtimeMetrics()` which queries the monitored database. For MySQL this uses `SHOW GLOBAL STATUS` requiring the `PROCESS` privilege. No permission pre-check is done.
-
-**Problem areas:**
-1. No visibility into which permissions an instance credential has before attempting collection
-2. No graceful degradation if permissions are insufficient -- the collector fails silently for that metric
-3. No way for administrators to see which metrics are collectable per instance
-
-**Solution approach:**
-
-- Add `collection_capabilities` JSON column to `database_instances` table:
-  ```json
-  { "cpu": true, "memory": true, "disk": true, "slow_queries": true }
-  ```
-
-- `monitor-collector.ts` reads this field before each collection iteration, skips metrics where capability is `false`
-
-- Add capability check endpoint:
-  ```typescript
-  POST /api/database/instances/:id/check-permissions
-    -> Test each metric collection, return { capabilities, failed: string[] }
-    -> Example response: { cpu: true, memory: true, disk: false, slow_queries: true }
-  ```
-
-- Frontend: Show capability status per instance (green/grey badges in instance list/detail)
-
-**DB migration:**
+Add nullable FK on `database_instances`:
 
 ```sql
-ALTER TABLE database_instances ADD COLUMN collection_capabilities JSON DEFAULT NULL
-  COMMENT '{"cpu":bool, "memory":bool, "disk":bool, "slow_queries":bool}';
+ALTER TABLE `database_instances`
+  ADD COLUMN `server_id` INT UNSIGNED DEFAULT NULL AFTER `id`,
+  ADD INDEX `idx_server_id` (`server_id`);
 ```
 
-**Modified components:**
+This creates a many-to-one relationship: many DB instances on one server. One server hosts zero to many DB instances. The FK is non-enforcing (application-level) to avoid cascade issues — Slide's existing pattern uses application-level relationships.
 
-- `monitor-collector.ts` `_collectInstanceMetrics()` -- check capabilities before each metric query
-- `instance-database-service.ts` -- add `updateCollectionCapabilities()` method
-- New frontend capability status display in instance detail view
+### server_metrics Table (Key-Value Time Series)
 
-#### 4.3 Data Flow: Data Quality v1.3
-
-```
-MonitorCollector._tick()
-  -> For each instance in schedule:
-    -> Read instance.collection_capabilities (JSON from database_instances)
-    -> If cpu capability = true: collect CPU metrics
-    -> If memory capability = true: collect memory metrics
-    -> If disk capability = true: collect disk metrics
-    -> Store in metrics_history
-  ->
-  (optional) InstanceScoreService.computeScore(instanceId)
-    -> Read metrics_history for last 24h
-    -> Read alerts for last 24h
-    -> Read capacity_history for trend
-    -> Compute category scores + overall score
-    -> Write to health_check_history
-  ->
-  (if score < configured threshold) AlertEngine.createAlert()
-    -> "Instance health score dropped to X"
+```sql
+CREATE TABLE IF NOT EXISTS `server_metrics` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `server_id` INT UNSIGNED NOT NULL,
+  `metric_name` VARCHAR(64) NOT NULL COMMENT '指标名称，如 os_cpu_usage',
+  `metric_value` DECIMAL(15,4) NOT NULL,
+  `recorded_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  INDEX `idx_server_metric_time` (`server_id`, `metric_name`, `recorded_at`),
+  INDEX `idx_recorded_at` (`recorded_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+COMMENT = '服务器 OS 级指标时间序列（key-value 格式）';
 ```
 
----
+**Why key-value over fixed columns:**
+- Server metrics have fewer conventions than DB metrics (Linux vs Windows differ)
+- New metrics can be added without schema migration
+- Query pattern is always "get metric X for server Y over time Z" — the index covers this
+- Avoids the unwieldy 30+ column pattern of `metrics_history`
 
-### 5. UI Unification
+### Required Schema Changes: alerts + alert_rules
 
-#### 5.1 Icon Consistency (current problem)
+Minimal additions to reuse the existing alert infrastructure:
 
-**Current state:** `frontend/src/openclaw/ui/icons.ts` has ~50 Lucide-style SVG icons defined as Lit `TemplateResult` values. Usage across views is inconsistent:
+```sql
+ALTER TABLE `alerts`
+  ADD COLUMN `server_id` INT UNSIGNED DEFAULT NULL AFTER `instance_id`,
+  ADD INDEX `idx_server_id` (`server_id`);
 
-- Some views import `{ icons }` and use `icons.iconName` directly
-- Some views use the `renderIcon('iconName')` helper from `icons.ts`
-- Several views embed inline SVG paths instead of using shared icons
-- `reports.ts` uses emoji characters for report type icons
-- `alerts.ts` uses partially inline SVG in alert badge classes
-- `navigation.ts` uses tab icons not from the shared set
-
-**Problem areas identified by view:**
-
-| View | Issue |
-|------|-------|
-| `reports.ts` | Uses emoji, not shared icons |
-| `alerts.ts` | Partially uses inline SVG |
-| `event-management.ts` | Mixed: some shared, some inline |
-| `overview-cards.ts` | Custom icon set not in icons.ts |
-| `views/instances-db.ts` | Inline SVG for status indicators |
-| `views/approval-dashboard.ts` | Inline SVG for status badges |
-
-**Recommended approach:**
-
-- Audit ALL views for icon usage (grep for `svg viewBox`, `<path`, `icons.`)
-- Add any missing Lucide-style icons to `icons.ts` (check upstream Lucide for canonical paths)
-- Create a lint rule or convention document: "All icons MUST come from icons.ts, never inline"
-- Replace inline SVGs with `renderIcon('iconName')` calls
-- Replace emoji icons in reports.ts with appropriate shared icons
-
-**Anti-pattern to avoid:** Adding duplicate copies of the same SVG in multiple view files. Every icon must live in `icons.ts` exactly once.
-
-#### 5.2 Layout/CSS Consistency
-
-**Current state identified:**
-
-- 15+ views have identical `@keyframes fade-in` animation CSS blocks -- code duplication
-- `reports.ts` still uses legacy `.ov-card` / `.ov-cards` class names
-- Other views use `.card` or `.card-container` patterns inconsistently
-- Page entrance animations vary subtly (different easing, timing, naming)
-
-**Recommended approach:**
-
-- Move `@keyframes fade-in` to a shared CSS module or the main stylesheet
-- Replace `.ov-card` classes in reports.ts with `.card` (standard pattern used elsewhere)
-- Audit page entrance animations and standardize timing/easing
-
----
-
-## Integration Matrix
-
-| Feature | New Components | Existing Components to Modify | Backend Routes | Frontend Views |
-|---------|---------------|------------------------------|----------------|----------------|
-| **Alert: Threshold Editing** | Inline editor component (frontend) | `alertDatabaseService.updateAlertRule()` | `PUT /api/alert-rules/:id` (add threshold_template) | `views/alerts.ts` rule editor |
-| **Alert: AI Learning** | `alert-threshold-learner.ts` | `baseline-calculator.ts` (reuse) | `GET /api/alert-rules/:id/learning-history` (new) | learning history panel (new) |
-| **Alert: Multi-Session** | Correlation logic in `event-aggregator.ts` | `event-aggregator.ts` (extend) | `POST /api/events/correlate` (optional) | `views/event-management.ts` |
-| **Auth: Token Refresh** | `api/client.ts` (frontend), `refresh_tokens` table | `server.ts` login route, `auth-database-service.ts` | `POST /api/auth/refresh` (new) | `login-gate.ts`, app lifecycle |
-| **Auth: Granularity** | `expires_at` + `access_level` columns | `rbac-service.ts`, `require-permission.ts` | `POST /api/rbac/grants` (new) | `views/rbac-page.ts` |
-| **Report: ov-card removal** | None | `views/reports.ts` (CSS) | None | `views/reports.ts` |
-| **Report: Concept unification** | `report-configs` table, `ReportConfigService` | `report-database-service.ts`, `report-service.ts` | `POST /api/report/configs` (new), migrate existing | `views/reports.ts` config UI |
-| **Data Quality: Scoring** | `instance-score-service.ts` | `report-service.ts` (replace hardcoded score) | `GET /api/instances/:id/score` (new) | Instance detail page |
-| **Data Quality: Collection perms** | Capability check logic | `monitor-collector.ts`, `instance-database-service.ts` | `POST /api/instances/:id/check-permissions` (new) | Instance detail page |
-| **UI Unification** | None | `icons.ts` (expand), ALL views (audit) | None | ALL frontend views |
-
----
-
-## Build Order and Dependencies
-
-```
-Phase 1: Auth Token Refresh  ---------------+
-  (dependency: needed by ALL authenticated  |
-   features that call backend after token    |
-   expiry)                                   |
-                                             |
-Phase 2: UI Unification  -------------------+--+
-  (plumbing: icon audit + CSS stand-         |  |
-   ardization touches all views, better      |  |
-   done first to avoid rework)               |  |
-                                             |  |
-Phase 3: Report Refactoring  ---------------+--+--+
-  (ov-card removal + concept unification     |  |  |
-   depends on CSS standards from Phase 2)    |  |  |
-                                             |  |  |
-Phase 4a: Alert Threshold Editing  ---------+-----+
-  (independent sub-feature, quick win)       |  |  |
-                                             |  |  |
-Phase 4b: Data Quality - Collection Perms ---+--+--+
-  (independent sub-feature)                  |  |  |
-                                             |  |  |
-Phase 5: Data Quality - Instance Scoring ----+--+--+
-  (score algorithm needed by AI learning)    |  |  |
-                                             |  |  |
-Phase 6: Alert AI Learning Thresholds -------+--+--+
-  (depends on Phase 5 baseline integration)  |  |  |
-                                             |  |  |
-Phase 7: Multi-Session Aggregation +         |  |  |
-         Auth Granularity                    +--+--+
-  (final polish features, no dependencies)   |  |  |
+ALTER TABLE `alert_rules`
+  ADD COLUMN `target_type` ENUM('database', 'server', 'both') NOT NULL DEFAULT 'database' COMMENT '规则目标类型',
+  ADD COLUMN `server_ids` JSON DEFAULT NULL COMMENT '适用服务器 ID 列表(NULL=全部)',
+  ADD INDEX `idx_target_type` (`target_type`);
 ```
 
-**Recommended 7-phase build order:**
+The `alerts.alert_type` enum already covers `performance`, `availability`, `capacity` — these work for server metrics too. The enum is NOT extended; `server_id` disambiguates DB vs server origin.
 
-1. **Auth Token Refresh** -- baseline infra, all other features need stable auth
-2. **UI Unification** -- icon audit is high-touch, do early to minimize merge conflicts
-3. **Report Refactoring** -- ov-card removal benefits from Phase 2 CSS standards
-4. **Alert Threshold Editing** -- quick win, independent
-5. **Data Quality: Collection Permissions** -- independent, small scope
-6. **Data Quality: Instance Scoring** -- needed for AI learning
-7. **Alert AI Learning Thresholds** -- depends on scoring from Phase 6
-8. **Multi-Session Aggregation + Auth Granularity** -- final polish
+### server_metric_definitions Table
 
----
+Analogous to `metric_definitions` but for OS-level metrics:
 
-## Scaling Considerations (for v1.3)
+```sql
+CREATE TABLE IF NOT EXISTS `server_metric_definitions` (
+  `id` VARCHAR(64) NOT NULL COMMENT '指标 ID，如 os_cpu_usage',
+  `name` VARCHAR(100) NOT NULL COMMENT '指标名称',
+  `description` TEXT DEFAULT NULL,
+  `unit` VARCHAR(20) NOT NULL,
+  `os_types` JSON NOT NULL COMMENT '适用操作系统类型',
+  `aggregation` ENUM('avg', 'max', 'min', 'sum', 'last') NOT NULL DEFAULT 'avg',
+  `default_interval` INT NOT NULL DEFAULT 30 COMMENT '默认采集间隔（秒）',
+  `threshold_template` JSON DEFAULT NULL COMMENT '默认阈值模板',
+  `is_collected` BOOLEAN NOT NULL DEFAULT TRUE,
+  `is_builtin` BOOLEAN NOT NULL DEFAULT FALSE,
+  `collection_command` VARCHAR(500) DEFAULT NULL COMMENT 'SSH 采集命令',
+  `parse_pattern` VARCHAR(100) DEFAULT NULL COMMENT '解析器标识',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  INDEX `idx_collected` (`is_collected`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+COMMENT = '服务器指标定义注册表';
+```
 
-| Concern | Current (v1.2) | v1.3 Target | Architecture Adjustment |
-|---------|---------------|-------------|------------------------|
-| Alert evaluation | Cron 60s, single-threaded | Same | No change needed |
-| Notification polling | Cron 10s, processes all pending | Same + escalation alerts | No change needed |
-| AI learning thresholds | Not implemented | Cron daily, ~1s per rule | New cron, trivial load |
-| Token refresh | Not implemented | Per-login + per-refresh | Stateless (JWT), minimal server-side storage |
-| Report generation | Single instance | Same + scheduled configs | Queue-based for large reports (deferred) |
-| Instance scoring | Not implemented | On-demand + optional scheduled | Lightweight O(n), n = number of metrics |
-| Collection permissions | Static all-or-nothing | Per-instance capability check | Read from DB, cached per tick |
+### server_inspection_history Table (for daily inspection reports)
 
-**First bottleneck:** Alert evaluation at 60s interval with 100+ instances. Currently loads ALL rules and evaluates ALL instances. At 500+ instances this may timeout. Mitigation: batch evaluation -- NOT in v1.3 scope.
+```sql
+CREATE TABLE IF NOT EXISTS `server_inspection_history` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `server_id` INT UNSIGNED NOT NULL,
+  `inspection_type` VARCHAR(50) NOT NULL COMMENT '巡检类型：daily, weekly, on_demand',
+  `summary_score` INT NOT NULL COMMENT '综合评分 0-100',
+  `checks` JSON NOT NULL COMMENT '检查项结果',
+  `issues` JSON DEFAULT NULL COMMENT '发现的问题',
+  `recommendations` JSON DEFAULT NULL COMMENT '建议',
+  `generated_report_id` BIGINT UNSIGNED DEFAULT NULL COMMENT '关联的报告 ID',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  INDEX `idx_server_id` (`server_id`),
+  INDEX `idx_inspection_type` (`inspection_type`),
+  INDEX `idx_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+COMMENT = '服务器巡检历史';
+```
 
----
+## SSH Connection Architecture
+
+### SshSessionPool Design
+
+The SSH connection pool manages the lifecycle of SSH sessions. It is a new standalone component, not extending the DB connection pool.
+
+```
+┌──────────────────────────────────────────────────┐
+│                  SshSessionPool                   │
+│                                                   │
+│  ┌────────────────────────────────────────────┐   │
+│  │          Connection Manager                 │   │
+│  │  ┌────────┐ ┌────────┐ ┌────────┐           │   │
+│  │  │server1 │ │server2 │ │server3 │  ...     │   │
+│  │  │ 3 sess │ │ 2 sess │ │ 1 sess │           │   │
+│  │  └───┬────┘ └───┬────┘ └───┬────┘           │   │
+│  │      │          │          │                  │   │
+│  │  ┌───▼────┐ ┌───▼────┐ ┌───▼────┐            │   │
+│  │  │sess[0] │ │sess[0] │ │sess[0] │            │   │
+│  │  │sess[1] │ │sess[1] │ │        │            │   │
+│  │  │sess[2] │ │        │ │        │            │   │
+│  │  └────────┘ └────────┘ └────────┘            │   │
+│  └────────────────────────────────────────────┘   │
+│                                                   │
+│  ┌────────────────────────────────────────────┐   │
+│  │          Keepalive Heartbeat               │   │
+│  │  30s interval per open session             │   │
+│  └────────────────────────────────────────────┘   │
+│                                                   │
+│  ┌────────────────────────────────────────────┐   │
+│  │          Idle Reaper                        │   │
+│  │  Close sessions idle > 300s                │   │
+│  └────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────┘
+```
+
+### Connection Lifecycle
+
+```
+  ┌──────────┐
+  │  REQUEST  │ -- acquire(serverId) -> return session or create new
+  └─────┬────┘
+        │
+  ┌─────▼──────┐   ┌──────────┐
+  │ Pool has   │───│  Return  │
+  │ idle conn? │   │ existing │
+  └─────┬──────┘   └──────────┘
+        │ no
+  ┌─────▼──────────┐
+  │ At max session │── YES ──> Wait queue (promise-based)
+  │ per server?    │
+  └─────┬──────────┘
+        │ no
+  ┌─────▼───────────┐
+  │ Create new ssh2 │
+  │ Client instance │
+  └─────┬───────────┘
+        │
+  ┌─────▼───────────┐
+  │ Authenticate    │── FAIL ──> Mark server unreachable, throw
+  │ & ready         │
+  └─────┬───────────┘
+        │ OK
+  ┌─────▼──────────────┐
+  │ Configure keepalive│
+  │ Register in pool   │
+  │ Return session     │
+  └────────────────────┘
+```
+
+### Key Configuration Parameters
+
+```typescript
+interface SshPoolConfig {
+  maxSessionsPerServer: number;     // Default: 3
+  connectTimeoutMs: number;        // Default: 10000
+  keepaliveIntervalMs: number;     // Default: 30000
+  keepaliveCountMax: number;       // Default: 3
+  idleTimeoutMs: number;           // Default: 300000 (5min)
+  readyTimeoutMs: number;          // Default: 10000
+  retryAttempts: number;           // Default: 2
+  retryDelayMs: number;            // Default: 1000
+  maxWaitQueueSize: number;        // Default: 10
+}
+```
+
+### SshSessionPool Interface
+
+```typescript
+class SshSessionPool {
+  async acquire(serverId: number): Promise<SshSession>;
+  release(session: SshSession): void;
+  invalidate(serverId: number): void;           // Force-close all sessions (auth failure)
+  getStatus(): PoolStatus;
+  async testConnection(config: ServerSshConfig): Promise<TestResult>;
+  stop(): void;                                  // Graceful shutdown
+}
+```
+
+### SshSession Wrapper
+
+Each session wraps an `ssh2` Client connection. The wrapper:
+
+- Tracks last-used timestamp for idle reaping
+- Supports `execCommand(command: string): Promise<CommandResult>` for running individual commands
+- Supports `execCommands(commands: string[]): Promise<CommandResult[]>` for batch execution
+- Implements a health check heartbeat (simple `echo` or `uptime` command)
+- Auto-reconnects on detected failure (configurable retry)
+
+## Metrics Collection Integration
+
+### How ServerCollector Plugs Into Existing Infrastructure
+
+The server collection reuses the **MonitorCollector heartbeat scheduling pattern** but operates as a sibling component:
+
+```
+monitor-collector.ts (EXISTING — no changes needed)
+  │
+  ├──→ UnifiedCollector → DB metrics → metrics_history (EVERY 10s tick)
+  │
+  └──→ NEW: collectServerMetrics()
+       → ServerCollector → server_metrics (same tick)
+
+ServerCollector (NEW — standalone class)
+  │
+  ├──→ schedule per-server (like per-instance in MonitorCollector)
+  │
+  └──→ SshSessionPool.acquire(serverId) → execCommands(commands) → parse → write
+```
+
+The `ServerCollector` is instantiated alongside `MonitorCollector` but operates on its own heartbeat (same 10s interval) to avoid blocking DB metric collection with slow SSH operations.
+
+### Collection Command Registry Pattern
+
+Each metric type defines:
+1. The SSH command to execute
+2. A parser function from stdout to numeric value(s)
+3. The interval and metric metadata
+
+This mirrors the `MetricProvider` pattern but is structured as a command registry rather than a provider per DB type, because SSH metrics collection has no "provider per OS type" — all Linux servers use the same commands:
+
+```typescript
+// server-commands.registry.ts
+
+interface ServerMetricCommand {
+  id: string;                // metric name: 'os_cpu_usage'
+  command: string;           // shell command to execute
+  parse: (stdout: string) => number | Record<string, number>;
+  interval: number;          // default collection interval (seconds)
+  isDelta: boolean;          // true if rate-calculated from previous value
+}
+```
+
+### Batch Execution Strategy
+
+Rather than executing N individual SSH commands (N round trips), **batch commands with shell scripting**. One SSH round trip collects all metrics:
+
+```typescript
+// Batch command — all metrics in one exec
+const BATCH_COMMAND = [
+  `export LC_ALL=C;`,
+  `echo "---BEGIN---";`,
+  `top -bn1 | head -5 | awk '/%Cpu/{print $2","$10}';`,     // cpu_usage, io_wait
+  `free | awk '/^Mem/{printf "%.1f,",$3/$2*100} /^Swap/{if($2>0) printf "%.1f",$3/$2*100; else print "0"}';`,
+  `df / | awk 'NR==2{print $5}' | tr -d '%';`,              // root disk
+  `cat /proc/loadavg | awk '{print $1","$2","$3}';`,        // 1m,5m,15m load
+  `cat /proc/uptime | awk '{print int($1/86400)}';`,        // uptime days
+  `ps aux --no-headers | wc -l;`,                            // process count
+  `ss -t state established | tail -n +2 | wc -l;`,          // tcp connections
+  `cat /proc/diskstats | awk '{r+=$6;w+=$10}END{print r*512","w*512}';`, // disk r/w bytes
+  `ps aux --no-headers | awk '/Z/{count++}END{print count+0}';`, // zombie count
+  `echo "---END---";`,
+].join('\n');
+```
+
+Parsed with `parseBatchStdout(stdout: string): Record<string, number>` that splits on delimiter, maps each position to metric name.
+
+### Collection Flow
+
+```
+ServerCollector._tick()
+  │
+  ├── For each active server:
+  │    │
+  │    ├── Check schedule: is server due for collection?
+  │    │    (based on minimal interval across its enabled metrics)
+  │    │
+  │    ├── SshSessionPool.acquire(serverId)
+  │    │    │
+  │    │    ├── Have idle session? -> return it
+  │    │    ├── At max sessions? -> wait in queue
+  │    │    └── No session? -> create new ssh2 Client
+  │    │
+  │    ├── session.execCommand(BATCH_COMMAND)
+  │    │    │
+  │    │    ├── Success? -> parse stdout, produce metric values dict
+  │    │    ├── Timeout? -> retry once, else invalidate session
+  │    │    └── Auth failure? -> invalidate all sessions, set server unreachable
+  │    │
+  │    ├── Handle delta-calculated metrics
+  │    │    (store previous counter values on SshSession for rate calc)
+  │    │
+  │    ├── Bulk INSERT into server_metrics
+  │    │
+  │    ├── Update schedule (next collection time)
+  │    │
+  │    └── session.release() -> back to pool
+  │
+  └── Wait for next heartbeat tick
+```
+
+### Delta Counter Handling (Rate Metrics)
+
+Network and disk IO metrics are cumulative counters. Delta calculation follows the same pattern as `mysql.provider.ts`:
+
+```typescript
+interface ServerDeltaCounter {
+  network_rx_bytes: number;
+  network_tx_bytes: number;
+  disk_read_bytes: number;
+  disk_write_bytes: number;
+  timestamp: number;
+}
+
+// On each collection:
+//   rate = (current_value - previous_value) / elapsed_seconds
+//   Store rate in server_metrics, not the raw counter
+//   Update previous_value + timestamp on SshSession
+```
+
+This avoids the "increasing counter" problem in time-series charts.
+
+## Alert Integration
+
+### How Server Alerts Reuse Existing Infrastructure
+
+The existing `AlertEngine` runs every 60s and calls `evaluateAllRules()`. Server alerts are added as a parallel evaluation call within the same engine:
+
+```
+AlertEngine (EXISTING) — runs every 60s
+  │
+  ├── evaluateAllRules()          -> DB instance rules (unchanged)
+  │
+  └── evaluateAllServerRules()    -> NEW
+       │
+       ├── Query alert_rules WHERE target_type IN ('server', 'both')
+       │
+       ├── For each rule:
+       │    ├── Query latest server_metrics value
+       │    ├── evaluateRuleWithLevels() — REUSED from alert-evaluator.ts
+       │    ├── checkDuration() — pass server_metrics query instead of metrics_history
+       │    └── If triggered → createServerAlert() — same logic as createAlertFromRule()
+       │         with server_id set instead of instance_id
+       │
+       └── Existing eventAggregator.aggregate() picks up server alerts automatically
+```
+
+### Changes to AlertEngine
+
+**Minimal.** The changes are:
+
+1. **New `evaluateAllServerRules()` in `server-alert-evaluator.ts`** — structurally mirrors `evaluateAllRules()` but reads from `server_metrics` and `servers` tables instead of `metrics_history` and `database_instances`
+
+2. **Extend `alert-engine.ts`** — add a call to `evaluateAllServerRules()` inside `evaluateAndCreateAlerts()`. This is 3-5 lines added to the existing method.
+
+3. **Extend `alert-engine.ts` `createAlertFromRule()`** — accept optional `serverId` param. When `serverId` is set, use it instead of `instanceId` in the created `alerts` row.
+
+4. **Auto-recovery loop** — extend the existing loop in `evaluateAndCreateAlerts()` that checks `activeAlerts` to also handle alerts that have `server_id` set instead of `instance_id`.
+
+### Type Mapping for Server Metrics
+
+The `createAlertFromRule()` method has a hardcoded `typeMap` — extend it:
+
+```typescript
+// Existing typeMap entries for DB metrics
+const typeMap: Record<string, 'performance' | 'availability' | 'security' | 'capacity'> = {
+  // ... existing DB metric entries ...
+  // New server metric entries:
+  os_cpu_usage: 'performance',
+  os_memory_usage: 'performance',
+  os_disk_usage_root: 'capacity',
+  os_disk_usage_data: 'capacity',
+  os_loadavg_1m: 'performance',
+  os_io_wait: 'performance',
+  os_swap_usage: 'capacity',
+  os_zombie_processes: 'availability',
+  os_connectivity: 'availability',  // special: set by health check, not by collector
+};
+
+// Fallback: if metric_name not in typeMap, default to 'performance'
+```
+
+### Alert Rule Examples for Server Metrics
+
+| Rule Name | metric_name | Operator | Threshold Warning | Threshold Critical | Duration |
+|-----------|-------------|----------|-------------------|---------------------|----------|
+| 服务器 CPU 使用率 | os_cpu_usage | >= | 80% | 95% | 120s |
+| 服务器内存使用率 | os_memory_usage | >= | 85% | 95% | 120s |
+| 服务器负载 | os_loadavg_1m | >= | `cpu_cores * 2` | `cpu_cores * 4` | 300s |
+| 服务器根分区 | os_disk_usage_root | >= | 80% | 92% | 600s |
+| 服务器 Swap 使用 | os_swap_usage | >= | 50% | 75% | 300s |
+| IO Wait 过高 | os_io_wait | >= | 30% | 50% | 120s |
+| 服务器不可达 | os_connectivity | = | 0 | 0 | 60s |
+| 僵尸进程数 | os_zombie_processes | >= | 5 | 20 | 300s |
+
+Note: `os_loadavg_1m` threshold uses the `macro_defaults` system from `metric_templates` — the `cpu_cores` value is set per server via `instance_templates.macro_overrides`.
+
+## Server Inspection Report Integration
+
+Server inspection reports are a new report type that ships alongside the existing DB report types. The existing `ReportType` enum gains new entries:
+
+| Report Type | Description | Integration Point |
+|-------------|-------------|-------------------|
+| `server_health` | Server health check report | Reuse `report-service.ts` generation pattern |
+| `server_patrol` | Regular server inspection (daily/weekly) | Reuse `report-schedule` cron-based pattern |
+
+The inspection flow:
+
+```
+Report Schedule (cron)
+  │
+  └── ReportService.generateReport(type='server_health')
+       │
+       ├── ServerCollector.collectAll()   -> force fresh collection before report
+       ├── Query server_metrics (last 24h)
+       ├── Aggregate and analyze trends
+       ├── Calculate health score from metric averages
+       ├── Write results to server_inspection_history
+       ├── Generate PDF/HTML/MD using inspection template
+       │    (reuse report-exporter.ts, new template)
+       └── Return report_id
+```
+
+## Credential Management
+
+### Storage Strategy
+
+Slide already has `encryptData()` / `decryptData()` in `db-connection.ts` for DB passwords. **Reuse the same functions** for SSH credentials.
+
+| Auth Method | Stored Column | How It's Stored |
+|-------------|---------------|-----------------|
+| `password` | `password_encrypted` | `encryptData(ssh_password)` |
+| `key` | `private_key_encrypted` | `encryptData(private_key_contents)` — the PEM string |
+| `key_passphrase` | `private_key_encrypted` + `passphrase_encrypted` | Both encrypted via `encryptData()` |
+
+### Connection-time Decryption
+
+```typescript
+import { decryptData } from './db-connection';
+
+function buildSshConfig(server: ServerRow): ssh2.ConnectConfig {
+  const config: ssh2.ConnectConfig = {
+    host: server.host,
+    port: server.port,
+    username: server.username,
+    readyTimeout: SESSION_POOL_CONFIG.readyTimeoutMs,
+    keepaliveInterval: SESSION_POOL_CONFIG.keepaliveIntervalMs,
+    keepaliveCountMax: SESSION_POOL_CONFIG.keepaliveCountMax,
+  };
+
+  switch (server.auth_method) {
+    case 'password':
+      config.password = decryptData(server.password_encrypted);
+      break;
+    case 'key':
+      config.privateKey = decryptData(server.private_key_encrypted);
+      break;
+    case 'key_passphrase':
+      config.privateKey = decryptData(server.private_key_encrypted);
+      config.passphrase = decryptData(server.passphrase_encrypted);
+      break;
+  }
+
+  return config;
+}
+```
+
+### Host Key Verification
+
+The `fingerprint` field stores the expected host key hash. Verified via ssh2's `hostVerifier` callback:
+
+```typescript
+hostVerifier: (hashedKey: Buffer) => {
+  if (!expectedFingerprint) return true; // accept on first connect
+  const computed = crypto.createHash('sha256').update(hashedKey).digest('hex');
+  return computed === expectedFingerprint;
+}
+```
+
+On first connection: `fingerprint` is NULL, so the connection is accepted. The received hash is stored in the `servers` row. On subsequent connections, the received hash must match.
+
+This is configurable — disable host key verification via `servers` config flag for environments with dynamic IPs.
+
+## Recommended Project Structure
+
+New files are added to the existing `apps/db-ops-api/src/` directory. No new top-level modules needed — the pattern is co-location with existing architecture:
+
+```
+apps/db-ops-api/src/
+│
+├── servers/                                    # NEW — Server management module
+│   ├── server-database-service.ts              # CRUD for servers table
+│   ├── server-session-pool.ts                  # SshSessionPool implementation
+│   ├── server-collector.ts                     # Collection heartbeat + scheduling
+│   ├── server-metric-commands.ts               # Command definitions + parsers registry
+│   ├── server-metric-definitions.ts            # Predefined server metric defs
+│   ├── server-alert-evaluator.ts               # Server-specific alert evaluation
+│   ├── server-health-check.ts                  # Reachability + OS info detection
+│   └── server-ssh-config.ts                    # Credential decryption + connection config building
+│
+├── types/
+│   └── shared.ts                               # Add ServerInfo interface (frontend contract)
+│
+├── server.ts                                   # Add routes and start ServerCollector
+```
+
+### Where Each File Maps to Existing Patterns
+
+| New File | Patterns From | Purpose |
+|----------|---------------|---------|
+| `server-database-service.ts` | `instance-database-service.ts` | DB operations for servers table |
+| `server-session-pool.ts` | `database-service.ts` (connection pool) | SSH session lifecycle |
+| `server-collector.ts` | `monitor-collector.ts` | Collection scheduling + delegation |
+| `server-metric-commands.ts` | `collectors/mysql.provider.ts` command pattern | Command definitions + parse functions |
+| `server-metric-definitions.ts` | `metric-registry.ts` | Predefined server metric metadata |
+| `server-alert-evaluator.ts` | `alert-evaluator.ts` | Rule evaluation against server_metrics |
+| `server-health-check.ts` | `database-service.ts` health check | OS info discovery + reachability test |
+
+### Route Registration Pattern
+
+Following the existing pattern in `server.ts` (inline route handlers), add:
+
+```
+# Server Management
+GET    /api/servers                           # List all servers
+POST   /api/servers                           # Create server
+GET    /api/servers/:id                       # Get server detail
+PUT    /api/servers/:id                       # Update server
+DELETE /api/servers/:id                       # Delete server
+POST   /api/servers/test-connection           # Test SSH connectivity
+POST   /api/servers/:id/collect-now           # Force immediate collection
+
+# Server Metrics
+GET    /api/servers/:id/metrics               # Latest metrics (all or selected)
+GET    /api/servers/:id/metrics/history       # Historical metrics with period + interval
+
+# Server Alerts
+GET    /api/servers/:id/alerts                # Alerts for this server (reuse /api/alerts)
+POST   /api/servers/:id/alerts/rules          # Create server alert rule
+
+# Server Health
+GET    /api/servers/:id/health                # Health check result
+GET    /api/servers/:id/inspections           # Inspection history
+
+# Server Reports
+POST   /api/reports/generate?type=server_health  # New report type
+POST   /api/reports/generate?type=server_patrol   # New report type
+```
+
+Auth middleware follows existing `verifyToken` + `requirePermission` pattern. New permissions codes: `server:create`, `server:update`, `server:delete`, `server:view`, `server:collect`.
+
+## Data Flow
+
+### Complete Server Monitoring Data Flow
+
+```
+  ┌─────────────────────┐
+  │  User adds server   │  POST /api/servers
+  │  via UI or API      │  (test-connection first)
+  └──────────┬──────────┘
+             │
+  ┌──────────▼──────────┐
+  │  server-database-   │  Store encrypted credentials
+  │  service.create()   │  Set status='active', reachable=false
+  └──────────┬──────────┘
+             │
+  ┌──────────▼──────────┐
+  │  ServerCollector     │  Heartbeat tick picks up new server
+  │  _rebuildSchedule()  │  Creates schedule entry with interval
+  └──────────┬──────────┘
+             │
+  ┌──────────▼──────────┐
+  │  Collection Cycle    │  For each due server:
+  │  1. Acquire session │   - Open or reuse SSH session
+  │  2. Exec batch cmd  │   - Run batch commands in one exec
+  │  3. Parse stdout    │   - Parse comma-separated results
+  │  4. Bulk INSERT     │   - Write to server_metrics table
+  │  5. Release session │   - Return to pool
+  └──────────┬──────────┘
+             │
+  ┌──────────▼──────────┐
+  │  server_metrics      │  Key-value time series
+  │  (MySQL table)       │  index: (server_id, metric_name, recorded_at)
+  └──────────┬──────────┘
+             │
+  ┌──────────▼──────────┐
+  │  AlertEngine         │  evaluateAndCreateAlerts() (every 60s)
+  │                      │  ├── evaluateAllRules()              -> DB alerts (existing)
+  │                      │  └── evaluateAllServerRules()        -> Server alerts (new)
+  │                      │        ├── Query server_metrics
+  │                      │        ├── Evaluate thresholds
+  │                      │        └── Create alert with server_id
+  └──────────┬──────────┘
+             │
+  ┌──────────▼──────────┐
+  │  alerts (table)      │  server_id set, alert_type from typeMap
+  │  + alert_events      │  Same event aggregation flow as DB alerts
+  └──────────┬──────────┘
+             │
+  ┌──────────▼──────────┐
+  │  Notification        │  Existing notification channels
+  │  (poll loop 10s)     │  DingTalk, WeCom, Feishu, Webhook
+  └──────────────────────┘
+             │
+  ┌──────────▼──────────┐
+  │  User Notification  │  Alert appears in server alert list UI
+  │  + Dashboard        │  Server metrics chart (ECharts, reuse)
+  └──────────────────────┘
+```
+
+### Server Inspection Report Data Flow
+
+```
+  Report Schedule (cron) or manual trigger
+  │
+  └── ReportService.generateReport(type='server_health')
+       │
+       ├── Collect fresh server_metrics (force full collection)
+       ├── Query 24h of metrics for each server
+       ├── Calculate health score from metric averages
+       ├── Identify anomalies (metric spikes, dips)
+       ├── Write to server_inspection_history
+       ├── Generate PDF via report-exporter.ts (reuse)
+       └── Return report_id
+```
+
+## Scaling Considerations
+
+### N Servers x M Metrics x 30s Interval
+
+| Scenario | Approach | Limiting Factor |
+|----------|----------|-----------------|
+| 1-10 servers | Single thread, sequential batch per server | SSH connection setup cost |
+| 10-50 servers | Concurrent collection with semaphore (max 10 parallel) | CPU for parse + DB write |
+| 50-200 servers | Rate-limited concurrent (max 20), batch sizing | SSH connection count on target servers |
+| 200+ servers | Dedicated ServerCollector process (separate from DB collector) | MySQL write throughput |
+
+### SSH Connection Limits
+
+**Per target server:** Most Linux servers allow 10-100 concurrent SSH sessions by default (`MaxStartups` in sshd_config). The pool limits to **3 concurrent sessions per target** to avoid overwhelming source or target.
+
+**Global limit:** The pool enforces a hard cap on total concurrent sessions (configurable, default 50). If this limit is reached, acquisition blocks until a session is released.
+
+### Heartbeat Tick Scheduling
+
+Reuse the MonitorCollector Zabbix heartbeat model. All servers share one heartbeat interval (10s). Each tick checks which servers are due based on their minimal metric interval. This avoids per-server timers.
+
+```typescript
+// ServerCollector._tick() — simplified
+private async _tick() {
+  const now = Date.now();
+  const servers = await serverDatabaseService.getAllActive();
+  const promises: Promise<void>[] = [];
+
+  for (const server of servers) {
+    let sched = this.schedule.get(server.id);
+    if (!sched) {
+      sched = { lastCollected: 0, intervalMs: this.getMinInterval() };
+      this.schedule.set(server.id, sched);
+    }
+    if (now >= sched.lastCollected + sched.intervalMs) {
+      promises.push(this.collectServer(server));
+      sched.lastCollected = now;
+    }
+  }
+
+  // Limit concurrent SSH operations
+  await this.throttledAll(promises, MAX_CONCURRENT);
+}
+```
+
+**Start with** `maxConcurrentCollections = 5` (safe). Monitor actual concurrency against SSH session counts. Increase to 10-20 as needed.
+
+### Monitoring the Monitor: SSH System Health Metrics
+
+The monitoring system should collect its own health metrics (stored in `server_metrics` with `_system` prefix):
+
+| Metric | What It Measures | When to Alert |
+|--------|------------------|---------------|
+| `_ssh_collection_duration_ms` | Time to complete one full collection cycle | If > heartbeat interval * 0.8 |
+| `_ssh_session_pool_size` | Active sessions in pool | If approaching global limit |
+| `_ssh_collection_failures` | Consecutive failures per server | If > 3, auto-disable server |
+| `_ssh_pool_wait_queue` | Sessions waiting in acquire queue | If queue grows continuously |
+| `_ssh_auth_failures` | Authentication failures | Immediate alert |
+
+## Integration Points Summary
+
+| Integration Point | Existing Component | Change Required | Complexity |
+|-------------------|-------------------|-----------------|------------|
+| Collection scheduling | `MonitorCollector` heartbeat | Add `ServerCollector` as sibling timer (same file or standalone) | Low — standalone class |
+| Metrics storage | `metrics_history` (fixed columns) | New `server_metrics` (key-value table) | Low — independent table |
+| Metric definitions | `metric-registry.ts` | New `server-metric-definitions.ts` (standalone) | Low — parallel structure |
+| Alert evaluation | `alert-evaluator.ts` | Add `evaluateAllServerRules()` in new file; reuse `evaluateRuleWithLevels` | Medium — reuses same logic |
+| Alert creation | `alert-engine.ts` — `createAlertFromRule()` | Accept `serverId` param, extend typeMap | Low — one method change |
+| Alert events | `event-aggregator.ts` | Already works with any alert in `alerts` table | None — automatic |
+| Notification | `notification-service.ts` | Already reads `alerts` table | None — automatic |
+| Report generation | `report-service.ts` | Add `server_health` / `server_patrol` report types | Medium — new templates |
+| Health check | `instance-database-service.ts` health pattern | New `server-health-check.ts` (separate concern) | Low — independent |
+| Credential encryption | `db-connection.ts` — `encryptData/decryptData` | Reuse as-is | None — just import |
+| Frontend components | Lit 3.3 shared components | New server-list, server-detail, server-metrics views | Medium — new views |
+
+## Build Order Recommendation
+
+```
+Phase 1: Foundation (DB schema + CRUD)
+  ├── servers table migration
+  ├── server_metrics table migration
+  ├── server_metric_definitions table migration
+  ├── ALTER TABLE on alerts + alert_rules for server_id / target_type
+  └── server-database-service.ts (CRUD + test-connection)
+  └── Register /api/servers routes in server.ts
+
+Phase 2: SSH Connection (core infrastructure)
+  ├── npm install ssh2
+  ├── server-ssh-config.ts (credential decryption)
+  ├── server-session-pool.ts (connection pool + keepalive + reaping)
+  └── Integration test: connect, exec, disconnect
+
+Phase 3: Metrics Collection (data pipeline)
+  ├── server-metric-commands.ts (command definitions + parsers)
+  ├── server-metric-definitions.ts (metric metadata seeding)
+  ├── server-collector.ts (heartbeat + scheduling)
+  ├── server-health-check.ts (OS info detection, fingerprint capture)
+  └── Wire into server.ts start sequence
+
+Phase 4: Alert Integration (alert pipeline)
+  ├── server-alert-evaluator.ts
+  ├── Extend AlertEngine — server_id handling in createAlertFromRule()
+  ├── Extend AlertEngine.evaluateAndCreateAlerts() — call server evaluator
+  ├── Extend auto-recovery loop for server_id alerts
+  └── Seed server alert rules
+
+Phase 5: Server Inspection Reports
+  ├── server_inspection_history table
+  ├── Report templates for server_health / server_patrol
+  └── Report scheduling (reuse existing report cron)
+
+Phase 6: Frontend (parallel with Phases 3-5)
+  ├── Server list view (table, status indicators)
+  ├── Server detail view (info, metrics, alerts tabs)
+  ├── Server metrics trend charts (ECharts, reuse pattern)
+  └── Server alert rules management UI
+```
 
 ## Anti-Patterns to Avoid
 
-### Anti-Pattern 1: JWT Without Refresh
+### Anti-Pattern 1: One SSH Connection Per Collection Cycle
 
-**Current state:** Single JWT with 24h expiration and zero refresh capability.
+**What people do:** Create a new SSH connection, execute commands, close connection for every collection cycle. This adds 500ms-2s of connection overhead per cycle per server.
 
-**Why it is wrong:** Users lose work when token expires mid-session. No graceful re-auth.
+**Why it's wrong:** Creates unnecessary TCP handshake overhead, increases load on both monitor and target, delays collection.
 
-**v1.3 fix:** Implement refresh token rotation. Keep JWT short-lived (15 min) but auto-refresh transparently via `ApiClient` interceptor.
+**Do this instead:** Maintain persistent SSH connections via the session pool. Keep connections alive with keepalive pings. Only reconnect on failure or after idle timeout.
 
-### Anti-Pattern 2: Inline HTML Templates in Service Code
+### Anti-Pattern 2: Extending metrics_history Table
 
-**Current state:** `report-service.ts` has ~250 lines of HTML template strings embedded in JavaScript.
+**What people do:** Add server metric columns to the existing `metrics_history` table alongside DB metrics.
 
-**Why it is wrong:** Templates are not editable, not testable, mix presentation with logic.
+**Why it's wrong:** The table already has 30+ DB-specific fixed columns. Adding OS metrics would double the column count, create join confusion (server_metrics have no DB context), and waste storage with NULLs when collecting only local metrics.
 
-**v1.3 fix:** Extract templates to separate files. Use simple `{{ variable }}` replacement or minimal template engine.
+**Do this instead:** Separate `server_metrics` key-value table. The query pattern is different: by metric name, not by fixed column.
 
-### Anti-Pattern 3: Hardcoded Health Score
+### Anti-Pattern 3: Blocking the DB Collector Heartbeat With SSH Collection
 
-**Current state:** `report-service.ts` line 321: `health_score: 100, // TODO: implement health scoring logic`
+**What people do:** Add server collection directly inside the existing `MonitorCollector._tick()` method, making slow SSH operations delay DB metric collection.
 
-**Why it is wrong:** The score is meaningless and misleads users. The TODO has been in the codebase since initial implementation.
+**Why it's wrong:** A slow SSH connection (timeout, unresponsive server) holds up DB metric collection for all monitored database instances.
 
-**v1.3 fix:** Implement `instance-score-service.ts` with the weighted algorithm described in section 4.1.
+**Do this instead:** Run SSH collection independently — either as a separate interval timer or as a fire-and-forget branch within the tick. Guard with a timeout semaphore.
 
-### Anti-Pattern 4: Duplicate CSS Animations Across All Views
+### Anti-Pattern 4: Storing SSH Private Keys in Plaintext
 
-**Current state:** 15+ views have identical `@keyframes fade-in` CSS blocks.
+**What people do:** Store SSH private keys or passwords as raw text in the database for simplicity.
 
-**Why it is wrong:** Code bloat, inconsistent if one is modified. Violates DRY.
+**Why it's wrong:** Key compromise gives access to all monitored servers. Slide already has `encryptData()` — use it consistently.
 
-**v1.3 fix:** Move `fade-in` keyframes to a shared CSS stylesheet. Reference via CSS class import.
+**Do this instead:** Always encrypt via `encryptData()`. The key stays encrypted at rest and is decrypted only in memory during SSH connection setup.
 
-### Anti-Pattern 5: Silent Metrics Collection Failure
+### Anti-Pattern 5: Per-Server Timers
 
-**Current state:** `monitor-collector.ts` fails silently when instance credentials lack necessary permissions (e.g., no PROCESS privilege for MySQL CPU metrics).
+**What people do:** Set a separate `setInterval` per server, each running at the server's interval.
 
-**Why it is wrong:** Users see missing metrics with no indication why. Debugging requires log spelunking.
+**Why it's wrong:** Creates N timers (bad for event loop), hard to stop/restart, drift over time.
 
-**v1.3 fix:** Add collection capability detection + per-instance capability JSON column. Show capability status in UI.
+**Do this instead:** Single heartbeat timer (10s) checks a schedule map. This is the Zabbix model that `MonitorCollector` already uses.
 
----
+### Anti-Pattern 6: Blocking On SSH Pool Acquire
+
+**What people do:** Use a synchronous blocking pool acquire that holds up the entire collection tick until a session is available.
+
+**Why it's wrong:** If all sessions are in use or the acquire times out, the entire tick stalls for all servers, including healthy ones.
+
+**Do this instead:** Use a non-blocking acquire with a short timeout (5s). If acquire fails, skip the server this tick and try again next tick. Log the skip.
 
 ## Sources
 
-- Slide codebase: `/apps/db-ops-api/server.ts` -- all route registrations
-- Slide codebase: `/apps/db-ops-api/src/alert-engine.ts` -- existing alert evaluation and event aggregation
-- Slide codebase: `/apps/db-ops-api/src/alert-evaluator.ts` -- rule evaluation with threshold templates
-- Slide codebase: `/apps/db-ops-api/src/event-aggregator.ts` -- existing event aggregation logic
-- Slide codebase: `/apps/db-ops-api/src/auth/rbac-service.ts` -- full RBAC CRUD
-- Slide codebase: `/apps/db-ops-api/src/auth/require-permission.ts` -- middleware factory
-- Slide codebase: `/apps/db-ops-api/src/report-service.ts` -- inline HTML generation
-- Slide codebase: `/apps/db-ops-api/src/monitor-collector.ts` -- metrics collection
-- Slide codebase: `/apps/db-ops-api/src/baseline-calculator.ts` -- baseline computation
-- Slide codebase: `/apps/db-ops-api/sql/schema.sql` -- all table schemas
-- Slide codebase: `/apps/db-ops-api/sql/migrations/002_add_rbac_tables.sql` -- RBAC migration
-- Slide codebase: `frontend/src/openclaw/ui/icons.ts` -- icon set
-- Slide codebase: `frontend/src/openclaw/ui/views/*.ts` -- all frontend views
-- Slide codebase: `frontend/src/openclaw/ui/navigation.ts` -- tab definitions
+- Existing Slide architecture: `monitor-collector.ts` — Zabbix heartbeat scheduling model
+- Existing Slide architecture: `collector.ts` + `collectors/` — Provider pattern for metric collection
+- Existing Slide architecture: `alert-evaluator.ts` + `alert-engine.ts` — Alert evaluation pipeline
+- Existing Slide architecture: `instance-database-service.ts` — CRUD + encrypted credential pattern
+- Existing Slide architecture: `db-connection.ts` — `encryptData/decryptData` functions
+- External: `ssh2` npm package — standard Node.js SSH client library
+
+---
+*Architecture research for: SSH-based server monitoring integration into Slide DB Ops platform*
+*Researched: 2026-07-07*

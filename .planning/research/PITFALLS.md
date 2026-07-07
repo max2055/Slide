@@ -1,419 +1,480 @@
 # Pitfalls Research
 
-**Domain:** Database Ops Platform — Alert System, Auth & Permissions, Reports, Data Quality, UI Unification
-**Researched:** 2026-05-20
+**Domain:** SSH-based Server Monitoring (no-agent, via Node.js ssh2) on existing DB Ops Platform
+**Researched:** 2026-07-07
 **Confidence:** HIGH
 
 ## Critical Pitfalls
 
-### Pitfall 1: GET /api/alerts Route Missing Auth Middleware
+### Pitfall 1: SSH Host Key Verification Bypass (MITM Attack)
 
 **What goes wrong:**
-The `/api/alerts` route at server.ts line 532 has NO `verifyToken` or `requirePermission` middleware. Any unauthenticated request can list all alerts, including instance names, metric values, threshold values, and severity levels. This exposes operational data about all database instances.
-
-```
-// server.ts line 532 — NO auth middleware
-fastify.get('/api/alerts', async (request, reply) => { ... });
-```
-
-Compare with `/api/alert-rules` at line 1452 which correctly has `preHandler: [verifyToken, requirePermission('alert:view')]`.
+All server connections are silently accepted without verifying the remote host's identity. The ssh2 library defaults to auto-accepting any host key when `hostVerifier` is not set. An attacker on the network path (same VLAN, compromised switch, ARP spoofing) can intercept SSH connections, capture credentials, and return fake metrics. The platform operator never knows the key was wrong.
 
 **Why it happens:**
-Alert routes were added incrementally. The alert-rule routes (1452+) were added later and correctly include auth. But `GET /api/alerts` (532) and `GET /api/metrics/:instanceId` (567) were among the earliest routes and were never retrofitted. The "it works" testing pattern — developers test the route from the same browser they're logged into — hides this gap because they are already authenticated.
+Setup is quicker when you skip host key verification. In development, every new server needs its key manually accepted (like `ssh-keygen -R` for known_hosts). Developers disable verification "temporarily" and it ships to production. The team is familiar with SSH key pairs for user access but unfamiliar with `known_hosts` as a verification mechanism for automation. The ssh2 documentation explicitly states keys are "auto-accept if hostVerifier is not set" — silent authorization, not a helpful error.
 
 **How to avoid:**
-- Add `preHandler: [verifyToken, requirePermission('alert:view')]` to `GET /api/alerts`
-- Similarly audit `GET /api/metrics/:instanceId`, `GET /api/chat/history`, and `GET /api/database/instances` — these also lack auth middleware
-- Run a route audit script: `grep "fastify\.\(get\|post\|put\|delete\)" server.ts | grep -v "preHandler"` to find all unprotected routes
-- Before marking any alert-related phase complete, verify ALL alert routes have auth
+- Implement a `hostVerifier` callback in every SSH connection. Always hash with `hostHash: 'sha256'`.
+- Store accepted host keys in a dedicated `known_hosts` table (MySQL `server_known_hosts`) alongside the server record. On first connection, prompt an admin to verify and accept the key before collection begins.
+- For initial onboarding, support a "verify on first use" (TOFU) mode that stores the first-seen key and raises an alert if it changes — do NOT accept TOFU and never mention it.
+- Ship with strict verification enabled. Add a config flag `SSH_STRICT_HOST_KEY_CHECK=false` as a KNOWN INSECURE override, logged on startup, with a warning sentry event.
 
 **Warning signs:**
-- Any `GET /api/alerts` call from an incognito window returns data without a login prompt
-- grep shows `fastify.get('/api/alerts'` with no `preHandler` in the same line or next 3 lines
+- SSH connection code that only calls `connect()` with `host`, `port`, `username`, `privateKey` — no `hostVerifier` or `hostHash` parameters.
+- A `hostVerifier: () => true` or similar always-return-true function.
+- Connections work but there's no "first time connecting to new host" prompt anywhere in the UI.
 
 **Phase to address:**
-Phase: Alert System — this must be fixed BEFORE any alert UI work, because the UI will naturally authenticate and not catch this gap.
+Phase "SSH Connection Security" — must be implemented before ANY production server is registered. The host key verification model (strict vs. TOFU vs. database-backed) needs to be designed upfront because it affects the server registration flow, database schema, and UI.
 
 ---
 
-### Pitfall 2: monitor-collector.ts `checkAlerts()` Duplicates alert-engine Logic
+### Pitfall 2: Plaintext SSH Key Storage in Database
 
 **What goes wrong:**
-`monitor-collector.ts` has its own `checkAlerts()` method (line 311) that reads alert rules and creates alert records independently. The `alert-engine.ts` does the same job via `evaluateAndCreateAlerts()`. When both run — the collector runs via setInterval every ~10 seconds, the engine runs via cron every 60 seconds — duplicate alerts are created for the same metric breaches. Worse, they use different status checks: the collector checks for existing "open" status alerts, while the engine checks a `silence_periods` table. The two systems disagree on deduplication.
-
-```
-// monitor-collector.ts checkAlerts() — checks existing.open
-const existing = await alertDatabaseService.getAlerts({
-  instance_id: instanceId, metric_name: rule.metric_name,
-  status: 'open', limit: 1,
-});
-if (existing.length === 0) { createAlert(...) }
-
-// alert-engine.ts createAlertFromRule() — checks silence_periods
-const isSilenced = await alertSilenceService.isSilenced(instanceId, rule.metric_name);
-```
+SSH private keys are stored unencrypted in the `servers` table or a `server_credentials` table. Anyone with database read access (DBA, support staff, SQL injection vulnerability) can extract all private keys and access every monitored server. Unlike database passwords that are usually database-specific, SSH keys often grant broad system access (passwordless sudo, `root` login).
 
 **Why it happens:**
-The monitor-collector was written first as a simple inline alert checker. Later, the alert-engine was added as a more sophisticated system with dynamic thresholds, maintenance windows, and proper silence management. But the old inline checker was never removed, so both paths coexist creating alerts for the same metrics.
+The existing platform already stores database passwords in encrypted form (via `encryptData()` / `decryptData()`), so the team likely plans to reuse this pattern for SSH keys. But SSH private keys are fundamentally different from passwords in three ways:
+1. SSH keys are permanent credentials that users often reuse across multiple servers
+2. A compromised key can be used for lateral movement (SSH agent forwarding, key-based `sudo`)
+3. The `ssh2` library expects keys in a specific format (PEM, OpenSSH), not an encrypted blob that needs decryption at connection time
 
 **How to avoid:**
-- Remove the `checkAlerts()` method from `monitor-collector.ts` entirely — it is dead code now that alert-engine exists
-- The monitor-collector should ONLY collect metrics, never create alerts. That is the alert-engine's job
-- If the collector needs to trigger immediate evaluation (vs waiting for cron), make it call `alertEngine.triggerEvaluation()` instead
+- Store private keys encrypted at rest using the same `encryptData()` / `decryptData()` pattern already used for database passwords. Decrypt only in memory at connection time, never write the decrypted key to a temp file or log.
+- Add a dedicated `server_credentials` table (separate from `servers` or reuse `database_instances`-like pattern) with a `credential_type` column (`ssh_key` / `password`) and encrypted value storage.
+- Implement a key rotation endpoint (`POST /api/servers/:id/rotate-key`) that accepts a new key and re-encrypts it. This forces the API design to account for rotation from day one, rather than having keys be permanent once stored.
+- Add a `fingerprint` column (derived from the public key) so the platform can detect when a server's key changes unexpectedly.
 
 **Warning signs:**
-- Same instance+metric generates two alert records within 60 seconds of each other
-- One alert has `source: 'monitor-collector'` (from collector), the other has `source: 'alert-engine'` (from engine)
+- A `server_credentials` column that stores private keys in plaintext (or base64 only, no actual encryption).
+- No credential rotation endpoint on the server management API.
+- The team plans to "just encrypt it the same way as database passwords" without auditing whether SSH keys are equivalent to database passwords in terms of exposure risk.
 
 **Phase to address:**
-Phase: Alert System — Remove `checkAlerts()` from monitor-collector.ts as a first task. This prevents a class of bug that is extremely hard to detect later.
+Phase "Server Registration & Credential Management" — credential storage model is a design constraint that affects the database schema, API design, and agent tool registration.
 
 ---
 
-### Pitfall 3: Threshold Type Mismatch — Interface vs Database
+### Pitfall 3: SSH Connection Pool Exhaustion (Memory / Socket Leak)
 
 **What goes wrong:**
-The `AlertRule` interface in `alert-database-service.ts` (line 31-45) does NOT define a `threshold_type` column, but `alert-evaluator.ts` checks `rule.threshold_type === 'dynamic'` at line 126. The frontend alerts.ts interface (line 33-34) defines `threshold_type: 'static' | 'dynamic'` and `dynamic_config?: any`. This means:
-
-1. The DB table has no `threshold_type` column defined in the backend interface
-2. The evaluator silently treats null/undefined threshold_type as static (falls back, no error)
-3. Changing a rule to 'dynamic' via the frontend sends `threshold_type: 'dynamic'` but the backend's `updateAlertRule()` doesn't save it
-4. Dynamic thresholds are effectively broken — they work only if the baseline exists, but users can never configure a rule as "dynamic" through the UI
+Every metric collection cycle opens a new SSH connection to each server. If there are 100 servers, each with CPU, memory, disk, and network metrics collected at 30-second intervals, the platform opens 400 SSH connections per cycle. Many of these connections are not properly closed — the `exec()` callback completes but the channel or session is left open, or the `Client.end()` is never called on error. Within hours, the Node.js process exhausts the file descriptor limit (typically 1024 on macOS, 65535 on Linux but still finite) or the remote SSH servers exhaust their `MaxSessions` limit, causing all connections to start failing.
 
 **Why it happens:**
-The dynamic threshold feature was added incrementally: first the baseline calculator, then the evaluator, then the frontend UI. The DB schema migration and backend AlertRule interface were never updated to include `threshold_type`. This is a classic "half-integrated feature" — each piece works in isolation, but the full path is broken.
+The ssh2 library has a multi-level object model: `Client` (connection), `Session`, `Channel`. A common mistake is:
+- Creating a new `Client` for every collection without pooling
+- Calling `exec()` but not listening for the `close` event on the channel (SSH2 spec says the `exit` event is optional)
+- On error, only logging the error without calling `client.end()`
+- Assuming the `Client` auto-cleans when garbage collected (Node.js GC does not close TCP sockets)
+- The existing `unifiedCollector` acquires a database connection per instance and releases it — but a direct `getConnection()` pattern for SSH would be much more expensive, since each SSH connection involves a TCP handshake + key exchange + authentication
 
 **How to avoid:**
-- Add `threshold_type` to the `AlertRule` interface in `alert-database-service.ts`
-- Add `threshold_type` and `dynamic_config` columns to the DB migration
-- Update `updateAlertRule()` to persist both fields
-- Write an integration test: create a rule with `threshold_type: 'dynamic'`, read it back, verify it's still dynamic
-- Same issue exists for `silence_minutes` — present in frontend interface and alert-engine.ts (line 196) but not in backend AlertRule interface or updateAlertRule()
+- Implement a **connection pool** per SSH server, not per metric. Reuse the same `ssh2.Client` for all metrics on the same server within a collection cycle.
+- Set `keepaliveInterval: 60000` and `keepaliveCountMax: 3` on the Client so idle connections are detected and cleaned.
+- In the pool, set a `maxConnections: 3` limit per server (SSH default `MaxSessions` is often 10, but limit yourself to 3 to be safe).
+- On every `exec()` call, attach ALL channel event listeners: `close`, `error`, `exit`, `end`. The `close` handler MUST call `channel.close()` and the `error` handler MUST call `client.end()`.
+- Add a health check: monitor open file descriptors (`process.resourceUsage()`) and SSH connection count. Alert when either exceeds 80% of the system limit.
+- Set `readyTimeout: 30000` (30s) to fail fast on unreachable hosts instead of hanging for 2+ minutes.
 
 **Warning signs:**
-- Frontend shows "Dynamic threshold" toggle but after save, reload shows "Static"
-- A rule that should use dynamic thresholds never triggers (always falls back to static threshold_template)
+- Metric collection that works for 1-2 servers but silently fails for 10+.
+- Increasing `ETIMEDOUT` or `ECONNRESET` errors over time.
+- The platform's file descriptor usage growing monotonically with each collection cycle.
+- Remote SSH servers logging "max sessions" errors or refusing new connections.
+- No test for "collect metrics from 50 servers simultaneously" — single-server tests never catch pool leaks.
 
 **Phase to address:**
-Phase: Alert System — Fix threshold_type AND silence_minutes persistence in the same pass. These are the same class of bug.
+Phase "SSH Metric Collection Engine" — connection pooling is the architectural foundation. Written correctly here, performance and reliability issues are avoided. Written as a quick prototype, the pool leak will only surface later under load.
 
 ---
 
-### Pitfall 4: JWT Token Refresh Lost — Mid-Session Logout
+### Pitfall 4: Collection Output Parsing Fragility (Brittle `exec()` Output Processing)
 
 **What goes wrong:**
-JWT tokens are stored in `localStorage` (checked at `event-management.ts` line 8: `localStorage.getItem("token")`) but there is no visible refresh mechanism. When the JWT expires (typically 1-24 hours depending on config), all API calls start returning 401. The user is silently logged out — the UI doesn't handle 401 responses by redirecting to login; it shows "permission denied" errors or blank data.
+Metric collection relies on parsing the stdout of shell commands like `cat /proc/stat`, `free -m`, `df -h`, or `top -bn1`. These commands have different output formats across Linux distributions (Debian vs RHEL vs Alpine vs Ubuntu), different kernel versions, different locale settings (`LANG=de_DE.UTF-8` produces German decimal commas instead of dots), and different language packs. A metric that works on Ubuntu 22.04 fails silently on CentOS 7, returning `NaN` or garbage values that pass threshold checks incorrectly.
 
 **Why it happens:**
-The auth system was designed with short sessions in mind. Token expiry handling (intercept 401, redirect to login, try refresh token) is a standard pattern that was deferred. The result is that a user actively working (generating a report, reviewing alerts) may hit an expiry mid-operation with no recovery path.
+The developer tests on one OS (their dev machine or a single Ubuntu test server) and assumes the output format is universal. In reality:
+- `free -m` output differs between `procps-ng` and BusyBox (Alpine uses BusyBox)
+- `df` column alignment varies by filesystem name length — fixed-width parsing breaks on long mount paths
+- `cat /proc/stat` CPU line format differs across kernel versions (older kernels don't have guest/steal columns)
+- Locale affects number formatting: `LANG=de_DE.UTF-8 free` shows `3,1` instead of `3.1`
+- `awk` or `sed` may not be available on minimal Docker images (Alpine uses BusyBox `awk` with different behavior)
+- The remote server's default shell might be `sh`, not `bash`, with different pipe/expansion semantics
 
 **How to avoid:**
-- Implement a Fastify preHandler that checks token expiry and returns a structured 401 response
-- On the frontend, wrap all `fetch()` calls in an interceptor that catches 401, clears localStorage, and redirects to login
-- OR: Implement refresh tokens — `/api/auth/refresh` endpoint issues new access token using a stored refresh token
-- OR (simplest): Set JWT expiry to a very long duration (24h) and only require re-login on browser close (sessionStorage vs localStorage)
+- Read metrics from `/proc` and `/sys` filesystem directly over SFTP instead of parsing `exec()` output. SFTP avoids shell interpretation issues entirely and returns raw file contents.
+- If using `exec()`, always set `LANG=C` and `LC_ALL=C` in the command prefix to get consistent English output: `LANG=C LC_ALL=C free -b`.
+- Use JSON-capable command lines where possible: `LANG=C LC_ALL=C free -b --json` (available on newer procps), or parse `/proc/meminfo` (key-value format, highly portable).
+- Maintain a **per-metric compatibility matrix** in code: e.g., `{ command: ['/proc/cpuinfo', 'sftp'], fallback: ['top -bn1 | head -5', 'exec'] }`. If the primary method fails for a distro, try the fallback.
+- Validate every parsed metric: if a CPU percentage exceeds 100 or memory usage is negative, treat it as a collection failure, not a valid data point.
+- Unit test against fixture files from Ubuntu 20.04, 22.04, CentOS 7, 8, Rocky Linux 9, Alpine 3.18, and Debian 11/12. Do not trust that "Linux is Linux."
 
 **Warning signs:**
-- Intermittent "permission denied" errors that go away after page refresh
-- "401" responses in browser DevTools network tab during active sessions
+- Metric collection that only uses `exec()` with pipe-heavy shell commands (`cat file | awk '{print $2}' | grep ...`).
+- No `LANG=C` prefix on any SSH command.
+- All testing performed on a single OS (the dev's Mac with a single Ubuntu VM).
+- Metric values that are occasionally `0`, `Infinity`, or `NaN` but collected successfully.
 
 **Phase to address:**
-Phase: Auth & Permissions — Token refresh or 401 intercept is a prerequisite for any feature that involves long user sessions (report generation, alert management, dashboard monitoring).
+Phase "SSH Metric Collection Engine" — the collection strategy (SFTP vs exec, locale handling, fallback chains) is a design decision that affects every single metric. Changing it later means rewriting every provider.
 
 ---
 
-### Pitfall 5: ov-card Removal Blast Radius — 5+ Views with Duplicate CSS
+### Pitfall 5: Blocking the Node.js Event Loop with SSH Operations
 
 **What goes wrong:**
-The `ov-card` pattern is used across 5+ frontend views with near-identical inline CSS duplicated in each:
-- `dashboard.ts` — 6 ov-cards, ~30 lines of CSS
-- `alerts.ts` — 4 ov-cards, ~50 lines of CSS
-- `reports.ts` — 4 ov-cards, ~50 lines of CSS
-- `schema-management.ts` — 4 ov-cards, ~40 lines of CSS
-- `instances-db.ts` — 4 ov-cards, ~50 lines of CSS
-- `overview-cards.ts` — shared component but with different styling
-
-Removing `ov-card` requires touching 6 files, each with slightly different CSS variants (`.ok`, `.warn`, `.danger`, `.red`, `.orange`, `.blue`). Any replacement shared component must handle ALL color variants and the stagger animation pattern.
+SSH key exchange (especially RSA 4096-bit key exchange) is CPU-intensive and can block the event loop for 50-200ms per connection. With 50 servers reconnecting simultaneously on a collection cycle, the event loop is blocked for 2.5-10 seconds. During this time, the platform's HTTP server cannot respond to requests, alert evaluation is delayed, WebSocket heartbeats time out, and the platform appears unresponsive. In extreme cases, the health check endpoint times out and supervisors (PM2, Docker healthcheck) restart the process.
 
 **Why it happens:**
-`ov-card` started as a dashboard-only pattern (dashboard.ts), then was copy-pasted to other views. Each copy added minor variants (`.red`, `.orange`, `.blue` color classes). By the time it was used in 5 views, converting to a shared component became a coordination problem — "which version of ov-card is canonical?"
+The ssh2 library's crypto operations run synchronously in the main thread (Node.js does not offload crypto to a thread pool by default for all operations, especially the OpenSSL key exchange). The developer sees that ssh2 is "async" (use of callbacks/promises) and assumes it doesn't block the event loop. The existing DB metric collection uses a connection pool that holds persistent connections, so there's no reconnect overhead per cycle. SSH connections are brand new each cycle, so the overhead is dramatically higher.
 
 **How to avoid:**
-- Before removing ov-card, create a shared `<stat-card>` Lit component that supports ALL existing variants:
-  ```typescript
-  <stat-card label="Total Alerts" value="${stats.total}" variant="default"
-             hint="All alerts" color="ok|warn|danger|red|orange|blue">
+- **Connection reuse**: Hold persistent SSH connections per server (with keepalive). Do not reconnect every collection cycle. The existing DB collector model (persistent pool connections) is the right pattern — replicate it for SSH.
+- **Staggered collection**: Do not start all SSH connections simultaneously. Use a semaphore (e.g., `async-sema`) limited to 5-10 concurrent SSH connections. The existing `monitor-collector` has a 5-second heartbeat — use it to distribute collection across the cycle window.
+- **Worker thread for heavy collections**: If reconnection is unavoidable (e.g., after network partition), consider offloading the reconnect + key exchange to a `worker_threads` sub-process. This is overkill for most cases but essential if managing 200+ servers.
+- **Monitor event loop lag**: Add a metric for event loop delay (via `monitorEventLoopDelay` from Node.js `perf_hooks`). Alert if it exceeds 1000ms during collection cycles.
+- **Set collection jitter**: Each server's first collection should be randomized within the collection window to prevent thundering herd of key exchanges.
+
+**Warning signs:**
+- HTTP API latency spikes during collection cycles.
+- WebSocket disconnections during the "top of the minute" (when all cron jobs run simultaneously).
+- Health check endpoint sometimes returns 503 during collection.
+- Event loop lag metrics showing >1000ms during collection.
+
+**Phase to address:**
+Phase "SSH Metric Collection Engine" — the connection reuse strategy directly determines whether event loop blocking is a problem at scale. Must be designed upfront.
+
+---
+
+### Pitfall 6: Creating a Parallel Monitoring System Instead of Extending the Existing One
+
+**What goes wrong:**
+Server monitoring is implemented as a separate, parallel system — its own scheduler, its own metric storage model, its own alert rules engine, its own notification dispatch, and its own frontend that doesn't share components with the existing DB monitoring views. This doubles the maintenance burden and creates inconsistency: server alert rules are configured differently than DB alert rules, server metrics are queried differently in the frontend, and the "unified view" of all monitored resources never materializes.
+
+**Why it happens:**
+The existing platform's scheduling system (`monitor-collector.ts` + `unifiedCollector`) and alert engine are designed around database instances. The team assumes they need to build a separate system because "SSH servers are different from databases." In reality, 80% of the infrastructure is identical: periodic metric collection, threshold evaluation, alert creation, notification dispatch. The temptation to build a clean new system rather than fitting into the existing one is strong — the new system feels simpler because it doesn't have to accommodate the existing quirks.
+
+**How to avoid:**
+- Extend `collector.ts` / `MonitorCollector` to accept a second `collectable` type (servers alongside database instances). The heartbeat scheduler should schedule both DB and server metrics.
+- Reuse the `metrics_history` table by adding an optional `server_id` foreign key (alongside the existing `instance_id`). Keep the same metric names for comparable metrics (`cpu_usage`, `memory_usage`, `disk_usage`).
+- Add server-specific metric names prefixed with `server_` for clarity (`server_cpu_usage`, `server_disk_io_wait`).
+- Reuse the `alert_rules` table with a new `target_type` column: `'database' | 'server'` to distinguish alert scopes. The `alert-evaluator.ts` already handles `evaluateRule()` generically.
+- Reuse `notification-service.ts` and `alert-event-service.ts` unchanged — notifications don't care where the metric came from.
+- Add a new provider type (SSH provider) to the `collectorRegistry` alongside the existing `mysql.provider.ts`, `postgresql.provider.ts`, etc. Follow the `MetricProvider` interface pattern from `base-provider.ts`.
+
+**Warning signs:**
+- Architecture document or plan that describes a "separate server monitoring engine" or "server alert system" rather than extending the existing one.
+- New database tables that re-invent `metrics_history`, `alert_rules`, or `alerts`.
+- The team creates a separate frontend component for server monitoring charts instead of reusing the existing ECharts-based metric dashboard.
+- "It would be cleaner to build it fresh" appears in design discussions — this is almost always the wrong call for an existing platform.
+
+**Phase to address:**
+Phase "Architecture Planning" — before any code is written, the integration model must be decided. This decision affects ALL subsequent phases.
+
+---
+
+### Pitfall 7: Connection Test Works But Periodic Collection Fails
+
+**What goes wrong:**
+The server registration flow includes a "Test Connection" button that successfully connects via SSH, authenticates, runs a simple command (like `hostname` or `uptime`), and returns success. The server is registered as "Connected." But when periodic collection starts, every single metric fails with `ETIMEDOUT`, authentication errors, or "command not found" — because the test connection used a different authentication method, a different command, or bypassed a restriction that production collection hits.
+
+**Why it happens:**
+The test connection and the periodic collection use different code paths:
+- Test connection uses the admin user's SSH key (via agent forwarding)
+- Periodic collection uses the stored private key (which may be incorrect or passphrase-protected)
+- Test connection runs `echo success` (available everywhere)
+- Periodic collection runs `cat /proc/stat` (which may be restricted by SELinux, AppArmor, or `restricted shell` environments)
+- Test connection runs on the API server's local network
+- Periodic collection runs on a container with different DNS resolution or network ACLs
+
+**How to avoid:**
+- Make the "Test Connection" button execute the SAME code path as periodic collection. Specifically, it should:
+  1. Retrieve the stored credential from the database (not prompt for a new one)
+  2. Call the EXACT same connect() parameters as the collector
+  3. Run a representative command from the metric set (e.g., `cat /proc/stat` instead of `echo success`)
+  4. Return the list of metrics it could collect, not just "connection OK"
+- Add a mandatory "dry run" step after server registration: a full collection cycle that runs all metrics and reports which ones succeeded and which failed, with error messages for each failure.
+- Distinguish "connection status" from "collection status" in the UI: a server can be "connected" (SSH auth works) but "unhealthy" (metrics consistently fail).
+- For each metric, implement a "readiness probe" that verifies the specific command or file path is available on the target system.
+
+**Warning signs:**
+- "Test Connection" is quick but uses a different code path than collection.
+- Test connection only tests SSH connectivity, not the actual metric commands.
+- A server shows as "online" but produces no metrics.
+- No visible distinction between "connection failed" and "collection failed" error states.
+
+**Phase to address:**
+Phase "Server Registration & Credential Management" — the test connection flow must be designed to use the same code path as production collection.
+
+---
+
+### Pitfall 8: One Server Connects, But 100 Servers Crash — No Concurrency Throttling
+
+**What goes wrong:**
+The SSH collector works perfectly with 1-5 servers during development. When deployed with 100 servers, the platform starts failing unpredictably:
+- Some servers return `ETIMEDOUT` (OS connection queue saturated)
+- The API server becomes unresponsive (too many concurrent crypto operations on the event loop)
+- Existing database metric collection starts failing (the SSH collectors consumed all available resources)
+- Remote SSH servers refuse connections (the platform opened 100 simultaneous SSH connections from the same IP)
+
+**Why it happens:**
+The collector was tested with a few servers and no concurrency limit. The developer assumed SSH connections are like HTTP connections (which Node.js handles well concurrently). But SSH key exchange is significantly more expensive than HTTP:
+- Each key exchange does asymmetric crypto (CPU-bound)
+- Each connection involves a TCP handshake + SSH version exchange + key exchange + authentication (multiple round trips, latency-bound)
+- The combination of CPU-bound crypto and I/O-bound connection setup means the operation can't be parallelized efficiently
+- Node.js doesn't have a built-in semaphore; the developer must explicitly implement concurrency limiting
+
+**How to avoid:**
+- Implement a **global semaphore** (e.g., `async-sema` library) that limits concurrent SSH operations across ALL servers. Start with `maxConcurrentSsh: 10` and tune based on event loop lag.
+- Implement a **per-host semaphore** limited to 3 concurrent channels (matching SSH default `MaxSessions`).
+- Use staggered scheduling: distribute server collection across the full collection interval, not all at the same second. The existing `MonitorCollector.heartbeatMs = 10000` provides natural staggering.
+- Test with at least 50 simulated servers before shipping. Use a test harness that runs local SSH daemons (e.g., `sshd` on high-numbered ports) to simulate load.
+- If the platform uses multiple worker processes (PM2 cluster mode), ensure SSH semaphores are scoped per-worker or use a shared Redis-based semaphore.
+
+**Warning signs:**
+- `ssh2.Client.connect()` calls all metrics in a synchronous `for` loop with no concurrency limiting.
+- No semaphore or concurrency limiter in the SSH collector.
+- Testing with only 1-2 servers.
+- No `EventLoopUtilization` metrics being collected.
+
+**Phase to address:**
+Phase "SSH Metric Collection Engine" — the concurrency model (semaphore, semaphore scoping, staggering) must be part of the initial collector design.
+
+---
+
+### Pitfall 9: Not Handling SSH Connection Failures at Scale (Transient Errors vs Permanent Failure)
+
+**What goes wrong:**
+When 1 out of 100 servers has a transient SSH failure (temporary network issue, SSH daemon restart, key rotation in progress), the collector either:
+1. Treats it as a permanent failure, disables monitoring and fires a P0 alert
+2. Ignores it silently, leaving the operator unaware their server is unmonitored
+3. Retries aggressively, causing a thundering herd of reconnection attempts that amplify the problem
+
+**Why it happens:**
+The existing DB collector pattern has a "3 consecutive failures disables the provider" rule (D-13). This makes sense for DB providers where a failure means the database configuration is wrong. For SSH, failures are often transient (network blips, SSH daemon restarting, DNS resolution timing out) and disabling monitoring after 3 failures means the server goes dark during a real incident because the network is flaky — exactly when monitoring is most needed.
+
+**How to avoid:**
+- Differentiate failure types: `ETIMEDOUT` (network issue) vs `ERR_SSH_AUTH` (credential issue) vs `EHOSTUNREACH` (server down). Network errors should backoff and retry; auth errors should alert immediately.
+- Implement exponential backoff: wait 30s, 2min, 5min, 15min between retries. After 5 consecutive failures of the same type, fire a "Server Unreachable" alert but keep retrying at 15-minute intervals.
+- Do NOT disable metric collection for a server due to SSH failures. Keep the server's metric schedule active; just skip and retry the failed collection.
+- Add a "last successful collection" timestamp to the server record. Alert if it exceeds 2x the collection interval (e.g., if metrics are collected every 60s, alert after 120s without success).
+- When a server recovers, detect the gap and backfill if possible (some metrics like disk usage can be corrected on recovery; CPU utilization over the gap is lost).
+
+**Warning signs:**
+- The existing "3 consecutive failures disables provider" pattern is used directly for SSH without modification.
+- No distinction between network errors, auth errors, and command errors.
+- No server-level "last successful collection" timestamp.
+- Retry logic that retries immediately (no backoff) or retries indefinitely.
+
+**Phase to address:**
+Phase "SSH Metric Collection Engine" — the failure handling strategy is part of the collector design.
+
+---
+
+### Pitfall 10: Over-Engineering the Server Model with Unnecessary Abstraction
+
+**What goes wrong:**
+Instead of adding a simple `servers` table that mirrors existing `database_instances`, the team builds a generic "Resource" abstraction layer to support "any type of monitored resource." This adds weeks of development time, introduces abstraction bugs, and the generic layer never gets used for anything beyond SSH servers. The existing `database_instances` table has worked well for DB monitoring; the server model should follow the same pattern, not introduce a new paradigm.
+
+**Why it happens:**
+The developer sees that databases and servers share some attributes (host, port, credentials, status) and decides to extract a common "monitored resource" base class or table. This is a classic "premature generalization" — the abstraction solves a future problem that may never materialize. The existing `database_instances` table is concrete and works; adding a similar `servers` table with server-specific columns is faster, simpler, and easier to maintain.
+
+**How to avoid:**
+- Start with a concrete `servers` table that mirrors `database_instances` structure:
+  ```sql
+  CREATE TABLE servers (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    host VARCHAR(255) NOT NULL,
+    port INT DEFAULT 22,
+    username VARCHAR(255) NOT NULL,
+    auth_method ENUM('password', 'key') DEFAULT 'key',
+    credential_id INT REFERENCES server_credentials(id),
+    os_type VARCHAR(50),
+    tags JSON,
+    status ENUM('active', 'inactive', 'error') DEFAULT 'active',
+    health_score DECIMAL(5,2) DEFAULT 100.00,
+    health_status ENUM('healthy', 'warning', 'critical', 'unknown') DEFAULT 'unknown',
+    last_collected_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  );
   ```
-- Replace ov-card in all 6 views in a SINGLE commit (partial replacement leaves inconsistent UI)
-- Remove the old CSS from each view's `static styles` after replacement
-- Test each view's stat card section visually — stagger animations, colors, hover states
+- If future generalization is needed, extract the shared interface after 2+ concrete implementations exist. Not before.
+- Reuse the existing `DatabaseInstance` pattern in code. Create a `ServerInstance` interface that mirrors `DatabaseInstance`, not a generic `MonitoredTarget<SpecificFields>`.
+- The SSR details port (22 vs custom), auth method (key vs password), and OS type are server-specific fields that don't fit databases. Accept that they're different and model them separately.
 
 **Warning signs:**
-- After refactoring, one view shows stat cards in the old style while others show the new style
-- Removing ov-card CSS from one view "accidentally" removes it from another (if CSS leaks through shared shadow DOM — unlikely with Lit but possible with global styles)
+- Planning documents discussing "abstract resource model" or "generic monitoring target" or "unified resource abstraction."
+- Feature creep: "While we're at it, we can model network devices and storage arrays too."
+- The table design has a `resource_type` ENUM and a generic `connection_config` JSON column instead of concrete columns.
+- Design discussions that last more than one session about table structure.
 
 **Phase to address:**
-Phase: UI Unification — This is the core work item. Do NOT remove ov-card piecemeal across multiple phases; do it all at once.
+Phase "Architecture Planning" — the server model decision (concrete vs abstract) must be made before any schema or code is written. The FEATURES.md research already advocates for the concrete approach.
 
 ---
-
-### Pitfall 6: Report Type Inconsistency — 'slow-query' vs 'slow_query' vs 'slow_query'
-
-**What goes wrong:**
-The report system has THREE different naming conventions for the same report type:
-
-1. Backend `ReportType` type: `'health' | 'performance' | 'slow-query' | 'capacity'` (report-database-service.ts line 7)
-2. Backend route handler valid types: `['health', 'performance', 'slow_query', 'capacity']` (server.ts line 1391)
-3. Frontend `Report` interface: `report_type?: string` (reports.ts line 8) — not even typed
-
-Route `/api/reports/generate` checks against `slow_query` (with underscore) but the `reportDatabaseService.createReport()` accepts the DB-enforced `ReportType` which expects `slow-query` (with hyphen). The mismatch causes report generation to succeed (the route check passes both), but filtering or displaying by type will miss records because the stored value depends on which code path created the report.
-
-**Why it happens:**
-`slow-query` was the original type name (hyphenated for consistency with URL conventions). At some point, a route was added that validates against `slow_query` (underscore, matching variable naming conventions). Nobody noticed the mismatch because both paths write to the same `reports.type` column, just with different values, leading to inconsistent data.
-
-**How to avoid:**
-- Choose ONE convention and stick to it: `slow_query` (SQL-style, consistent with other enum values) or `slow-query` (URL-style)
-- Update both `ReportType` and the route validator to use the SAME string
-- Write a data migration script to normalize existing rows: `UPDATE reports SET type = 'slow_query' WHERE type = 'slow-query'`
-- Add a DB constraint or application-level validation that rejects unknown types
-- Type the frontend `Report` interface properly: `type: 'health' | 'performance' | 'slow_query' | 'capacity'`
-
-**Warning signs:**
-- Filtering reports by type shows incomplete results
-- `SELECT DISTINCT type FROM reports` shows both `slow_query` and `slow-query`
-
-**Phase to address:**
-Phase: Reports Refactoring — Fix the type constant first, before any report UI refactoring. Data migration and type unification are prerequisites for the rest.
-
----
-
-### Pitfall 7: health_score Hardcoded to 100 — All Instances Appear Perfect
-
-**What goes wrong:**
-In `report-service.ts` line 322-323:
-```typescript
-health_score: 100, // TODO: 实现健康评分逻辑
-health_status: 'healthy', // TODO: 实现健康状态判断
-```
-
-The health score and status are hardcoded. Every health report says the instance is perfectly healthy (score 100). Users who trust this report will miss actual issues. The dashboard also uses this hardcoded score for its "Health Score" stat card.
-
-Additionally, the `instanceDatabaseService.updateHealthStatus()` in `monitor-collector.ts` (line 283) sets the actual health score based on databaseService.checkHealth(), so there IS a real health score — but report-service.ts bypasses it.
-
-**Why it happens:**
-The report generation was built before the health check system was complete. The TODO was never resolved because "it works" (reports generate, they just always say healthy). This is a classic "shipped with TODOs" problem — once the feature ships, there's no user pressure to fix it because users don't know there's missing logic.
-
-**How to avoid:**
-- Replace the hardcoded values with actual metrics data:
-  ```typescript
-  health_score: this.calculateHealthScore(metrics),
-  health_status: this.determineHealthStatus(metrics.health_score),
-  ```
-- `calculateHealthScore()` should consider: CPU (0-100, weight 25%), memory (0-100, weight 25%), disk (0-100, weight 25%), connections saturation (0-100, weight 15%), slow query rate (0-100, weight 10%)
-- OR: Use the existing `databaseService.checkHealth()` result which already has a computed score
-
-**Warning signs:**
-- All health reports show "100" for health score
-- A report for a known-dead instance still says "Healthy"
-
-**Phase to address:**
-Phase: Data Quality — This is the minimum deliverable for "instance score algorithm." The algorithm doesn't need to be perfect in v1.3, but it MUST NOT be hardcoded.
-
----
-
-### Pitfall 8: Alert-Event Aggregation Window Collision
-
-**What goes wrong:**
-The event aggregator uses a hardcoded 5-minute aggregation window (`FLOOR(UNIX_TIMESTAMP(created_at) / 300) * 300 AS time_bucket`) in `event-aggregator.ts` line 39. Alerts created just outside the 5-minute boundary (e.g., at 00:04:59 and 00:05:01) fall into different buckets and are never aggregated together, even though they represent the same incident.
-
-Worse: the aggregation runs on every alert-engine tick (every 60 seconds), querying alerts from the last 10 minutes. A batch of alerts created at T+0, T+1min, T+2min will be partially aggregated at T+5min (alerts from T+0..T+5 only), and the remaining alerts at T+6min..T+10min will form a separate event. One real incident becomes two events.
-
-**Why it happens:**
-The 5-minute window is a reasonable default (to avoid excessive aggregation), but hardcoding it without overlap handling means boundary cases split events. The real fix is either: (a) use a sliding window that checks for ANY gap > 5 minutes, not fixed buckets, or (b) at minimum, check continuity across bucket boundaries.
-
-**How to avoid:**
-- Replace the fixed time-bucket approach with a gap-based aggregation: group alerts where the time between consecutive alerts < threshold (e.g., 5 minutes)
-- Or: Add a post-aggregation merge step that checks if new events overlap with existing ones within a configurable grace period
-
-**Warning signs:**
-- Two related events for the same instance+metric created within 6-10 minutes of each other
-- Manual inspection shows the alerts should be one incident
-
-**Phase to address:**
-Phase: Alert System — Refine the aggregation algorithm. The fix is small but has high impact on alert quality.
-
----
-
-### Pitfall 9: Two Icon Files with Overlapping But Different Sets
-
-**What goes wrong:**
-There are two icon files in the frontend:
-1. `frontend/src/styles/icons.ts` — 470 lines, ~50 icons
-2. `frontend/src/openclaw/ui/icons.ts` — 515 lines, ~50+ icons (including `icons.shield`)
-
-These files have overlapping icons (both define `database`, `settings`, `bell`, `file-text`, `triangle-alert`, etc.) but with different SVG paths and different names. The `styles/icons.ts` uses names like `'layout-grid'`, `'heart-pulse'`, `'triangle-alert'` (kebab-case string keys), while `openclaw/ui/icons.ts` uses names like `messageSquare`, `fileText`, `trendingUp` (camelCase object property names).
-
-Views import from different locations inconsistently. Adding new icons to one file doesn't make them available to views that import from the other. Any UI unification effort needs to decide which is canonical.
-
-**Why it happens:**
-The two files come from different development periods. `styles/icons.ts` is from the earlier OpenClaw-based UI layer. Later, `openclaw/ui/icons.ts` was created as part of the Slide-specific UI rewrite. Both are still actively imported because not all views were migrated to the new icons.
-
-**How to avoid:**
-- Designate ONE canonical icon file (recommended: `openclaw/ui/icons.ts` since it has more icons and is the Slide-specific one)
-- Consolidate all icons into the canonical file, ensuring no icon is lost
-- Update all imports across the entire frontend to use the canonical file
-- Remove the deprecated file
-- Add a lint rule: `no-restricted-imports` with pattern `*/styles/icons`
-
-**Warning signs:**
-- `grep -r "styles/icons" frontend/src --include="*.ts"` returns results
-- An icon works in one view but renders as empty/blank in another
-
-**Phase to address:**
-Phase: UI Unification — This must be done BEFORE adding new icons for the alert/report features, otherwise new icons will be added to the wrong file.
-
----
-
-### Pitfall 10: Alert Metric Type Map is Hardcoded — New Metrics Don't Map
-
-**What goes wrong:**
-In `alert-engine.ts` lines 154-163:
-```typescript
-const typeMap: Record<string, 'performance' | 'availability' | 'security' | 'capacity'> = {
-  cpu_usage: 'performance',
-  memory_usage: 'performance',
-  disk_usage: 'capacity',
-  connections: 'performance',
-  qps: 'performance',
-  tps: 'performance',
-  health_score: 'availability',
-  slow_queries: 'performance',
-};
-```
-
-When a new metric is added to `metric-registry.ts` (e.g., `replication_lag_seconds`), the typeMap doesn't include it. The fallback `rule.metric_name` || 'performance' silently assigns 'performance' to every unknown metric. A replication lag alert labeled as 'performance' type is misleading.
-
-**Why it happens:**
-The typeMap is a lookup table that should be derived from the metric definition, not hardcoded. Since there's no dynamic mapping from `metric-registry.ts` categories to alert types, every new metric needs a manual update to the typeMap — and nobody remembers.
-
-**How to avoid:**
-- Add a `category` field to `MetricDefinition` in `metric-registry.ts`: `category: 'performance' | 'availability' | 'security' | 'capacity'`
-- Replace hardcoded typeMap with `metricRegistry.getById(rule.metric_name)?.category || 'performance'`
-- Remove the typeMap entirely — it becomes a derived property
-
-**Warning signs:**
-- New metrics always show as "performance" type in alerts regardless of what they measure
-
-**Phase to address:**
-Phase: Alert System — Add category to MetricDefinition and use it in alert creation. This is a small change that prevents a recurring bug.
 
 ## Technical Debt Patterns
 
+Shortcuts that seem reasonable but create long-term problems.
+
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Inline alert check in monitor-collector.ts | Quick alert creation without building engine | Duplicate alerts, two code paths to maintain, inconsistent dedup | NEVER — remove immediately |
-| Hardcoded health_score=100 in report-service.ts | Ship report feature faster | All health reports lie to users; data quality feature lacks baseline | NEVER — fix before v1.3 ships |
-| Missing threshold_type in DB schema | Ship dynamic threshold UI quickly | Dynamic thresholds can never be saved; feature is broken | NEVER — fix persistence |
-| Two icon files | Incremental migration without breaking existing views | Confusion about where to add new icons; inconsistent rendering | Only during active migration; collapse to one file in v1.3 |
-| ov-card duplicate CSS across 5+ views | Quick stat card in each view | 200+ lines of identical CSS; any design change requires 5 edits | Only until shared component exists — create in v1.3 |
-| Report type 'slow-query' vs 'slow_query' | Both values seemed reasonable | DB has inconsistent data; filtering breaks | Only if data migration script is queued to run |
-| JWT stored in localStorage with no refresh | Simple auth implementation | Token expiry = silent logout; no recovery path | For short sessions only (<1h); unacceptable for long-running features like reports |
+| Store all server metrics in a generic JSON blob instead of typed columns | Fast schema iteration, no schema migrations | Can't query by metric value, no indexing, slow trend views, harder to join with alert rules | Never — the existing `metrics_history` pattern already solves this with typed columns |
+| Disable host key verification (hostVerifier = noop) | No first-connect UI needed, all servers connect on first try | MITM attacks possible, no tamper detection, compliance violation (PCI-DSS, SOC2) | Only in isolated dev environments with non-production servers |
+| Same SSH connection for all metrics, no pooling | Simple code, easy to understand | If connection drops mid-cycle, partial metrics are lost and harder to attribute | Acceptable temporarily in MVP if documented as tech debt, must fix before v0.8 ships |
+| Use shell commands ("top -bn1", "df -h") instead of SFTP /proc reads | Faster to prototype, works on most systems | Brittle across distros, locale issues, shell injection risk, no error locality | Only for metrics that have NO /proc alternative (e.g., network metrics that need `ss -s` or `/proc/net/dev`) |
+| SSH password authentication instead of key-based | Password can re-use existing database credential storage pattern | Exposed if DB leaked, no key rotation support, weaker against brute force, harder to audit | Never for production; acceptable only for dev/test servers with non-sensitive data |
+| Collection via `exec()` with `sudo` to read privileged metrics | Allows collecting any metric without managing SSH user permissions | sudo escalation is a critical security boundary, sudo failures break collection, audit trail lost | Use `ssh user@host command` with proper sshd_config `Match` rules instead of sudo |
+| Alert rules for server metrics via independent cron (not the existing alert engine) | Faster initial implementation, no risk of breaking existing alert engine | Two alert systems to maintain, inconsistent user experience for threshold configuration | Never — the existing alert engine is designed for extensibility |
+| Single-server test as "proof of concept" | Quick validation, demo works | Hides all scale-related issues: pool exhaustion, event loop blocking, concurrency limits, parsing variance | Acceptable only in the earliest prototyping phase, must be followed by multi-server test |
+| Hardcoded metric list in the provider code | No need for metric_registry integration | Cannot add/remove server metrics without code changes, no per-server customization | Acceptable temporarily in MVP; must integrate with `metricRegistry` before general availability |
+
+---
 
 ## Integration Gotchas
 
+Common mistakes when connecting to external services.
+
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| metric-registry.ts -> alert-engine.ts typeMap | Hardcode metric-to-alert-type mapping in a lookup table | Derive alert type from MetricDefinition.category field |
-| alert-engine.ts -> silence_periods table | Create silence without checking if existing silence is shorter | UPSERT silence with MAX(duration) or skip if existing silence is longer |
-| monitor-collector.ts -> alert creation | Create alerts directly in the collector | Remove inline checkAlerts(); delegate to alert-engine |
-| report-service.ts -> health score | Hardcode health_score to 100 with a TODO | Use databaseService.checkHealth() which already computes real scores |
-| alert-routes [missing auth] | Add new alert route without preHandler | ALWAYS start with the preHandler template when adding any route |
-| frontend icon import | Add new icon to whichever file you "find first" | Check which icon file the view already imports from; use the same |
-| reports type filter | Validate report type in route handler with hardcoded array | Use a shared constant exported from report-database-service.ts |
-| alerts frontend -> backend interface | Match AlertRule interface independently in frontend and backend | Export AlertRule type from backend and regenerate frontend types from it |
+| **ssh2 library** | Only attaching `error` listener, not `close` and `end` listeners | Attach ALL lifecycle listeners: `error`, `close`, `end`, `handshake`, `ready`. The `close` event is the only reliable signal the connection is fully cleaned up. |
+| **ssh2 exec()** | Assuming `exit` event always fires | The SSH2 spec says `exit` is optional. Always also listen for `close` on the channel. The `close` event is guaranteed. |
+| **SSH keepalive** | Not configuring `keepaliveInterval` | Default is off. Without keepalive, idle connections are never detected as dead until the next `exec()` attempt. Set `keepaliveInterval: 60000` and `keepaliveCountMax: 3`. |
+| **SFTP vs exec** | Using exec for everything because it resembles local shell scripting | SFTP (via `client.sftp()`) is superior for file reads: no shell injection risk, no locale issues, no parsing of stdout. Use SFTP for `/proc` and `/sys` file reads; use `exec()` only for commands like `ss -s` or `uptime`. |
+| **Existing metricRegistry** | Creating a separate metric definition system for server metrics | Add server metrics to the existing `metric_registry` table with a new `target_type: 'server'` filter. The `metric-registry.ts` already supports filtering by `getByDbType()`. |
+| **Existing alert_rules** | Creating a separate alert rule model for servers | Add a `target_type` column to `alert_rules` (default `'database'`). The existing alert evaluator's `evaluateRule()` is metric-value-agnostic and works with any numeric value. |
+| **Existing notification-service** | Building a separate notification dispatch for server alerts | Notifications don't differentiate by metric source. Reuse `notification-service.ts` unchanged. |
+| **Existing auth middleware** | Building separate permission model for server management | Reuse `requireRole('admin')` for server CRUD, reuse `requirePermission('alert:view')` for alert viewing. Add `requirePermission('server:view')` and `requirePermission('server:manage')` permissions. |
+| **Frontend ECharts components** | Building new chart components for server metrics | The existing dashboard components (ECharts time-series charts, stat tiles, data tables) are metric-name-driven. Server metrics with the same names (`cpu_usage`, `disk_usage`) will render in the existing charts automatically. |
+
+---
 
 ## Performance Traps
 
+Patterns that work at small scale but fail as usage grows.
+
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| PDF generation blocks event loop | Report download takes 5+ seconds; all other API requests hang | Use `setImmediate()` or worker pool for PDF generation | Single concurrent PDF with 50+ pages |
-| alert-engine evaluateAllRules() N+1 queries | Each rule evaluation queries metrics_history, per instance per rule | Cache recent metrics; batch evaluation by instance | 50+ instances with 20+ rules each = 1000+ metric queries per tick |
-| monitor-collector tick with 50+ instances | Each tick queries all instances and all metrics synchronously | Use Promise.allSettled() for concurrent instance collection | 50+ instances |
-| Event aggregation GROUP_CONCAT overflow | Event creation fails silently with MySQL truncation warning | Set `group_concat_max_len=10000` in MySQL session | 500+ alerts per aggregation window |
-| Frontend alert list with 10k+ rows | Table render causes long frame times | Server-side pagination (already done in getAlerts with limit/offset) | Already mitigated — verify frontend respects pagination |
+| **Reconnecting every collection cycle** | Event loop delay > 1000ms, HTTP timeouts during collect, SSH `ETIMEDOUT` errors | Hold persistent SSH connections per server, use keepalive to detect dead connections | 10-20 concurrent servers |
+| **No concurrency limit on SSH operations** | Socket exhaustion, remote SSH daemon refuses new connections after `MaxSessions` limit | Global semaphore (limit 10 concurrent) and per-host semaphore (limit 3) | 30-50 concurrent servers |
+| **Heavy shell pipelines in exec()** | Command takes 1-3 seconds per execution, collection cycle time exceeds interval | Use SFTP for file reads, or compound commands (`LANG=C free -b` instead of `cat /proc/meminfo | grep ... | awk ...`) | Variable — CPU parsing overhead grows with metric count |
+| **Collection all servers at exactly the same time (no jitter)** | Key exchange thundering herd, all servers respond with delay simultaneously, platform appears down | Randomize each server's first collection offset within the heartbeat window | 10+ servers starting collection simultaneously |
+| **Collecting all metrics every cycle** | Collection cycle takes longer than interval (seconds), metrics get stale | Heartbeat-based scheduling (existing pattern in `monitor-collector.ts`): check which metrics are due, collect only those | When every metric's collection time × metric count > collection interval |
+| **Parsing metric output on every collection** | Repeated `parseInt()` / `parseFloat()` on SSH stdout is CPU-intensive for 100 metrics × 100 servers | Cache heavy parsing results, use typed columns in `metrics_history` instead of JSON, batch metric writes | 5000+ metric values per collection cycle |
+| **Writing each metric to DB individually** | 100 servers × 10 metrics = 1000 DB writes per cycle, overwhelming MySQL | Batch metric writes — collect all metrics in memory, INSERT with multi-value `VALUES (..),(..)`. The existing `metrics-database-service` may already support batch operations. | 50+ servers or 5+ metrics per server |
+| **SSH credential decryption for each connection attempt** | `decryptData()` on every retry adds latency to already-hot retry loops | Decrypt credential once per connection pool startup, cache in memory for the pool's lifetime | When retry frequency increases during network issues |
+
+---
 
 ## Security Mistakes
 
+Domain-specific security issues beyond general web security.
+
 | Mistake | Risk | Prevention |
 |---------|------|------------|
-| GET /api/alerts has no auth | Anyone can list all alert data including instance names and metric values | Add `preHandler: [verifyToken, requirePermission('alert:view')]` |
-| GET /api/metrics/:instanceId has no auth | Anyone can read metrics for any instance | Add `preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess()]` |
-| GET /api/database/instances has no auth | Anyone can list all database instances with host/port info | Add `preHandler: [verifyToken, requirePermission('instance:view')]` |
-| GET /api/chat/history has no auth | Anyone can read chat history which may contain SQL queries and results | Add `preHandler: [verifyToken]` (requires auth but minimal permission) |
-| JWT in localStorage without refresh | XSS vulnerability; no recovery on expiry | Use httpOnly cookies or implement refresh token with secure flag |
+| **Storing SSH private keys in plaintext** (encrypted or not) in same table as server metadata | SQL injection or DB snapshot leads to total compromise of all monitored servers | Store credentials in a separate table with column-level encryption. The existing `encryptData()` / `decryptData()` pattern is acceptable but verify key derivation strength. |
+| **No host key verification** (`hostVerifier` not set — ssh2 auto-accepts) | MITM attack — attacker on same network can intercept SSH connections, steal server credentials, and return fake metrics | Always set `hostVerifier` + `hostHash: 'sha256'`. Store accepted keys in `server_known_hosts` table. |
+| **Using SSH password instead of key-based auth** | Password stored encrypted but is still weaker than key auth. If password is compromised, it can be used from any machine without the key file. | Prefer SSH key authentication (ED25519). Only accept password auth for servers that explicitly cannot use keys, and log a security warning. |
+| **Allowing root/sudo-level SSH access for monitoring** | If platform is compromised, attacker has full root access to ALL monitored servers | Create a dedicated `slide_monitor` user on each server with a restricted shell and read-only file access. Use `sudo` only for specific metrics via `sudo -l` whitelist, not blanket sudo access. |
+| **Exposing credentials in error messages or logs** | SSH connection errors often include the full connect configuration object, which includes the private key or password | Before logging any SSH error, sanitize the error object to remove `privateKey`, `password`, and `passphrase` fields. Use a custom error serializer. |
+| **SSH key reuse across environments** | Compromise of dev environment's SSH keys grants access to production servers | Use separate SSH key pairs per environment (dev/staging/production). Store them in environment-specific secret storage. |
+| **No SSH key rotation policy** | Keys that have been compromised are never discovered or rotated. Long-lived keys increase exposure window. | Implement a key rotation endpoint. Alert on keys older than 90 days. Generate new key pairs server-side and upload via authorized_keys API. |
+| **Ignoring `known_hosts` changes** | A changed host key could indicate a legitimate server reinstall OR a MITM attack. Silent acceptance of new keys hides both. | When host key changes, fire a P1 alert. Do not auto-accept. Require admin acknowledgment of key change. |
+| **Forwarding SSH Agent** | Using `agent: process.env.SSH_AUTH_SOCK` forwards the local SSH agent to remote hosts, enabling lateral movement | Never set `agent` in the Node.js ssh2 Client config for automation. Only set `privateKey`. |
+| **Logging SSH commands and output without sanitization** | Commands may contain arguments with sensitive data (e.g., passwords in environment variables) | Implement a command whitelist. Never log the full stdout of arbitrary commands. Sanitize before persisting. |
+
+---
 
 ## UX Pitfalls
 
+Common user experience mistakes in this domain.
+
 | Pitfall | User Impact | Better Approach |
 |---------|-------------|-----------------|
-| Alert list loads without auth error | User sees "loading..." spinner forever if JWT expired | Redirect to login on 401 from any alert API call |
-| Report generation with no progress indicator | User clicks generate, nothing happens for 5+ seconds | Show progress states: "Collecting metrics", "Generating HTML", "Saving" |
-| Threshold type toggle saves silently | User sets "Dynamic", reloads, sees "Static" again — thinks it's broken | After save, read back and show the actual saved value |
-| JWT expires mid-report-download | Download fails, no error shown | Intercept 401 on all fetch responses; prompt re-login before retry |
-| Aggregated events hide individual alerts | User dismisses event thinking it's fixed, but underlying alerts still firing | Event detail view should show all member alerts; resolved events should auto-resolve member alerts |
-| Health report shows 100/100 | User believes instance is healthy when it's not | Show real health score or document "health score calculation pending" |
+| **"Test Connection" only checks connectivity, not metric collection** | User sees green checkmark, server is "connected," but no metrics appear. User assumes platform is broken. | Make "Test Connection" run a full dry-run collection with per-metric success/failure results. Show which STDOUT/STDERR for each failed metric. |
+| **No server grouping / tagging** | With 50+ servers, the server list is unmanageable without filtering. Users cannot group by environment, role, or region. | Reuse the existing `tags` JSON column pattern from `database_instances`. Add tag filtering to the server list view from day one. |
+| **Per-server metric customization not available** | Users want different metrics / intervals for different server types (web servers vs DB servers vs cache servers), but the configuration is global. | Make metric sets configurable per-server via tags. `tags.role === 'database'` gets disk and memory; `tags.role === 'web'` gets CPU, network, and process count. |
+| **Alert threshold applied globally** | A 90% CPU alert threshold works for a 2-core dev server but triggers constant false alerts for a 64-core production server. | Support per-server alert threshold overrides in `alert_rules`. The existing `resolveMacrosForRule()` pattern already supports this via instance-level macros. |
+| **No acknowledgment of network latency impact** | SSH commands take 2-5 seconds on high-latency links (monitoring across data centers), causing collection timeouts and stale data. | Implement a latency-aware timeout: `readyTimeout: Math.max(10000, hostLatency * 3)`. Measure and display host latency in the UI. |
+| **Metric chart shows gaps without explanation** | When SSH connection fails during a collection cycle, the chart shows a flat gap. User doesn't know if server was down or just collection failed. | Show "collection gap" annotations on metric charts. Add a collection status indicator per metric (last success, last failure, failure count). |
+
+---
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **GET /api/alerts:** Often missing JWT auth — verify `preHandler: [verifyToken, requirePermission('alert:view')]` is present
-- [ ] **Dynamic threshold toggle:** Often saves to frontend but not to DB — verify `threshold_type` is persisted in `alert_rules` table
-- [ ] **silence_minutes configuration:** Often present in frontend UI but not saved to DB — verify `silence_minutes` column exists and is written by `updateAlertRule()`
-- [ ] **Health report:** Often shows hardcoded 100/100 — verify actual health score is computed from metrics
-- [ ] **Report type filter:** Often uses `'slow_query'` in one place and `'slow-query'` in another — verify single consistent value
-- [ ] **Alert event aggregation:** Often misses boundary alerts due to fixed 5-min window — verify alerts within 10 minutes of each other are in the same event
-- [ ] **Icon consolidation:** Often adds new icons to the wrong file — verify all views import from a single canonical icon file
-- [ ] **ov-card removal:** Often leaves one view using old cards — verify ALL 5+ views use the new shared component
+Things that appear complete but are missing critical pieces.
+
+- [ ] **Server Registration:** Server is saved to DB, appears in list, shows "Connected" status, BUT there is no corresponding `server_known_hosts` entry and the `hostVerifier` is not set — connection auto-accepts any host key.
+- [ ] **Test Connection:** Returns "Connection successful" from `hostname` command, BUT the connection was established with a different credential than the stored one (e.g., user's SSH agent, not the stored private key). Verify the test connection retrieves the credential from the database.
+- [ ] **Metric Collection** (single server): CPU, memory, disk values show 42%, 67%, 34% on Ubuntu 22.04, BUT on CentOS 7, CPU is always 0 and disk is NaN. Verify collection against at least 3 different distros.
+- [ ] **Multiple Servers:** 5 servers all collect and show metrics, BUT at 10 servers the API starts timing out and at 20 servers SSH connections start failing. Verify event loop lag and file descriptor limits at target scale.
+- [ ] **Alert Rules:** Server alert rules are created in the database and appear in the alert list, BUT the `alert-engine.ts` cron job doesn't evaluate them because it only queries rules with `target_type = 'database'` (hardcoded filter). Verify alert rules for servers are evaluated.
+- [ ] **Metric Trends:** Server metric trend charts render correctly, BUT they use a different frontend component than the DB metric charts, creating visual inconsistency, code duplication, and higher maintenance burden. Verify charts reuse the existing ECharts components.
+- [ ] **SSH Key Authentication:** Private key connection works in the "Test Connection" flow, BUT period collection never recovers `ECONNRESET` errors on long-lived connections because there's no keepalive configured. Verify `keepaliveInterval` and `keepaliveCountMax` are configured.
+- [ ] **SSH Connection Pool:** The pool opens and reuses connections correctly, BUT only one connection is ever created per server. When an `exec()` call takes 60 seconds to complete (slow command on remote host), no other metrics can be collected for that server during that time. Verify the pool supports at least 2-3 concurrent channels per server.
+- [ ] **Server Health Report:** Report generates PDF with server metrics, BUT the page footer still says "Database Health Report" and the logo references "DB Ops Platform." Verify all templates are generalized.
+- [ ] **Agent Integration:** The AI Chat agent can "query server metrics," BUT the tool is implemented as a generic SQL query against `metrics_history` and the agent has no awareness of what server-specific metrics exist or what they mean. Verify agent tools have server-specific descriptions and context.
+- [ ] **Performance Dashboard:** The main dashboard shows server metrics, BUT it's loading all historical metric data for every server (instead of aggregating) and the page takes 30+ seconds to load. Verify dashboard queries use time-bucketed aggregation for trend views.
+
+---
 
 ## Recovery Strategies
 
+When pitfalls occur despite prevention, how to recover.
+
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Duplicate alerts from collector vs engine | LOW — delete duplicates and remove checkAlerts() | 1. `DELETE FROM alerts WHERE source='monitor-collector' AND id NOT IN (SELECT alert_id FROM alert_event_members)` 2. Remove checkAlerts() from monitor-collector.ts |
-| Broken dynamic threshold persistence | MEDIUM — fix DB schema and data migration | 1. ALTER TABLE alert_rules ADD COLUMN threshold_type 2. UPDATE alert_rules SET threshold_type='static' WHERE threshold_type IS NULL 3. Fix backend interface and updateAlertRule() |
-| Report type inconsistency | LOW — data migration | 1. `UPDATE reports SET type = 'slow_query' WHERE type = 'slow-query'` 2. Fix ReportType enum 3. Fix route validator |
-| Two icon files with inconsistent names | MEDIUM — consolidating all imports | 1. Copy all unique icons from deprecated file to canonical file 2. Update imports across all files 3. Verify no broken icons in any view |
-| ov-card refactor with missed views | LOW — fix remaining view | Check ALL views that import or use `ov-card`, `.ov-card`, `.ov-cards` |
+| **SSH private key compromise** | HIGH — requires key rotation on ALL affected servers | 1. Revoke compromised key on each server (remove from `~/.ssh/authorized_keys`)<br>2. Generate new key pair<br>3. Upload public key to all servers<br>4. Update stored private key in platform<br>5. Rotate database encryption key if stored credentials were exposed |
+| **Host key verification bypass allowed MITM** | CRITICAL — incident response required | 1. Rotate ALL SSH credentials (keys and passwords)<br>2. Audit all metric data collected during exposure window for tampering<br>3. Harden all servers (disallow password auth, restrict access to monitoring IPs)<br>4. Add host key verification post-deployment |
+| **SSH connection pool leak (zombie connections)** | MEDIUM — may require process restart | 1. Restart the process to close all stale sockets<br>2. Add monitoring of open file descriptors<br>3. Add a scheduled pool health check that force-kills connections idle for >5 minutes<br>4. Reduce pool TTL as immediate mitigation |
+| **Collecting garbage metrics (parsing failures)** | LOW — metric values are overwritten on next cycle | 1. Set invalid metric values to `null` instead of `0` so they don't trigger false alerts<br>2. Add a metric validation step (e.g., reject CPU > 100 or disk < 0)<br>3. Implement the fallback command chain |
+| **All metric collection failing** | HIGH — platform loses visibility into all servers | 1. Check if SSH daemon on remote servers is reachable (port 22)<br>2. Check if platform's network connectivity to servers is intact<br>3. Check if the stored credentials are still valid (key rotation happened without updating platform)<br>4. Check if the SSH connection pool has a deadlock (all channels in use, none releasing)<br>5. As a temporary measure, consider stateless reconnection with a retry backoff |
+| **Alert engine not evaluating server rules** | MEDIUM — alerts are not firing for server issues | 1. Check `target_type` filter in `alert-engine.ts`<br>2. Add missing filter support<br>3. Create manual alert for any unresolved server health issues<br>4. Verify fix by running a manual alert evaluation cycle |
+| **False alerts from metric parsing errors** | MEDIUM — operators stop trusting alerts | 1. Implement metric validation (min/max thresholds at collection time)<br>2. Add a "stale data" filter — don't alert on metrics older than 2x the collection interval<br>3. Add a metric quality score to alert provenance |
+
+---
 
 ## Pitfall-to-Phase Mapping
 
+How roadmap phases should address these pitfalls.
+
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| GET /api/alerts missing auth | Alert System | Incognito browser test: GET /api/alerts returns 401 |
-| monitor-collector checkAlerts() duplicate | Alert System (remove first) | grep for `checkAlerts` in monitor-collector.ts returns nothing |
-| threshold_type not persisted | Alert System | Integration test: save dynamic rule, read back, verify threshold_type |
-| JWT refresh/lost session | Auth & Permissions | Simulate token expiry during active session, verify redirect to login |
-| ov-card blast radius | UI Unification | All 6 views use `<stat-card>` component, no `.ov-card` CSS anywhere |
-| Report type 'slow-query' vs 'slow_query' | Reports Refactoring | SELECT DISTINCT type FROM reports shows only canonical values |
-| health_score hardcoded to 100 | Data Quality | Health report shows score != 100, verify matches real metrics |
-| Event aggregation window collision | Alert System | Create test alerts at T+4min and T+6min, verify they aggregate into one event |
-| Two icon files | UI Unification | grep for "styles/icons" in imports returns 0 results |
-| Hardcoded metric typeMap | Alert System | metricRegistry.getById() used for type lookup, no hardcoded map |
+| **Host Key Verification Bypass** (Pitfall 1) | SSH Connection Security | Audit all `ssh2.Client.connect()` calls in the codebase — every one must have a `hostVerifier`. |
+| **Plaintext SSH Key Storage** (Pitfall 2) | Server Registration & Credential Management | Verify `server_credentials` table stores encrypted values. Verify no log statement can leak `privateKey` or `password`. |
+| **Connection Pool Exhaustion** (Pitfall 3) | SSH Metric Collection Engine | Run 10+ concurrent servers in integration test. Verify `process.resourceUsage()` file descriptor count is stable after 100 collections. |
+| **Parsing Fragility** (Pitfall 4) | SSH Metric Collection Engine | Unit test against fixture files from Ubuntu 20.04, 22.04, CentOS 7, 8, Alpine 3.18. Verify `LANG=C LC_ALL=C` prefix on all `exec()` commands. |
+| **Event Loop Blocking** (Pitfall 5) | SSH Metric Collection Engine | Run `perf_hooks.monitorEventLoopDelay()` during collection. Verify lag < 100ms for 20 concurrent servers. |
+| **Parallel Monitoring System** (Pitfall 6) | Architecture Planning | Code review: verify server monitoring reuses `MonitorCollector`, `metrics_history`, `alert_rules`, `notification-service`. |
+| **Test vs. Prod Collection Discrepancy** (Pitfall 7) | Server Registration & Credential Management | Verify "Test Connection" uses the same credential retrieval and same `connect()` parameters as periodic collection. |
+| **Concurrency Meltdown at Scale** (Pitfall 8) | SSH Metric Collection Engine | Load test with 50 simulated servers. Verify all connections succeed and event loop stays responsive. |
+| **Failure Response at Scale** (Pitfall 9) | SSH Metric Collection Engine | Test scenarios: 5 servers unreachable, 1 server has wrong credentials, 1 server has network blip. Verify correct per-type handling. |
+| **Over-Engineering Server Model** (Pitfall 10) | Architecture Planning | Code review: verify `servers` table is concrete (not a generic "resource" table). Verify no abstract MonitoredTarget or similar wrapper. |
+| **`exec()` output locale issue** | SSH Metric Collection Engine | Search for all `exec()` calls and verify `LANG=C LC_ALL=C` prefix on each. |
+| **No SSH key rotation** | Security Hardening | Verify `POST /api/servers/:id/rotate-key` endpoint exists. Verify key age is tracked and key expiry alerts are configured. |
+| **Credential logged in error messages** | Security Hardening | Inject an intentional SSH connection error and verify error message does NOT contain `privateKey`, `password`, or `passphrase`. |
+| **Separate metric definitions for server metrics** | Metric Registry Integration | Verify `metric_registry` table has entries for server metrics. Verify `getByDbType('server')` or equivalent filter returns them. |
+| **Separate alert configuration for server alerts** | Alert Integration | Verify `alert_rules` table's `target_type` column works. Verify `AlertEngine.evaluateAndCreateAlerts()` evaluates server rules. |
+| **Batch metric writes** | Metric Registry Integration | Verify `metrics-database-service.ts` batch INSERT is used for server metrics. Verify DB write count per collection cycle is stable. |
+| **Event loop / file descriptor monitoring** | Platform Hardening | Verify `monitor-event-loop.ts` or equivalent exists. Verify alert fires when event loop lag > 1000ms or FD count > 80% of limit. |
+
+---
 
 ## Sources
 
-- Slide codebase `apps/db-ops-api/server.ts` lines 532, 567, 578, 388 — routes missing auth middleware
-- Slide codebase `apps/db-ops-api/src/monitor-collector.ts` lines 311-341 — duplicate checkAlerts() method
-- Slide codebase `apps/db-ops-api/src/alert-evaluator.ts` line 126 — threshold_type check on undefined field
-- Slide codebase `apps/db-ops-api/src/alert-database-service.ts` line 31-45 — AlertRule interface missing threshold_type and silence_minutes
-- Slide codebase `apps/db-ops-api/src/alert-engine.ts` lines 154-163, 183 — hardcoded typeMap
-- Slide codebase `apps/db-ops-api/src/report-service.ts` lines 322-323 — hardcoded health_score=100
-- Slide codebase `apps/db-ops-api/server.ts` lines 1391 vs `apps/db-ops-api/src/report-database-service.ts` line 7 — report type mismatch
-- Slide codebase `apps/db-ops-api/src/event-aggregator.ts` line 39 — hardcoded 300-second bucket
-- Slide codebase `frontend/src/styles/icons.ts` (470 lines) vs `frontend/src/openclaw/ui/icons.ts` (515 lines) — duplicate icon files
-- Slide codebase `frontend/src/openclaw/ui/views/reports.ts`, `alerts.ts`, `dashboard.ts`, `schema-management.ts`, `instances-db.ts` — ov-card duplicates across 5+ views
-- Slide codebase `frontend/src/openclaw/ui/views/event-management.ts` line 8 — localStorage token retrieval pattern
-- Slide codebase milestone_context documented known issues: GET /api/alerts JWT auth, PDF concurrency, alert rate limiting
+- **ssh2 library documentation** — `github.com/mscdex/ssh2` (connection lifecycle, host verification behavior, channel events)
+- **Mozilla SSH Guidelines** — `infosec.mozilla.org/guidelines/openssh` (key management best practices for automation)
+- **ssh2 GitHub Issues** — Common bugs: missing `close` event listener (#610), algorithm negotiation (#841), error propagation patterns
+- **ssh2 README** — Security section: `hostVerifier` auto-accept warning, timing-safe comparison guidance
+- **Existing Slide Platform Codebase** — `monitor-collector.ts`, `unifiedCollector.ts`, `base-provider.ts`, `alert-engine.ts`, `alert-evaluator.ts`, `instance-database-service.ts` (patterns to extend vs. replace)
+- **Slide FEATURES.md Research** — `.planning/research/FEATURES.md` (feature scope and integration points for v0.8 server monitoring)
+- **Slide PROJECT.md** — `.planning/PROJECT.md` (current architecture, existing monitoring patterns, milestone context)
 
 ---
-*Pitfalls research for: Slide v1.3 Alert System, Auth & Permissions, Reports Refactoring, Data Quality, UI Unification*
-*Researched: 2026-05-20*
+*Pitfalls research for: SSH-based Server Monitoring (no-agent, via Node.js ssh2) on existing DB Ops Platform*
+*Researched: 2026-07-07*

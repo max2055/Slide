@@ -1,386 +1,244 @@
-# Stack Research
+# Stack Research: SSH-Based Server Monitoring
 
-**Domain:** Alert System, Auth Refresh/Permissions, Report Refactoring, Data Quality, UI Unification
-**Researched:** 2026-05-20
+**Domain:** SSH server monitoring in Node.js/TypeScript
+**Researched:** 2026-07-07
 **Confidence:** HIGH
 
 ## Recommended Stack
 
-### No New Core Libraries Required
+### Core Technologies
 
-After thorough analysis of the existing codebase and the planned v1.3 features, **no new core runtime dependencies are needed**. Every feature area can be implemented by extending existing capabilities or adding lightweight supporting libraries only where templating is needed.
-
-The existing stack already covers:
-- **Redis (ioredis 5.3.2)**: Token blacklisting, refresh token store
-- **simple-statistics 7.8.9**: Moving average, standard deviation, percentile for threshold learning
-- **PDFKit (pdfkit 0.18.0)**: PDF report generation
-- **jsonwebtoken 9.0.2**: JWT creation and verification
-- **Anthropic/OpenAI SDKs**: AI-powered threshold recommendation
-- **ECharts 5.4.0**: Chart rendering in reports
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| `ssh2` | ^1.17.0 | Pure JS SSH2 client — all SSH connectivity | Gold standard for Node.js SSH since 2012 (13+ years). Zero native deps, actively maintained (Aug 2025), 2M+ weekly downloads. Supports exec, shell, SFTP, key auth, host verification, keepalive — everything needed for server monitoring. Chosen over wrappers because we need direct control over connection lifecycle for pooling. |
+| `@types/ssh2` | ^1.15.5 | TypeScript type definitions for ssh2 | ssh2 does not bundle TS declarations. Latest release Apr 2025, compatible with ssh2@1.17.x. Required for type-safe SSH operations. |
+| Node.js built-in `crypto` (AES-256-CBC) | (built-in) | Encrypt SSH keys at rest | Already used in project for DB password encryption (see `db-connection.ts`). Reuse same pattern — no new crypto dependency. |
+| Node.js built-in `stream` | (built-in) | Process command output streams | ssh2 `Channel` extends `stream.Readable`. Process stdout/stderr with standard stream API. No wrapper needed. |
 
 ### Supporting Libraries
 
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
-| `ejs` | 5.0.2 | Server-side report template engine | **Report Refactoring** -- replace inline HTML strings in `report-service.ts` with `.ejs` template files. Lighter than Handlebars (205KB vs 2.8MB), zero dependencies, native Node.js support. |
-| `crypto` (built-in) | Node.js built-in | Refresh token generation | **Auth Refresh** -- `crypto.randomBytes()` for secure token generation. Already used elsewhere in codebase. |
+| (none for metric parsing) | — | Parse `top`, `free`, `df`, `netstat` output | Linux CLI output is columnar/whitespace-delimited. Parse with line-by-line `.split()` + `.trim()` + regex. No npm parser is standard or necessary — each monitoring project rolls its own parsing because output format varies by OS flavor/flags. |
+| (build our own connection pool) | — | Manage concurrent SSH connections | No mature SSH connection-pooling npm package exists. `node-ssh` wraps individual connections but offers no pooling. Best practice: a simple Map<string, ssh2.Client> pool with TTL, max connections, and idle timeout. Pattern identical to how `database-service.ts` manages DB pools. |
+| (existing `cron` ^4.4.0) | ^4.4.0 | Schedule periodic metric collection | Already in `apps/db-ops-api/package.json`. Reuse the 30-second cron infrastructure from `collector.ts` for server metrics collection. |
+| (existing notification service) | — | Alert notifications for server metrics | Already in `notification-service.ts`. Server alerts reuse the same DingTalk/WeCom/Feishu/Webhook channels. |
+| (existing report service) | — | Generate server inspection reports | Already in `report-service.ts`. Server inspection PDF/HTML/JSON/MD reports follow the same export patterns. |
 
-### Template System
+### Development Tools
 
-**Important: Do NOT use puppeteer or playwright for HTML-to-PDF generation.**
-
-The existing PDFKit-based approach is sufficient for the current report types (health, performance, slow_query, capacity). Adding a headless browser (Chrome/Chromium ~300MB) for HTML-to-PDF conversion:
-- Adds 300MB+ to the deployment
-- Adds 2-3s per report generation (browser startup)
-- Requires managing browser lifecycle (crashes, memory leaks)
-- Puppeteer 25.0.4 requires `@puppeteer/browsers` 3.0.3 + Chromium binary
-
-PDFKit is already installed and working. Keep it for PDF output.
-
-### ICON LIBRARY: Do NOT Add One
-
-The existing `icons.ts` file at `frontend/src/openclaw/ui/icons.ts` already contains 60+ Lucide-style SVG icons as Lit `TemplateResult` objects. This is the correct approach:
-
-- **Zero additional bundle size** -- only the icons actually used are imported
-- **Tree-shakeable by Vite** -- unused icons are dropped
-- **Lucide-compatible paths** -- existing icons use Lucide SVG path data
-- **No JS runtime** -- pure SVG templates, no icon resolution logic needed
-- **Consistent styling** -- all icons use `currentColor` via `stroke="currentColor"`
-
-For v1.3 UI unification, the work is:
-1. Audit existing icon usage (approximately 25 of the 60+ defined icons are actually imported)
-2. Add missing icons to `icons.ts` following the same SVG template pattern
-3. Remove unused/unnecessary emoji fallbacks (like `emoji-icon` in event-management.ts)
-4. Add a standardized `<icon-element>` wrapper component for consistent sizing
-
-If an external library is required later (not needed for v1.3), use **lucide-static 1.16.0** (46.3MB unpacked but tree-shakeable via selective imports). Do NOT use `@material/web` 2.4.1 (4MB, brings Material Design component system which conflicts with the existing custom UI).
+| Tool | Purpose | Notes |
+|------|---------|-------|
+| `tsx` | Run TypeScript directly | Already in devDeps, use for testing SSH connections during development |
+| `vitest` | Unit/integration tests | Already in devDeps. Test SSH parsing with fixture output files. |
+| Local SSH server (`sshd` on localhost) | Integration testing | For CI, use `ssh-keygen -t ed25519 -f test_key -N ""` to generate test keys. For local dev, test against an actual SSH server or Docker `linuxserver/openssh-server`. |
 
 ## Installation
 
 ```bash
-# Report template engine (backend)
-cd apps/db-ops-api && npm install ejs@^5.0.2
-
-# Dev: @types/ejs for TypeScript support
-cd apps/db-ops-api && npm install -D @types/ejs@^5.0.0
+cd apps/db-ops-api
+npm install ssh2@^1.17.0
+npm install -D @types/ssh2@^1.15.5
 ```
 
-No other new npm packages required for v1.3 features.
+That is the complete set of new npm dependencies. Everything else needed (cron infrastructure, notification channels, report generation, metric storage, encryption) already exists in the platform.
 
 ## Alternatives Considered
 
-### Report Template Engine
+### Why ssh2 directly, not node-ssh
+
+`node-ssh@13.2.1` wraps ssh2 with a Promise-based API. It is well-maintained (Mar 2025) and bundles TypeScript types. However, it is not recommended because:
+
+1. **Extra dependencies**: `node-ssh` pulls in ~6 additional packages (`is-stream`, `make-dib`, `sb-promise-queue`, `sb-scandir`, `shell-escape`, `ssh2`). None are needed for server monitoring.
+2. **Connection pooling**: `node-ssh` is designed for one-off connections. Its internal queue (`sb-promise-queue`) serializes commands on a single connection — not what we need for pooling. We would end up managing our own pool anyway, bypassing node-ssh entirely.
+3. **Control**: Direct `ssh2` access gives us control over `keepaliveInterval`, `readyTimeout`, `hostVerifier`, and `debug` callbacks — all critical for reliable monitoring connections.
+
+Use `node-ssh` only if you needed SFTP file transfer convenience in a one-off script. For a server monitoring system, go direct to `ssh2`.
+
+### Alternatives Rejected
 
 | Recommended | Alternative | When to Use Alternative |
 |-------------|-------------|-------------------------|
-| **EJS 5.0.2** (ADD) | Handlebars 4.7.9 | When templates need to be edited by non-developers (Handlebars has stricter logic-less philosophy). For a developer-maintained codebase, EJS's familiar ` <% %> ` syntax is more natural and its zero-dependency footprint is smaller (205KB vs 2.8MB). |
-| **EJS 5.0.2** (ADD) | Inline HTML strings (current) | When a report has exactly one template and is never expected to change. For v1.3's report unification, multiple templates need maintenance; inline strings in `report-service.ts` are at 638 lines and growing. EJS separates templates into `.ejs` files. |
-| **EJS 5.0.2** (ADD) | Puppeteer 25.0.4 | When reports require complex layouts with CSS Grid, Flexbox, and custom fonts that cannot be expressed in PDFKit. For the current report types (tables + metric cards + text), PDFKit is sufficient. Add puppetee only as a targeted upgrade. |
-
-### Icon Library
-
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|-------------------------|
-| **Existing `icons.ts`** (keep) | `lucide-static` 1.16.0 | When the project needs 100+ icons for a public-facing UI and maintaining custom SVG paths becomes tedious. For v1.3's internal tool UI, 60+ custom SVG icons are sufficient. |
-| **Existing `icons.ts`** (keep) | `@material/web` 2.4.1 | When the project wants to adopt Material Design 3 as its design system. For v1.3, Material Design would conflict with the existing custom UI components and add unnecessary weight. |
-
-### Refresh Token Approach
-
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|-------------------------|
-| **Redis + DB** (extend existing) | `@fastify/oauth2` or Passport.js | When implementing third-party OAuth providers (Google, GitHub, etc.). For JWT-on-first-party only, Redis-based refresh token rotation is simpler and avoids adding an auth framework. |
+| `ssh2` | `node-ssh` | For one-off SSH scripts or SFTP-heavy tasks where you want a quick Promise wrapper. Not for production monitoring. |
+| `ssh2` | `ssh2-promise@1.0.3` | **Never.** Last published June 2022, unmaintained. Repo is archived. Do not use. |
+| `ssh2` | `ssh-exec@2.0.0` | **Never.** Last published January 2016, unmaintained. |
+| `ssh2` | `simple-ssh` | **Never.** Unmaintained, callback-only API, no TypeScript support. |
 
 ## What NOT to Use
 
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| Puppeteer 25.0.4 | 300MB Chromium download, 2-3s startup per generation, memory leaks. The 4 report types generate tables + text + metric cards -- PDFKit handles this perfectly. | Keep existing PDFKit 0.18.0 |
-| Playwright 1.60.0 | Same problem as Puppeteer plus requires its own browser binary. Playwright is a testing tool, not a generation tool. | EJS + PDFKit |
-| Handlebars 4.7.9 | 2.8MB unpacked, 5 dependencies. Logic-less philosophy means computed data must be pre-processed in the service layer, duplicating logic. | EJS 5.0.2 (zero dependencies, 205KB) |
-| `@material/web` | 4MB unpacked, brings Material Design 3 components (buttons, dialogs, navigation). Conflicts with existing custom UI. Would require rewriting all components for consistency. | Extend existing `icons.ts` |
-| `@lit-labs/task` | Already outdated. `@lit/task` is the stable successor (3.1.0). But even `@lit/task` is unnecessary for v1.3 -- existing views use `@state` + `connectedCallback()` patterns that work fine. | Keep existing Lit patterns |
-| Casbin / Policy engine | Previous research already concluded: overengineered for <100 roles and <500 permission points. RBAC tables + middleware pattern is working. | Existing `rbac-service.ts` + `require-permission.ts` |
-| OAuth libraries (Passport, @fastify/oauth2) | Only needed for third-party auth providers. v1.3 is about first-party login with JWT refresh tokens, not SSO. | Custom refresh token service + Redis |
+| `ssh2-promise` | Unmaintained since June 2022. No guarantees for compatibility with ssh2@1.x. | Direct `ssh2` with native `util.promisify` callbacks. |
+| `node-ssh` for pooling | Its queue-based design serializes commands — we need parallel collection across many servers. | Build a thin connection pool over raw `ssh2.Client`. |
+| Any npm package for parsing `top`/`free`/`df` output | No standard package exists for this; every project rolls custom parsers because output format is OS-dependent. Adding a parser dependency adds fragility (wrong format assumptions). | Write simple line-split parsers with regex. ~20 lines per command. See patterns below. |
+| `procps` or `sysstat` installation on monitored servers | Avoid requiring agents or additional packages on monitored servers. | Use built-in Linux commands (`cat /proc/stat`, `free`, `df`) or parse `/proc` files directly. |
+| Storing SSH keys in plaintext in the DB | Credential leak would expose SSH access to all monitored servers. | Use existing AES-256-CBC `encryptData`/`decryptData` from `db-connection.ts`. Same pattern as DB passwords. |
+| Storing SSH key passphrases in code | Plaintext passphrases in config files. | Encrypt with same AES-256-CBC key. Store encrypted alongside the key in the `server_instances` table. |
 
-## Stack Patterns by Variant
+## Linux Command Output Parsing Patterns
 
-**If the reporting requirements later expand to include rich HTML layouts (charts, images, paginated tables):**
-- Add `playwright` 1.60.0 (not `puppeteer` -- Playwright has better TypeScript support, cross-browser consistency, and better crash recovery)
-- Use Playwright's `page.pdf()` for PDF output: better layout fidelity than PDFKit
-- Keep EJS for template generation, feed rendered HTML to Playwright for PDF conversion
-- Note: This adds ~200MB to deployment size
+No npm library needed. These are the standard Linux monitoring commands and their parseable output format with Node.js parsing approaches:
 
-**If instance scoring needs sophisticated statistical models beyond weighted sums:**
-- The existing `simple-statistics` 7.8.9 already provides: linear regression, standard deviation, mean, median, quantile, sample correlation, Bayesian classifier
-- If needed later, `ml.js` or `tensorflow.js` are overkill for instance health scoring
+### CPU Usage — `/proc/stat`
+```typescript
+// Command: cat /proc/stat | grep '^cpu '
+// Output: cpu  12345 678 90123 456789 111 222 333 444 555 666
+// Columns: user, nice, system, idle, iowait, irq, softirq, steal, guest, guest_nice
+// Parse: split on whitespace, slice(1), map to numbers
+// Rate calculation: delta(active) / delta(total) where total = sum of all columns
+// Active = total - idle - iowait
+const parts = line.trim().split(/\s+/);
+const columns = parts.slice(1).map(Number);
+const total = columns.reduce((a, b) => a + b, 0);
+const idle = columns[3]; // index 3 = idle
+const active = total - idle;
+// Store across two collection cycles to compute delta
+```
 
-**If the alert system needs real-time streaming anomaly detection:**
-- Consider adding Redis Streams for buffering metric data points
-- The push-based pattern (gateway -> Redis Stream -> alert evaluator) is more scalable than the current cron-based polling
-- Not needed for v1.3; the existing cron-based evaluator at 1-minute intervals is sufficient
+### Memory — `/proc/meminfo`
+```typescript
+// Command: cat /proc/meminfo
+// Output:
+// MemTotal:       16384972 kB
+// MemFree:         8354560 kB
+// MemAvailable:   11123784 kB
+// Buffers:          435672 kB
+// Cached:          6128744 kB
+// ...
+// Parse: /^(\w+):\s+(\d+)\s+kB$/gm
+const match = line.match(/^(\w+):\s+(\d+)\s+kB$/);
+if (match) meminfo[match[1]] = parseInt(match[2], 10);
+// Used = MemTotal - MemAvailable
+// Usage% = (MemTotal - MemAvailable) / MemTotal * 100
+```
+
+### Disk Usage — `df`
+```typescript
+// Command: df -B1 --exclude-type=tmpfs --exclude-type=devtmpfs
+// Output:
+// Filesystem      1B-blocks         Used   Available Use% Mounted on
+// /dev/sda1      51195701248  2147483648 49048217600   5% /
+// devtmpfs         ...        ...
+// Parse: skip header line, split on whitespace
+// Columns: filesystem, blocks (1B), used, available, usePct, mountPoint
+// For percentage: parse usePct as integer (remove '%')
+```
+
+### Network — `/proc/net/dev`
+```typescript
+// Command: cat /proc/net/dev
+// Output:
+// Inter-|   Receive                                                |  Transmit
+//  face |bytes    packets errs drop fifo frame ...  |bytes    packets errs drop fifo ...
+//   eth0: 1234567  1234    0    0    0     0    ...  7654321  4321    0    0    0 ...
+// Parse: skip 2 header lines, match /^\s*(\w+):\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+/
+// Key columns: rxBytes[1], rxPackets[2], rxErrors[3], txBytes[9], txPackets[10], txErrors[11]
+// Rate = delta / elapsed_seconds (since counters are cumulative)
+```
+
+### Load Average — `/proc/loadavg`
+```typescript
+// Command: cat /proc/loadavg
+// Output: 0.45 0.32 0.21 2/345 67890
+// Columns: 1min, 5min, 15min, running/total, last_pid
+// Parse: line.split(/\s+/).slice(0, 3).map(Number)
+```
+
+### Process Count — `/proc/loadavg` or `ps`
+```typescript
+// Command: ps aux --no-headers | wc -l
+// Output: 345
+// OR from /proc/loadavg: the 4th field "2/345" — parse as running/total
+```
+
+### Uptime — `cat /proc/uptime`
+```typescript
+// Command: cat /proc/uptime
+// Output: 1234567.89 2345678.90
+// Columns: uptime_seconds, idle_seconds
+// Parse: split, parseFloat
+```
 
 ## Version Compatibility
 
-| Package A | Compatible With | Notes |
-|-----------|-----------------|-------|
-| `ejs@5.0.2` | Node.js 18+ | Native ESM support. No peer dependencies. |
-| `@types/ejs@5.0.x` | TypeScript 5.x | Type definitions for compile-time safety. |
-| `simple-statistics@7.8.9` | All Node.js | Pure JS, no native deps. Already installed. |
-| `jsonwebtoken@9.0.2` | Node.js 18+ | Already installed. |
-| `ioredis@5.3.2` | Redis 6+ | Already installed. Refresh tokens stored as key-value with TTL. |
+| Package | Compatible With | Notes |
+|---------|-----------------|-------|
+| `ssh2@1.17.0` | Node >=10.16.0 (we have v22.22.1) | Fully compatible |
+| `@types/ssh2@1.15.5` | `ssh2@1.x`, `@types/node@>=18.11.18` | Compatible with our `@types/node@^20.10.0` |
+| `ssh2` | TypeScript `target: ES2022` | No conflicts. ssh2 uses callbacks; wrap with `util.promisify` or use in async patterns. |
+| ssh2 with existing `mysql2` | No conflict | Different transport layers, independent connection lifecycle. |
+| SSH connections with existing pool connections | No conflict | `ssh2.Client` manages its own socket; DB pools manage MySQL/PostgreSQL connections. They share the Node.js event loop but are independent. |
 
-## Refresh Token Architecture
+## Stack Patterns by Variant
 
-### Why No New Library
+**If monitoring both Linux and Windows servers:**
+- Use the same `ssh2` library for Linux. For Windows, use WinRM instead of SSH (Windows OpenSSH server uses different default metrics format). WinRM setup is out of scope — keep the first version Linux-only.
 
-The refresh token pattern uses only:
-1. **`jsonwebtoken`** (already installed) -- sign access tokens
-2. **`ioredis`** (already installed) -- store refresh tokens with TTL
-3. **`crypto.randomBytes()`** (built-in) -- generate cryptographically secure refresh token strings
-4. **MySQL** (already connected) -- optional persistent refresh token table
+**If the project needs to run custom scripts (not just built-in commands):**
+- Upload scripts via ssh2 SFTP `sftp()` method before executing them. Store script content in a `server_scripts` table. This is a Phase 2 feature — start with built-in commands only.
 
-### Data Flow
+**If SSH key rotation is needed:**
+- SSH key pairs can be rotated by the same `encryptData`/`decryptData` pattern. Store the new key encrypted, test connectivity, then replace the old key. Add a `last_key_rotated_at` column to `server_instances`.
 
-```
-POST /api/auth/login
-  -> Validate credentials (existing)
-  -> Generate access_token (jwt.sign, 15min expiry)
-  -> Generate refresh_token (crypto.randomBytes(48).toString('hex'))
-  -> Store refresh_token in Redis: SET refresh_token:{hashed_token} {userId} EX {days}
-  -> Return { access_token, refresh_token, expires_in }
+**If monitoring needs to scale beyond 100 servers:**
+- Add connection pooling with max concurrent connections (e.g. 50). Queue excess connections. This isn't needed at initial scale (5-20 servers) but should be architected from day one. See Architecture Pattern below.
 
-POST /api/auth/refresh
-  -> Receive { refresh_token }
-  -> Hash the token
-  -> Redis: GET refresh_token:{hashed_token}
-  -> If found: generate new access_token, rotate refresh_token
-  -> If not found or expired: 401, user must re-login
+## Architecture Pattern: Connection Pool
 
-POST /api/auth/logout
-  -> Receive access_token / refresh_token
-  -> Blacklist access_token JWT ID in Redis until its natural expiry
-  -> Delete refresh_token from Redis
-```
-
-### MySQL Migration (Optional Persistence)
-
-```sql
-CREATE TABLE IF NOT EXISTS refresh_tokens (
-  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  user_id INT UNSIGNED NOT NULL,
-  token_hash VARCHAR(128) NOT NULL COMMENT 'SHA-256 of the raw refresh token',
-  expires_at DATETIME NOT NULL,
-  revoked BOOLEAN NOT NULL DEFAULT FALSE,
-  created_by_ip VARCHAR(45) DEFAULT NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_user_id (user_id),
-  INDEX idx_token_hash (token_hash),
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
-
-Redis is the primary store (fast, automatic TTL). MySQL is a durable fallback for audit/recovery.
-
-### Token Rotation Policy
-
-- Each refresh token can be used exactly **once** for a refresh
-- On refresh: the old token is revoked, a new refresh token is issued
-- This prevents stolen refresh tokens from being reused (rotation)
-- Grace period: allow the previous token for 30 seconds to handle concurrent requests
-
-## Threshold Learning Algorithm
-
-### Approach: Moving Window + Z-Score
-
-No new library needed. The existing `simple-statistics` 7.8.9 provides all primitives.
+The server monitoring stack introduces a `ServerSSHPool` class that parallels the existing `database-service.ts` connection management:
 
 ```typescript
-import { mean, standardDeviation } from 'simple-statistics';
+interface SSHConnectionConfig {
+  host: string;
+  port: number;
+  username: string;
+  privateKey?: Buffer;   // Decrypted at runtime
+  passphrase?: string;
+  password?: string;
+  readyTimeout: number;   // default 10000ms
+  keepaliveInterval: number; // default 10000ms
+  keepaliveCountMax: number; // default 3
+}
 
-class AdaptiveThresholdLearner {
-  private windowSize = 1440; // 24 hours at 1-minute intervals
+class ServerSSHPool {
+  private pool = new Map<number, ssh2.Client>(); // server_id -> Client
+  private configs = new Map<number, SSHConnectionConfig>();
 
-  async computeDynamicThreshold(
-    instanceId: number,
-    metricName: string,  // 'cpu_usage', 'connections', etc.
-    recentValues: number[]
-  ): Promise<{ warning: number; critical: number; baseline: number }> {
-    if (recentValues.length < 60) {
-      // Not enough data: use static defaults
-      return { warning: 80, critical: 90, baseline: 50 };
-    }
-
-    const m = mean(recentValues);
-    const sd = standardDeviation(recentValues);
-
-    return {
-      warning: m + 2 * sd,   // 2 sigma: ~95th percentile
-      critical: m + 3 * sd,  // 3 sigma: ~99.7th percentile
-      baseline: m,
-    };
-  }
+  async connect(serverId: number, config: SSHConnectionConfig): Promise<void>;
+  async exec(serverId: number, command: string): Promise<{ stdout: string; stderr: string; code: number | null }>;
+  async disconnect(serverId: number): Promise<void>;
+  isConnected(serverId: number): boolean;
+  async healthCheck(serverId: number): Promise<boolean>;
+  dispose(): void; // Close all connections
 }
 ```
 
-For AI-powered threshold recommendation (reuse existing Anthropic/OpenAI SDK):
-```typescript
-class AIThresholdAdvisor {
-  async recommendThresholds(
-    instanceId: number,
-    metricHistory: { timestamp: Date; value: number }[]
-  ): Promise<{ warning: number; critical: number; rationale: string }> {
-    // Summarize metric history
-    const summary = this.summarizeMetrics(metricHistory);
-    // Call existing LLM: aiBridge.sendMessage({ role: 'user', content: prompt })
-    // Prompt: analyze metric history and recommend thresholds
-  }
-}
-```
+This is intentionally thin — it does NOT implement queuing (that is handled by the collector scheduler which controls concurrency), and it does NOT implement retry (that is handled by the metric collection infrastructure with its 3-failure auto-disable).
 
-This uses the existing `@anthropic-ai/sdk` or `openai` -- no new AI library needed.
+## Integration Points with Existing Platform
 
-## Instance Scoring Algorithm
-
-### Approach: Weighted Multi-Metric Scoring
-
-Pure math, no library needed. The `simple-statistics` library is available for percentile normalization.
-
-```typescript
-interface ScoringWeights {
-  cpuWeight: number;      // 0.25
-  memoryWeight: number;   // 0.25
-  diskWeight: number;     // 0.20
-  connectionsWeight: number; // 0.10
-  qpsWeight: number;      // 0.10
-  slowQueryWeight: number; // 0.10
-}
-
-class InstanceScorer {
-  // Convert raw metric to 0-100 score (inverted: lower raw = higher score)
-  scoreMetric(value: number, warning: number, critical: number): number {
-    if (value <= warning) return 100;
-    if (value >= critical) return 0;
-    // Linear interpolation between warning and critical
-    return 100 - ((value - warning) / (critical - warning)) * 100;
-  }
-
-  computeOverallScore(metrics: RawMetrics, weights: ScoringWeights): number {
-    const scores = {
-      cpu: this.scoreMetric(metrics.cpu_usage, 70, 90),
-      memory: this.scoreMetric(metrics.memory_usage, 75, 90),
-      disk: this.scoreMetric(metrics.disk_usage, 80, 95),
-      connections: this.scoreMetric(metrics.connections, 80, 100),
-      qps: this.scoreMetric(metrics.qps, 70, 90),
-      slowQuery: metrics.slow_queries === 0 ? 100
-        : Math.max(0, 100 - metrics.slow_queries * 10),
-    };
-
-    return Math.round(
-      scores.cpu * weights.cpuWeight +
-      scores.memory * weights.memoryWeight +
-      scores.disk * weights.diskWeight +
-      scores.connections * weights.connectionsWeight +
-      scores.qps * weights.qpsWeight +
-      scores.slowQuery * weights.slowQueryWeight
-    );
-  }
-}
-```
-
-## Metrics Collection (CPU/Memory)
-
-### Current Collection Method
-
-The existing `metrics-database-service.ts` already collects CPU, memory, disk, connections, QPS, TPS from MySQL `performance_schema` and inserts into the `metrics_database` table. No new collection mechanism is needed for the existing monitored instances.
-
-### For the Gateway Layer
-
-The OpenClaw gateway agent runtime runs on the same machine as monitored databases, so it has OS-level access. The gateway already reports metrics via WebSocket/RPC. The existing `metricsDatabaseService.getRealtimeMetrics()` reads from the `metrics_database` table.
-
-### What's Needed for v1.3
-
-1. A **data quality score service** (`data-quality-service.ts`) that reads metrics from `metrics_database` and computes instance scores
-2. Integration with the existing cron evaluator (or a new cron schedule) to periodically compute scores
-3. Store scores in a new `instance_scores` or `database_instances.health_score` column
-
-**No new metric collection infrastructure is needed.** The existing metrics pipeline (gateway -> metrics_database table) already handles CPU/memory collection.
-
-## Report Refactoring: EJS Template File Structure
-
-```
-apps/db-ops-api/src/report-templates/
-  report-templates/
-    health-report.ejs
-    performance-report.ejs
-    slow-query-report.ejs
-    capacity-report.ejs
-    _header.ejs         (partial: CSS styles, HTML head)
-    _footer.ejs         (partial: closing tags)
-    _metric-card.ejs     (partial: reusable metric card)
-    _table.ejs           (partial: reusable data table)
-```
-
-This replaces the current 200+ lines of inline HTML string concatenation in `report-service.ts` with clean template files. Example usage:
-
-```typescript
-import ejs from 'ejs';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
-
-class ReportTemplateService {
-  private templates: Map<string, ejs.TemplateFunction> = new Map();
-
-  private loadTemplate(name: string): ejs.TemplateFunction {
-    if (!this.templates.has(name)) {
-      const filePath = resolve(__dirname, `report-templates/${name}.ejs`);
-      const content = readFileSync(filePath, 'utf-8');
-      this.templates.set(name, ejs.compile(content, { filename: filePath }));
-    }
-    return this.templates.get(name)!;
-  }
-
-  render(type: ReportType, data: object): string {
-    const template = this.loadTemplate(type);
-    return template(data);
-  }
-}
-```
-
-## ov-card Refactoring
-
-**No library needed.** The `ov-card` CSS class pattern exists in:
-- `overview-cards.ts` (OpenClaw overview cards)
-- `reports.ts` (report type cards)
-- `schema-management.ts` (schema stat cards)
-
-Refactoring approach:
-1. Replace inline `.ov-card` styles in each component's `static styles` with a shared CSS class in a common stylesheet
-2. Rename from `ov-card` to `stat-card` or `metric-card` for clarity
-3. Standardize the CSS variables used (already using `var(--border)`, `var(--card)`, etc.)
+| Existing Component | Integration for Server Monitoring |
+|-------------------|----------------------------------|
+| `collectors/registry.ts` | Register `ServerMetricProvider` with `db_type: 'server'` |
+| `collectors/base-provider.ts` | `SSHProvider extends BaseMetricProvider` — same `collect(conn, metricDef)` interface |
+| `UnifiedCollector` | Reuse `collectInstance()` — server instances treated as a new `db_type` |
+| `metric_registry` table | Register server-specific metrics (cpu_usage_pct, memory_usage_pct, disk_usage_pct...) with `db_types: ['server']` |
+| `metrics-history` table | Add `source: 'server' | 'database'` column or use new `server_metrics_history` table |
+| `alert-engine.ts` | Reuse `evaluateRule()` — add `source_type: 'server'` to alert rules |
+| `event-aggregator.ts` | Reuse — server alerts aggregated same way as DB alerts |
+| `notification-service.ts` | Reuse — notifications go through same channels |
+| `report-service.ts` | Add server inspection report template |
+| `instance-database-service.ts` | Add `ServerInstance` model in a new `server-database-service.ts` (separate table from database_instances) |
+| `database-service.ts` | **Do NOT reuse** — server SSH connections use `ssh2.Client`, not SQL pools |
 
 ## Sources
 
-- `npm view ejs@5.0.2` (2026-05-20) -- zero dependencies, 205KB unpacked, ESM support
-- `npm view puppeteer@25.0.4` (2026-05-20) -- requires chromium-bidi 16.0.1, browser download
-- `npm view playwright@1.60.0` (2026-05-20) -- 1.60.0, requires playwright-core, browser download
-- `npm view lucide-static@1.16.0` (2026-05-20) -- 46.3MB unpacked, pure SVG, tree-shakeable
-- `npm view @material/web@2.4.1` (2026-05-20) -- 4MB, lit peer dependency, Material Design 3
-- `npm view simple-statistics@7.8.9` (2026-05-20) -- 1.2MB, ISC, zero deps, already installed
-- Slide codebase `apps/db-ops-api/server.ts` -- JWT login flow, 24h token expiry, no refresh token
-- Slide codebase `apps/db-ops-api/src/auth-database-service.ts` -- user auth, no refresh mechanism
-- Slide codebase `apps/db-ops-api/src/report-service.ts` -- inline HTML strings, 638 lines
-- Slide codebase `apps/db-ops-api/src/report-exporter.ts` -- PDFKit PDF generation, HTML/MD export
-- Slide codebase `apps/db-ops-api/src/report-database-service.ts` -- ReportType/ReportFormat types
-- Slide codebase `apps/db-ops-api/src/event-aggregator.ts` -- existing alert aggregation pattern
-- Slide codebase `apps/db-ops-api/src/alert-event-service.ts` -- event lifecycle management
-- Slide codebase `apps/db-ops-api/src/metrics-database-service.ts` -- CPU/memory/disk metrics collection
-- Slide codebase `apps/db-ops-api/src/auth/rbac-service.ts` -- existing RBAC CRUD
-- Slide codebase `apps/db-ops-api/src/auth/require-permission.ts` -- permission check middleware
-- Slide codebase `frontend/src/openclaw/ui/icons.ts` -- 60+ Lucide-style custom SVG icons
-- Slide codebase `frontend/src/openclaw/ui/views/overview-cards.ts` -- ov-card pattern
-- Slide codebase `frontend/src/openclaw/ui/views/reports.ts` -- reports page with ov-card usage
-- Slide codebase `frontend/src/openclaw/ui/views/event-management.ts` -- emoji fallback for icons
+- npm registry — `ssh2@1.17.0`, `@types/ssh2@1.15.5`, `node-ssh@13.2.1`, `ssh2-promise@1.0.3` (verified versions, publish dates, dependencies) — HIGH confidence
+- GitHub — `mscdex/ssh2` (documented API, best practices) — HIGH confidence
+- GitHub — `steelbrain/node-ssh` (documented wrapper API) — MEDIUM confidence
+- npm search results — validated no mature SSH connection-pooling package exists — HIGH confidence
+- Existing codebase audit — `db-connection.ts`, `encryptData`/`decryptData`, `BaseMetricProvider`, `UnifiedCollector`, `alert-engine.ts`, `notification-service.ts` — HIGH confidence (first-hand audit of the project source)
 
 ---
-*Stack research for: Slide v1.3 new features (Alert System, Auth Refresh, Report Refactoring, Data Quality, UI Unification)*
-*Researched: 2026-05-20*
+*Stack research for: SSH-based server monitoring in the Slide platform*
+*Researched: 2026-07-07*
