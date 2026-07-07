@@ -79,6 +79,7 @@ import { startSessionCleanup } from './src/session-cleanup.js';
 import { loadPredefinedSkills, skillRegistry } from './src/skills/loader.js';
 import { promptManager } from './src/prompts/prompt-manager.js';
 import { serverDatabaseService } from './src/server-database-service.js';
+import serverCollector from './src/server-collector.js';
 
 const fastify = Fastify({
   logger: false,
@@ -1376,6 +1377,125 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: '密钥轮换失败：' + error.message });
+    }
+  });
+
+  // ========== 服务器指标 API ==========
+
+  // 获取服务器最新指标
+  fastify.get('/api/servers/:id/metrics', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
+    try {
+      const { id } = request.params as any;
+      const pool = (await import('./src/db-connection.js')).dbConnection.getPool();
+      if (!pool) {
+        return reply.code(500).send({ error: '数据库未连接' });
+      }
+
+      // Verify server exists
+      const server = await serverDatabaseService.getServerById(Number(id));
+      if (!server) {
+        return reply.code(404).send({ error: '服务器不存在' });
+      }
+
+      // Get latest metric values (one row per metric_name)
+      const [rows] = await pool.execute(
+        `SELECT sm.server_id, sm.metric_name, sm.metric_value, sm.recorded_at
+         FROM server_metrics sm
+         INNER JOIN (
+           SELECT metric_name, MAX(recorded_at) AS max_time
+           FROM server_metrics
+           WHERE server_id = ?
+           GROUP BY metric_name
+         ) latest ON sm.metric_name = latest.metric_name AND sm.recorded_at = latest.max_time
+         WHERE sm.server_id = ?
+         ORDER BY sm.metric_name`,
+        [Number(id), Number(id)]
+      ) as any;
+
+      reply.send({ server_id: Number(id), metrics: rows, recorded_at: rows.length > 0 ? rows[0].recorded_at : null });
+    } catch (error: any) {
+      reply.code(500).send({ error: '获取服务器指标失败：' + error.message });
+    }
+  });
+
+  // 获取服务器指标历史
+  fastify.get('/api/servers/:id/metrics/history', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
+    try {
+      const { id } = request.params as any;
+      const { range = '1h', metric } = request.query as { range?: string; metric?: string };
+
+      // Validate range parameter
+      const validRanges = ['1h', '6h', '24h', '7d', '30d'];
+      if (!validRanges.includes(range)) {
+        return reply.code(400).send({ error: `range 必须为 ${validRanges.join('/')} 之一` });
+      }
+
+      const pool = (await import('./src/db-connection.js')).dbConnection.getPool();
+      if (!pool) {
+        return reply.code(500).send({ error: '数据库未连接' });
+      }
+
+      // Verify server exists
+      const server = await serverDatabaseService.getServerById(Number(id));
+      if (!server) {
+        return reply.code(404).send({ error: '服务器不存在' });
+      }
+
+      let whereClause = 'WHERE server_id = ? AND recorded_at >= NOW() - INTERVAL ?';
+      const params: any[] = [Number(id)];
+
+      // Map range to INTERVAL value
+      const intervalMap: Record<string, string> = { '1h': '1 HOUR', '6h': '6 HOUR', '24h': '24 HOUR', '7d': '7 DAY', '30d': '30 DAY' };
+      params.push(intervalMap[range] || '1 HOUR');
+
+      // Optional metric filter (comma-separated)
+      if (metric) {
+        const metricNames = metric.split(',').map((m: string) => m.trim()).filter(Boolean);
+        if (metricNames.length > 0) {
+          // Validate metric names to prevent injection
+          for (const mn of metricNames) {
+            if (!/^[a-zA-Z0-9_-]+$/.test(mn)) {
+              return reply.code(400).send({ error: `无效的指标名称: ${mn}` });
+            }
+          }
+          whereClause += ` AND metric_name IN (${metricNames.map(() => '?').join(',')})`;
+          params.push(...metricNames);
+        }
+      }
+
+      const [rows] = await pool.execute(
+        `SELECT id, server_id, metric_name, metric_value, recorded_at
+         FROM server_metrics
+         ${whereClause}
+         ORDER BY recorded_at ASC`,
+        params
+      ) as any;
+
+      reply.send({ server_id: Number(id), metrics: rows, range });
+    } catch (error: any) {
+      reply.code(500).send({ error: '获取服务器指标历史失败：' + error.message });
+    }
+  });
+
+  // 手动触发单次采集
+  fastify.post('/api/servers/:id/collect', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
+    try {
+      const { id } = request.params as any;
+
+      // Verify server exists
+      const server = await serverDatabaseService.getServerById(Number(id));
+      if (!server) {
+        return reply.code(404).send({ error: '服务器不存在' });
+      }
+
+      const result = await serverCollector.collectServer(Number(id));
+      if (result.success) {
+        reply.send({ success: true, metrics_count: result.metricsCount || 0 });
+      } else {
+        reply.code(500).send({ success: false, error: result.error || '采集失败' });
+      }
+    } catch (error: any) {
+      reply.code(500).send({ error: '采集失败：' + error.message });
     }
   });
 
