@@ -407,7 +407,7 @@ export class ServersPage extends LitElement {
       label: server.label || "",
       os_type: server.os_type,
       credential_type: server.credential_type,
-      credential_username: server.credential_username || "root",
+      credential_username: "",
       credential_value: "",
     };
     this._testConnectionMessage = "";
@@ -534,7 +534,7 @@ export class ServersPage extends LitElement {
     this._keyRotationServer = server;
     this._keyRotationForm = {
       credential_type: server.credential_type,
-      credential_username: server.credential_username || "root",
+      credential_username: "",
       credential_value: "",
     };
     this._showKeyRotationDialog = true;
