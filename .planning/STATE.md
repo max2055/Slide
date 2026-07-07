@@ -2,27 +2,27 @@
 gsd_state_version: 1.0
 milestone: v0.8
 milestone_name: 服务器纳管
-current_phase: 124
-current_phase_name: server-registration
+current_phase: 125
+current_phase_name: SSH 指标采集与监控视图
 status: executing
 stopped_at: Phase 124 context gathered
-last_updated: "2026-07-07T14:00:35.890Z"
+last_updated: "2026-07-07T15:36:29.456Z"
 last_activity: 2026-07-07
-last_activity_desc: Phase 124 execution started
+last_activity_desc: Phase 124 complete, transitioned to Phase 125
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 0
-  percent: 0
+  completed_plans: 2
+  percent: 20
 ---
 
 ## Current Position
 
-Phase: 124 (server-registration) — EXECUTING
-Plan: 1 of 2
+Phase: 125 — SSH 指标采集与监控视图
+Plan: Not started
 Status: Executing Phase 124
-Last activity: 2026-07-07 — Phase 124 execution started
+Last activity: 2026-07-07 — Phase 124 complete, transitioned to Phase 125
 
 ## v0.7 验收状态
 
