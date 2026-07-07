@@ -47,12 +47,12 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   fontDensity: 'standard',
   sidebarPosition: 'left',
   reduceAnimations: false,
-  accentColor: '#7c5cff',
+  accentColor: '#409eff',
   borderRadius: 50,
 
   defaultTab: 'dashboard',
   visibleTabs: [],
-  navWidth: 258,
+  navWidth: 220,
 
   defaultPageSize: 50,
   dateFormat: 'absolute',

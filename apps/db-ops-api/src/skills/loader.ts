@@ -10,6 +10,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { SkillEntry, ParsedSkillFrontmatter, SkillCommandSpec } from './types.js';
 import { parseSkillFrontmatter, normalizeFrontmatter, buildSkillEntry, extractSlideSkillMetadata } from './frontmatter.js';
 
@@ -402,7 +403,8 @@ export const skillRegistry = new SkillRegistry();
 export const PREDEFINED_SKILL_DIRS = [
   // 应用内技能目录
   './src/skills',
-  './apps/db-ops-skills',
+  // 外部技能目录（基于源码文件位置解析，而非 CWD）
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../db-ops-skills'),
   // 用户技能目录
   '~/.slide/skills',
   '~/.slide/skills/user',

@@ -20,6 +20,18 @@ import {
 } from './session-store.js';
 import { subagentRegistry, registerSubagentRun } from './subagent-registry.js';
 
+// ── Module-level SubagentManager ref (set by DirectAdapter.start()) ──
+
+let _subagentManager: SubagentManager | null = null;
+
+/**
+ * Set the SubagentManager to use for spawn_subagent tool execution.
+ * Called by DirectAdapter.start() once the AgentRunner is available.
+ */
+export function setSubagentManager(manager: SubagentManager): void {
+  _subagentManager = manager;
+}
+
 // ============== 工具参数类型 ==============
 
 export interface SpawnSubagentParams {
@@ -57,6 +69,7 @@ export function createSpawnSubagentTool(opts?: {
 }): AnyAgentTool {
   return {
     name: 'spawn_subagent',
+    scope: ['core'], // Prevent recursive subagent spawning (nanobot: SpawnTool._scopes = {"core"})
     description:
       'Spawn a subagent to handle a task independently. Subagents run asynchronously and report back when completed.',
     parameters: {
@@ -174,6 +187,19 @@ export function createSpawnSubagentTool(opts?: {
         parentSessionKey,
       });
 
+      // 实际启动子 Agent 执行（fire-and-forget）
+      if (_subagentManager) {
+        _subagentManager.spawn(agentId, params.task, parentSessionKey)
+          .then((actualRunId) => {
+            console.log(`[SubagentManager] Subagent started: ${actualRunId} (task: ${params.task.slice(0, 80)})`);
+          })
+          .catch((err) => {
+            console.error(`[SubagentManager] Failed to spawn subagent:`, err);
+          });
+      } else {
+        console.warn('[SubagentManager] SubagentManager not initialized — subagent will not execute. Call setSubagentManager() first.');
+      }
+
       // 返回结果
       return {
         success: true,
@@ -210,6 +236,7 @@ function calculateDepthFromSessionKey(sessionKey: string): number {
 export function createSubagentAccessTool(): AnyAgentTool {
   return {
     name: 'access_subagent',
+    scope: ['core'], // Prevent recursive subagent access
     description: 'Access subagent status and results',
     parameters: {
       type: 'object',
@@ -280,6 +307,7 @@ export function getSubagentTools(): AnyAgentTool[] {
 export function createSpawnSubagentCoreTool(subagentManager: SubagentManager): Tool {
   return {
     name: 'spawn_subagent',
+    scope: ['core'], // Prevent recursive subagent spawning
     description:
       'Spawn a subagent to handle a task independently. Subagents run asynchronously and report back when completed.',
     parameters: {
@@ -328,6 +356,7 @@ export function createSpawnSubagentCoreTool(subagentManager: SubagentManager): T
 export function createAccessSubagentCoreTool(subagentManager: SubagentManager): Tool {
   return {
     name: 'access_subagent',
+    scope: ['core'], // Prevent recursive subagent access
     description: 'Access subagent status and results by runId.',
     parameters: {
       type: 'object',

@@ -604,7 +604,7 @@ export class IndexManagementPage extends LitElement {
                   >`
                 : ""}
               <button
-                class="btn primary"
+                class="btn-primary"
                 ?disabled="${this.collecting || !this.selectedInstanceId}"
                 @click="${this.collectIndexes}"
               >

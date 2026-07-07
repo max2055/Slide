@@ -36,13 +36,13 @@
  *   });
  */
 
-export { ToolRegistry, validateJsonSchema, castToolParams, scanToolDir, importToolsFromDir } from "./tool-registry.js";
+export { ToolRegistry } from "./tool-registry.js";
 export { AgentRunner, NoopHook } from "./runner.js";
-export { Session, SessionManager } from "./session.js";
-export type { SessionEntry, SessionMetadata, SessionData } from "./session.js";
+export { Session, SessionManager, AutoCompact } from "./session.js";
+export type { SessionEntry, SessionMetadata, SessionData, SessionManagerOptions, AutoCompactOptions } from "./session.js";
 export { SkillsLoader } from "./skills.js";
 export type { Skill, SkillMeta } from "./skills.js";
-export { MemoryStore, Consolidator } from "./memory.js";
+export { MemoryStore } from "./memory.js";
 export { ContextBuilder } from "./context.js";
 export { OpenAIProvider } from "./openai-provider.js";
 export type {

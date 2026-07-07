@@ -22,7 +22,7 @@ export function renderGatewayUrlConfirmation(state: AppViewState) {
           ${t("channels.gatewayUrlConfirmation.warning")}
         </div>
         <div class="exec-approval-actions">
-          <button class="btn primary" @click=${() => state.handleGatewayUrlConfirm()}>
+          <button class="btn-primary" @click=${() => state.handleGatewayUrlConfirm()}>
             ${t("common.confirm")}
           </button>
           <button class="btn" @click=${() => state.handleGatewayUrlCancel()}>

@@ -658,7 +658,7 @@ export class InstancesPage extends LitElement {
               />
             </div>
 
-            <button class="btn primary" style="margin-left:auto;" @click=${() => this._addInstance()}>
+            <button class="btn" style="margin-left:auto;" @click=${() => this._addInstance()}>
               + 添加实例
             </button>
           </div>
@@ -669,7 +669,8 @@ export class InstancesPage extends LitElement {
                   <table class="table">
                     <thead>
                       <tr>
-                        <th class="sortable" @click=${() => this._toggleSort('name')}>实例 ${this._sortArrow('name')}</th>
+                        <th style="width:40px;text-align:center;">#</th>
+                        <th class="sortable" style="max-width:200px;" @click=${() => this._toggleSort('name')}>实例 ${this._sortArrow('name')}</th>
                         <th class="sortable" style="width: 60px; text-align:center;" @click=${() => this._toggleSort('db_type')}>类型 ${this._sortArrow('db_type')}</th>
                         <th class="sortable" style="width: 72px; text-align:center;" @click=${() => this._toggleSort('db_version')}>版本 ${this._sortArrow('db_version')}</th>
                         <th class="sortable" style="width: 72px; text-align:center;" @click=${() => this._toggleSort('data_size_gb')}>容量 ${this._sortArrow('data_size_gb')}</th>
@@ -680,11 +681,10 @@ export class InstancesPage extends LitElement {
                       </tr>
                     </thead>
                     <tbody>
-                      ${filtered.map((inst) => html`
-                        <tr class="instance-row" @click=${(e: MouseEvent) => { if (!(e.target as HTMLElement).closest('button')) this._viewDetail(inst); }} style="cursor:pointer;">
-                          <td>
-                            <div class="instance-name">${inst.name}</div>
-                          </td>
+                      ${filtered.map((inst, idx) => html`
+                        <tr class="instance-row">
+                          <td style="text-align:center;font-size:var(--text-sm);color:var(--muted);">${idx + 1}</td>
+                          <td><div class="instance-name">${inst.name}</div></td>
                           <td style="text-align:center;">
                             <span class="type-tag">${inst.db_type.toUpperCase()}</span>
                           </td>
@@ -1012,7 +1012,7 @@ export class InstancesPage extends LitElement {
 
   private _renderFormDialog(title: string, isEdit: boolean) {
     return html`
-      <app-dialog .open=${true} size="md" title="${title}" @app-dialog-close=${this._closeDialogs}>
+      <app-dialog .open=${true} size="md" .closeOnOverlay=${false} title="${title}" @app-dialog-close=${this._closeDialogs}>
         <div class="form-row">
           <app-form-field label="实例名称" required>
             <input class="form-input" type="text" .value=${this.formData.name} @input=${(e: any) => this._updateForm("name", e.target.value)} placeholder="如：生产主库" />
@@ -1078,7 +1078,7 @@ export class InstancesPage extends LitElement {
             ${this.testStatus === 'testing' ? '测试中...' : '测试连接'}
           </button>
           <button class="btn" @click=${this._closeDialogs}>取消</button>
-          <button class="btn primary" @click=${() => this._handleSubmit(isEdit)} ?disabled=${this.isSubmitting}>${this.isSubmitting ? '保存中...' : isEdit ? '保存修改' : '添加实例'}</button>
+          <button class="btn" @click=${() => this._handleSubmit(isEdit)} ?disabled=${this.isSubmitting}>${this.isSubmitting ? '保存中...' : isEdit ? '保存修改' : '添加实例'}</button>
         </div>
       </app-dialog>
     `;
@@ -1156,7 +1156,7 @@ export class InstancesPage extends LitElement {
           : ''}
         <div slot="footer" style="display:flex;justify-content:${isConnected ? 'center' : 'space-between'};align-items:center">
           <button class="btn" @click=${this._closeDialogs}>关闭</button>
-          ${isConnected ? nothing : html`<button class="btn primary" @click=${this._handleListTestConnection} ?disabled=${isTesting}>
+          ${isConnected ? nothing : html`<button class="btn-primary" @click=${this._handleListTestConnection} ?disabled=${isTesting}>
             ${isTesting ? html`${icons['loader']} 测试中...` : html`${icons['link']} 测试连接`}
           </button>`}
         </div>

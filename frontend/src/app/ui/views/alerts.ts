@@ -1131,7 +1131,7 @@ export class AlertsPage extends LitElement {
       <div class="card">
         <div class="card-header">
           <span class="card-title">告警规则 (${this.rules.length})</span>
-          <button class="btn primary" @click=${() => this._openRuleModal()}>
+          <button class="btn-primary" @click=${() => this._openRuleModal()}>
             ${icons['plus']} 新建规则
           </button>
         </div>
@@ -1320,7 +1320,7 @@ export class AlertsPage extends LitElement {
       <div class="card">
         <div class="card-header">
           <span class="card-title">升级规则 (${this.escalationRules.length})</span>
-          <button class="btn primary" @click=${() => this._openEscalationModal()}>
+          <button class="btn-primary" @click=${() => this._openEscalationModal()}>
             ${icons['plus']} 新建规则
           </button>
         </div>
@@ -1420,7 +1420,7 @@ export class AlertsPage extends LitElement {
 
           <div class="form-actions">
             <button class="btn" @click=${() => this._closeEscalationModal()}>取消</button>
-            <button class="btn primary" @click=${() => this._saveEscalationRule()}>保存</button>
+            <button class="btn-primary" @click=${() => this._saveEscalationRule()}>保存</button>
           </div>
         </div>
       </div>
@@ -1539,7 +1539,7 @@ export class AlertsPage extends LitElement {
       <div class="card">
         <div class="card-header">
           <span class="card-title">维护窗口 (${this.maintenanceWindows.length})</span>
-          <button class="btn primary" @click=${() => this._openMaintenanceModal()}>
+          <button class="btn-primary" @click=${() => this._openMaintenanceModal()}>
             ${icons['plus']} 新建窗口
           </button>
         </div>
@@ -1648,7 +1648,7 @@ export class AlertsPage extends LitElement {
 
           <div class="form-actions">
             <button class="btn" @click=${() => this._closeMaintenanceModal()}>取消</button>
-            <button class="btn primary" @click=${() => this._saveMaintenanceWindow()}>保存</button>
+            <button class="btn-primary" @click=${() => this._saveMaintenanceWindow()}>保存</button>
           </div>
         </div>
       </div>
@@ -1747,7 +1747,7 @@ export class AlertsPage extends LitElement {
       <div class="card">
         <div class="card-header">
           <span class="card-title">静默期 (${this.silencePeriods.length})</span>
-          <button class="btn primary" @click=${() => this._openSilenceModal()}>
+          <button class="btn-primary" @click=${() => this._openSilenceModal()}>
             ${icons['bell-off']} 新建静默
           </button>
         </div>
@@ -1840,7 +1840,7 @@ export class AlertsPage extends LitElement {
 
           <div class="form-actions">
             <button class="btn" @click=${() => this._closeSilenceModal()}>取消</button>
-            <button class="btn primary" @click=${() => this._createSilence()}>创建</button>
+            <button class="btn-primary" @click=${() => this._createSilence()}>创建</button>
           </div>
         </div>
       </div>
@@ -1899,7 +1899,7 @@ export class AlertsPage extends LitElement {
       <div class="card" data-baseline-v="2">
         <div class="card-header">
           <span class="card-title">指标基线</span>
-          <button class="btn primary" ?disabled=${this.baselineComputing} @click=${() => this._computeAllBaselines()}>
+          <button class="btn-primary" ?disabled=${this.baselineComputing} @click=${() => this._computeAllBaselines()}>
             ${this.baselineComputing ? html`${icons['loader']} 计算中...` : html`${icons['refresh']} 重新计算全部`}
           </button>
         </div>

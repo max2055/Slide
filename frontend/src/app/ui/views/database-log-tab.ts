@@ -747,7 +747,7 @@ export class DatabaseLogTab extends LitElement {
           <div class="header-actions">
             <button class="btn" @click=${() => { this.loadLogs(); this.loadStats(); }}>刷新</button>
             <button
-              class="btn primary"
+              class="btn-primary"
               ?disabled=${this.selectedIds.size === 0 || this.analysisLoading}
               @click=${this._triggerAnalysis}
             >

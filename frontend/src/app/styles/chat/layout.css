@@ -639,7 +639,7 @@
 
 .chat-send-btn--stop {
   background: var(--danger);
-  color: var(--destructive-foreground);
+  color: var(--danger-foreground);
 }
 
 .chat-send-btn--stop:hover:not(:disabled) {

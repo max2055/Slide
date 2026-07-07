@@ -496,7 +496,7 @@ export class ReportsPage extends LitElement {
                           <td style="text-align:center;"><span class="time-ago">${this._formatTime(report.created_at)}</span></td>
                           <td style="text-align:center;">
                             <div class="actions">
-                              <button class="btn primary" @click=${() => this._download(report)}>下载</button>
+                              <button class="btn-primary" @click=${() => this._download(report)}>下载</button>
                               <button class="action-btn" @click=${() => this._view(report)}>查看</button>
                             </div>
                           </td>

@@ -63,7 +63,6 @@ export class OracleProvider extends BaseMetricProvider {
                 FROM DBA_DATA_FILES df LEFT JOIN (
                   SELECT tablespace_name, SUM(bytes) as free_bytes FROM DBA_FREE_SPACE GROUP BY tablespace_name
                 ) fs ON fs.tablespace_name = df.tablespace_name
-                WHERE df.tablespace_name NOT IN ('SYSTEM', 'SYSAUX')
                 GROUP BY df.tablespace_name, fs.free_bytes
               )
             `);
@@ -81,7 +80,6 @@ export class OracleProvider extends BaseMetricProvider {
                 FROM DBA_DATA_FILES df LEFT JOIN (
                   SELECT tablespace_name, SUM(bytes) as free_bytes FROM DBA_FREE_SPACE GROUP BY tablespace_name
                 ) fs ON fs.tablespace_name = df.tablespace_name
-                WHERE df.tablespace_name NOT IN ('SYSTEM', 'SYSAUX')
                 GROUP BY df.tablespace_name, fs.free_bytes
               )
             `);

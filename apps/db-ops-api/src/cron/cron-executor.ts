@@ -54,14 +54,14 @@ export class CronExecutor {
     const hook = new CronHook();
 
     try {
-      const result = await this.runner.run({
+      const runPromise = this.runner.run({
         initialMessages: [
           { role: 'system', content: this.buildSystemPrompt(taskDescription, outputSchema) },
           { role: 'user', content: taskDescription },
         ] as Message[],
         tools: this.registry,
         model: this.provider.getDefaultModel(),
-        maxIterations: 20,
+        maxIterations: 200,
         maxToolResultChars: 20000,
         temperature: 0.0,
         reasoningEffort: 'medium',
@@ -72,6 +72,13 @@ export class CronExecutor {
         failOnToolError: false,
         sessionKey,
       });
+
+      // 硬超时：即使 Agent 多轮 tool-call 循环，总 wall-clock 时间也不超过 timeoutSeconds
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error(`Cron 任务执行超时（${timeoutSeconds}s）`)), timeoutSeconds * 1000);
+      });
+
+      const result = await Promise.race([runPromise, timeoutPromise]);
 
       // Extract structured result from agent output
       const structuredResult = this.extractStructuredResult(result.finalContent, hook.events);
@@ -94,7 +101,7 @@ export class CronExecutor {
         messages: [],
         toolsUsed: [],
         usage: {},
-        stopReason: 'error',
+        stopReason: errorMessage.includes('超时') ? 'timeout' : 'error',
         error: errorMessage,
         toolEvents: hook.events,
         hadInjections: false,

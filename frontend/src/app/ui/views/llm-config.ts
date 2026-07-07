@@ -131,9 +131,9 @@ export class LLMConfigPage extends LitElement {
 
     :host { display: block; height: 100%; }
     .shell { display: flex; height: 100%; overflow: hidden; }
-    .page-header { margin-bottom: 0; padding: 0 0 16px; flex-shrink: 0; }
-    .page-header h1 { font-size: 20px; font-weight: 700; margin: 0 0 2px; color: var(--text-strong); }
-    .page-header p { font-size: 12px; color: var(--muted); margin: 0; }
+    .page-header { margin-bottom: 24px; }
+    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
+    .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
 
     /* Sidebar */
     .sidebar { width: 240px; min-width: 240px; border-right: 1px solid var(--border); background: var(--card); display: flex; flex-direction: column; overflow: hidden; }
@@ -143,12 +143,12 @@ export class LLMConfigPage extends LitElement {
     .sidebar-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px 16px; text-align: center; gap: 10px; }
     .sidebar-empty svg { opacity: 0.2; }
     .sidebar-empty p { font-size: 11px; color: var(--muted); margin: 0; line-height: 1.4; }
-    .sidebar-empty .add-first-btn { margin-top: 4px; padding: 6px 16px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--accent); background: var(--accent); color: #fff; transition: opacity 0.15s; }
+    .sidebar-empty .add-first-btn { margin-top: 4px; padding: 6px 16px; border-radius: var(--radius-md); font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--accent); background: var(--accent); color: #fff; transition: opacity 0.15s; }
     .sidebar-empty .add-first-btn:hover { opacity: 0.85; }
-    .sidebar-item { display: flex; align-items: center; gap: var(--space-sm); padding: 8px 10px; border-radius: 6px; cursor: pointer; transition: background 0.12s; }
+    .sidebar-item { display: flex; align-items: center; gap: var(--space-sm); padding: 8px 10px; border-radius: var(--radius-md); cursor: pointer; transition: background 0.12s; }
     .sidebar-item:hover { background: var(--hover); }
     .sidebar-item.selected { background: var(--active); }
-    .brand-circle { width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; color: inherit; }
+    .brand-circle { width: 28px; height: 28px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; color: inherit; }
     .item-info { flex: 1; min-width: 0; }
     .item-name { font-size: 12px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .item-url { font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
@@ -157,19 +157,19 @@ export class LLMConfigPage extends LitElement {
     .status-off { background: var(--border); }
     .default-star { font-size: 11px; color: var(--accent); flex-shrink: 0; margin-left: -2px; }
     .sidebar-footer { padding: 8px 6px; border-top: 1px solid var(--border); }
-    .add-btn { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; padding: 7px 0; background: none; border: 1px dashed var(--border); border-radius: 6px; color: var(--muted); cursor: pointer; font-size: 12px; transition: border-color 0.12s, color 0.12s; }
+    .add-btn { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; padding: 7px 0; background: none; border: 1px dashed var(--border); border-radius: var(--radius-md); color: var(--muted); cursor: pointer; font-size: 12px; transition: border-color 0.12s, color 0.12s; }
     .add-btn:hover { border-color: var(--accent); color: var(--accent); }
 
     /* Detail */
-    .detail { flex: 1; overflow-y: auto; padding: 0; display: flex; flex-direction: column; }
+    .detail { flex: 1; overflow-y: auto; padding: 0; display: flex; flex-direction: column; background: var(--bg-elevated); }
     .detail-inner { padding: 20px 28px; max-width: 560px; }
 
     /* Template picker */
     .picker-section-label { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 8px; margin-top: 4px; }
     .template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
-    .template-card { display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); padding: 16px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); cursor: pointer; text-align: center; transition: border-color 0.12s, background 0.12s; }
+    .template-card { display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); padding: 16px 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); cursor: pointer; text-align: center; transition: border-color 0.12s, background 0.12s; }
     .template-card:hover { border-color: var(--accent); background: var(--bg-accent); }
-    .template-card .t-circle { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; }
+    .template-card .t-circle { width: 36px; height: 36px; border-radius: var(--radius-lg); display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; }
     .template-card .t-name { font-size: 12px; font-weight: 600; color: var(--text); }
     .template-card .t-desc { font-size: 10px; color: var(--muted); line-height: 1.3; }
     .template-card.custom .t-circle { border: 1.5px dashed var(--border); background: transparent; color: var(--muted); }
@@ -188,7 +188,7 @@ export class LLMConfigPage extends LitElement {
     .key-wrapper .form-input { padding-right: 34px; }
     .key-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; padding: 0; border: none; background: transparent; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; }
 
-    .model-remove-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; margin-top: 14px; flex-shrink: 0; border: 1px solid rgba(239,68,68,0.25); border-radius: 5px; background: transparent; color: #ef4444; cursor: pointer; transition: background 0.12s, border-color 0.12s; }
+    .model-remove-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; margin-top: 14px; flex-shrink: 0; border: 1px solid rgba(239,68,68,0.25); border-radius: var(--radius-sm); background: transparent; color: #ef4444; cursor: pointer; transition: background 0.12s, border-color 0.12s; }
     .model-remove-btn:hover { background: rgba(239,68,68,0.1); border-color: #ef4444; }
     .model-remove-btn svg { width: 14px; height: 14px; }
     .actions-bar { display: flex; gap: var(--space-sm); align-items: center; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
@@ -203,7 +203,7 @@ export class LLMConfigPage extends LitElement {
     .toggle-switch.on::after { transform: translateX(16px); }
 
     /* Messages */
-    .msg { font-size: 12px; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; }
+    .msg { font-size: 12px; padding: 8px 12px; border-radius: var(--radius-sm); margin-bottom: 12px; }
     .msg-ok { background: var(--ok-subtle); color: var(--ok); }
     .msg-err { background: var(--danger-subtle); color: var(--danger); }
 
@@ -442,7 +442,7 @@ export class LLMConfigPage extends LitElement {
 
     return html`
       <div style="display:flex;flex-direction:column;height:100%">
-        <div class="page-header" style="padding:0 var(--space-xl) var(--space-lg)">
+        <div class="page-header">
           <h1>LLM 配置</h1>
           <p>管理 AI 提供商：添加、编辑、启停、测试连接</p>
         </div>

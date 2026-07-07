@@ -171,7 +171,7 @@ export class MetricRegistryViewer extends LitElement {
             ${this._allDbTypes().map(t => html`<option value=${t}>${t.toUpperCase()}</option>`)}
           </select>
           <span class="spacer"></span>
-          <button class="btn btn-primary" @click=${this._openCreate}>+ 新建指标</button>
+          <button class="btn" @click=${this._openCreate}>+ 新建指标</button>
         </div>
         <table>
           <thead>
@@ -247,7 +247,7 @@ export class MetricRegistryViewer extends LitElement {
     const isEdit = !!this.editing;
     const dbTypes: string[] = this.form.db_types || [];
     const collectionSqls: Record<string, string> = this.form.collection_sqls || {};
-    return html`<app-dialog .open=${true} size="xl" title="${isEdit ? '编辑指标' : '新建指标'}" @app-dialog-close=${() => this.showModal = false}>
+    return html`<app-dialog .open=${true} size="xl" .closeOnOverlay=${false} title="${isEdit ? '编辑指标' : '新建指标'}" @app-dialog-close=${() => this.showModal = false}>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 16px">
         <div class="form-group"><label class="form-label">指标 ID</label><input class="form-input" .value=${this.form.id || ''} @input=${(e: any) => this.form.id = e.target.value} placeholder="custom_metric" ?disabled=${isEdit} /></div>
         <div class="form-group"><label class="form-label">名称</label><input class="form-input" .value=${this.form.name || ''} @input=${(e: any) => this.form.name = e.target.value} placeholder="指标显示名称" /></div>

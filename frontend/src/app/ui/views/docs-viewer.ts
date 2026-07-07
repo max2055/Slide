@@ -93,7 +93,7 @@ export class DocsViewerPage extends LitElement {
     this.loading = true;
     this.error = null;
     try {
-      const res = await authFetch(`/api/docs/content/${encodeURIComponent(file)}`);
+      const res = await authFetch(`/api/docs/files/${encodeURIComponent(file)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       this.content = data.content || "";

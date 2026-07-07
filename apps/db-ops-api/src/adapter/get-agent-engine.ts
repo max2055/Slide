@@ -60,6 +60,7 @@ export async function loadPlatformTools(): Promise<ToolRegistry> {
         readOnly: true,
         concurrencySafe: !anyTool.ownerOnly,
         exclusive: false,
+        scope: anyTool.scope, // Pass through scope for subagent filtering
         execute: async (params: Record<string, unknown>) => {
           const result = await anyTool.handler(params);
           // Extract meaningful data from ToolResult wrapper

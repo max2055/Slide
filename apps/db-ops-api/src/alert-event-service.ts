@@ -29,7 +29,7 @@ class AlertEventService {
     severity?: string;
     limit?: number;
     offset?: number;
-  }): Promise<any[]> {
+  }): Promise<{ items: any[]; total: number }> {
     const pool = this.getPool();
     if (!pool) return [];
 
@@ -65,36 +65,35 @@ class AlertEventService {
 
       sql += ' GROUP BY e.id ORDER BY e.created_at DESC';
 
-      if (options?.limit !== undefined) {
-        sql += ' LIMIT ?';
-        params.push(options.limit);
-      }
+      // Default LIMIT 50 to prevent returning entire table (22k+ rows)
+      const limit = Number(options?.limit ?? 50);
+      sql += ' LIMIT ?';
+      params.push(limit);
       if (options?.offset !== undefined) {
         sql += ' OFFSET ?';
-        params.push(options.offset);
+        params.push(Number(options.offset));
       }
 
-      const [rows] = await pool.execute(sql, params) as any;
+      // Use pool.query() instead of pool.execute() — mysql2 prepared statements
+      // have issues with LIMIT/OFFSET parameters in some MySQL versions.
+      const [rows] = await pool.query(sql, params) as any;
 
-      // Get total count for pagination
-      let total = rows.length;
-      if (options?.limit !== undefined) {
-        let countSql = 'SELECT COUNT(DISTINCT e.id) AS total FROM alert_events e WHERE 1=1';
-        const countParams: any[] = [];
-        if (options?.instance_id !== undefined) { countSql += ' AND e.instance_id = ?'; countParams.push(options.instance_id); }
-        if (options?.status) {
-          const statuses = options.status.split(',').map(s => s.trim()).filter(Boolean);
-          if (statuses.length === 1) {
-            countSql += ' AND e.status = ?'; countParams.push(statuses[0]);
-          } else if (statuses.length > 1) {
-            countSql += ` AND e.status IN (${statuses.map(() => '?').join(',')})`;
-            countParams.push(...statuses);
-          }
+      // Get total count for pagination (always needed since we apply default limit)
+      let countSql = 'SELECT COUNT(DISTINCT e.id) AS total FROM alert_events e WHERE 1=1';
+      const countParams: any[] = [];
+      if (options?.instance_id !== undefined) { countSql += ' AND e.instance_id = ?'; countParams.push(options.instance_id); }
+      if (options?.status) {
+        const statuses = options.status.split(',').map(s => s.trim()).filter(Boolean);
+        if (statuses.length === 1) {
+          countSql += ' AND e.status = ?'; countParams.push(statuses[0]);
+        } else if (statuses.length > 1) {
+          countSql += ` AND e.status IN (${statuses.map(() => '?').join(',')})`;
+          countParams.push(...statuses);
         }
-        if (options?.severity) { countSql += ' AND e.severity = ?'; countParams.push(options.severity); }
-        const [countRows] = await pool.execute(countSql, countParams) as any;
-        total = countRows[0]?.total ?? rows.length;
       }
+      if (options?.severity) { countSql += ' AND e.severity = ?'; countParams.push(options.severity); }
+      const [countRows] = await pool.query(countSql, countParams) as any;
+      const total = countRows[0]?.total ?? 0;
 
       return { items: rows, total };
     } catch (error) {

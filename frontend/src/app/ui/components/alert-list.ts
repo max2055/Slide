@@ -119,7 +119,7 @@ export class AlertList extends LitElement {
           </div>
         `)}
       </div>`;
-    if (this.error) return html`<div class="loading" style="color:var(--destructive);">${this.error}</div>`;
+    if (this.error) return html`<div class="loading" style="color:var(--danger);">${this.error}</div>`;
 
     const filtered = this.alerts;
     const totalPages = Math.max(1, Math.ceil(this.total / this.pageSize));

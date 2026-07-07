@@ -3,7 +3,9 @@ import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
 import { apiClient } from '../../../api/index.js';
 import "../components/app-dialog.js";
-import "../components/app-form-field.js";
+import "../components/app-card.js";
+import "../components/app-badge.js";
+import "../components/app-empty-state.js";
 
 /* ───────── Types ───────── */
 
@@ -58,7 +60,6 @@ export class RbacAdminPage extends LitElement {
       border-radius: var(--radius) var(--radius) 0 0;
       overflow: hidden;
     }
-
     .sub-tab {
       padding: var(--space-md) var(--space-xl);
       border: none;
@@ -70,7 +71,6 @@ export class RbacAdminPage extends LitElement {
       position: relative;
       transition: color var(--duration-fast) var(--ease-out);
     }
-
     .sub-tab:hover { color: var(--text); background: var(--bg-hover); }
     .sub-tab--active {
       color: var(--accent);
@@ -86,7 +86,10 @@ export class RbacAdminPage extends LitElement {
       background: var(--accent);
     }
 
-    /* Shared styles */
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
+    .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
+
     .page { padding: 0; }
 
     .table-container { overflow-x: auto; }
@@ -97,10 +100,7 @@ export class RbacAdminPage extends LitElement {
     .table tbody tr:hover { background: var(--bg-hover); }
     .table tbody tr:last-child td { border-bottom: none; }
 
-    .actions { display: flex; gap: var(--space-sm); flex-wrap: wrap; }
-    .action-btn { display: inline-flex; align-items: center; justify-content: center; padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-xs); font-weight: 500; color: var(--text); background: var(--secondary); cursor: pointer; transition: all var(--duration-normal) var(--ease-out); }
-    .action-btn:hover { background: var(--accent); color: var(--accent-foreground); border-color: var(--accent); }
-    .action-btn.danger:hover { background: var(--danger); color: var(--danger-foreground); border-color: var(--danger); }
+    .actions { display: flex; gap: var(--space-sm); flex-wrap: wrap; justify-content: center; }
 
     .empty { display: flex; align-items: center; justify-content: center; min-height: 200px; color: var(--muted); font-size: var(--text-base); padding: 40px 20px; text-align: center; }
 
@@ -147,6 +147,16 @@ export class RbacAdminPage extends LitElement {
     this.activeSubTab = tab;
   }
 
+  private _openCreateInActiveTab() {
+    const tabElement = this.activeSubTab === "roles"
+      ? this.shadowRoot?.querySelector("role-management-tab")
+      : this.shadowRoot?.querySelector("permission-management-tab");
+
+    if (tabElement) {
+      tabElement.dispatchEvent(new CustomEvent("open-create-modal", { bubbles: true, composed: true }));
+    }
+  }
+
   override render() {
     if (this.loading) {
       return html`<div class="loading">加载中...</div>`;
@@ -162,6 +172,9 @@ export class RbacAdminPage extends LitElement {
 
     return html`
       <div class="page">
+        <div class="page-header">
+          <h1>权限管理</h1>
+        </div>
         <div class="sub-tabs">
           ${subTabs.map(
             (st) => html`
@@ -217,6 +230,7 @@ export class RoleManagementTab extends LitElement {
 
   override async firstUpdated() {
     await this._loadRoles();
+    this.addEventListener("open-create-modal", () => this._openCreateModal());
   }
 
   private async _loadRoles() {
@@ -391,12 +405,12 @@ export class RoleManagementTab extends LitElement {
     return html`
       <app-card>
         <span slot="header">角色列表
-          <button class="btn-primary" @click=${this._openCreateModal} style="margin-left:auto">＋ 新建角色</button>
+          <button class="btn-primary" @click=${this._openCreateModal}>+ 新建角色</button>
         </span>
         ${this._renderFormModal()}
         ${this._renderPermModal()}
         ${this.roles.length === 0
-          ? html`<div class="empty">暂无角色数据。点击"新建角色"创建第一个角色。</div>`
+          ? html`<app-empty-state title="暂无角色数据" description="点击「新建角色」创建第一个角色。"></app-empty-state>`
           : html`
               <div class="table-container">
                 <table class="table">
@@ -406,7 +420,7 @@ export class RoleManagementTab extends LitElement {
                       <th>描述</th>
                       <th>权限数</th>
                       <th>用户数</th>
-                      <th>操作</th>
+                      <th style="text-align:center">操作</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -417,11 +431,11 @@ export class RoleManagementTab extends LitElement {
                           <td style="color:var(--muted)">${role.description || "-"}</td>
                           <td>${role.permission_count ?? 0}</td>
                           <td>${role.user_count ?? 0}</td>
-                          <td>
+                          <td style="text-align:center">
                             <div class="actions">
-                              <button class="action-btn" @click=${() => this._openEditModal(role)}>编辑</button>
-                              <button class="action-btn" @click=${() => this._openPermModal(role)}>编辑权限</button>
-                              <button class="action-btn danger" @click=${() => this._deleteRole(role)}>删除</button>
+                              <button class="btn-sm" @click=${() => this._openEditModal(role)}>编辑</button>
+                              <button class="btn-sm" @click=${() => this._openPermModal(role)}>编辑权限</button>
+                              <button class="btn-sm danger" @click=${() => this._deleteRole(role)}>删除</button>
                             </div>
                           </td>
                         </tr>
@@ -439,16 +453,18 @@ export class RoleManagementTab extends LitElement {
     if (!this.showFormModal) return nothing;
     const isEdit = !!this.editingRole;
     return html`
-      <app-dialog .open=${true} size="md" title="${isEdit ? '编辑角色' : '新建角色'}" @app-dialog-close=${this._closeFormModal}>
+      <app-dialog .open=${true} size="md" .closeOnOverlay=${false} title="${isEdit ? '编辑角色' : '新建角色'}" @app-dialog-close=${this._closeFormModal}>
         ${this.saveError
-          ? html`<div class="save-error">${this.saveError}</div>`
+          ? html`<div class="save-error" style="margin-bottom:8px">${this.saveError}</div>`
           : ""}
-        <app-form-field label="角色名称" required>
+        <div class="form-group">
+          <label>角色名称</label>
           <input .value=${this.formName} @input=${(e: any) => (this.formName = e.target.value)} placeholder="如：高级 DBA" />
-        </app-form-field>
-        <app-form-field label="描述">
+        </div>
+        <div class="form-group">
+          <label>描述</label>
           <textarea .value=${this.formDescription} @input=${(e: any) => (this.formDescription = e.target.value)} placeholder="可选角色说明"></textarea>
-        </app-form-field>
+        </div>
         <div slot="footer">
           <button class="btn" @click=${this._closeFormModal}>取消</button>
           <button class="btn-primary" @click=${this._saveRole} ?disabled=${this.saving}>
@@ -462,22 +478,22 @@ export class RoleManagementTab extends LitElement {
   private _renderPermModal() {
     if (!this.showPermModal) return nothing;
     return html`
-      <app-dialog .open=${true} size="lg" title="编辑权限 - ${this.permRoleName}" @app-dialog-close=${this._closePermModal}>
+      <app-dialog .open=${true} size="lg" .closeOnOverlay=${false} title="编辑权限 - ${this.permRoleName}" @app-dialog-close=${this._closePermModal}>
         ${this.permError
           ? html`<div class="save-error">${this.permError}</div>`
           : ""}
         ${this.permLoading
-          ? html`<div class="empty">加载中...</div>`
+          ? html`<app-empty-state title="加载中..."></app-empty-state>`
           : this.allPermissions.length === 0
-            ? html`<div class="empty">暂无权限数据。</div>`
+            ? html`<app-empty-state title="暂无权限数据"></app-empty-state>`
             : html`
                 ${[...this._groupByResource(this.allPermissions).entries()].map(
                   ([resource, perms]) => html`
                     <details class="perm-group">
                       <summary>
                         ${resource}
-                        <span class="count-badge"
-                          >已选 ${this._permCountForResource(resource)}/${perms.length}</span
+                        <app-badge variant="muted"
+                          >已选 ${this._permCountForResource(resource)}/${perms.length}</app-badge
                         >
                       </summary>
                       <div class="perm-group-content">
@@ -540,6 +556,7 @@ export class PermissionManagementTab extends LitElement {
 
   override async firstUpdated() {
     await this._loadPermissions();
+    this.addEventListener("open-create-modal", () => this._openCreateModal());
   }
 
   private async _loadPermissions() {
@@ -647,11 +664,11 @@ export class PermissionManagementTab extends LitElement {
     return html`
       <app-card>
         <span slot="header">权限列表
-          <button class="btn-primary" @click=${this._openCreateModal} style="margin-left:auto">＋ 新建权限</button>
+          <button class="btn-primary" @click=${this._openCreateModal}>+ 新建权限</button>
         </span>
         ${this._renderModal()}
         ${this.permissions.length === 0
-          ? html`<div class="empty">暂无权限数据。点击"新建权限"创建第一个权限。</div>`
+          ? html`<app-empty-state title="暂无权限数据" description="点击「新建权限」创建第一个权限。"></app-empty-state>`
           : html`
               <div class="table-container">
                 <table class="table">
@@ -662,7 +679,7 @@ export class PermissionManagementTab extends LitElement {
                       <th>资源类型</th>
                       <th>操作</th>
                       <th>描述</th>
-                      <th>操作</th>
+                      <th style="text-align:center">操作</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -674,9 +691,9 @@ export class PermissionManagementTab extends LitElement {
                           <td>${perm.resource}</td>
                           <td>${perm.action}</td>
                           <td style="color:var(--muted)">${perm.description || "-"}</td>
-                          <td>
+                          <td style="text-align:center">
                             <div class="actions">
-                              <button class="action-btn danger" @click=${() => this._deletePermission(perm)}>删除</button>
+                              <button class="btn-sm danger" @click=${() => this._deletePermission(perm)}>删除</button>
                             </div>
                           </td>
                         </tr>
@@ -693,7 +710,7 @@ export class PermissionManagementTab extends LitElement {
   private _renderModal() {
     if (!this.showModal) return nothing;
     return html`
-      <app-dialog .open=${true} size="md" title="新建权限" @app-dialog-close=${this._closeModal}>
+      <app-dialog .open=${true} size="md" .closeOnOverlay=${false} title="新建权限" @app-dialog-close=${this._closeModal}>
         ${this.saveError
           ? html`<div class="save-error">${this.saveError}</div>`
           : ""}
@@ -923,13 +940,11 @@ export class InstancePermissionsTab extends LitElement {
     if (this.error) return html`<div class="error-msg">${this.error}</div>`;
 
     return html`
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">用户实例权限</span>
-        </div>
+      <app-card>
+        <span slot="header">用户实例权限</span>
         ${this._renderModal()}
         ${this.users.length === 0
-          ? html`<div class="empty">暂无用户数据。</div>`
+          ? html`<app-empty-state title="暂无用户数据"></app-empty-state>`
           : html`
               <div class="table-container">
                 <table class="table">
@@ -961,7 +976,7 @@ export class InstancePermissionsTab extends LitElement {
                 </table>
               </div>
             `}
-      </div>
+      </app-card>
     `;
   }
 
@@ -974,11 +989,9 @@ export class InstancePermissionsTab extends LitElement {
           ? html`<div class="save-error">${this.saveError}</div>`
           : ""}
         ${this.loadingInstances
-          ? html`<div class="empty">加载中...</div>`
+          ? html`<app-empty-state title="加载中..."></app-empty-state>`
           : this.allInstances.length === 0
-            ? html`<div class="empty">
-                暂无实例数据。请先在「实例管理」中添加数据库实例。
-              </div>`
+            ? html`<app-empty-state title="暂无实例数据" description="请先在「实例管理」中添加数据库实例。"></app-empty-state>`
             : html`
                 <input
                   class="instance-search"
@@ -987,13 +1000,11 @@ export class InstancePermissionsTab extends LitElement {
                   placeholder="搜索实例名称..."
                 />
                 ${this.grantedInstanceIds.size === 0
-                  ? html`<div class="empty">
-                      该用户暂无实例访问权限。选择实例后点击"保存权限"。
-                    </div>`
+                  ? html`<app-empty-state title="暂无实例访问权限" description="选择实例后点击「保存权限」。"></app-empty-state>`
                   : ""}
                 <div class="instance-list">
                   ${this._filteredInstances.length === 0
-                    ? html`<div class="empty">无匹配实例。</div>`
+                    ? html`<app-empty-state title="无匹配实例"></app-empty-state>`
                     : this._filteredInstances.map(
                         (inst) => html`
                           <div class="instance-check-row">

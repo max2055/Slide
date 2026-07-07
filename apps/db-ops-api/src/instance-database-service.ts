@@ -177,6 +177,17 @@ class InstanceDatabaseService {
         return { success: false, error: '该环境下实例名称已存在' };
       }
 
+      // 检查物理地址是否已纳管（防止同一库被不同名字重复添加）
+      const [physicallyExists] = await pool.execute(
+        'SELECT id, name FROM database_instances WHERE host = ? AND port = ? AND (database_name = ? OR (database_name IS NULL AND ? IS NULL))',
+        [data.host, data.port, data.database_name || null, data.database_name || null]
+      ) as any;
+
+      if (physicallyExists && physicallyExists.length > 0) {
+        const dup = physicallyExists[0];
+        return { success: false, error: `该地址已被实例 "${dup.name}" (ID: ${dup.id}) 纳管，请勿重复添加` };
+      }
+
       const encryptedPassword = encryptData(data.password);
 
       const [result] = await pool.execute(

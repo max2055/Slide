@@ -48,6 +48,30 @@ import { renderMarkdownSidebar } from "./markdown-sidebar.ts";
 import "../components/resizable-divider.ts";
 
 /**
+ * Map raw error messages to user-friendly Chinese text.
+ */
+function mapErrorMessage(error: string): string {
+  if (!error) return '未知错误';
+  const lower = error.toLowerCase();
+  if (lower.includes('provider_error') || lower.includes('api')) {
+    return 'AI 服务暂时不可用，请稍后重试';
+  }
+  if (lower.includes('timeout')) {
+    return '响应超时，请重试';
+  }
+  if (lower.includes('rate_limit')) {
+    return '请求过于频繁，请稍后再试';
+  }
+  if (lower.includes('connection') || lower.includes('network')) {
+    return '网络连接异常，请检查网络';
+  }
+  if (lower.includes('auth')) {
+    return '认证失败，请重新登录';
+  }
+  return error;
+}
+
+/**
  * Detects heartbeat acknowledgment tokens that should not be rendered.
  * Returns true if text consists only of whitespace or zero-width characters.
  */
@@ -75,6 +99,8 @@ export type ChatProps = {
   streamSegments: Array<{ text: string; ts: number }>;
   stream: string | null;
   streamStartedAt: number | null;
+  thinkingText?: string;
+  thinkingComplete?: boolean;
   assistantAvatarUrl?: string | null;
   draft: string;
   queue: ChatQueueItem[];
@@ -1489,13 +1515,25 @@ export function renderChat(props: ChatProps) {
               if (isHeartbeatAckText(item.text)) {
                 return nothing;
               }
-              return renderStreamingGroup(
-                item.text,
-                item.startedAt,
-                props.onOpenSidebar,
-                assistantIdentity,
-                props.basePath,
-              );
+              // Render thinking block before stream if thinking is active
+              const thinkingBlock = props.thinkingText
+                ? html`
+                    <details class="thinking-block" ?open=${!props.thinkingComplete}>
+                      <summary>💭 思考过程${props.thinkingComplete ? '' : '中...'}</summary>
+                      <pre>${props.thinkingText}</pre>
+                    </details>
+                  `
+                : nothing;
+              return html`
+                ${thinkingBlock}
+                ${renderStreamingGroup(
+                  item.text,
+                  item.startedAt,
+                  props.onOpenSidebar,
+                  assistantIdentity,
+                  props.basePath,
+                )}
+              `;
             }
             if (item.kind === "group") {
               if (deleted.has(item.key)) {
@@ -1682,9 +1720,22 @@ export function renderChat(props: ChatProps) {
         .connection-status__dot.connecting { background: var(--muted); box-shadow: 0 0 0 4px color-mix(in srgb, var(--muted) 14%, transparent); }
         .connection-status__reconnect { margin-left: auto; padding: 4px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); color: var(--text); font-size: var(--text-sm); font-weight: 600; cursor: pointer; transition: border-color 100ms ease, background 100ms ease, color 100ms ease; }
         .connection-status__reconnect:hover { border-color: var(--accent); background: var(--accent-subtle); color: var(--accent); }
+        .thinking-block { margin: var(--space-sm, 8px) 0; padding: var(--space-sm, 8px); background: var(--card, var(--bg-elevated)); border-radius: var(--radius-sm, 6px); border-left: 3px solid var(--accent); }
+        .thinking-block summary { cursor: pointer; font-weight: 500; color: var(--text-secondary, var(--muted)); font-size: 13px; user-select: none; }
+        .thinking-block pre { margin: var(--space-xs, 4px) 0 0; white-space: pre-wrap; font-size: 12px; color: var(--text-muted, var(--muted)); font-family: var(--font-mono, monospace); line-height: 1.5; max-height: 300px; overflow-y: auto; }
+        .connection-banner { display: flex; align-items: center; gap: var(--space-sm, 8px); padding: var(--space-sm, 8px) var(--space-md, 12px); background: rgba(255, 193, 7, 0.15); border-bottom: 1px solid rgba(255, 193, 7, 0.3); color: var(--text); font-size: 13px; }
+        .connection-banner__icon { font-size: 16px; }
+        .connection-banner__pulse { width: 8px; height: 8px; border-radius: 50%; background: #ffc107; animation: pulse 1.5s ease-in-out infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.85); } }
       </style>
+      ${!props.connected && !props.disabledReason ? html`
+        <div class="connection-banner">
+          <span class="connection-banner__pulse"></span>
+          <span>连接中断，正在重连...</span>
+        </div>
+      ` : nothing}
       ${props.disabledReason ? html`<div class="callout">${props.disabledReason}</div>` : nothing}
-      ${props.error ? html`<div class="callout danger">${props.error}</div>` : nothing}
+      ${props.error ? html`<div class="callout danger">${mapErrorMessage(props.error)}</div>` : nothing}
       ${props.focusMode
         ? html`
             <button

@@ -5,6 +5,7 @@ import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
 import { authFetch } from "../../../api/index.js";
+import "../components/app-card.js";
 
 interface ScoringWeights { availability: number; performance: number; capacity: number; security: number; }
 
@@ -24,14 +25,10 @@ export class ScoringSettingsPage extends LitElement {
   @state() private ok: string | null = null;
   static styles = [sharedBtnStyles, css`
 
-    :host { display: block; max-width: 640px; }
+    :host { display: block; max-width: 800px; }
     .page-header { margin-bottom: 24px; }
     .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
     .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
-
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-    .card-body { padding: 24px; }
-    .card-footer { padding: 14px 24px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; background: var(--bg-accent); }
 
     .dim-row { display: flex; align-items: center; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--border); }
     .dim-row:last-of-type { border-bottom: none; }
@@ -47,11 +44,11 @@ export class ScoringSettingsPage extends LitElement {
     .total-value { font-size: 18px; font-weight: 700; }
     .total-value.ok { color: var(--ok); }
     .total-value.warn { color: var(--warn); }
-    .total-value.err { color: var(--destructive); }
+    .total-value.err { color: var(--danger); }
 
     .toast { font-size: 12px; padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 12px; }
     .toast-ok { background: var(--ok-subtle); color: var(--ok); }
-    .toast-err { background: var(--danger-subtle); color: var(--destructive); }
+    .toast-err { background: var(--danger-subtle); color: var(--danger); }
 
     .loading { padding: 48px; text-align: center; color: var(--muted); }
   `];
@@ -85,8 +82,8 @@ export class ScoringSettingsPage extends LitElement {
 
   override render() {
     if (this.loading) return html`<div class="loading">加载中...</div>`;
-    if (this.error && !this.weights) return html`<div class="loading" style="color:var(--destructive)">${this.error}</div>`;
-    if (!this.weights) return html`<div class="loading" style="color:var(--destructive)">无法加载配置</div>`;
+    if (this.error && !this.weights) return html`<div class="loading" style="color:var(--danger)">${this.error}</div>`;
+    if (!this.weights) return html`<div class="loading" style="color:var(--danger)">无法加载配置</div>`;
 
     const total = this._total();
     return html`
@@ -98,24 +95,22 @@ export class ScoringSettingsPage extends LitElement {
         <p>调整各维度在实例健康评分中的占比，总和需为 100%</p>
       </div>
 
-      <div class="card">
-        <div class="card-body">
-          ${DIMS.map(d => html`
-            <div class="dim-row">
-              <div class="dim-info"><span class="dim-label">${d.label}</span><span class="dim-desc">${d.desc}</span></div>
-              <div class="dim-slider"><input type="range" min="0" max="1" step="0.05" .value=${String(this.weights![d.key])} @input=${(e: Event) => { if (this.weights) this.weights = { ...this.weights, [d.key]: Math.min(1, Math.max(0, parseFloat((e.target as HTMLInputElement).value) || 0)) }; }}></div>
-              <div class="dim-value">${Math.round(this.weights![d.key] * 100)}%</div>
-            </div>
-          `)}
-          <div class="total-bar">
-            <span class="total-label">权重总和</span>
-            <span class="total-value ${this._valid() ? 'ok' : Math.abs(total - 1) < 0.06 ? 'warn' : 'err'}">${total.toFixed(2)}${this._valid() ? ' ✓' : ''}</span>
+      <app-card variant="default">
+        ${DIMS.map(d => html`
+          <div class="dim-row">
+            <div class="dim-info"><span class="dim-label">${d.label}</span><span class="dim-desc">${d.desc}</span></div>
+            <div class="dim-slider"><input type="range" min="0" max="1" step="0.05" .value=${String(this.weights![d.key])} @input=${(e: Event) => { if (this.weights) this.weights = { ...this.weights, [d.key]: Math.min(1, Math.max(0, parseFloat((e.target as HTMLInputElement).value) || 0)) }; }}></div>
+            <div class="dim-value">${Math.round(this.weights![d.key] * 100)}%</div>
           </div>
+        `)}
+        <div class="total-bar">
+          <span class="total-label">权重总和</span>
+          <span class="total-value ${this._valid() ? 'ok' : Math.abs(total - 1) < 0.06 ? 'warn' : 'err'}">${total.toFixed(2)}${this._valid() ? ' ✓' : ''}</span>
         </div>
-        <div class="card-footer">
+        <div slot="footer">
           <button class="btn btn-primary" @click=${this._save} ?disabled=${this.saving || !this._valid()}>${this.saving ? '保存中...' : '保存配置'}</button>
         </div>
-      </div>
+      </app-card>
     `;
   }
 }

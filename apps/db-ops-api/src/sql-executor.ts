@@ -10,7 +10,7 @@ class SqlExecutor {
    * 执行 SQL 查询（仅 SELECT）
    */
   async executeSql(instanceId: number, sql: string, context?: {
-    userId?: string; username?: string; ipAddress?: string; database?: string;
+    userId?: string; username?: string; ipAddress?: string; database?: string; timeoutMs?: number;
   }): Promise<{
     success: boolean;
     columns?: string[];
@@ -48,6 +48,10 @@ class SqlExecutor {
       let result: any;
 
       if (conn.db_type === 'mysql' && conn.pool) {
+        // Set timeout guard on the same connection before executing
+        if (context?.timeoutMs) {
+          await conn.pool.query(`SET SESSION max_execution_time = ${context.timeoutMs}`);
+        }
         const [rows, fields] = await conn.pool.query(sql);
         result = { rows, fields };
       } else if (conn.db_type === 'postgresql' && conn.pgClient) {

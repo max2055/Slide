@@ -183,6 +183,23 @@ export class DirectGatewayClient {
     if (method === 'sessions.list') {
       return this._fetchJson<T>('/api/sessions');
     }
+    if (method === 'sessions.patch') {
+      const p = params as { key: string; model?: string | null; thinkingLevel?: string | null };
+      const token = this._getToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      return fetch(`/api/sessions/${encodeURIComponent(p.key)}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ model: p.model, thinkingLevel: p.thinkingLevel }),
+      }).then(async r => {
+        if (!r.ok) throw new Error(`PATCH /api/sessions failed: ${r.status}`);
+        return r.json();
+      }) as unknown as T;
+    }
+    if (method === 'models.list') {
+      return this._fetchJson<T>('/api/models');
+    }
     // Unsupported methods — throw clear error instead of silent undefined
     throw new Error(`[DirectGatewayClient] Method "${method}" is not supported in DirectAdapter mode`);
   }
@@ -473,7 +490,12 @@ function handleDirectAdapterEvent(host: Record<string, unknown>, event: AdapterC
 
   switch (event.type) {
     case 'thinking_delta':
+      // Accumulate thinking text
+      host.chatThinkingText = ((host.chatThinkingText as string) || '') + event.delta;
+      host.chatThinkingComplete = false;
+      break;
     case 'thinking_end':
+      host.chatThinkingComplete = true;
       break;
     case 'text_delta':
     case 'complete':

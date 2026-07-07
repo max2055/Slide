@@ -141,8 +141,8 @@ export class AlertRuleEditor extends LitElement {
     const dayLabels = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
     return html`
-      <app-dialog size="lg" .open=${this.open} title="${this.rule ? '编辑规则' : '新建规则'}" @app-dialog-close=${this._close}>
-        ${(this._error || this.error) ? html`<div style="color:var(--destructive);font-size:var(--text-base);margin-bottom:var(--space-md);">${this._error || this.error}</div>` : ''}
+      <app-dialog size="lg" .closeOnOverlay=${false} .open=${this.open} title="${this.rule ? '编辑规则' : '新建规则'}" @app-dialog-close=${this._close}>
+        ${(this._error || this.error) ? html`<div style="color:var(--danger);font-size:var(--text-base);margin-bottom:var(--space-md);">${this._error || this.error}</div>` : ''}
 
         <app-form-field label="规则名称" required>
           <input class="form-input" .value=${f.name || ''} @input=${(e: any) => this._update('name', e.target.value)} placeholder="例如：CPU 使用率过高" />
@@ -197,7 +197,7 @@ export class AlertRuleEditor extends LitElement {
 
         ${f.threshold_type !== 'dynamic' ? html`
           <app-form-field label="三级阈值" hint="${this._thresholdError ? '' : '留空表示该级别不触发。有效值需满足 warning < error < critical'}">
-            ${this._thresholdError ? html`<div style="color:var(--destructive);font-size:var(--text-sm);margin-bottom:var(--space-xs);">${this._thresholdError}</div>` : ''}
+            ${this._thresholdError ? html`<div style="color:var(--danger);font-size:var(--text-sm);margin-bottom:var(--space-xs);">${this._thresholdError}</div>` : ''}
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-md);">
               ${['warning', 'error', 'critical'].map(level => html`
                 <div>
@@ -240,7 +240,7 @@ export class AlertRuleEditor extends LitElement {
 
         <div slot="footer" style="display:flex;gap:var(--space-sm);justify-content:flex-end;">
           <button class="btn" @click=${this._close}>取消</button>
-          <button class="btn primary" @click=${this._save}>保存</button>
+          <button class="btn-primary" @click=${this._save}>保存</button>
         </div>
       </app-dialog>
     `;

@@ -134,7 +134,7 @@ export class HealthScoreTab extends LitElement {
 
     .check-status-icon.ok svg { color: var(--ok); }
     .check-status-icon.warn svg { color: var(--warn); }
-    .check-status-icon.danger svg { color: var(--destructive); }
+    .check-status-icon.danger svg { color: var(--danger); }
 
     .check-name {
       flex: 1;
@@ -165,7 +165,7 @@ export class HealthScoreTab extends LitElement {
 
     .check-score.red {
       background: var(--danger-subtle);
-      color: var(--destructive);
+      color: var(--danger);
     }
 
     .check-dimension {
@@ -293,7 +293,7 @@ export class HealthScoreTab extends LitElement {
     }
 
     .error {
-      color: var(--destructive);
+      color: var(--danger);
     }
   `;
 
@@ -350,7 +350,7 @@ export class HealthScoreTab extends LitElement {
   private _getScoreColor(score: number): string {
     if (score >= 80) return "var(--ok)";
     if (score >= 60) return "var(--warn)";
-    return "var(--destructive)";
+    return "var(--danger)";
   }
 
   private _getStatusIcon(status: string) {
@@ -360,7 +360,7 @@ export class HealthScoreTab extends LitElement {
       case "warning":
         return html`<span style="color: var(--warn);">${icons['triangle-alert']}</span>`;
       case "critical":
-        return html`<span style="color: var(--destructive);">${icons['circle-x']}</span>`;
+        return html`<span style="color: var(--danger);">${icons['circle-x']}</span>`;
       default:
         return html`<span style="color: var(--muted);">${icons['circle']}</span>`;
     }

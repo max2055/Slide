@@ -109,8 +109,20 @@ export const dbConnection = new DbConnectionManager();
 /**
  * 加密敏感数据
  */
+const ENCRYPTION_FALLBACK = 'change-this-to-a-random-32-char-key';
+let _encryptionWarned = false;
+function _getEncryptionKey(callerKey?: string): string {
+  const key = callerKey || process.env.ENCRYPTION_KEY;
+  if (key && key.length >= 32) return key;
+  if (!_encryptionWarned) {
+    console.warn('⚠ ENCRYPTION_KEY 未设置或长度不足 32 字符，使用不安全默认值。请尽快在 .env 中添加：ENCRYPTION_KEY=your-random-key-at-least-32-chars');
+    _encryptionWarned = true;
+  }
+  return ENCRYPTION_FALLBACK;
+}
+
 export function encryptData(data: string, key?: string): string {
-  const encryptKey = key || process.env.ENCRYPTION_KEY || 'default-encryption-key-change-in-production';
+  const encryptKey = _getEncryptionKey(key);
   const iv = crypto.randomBytes(16);
   const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(encryptKey.padEnd(32, '0').slice(0, 32)), iv);
   let encrypted = cipher.update(data, 'utf8', 'hex');
@@ -122,7 +134,7 @@ export function encryptData(data: string, key?: string): string {
  * 解密敏感数据
  */
 export function decryptData(encrypted: string, key?: string): string {
-  const decryptKey = key || process.env.ENCRYPTION_KEY || 'default-encryption-key-change-in-production';
+  const decryptKey = _getEncryptionKey(key);
   const parts = encrypted.split(':');
   if (parts.length !== 2) {
     throw new Error('无效的加密数据');

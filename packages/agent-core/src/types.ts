@@ -221,6 +221,8 @@ export interface Tool {
   readonly readOnly: boolean;
   readonly concurrencySafe: boolean;
   readonly exclusive: boolean;
+  /** Tool scopes for auto-discovery filtering. Default ["core"]. "subagent" scope allows use in subagents. Mirrors nanobot's _scopes. */
+  readonly scope?: string[];
   execute(params: Record<string, unknown>): Promise<unknown>;
   castParams?(params: Record<string, unknown>): Record<string, unknown>;
 }

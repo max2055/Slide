@@ -43,7 +43,7 @@ export class ApprovalDashboard extends LitElement {
     .actions { display: flex; gap: var(--space-sm); margin-top: 12px; }
     .btn { padding: var(--space-sm) var(--space-lg); border-radius: var(--radius-sm); font-size: var(--text-base); cursor: pointer; border: 1px solid var(--border, #e5e7eb); background: var(--card, #fff); color: var(--text, #3c3c43); }
     .btn-approve { background: var(--ok-subtle, #ecfdf5); color: var(--ok, #22c55e); border-color: var(--ok, #22c55e); }
-    .btn-reject { background: var(--danger-subtle, #fef2f2); color: var(--destructive, #ef4444); border-color: var(--destructive, #ef4444); }
+    .btn-reject { background: var(--danger-subtle, #fef2f2); color: var(--danger, #ef4444); border-color: var(--danger, #ef4444); }
     .batch-bar { display: flex; align-items: center; gap: var(--space-md); height: 48px; padding: 0 var(--space-lg); margin-bottom: 12px; background: var(--card, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-md); animation: fade-in 0.2s ease; }
     .batch-bar .count { font-size: var(--text-md); color: var(--text, #3c3c43); font-weight: 500; }
     .batch-bar .spacer { flex: 1; }
@@ -52,7 +52,7 @@ export class ApprovalDashboard extends LitElement {
     .card-exec-checkbox label { cursor: pointer; user-select: none; }
     .exec-result { margin-top: 8px; font-size: var(--text-sm); padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); }
     .exec-result.success { color: var(--ok, #22c55e); background: var(--ok-subtle, #ecfdf5); }
-    .exec-result.fail { color: var(--destructive, #ef4444); background: var(--danger-subtle, #fef2f2); }
+    .exec-result.fail { color: var(--danger, #ef4444); background: var(--danger-subtle, #fef2f2); }
     .empty { padding: 40px; text-align: center; color: var(--muted, #6b7280); }
     .ai-badge { font-size: var(--text-xs); padding: var(--space-xs) var(--space-sm); background: var(--bg-elevated, #f9fafb); border-radius: var(--radius-sm); color: var(--muted, #6b7280); }
     .loading { padding: 40px; text-align: center; color: var(--muted, #6b7280); }
@@ -62,7 +62,7 @@ export class ApprovalDashboard extends LitElement {
     .detail-title { font-size: var(--text-xl); font-weight: 600; color: var(--text-strong, #1a1a1e); margin: 0; }
 
 
-    .error-box { background: var(--danger-subtle, #fef2f2); color: var(--destructive, #ef4444); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); font-size: var(--text-base); margin-bottom: 12px; }
+    .error-box { background: var(--danger-subtle, #fef2f2); color: var(--danger, #ef4444); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); font-size: var(--text-base); margin-bottom: 12px; }
     .detail-split { display: grid; grid-template-columns: 1fr 360px; gap: 32px; align-items: start; }
     .detail-sql-panel { background: var(--card, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-md); overflow: hidden; min-height: 300px; }
     .detail-sql-panel .cm-editor { height: 100%; }
@@ -85,12 +85,12 @@ export class ApprovalDashboard extends LitElement {
     .timeline-dot--approved,
     .timeline-dot--executed { background: var(--ok, #22c55e); }
     .timeline-dot--rejected,
-    .timeline-dot--execution_failed { background: var(--destructive, #ef4444); }
+    .timeline-dot--execution_failed { background: var(--danger, #ef4444); }
     .timeline-content { min-width: 0; }
     .timeline-event-name { font-size: var(--text-md); font-weight: 500; color: var(--text-strong, #1a1a1e); }
     .timeline-timestamp { font-size: var(--text-sm); color: var(--muted, #6e6e73); margin-top: 2px; }
     .timeline-detail { font-size: var(--text-sm); color: var(--text, #3c3c43); margin-top: 4px; white-space: pre-wrap; }
-    .detail-error { padding: 20px; text-align: center; color: var(--destructive, #ef4444); }
+    .detail-error { padding: 20px; text-align: center; color: var(--danger, #ef4444); }
     .detail-error button { margin-top: 12px; }
   `];
 
@@ -414,7 +414,7 @@ export class ApprovalDashboard extends LitElement {
                   <span class="ai-badge">AI: ${r.ai_recommendation.recommendation === 'approve' ? '建议通过' : '建议驳回'}</span>
                 ` : ''}
               </div>
-              <div class="sql-preview">${r.sql_text}</div>
+              <div class="sql-preview" @click=${(e: Event) => e.stopPropagation()}>${r.sql_text}</div>
               ${r.ai_recommendation?.reasoning ? html`
                 <div style="margin-top:8px;font-size:12px;color:var(--muted);">${r.ai_recommendation.reasoning}</div>
               ` : ''}
@@ -423,7 +423,7 @@ export class ApprovalDashboard extends LitElement {
               ` : ''}
               ${r.status === 'executed' ? this._renderExecResult(r) : ''}
               ${r.status === 'rejected' ? html`
-                <div style="margin-top:8px;font-size:12px;color:var(--destructive,#ef4444);">✗ 已驳回 ${r.review_notes ? '— ' + r.review_notes : ''}</div>
+                <div style="margin-top:8px;font-size:12px;color:var(--danger,#ef4444);">✗ 已驳回 ${r.review_notes ? '— ' + r.review_notes : ''}</div>
               ` : ''}
             </div>
           </div>
@@ -491,7 +491,7 @@ export class ApprovalDashboard extends LitElement {
                     <div class="timeline-content">
                       <div class="timeline-event-name">${this._eventLabel(ev.event_type)}</div>
                       <div class="timeline-timestamp">${new Date(ev.created_at).toLocaleString("zh-CN")}</div>
-                      ${ev.event_data ? html`<div class="timeline-detail">${this._eventDetail(ev)}</div>` : ''}
+                      ${ev.event_data ? html`<div class="timeline-detail" @click=${(e: Event) => e.stopPropagation()}>${this._eventDetail(ev)}</div>` : ''}
                     </div>
                   </div>
                 `)}

@@ -265,6 +265,9 @@ export class ScriptEditor extends LitElement {
   /** CodeMirror EditorView instance (created in firstUpdated) */
   editorView: EditorView | null = null;
 
+  /** Internal content tracking (not reactive — avoids Lit re-render loop) */
+  private _editorContent = "";
+
   static styles = css`
     :host { display: block; }
     .editor-wrapper { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
@@ -286,17 +289,14 @@ export class ScriptEditor extends LitElement {
   }
 
   override updated(changedProperties: Map<string, unknown>) {
-    if (changedProperties.has("content")) {
-      // Content changed: use the new property value directly
-      this._destroyEditor();
-      this._mountEditor(this.content, this.dbType, this.readonly);
-    } else if (changedProperties.has("dbType")) {
-      // Only dialect changed: preserve current editor content
-      const currentContent = this.editorView?.state.doc.toString() ?? this.content;
-      this._destroyEditor();
-      this._mountEditor(currentContent, this.dbType, this.readonly);
-    } else if (changedProperties.has("readonly") && this.editorView) {
+    if (changedProperties.has("content") && this.editorView) {
       const currentContent = this.editorView.state.doc.toString();
+      if (currentContent !== this.content) {
+        this.setContent(this.content);
+      }
+    }
+    if (changedProperties.has("dbType") || changedProperties.has("readonly")) {
+      const currentContent = this.editorView?.state.doc.toString() ?? this.content;
       this._destroyEditor();
       this._mountEditor(currentContent, this.dbType, this.readonly);
     }
@@ -318,10 +318,10 @@ export class ScriptEditor extends LitElement {
           EditorView.editable.of(!readOnly),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
-              this.content = update.state.doc.toString();
+              this._editorContent = update.state.doc.toString();
               this.dispatchEvent(
                 new CustomEvent("content-change", {
-                  detail: { content: this.content },
+                  detail: { content: update.state.doc.toString() },
                   bubbles: true,
                   composed: true,
                 })
@@ -355,7 +355,7 @@ export class ScriptEditor extends LitElement {
 
   /** Get the current editor content */
   getContent(): string {
-    return this.editorView?.state.doc.toString() ?? this.content;
+    return this.editorView?.state.doc.toString() ?? this._editorContent;
   }
 
   override render() {

@@ -276,7 +276,7 @@ export class SqlConsolePage extends LitElement {
     .tab.active { color: var(--text-strong, #1a1a1e); background: var(--card, #fff); border: 1px solid var(--border, #e5e7eb); border-bottom: none; }
     .tab-label { overflow: hidden; text-overflow: ellipsis; cursor: text; }
     .tab-close { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; border: none; background: none; cursor: pointer; color: var(--muted, #9ca3af); padding: 0; font-size: var(--text-md); border-radius: var(--radius-sm); }
-    .tab-close:hover { background: var(--danger-subtle, rgba(239,68,68,0.1)); color: var(--destructive, #ef4444); }
+    .tab-close:hover { background: var(--danger-subtle, rgba(239,68,68,0.1)); color: var(--danger, #ef4444); }
     .tab-add { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: none; background: none; cursor: pointer; color: var(--muted, #6b7280); font-size: 16px; font-weight: 600; border-radius: var(--radius-sm); flex-shrink: 0; }
     .tab-add:hover { background: var(--accent-subtle, rgba(64,158,255,0.12)); color: var(--accent, #409eff); }
     .tab-rename-input { font-size: var(--text-sm); padding: 1px 4px; border: 1px solid var(--accent, #409eff); border-radius: var(--radius-sm); background: var(--card, #fff); color: var(--text, #3c3c43); outline: none; width: 120px; }
@@ -323,7 +323,7 @@ export class SqlConsolePage extends LitElement {
     .page-btn:disabled { opacity: .4; cursor: not-allowed; }
     .page-btn:hover:not(:disabled) { background: var(--bg-elevated, #f9fafb); }
     .page-num { font-size: var(--text-sm); color: var(--muted, #6b7280); min-width: 40px; text-align: center; }
-    .error-box { padding: var(--space-md) 16px; background: var(--danger-subtle, #fef2f2); border: 1px solid var(--destructive, #ef4444); border-radius: var(--radius-md); color: var(--destructive, #ef4444); font-size: var(--text-base); font-family: monospace; white-space: pre-wrap; }
+    .error-box { padding: var(--space-md) 16px; background: var(--danger-subtle, #fef2f2); border: 1px solid var(--danger, #ef4444); border-radius: var(--radius-md); color: var(--danger, #ef4444); font-size: var(--text-base); font-family: monospace; white-space: pre-wrap; }
     .approval-notice { padding: var(--space-md); background: var(--warn-subtle, #fffbeb); border: 1px solid var(--warn, #f59e0b); border-radius: var(--radius-md); font-size: var(--text-base); }
     .empty-state { padding: 40px; text-align: center; color: var(--muted, #6b7280); }
     .loading { padding: var(--space-lg); text-align: center; color: var(--muted, #6b7280); }

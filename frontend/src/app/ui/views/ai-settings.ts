@@ -29,10 +29,10 @@ export class AiSettingsPage extends LitElement {
   @state() private _instanceSearch = "";
   static styles = [sharedBtnStyles, css`
 
-    :host { display: block; }
-    .header { margin-bottom: 20px; }
-    .header h1 { font-size: 20px; font-weight: 600; margin: 0; color: var(--text); }
-    .header p { font-size: 13px; color: var(--muted); margin: 4px 0 0; }
+    :host { display: block; max-width: 800px; }
+    .page-header { margin-bottom: 24px; }
+    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
+    .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
 
 
     .form-group { margin-bottom: 18px; }
@@ -70,8 +70,8 @@ export class AiSettingsPage extends LitElement {
 
     /* Feedback messages */
     .msg { font-size: 12px; padding: 8px 12px; border-radius: var(--radius-sm); margin-bottom: 12px; }
-    .msg-ok { background: rgba(21,128,61,0.1); color: #15803d; }
-    .msg-err { background: rgba(220,38,38,0.1); color: #dc2626; }
+    .msg-ok { background: var(--ok-subtle); color: var(--ok); }
+    .msg-err { background: var(--danger-subtle); color: var(--danger); }
 
     /* Instance dropdown */
     .inst-dropdown { position: relative; }
@@ -196,18 +196,22 @@ export class AiSettingsPage extends LitElement {
 
   override render() {
     if (this.loading) return html`<div class="loading">加载中...</div>`;
-    if (this.error && !this.config) return html`<div class="loading" style="color:var(--destructive)">${this.error}</div>`;
-    if (!this.config) return html`<div class="loading" style="color:var(--destructive)">无法加载配置</div>`;
+    if (this.error && !this.config) return html`<div class="loading" style="color:var(--danger)">${this.error}</div>`;
+    if (!this.config) return html`<div class="loading" style="color:var(--danger)">无法加载配置</div>`;
 
     const { enabled, severityLevels, instanceWhitelist, timeWindowStart, timeWindowEnd } = this.config;
     const allSeverities = ["critical", "error", "warning", "info"];
 
     return html`
-      <div class="page">
-        ${this.successMessage ? html`<div class="msg msg-ok">${this.successMessage}</div>` : ""}
-        ${this.error ? html`<div class="msg msg-err">${this.error}</div>` : ""}
+      ${this.successMessage ? html`<div class="msg msg-ok">${this.successMessage}</div>` : ""}
+      ${this.error ? html`<div class="msg msg-err">${this.error}</div>` : ""}
 
-        <app-card variant="default">
+      <div class="page-header">
+        <h1>AI 分析配置</h1>
+        <p>管理 AI 自动分析的启用开关、分析级别、实例白名单和时间窗口</p>
+      </div>
+
+      <app-card variant="default">
           <!-- Master toggle -->
           <div class="cfg-toggle-row">
             <span>启用自动分析</span>

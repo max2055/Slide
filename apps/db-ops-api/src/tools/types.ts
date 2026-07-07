@@ -116,6 +116,8 @@ export interface AnyAgentTool {
   requiresApproval?: boolean;
   /** 危险等级（1-5，5 为最危险） */
   dangerLevel?: number;
+  /** Tool scopes for auto-discovery filtering. Mirrors nanobot _scopes. Default ['core']. */
+  scope?: string[];
 }
 
 // ============== 工具目录类型 ==============

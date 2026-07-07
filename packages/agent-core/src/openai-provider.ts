@@ -71,6 +71,18 @@ export class OpenAIProvider implements LLMProvider {
     callbacks: StreamCallbacks,
     options?: LLMCallOptions,
   ): Promise<LLMResponse> {
+    const idleTimeoutS = options?.streamIdleTimeoutS;
+    const ctrl = new AbortController();
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const resetIdleTimer = () => {
+      if (!idleTimeoutS || idleTimeoutS <= 0) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        ctrl.abort();
+      }, idleTimeoutS * 1000);
+    };
+
     try {
       const stream = await this.client.chat.completions.create({
         model: options?.model || this.model,
@@ -80,7 +92,7 @@ export class OpenAIProvider implements LLMProvider {
         max_tokens: options?.maxTokens,
         stream: true,
         ...(options?.reasoningEffort ? { reasoning_effort: options.reasoningEffort } as any : {}),
-      });
+      }, { signal: ctrl.signal });
 
       let content = "";
       let reasoningContent = "";
@@ -95,6 +107,7 @@ export class OpenAIProvider implements LLMProvider {
       const toolCalls: Record<number, { id: string; name: string; arguments: string }> = {};
 
       for await (const chunk of stream) {
+        resetIdleTimer();
         const delta = chunk.choices?.[0]?.delta;
         const hasReasoningField = !!(delta as any)?.reasoning_content;
 
@@ -203,6 +216,7 @@ export class OpenAIProvider implements LLMProvider {
         arguments: safeParseJSON(tc.arguments),
       }));
 
+      if (idleTimer) clearTimeout(idleTimer);
       return {
         content: content || null,
         reasoningContent: reasoningContent || null,
@@ -215,6 +229,7 @@ export class OpenAIProvider implements LLMProvider {
         ...(reasoningContent ? { _extra: { reasoning_content: reasoningContent } } as any : {}),
       };
     } catch (err) {
+      if (idleTimer) clearTimeout(idleTimer);
       const message = err instanceof Error ? err.message : String(err);
       console.error("[OpenAIProvider] chatStream() failed:", message);
       return {

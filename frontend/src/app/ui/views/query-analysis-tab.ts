@@ -69,7 +69,7 @@ export class QueryAnalysisTab extends LitElement {
       max-width: 300px; overflow: hidden; text-overflow: ellipsis;
       white-space: nowrap; font-family: monospace; font-size: 11px;
     }
-    .time-high { color: var(--destructive, #ef4444); font-weight: 600; }
+    .time-high { color: var(--danger, #ef4444); font-weight: 600; }
     .time-mid { color: var(--warn, #f59e0b); font-weight: 600; }
 
     /* EXPLAIN tree */

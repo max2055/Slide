@@ -202,14 +202,10 @@ export class CronManager {
     if (config.target_instance_id) {
       // Per Pitfall 3: Set timeout guard before execution
       const timeoutMs = (config.timeout_seconds || 300) * 1000;
-      const preparedSql = script.content;
-      // For MySQL: prefix with SET max_execution_time
-      let timeoutSql = '';
-      if (script.target_db_type === 'mysql') {
-        timeoutSql = `SET SESSION max_execution_time = ${timeoutMs};\n`;
-      }
-      const execSql = timeoutSql + preparedSql;
-      result = await sqlExecutor.executeSql(config.target_instance_id, execSql);
+      result = await sqlExecutor.executeSql(config.target_instance_id, script.content, {
+        timeoutMs,
+        database: config.target_database || undefined,
+      });
     } else {
       // Per Pitfall 4: Execute against Slide's own MySQL DB (no target instance)
       result = await this.executeInternalSql(script.content);

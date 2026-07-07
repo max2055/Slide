@@ -105,7 +105,7 @@ export function renderLoginGate(state: AppViewState) {
               </button>
             </div>
           </label>
-          <button class="btn primary login-gate__connect" @click=${doLogin}>
+          <button class="btn-primary login-gate__connect" @click=${doLogin}>
             ${t("common.connect")}
           </button>
         </div>

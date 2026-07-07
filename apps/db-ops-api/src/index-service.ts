@@ -229,7 +229,8 @@ class IndexService {
     if (!encrypted) return '';
     try {
       const crypto = await import('crypto');
-      const keyStr = process.env.ENCRYPTION_KEY || 'change-this-to-a-random-32-char-key';
+      const rawKey = process.env.ENCRYPTION_KEY;
+      const keyStr = (rawKey && rawKey.length >= 32) ? rawKey : 'change-this-to-a-random-32-char-key';
       const key = Buffer.from(keyStr.padEnd(32, '0').substring(0, 32));
       const parts = encrypted.split(':');
       if (parts.length === 2) {

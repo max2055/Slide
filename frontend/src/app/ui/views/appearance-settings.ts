@@ -3,6 +3,7 @@
  * Modifies CSS custom properties on <html> and dispatches settings changes.
  */
 import { LitElement, html, css, nothing } from "lit";
+import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
 import { t } from "../../i18n/index.ts";
 import { applyAccentColor, applyBorderRadius, applyNavWidth } from "../app-settings.ts";
@@ -10,6 +11,7 @@ import { applyButtonPalette, type ButtonPalette } from "../btn-palette.ts";
 import { applyDensity, type Density } from "../density.ts";
 import { DEFAULT_TAB_OPTIONS, TAB_GROUPS } from "../navigation.ts";
 import type { Locale } from "../../i18n/lib/types.ts";
+import "../components/app-card.js";
 
 const ALL_TABS = TAB_GROUPS.flatMap((g) => [...g.tabs]);
 
@@ -76,25 +78,6 @@ function dispatchSettingsChange(partial: Record<string, unknown>) {
   );
 }
 
-function readStoredAccent(): string {
-  try {
-    return localStorage.getItem("slide-accent") || "#409eff";
-  } catch {
-    return "#409eff";
-  }
-}
-
-function readStoredRadius(): number {
-  try {
-    const v = localStorage.getItem("slide-radius");
-    if (v) {
-      const n = parseInt(v, 10);
-      if (!isNaN(n) && n >= 0 && n <= 100) return n;
-    }
-  } catch { /* ignore */ }
-  return 50;
-}
-
 function readSettingsField<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem("slide.control.settings.v1:default");
@@ -108,8 +91,8 @@ function readSettingsField<T>(key: string, fallback: T): T {
 
 @customElement("appearance-settings")
 export class AppearanceSettings extends LitElement {
-  @state() private accent: string = readStoredAccent();
-  @state() private radius: number = readStoredRadius();
+  @state() private accent: string = "#409eff";
+  @state() private radius: number = 50;
   @state() private density: Density = "standard";
   @state() private sidebarPos: "left" | "right" = "left";
   @state() private reduceMotion: boolean = false;
@@ -132,26 +115,11 @@ export class AppearanceSettings extends LitElement {
   @state() private btnPalDangerBg: string = "#f87171";
   @state() private btnPalGhostColor: string = "#6e6e73";
 
-  static styles = css`
-    :host { display: block; max-width: 640px; }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      padding: 20px;
-      margin-bottom: 16px;
-    }
-    .card h3 {
-      margin: 0 0 6px;
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--text-strong);
-    }
-    .card .desc {
-      margin: 0 0 14px;
-      font-size: 12px;
-      color: var(--muted);
-    }
+  static styles = [sharedBtnStyles, css`
+    :host { display: block; max-width: 800px; }
+    .page-header { margin-bottom: 24px; }
+    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
+    .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
     .color-grid { display: flex; gap: 8px; flex-wrap: wrap; }
     .color-swatch {
       width: 36px; height: 36px;
@@ -190,25 +158,23 @@ export class AppearanceSettings extends LitElement {
       background: var(--card); color: var(--text);
       font-size: 13px; box-sizing: border-box;
     }
+    .text-input:focus { outline: none; border-color: var(--accent); }
     .range-input { width: 100%; }
-  `;
+    .desc { font-size: 12px; color: var(--muted); margin: 0 0 14px; }
+  `];
 
   connectedCallback() {
     super.connectedCallback();
-    // Read current visual state from DOM
-    this.accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#409eff";
-    const r = getComputedStyle(document.documentElement).getPropertyValue("--radius").trim();
-    const rn = parseInt(r, 10);
-    this.radius = !isNaN(rn) && rn > 0 && rn <= 20 ? Math.round((rn / 10) * 50) : readStoredRadius();
-    this.density = (document.documentElement.dataset.density as Density) || "standard";
-    this.sidebarPos = (document.documentElement.dataset.sidebarPosition as "left" | "right") || "left";
-    this.reduceMotion = document.documentElement.dataset.reduceAnimations !== undefined;
-    this.locale = localStorage.getItem("slide.i18n.locale") || "en";
-    this.navWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--shell-nav-width").trim(), 10) || 258;
-    // Read persisted settings from localStorage
+    // Read persisted settings from unified localStorage key
+    this.accent = readSettingsField("accentColor", "#409eff");
+    this.radius = readSettingsField("borderRadius", 50);
+    this.density = readSettingsField("fontDensity", "standard");
+    this.sidebarPos = readSettingsField("sidebarPosition", "left");
+    this.reduceMotion = readSettingsField("reduceAnimations", false);
+    this.locale = readSettingsField("locale", "en");
     this.defaultTab = readSettingsField("defaultTab", "dashboard");
     this.visibleTabs = readSettingsField("visibleTabs", []);
-    this.navWidth = readSettingsField("navWidth", this.navWidth);
+    this.navWidth = readSettingsField("navWidth", 258);
     this.pageSize = readSettingsField("defaultPageSize", 50);
     this.dateFormat = readSettingsField("dateFormat", "absolute");
     this.timezone = readSettingsField("timezone", "");
@@ -217,7 +183,7 @@ export class AppearanceSettings extends LitElement {
     this.notifyEnabled = readSettingsField("notificationEnabled", true);
     this.notifySeverity = readSettingsField("notifySeverity", ["critical", "warning"]);
     this.defaultModel = readSettingsField("defaultModel", "");
-    // Button palette
+    // Apply visual state from current settings
     const savedPalette = readSettingsField("btnPalette", null);
     if (savedPalette) {
       this.btnPalPrimaryBg = savedPalette.primaryBg || "#409eff";
@@ -250,9 +216,14 @@ export class AppearanceSettings extends LitElement {
     const defaultTabOpts = DEFAULT_TAB_OPTIONS.map(t => ({ value: t, label: t }));
 
     return html`
+      <div class="page-header">
+        <h1>外观</h1>
+        <p>自定义界面主题、颜色、字体密度等视觉设置</p>
+      </div>
+
       <!-- Accent Color -->
-      <div class="card">
-        <h3>${t("appearance.accentColor")}</h3>
+      <app-card>
+        <div slot="header">${t("appearance.accentColor")}</div>
         <p class="desc">${t("appearance.accentColorDesc")}</p>
         <div class="color-grid">
           ${ACCENT_PRESETS.map((c) => html`
@@ -269,85 +240,86 @@ export class AppearanceSettings extends LitElement {
           <span class="hint">${t("appearance.customColor")}</span>
           <code>${this.accent}</code>
         </div>
-      </div>
+      </app-card>
 
       <!-- Border Radius -->
-      <div class="card">
-        <h3>${t("appearance.borderRadius")}</h3>
+      <app-card>
+        <div slot="header">${t("appearance.borderRadius")}</div>
         <p class="desc">${t("appearance.borderRadiusDesc")}</p>
         <app-option-group
           .value=${this.radius}
           .options=${radiusOpts}
           @change=${(e: CustomEvent) => this._setRadius(e.detail as number)}
         ></app-option-group>
-      </div>
+      </app-card>
 
       <!-- Font Density -->
-      <div class="card">
-        <h3>${t("appearance.fontDensity")}</h3>
+      <app-card>
+        <div slot="header">${t("appearance.fontDensity")}</div>
         <p class="desc">${t("appearance.fontDensityDesc")}</p>
         <app-option-group
           .value=${this.density}
           .options=${densityOpts}
           @change=${(e: CustomEvent) => this._setDensity(e.detail as Density)}
         ></app-option-group>
-      </div>
+      </app-card>
 
       <!-- Sidebar Position -->
-      <div class="card">
-        <h3>${t("appearance.sidebarPosition")}</h3>
+      <app-card>
+        <div slot="header">${t("appearance.sidebarPosition")}</div>
         <p class="desc">${t("appearance.sidebarPositionDesc")}</p>
         <app-option-group
           .value=${this.sidebarPos}
           .options=${sidebarOpts}
           @change=${(e: CustomEvent) => this._setSidebarPos(e.detail as "left" | "right")}
         ></app-option-group>
-      </div>
+      </app-card>
 
       <!-- Language -->
-      <div class="card">
-        <h3>${t("appearance.language")}</h3>
+      <app-card>
+        <div slot="header">${t("appearance.language")}</div>
         <p class="desc">${t("appearance.languageDesc")}</p>
         <app-select-field
           .value=${this.locale}
           .options=${LANG_OPTIONS.map(l => ({ value: l.value, label: l.label }))}
           @change=${(e: CustomEvent) => this._setLocale(e.detail as string)}
         ></app-select-field>
-      </div>
+      </app-card>
 
       <!-- Reduce Animations -->
-      <div class="card">
+      <app-card>
+        <div slot="header">${t("appearance.reduceAnimations")}</div>
         <app-toggle
           .checked=${this.reduceMotion}
           @change=${(e: CustomEvent) => this._setReduceMotion(e.detail)}
         >${t("appearance.reduceAnimations")}</app-toggle>
         <p class="desc">${t("appearance.reduceAnimationsDesc")}</p>
-      </div>
+      </app-card>
 
       <!-- Default Page -->
-      <div class="card">
-        <h3>${t("appearance.defaultPage")}</h3>
+      <app-card>
+        <div slot="header">${t("appearance.defaultPage")}</div>
         <p class="desc">${t("appearance.defaultPageDesc")}</p>
         <app-select-field
           .value=${this.defaultTab}
           .options=${defaultTabOpts}
           @change=${(e: CustomEvent) => this._setDefaultTab(e.detail as string)}
         ></app-select-field>
-      </div>
+      </app-card>
 
       <!-- Sidebar Width -->
-      <div class="card">
-        <h3>${t("appearance.sidebarWidth")}</h3>
+      <app-card>
+        <div slot="header">${t("appearance.sidebarWidth")}</div>
         <p class="desc">${t("appearance.sidebarWidthDesc")} (${this.navWidth}px)</p>
         <input type="range" min="200" max="400" step="10"
           class="range-input"
           .value=${String(this.navWidth)}
           @input=${(e: Event) => this._setNavWidth(Number((e.target as HTMLInputElement).value))} />
-      </div>
+      </app-card>
 
       <!-- Sidebar Tabs -->
-      <div class="card">
-        <h3>${t("appearance.sidebarTabs")}</h3>
+      <app-card>
+        <div slot="header">${t("appearance.sidebarTabs")}</div>
         <p class="desc">${t("appearance.sidebarTabsDesc")}</p>
         ${ALL_TABS.map((tab) => html`
           <app-toggle
@@ -355,11 +327,11 @@ export class AppearanceSettings extends LitElement {
             @change=${() => this._toggleTab(tab)}
           >${tab}</app-toggle>
         `)}
-      </div>
+      </app-card>
 
       <!-- Data Display -->
-      <div class="card">
-        <h3>${t("appearance.dataDisplay")}</h3>
+      <app-card>
+        <div slot="header">${t("appearance.dataDisplay")}</div>
         <div class="field-group">
           <app-select-field
             label=${t("appearance.defaultPageSize")}
@@ -380,11 +352,11 @@ export class AppearanceSettings extends LitElement {
             @change=${(e: CustomEvent) => this._setTimezone(e.detail as string)}
           ></app-select-field>
         </div>
-      </div>
+      </app-card>
 
       <!-- Auto Refresh -->
-      <div class="card">
-        <h3>${t("appearance.autoRefresh")}</h3>
+      <app-card>
+        <div slot="header">${t("appearance.autoRefresh")}</div>
         <div class="field-group">
           <app-toggle
             .checked=${this.autoRefresh}
@@ -398,11 +370,11 @@ export class AppearanceSettings extends LitElement {
             ></app-select-field>
           ` : nothing}
         </div>
-      </div>
+      </app-card>
 
       <!-- Notifications -->
-      <div class="card">
-        <h3>${t("appearance.notifications")}</h3>
+      <app-card>
+        <div slot="header">${t("appearance.notifications")}</div>
         <div class="field-group">
           <app-toggle
             .checked=${this.notifyEnabled}
@@ -421,11 +393,11 @@ export class AppearanceSettings extends LitElement {
             </div>
           ` : nothing}
         </div>
-      </div>
+      </app-card>
 
       <!-- Button Colors -->
-      <div class="card">
-        <h3>Button Colors</h3>
+      <app-card>
+        <div slot="header">Button Colors</div>
         <p class="desc">Customize button fill and text colors per semantic level.</p>
         <div class="field-group">
           <div>
@@ -468,32 +440,30 @@ export class AppearanceSettings extends LitElement {
             <button class="btn-primary btn-danger" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-md)">Danger</button>
           </div>
         </div>
-      </div>
+      </app-card>
 
       <!-- Default Model -->
-      <div class="card">
-        <h3>${t("appearance.defaultModel")}</h3>
+      <app-card>
+        <div slot="header">${t("appearance.defaultModel")}</div>
         <p class="desc">${t("appearance.defaultModelDesc")}</p>
         <input type="text"
           class="text-input"
           .value=${this.defaultModel}
           @input=${(e: Event) => this._setDefaultModel((e.target as HTMLInputElement).value)}
           placeholder="e.g. claude-sonnet-4-20250929" />
-      </div>
+      </app-card>
     `;
   }
 
   private _setAccent(hex: string) {
     this.accent = hex;
     applyAccentColor(hex);
-    localStorage.setItem("slide-accent", hex);
     dispatchSettingsChange({ accentColor: hex });
   }
 
   private _setRadius(value: number) {
     this.radius = value;
     applyBorderRadius(value);
-    localStorage.setItem("slide-radius", String(value));
     dispatchSettingsChange({ borderRadius: value });
   }
 
@@ -521,7 +491,6 @@ export class AppearanceSettings extends LitElement {
 
   private _setLocale(locale: string) {
     this.locale = locale;
-    localStorage.setItem("slide.i18n.locale", locale);
     import("../../i18n/lib/translate.ts").then(({ i18n }) => {
       i18n.setLocale(locale as Locale);
     });

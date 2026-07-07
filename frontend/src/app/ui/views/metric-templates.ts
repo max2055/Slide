@@ -437,7 +437,7 @@ export class MetricTemplatesPage extends LitElement {
       <div class="toolbar">
         <span style="font-weight:600;font-size:13px">指标模板 (${this.templates.length})</span>
         <span class="spacer"></span>
-        <button class="btn btn-primary" @click=${this._openCreate}>+ 新建模板</button>
+        <button class="btn" @click=${this._openCreate}>+ 新建模板</button>
       </div>
       <div class="table-wrap">
         <table>
@@ -521,7 +521,7 @@ export class MetricTemplatesPage extends LitElement {
   _renderModal() {
     const isEdit = !!this.editing;
     const selectedMetrics: string[] = this.form.metrics || [];
-    return html`<app-dialog .open=${true} size="lg" title="${isEdit ? '编辑模板' : '新建模板'}" @app-dialog-close=${() => this.showModal = false}>
+    return html`<app-dialog .open=${true} size="lg" .closeOnOverlay=${false} title="${isEdit ? '编辑模板' : '新建模板'}" @app-dialog-close=${() => this.showModal = false}>
       <div style="display:flex;flex-wrap:wrap;gap:12px">
         <div style="width:calc(50% - 6px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">名称 *</label><input class="form-input" .value=${this.form.name || ''} @input=${(e: any) => this.form.name = e.target.value} placeholder="MySQL 生产模板" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" /></div>
         <div style="width:calc(50% - 6px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">适用数据库类型</label>
@@ -596,7 +596,7 @@ export class MetricTemplatesPage extends LitElement {
     const templateMetrics = this.expandedId
       ? this._templateMetrics(this.templates.find(t => t.id === this.expandedId)!) : [];
     const availableMetrics = templateMetrics.length > 0 ? templateMetrics : this.allMetrics.filter(m => m.is_collected);
-    return html`<app-dialog .open=${true} size="lg" title="新增告警规则" @app-dialog-close=${() => this.showRuleModal = false}>
+    return html`<app-dialog .open=${true} size="lg" .closeOnOverlay=${false} title="新增告警规则" @app-dialog-close=${() => this.showRuleModal = false}>
       <div style="display:flex;flex-wrap:wrap;gap:12px">
         <div style="width:calc(50% - 6px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">规则名称 *</label><input style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--card);color:var(--text);box-sizing:border-box" .value=${rf.name || ''} @input=${(e: any) => this.ruleForm = {...this.ruleForm, name: e.target.value}} placeholder="TPS 过高告警" /></div>
         <div style="width:calc(50% - 6px)"><label style="font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:3px">指标 *</label>
@@ -630,7 +630,7 @@ export class MetricTemplatesPage extends LitElement {
     const tpl = this.linkingTemplate;
     if (!tpl) return nothing;
     const available = this._availableInstances();
-    return html`<app-dialog .open=${true} size="lg" title="关联实例 — ${tpl.name}" @app-dialog-close=${() => this.showLinkModal = false}>
+    return html`<app-dialog .open=${true} size="lg" .closeOnOverlay=${false} title="关联实例 — ${tpl.name}" @app-dialog-close=${() => this.showLinkModal = false}>
       ${available.length === 0 ? html`<span style="font-size:12px;color:var(--muted);">没有可关联的实例（所有实例已关联）</span>` : ""}
       ${available.map(inst => html`
         <div class="inst-row" style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:11px">

@@ -65,6 +65,10 @@ export class UsersManagement extends LitElement {
       padding: 0;
     }
 
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
+    .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
+
 
     .table-container {
       overflow-x: auto;
@@ -156,33 +160,7 @@ export class UsersManagement extends LitElement {
       display: flex;
       gap: 6px;
       flex-wrap: wrap;
-    }
-
-    .action-btn {
-      display: inline-flex;
-      align-items: center;
       justify-content: center;
-      padding: 5px 10px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      font-size: 11px;
-      font-weight: 500;
-      color: var(--text);
-      background: var(--secondary);
-      cursor: pointer;
-      transition: all var(--duration-normal) var(--ease-out);
-    }
-
-    .action-btn:hover {
-      background: var(--accent);
-      color: var(--accent-foreground);
-      border-color: var(--accent);
-    }
-
-    .action-btn.danger:hover {
-      background: var(--danger);
-      color: var(--danger-foreground);
-      border-color: var(--danger);
     }
 
     .loading, .empty {
@@ -556,11 +534,11 @@ export class UsersManagement extends LitElement {
   private _renderUserRoleBadges(userId: number) {
     const roles = this.userRoles.get(userId) || [];
     if (roles.length === 0) {
-      return html`<span class="role-badge" style="background:var(--bg-muted);color:var(--muted)">无角色</span>`;
+      return html`<app-badge variant="muted">无角色</app-badge>`;
     }
     return html`${roles.map(r => {
       const roleName = r.role_name;
-      return html`<span class="role-badge ${roleName}">${ROLE_LABELS[roleName] || roleName}</span>`;
+      return html`<app-badge variant="muted">${ROLE_LABELS[roleName] || roleName}</app-badge>`;
     })}`;
   }
 
@@ -586,8 +564,10 @@ export class UsersManagement extends LitElement {
     if (!this.isAdmin) {
       return html`
         <div class="page">
+          <div class="page-header">
+            <h1>用户管理</h1>
+          </div>
           <app-card variant="default">
-            <div slot="header">用户管理</div>
             <div class="no-permission">
               无权限访问此页面，需要 admin 角色
             </div>
@@ -598,14 +578,13 @@ export class UsersManagement extends LitElement {
 
     return html`
       <div class="page">
+        <div class="page-header">
+          <h1>用户管理</h1>
+          <button class="btn-primary" @click=${this._openCreateModal}>
+            新建用户
+          </button>
+        </div>
         <app-card variant="default">
-          <div slot="header">
-            <span>用户管理</span>
-            <button class="btn-primary" @click=${this._openCreateModal}>
-              新建用户
-            </button>
-          </div>
-
           ${this.error
             ? html`<div class="error-msg">${this.error}</div>`
             : ""}
@@ -651,15 +630,15 @@ export class UsersManagement extends LitElement {
                               <td style="text-align:center">
                                 <div class="actions">
                                   <button
-                                    class="action-btn"
+                                    class="btn-sm"
                                     @click=${() => this._openEditModal(u)}
                                   >编辑</button>
                                   <button
-                                    class="action-btn"
+                                    class="btn-sm"
                                     @click=${() => this._openPasswordModal(u)}
                                   >重置密码</button>
                                   <button
-                                    class="action-btn danger"
+                                    class="btn-sm danger"
                                     @click=${() =>
                                       this._deleteUser(u.id, u.username)}
                                   >删除</button>
@@ -676,7 +655,7 @@ export class UsersManagement extends LitElement {
 
         <!-- Create/Edit Modal -->
         ${this.showModal ? html`
-          <app-dialog .open=${true} size="md" title="${this.editingUser ? "编辑用户" : "新建用户"}" @app-dialog-close=${this._closeModal}>
+          <app-dialog .open=${true} size="md" .closeOnOverlay=${false} title="${this.editingUser ? "编辑用户" : "新建用户"}" @app-dialog-close=${this._closeModal}>
             ${this.saveError ? html`<div class="save-error" style="margin-bottom:8px">${this.saveError}</div>` : ""}
             ${this.formErrors.length > 0 ? html`
               <div class="save-error" style="margin-bottom:8px">${this.formErrors.map((e) => html`<div>${e}</div>`)}</div>
@@ -684,18 +663,18 @@ export class UsersManagement extends LitElement {
 
             <div class="form-group">
               <label>用户名</label>
-              <input type="text" .value=${this.formUsername} @input=${(e: Event) => { this.formUsername = (e.target as HTMLInputElement).value; }} ?disabled=${!!this.editingUser} placeholder=${this.editingUser ? "" : "请输入用户名"} />
+              <input type="text" autocomplete="off" .value=${this.formUsername} @input=${(e: Event) => { this.formUsername = (e.target as HTMLInputElement).value; }} ?disabled=${!!this.editingUser} placeholder=${this.editingUser ? "" : "请输入用户名"} />
             </div>
 
             <div class="form-group">
               <label>邮箱</label>
-              <input type="email" .value=${this.formEmail} @input=${(e: Event) => { this.formEmail = (e.target as HTMLInputElement).value; }} placeholder="可选" />
+              <input type="email" autocomplete="off" .value=${this.formEmail} @input=${(e: Event) => { this.formEmail = (e.target as HTMLInputElement).value; }} placeholder="可选" />
             </div>
 
             ${!this.editingUser ? html`
               <div class="form-group">
                 <label>密码</label>
-                <input type="password" .value=${this.formPassword} @input=${(e: Event) => { this.formPassword = (e.target as HTMLInputElement).value; }} placeholder="至少 8 位" />
+                <input type="password" autocomplete="new-password" .value=${this.formPassword} @input=${(e: Event) => { this.formPassword = (e.target as HTMLInputElement).value; }} placeholder="至少 8 位" />
               </div>
             ` : ""}
 

@@ -3,8 +3,10 @@
  * Changes take effect immediately via branding.ts memory cache.
  */
 import { LitElement, html, css } from "lit";
+import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
 import { refreshBrandingCache } from "../../src/branding.js";
+import "../components/app-card.js";
 
 const CLI_NAME_REGEX = /^[a-z][a-z0-9-]*$/;
 const ENV_PREFIX_REGEX = /^[A-Z][A-Z0-9_]*$/;
@@ -19,26 +21,12 @@ export class BrandingSettings extends LitElement {
   @state() private message: string = "";
   @state() private messageType: "success" | "error" = "success";
 
-  static styles = css`
-    :host { display: block; max-width: 640px; }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      padding: 20px;
-      margin-bottom: 16px;
-    }
-    .card h3 {
-      margin: 0 0 6px;
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--text-strong);
-    }
-    .card .desc {
-      margin: 0 0 14px;
-      font-size: 12px;
-      color: var(--muted);
-    }
+  static styles = [sharedBtnStyles, css`
+    :host { display: block; max-width: 800px; }
+    .page-header { margin-bottom: 24px; }
+    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
+    .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
+
     .text-input {
       width: 100%;
       padding: 6px 10px;
@@ -61,25 +49,6 @@ export class BrandingSettings extends LitElement {
       color: var(--danger);
       margin-top: 4px;
     }
-    .actions {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-top: 20px;
-    }
-    .btn-save {
-      background: var(--accent);
-      color: #fff;
-      border: none;
-      border-radius: var(--radius-sm);
-      padding: 8px 20px;
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: opacity 0.15s;
-    }
-    .btn-save:hover { opacity: 0.9; }
-    .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
     .msg {
       font-size: 12px;
       padding: 6px 12px;
@@ -93,7 +62,7 @@ export class BrandingSettings extends LitElement {
       background: color-mix(in srgb, var(--danger) 15%, transparent);
       color: var(--danger);
     }
-  `;
+  `];
 
   connectedCallback() {
     super.connectedCallback();
@@ -185,10 +154,18 @@ export class BrandingSettings extends LitElement {
       : "";
 
     return html`
-      <!-- CLI Name -->
-      <div class="card">
-        <h3>CLI 命令名称</h3>
-        <p class="desc">终端命令名称，如 slide</p>
+      <div class="page-header">
+        <h1>品牌</h1>
+        <p>自定义 CLI、环境变量、数据目录等品牌标识</p>
+      </div>
+
+      ${this.message ? html`
+        <div class="msg ${this.messageType}" style="margin-bottom:12px">${this.message}</div>
+      ` : ""}
+
+      <app-card>
+        <div slot="header">CLI 命令名称</div>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 12px">终端命令名称，如 slide</p>
         <input
           type="text"
           class="text-input ${cliError ? "input-error" : ""}"
@@ -197,12 +174,11 @@ export class BrandingSettings extends LitElement {
           placeholder="slide"
         />
         ${cliError ? html`<div class="field-error">${cliError}</div>` : ""}
-      </div>
+      </app-card>
 
-      <!-- Product Name -->
-      <div class="card">
-        <h3>产品名称</h3>
-        <p class="desc">产品显示名称，如 Slide</p>
+      <app-card>
+        <div slot="header">产品名称</div>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 12px">产品显示名称，如 Slide</p>
         <input
           type="text"
           class="text-input"
@@ -210,12 +186,11 @@ export class BrandingSettings extends LitElement {
           @input=${(e: Event) => { this.productName = (e.target as HTMLInputElement).value; this.message = ""; }}
           placeholder="Slide"
         />
-      </div>
+      </app-card>
 
-      <!-- Env Prefix -->
-      <div class="card">
-        <h3>环境变量前缀</h3>
-        <p class="desc">环境变量前缀，如 SLIDE</p>
+      <app-card>
+        <div slot="header">环境变量前缀</div>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 12px">环境变量前缀，如 SLIDE</p>
         <input
           type="text"
           class="text-input ${prefixError ? "input-error" : ""}"
@@ -224,12 +199,11 @@ export class BrandingSettings extends LitElement {
           placeholder="SLIDE"
         />
         ${prefixError ? html`<div class="field-error">${prefixError}</div>` : ""}
-      </div>
+      </app-card>
 
-      <!-- State Dir -->
-      <div class="card">
-        <h3>数据目录名称</h3>
-        <p class="desc">数据目录名称，如 .slide</p>
+      <app-card>
+        <div slot="header">数据目录名称</div>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 12px">数据目录名称，如 .slide</p>
         <input
           type="text"
           class="text-input"
@@ -237,21 +211,16 @@ export class BrandingSettings extends LitElement {
           @input=${(e: Event) => { this.stateDir = (e.target as HTMLInputElement).value; this.message = ""; }}
           placeholder=".slide"
         />
-      </div>
-
-      <!-- Actions -->
-      <div class="actions">
-        <button
-          class="btn-save"
-          ?disabled=${this.saving}
-          @click=${this._save}
-        >
-          ${this.saving ? "保存中..." : "保存"}
-        </button>
-        ${this.message ? html`
-          <span class="msg ${this.messageType}">${this.message}</span>
-        ` : ""}
-      </div>
+        <div slot="footer">
+          <button
+            class="btn-primary"
+            ?disabled=${this.saving}
+            @click=${this._save}
+          >
+            ${this.saving ? "保存中..." : "保存"}
+          </button>
+        </div>
+      </app-card>
     `;
   }
 }

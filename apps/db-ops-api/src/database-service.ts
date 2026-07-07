@@ -1890,10 +1890,7 @@ class DatabaseService {
 
       let dataSizeGB: number | null = null;
       try {
-        const dsResult = await conn.oracleConnection.execute(
-          "SELECT ROUND(SUM(bytes)/1024/1024/1024, 2) FROM DBA_DATA_FILES"
-        );
-        dataSizeGB = dsResult.rows[0]?.[0] as number || null;
+        dataSizeGB = await this._queryOracleTablespaceUsage(conn);
       } catch {
         // DBA_DATA_FILES 可能无权限 — 优雅降级
         dataSizeGB = null;
@@ -2799,6 +2796,28 @@ class DatabaseService {
   }
 
   /**
+   * 查询 Oracle 所有表空间（含系统）的实际用量总和
+   * = 数据文件总大小 - 空闲空间
+   * 统一口径，所有消费者共用此方法
+   */
+  private async _queryOracleTablespaceUsage(conn: DatabaseConnection): Promise<number | null> {
+    if (!conn.oracleConnection) return null;
+    try {
+      const result = await conn.oracleConnection.execute(`
+        SELECT ROUND((SUM(df.bytes) - NVL(SUM(fs.free_bytes), 0)) / 1024 / 1024 / 1024, 2)
+        FROM DBA_DATA_FILES df
+        LEFT JOIN (
+          SELECT tablespace_name, SUM(bytes) as free_bytes
+          FROM DBA_FREE_SPACE GROUP BY tablespace_name
+        ) fs ON fs.tablespace_name = df.tablespace_name
+      `);
+      return (result.rows?.[0]?.[0] as number) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * 获取 Oracle/Dameng 容量信息
    */
   private async getOracleCapacity(conn: DatabaseConnection): Promise<any> {
@@ -2812,7 +2831,7 @@ class DatabaseService {
       const tsResult = await conn.oracleConnection.execute(`
         SELECT
           df.tablespace_name as name,
-          ROUND(SUM(df.bytes) / 1024 / 1024 / 1024, 2) as size_gb,
+          ROUND((SUM(df.bytes) - NVL(fs.free_bytes, 0)) / 1024 / 1024 / 1024, 2) as size_gb,
           ROUND(SUM(df.bytes) / 1024 / 1024 / 1024, 2) as max_size_gb,
           ROUND((1 - NVL(fs.free_bytes, 0) / NULLIF(SUM(df.bytes), 0)) * 100, 2) as usage_percent
         FROM dba_data_files df
@@ -2821,7 +2840,6 @@ class DatabaseService {
           FROM dba_free_space
           GROUP BY tablespace_name
         ) fs ON fs.tablespace_name = df.tablespace_name
-        WHERE df.tablespace_name NOT IN ('SYSTEM', 'SYSAUX')
         GROUP BY df.tablespace_name, fs.free_bytes
         ORDER BY size_gb DESC
       `);

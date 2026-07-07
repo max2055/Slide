@@ -28,6 +28,7 @@ export class AppDialog extends LitElement {
   @property() size: DialogSize = "md";
   @property() title = "";
   @property({ type: Boolean }) closable = true;
+  @property({ type: Boolean }) closeOnOverlay = true;
 
   private _previousFocus: HTMLElement | null = null;
 
@@ -65,7 +66,7 @@ export class AppDialog extends LitElement {
 
   private _onOverlayClick(e: MouseEvent): void {
     // T-120-01: Only close on overlay click, not content click
-    if (e.target === e.currentTarget && this.closable) {
+    if (e.target === e.currentTarget && this.closeOnOverlay && this.closable) {
       this._close();
     }
   }

@@ -101,16 +101,16 @@ export class AlertDetailModal extends LitElement {
             <div style="padding:var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);">
               <div style="display:flex;align-items:center;gap:var(--space-sm);margin-bottom:var(--space-sm);">
                 <span style="color:var(--ok);font-weight:600;">✅ 分析完成</span>
-                ${this.activeRCAAnalysis?.sessionKey ? html`<button class="btn primary" @click=${() => this._emit('alert-navigate-chat', { sessionKey: this.activeRCAAnalysis!.sessionKey })} style="display:inline-flex;align-items:center;padding:var(--space-sm) var(--space-md);border:none;border-radius:var(--radius-sm);font-size:var(--text-sm);font-weight:500;cursor:pointer;background:var(--accent);color:var(--accent-foreground,#fff);">查看详情</button>` : ''}
+                ${this.activeRCAAnalysis?.sessionKey ? html`<button class="btn-primary" @click=${() => this._emit('alert-navigate-chat', { sessionKey: this.activeRCAAnalysis!.sessionKey })} style="display:inline-flex;align-items:center;padding:var(--space-sm) var(--space-md);border:none;border-radius:var(--radius-sm);font-size:var(--text-sm);font-weight:500;cursor:pointer;background:var(--accent);color:var(--accent-foreground,#fff);">查看详情</button>` : ''}
               </div>
               ${this._renderAnalysisSummary()}
             </div>
           ` : analysisFailed ? html`
-            <div style="padding:var(--space-md);background:var(--danger-subtle);border-radius:var(--radius-sm);color:var(--destructive);">❌ ${this.diagnosisError || 'AI 分析失败'}</div>
+            <div style="padding:var(--space-md);background:var(--danger-subtle);border-radius:var(--radius-sm);color:var(--danger);">❌ ${this.diagnosisError || 'AI 分析失败'}</div>
           ` : html`
             <div style="color:var(--muted);font-size:var(--text-base);margin-bottom:var(--space-md);">点击「开始分析」让 AI 自动采集指标、诊断根因。</div>
           `}
-          ${canAnalyze ? html`<button class="btn primary" @click=${() => this._emit('alert-rca', { id: a.id })} style="margin-top:var(--space-sm);width:100%;justify-content:center;display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm) var(--space-md);border:none;border-radius:var(--radius-sm);font-size:var(--text-sm);font-weight:500;cursor:pointer;background:var(--accent);color:var(--accent-foreground,#fff);">开始 AI 分析</button>` : ''}
+          ${canAnalyze ? html`<button class="btn-primary" @click=${() => this._emit('alert-rca', { id: a.id })} style="margin-top:var(--space-sm);width:100%;justify-content:center;display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm) var(--space-md);border:none;border-radius:var(--radius-sm);font-size:var(--text-sm);font-weight:500;cursor:pointer;background:var(--accent);color:var(--accent-foreground,#fff);">开始 AI 分析</button>` : ''}
         </div>
 
         <!-- Analysis History -->
@@ -123,7 +123,7 @@ export class AlertDetailModal extends LitElement {
                   <div style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-sm) var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);font-size:var(--text-sm);">
                     <span><span style="color:var(--muted);">${new Date(r.created_at).toLocaleString('zh-CN')}</span>
                       ${r.status === 'completed' ? html`<span style="color:var(--ok);margin-left:var(--space-sm);">已完成</span>`
-                        : r.status === 'failed' ? html`<span style="color:var(--destructive);margin-left:var(--space-sm);">失败</span>`
+                        : r.status === 'failed' ? html`<span style="color:var(--danger);margin-left:var(--space-sm);">失败</span>`
                         : html`<span style="color:var(--muted);margin-left:var(--space-sm);">${r.status}</span>`}
                     </span>
                     ${r.session_key ? html`<a href="#" @click=${(e: Event) => { e.preventDefault(); this._emit('alert-navigate-chat', { sessionKey: r.session_key }); }} style="color:var(--accent);font-size:var(--text-xs);">查看 →</a>` : ''}
