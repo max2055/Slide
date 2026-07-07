@@ -26,6 +26,7 @@ import "./components/app-toast-container.ts";
 import "./views/dashboard.ts";
 import "./views/instances-db.ts";
 import "./views/servers-page.ts";
+import "./views/server-detail.ts";
 import "./views/instance-detail.ts";
 import "./views/llm-config.ts";
 import "./views/ai-settings.ts";
@@ -696,6 +697,9 @@ export function renderApp(state: AppViewState) {
           : nothing}
         ${state.tab === "servers"
           ? html`<servers-page></servers-page>`
+          : nothing}
+        ${state.tab === "server-detail"
+          ? html`<server-detail .serverId=${(state as any).serverId}></server-detail>`
           : nothing}
         ${state.tab === "instance-detail"
           ? html`<instance-detail-page></instance-detail-page>`
