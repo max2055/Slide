@@ -79,6 +79,7 @@ import { startSessionCleanup } from './src/session-cleanup.js';
 import { loadPredefinedSkills, skillRegistry } from './src/skills/loader.js';
 import { promptManager } from './src/prompts/prompt-manager.js';
 import { serverDatabaseService } from './src/server-database-service.js';
+import { serverReportService } from './src/server-report-service.js';
 import serverCollector from './src/server-collector.js';
 
 const fastify = Fastify({
@@ -1532,6 +1533,37 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
     } catch (error: any) {
       reply.code(500).send({ error: '采集失败：' + error.message });
+    }
+  });
+
+  // ========== 服务器报告 API ==========
+
+  // POST /api/servers/reports/generate — Generate server health report
+  fastify.post('/api/servers/reports/generate', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
+    try {
+      const reportData = await serverReportService.generateReport();
+      reply.send(reportData);
+    } catch (error: any) {
+      reply.code(500).send({ error: '生成服务器健康报告失败：' + error.message });
+    }
+  });
+
+  // GET /api/servers/reports?format=html|md — Generate and return formatted report
+  fastify.get('/api/servers/reports', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
+    try {
+      const { format = 'html' } = request.query as { format?: string };
+      const safeFormat = (format === 'md' || format === 'markdown') ? 'md' : 'html';
+      const reportData = await serverReportService.generateReport();
+
+      if (safeFormat === 'md') {
+        const md = serverReportService.generateMarkdown(reportData);
+        reply.header('Content-Type', 'text/markdown; charset=utf-8').send(md);
+      } else {
+        const html = serverReportService.generateHtml(reportData);
+        reply.header('Content-Type', 'text/html; charset=utf-8').send(html);
+      }
+    } catch (error: any) {
+      reply.code(500).send({ error: '生成服务器健康报告失败：' + error.message });
     }
   });
 
