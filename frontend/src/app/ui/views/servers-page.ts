@@ -341,7 +341,7 @@ export class ServersPage extends LitElement {
         authFetch("/api/servers/metrics/summary"),
       ]);
       if (serversRes.status === 401) {
-        alert("请先登录");
+        showToast("请先登录", "warning");
         window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "chat" } }));
         return;
       }
