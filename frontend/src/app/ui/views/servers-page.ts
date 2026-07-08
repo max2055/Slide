@@ -845,6 +845,7 @@ export class ServersPage extends LitElement {
   }
 }
 
+// Guard against duplicate registration during HMR
 if (!customElements.get("servers-page")) {
   customElements.define("servers-page", ServersPage);
 }
