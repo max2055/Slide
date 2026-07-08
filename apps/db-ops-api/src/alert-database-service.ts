@@ -7,6 +7,7 @@ import { dbConnection } from './db-connection';
 export interface Alert {
   id: number;
   instance_id: number | null;
+  server_id: number | null;
   alert_type: 'performance' | 'availability' | 'security' | 'backup' | 'replication' | 'capacity';
   level: 'info' | 'warning' | 'error' | 'critical';
   title: string;
@@ -58,6 +59,7 @@ class AlertDatabaseService {
     return {
       id: row.id,
       instance_id: row.instance_id,
+      server_id: row.server_id,
       alert_type: row.alert_type,
       level: row.level,
       title: row.title,
