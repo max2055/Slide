@@ -349,6 +349,7 @@ class ServerDatabaseService {
         });
 
         client.on('error', (err: Error) => {
+          client.end();
           resolve({ success: false, message: `连接失败：${err.message}` });
         });
 
