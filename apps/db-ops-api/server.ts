@@ -638,7 +638,7 @@ async function start() {
     try {
       const data = request.body as any;
       const result = await llmDatabaseService.configureProvider(data)
-      warnUnknown(data, ['name','displayName','deploymentType','apiKey','apiFormat','model','baseURL','modelsSupported','contextWindow','supportsFunctionCall','supportsVision','inputCostPer1k','outputCostPer1k','enabled','temperature','maxTokens','timeoutMs','rateLimitPerMinute','dailyQuota'], 'POST /api/llm/configs');;
+      warnUnknown(data, ['name','displayName','deploymentType','apiKey','apiFormat','model','baseURL','modelsSupported','contextWindow','supportsFunctionCall','supportsVision','inputCostPer1k','outputCostPer1k','enabled','temperature','maxTokens','timeoutMs','rateLimitPerMinute','dailyQuota'], 'POST /api/llm/configs');
       await reloadChatProvider();
       reply.send(result);
     } catch (error: any) {
@@ -1159,8 +1159,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/database/instances', { preHandler: [verifyToken, requirePermission('instance:create')] }, async (request, reply) => {
     try {
       const data = request.body as any;
-      const result = await instanceDatabaseService.createInstance(data)
-      warnUnknown(data, ['name','environment','db_type','host','port','username','password','database_name','max_connections','connection_timeout_ms','description','tags','created_by'], 'POST /api/database/instances');;
+      const result = await instanceDatabaseService.createInstance(data);
+      warnUnknown(data, ['name','environment','db_type','host','port','username','password','database_name','max_connections','connection_timeout_ms','description','tags','created_by'], 'POST /api/database/instances');
       if (result.success) {
         reply.send({ id: result.instanceId, message: '创建成功' });
       } else {
@@ -1190,8 +1190,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const data = request.body as any;
-      const result = await instanceDatabaseService.updateInstance(Number(id), data)
-      warnUnknown(data, ['name','environment','db_type','host','port','username','password','database_name','max_connections','connection_timeout_ms','description','tags'], 'PUT /api/database/instances/:id');;
+      const result = await instanceDatabaseService.updateInstance(Number(id), data);
+      warnUnknown(data, ['name','environment','db_type','host','port','username','password','database_name','max_connections','connection_timeout_ms','description','tags'], 'PUT /api/database/instances/:id');
       if (result.success) {
         reply.send({ message: '更新成功' });
       } else {
