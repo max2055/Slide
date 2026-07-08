@@ -152,7 +152,8 @@ class ServerCollector {
       server.port,
       creds.username,
       server.credential_type,
-      credentialValue
+      credentialValue,
+      server.host_key_fingerprint
     );
 
     try {

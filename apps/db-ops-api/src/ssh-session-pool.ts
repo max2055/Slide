@@ -9,6 +9,7 @@
  */
 
 import { Client, ClientChannel, ConnectConfig } from 'ssh2';
+import crypto from 'crypto';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -66,7 +67,8 @@ class SshSessionPool {
     port: number,
     username: string,
     credentialType: string,
-    credentialValue: string
+    credentialValue: string,
+    hostKeyFingerprint?: string | null
   ): Promise<Client> {
     // Clean stale connections first
     this._cleanStale();
@@ -108,7 +110,7 @@ class SshSessionPool {
     }
 
     // Create new connection
-    const client = await this._connect(host, port, username, credentialType, credentialValue);
+    const client = await this._connect(host, port, username, credentialType, credentialValue, hostKeyFingerprint);
 
     const session: SshSession = {
       client,
@@ -232,7 +234,8 @@ class SshSessionPool {
     port: number,
     username: string,
     credentialType: string,
-    credentialValue: string
+    credentialValue: string,
+    hostKeyFingerprint?: string | null
   ): Promise<Client> {
     return new Promise((resolve, reject) => {
       const client = new Client();
@@ -244,7 +247,25 @@ class SshSessionPool {
         readyTimeout: this.config.readyTimeoutMs,
         keepaliveInterval: this.config.keepaliveIntervalMs,
         keepaliveCountMax: this.config.keepaliveCountMax,
-        hostVerifier: () => true, // Phase 125 doesn't fix host key — deferred to security phase
+        hostVerifier: (key: Buffer, callback: (verified: boolean) => void) => {
+          if (!hostKeyFingerprint) {
+            // No stored fingerprint — accept any key (first connection).
+            callback(true);
+            return;
+          }
+          // Hash received host key with SHA256 and compare against stored fingerprint
+          const hash = crypto.createHash('sha256').update(key).digest('base64');
+          const received = `SHA256:${hash}`;
+          if (received === hostKeyFingerprint) {
+            callback(true);
+          } else {
+            console.error(
+              `[SshSessionPool] Host key mismatch for ${host}:${port}. ` +
+              `Stored: ${hostKeyFingerprint}, received: ${received}`
+            );
+            callback(false);
+          }
+        },
       };
 
       // Build credential payload based on credential type
