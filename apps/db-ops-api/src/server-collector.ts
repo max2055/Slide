@@ -108,10 +108,6 @@ class ServerCollector {
     for (const server of servers) {
       try {
         const result = await this._collectOneServer(server);
-        if (result.success) {
-          // Reset failure count on success
-          this.failureCounts.delete(server.id);
-        }
       } catch (error: any) {
         console.error(`[ServerCollector] collection failed for #${server.id} (${server.host}):`, error.message);
 
