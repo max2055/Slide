@@ -107,7 +107,7 @@ class ServerCollector {
 
     for (const server of servers) {
       try {
-        const result = await this._collectOneServer(server);
+        await this._collectOneServer(server);
       } catch (error: any) {
         console.error(`[ServerCollector] collection failed for #${server.id} (${server.host}):`, error.message);
 
