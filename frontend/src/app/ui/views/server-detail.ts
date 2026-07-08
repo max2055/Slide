@@ -163,6 +163,11 @@ export class ServerDetailPage extends LitElement {
     window.addEventListener("slide-navigate", this._navHandler);
     // Also try reading URL params
     this.loadFromUrl();
+    // If serverId was set via property binding (not URL/event), load directly
+    if (this.serverId && !this.server) {
+      this.loadServer(this.serverId);
+      this.loadLatestMetrics(this.serverId);
+    }
   }
 
   override disconnectedCallback() {
@@ -188,9 +193,13 @@ export class ServerDetailPage extends LitElement {
     try {
       const res = await authFetch(`/api/servers/${id}`);
       if (res.ok) this.server = await res.json();
-      else this.error = "获取服务器详情失败";
+      else {
+        this.error = "获取服务器详情失败";
+        this.loading = false;
+      }
     } catch (err: any) {
       this.error = err.message;
+      this.loading = false;
     }
   }
 
