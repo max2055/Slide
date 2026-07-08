@@ -297,7 +297,13 @@ class ServerDatabaseService {
             username: data.credential_username !== undefined && data.credential_username !== '' ? data.credential_username : decrypted.username,
           };
           if (data.credential_value !== undefined && data.credential_value !== '') {
-            const key = (data.credential_type || existing.credential_type) === 'password' ? 'password' : 'privateKey';
+            // Determine credential key from the decrypted payload when credential_type
+            // is not provided, to avoid stale column value causing type mismatch.
+            const actualType = data.credential_type
+              || (decrypted.password ? 'password'
+                : decrypted.privateKey ? 'key'
+                  : existing.credential_type);
+            const key = actualType === 'password' ? 'password' : 'privateKey';
             credPayload[key] = data.credential_value;
           } else {
             if (decrypted.password) credPayload.password = decrypted.password;
