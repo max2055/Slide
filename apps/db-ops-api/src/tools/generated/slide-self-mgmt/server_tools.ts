@@ -6,6 +6,11 @@
  *
  * 用途：Agent 可以在对话中查询服务器状态、指标、告警信息，
  * 以及生成结构化的健康诊断分析。
+ *
+ * 访问控制：所有工具均设置 group: 'slide_self_mgmt' 用于分组路由，
+ * 权限检查预期在工具执行中间件层统一实施。ownerOnly 标记可用于
+ * 要求用户认证，当前未启用——如需严格权限控制，应在中间件层
+ * 或各 handler 入口添加 context.userId 检查。
  */
 
 import type { AnyAgentTool } from '../../types.js';
