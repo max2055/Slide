@@ -263,7 +263,13 @@ class SshSessionPool {
     command: string
   ): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
+      let commandChannel: ClientChannel | undefined;
+
       const timeout = setTimeout(() => {
+        // Close the channel to prevent resource leak on timeout
+        if (commandChannel) {
+          try { commandChannel.close(); } catch { /* ignore */ }
+        }
         reject(new Error(`SSH command timed out after ${this.config.commandTimeoutMs}ms: ${command.substring(0, 80)}`));
       }, this.config.commandTimeoutMs);
 
@@ -273,6 +279,8 @@ class SshSessionPool {
           reject(err);
           return;
         }
+
+        commandChannel = channel;
 
         let stdout = '';
         let stderr = '';
