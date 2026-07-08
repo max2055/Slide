@@ -679,7 +679,6 @@ export class ServersPage extends LitElement {
         <div class="page">
           <div class="card">
             <div class="toolbar">
-              <div style="flex:1"></div>
               <button class="btn" style="margin-left:auto;" @click=${this._openAddDialog}>
                 + 添加服务器
               </button>
@@ -690,6 +689,15 @@ export class ServersPage extends LitElement {
               icon="server"
             ></app-empty-state>
           </div>
+
+          <!-- Add/Edit Dialog -->
+          ${this._renderFormDialog()}
+
+          <!-- Delete Confirmation Dialog -->
+          ${this._renderDeleteDialog()}
+
+          <!-- Key Rotation Dialog -->
+          ${this._renderKeyRotationDialog()}
         </div>
       `;
     }
