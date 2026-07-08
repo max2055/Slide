@@ -439,7 +439,13 @@ export class ServersPage extends LitElement {
       const res = await authFetch("/api/servers/test-connection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(this._form),
+        body: JSON.stringify({
+          host: this._form.host,
+          port: this._form.port,
+          credential_type: this._form.credential_type,
+          credential_username: this._form.credential_username,
+          credential_value: this._form.credential_value,
+        }),
       });
       const result = await res.json();
 
