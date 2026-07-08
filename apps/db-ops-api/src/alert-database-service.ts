@@ -648,6 +648,8 @@ class AlertDatabaseService {
     db_types?: string[] | null;
     instance_ids?: number[] | null;
     template_id?: number | null;
+    target_type?: 'instance' | 'server';
+    server_id?: number;
     created_by?: number;
   }): Promise<{ success: boolean; ruleId?: number; error?: string }> {
     const pool = this.getPool();
@@ -660,8 +662,9 @@ class AlertDatabaseService {
         `INSERT INTO alert_rules
          (name, description, metric_name, operator, threshold, threshold_template,
           threshold_type, dynamic_config, silence_minutes, duration_seconds,
-          severity, notification_channels, db_types, instance_ids, template_id, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          severity, notification_channels, db_types, instance_ids, template_id,
+          target_type, server_id, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           data.name,
           data.description || null,
@@ -678,6 +681,8 @@ class AlertDatabaseService {
           data.db_types ? JSON.stringify(data.db_types) : null,
           data.instance_ids ? JSON.stringify(data.instance_ids) : null,
           data.template_id || null,
+          data.target_type || 'instance',
+          data.server_id || null,
           data.created_by || null,
         ]
       ) as any;
@@ -711,6 +716,8 @@ class AlertDatabaseService {
       db_types?: string[] | null;
       instance_ids?: number[] | null;
       template_id?: number | null;
+      target_type?: 'instance' | 'server';
+      server_id?: number | null;
     }
   ): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
@@ -785,6 +792,14 @@ class AlertDatabaseService {
       if (data.template_id !== undefined) {
         updates.push('template_id = ?');
         values.push(data.template_id);
+      }
+      if (data.target_type !== undefined) {
+        updates.push('target_type = ?');
+        values.push(data.target_type);
+      }
+      if (data.server_id !== undefined) {
+        updates.push('server_id = ?');
+        values.push(data.server_id);
       }
 
       if (updates.length === 0) {
