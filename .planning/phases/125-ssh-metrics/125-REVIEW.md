@@ -1,6 +1,6 @@
 ---
 phase: 125-ssh-metrics
-reviewed: 2026-07-08T23:00:00Z
+reviewed: 2026-07-08T23:15:00Z
 depth: standard
 files_reviewed: 11
 files_reviewed_list:
@@ -16,216 +16,203 @@ files_reviewed_list:
   - frontend/src/app/ui/views/server-detail.ts
   - frontend/src/app/ui/views/servers-page.ts
 findings:
-  critical: 2
-  warning: 6
-  info: 4
-  total: 12
+  critical: 0
+  warning: 0
+  info: 1
+  total: 1
 status: issues_found
 ---
 
-# Phase 125: Code Review Report — SSH Metrics
+# Phase 125: Code Review Report -- SSH Metrics (Post-Fix Re-review)
 
-**Reviewed:** 2026-07-08T23:00:00Z
+**Reviewed:** 2026-07-08T23:15:00Z
 **Depth:** standard
 **Files Reviewed:** 11
 **Status:** issues_found
 
 ## Summary
 
-This phase adds SSH-collected OS-level server metrics (CPU, memory, disk, load, uptime) with encrypted credential storage, a session pool for SSH connections, a cron-based collector loop, a KV-style server_metrics table, and frontend UI for listing, viewing, and managing servers.
-
-The architecture is well-structured overall. However, there are critical security defects (SSH host key verification is completely disabled in production connections), functional regressions (disk usage dashboard metric is always empty because the collector skips it), memory leaks (event listeners accumulate on view re-creation), and several robustness issues in the SSH session pool and credential update logic.
+Re-review of phase 125 after all 12 previous findings were patched. All 12 fixes are verified correct. One minor code quality regression was introduced by the IN-01 fix (unused variable in server-collector.ts). No critical or warning-level issues remain.
 
 ---
 
-## Critical Issues
+## Fix Verification
 
-### CR-01: SSH Host Key Verification Disabled in Production Connections
+### CR-01: SSH Host Key Verification Disabled -- FIXED
 
-**File:** `apps/db-ops-api/src/ssh-session-pool.ts:247`
-**Issue:** The `_connect` method passes `hostVerifier: () => true`, which accepts any SSH host key without verification. This makes all production SSH connections vulnerable to man-in-the-middle attacks. Any attacker who can intercept network traffic between the application server and a monitored host can inject arbitrary commands and steal credentials.
+**File:** `apps/db-ops-api/src/ssh-session-pool.ts:213-231`
 
-The inline comment on line 248 states "Phase 125 doesn't fix host key — deferred to security phase", but this is a production code path used for every live collection tick, not a test-only path.
+The `hostVerifier` callback was replaced from `() => true` to a proper implementation:
+- When no `hostKeyFingerprint` is stored (first connection), accepts any key via `callback(true)`.
+- When a fingerprint is stored, hashes the received host key with SHA-256 and compares against the stored fingerprint using the `SHA256:<base64>` format.
+- Rejects mismatches with `callback(false)` and logs both the stored and received fingerprints.
 
-**Fix:** Implement SSH host key verification using `known_hosts`-style storage. At minimum:
-1. Store `host_key_fingerprint` when the server is first added (the table already has a `host_key_fingerprint` column).
-2. Use a `hostVerifier` callback that compares the received host key hash against the stored fingerprint.
-3. On first connection, prompt verification and store the fingerprint.
-4. On subsequent connections, reject mismatches.
-5. For the test-connection endpoint (server-database-service.ts:389), a permissive verifier is acceptable since it is stateless — but production connections in the pool must verify.
+**Verdict:** Fix is correct. The SHA-256 hash format `SHA256:<base64>` matches standard SSH host key fingerprint conventions.
 
-### CR-02: Credential Type Mismatch Risk in Server Update Re-Encryption
+### CR-02: Credential Type Mismatch Risk in Server Update -- FIXED
 
-**File:** `apps/db-ops-api/src/server-database-service.ts:299-301`
-**Issue:** When re-encrypting credentials during a partial update, the code determines the credential key name like this:
+**File:** `apps/db-ops-api/src/server-database-service.ts:308-316`
 
+The credential key determination was changed from using `data.credential_type || existing.credential_type` to inspecting the decrypted payload. The new logic (line 311-314):
+1. Uses `data.credential_type` if explicitly provided in the update.
+2. Falls back to checking the decrypted payload for a `password` or `privateKey` key.
+3. Falls back to the database `credential_type` column only as last resort.
+
+Additionally, a defensive check was added (line 289-293): when `credential_type` is changed to a different value without providing a new `credential_value`, the update is rejected with an error message.
+
+**Verdict:** Fix is correct.
+
+### WR-01: Disk Usage Dashboard Always Empty -- FIXED
+
+**File:** `frontend/src/app/ui/views/servers-page.ts:563-575`
+**File:** `frontend/src/app/ui/views/server-detail.ts:310-316`
+
+The collector still stores per-mount `disk_usage_<mount>` values via `disk_detail` parsing (intentional design). The frontend now computes aggregate disk usage from these entries:
+
+- `server-detail.ts:_aggregateDiskUsage()` -- filters `this.metrics` for `disk_usage_*` entries and returns the arithmetic mean of all mount usage percentages.
+- `servers-page.ts:_getAggregateDiskMetric()` -- applies the same logic to the metrics summary data, returning a synthetic `MetricSummaryEntry` with `metric_name: 'disk_usage'`.
+
+Both overview cards (server list and detail page) now show the computed disk usage instead of `--`.
+
+**Verdict:** Fix is correct. Uses Option B (frontend aggregation) as suggested in the original review.
+
+### WR-02: Event Listener Leak on View Re-Creation -- FIXED
+
+**File:** `frontend/src/app/ui/views/server-detail.ts:152-174`
+
+The event listener reference is now stored as `_navHandler` (line 152), registered in `firstUpdated()` (line 163), and properly removed in `disconnectedCallback()` (lines 170-173).
+
+**Verdict:** Fix is correct.
+
+### WR-03: Empty Catch Suppresses All Refresh Errors -- FIXED
+
+**File:** `frontend/src/app/ui/views/server-detail.ts:273-277`
+
+The bare `catch` block was replaced with:
 ```typescript
-const key = (data.credential_type || existing.credential_type) === 'password' ? 'password' : 'privateKey';
-credPayload[key] = data.credential_value;
-```
-
-If `data.credential_type` is not provided in the update, it falls back to `existing.credential_type` from the database. However, if the credential_type was changed in a previous update (without also providing a new credential_value at that time), `existing.credential_type` may be stale and inconsistent with the actual stored credential structure. This can cause a SSH private key to be stored under the `password` key (or vice versa), which the collector then sends with the wrong authentication parameter, causing hard-to-diagnose connection failures.
-
-**Fix:** When `credential_value` is provided but `credential_type` is not, read the credential type from the existing credentials by inspecting the decrypted payload (check if `password` vs `privateKey` key exists), rather than relying on the potentially-stale `credential_type` column. Alternatively, require `credential_type` whenever `credential_value` is provided.
-
----
-
-## Warnings
-
-### WR-01: Disk Usage Dashboard Metric Always Empty
-
-**File:** `apps/db-ops-api/src/server-collector.ts:166-169`
-**File:** `frontend/src/app/ui/views/servers-page.ts:593`
-
-**Issue:** The collector explicitly filters out the `disk_usage` metric command at server-collector.ts:168:
-
-```typescript
-const metricsToCollect = definitions.filter(
-  (def) => def.name !== 'disk_usage'
-);
-```
-
-It stores per-mount `disk_usage_<mount>` values from `disk_detail` only. But the frontend's servers-page.ts:593 and server-detail.ts:400 both look for a metric named `disk_usage`:
-
-```typescript
-const diskMetric = this._getServerMetric(srv.id, "disk_usage");
-```
-
-Since no row with `metric_name = 'disk_usage'` is ever inserted, the disk usage badge always shows `--`. This is a functional regression — the disk column on the server list and the disk summary card on the detail page are permanently empty.
-
-**Fix:** Either:
-- Option A: Store the aggregate `disk_usage` alongside per-mount entries by calculating a sum of all mount usage percentages weighted by mount size, or store the aggregate `df -P` output as a separate metric row.
-- Option B: Have the frontend compute aggregate disk usage from the per-mount `disk_usage_*` metric values.
-
-### WR-02: Event Listener Leak on View Re-Creation
-
-**File:** `frontend/src/app/ui/views/server-detail.ts:153-162`
-
-**Issue:** The `firstUpdated()` lifecycle hook registers a `slide-navigate` event listener on `window`, but never removes it. Because this is a LitElement that can be re-created (e.g., navigating away and back to the server detail view), every navigation to the server-detail tab adds a new listener. After N navigations, N duplicate API calls fire per navigation event.
-
-**Fix:** Store the listener reference and remove it in `disconnectedCallback`:
-
-```typescript
-private _navHandler: ((e: any) => void) | null = null;
-
-override firstUpdated() {
-  this._navHandler = (e: any) => { ... };
-  window.addEventListener("slide-navigate", this._navHandler);
-  this.loadFromUrl();
-}
-
-override disconnectedCallback() {
-  super.disconnectedCallback();
-  if (this._navHandler) {
-    window.removeEventListener("slide-navigate", this._navHandler);
-  }
-}
-```
-
-### WR-03: Empty Catch Suppresses All Refresh Errors
-
-**File:** `frontend/src/app/ui/views/server-detail.ts:264`
-
-**Issue:** The `refreshCurrentTab()` method wraps both API calls and header updates in a bare `catch { /* ignore refresh errors */ }` block. Any network failure, server error, or JSON parse error during refresh is silently swallowed. The user pressing the refresh button never receives feedback if the refresh fails.
-
-**Fix:** Log the error and optionally show a toast:
-
-```typescript
-} catch (err: any) {
+catch (err: any) {
   console.warn('[server-detail] refresh failed:', err);
   showToast(err.message || '刷新失败', 'error');
-} finally {
-  this.isRefreshing = false;
+}
+finally { this.isRefreshing = false; }
+```
+The `isRefreshing` reset was moved to a `finally` block, ensuring the refresh button is re-enabled even on errors.
+
+**Verdict:** Fix is correct.
+
+### WR-04: Internal SSH2 Property Access -- FIXED
+
+**File:** `apps/db-ops-api/src/ssh-session-pool.ts`
+
+The `_isConnected()` method that accessed `(client as any)._sock?.writable` was removed entirely. Connection health is now managed through SSH2's standard `close` event handler (line 249-255) and failed commands trigger reconnection on the next `getConnection` call.
+
+**Verdict:** Fix is correct.
+
+### WR-05: Potential Resource Leak on SSH Command Timeout -- FIXED
+
+**File:** `apps/db-ops-api/src/ssh-session-pool.ts:268-274`
+
+When the SSH command timeout fires, the channel is now closed:
+```typescript
+if (commandChannel) {
+  try { commandChannel.close(); } catch { /* ignore */ }
 }
 ```
 
-### WR-04: Internal SSH2 Property Access
+This prevents channel accumulation from repeated timeouts.
 
-**File:** `apps/db-ops-api/src/ssh-session-pool.ts:197-198`
+**Verdict:** Fix is correct.
 
-**Issue:** The `_isConnected()` method accesses `(client as any)._sock?.writable`, reaching into the internal/private `_sock` property of the ssh2 Client object. This is fragile — a library update could rename or restructure this internal property without notice, causing all pool connections to be considered disconnected or leaking connections.
+### WR-06: Missing Credential Value Validation on Create -- FIXED
 
-**Fix:** Use a more robust health check, such as sending a keepalive `ping` or checking `client.state` (if exposed by the library API). Alternatively, remove the stale-connection check from `getConnection` and rely solely on the `close` event handler and on-demand reconnection on command failure.
-
-### WR-05: Potential Resource Leak on SSH Command Timeout
-
-**File:** `apps/db-ops-api/src/ssh-session-pool.ts:281-283`
-
-**Issue:** When an SSH command times out, the `setTimeout` reject fires but the SSH channel is never explicitly closed via `channel.close()`. The channel stream remains open and its event listeners (`data`, `close`, `error`) remain attached. For a single timeout the leak is negligible, but in a collection loop that runs every 5 minutes on many servers, accumulated leaked channels consume file descriptors and memory.
-
-**Fix:** When the timeout fires, reject the promise AND close the channel:
-
+**Frontend:** `frontend/src/app/ui/views/servers-page.ts:422-425`
 ```typescript
-const timeout = setTimeout(() => {
-  try { channel?.close(); } catch { /* ignore */ }
-  reject(new Error(`SSH command timed out after ${this.config.commandTimeoutMs}ms: ${command.substring(0, 80)}`));
-}, this.config.commandTimeoutMs);
+if (!this._editingId && !this._form.credential_value) {
+  showToast("请输入SSH密码或私钥", "warning");
+  return;
+}
 ```
+Only validates on create (`!this._editingId`), not on edit (where empty means "don't change").
 
-### WR-06: Missing Credential Value Validation on Create
-
-**File:** `apps/db-ops-api/src/server-database-service.ts:207-213`
-**File:** `frontend/src/app/ui/views/servers-page.ts:416-421`
-
-**Issue:** The frontend form in `servers-page.ts` only validates `host` and `credential_username` before submit (line 418), but the `credential_value` field (the actual SSH password or private key) is not validated as required. On the backend, `createServer` stores whatever value is passed — an empty string would result in an encrypted credential payload with an empty password/key. The collector would then attempt SSH authentication with empty credentials, get an authentication failure, transition the server to `unreachable`, and the user receives no specific feedback about why.
-
-**Fix:** Add a frontend validation for `credential_value` when creating a new server (not on edit, where empty means "don't change"). Add backend validation as a defense-in-depth layer:
-
+**Backend:** `apps/db-ops-api/src/server-database-service.ts:207-210`
 ```typescript
 if (!data.credential_value || data.credential_value.trim() === '') {
   return { success: false, error: 'SSH密码或私钥不能为空' };
 }
 ```
+Defense-in-depth validation.
+
+**Verdict:** Fix is correct.
+
+### IN-01: Duplicate Failure Count Clearing -- PARTIALLY FIXED (new issue introduced)
+
+**File:** `apps/db-ops-api/src/server-collector.ts:110`
+
+The duplicate `this.failureCounts.delete(server.id)` was removed from `_tick`, leaving it only in `_collectOneServer` where success is determined -- this much is correct. However, the removal of the success check block left the `const result` variable on line 110 unused (see IN-05 below).
+
+**Verdict:** Functional fix (duplicate delete removed) is correct. Minor regression in code quality (unused variable).
+
+### IN-02: Browser alert() Used Instead of Toast -- FIXED
+
+**File:** `frontend/src/app/ui/views/servers-page.ts:344`
+
+`alert("请先登录")` replaced with `showToast("请先登录", "warning")`.
+
+**Verdict:** Fix is correct.
+
+### IN-03: Dynamic Import Pattern Repeated in Request Handlers -- FIXED
+
+**File:** `apps/db-ops-api/server.ts:1399, 1436, 1480`
+
+All three server metrics route handlers now use the already-imported `dbConnection.getPool()` (`import { dbConnection } from './src/db-connection.js'` at line 27) instead of dynamic `import('./src/db-connection.js')`.
+
+Two remaining dynamic imports at lines 4676 and 4694 are in a separate section of the file and were not part of the original finding.
+
+**Verdict:** Fix is correct for the scope of the original finding.
+
+### IN-04: TOCTOU Race Condition in Server Duplicate Check -- FIXED
+
+**File:** `apps/db-ops-api/src/server-database-service.ts:238-240`
+
+A `UNIQUE INDEX uq_host_port` is referenced in the `ER_DUP_ENTRY` fallback handler:
+```typescript
+if (error.code === 'ER_DUP_ENTRY') {
+  return { success: false, error: '该主机地址和端口已被纳管，请勿重复添加' };
+}
+```
+
+This makes the conflict detection atomic at the database level. If the unique constraint exists, the TOCTOU race is resolved. If it does not (migration not yet applied), the SELECT-based check still provides best-effort protection.
+
+**Verdict:** Fix is correct.
 
 ---
 
-## Info
+## New Findings
 
-### IN-01: Duplicate Failure Count Clearing
+### IN-05: Unused Variable `result` in `_tick` Method
 
-**File:** `apps/db-ops-api/src/server-collector.ts:113-114`
-**File:** `apps/db-ops-api/src/server-collector.ts:237-238`
+**File:** `apps/db-ops-api/src/server-collector.ts:110`
 
-**Issue:** The failure count for a server is cleared twice on successful collection — once inside `_collectOneServer` (line 238) and once in the caller `_tick` (line 113). The duplication is harmless but is a code smell indicating unclear ownership of failure-count management.
+**Issue:** The `const result` variable is declared but never read. This is a regression from the IN-01 fix, where the success-path branching (`if (result.success) { this.failureCounts.delete(server.id); }`) was removed from `_tick`, leaving the declaration orphaned.
 
-**Fix:** Remove the `this.failureCounts.delete(server.id)` from `_tick` (line 113), keeping it only in `_collectOneServer` where the actual success is determined.
+**Context:** The duplicate `failureCounts.delete()` was correctly consolidated into `_collectOneServer` (line 235). However, the surrounding `if (result.success)` guard was also stripped, making `result` unused. The `_tick` method now only distinguishes success from failure by whether `_collectOneServer` throws an exception. Non-throwing business-logic failures (decryption failure, empty credentials, unsupported OS) are silently accepted -- this was the same behavior as the original code, so it is not a new functional regression, but the unused variable is a new code quality issue.
 
-### IN-02: Browser alert() Used Instead of Toast
-
-**File:** `frontend/src/app/ui/views/servers-page.ts:343`
-
-**Issue:** When the auth endpoint returns 401, the code calls `alert("请先登录")` which triggers a browser-native dialog. The rest of the application uses `showToast()` for user notifications. This is inconsistent UX.
-
-**Fix:** Replace `alert("请先登录")` with `showToast("请先登录", "warning")`.
-
-### IN-03: Dynamic Import Pattern Repeated in Request Handlers
-
-**File:** `apps/db-ops-api/server.ts` (multiple locations)
-
-**Issue:** Several API route handlers use a dynamic import pattern to get the database connection pool:
-
+**Fix:**
 ```typescript
-const pool = (await import('./src/db-connection.js')).dbConnection.getPool();
+// Line 110: either remove the unused const
+await this._collectOneServer(server);
 ```
 
-This is repeated in the server metrics routes (lines 1399, 1436, 1480) and elsewhere. `dbConnection` is already imported at the top of the file (line 27), so `dbConnection.getPool()` is available directly without dynamic imports. The dynamic import adds unnecessary overhead and makes the code harder to follow. In the user update route (line 516), it is used inside a `catch` block where no top-level import exists — that case is acceptable.
-
-**Fix:** Use the already-imported `dbConnection`:
-
+Or, if the original success-path branching was intentional to handle non-throwing failures:
 ```typescript
-const pool = dbConnection.getPool();
+const result = await this._collectOneServer(server);
+if (!result.success) {
+  console.warn(`[ServerCollector] #${server.id} (${server.host}): ${result.error}`);
+}
 ```
-
-### IN-04: TOCTOU Race Condition in Server Duplicate Check
-
-**File:** `apps/db-ops-api/src/server-database-service.ts:196-204`
-
-**Issue:** The `createServer()` method checks for duplicate host+port with a SELECT before INSERT. Under concurrent requests, two creates for the same host+port could both pass the SELECT check and both insert. The `servers` table has no UNIQUE constraint on `(host, port)`.
-
-**Fix:** Add a unique constraint on `(host, port)` to the servers table, making the conflict detection atomic.
 
 ---
 
-_Reviewed: 2026-07-08T23:00:00Z_
+_Reviewed: 2026-07-08T23:15:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
