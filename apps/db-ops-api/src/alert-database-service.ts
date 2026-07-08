@@ -576,6 +576,7 @@ class AlertDatabaseService {
                 threshold_template, threshold_type, dynamic_config, silence_minutes,
                 db_types, instance_ids, template_id,
                 duration_seconds, severity, enabled, notification_channels,
+                target_type, server_id,
                 created_by, created_at, updated_at
          FROM alert_rules WHERE id = ?`,
         [ruleId]
@@ -602,6 +603,7 @@ class AlertDatabaseService {
                threshold_template, threshold_type, dynamic_config, silence_minutes,
                db_types, instance_ids, template_id, duration_seconds, severity,
                enabled, notification_channels,
+               target_type, server_id,
                created_by, created_at, updated_at
         FROM alert_rules
       `;
