@@ -462,12 +462,19 @@ export class SlideApp extends LitElement {
 
     // Listen for navigation events
     window.addEventListener("slide-navigate", (e: any) => {
-      const { tab, id, session } = e.detail;
+      const { tab, id, session, serverId } = e.detail;
+      const effectiveId = id ?? serverId;
       if (tab) {
         if (tab === "chat" && session) {
           switchChatSession(this as unknown as AppViewState, session);
         }
         this.setTab(tab as Tab);
+        // Set serverId in state for server-detail view
+        if (tab === "server-detail" && effectiveId != null) {
+          (this as any).serverId = Number(effectiveId);
+        } else if (tab !== "server-detail") {
+          (this as any).serverId = undefined;
+        }
         // Handle pending chat message from diagnosis "继续分析"
         const pendingMsg = (window as any).__pendingChatMessage;
         if (tab === "chat" && pendingMsg) {
@@ -484,8 +491,8 @@ export class SlideApp extends LitElement {
         // Update URL
         const url = new URL(window.location.href);
         url.searchParams.set("tab", tab);
-        if (id) {
-          url.searchParams.set("id", String(id));
+        if (effectiveId) {
+          url.searchParams.set("id", String(effectiveId));
         } else {
           url.searchParams.delete("id");
         }
