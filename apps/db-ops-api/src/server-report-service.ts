@@ -54,12 +54,13 @@ function scorePercentile(value: number | null): number {
 
 /**
  * Score load_1min relative to CPU count (assume 4 cores).
- * <1 → 100, 1-2 → 60, >2 → 20
+ * <1 per core → 100, 1-2 per core → 60, >2 per core → 20
  */
-function scoreLoad(value: number | null): number {
+function scoreLoad(value: number | null, coreCount: number = 4): number {
   if (value === null) return 0;
-  if (value < 1) return 100;
-  if (value <= 2) return 60;
+  const loadPerCore = value / coreCount;
+  if (loadPerCore < 1) return 100;
+  if (loadPerCore <= 2) return 60;
   return 20;
 }
 
