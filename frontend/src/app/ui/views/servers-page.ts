@@ -535,7 +535,7 @@ export class ServersPage extends LitElement {
 
   private _getServerMetric(serverId: number, metricName: string): MetricSummaryEntry | null {
     if (!this._metricSummary) return null;
-    const serverMetrics = this._metricSummary.servers[serverId];
+    const serverMetrics = this._metricSummary.servers?.[serverId];
     if (!serverMetrics) return null;
     return serverMetrics.metrics.find(m => m.metric_name === metricName) || null;
   }
