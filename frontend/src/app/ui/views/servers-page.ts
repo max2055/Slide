@@ -576,13 +576,13 @@ export class ServersPage extends LitElement {
     return [
       { key: "host", label: "主机" },
       { key: "label", label: "标签" },
-      { key: "os_type", label: "操作系统" },
-      { key: "cpu", label: "CPU" },
-      { key: "memory", label: "内存" },
-      { key: "disk", label: "磁盘" },
-      { key: "status", label: "状态" },
-      { key: "last_collection", label: "上次采集" },
-      { key: "actions", label: "操作" },
+      { key: "os_type", label: "操作系统", textAlign: "center" },
+      { key: "cpu", label: "CPU", textAlign: "center" },
+      { key: "memory", label: "内存", textAlign: "center" },
+      { key: "disk", label: "磁盘", textAlign: "center" },
+      { key: "status", label: "状态", textAlign: "center" },
+      { key: "last_collection", label: "上次采集", textAlign: "center" },
+      { key: "actions", label: "操作", textAlign: "center" },
     ];
   }
 
@@ -601,12 +601,12 @@ export class ServersPage extends LitElement {
             ${srv.host}
           </div>`,
         label: srv.label || html`<span style="color:var(--muted);">—</span>`,
-        os_type: html`<div style="text-align:center;"><app-badge variant="muted">${srv.os_type}</app-badge></div>`,
-        cpu: html`<div style="text-align:center;"><app-badge variant="${this._usageVariant(cpuValue)}">CPU ${cpuValue != null ? cpuValue.toFixed(1) + "%" : "--"}</app-badge></div>`,
-        memory: html`<div style="text-align:center;"><app-badge variant="${this._usageVariant(memValue)}">内存 ${memValue != null ? memValue.toFixed(1) + "%" : "--"}</app-badge></div>`,
-        disk: html`<div style="text-align:center;"><app-badge variant="${this._usageVariant(diskValue)}">磁盘 ${diskValue != null ? diskValue.toFixed(1) + "%" : "--"}</app-badge></div>`,
-        status: html`<div style="text-align:center;"><app-badge variant="${this._statusBadgeVariant(srv.status)}">${this._statusLabel(srv.status)}</app-badge></div>`,
-        last_collection: html`<div style="text-align:center;font-size:var(--text-sm);color:var(--muted);">${this._formatLastCheck(srv.last_check_at)}</div>`,
+        os_type: html`<app-badge variant="muted">${srv.os_type}</app-badge>`,
+        cpu: html`<app-badge variant="${this._usageVariant(cpuValue)}">CPU ${cpuValue != null ? cpuValue.toFixed(1) + "%" : "--"}</app-badge>`,
+        memory: html`<app-badge variant="${this._usageVariant(memValue)}">内存 ${memValue != null ? memValue.toFixed(1) + "%" : "--"}</app-badge>`,
+        disk: html`<app-badge variant="${this._usageVariant(diskValue)}">磁盘 ${diskValue != null ? diskValue.toFixed(1) + "%" : "--"}</app-badge>`,
+        status: html`<app-badge variant="${this._statusBadgeVariant(srv.status)}">${this._statusLabel(srv.status)}</app-badge>`,
+        last_collection: html`<span style="font-size:var(--text-sm);color:var(--muted);">${this._formatLastCheck(srv.last_check_at)}</span>`,
         actions: html`
           <div class="actions">
             <button class="action-btn" @click=${() => this._navigateToDetail(srv.id)}>详情</button>

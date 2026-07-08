@@ -16,6 +16,7 @@ export interface Column {
   label: string;
   sortable?: boolean;
   width?: string;
+  textAlign?: string;
 }
 
 @customElement("app-data-table")
@@ -131,7 +132,7 @@ export class AppDataTable extends LitElement {
               (col) => html`
                 <th
                   class=${col.sortable ? "sortable" : ""}
-                  style=${col.width ? `width: ${col.width}` : ""}
+                  style=${(col.width || col.textAlign) ? `${col.width ? `width: ${col.width};` : ""}${col.textAlign ? `text-align: ${col.textAlign};` : ""}` : ""}
                   @click=${col.sortable ? () => this._handleSort(col.key) : undefined}
                   role=${col.sortable ? "columnheader button" : "columnheader"}
                   tabindex=${col.sortable ? "0" : undefined}
@@ -167,7 +168,7 @@ export class AppDataTable extends LitElement {
                   (row) => html`
                     <tr>
                       ${this.columns.map(
-                        (col) => html`<td>${(row as Record<string, unknown>)[col.key] ?? ""}</td>`,
+                        (col) => html`<td style=${col.textAlign ? `text-align: ${col.textAlign};` : ""}>${(row as Record<string, unknown>)[col.key] ?? ""}</td>`,
                       )}
                     </tr>
                   `,
