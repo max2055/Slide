@@ -152,6 +152,7 @@ class AlertDatabaseService {
    */
   async getAlerts(options?: {
     instance_id?: number;
+    server_id?: number;
     status?: string;
     level?: string;
     limit?: number;
@@ -165,19 +166,25 @@ class AlertDatabaseService {
     try {
       let sql = `
         SELECT a.id, a.instance_id, COALESCE(d.name, '') as instance_name,
+               a.server_id, COALESCE(s.label, s.host, '') as server_name,
                a.alert_type, a.level, a.title, a.message, a.description,
                a.status, a.acknowledged_by, a.acknowledged_at, a.resolved_by, a.resolved_at,
                a.assigned_to, a.source, a.metric_name, a.metric_value, a.threshold_value,
                a.tags, a.created_at, a.updated_at
         FROM alerts a
         LEFT JOIN database_instances d ON a.instance_id = d.id
+        LEFT JOIN servers s ON a.server_id = s.id
         WHERE 1=1
       `;
       const params: any[] = [];
 
       if (options?.instance_id !== undefined) {
-        sql += ' AND instance_id = ?';
+        sql += ' AND a.instance_id = ?';
         params.push(options.instance_id);
+      }
+      if (options?.server_id !== undefined) {
+        sql += ' AND a.server_id = ?';
+        params.push(options.server_id);
       }
       if (options?.status) {
         const statuses = options.status.split(',').map(s => s.trim()).filter(Boolean);
@@ -214,6 +221,7 @@ class AlertDatabaseService {
         const whereParts: string[] = [];
         const countParams: any[] = [];
         if (options?.instance_id !== undefined) { whereParts.push('instance_id = ?'); countParams.push(options.instance_id); }
+        if (options?.server_id !== undefined) { whereParts.push('server_id = ?'); countParams.push(options.server_id); }
         if (options?.status) {
           const statuses = options.status.split(',').map(s => s.trim()).filter(Boolean);
           if (statuses.length === 1) {
@@ -235,10 +243,12 @@ class AlertDatabaseService {
         warning = wr ?? 0;
         // Resolved count: always cross-tab (ignores status filter)
         const resolvedCountParams: any[] = [];
-        if (options?.instance_id !== undefined) { resolvedCountParams.push(options.instance_id); }
-        const resolvedWhere = options?.instance_id !== undefined ? 'WHERE instance_id = ?' : '';
+        const resolvedWhereParts: string[] = [];
+        if (options?.instance_id !== undefined) { resolvedWhereParts.push('instance_id = ?'); resolvedCountParams.push(options.instance_id); }
+        if (options?.server_id !== undefined) { resolvedWhereParts.push('server_id = ?'); resolvedCountParams.push(options.server_id); }
+        const resolvedWhere = resolvedWhereParts.length ? 'WHERE ' + resolvedWhereParts.join(' AND ') : '';
         const [[{ total: rv }]] = await pool.query(
-          `SELECT COUNT(*) AS total FROM alerts ${resolvedWhere}${resolvedWhere ? ' AND' : 'WHERE'} status IN ('resolved','closed')`,
+          `SELECT COUNT(*) AS total FROM alerts ${resolvedWhere}${resolvedWhereParts.length ? ' AND' : 'WHERE'} status IN ('resolved','closed')`,
           resolvedCountParams
         ) as any;
         resolved = rv ?? 0;
@@ -249,6 +259,8 @@ class AlertDatabaseService {
         id: row.id,
         instance_id: row.instance_id,
         instance_name: row.instance_name || `实例 #${row.instance_id}`,
+        server_id: row.server_id,
+        server_name: row.server_name || (row.server_id ? `服务器 #${row.server_id}` : undefined),
         alert_type: row.alert_type,
         severity: row.level,
         title: row.title,
