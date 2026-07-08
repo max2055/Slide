@@ -70,6 +70,20 @@ export class ServersPage extends LitElement {
       padding: 0;
     }
 
+    .page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+
+    .page-header h1 {
+      font-size: 22px;
+      font-weight: 700;
+      margin: 0;
+      color: var(--text-strong);
+    }
+
     /* Form styles */
     .form-input,
     .form-select,
@@ -248,12 +262,6 @@ export class ServersPage extends LitElement {
       color: var(--danger);
     }
 
-    .toolbar {
-      display: flex;
-      justify-content: flex-end;
-      padding: var(--space-md) var(--space-lg);
-      border-bottom: 1px solid var(--border);
-    }
   `];
 
   @state() private _servers: ServerRow[] = [];
@@ -622,16 +630,16 @@ export class ServersPage extends LitElement {
     if (this._servers.length === 0) {
       return html`
         <div class="page">
+          <div class="page-header">
+            <h1>服务器管理</h1>
+            <button class="btn-primary" @click=${this._openAddDialog}>
+              + 添加服务器
+            </button>
+          </div>
           <app-card>
-            <span slot="header">服务器管理</span>
-            <div class="toolbar">
-              <button class="btn-primary" @click=${this._openAddDialog}>
-                + 添加服务器
-              </button>
-            </div>
             <app-empty-state
               title="暂无服务器"
-              description="点击上方添加按钮创建第一个服务器"
+              description="点击右上角添加按钮创建第一个服务器"
               icon="server"
             ></app-empty-state>
           </app-card>
@@ -644,13 +652,13 @@ export class ServersPage extends LitElement {
 
     return html`
       <div class="page">
+        <div class="page-header">
+          <h1>服务器管理</h1>
+          <button class="btn-primary" @click=${this._openAddDialog}>
+            + 添加服务器
+          </button>
+        </div>
         <app-card>
-          <span slot="header">服务器管理</span>
-          <div class="toolbar">
-            <button class="btn-primary" @click=${this._openAddDialog}>
-              + 添加服务器
-            </button>
-          </div>
           <app-data-table .columns=${columns} .rows=${rows}></app-data-table>
         </app-card>
 
