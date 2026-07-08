@@ -8,12 +8,12 @@
 
 ### 服务器注册与凭据管理
 
-- [ ] **SRV-01**: 用户可添加服务器（IP/主机名/SSH 端口/标签/OS 类型），数据存入独立的 `servers` 表
-- [ ] **SRV-02**: 用户可配置 SSH 凭据（密码/私钥），凭据加密存储（AES-256-CBC），预填时覆盖现有密码
-- [ ] **SRV-03**: 用户可在保存前测试 SSH 连接，验证凭据有效性和服务器可达性
-- [ ] **SRV-04**: 用户可查看服务器列表（状态指示器：online/offline/error + 最后检查时间 + CPU/内存摘要徽标）
+- [x] **SRV-01**: 用户可添加服务器（IP/主机名/SSH 端口/标签/OS 类型），数据存入独立的 `servers` 表
+- [x] **SRV-02**: 用户可配置 SSH 凭据（密码/私钥），凭据加密存储（AES-256-CBC），预填时覆盖现有密码
+- [x] **SRV-03**: 用户可在保存前测试 SSH 连接，验证凭据有效性和服务器可达性
+- [x] **SRV-04**: 用户可查看服务器列表（状态指示器：online/offline/error + 最后检查时间 + CPU/内存摘要徽标）
 - [ ] **SRV-05**: 用户可查看服务器详情页（概览/指标趋势图/告警历史/配置 多选项卡）
-- [ ] **SRV-06**: SSH 凭据支持密钥轮换（POST /api/servers/:id/rotate-key）
+- [x] **SRV-06**: SSH 凭据支持密钥轮换（POST /api/servers/:id/rotate-key）
 
 ### SSH 指标采集
 
@@ -35,11 +35,11 @@
 
 ### 服务器监控界面
 
-- [ ] **UI-01**: 导航栏新增"服务器"入口，列出所有已纳管服务器
+- [x] **UI-01**: 导航栏新增"服务器"入口，列出所有已纳管服务器
 - [ ] **UI-02**: 服务器列表页显示状态指示器、核心指标徽标（CPU/内存/磁盘摘要）、最后采集时间
 - [ ] **UI-03**: 服务器详情页包含概览卡片（关键指标实时值）、指标趋势图（ECharts，1h/6h/24h/7d/30d 切换）
 - [ ] **UI-04**: 服务器详情告警选项卡显示当前活跃告警和历史告警
-- [ ] **UI-05**: 复用现有共享组件（app-card/app-data-table/app-badge/app-dialog/app-empty-state）
+- [x] **UI-05**: 复用现有共享组件（app-card/app-data-table/app-badge/app-dialog/app-empty-state）
 
 ### 定时自动化服务器巡检
 
@@ -90,12 +90,12 @@ Deferred to future milestones.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SRV-01 | Phase 124 | Pending |
-| SRV-02 | Phase 124 | Pending |
-| SRV-03 | Phase 124 | Pending |
-| SRV-04 | Phase 124 | Pending |
+| SRV-01 | Phase 124 | Complete |
+| SRV-02 | Phase 124 | Complete |
+| SRV-03 | Phase 124 | Complete |
+| SRV-04 | Phase 124 | Complete |
 | SRV-05 | Phase 125 | Pending |
-| SRV-06 | Phase 124 | Pending |
+| SRV-06 | Phase 124 | Complete |
 | COL-01 | Phase 125 | Pending |
 | COL-02 | Phase 125 | Pending |
 | COL-03 | Phase 125 | Pending |
@@ -108,11 +108,11 @@ Deferred to future milestones.
 | ALR-02 | Phase 126 | Pending |
 | ALR-03 | Phase 126 | Pending |
 | ALR-04 | Phase 126 | Pending |
-| UI-01 | Phase 124 | Pending |
+| UI-01 | Phase 124 | Complete |
 | UI-02 | Phase 125 | Pending |
 | UI-03 | Phase 125 | Pending |
 | UI-04 | Phase 126 | Pending |
-| UI-05 | Phase 124 | Pending |
+| UI-05 | Phase 124 | Complete |
 | RPT-01 | Phase 127 | Pending |
 | RPT-02 | Phase 127 | Pending |
 | RPT-03 | Phase 127 | Pending |
@@ -123,6 +123,7 @@ Deferred to future milestones.
 | AI-04 | Phase 128 | Pending |
 
 **Coverage:**
+
 - v0.8 requirements: 31 total
 - Mapped to phases: 31 (roadmap defined)
 - Unmapped: 0

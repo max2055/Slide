@@ -1375,6 +1375,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (!data.credential_username) return reply.code(400).send({ error: '缺少必填字段：credential_username' });
       if (!data.credential_value) return reply.code(400).send({ error: '缺少必填字段：credential_value' });
       const result = await serverDatabaseService.rotateKey(Number(id), data.credential_type, data.credential_username, data.credential_value);
+      if (!result.success) {
+        return reply.code(400).send({ error: result.message || '密钥轮换失败' });
+      }
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: '密钥轮换失败：' + error.message });

@@ -345,7 +345,7 @@ class ServerDatabaseService {
     credentialType: string,
     credentialValue: string,
     username: string
-  ): Promise<{ success: boolean; message: string }> {
+  ): Promise<{ success: boolean; error?: string; message?: string }> {
     try {
       return new Promise((resolve) => {
         const client = new Client();
@@ -357,7 +357,7 @@ class ServerDatabaseService {
 
         client.on('error', (err: Error) => {
           client.end();
-          resolve({ success: false, message: `连接失败：${err.message}` });
+          resolve({ success: false, error: `连接失败：${err.message}` });
         });
 
         const connectConfig: any = {
@@ -379,7 +379,7 @@ class ServerDatabaseService {
         client.connect(connectConfig);
       });
     } catch (error: any) {
-      return { success: false, message: `连接失败：${error.message}` };
+      return { success: false, error: `连接失败：${error.message}` };
     }
   }
 
