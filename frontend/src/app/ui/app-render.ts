@@ -699,7 +699,7 @@ export function renderApp(state: AppViewState) {
           ? html`<servers-page></servers-page>`
           : nothing}
         ${state.tab === "server-detail"
-          ? html`<server-detail .serverId=${(state as any).serverId}></server-detail>`
+          ? html`<server-detail .serverId=${state.serverId}></server-detail>`
           : nothing}
         ${state.tab === "instance-detail"
           ? html`<instance-detail-page></instance-detail-page>`

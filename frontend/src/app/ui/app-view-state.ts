@@ -43,6 +43,7 @@ export type AppViewState = {
   loginShowGatewayPassword: boolean;
   userPermissions?: Set<string>;
   tab: Tab;
+  serverId?: number;
   onboarding: boolean;
   basePath: string;
   connected: boolean;
