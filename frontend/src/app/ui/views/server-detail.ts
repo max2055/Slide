@@ -295,6 +295,14 @@ export class ServerDetailPage extends LitElement {
     return entry ? entry.metric_value : null;
   }
 
+  /** Compute aggregate disk usage from per-mount disk_usage_* entries */
+  private _aggregateDiskUsage(): number | null {
+    const diskEntries = this.metrics.filter(m => m.metric_name.startsWith('disk_usage_'));
+    if (diskEntries.length === 0) return null;
+    const sum = diskEntries.reduce((acc, m) => acc + m.metric_value, 0);
+    return sum / diskEntries.length;
+  }
+
   private _formatBytes(bytes: number): string {
     if (bytes === 0) return "0 B";
     const units = ["B", "KB", "MB", "GB", "TB"];
@@ -397,7 +405,7 @@ export class ServerDetailPage extends LitElement {
     const mem = this._metricValue("memory_usage");
     const memUsed = this._metricValue("memory_used");
     const memTotal = this._metricValue("memory_total");
-    const disk = this._metricValue("disk_usage");
+    const disk = this._aggregateDiskUsage();
     const load1 = this._metricValue("load_1min");
     const load5 = this._metricValue("load_5min");
     const load15 = this._metricValue("load_15min");

@@ -556,6 +556,20 @@ export class ServersPage extends LitElement {
     return serverMetrics.metrics.find(m => m.metric_name === metricName) || null;
   }
 
+  /** Compute aggregate disk usage from per-mount disk_usage_* entries */
+  private _getAggregateDiskMetric(serverId: number): MetricSummaryEntry | null {
+    if (!this._metricSummary) return null;
+    const serverMetrics = this._metricSummary.servers?.[serverId];
+    if (!serverMetrics) return null;
+    const diskEntries = serverMetrics.metrics.filter(
+      m => m.metric_name.startsWith('disk_usage_')
+    );
+    if (diskEntries.length === 0) return null;
+    const sum = diskEntries.reduce((acc, m) => acc + m.metric_value, 0);
+    const avg = sum / diskEntries.length;
+    return { server_id: serverId, metric_name: 'disk_usage', metric_value: avg, recorded_at: diskEntries[0].recorded_at };
+  }
+
   private _navigateToDetail(serverId: number) {
     window.dispatchEvent(new CustomEvent("slide-navigate", {
       detail: { tab: "server-detail", serverId },
@@ -590,7 +604,7 @@ export class ServersPage extends LitElement {
     return this._filteredServers.map((srv) => {
       const cpuMetric = this._getServerMetric(srv.id, "cpu_usage");
       const memMetric = this._getServerMetric(srv.id, "memory_usage");
-      const diskMetric = this._getServerMetric(srv.id, "disk_usage");
+      const diskMetric = this._getAggregateDiskMetric(srv.id);
       const cpuValue = cpuMetric?.metric_value ?? null;
       const memValue = memMetric?.metric_value ?? null;
       const diskValue = diskMetric?.metric_value ?? null;
