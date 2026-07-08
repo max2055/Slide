@@ -68,7 +68,7 @@ function scoreLoad(value: number | null, coreCount: number = 4): number {
  * Score a value (green/amber/red) — used for all dimension scores.
  */
 function scoreClass(value: number): string {
-  if (value > 80) return 'good';
+  if (value >= 80) return 'good';
   if (value >= 60) return 'warning';
   return 'critical';
 }
@@ -181,7 +181,7 @@ class ServerReportService {
     let critical_count = 0;
 
     for (const entry of serverEntries) {
-      if (entry.overall_score > 80) healthy_count++;
+      if (entry.overall_score >= 80) healthy_count++;
       else if (entry.overall_score >= 60) warning_count++;
       else critical_count++;
     }
