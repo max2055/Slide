@@ -46,22 +46,15 @@ class ServerAlertEvaluator {
    * when thresholds are breached.
    */
   async evaluateServerRules(): Promise<void> {
-    const pool = dbConnection.getPool();
-    if (!pool) {
+    if (!dbConnection.isConnected()) {
       console.warn('[ServerAlertEvaluator] database not connected, skipping server rule evaluation');
       return;
     }
 
     try {
-      // 1. Fetch enabled server alert rules (target_type='server')
-      const [rules] = await pool.execute(
-        `SELECT id, name, description, metric_name, operator, threshold,
-                threshold_template, duration_seconds, severity, enabled,
-                silence_minutes, notification_channels,
-                server_id, target_type, db_types, instance_ids, template_id
-         FROM alert_rules
-         WHERE enabled = 1 AND target_type = 'server'`,
-      ) as any;
+      // 1. Fetch enabled server alert rules (target_type='server') via shared API
+      const allRules = await alertDatabaseService.getAlertRules(true);
+      const rules = allRules.filter(r => r.target_type === 'server');
 
       if (!rules || rules.length === 0) {
         return; // No server rules configured
