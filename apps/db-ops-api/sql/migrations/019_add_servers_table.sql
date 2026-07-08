@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS `servers` (
   PRIMARY KEY (`id`),
   INDEX `idx_host` (`host`),
   INDEX `idx_status` (`status`),
-  INDEX `idx_collection_enabled` (`collection_enabled`)
+  INDEX `idx_collection_enabled` (`collection_enabled`),
+  UNIQUE INDEX `uq_host_port` (`host`, `port`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ========================================
