@@ -373,6 +373,15 @@ export const getServerMetricsTool: AnyAgentTool = {
       };
     }
 
+    const VALID_METRIC_NAMES = ['cpu_usage', 'memory_usage', 'disk_usage', 'load_1min', 'uptime'];
+    if (metricName && !VALID_METRIC_NAMES.includes(metricName)) {
+      return {
+        success: false,
+        error: `参数错误：无效的指标名称 "${metricName}"。有效值：${VALID_METRIC_NAMES.join(', ')}`,
+        errorCode: 'INVALID_PARAMETER',
+      };
+    }
+
     try {
       const server = await serverDatabaseService.getServerById(serverId);
       if (!server) {
