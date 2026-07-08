@@ -145,12 +145,18 @@ class ServerMetricProvider {
     }
   }
 
+  private static readonly LINUX_DISTROS = new Set([
+    'linux', 'centos', 'rhel', 'ubuntu', 'debian', 'fedora', 'rocky', 'almalinux',
+    'kylin v10', 'kylin', 'other',
+  ]);
+
   /**
    * Return metric definitions for a given OS type.
-   * Currently only 'linux' is supported.
+   * Normalizes common Linux distribution names to 'linux'.
    */
   getDefinitions(osType: string): MetricDefinition[] {
-    if (osType === 'linux') {
+    const normalized = osType.toLowerCase().trim();
+    if (ServerMetricProvider.LINUX_DISTROS.has(normalized)) {
       return LINUX_DEFINITIONS;
     }
     return [];
@@ -171,7 +177,8 @@ class ServerMetricProvider {
    * Returns the command strings for batch execution.
    */
   getAllCommands(osType: string): string[] {
-    if (osType === 'linux') {
+    const normalized = osType.toLowerCase().trim();
+    if (ServerMetricProvider.LINUX_DISTROS.has(normalized)) {
       return LINUX_DEFINITIONS.map((def) => def.command);
     }
     return [];
