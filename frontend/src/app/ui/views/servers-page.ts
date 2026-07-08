@@ -597,20 +597,19 @@ export class ServersPage extends LitElement {
 
       return {
         host: html`
-          <div style="font-weight:600;color:var(--text-strong);font-size:var(--text-md);cursor:pointer;"
-               @click=${() => this._navigateToDetail(srv.id)}
-               title="查看服务器详情">
+          <div style="font-weight:600;color:var(--text-strong);font-size:var(--text-md);">
             ${srv.host}
           </div>`,
         label: srv.label || html`<span style="color:var(--muted);">—</span>`,
-        os_type: html`<app-badge variant="muted">${srv.os_type}</app-badge>`,
-        cpu: html`<app-badge variant="${this._usageVariant(cpuValue)}">CPU ${cpuValue != null ? cpuValue.toFixed(1) + "%" : "--"}</app-badge>`,
-        memory: html`<app-badge variant="${this._usageVariant(memValue)}">内存 ${memValue != null ? memValue.toFixed(1) + "%" : "--"}</app-badge>`,
-        disk: html`<app-badge variant="${this._usageVariant(diskValue)}">磁盘 ${diskValue != null ? diskValue.toFixed(1) + "%" : "--"}</app-badge>`,
-        status: html`<app-badge variant="${this._statusBadgeVariant(srv.status)}">${this._statusLabel(srv.status)}</app-badge>`,
-        last_collection: html`<span style="font-size:var(--text-sm);color:var(--muted);">${this._formatLastCheck(srv.last_check_at)}</span>`,
+        os_type: html`<div style="text-align:center;"><app-badge variant="muted">${srv.os_type}</app-badge></div>`,
+        cpu: html`<div style="text-align:center;"><app-badge variant="${this._usageVariant(cpuValue)}">CPU ${cpuValue != null ? cpuValue.toFixed(1) + "%" : "--"}</app-badge></div>`,
+        memory: html`<div style="text-align:center;"><app-badge variant="${this._usageVariant(memValue)}">内存 ${memValue != null ? memValue.toFixed(1) + "%" : "--"}</app-badge></div>`,
+        disk: html`<div style="text-align:center;"><app-badge variant="${this._usageVariant(diskValue)}">磁盘 ${diskValue != null ? diskValue.toFixed(1) + "%" : "--"}</app-badge></div>`,
+        status: html`<div style="text-align:center;"><app-badge variant="${this._statusBadgeVariant(srv.status)}">${this._statusLabel(srv.status)}</app-badge></div>`,
+        last_collection: html`<div style="text-align:center;font-size:var(--text-sm);color:var(--muted);">${this._formatLastCheck(srv.last_check_at)}</div>`,
         actions: html`
           <div class="actions">
+            <button class="action-btn" @click=${() => this._navigateToDetail(srv.id)}>详情</button>
             <button class="action-btn icon-btn" @click=${() => this._openEditDialog(srv)} title="编辑">
               ${icons['edit']}
             </button>
