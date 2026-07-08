@@ -237,6 +237,18 @@ export class ServersPage extends LitElement {
       gap: var(--space-md);
     }
 
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-md);
+    }
+
+    @media (max-width: 560px) {
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .form-hint {
       font-size: var(--text-sm);
       color: var(--muted);
@@ -747,19 +759,21 @@ export class ServersPage extends LitElement {
     const title = this._editingId ? "编辑服务器" : "添加服务器";
 
     return html`
-      <app-dialog .open=${true} size="md" title=${title} @app-dialog-close=${this._closeDialog}>
+      <app-dialog .open=${true} size="lg" .closeOnOverlay=${false} title=${title} @app-dialog-close=${this._closeDialog}>
         <div class="form-grid">
-          <app-form-field label="IP/主机名" required>
-            <input class="form-input" type="text" .value=${this._form.host}
-              @input=${(e: any) => this._updateForm("host", e.target.value)}
-              placeholder="192.168.1.100" />
-          </app-form-field>
+          <div class="form-row">
+            <app-form-field label="IP/主机名" required>
+              <input class="form-input" type="text" .value=${this._form.host}
+                @input=${(e: any) => this._updateForm("host", e.target.value)}
+                placeholder="192.168.1.100" />
+            </app-form-field>
 
-          <app-form-field label="SSH端口">
-            <input class="form-input" type="number" .value=${this._form.port}
-              @input=${(e: any) => this._updateForm("port", parseInt(e.target.value) || 22)}
-              placeholder="22" />
-          </app-form-field>
+            <app-form-field label="SSH端口">
+              <input class="form-input" type="number" .value=${this._form.port}
+                @input=${(e: any) => this._updateForm("port", parseInt(e.target.value) || 22)}
+                placeholder="22" />
+            </app-form-field>
+          </div>
 
           <app-form-field label="标签 (可选)">
             <input class="form-input" type="text" .value=${this._form.label}
@@ -767,33 +781,35 @@ export class ServersPage extends LitElement {
               placeholder="例如：生产环境主服务器" />
           </app-form-field>
 
-          <app-form-field label="操作系统">
-            <select class="form-select" .value=${this._form.os_type}
-              @change=${(e: any) => this._updateForm("os_type", e.target.value)}>
-              <option value="CentOS">CentOS</option>
-              <option value="Ubuntu">Ubuntu</option>
-              <option value="Debian">Debian</option>
-              <option value="RHEL">RHEL</option>
-              <option value="Other">Other</option>
-            </select>
-          </app-form-field>
+          <div class="form-row">
+            <app-form-field label="操作系统">
+              <select class="form-select" .value=${this._form.os_type}
+                @change=${(e: any) => this._updateForm("os_type", e.target.value)}>
+                <option value="CentOS">CentOS</option>
+                <option value="Ubuntu">Ubuntu</option>
+                <option value="Debian">Debian</option>
+                <option value="RHEL">RHEL</option>
+                <option value="Other">Other</option>
+              </select>
+            </app-form-field>
 
-          <app-form-field label="SSH认证方式">
-            <div class="radio-group">
-              <label class="radio-option">
-                <input type="radio" name="credential_type" value="password"
-                  ?checked=${this._form.credential_type === "password"}
-                  @change=${() => this._updateForm("credential_type", "password")} />
-                密码
-              </label>
-              <label class="radio-option">
-                <input type="radio" name="credential_type" value="key"
-                  ?checked=${this._form.credential_type === "key"}
-                  @change=${() => this._updateForm("credential_type", "key")} />
-                SSH密钥
-              </label>
-            </div>
-          </app-form-field>
+            <app-form-field label="SSH认证方式">
+              <div class="radio-group">
+                <label class="radio-option">
+                  <input type="radio" name="credential_type" value="password"
+                    ?checked=${this._form.credential_type === "password"}
+                    @change=${() => this._updateForm("credential_type", "password")} />
+                  密码
+                </label>
+                <label class="radio-option">
+                  <input type="radio" name="credential_type" value="key"
+                    ?checked=${this._form.credential_type === "key"}
+                    @change=${() => this._updateForm("credential_type", "key")} />
+                  SSH密钥
+                </label>
+              </div>
+            </app-form-field>
+          </div>
 
           <app-form-field label="SSH用户名" required>
             <input class="form-input" type="text" .value=${this._form.credential_username}
@@ -845,7 +861,7 @@ export class ServersPage extends LitElement {
     if (!this._showDeleteDialog || !this._deletingServer) return nothing;
 
     return html`
-      <app-dialog .open=${true} size="sm" title="确认删除" @app-dialog-close=${this._closeDeleteDialog}>
+      <app-dialog .open=${true} size="sm" .closeOnOverlay=${false} title="确认删除" @app-dialog-close=${this._closeDeleteDialog}>
         <div style="text-align:center;padding:var(--space-md) 0">
           <div style="margin-bottom:var(--space-md);color:var(--warn);display:flex;justify-content:center;">
             ${icons['triangle-alert']}
@@ -867,7 +883,7 @@ export class ServersPage extends LitElement {
     if (!this._showKeyRotationDialog || !this._keyRotationServer) return nothing;
 
     return html`
-      <app-dialog .open=${true} size="sm" title="密钥轮换" @app-dialog-close=${this._closeKeyRotation}>
+      <app-dialog .open=${true} size="sm" .closeOnOverlay=${false} title="密钥轮换" @app-dialog-close=${this._closeKeyRotation}>
         <div class="form-grid">
           <div style="font-size:var(--text-base);color:var(--text-strong);font-weight:500;margin-bottom:var(--space-sm);">
             服务器：${this._keyRotationServer.host}
