@@ -257,6 +257,13 @@ class ServerDatabaseService {
         values.push(data.os_type);
       }
       if (data.credential_type !== undefined) {
+        // When credential_type changes, require new credential_value to avoid payload/type mismatch
+        if (data.credential_value === undefined || data.credential_value === '') {
+          const existing = await this.getServerById(id);
+          if (existing && existing.credential_type !== data.credential_type) {
+            return { success: false, error: '更换认证方式时必须提供新的凭据值' };
+          }
+        }
         updates.push('credential_type = ?');
         values.push(data.credential_type);
       }
