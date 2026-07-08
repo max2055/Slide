@@ -111,6 +111,7 @@ class ServerReportService {
 
       for (const row of rows) {
         const name: string = row.metric_name;
+        if (row.metric_value === null || row.metric_value === undefined) continue;
         const value = Number(row.metric_value);
 
         if (name === 'cpu_usage') {
