@@ -1292,6 +1292,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
       // Strip credential_encrypted from response — never send encrypted blob to frontend
       const { credential_encrypted, ...safeServer } = server;
+      // Decrypt and include username for edit-form pre-fill (but NOT password/key)
+      try {
+        const creds = serverDatabaseService.decryptCredentials(credential_encrypted);
+        (safeServer as any).credential_username = creds.username;
+      } catch {
+        // If decryption fails, skip — frontend will show empty username field
+      }
       reply.send(safeServer);
     } catch (error: any) {
       reply.code(500).send({ error: '获取服务器详情失败：' + error.message });

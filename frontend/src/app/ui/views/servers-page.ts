@@ -35,11 +35,6 @@ interface ServerFormData {
   credential_value: string;
 }
 
-interface KeyRotationForm {
-  credential_type: "password" | "key";
-  credential_username: string;
-  credential_value: string;
-}
 
 interface MetricSummaryEntry {
   server_id: number;
@@ -319,8 +314,6 @@ export class ServersPage extends LitElement {
   @state() private _editingId: number | null = null;
   @state() private _showDeleteDialog = false;
   @state() private _deletingServer: ServerRow | null = null;
-  @state() private _showKeyRotationDialog = false;
-  @state() private _keyRotationServer: ServerRow | null = null;
   @state() private _testingConnection = false;
   @state() private _isSubmitting = false;
   @state() private _form: ServerFormData = {
@@ -329,12 +322,7 @@ export class ServersPage extends LitElement {
     label: "",
     os_type: "CentOS",
     credential_type: "password",
-    credential_username: "root",
-    credential_value: "",
-  };
-  @state() private _keyRotationForm: KeyRotationForm = {
-    credential_type: "password",
-    credential_username: "root",
+    credential_username: "",
     credential_value: "",
   };
   @state() private _testConnectionMessage = "";
@@ -377,7 +365,7 @@ export class ServersPage extends LitElement {
       label: "",
       os_type: "CentOS",
       credential_type: "password",
-      credential_username: "root",
+      credential_username: "",
       credential_value: "",
     };
     this._testConnectionMessage = "";
@@ -386,15 +374,25 @@ export class ServersPage extends LitElement {
     this._showDialog = true;
   }
 
-  private _openEditDialog(server: ServerRow) {
+  private async _openEditDialog(server: ServerRow) {
     this._editingId = server.id;
+    // Fetch detail to get credential_username (stripped from list response)
+    let credentialUsername = "";
+    try {
+      const res = await authFetch(`/api/servers/${server.id}`);
+      if (res.ok) {
+        const detail = await res.json();
+        credentialUsername = detail.credential_username || "";
+      }
+    } catch { /* fall back to empty */ }
+
     this._form = {
       host: server.host,
       port: server.port,
       label: server.label || "",
       os_type: server.os_type,
       credential_type: server.credential_type,
-      credential_username: "",
+      credential_username: credentialUsername,
       credential_value: "",
     };
     this._testConnectionMessage = "";
@@ -524,45 +522,6 @@ export class ServersPage extends LitElement {
     }
   }
 
-  private _openKeyRotation(server: ServerRow) {
-    this._keyRotationServer = server;
-    this._keyRotationForm = {
-      credential_type: server.credential_type,
-      credential_username: "",
-      credential_value: "",
-    };
-    this._showKeyRotationDialog = true;
-  }
-
-  private _closeKeyRotation() {
-    this._showKeyRotationDialog = false;
-    this._keyRotationServer = null;
-  }
-
-  private async _handleKeyRotation() {
-    if (!this._keyRotationServer || !this._keyRotationForm.credential_value) {
-      showToast("请填写凭据值", "warning");
-      return;
-    }
-
-    try {
-      const res = await authFetch(`/api/servers/${this._keyRotationServer.id}/rotate-key`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(this._keyRotationForm),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "密钥轮换失败");
-      }
-      this._closeKeyRotation();
-      await this._loadServers();
-      showToast("密钥已轮换", "success");
-    } catch (err: any) {
-      showToast(`密钥轮换失败: ${err.message}`, "error");
-    }
-  }
-
   private _statusBadgeVariant(status: string) {
     switch (status) {
       case "online": return "ok";
@@ -642,8 +601,7 @@ export class ServersPage extends LitElement {
                @click=${() => this._navigateToDetail(srv.id)}
                title="查看服务器详情">
             ${srv.host}
-          </div>
-          ${srv.label ? html`<div style="font-size:var(--text-sm);color:var(--muted);margin-top:var(--space-xs);">${srv.label}</div>` : nothing}`,
+          </div>`,
         label: srv.label || html`<span style="color:var(--muted);">—</span>`,
         os_type: html`<app-badge variant="muted">${srv.os_type}</app-badge>`,
         cpu: html`<app-badge variant="${this._usageVariant(cpuValue)}">CPU ${cpuValue != null ? cpuValue.toFixed(1) + "%" : "--"}</app-badge>`,
@@ -655,9 +613,6 @@ export class ServersPage extends LitElement {
           <div class="actions">
             <button class="action-btn icon-btn" @click=${() => this._openEditDialog(srv)} title="编辑">
               ${icons['edit']}
-            </button>
-            <button class="action-btn icon-btn" @click=${() => this._openKeyRotation(srv)} title="密钥轮换">
-              ${icons['refresh-cw']}
             </button>
             <button class="action-btn icon-btn danger" @click=${() => this._confirmDelete(srv)} title="删除">
               ${icons['trash']}
@@ -707,9 +662,6 @@ export class ServersPage extends LitElement {
 
           <!-- Delete Confirmation Dialog -->
           ${this._renderDeleteDialog()}
-
-          <!-- Key Rotation Dialog -->
-          ${this._renderKeyRotationDialog()}
         </div>
       `;
     }
@@ -746,9 +698,6 @@ export class ServersPage extends LitElement {
 
         <!-- Delete Confirmation Dialog -->
         ${this._renderDeleteDialog()}
-
-        <!-- Key Rotation Dialog -->
-        ${this._renderKeyRotationDialog()}
       </div>
     `;
   }
@@ -786,10 +735,9 @@ export class ServersPage extends LitElement {
               <select class="form-select" .value=${this._form.os_type}
                 @change=${(e: any) => this._updateForm("os_type", e.target.value)}>
                 <option value="CentOS">CentOS</option>
-                <option value="Ubuntu">Ubuntu</option>
-                <option value="Debian">Debian</option>
                 <option value="RHEL">RHEL</option>
-                <option value="Other">Other</option>
+                <option value="Kylin V10">Kylin V10</option>
+                <option value="Other">其他</option>
               </select>
             </app-form-field>
 
@@ -879,57 +827,6 @@ export class ServersPage extends LitElement {
     `;
   }
 
-  private _renderKeyRotationDialog() {
-    if (!this._showKeyRotationDialog || !this._keyRotationServer) return nothing;
-
-    return html`
-      <app-dialog .open=${true} size="sm" .closeOnOverlay=${false} title="密钥轮换" @app-dialog-close=${this._closeKeyRotation}>
-        <div class="form-grid">
-          <div style="font-size:var(--text-base);color:var(--text-strong);font-weight:500;margin-bottom:var(--space-sm);">
-            服务器：${this._keyRotationServer.host}
-          </div>
-
-          <app-form-field label="新凭据类型">
-            <div class="radio-group">
-              <label class="radio-option">
-                <input type="radio" name="kr_credential_type" value="password"
-                  ?checked=${this._keyRotationForm.credential_type === "password"}
-                  @change=${() => (this._keyRotationForm = { ...this._keyRotationForm, credential_type: "password" })} />
-                密码
-              </label>
-              <label class="radio-option">
-                <input type="radio" name="kr_credential_type" value="key"
-                  ?checked=${this._keyRotationForm.credential_type === "key"}
-                  @change=${() => (this._keyRotationForm = { ...this._keyRotationForm, credential_type: "key" })} />
-                SSH密钥
-              </label>
-            </div>
-          </app-form-field>
-
-          <app-form-field label="新用户名" required>
-            <input class="form-input" type="text" .value=${this._keyRotationForm.credential_username}
-              @input=${(e: any) => (this._keyRotationForm = { ...this._keyRotationForm, credential_username: e.target.value })} />
-          </app-form-field>
-
-          <app-form-field label=${this._keyRotationForm.credential_type === "password" ? "新密码" : "新SSH私钥"} required>
-            ${this._keyRotationForm.credential_type === "password"
-              ? html`<input class="form-input" type="password" autocomplete="new-password"
-                  .value=${this._keyRotationForm.credential_value}
-                  @input=${(e: any) => (this._keyRotationForm = { ...this._keyRotationForm, credential_value: e.target.value })} />`
-              : html`<textarea class="form-textarea" rows="4"
-                  .value=${this._keyRotationForm.credential_value}
-                  @input=${(e: any) => (this._keyRotationForm = { ...this._keyRotationForm, credential_value: e.target.value })}></textarea>`
-            }
-          </app-form-field>
-        </div>
-
-        <div slot="footer" style="display:flex;justify-content:flex-end;gap:var(--space-md);">
-          <button class="btn" @click=${this._closeKeyRotation}>取消</button>
-          <button class="btn-primary" @click=${this._handleKeyRotation}>确认轮换</button>
-        </div>
-      </app-dialog>
-    `;
-  }
 }
 
 // Guard against duplicate registration during HMR
