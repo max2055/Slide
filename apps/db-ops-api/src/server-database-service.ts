@@ -32,6 +32,25 @@ export interface DecryptedCredentials {
   privateKey?: string;
 }
 
+function translateSshError(rawMessage: string, host: string, port: number): string {
+  const lower = rawMessage.toLowerCase();
+  if (lower.includes('econnrefused'))
+    return `无法连接到 ${host}:${port}（连接被拒绝，请检查主机地址和 SSH 端口是否正确）`;
+  if (lower.includes('timed out') || lower.includes('timeout'))
+    return `连接 ${host}:${port} 超时（主机不可达或网络不通）`;
+  if (lower.includes('enotfound') || lower.includes('eai_again'))
+    return `无法解析主机名 "${host}"（请检查 IP 或域名是否正确）`;
+  if (lower.includes('ehostunreach') || lower.includes('enetunreach'))
+    return `主机 ${host} 不可达（网络不通或目标网络不存在）`;
+  if (lower.includes('authentication failed') || lower.includes('permission denied'))
+    return `SSH 认证失败（用户名或凭据错误）`;
+  if (lower.includes('connection lost') || lower.includes('handshake'))
+    return `与 ${host}:${port} 的 SSH 连接在握手阶段断开`;
+  if (lower.includes('key exchange failed'))
+    return `与 ${host}:${port} 的 SSH 密钥交换失败`;
+  return `连接 ${host}:${port} 失败：${rawMessage}`;
+}
+
 class ServerDatabaseService {
   /**
    * Get database connection pool
@@ -357,7 +376,7 @@ class ServerDatabaseService {
 
         client.on('error', (err: Error) => {
           client.end();
-          resolve({ success: false, error: `连接失败：${err.message}` });
+          resolve({ success: false, error: translateSshError(err.message, host, port) });
         });
 
         const connectConfig: any = {
@@ -379,7 +398,7 @@ class ServerDatabaseService {
         client.connect(connectConfig);
       });
     } catch (error: any) {
-      return { success: false, error: `连接失败：${error.message}` };
+      return { success: false, error: translateSshError(error.message, host, port) };
     }
   }
 
