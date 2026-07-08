@@ -150,6 +150,7 @@ async function start() {
     for (const migration of [
       '014_add_user_preferences.sql',
       '018_add_execution_trace.sql',
+      '021_add_server_alert_fields.sql',
     ]) {
       try {
         const fs = await import('fs');
