@@ -1,26 +1,11 @@
 ---
 phase: 124-server-registration
-verified: 2026-07-07T15:20:00Z
+verified: 2026-07-08T14:30:00Z
 status: passed
 score: 15/15 must-haves verified
-behavior_unverified: 0
+code_review: clean (14 found, 13 fixed, 1 skipped, 3 auto-iterations)
+uat: complete (9 passed, 1 issue resolved, 1 skipped)
 overrides_applied: 0
-gaps:
-  - truth: "All UI reuse shared components: app-data-table, app-card, app-dialog, app-form-field, app-badge, app-empty-state"
-    status: resolved
-    reason: "Fixed — replaced hand-rolled <table> with <app-data-table> and <div class='card'> with <app-card>. All 6 shared components now properly used."
-    artifacts:
-      - path: "frontend/src/app/ui/views/servers-page.ts"
-        issue: "RESOLVED — imported and uses app-data-table + app-card"
-    missing: []
-  - truth: "Server list API response strips credential_encrypted — never send encrypted blob to frontend (per PLAN threat model T-124-09)"
-    status: resolved
-    reason: "Fixed — GET /api/servers now maps servers to strip credential_encrypted before sending response."
-    artifacts:
-      - path: "apps/db-ops-api/server.ts"
-        issue: "RESOLVED — credential_encrypted stripped from list endpoint response"
-    missing: []
-deferred: []
 gaps: 0
 ---
 
