@@ -513,7 +513,7 @@ async function start() {
       // email update if provided
       if (email && email !== '') {
         try {
-          const pool = (await import('./src/db-connection.js')).dbConnection.getPool();
+          const pool = dbConnection.getPool();
           if (pool) {
             await pool.execute('UPDATE users SET email = ? WHERE id = ?', [email, Number(id)]);
           }
@@ -1396,7 +1396,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // 批量获取所有服务器最新指标摘要
   fastify.get('/api/servers/metrics/summary', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
     try {
-      const pool = (await import('./src/db-connection.js')).dbConnection.getPool();
+      const pool = dbConnection.getPool();
       if (!pool) {
         return reply.code(500).send({ error: '数据库未连接' });
       }
@@ -1433,7 +1433,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.get('/api/servers/:id/metrics', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const pool = (await import('./src/db-connection.js')).dbConnection.getPool();
+      const pool = dbConnection.getPool();
       if (!pool) {
         return reply.code(500).send({ error: '数据库未连接' });
       }
@@ -1477,7 +1477,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         return reply.code(400).send({ error: `range 必须为 ${validRanges.join('/')} 之一` });
       }
 
-      const pool = (await import('./src/db-connection.js')).dbConnection.getPool();
+      const pool = dbConnection.getPool();
       if (!pool) {
         return reply.code(500).send({ error: '数据库未连接' });
       }
