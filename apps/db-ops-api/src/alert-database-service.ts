@@ -46,6 +46,8 @@ export interface AlertRule {
   db_types?: string[] | null;
   instance_ids?: number[] | null;
   template_id?: number | null;
+  target_type?: 'instance' | 'server';
+  server_id?: number | null;
   created_by: number | null;
   created_at: Date;
   updated_at: Date;
