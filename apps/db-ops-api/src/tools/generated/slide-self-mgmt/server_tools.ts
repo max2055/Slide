@@ -470,9 +470,10 @@ export const getServerAlertsTool: AnyAgentTool = {
         };
       }
 
-      // 查询系统告警（alerts 表使用 instance_id，没有 server_id 关联）
-      // 返回最近的系统告警，Agent 可结合服务器上下文做关联分析
+      // 查询与服务器关联的系统告警（alerts 表支持 server_id 过滤）
+      // 返回该服务器及其关联实例的告警
       const alertResult = await alertDatabaseService.getAlerts({
+        server_id: serverId,
         status: activeOnly ? 'unread,read,acknowledged' : undefined,
         limit,
       });
