@@ -53,7 +53,7 @@ interface ServerAlertInfo {
   status: string;
   created_at: string;
   instance_id: number | null;
-  instance_name: string;
+  instance_name?: string;
 }
 
 /**
@@ -135,8 +135,9 @@ async function getMetricHistory(
     '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720,
   };
 
+  const HOUR_MS = 3_600_000;
   const hours = range && range in rangeHours ? rangeHours[range] : 24;
-  const since = new Date(Date.now() - hours * 3600000).toISOString().slice(0, 19).replace('T', ' ');
+  const since = new Date(Date.now() - hours * HOUR_MS).toISOString().slice(0, 19).replace('T', ' ');
 
   let sql: string;
   const params: any[] = [serverId, since];
@@ -476,7 +477,7 @@ export const getServerAlertsTool: AnyAgentTool = {
 
       const items = (alertResult.items || []).map((alert: any) => ({
         id: alert.id,
-        level: alert.severity || alert.level,
+        level: alert.severity,
         title: alert.title,
         message: alert.message,
         status: alert.status,
