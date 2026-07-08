@@ -149,19 +149,28 @@ export class ServerDetailPage extends LitElement {
   @state() private historyData: { time: string[]; metrics: Record<string, number[]> } | null = null;
   @state() private lastUpdated: Date | null = null;
   @state() private isRefreshing = false;
+  private _navHandler: ((e: any) => void) | null = null;
 
   override firstUpdated() {
-    // Listen for navigation event with server ID
-    window.addEventListener("slide-navigate", (e: any) => {
+    this._navHandler = (e: any) => {
       if (e.detail.tab === "server-detail" && e.detail.serverId != null) {
         this.serverId = Number(e.detail.serverId);
         this.activeTab = "overview";
         this.loadServer(this.serverId);
         this.loadLatestMetrics(this.serverId);
       }
-    });
+    };
+    window.addEventListener("slide-navigate", this._navHandler);
     // Also try reading URL params
     this.loadFromUrl();
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._navHandler) {
+      window.removeEventListener("slide-navigate", this._navHandler);
+      this._navHandler = null;
+    }
   }
 
   private loadFromUrl() {
