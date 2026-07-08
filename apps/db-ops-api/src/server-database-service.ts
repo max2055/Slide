@@ -234,6 +234,10 @@ class ServerDatabaseService {
 
       return { success: true, serverId: result.insertId };
     } catch (error: any) {
+      // Handle duplicate entry from UNIQUE INDEX uq_host_port (TOCTOU race fallback)
+      if (error.code === 'ER_DUP_ENTRY') {
+        return { success: false, error: '该主机地址和端口已被纳管，请勿重复添加' };
+      }
       console.error('创建服务器失败:', error);
       return { success: false, error: error.message };
     }
