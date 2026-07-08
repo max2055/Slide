@@ -89,43 +89,35 @@ async function getLatestMetrics(serverId: number): Promise<MetricsSummary> {
     };
   }
 
-  try {
-    const metricNames = ['cpu_usage', 'memory_usage', 'disk_usage', 'load_1min', 'uptime'];
-    const results: MetricsSummary = {
-      cpu_usage: null, memory_usage: null, disk_usage: null,
-      load_1min: null, uptime: null, recorded_at: null,
-    };
-    let latestTime: string | null = null;
+  const metricNames = ['cpu_usage', 'memory_usage', 'disk_usage', 'load_1min', 'uptime'];
+  const results: MetricsSummary = {
+    cpu_usage: null, memory_usage: null, disk_usage: null,
+    load_1min: null, uptime: null, recorded_at: null,
+  };
+  let latestTime: string | null = null;
 
-    for (const name of metricNames) {
-      const [rows] = await pool.execute(
-        `SELECT metric_value, recorded_at
-         FROM server_metrics
-         WHERE server_id = ? AND metric_name = ?
-         ORDER BY recorded_at DESC
-         LIMIT 1`,
-        [serverId, name]
-      ) as any;
+  for (const name of metricNames) {
+    const [rows] = await pool.execute(
+      `SELECT metric_value, recorded_at
+       FROM server_metrics
+       WHERE server_id = ? AND metric_name = ?
+       ORDER BY recorded_at DESC
+       LIMIT 1`,
+      [serverId, name]
+    ) as any;
 
-      if (rows && rows.length > 0) {
-        const row = rows[0];
-        const key = name as keyof MetricsSummary;
-        (results as any)[key] = Number(row.metric_value);
-        if (!latestTime || row.recorded_at > latestTime) {
-          latestTime = row.recorded_at;
-        }
+    if (rows && rows.length > 0) {
+      const row = rows[0];
+      const key = name as keyof MetricsSummary;
+      (results as any)[key] = Number(row.metric_value);
+      if (!latestTime || row.recorded_at > latestTime) {
+        latestTime = row.recorded_at;
       }
     }
-
-    results.recorded_at = latestTime;
-    return results;
-  } catch (error) {
-    console.error(`获取服务器 #${serverId} 最新指标失败:`, error);
-    return {
-      cpu_usage: null, memory_usage: null, disk_usage: null,
-      load_1min: null, uptime: null, recorded_at: null,
-    };
   }
+
+  results.recorded_at = latestTime;
+  return results;
 }
 
 /**
@@ -146,33 +138,28 @@ async function getMetricHistory(
   const hours = range && range in rangeHours ? rangeHours[range] : 24;
   const since = new Date(Date.now() - hours * 3600000).toISOString().slice(0, 19).replace('T', ' ');
 
-  try {
-    let sql: string;
-    const params: any[] = [serverId, since];
+  let sql: string;
+  const params: any[] = [serverId, since];
 
-    if (metricName) {
-      sql = `SELECT metric_name, metric_value, recorded_at
-             FROM server_metrics
-             WHERE server_id = ? AND recorded_at >= ? AND metric_name = ?
-             ORDER BY recorded_at ASC`;
-      params.push(metricName);
-    } else {
-      sql = `SELECT metric_name, metric_value, recorded_at
-             FROM server_metrics
-             WHERE server_id = ? AND recorded_at >= ?
-             ORDER BY recorded_at ASC`;
-    }
-
-    const [rows] = await pool.execute(sql, params) as any;
-    return (rows || []).map((row: any) => ({
-      metric_name: row.metric_name,
-      metric_value: Number(row.metric_value),
-      recorded_at: new Date(row.recorded_at).toISOString(),
-    }));
-  } catch (error) {
-    console.error(`获取服务器 #${serverId} 指标历史失败:`, error);
-    return [];
+  if (metricName) {
+    sql = `SELECT metric_name, metric_value, recorded_at
+           FROM server_metrics
+           WHERE server_id = ? AND recorded_at >= ? AND metric_name = ?
+           ORDER BY recorded_at ASC`;
+    params.push(metricName);
+  } else {
+    sql = `SELECT metric_name, metric_value, recorded_at
+           FROM server_metrics
+           WHERE server_id = ? AND recorded_at >= ?
+           ORDER BY recorded_at ASC`;
   }
+
+  const [rows] = await pool.execute(sql, params) as any;
+  return (rows || []).map((row: any) => ({
+    metric_name: row.metric_name,
+    metric_value: Number(row.metric_value),
+    recorded_at: new Date(row.recorded_at).toISOString(),
+  }));
 }
 
 /**
@@ -182,48 +169,43 @@ async function getAllServersLatestMetrics(): Promise<Map<number, MetricsSummary>
   const pool = dbConnection.getPool();
   if (!pool) return new Map();
 
-  try {
-    const metricNames = ['cpu_usage', 'memory_usage', 'disk_usage', 'load_1min', 'uptime'];
-    const result = new Map<number, MetricsSummary>();
+  const metricNames = ['cpu_usage', 'memory_usage', 'disk_usage', 'load_1min', 'uptime'];
+  const result = new Map<number, MetricsSummary>();
 
-    for (const name of metricNames) {
-      const [rows] = await pool.execute(
-        `SELECT m1.server_id, m1.metric_value, m1.recorded_at
-         FROM server_metrics m1
-         INNER JOIN (
-           SELECT server_id, MAX(recorded_at) AS max_time
-           FROM server_metrics
-           WHERE metric_name = ?
-           GROUP BY server_id
-         ) m2 ON m1.server_id = m2.server_id AND m1.recorded_at = m2.max_time
-         WHERE m1.metric_name = ?`,
-        [name, name]
-      ) as any;
+  for (const name of metricNames) {
+    const [rows] = await pool.execute(
+      `SELECT m1.server_id, m1.metric_value, m1.recorded_at
+       FROM server_metrics m1
+       INNER JOIN (
+         SELECT server_id, MAX(recorded_at) AS max_time
+         FROM server_metrics
+         WHERE metric_name = ?
+         GROUP BY server_id
+       ) m2 ON m1.server_id = m2.server_id AND m1.recorded_at = m2.max_time
+       WHERE m1.metric_name = ?`,
+      [name, name]
+    ) as any;
 
-      if (rows) {
-        for (const row of rows) {
-          let entry = result.get(row.server_id);
-          if (!entry) {
-            entry = {
-              cpu_usage: null, memory_usage: null, disk_usage: null,
-              load_1min: null, uptime: null, recorded_at: null,
-            };
-            result.set(row.server_id, entry);
-          }
-          const key = name as keyof MetricsSummary;
-          (entry as any)[key] = Number(row.metric_value);
-          if (!entry.recorded_at || row.recorded_at > entry.recorded_at) {
-            entry.recorded_at = row.recorded_at;
-          }
+    if (rows) {
+      for (const row of rows) {
+        let entry = result.get(row.server_id);
+        if (!entry) {
+          entry = {
+            cpu_usage: null, memory_usage: null, disk_usage: null,
+            load_1min: null, uptime: null, recorded_at: null,
+          };
+          result.set(row.server_id, entry);
+        }
+        const key = name as keyof MetricsSummary;
+        (entry as any)[key] = Number(row.metric_value);
+        if (!entry.recorded_at || row.recorded_at > entry.recorded_at) {
+          entry.recorded_at = row.recorded_at;
         }
       }
     }
-
-    return result;
-  } catch (error) {
-    console.error('批量获取服务器最新指标失败:', error);
-    return new Map();
   }
+
+  return result;
 }
 
 /**
