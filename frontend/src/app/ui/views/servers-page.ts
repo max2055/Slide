@@ -631,13 +631,9 @@ export class ServersPage extends LitElement {
             </div>
             <app-empty-state
               title="暂无服务器"
-              description="点击添加按钮创建第一个服务器"
+              description="点击上方添加按钮创建第一个服务器"
               icon="server"
-            >
-              <button slot="actions" class="btn-primary" @click=${this._openAddDialog}>
-                + 添加服务器
-              </button>
-            </app-empty-state>
+            ></app-empty-state>
           </app-card>
         </div>
       `;
