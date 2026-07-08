@@ -70,25 +70,12 @@ class SshSessionPool {
     credentialValue: string,
     hostKeyFingerprint?: string | null
   ): Promise<Client> {
-    // Clean stale connections first
-    this._cleanStale();
-
     // Look for an existing idle connection to this host
     const existing = this._findIdle(host, port);
     if (existing) {
-      try {
-        // Quick check if still connected — ssh2's _sock is internal but the
-        // only reliable indicator without issuing a command
-        if (this._isConnected(existing.client)) {
-          existing.inUse = true;
-          existing.lastUsed = Date.now();
-          return existing.client;
-        }
-        // Connection is dead — remove from pool
-        this._remove(existing);
-      } catch {
-        this._remove(existing);
-      }
+      existing.inUse = true;
+      existing.lastUsed = Date.now();
+      return existing.client;
     }
 
     // Check per-server session limit
@@ -196,10 +183,6 @@ class SshSessionPool {
     );
   }
 
-  private _isConnected(client: Client): boolean {
-    return (client as any)._sock?.writable === true;
-  }
-
   private _remove(session: SshSession): void {
     try {
       session.client.end();
@@ -207,26 +190,6 @@ class SshSessionPool {
       // Ignore
     }
     this.sessions = this.sessions.filter((s) => s !== session);
-  }
-
-  private _cleanStale(): void {
-    const stale = this.sessions.filter((s) => {
-      if (s.inUse) return false;
-      try {
-        return !this._isConnected(s.client);
-      } catch {
-        return true;
-      }
-    });
-
-    for (const s of stale) {
-      this._remove(s);
-    }
-
-    if (stale.length > 0) {
-      const stats = this.getPoolStats();
-      console.log(`[SshSessionPool] cleaned ${stale.length} stale connections (pool: ${stats.total})`);
-    }
   }
 
   private _connect(
