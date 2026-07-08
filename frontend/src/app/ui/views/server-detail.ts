@@ -270,7 +270,10 @@ export class ServerDetailPage extends LitElement {
       }
       this.lastUpdated = new Date();
       if (this.activeTab === "metrics") await this.loadMetricHistory(this.serverId, this.activeRange);
-    } catch { /* ignore refresh errors */ }
+    } catch (err: any) {
+      console.warn('[server-detail] refresh failed:', err);
+      showToast(err.message || '刷新失败', 'error');
+    }
     finally { this.isRefreshing = false; }
   }
 
