@@ -156,6 +156,7 @@ export const zh_CN: TranslationMap = {
     docs: "文档",
     "instances-db": "数据库管理",
     servers: "服务器管理",
+    "server-detail": "服务器详情",
     "instance-detail": "实例详情",
     alerts: "告警中心",
     schema: "表结构管理",

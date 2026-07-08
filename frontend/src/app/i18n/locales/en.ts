@@ -154,6 +154,7 @@ export const en: TranslationMap = {
     dashboard: "Dashboard",
     "instances-db": "Databases",
     servers: "Servers",
+    "server-detail": "Server Detail",
     "instance-detail": "Instance Detail",
     alerts: "Alerts",
     reports: "Reports",
