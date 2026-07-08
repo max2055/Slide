@@ -225,6 +225,8 @@ export function iconForTab(tab: Tab): IconName {
       return "database";
     case "servers":
       return "server";
+    case "server-detail":
+      return "server";
     case "alerts":
       return "bell";
     case "schema":
