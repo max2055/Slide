@@ -270,10 +270,12 @@ class ServerDatabaseService {
           const credPayload: Record<string, string> = {
             username: data.credential_username !== undefined && data.credential_username !== '' ? data.credential_username : decrypted.username,
           };
-          if (data.credential_type === 'password' || (!data.credential_type && existing.credential_type === 'password')) {
-            credPayload.password = data.credential_value !== undefined ? data.credential_value : (decrypted.password || '');
+          if (data.credential_value !== undefined && data.credential_value !== '') {
+            const key = (data.credential_type || existing.credential_type) === 'password' ? 'password' : 'privateKey';
+            credPayload[key] = data.credential_value;
           } else {
-            credPayload.privateKey = data.credential_value !== undefined ? data.credential_value : (decrypted.privateKey || '');
+            if (decrypted.password) credPayload.password = decrypted.password;
+            if (decrypted.privateKey) credPayload.privateKey = decrypted.privateKey;
           }
           updates.push('credential_encrypted = ?');
           values.push(encryptData(JSON.stringify(credPayload)));
