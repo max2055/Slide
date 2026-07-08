@@ -355,6 +355,8 @@ class ServerDatabaseService {
           port,
           username,
           readyTimeout: 10000,
+          // hostVerifier: accept any host key for initial test-connection.
+          // Production SSH connections MUST use the stored host_key_fingerprint for verification.
           hostVerifier: () => true,
         };
 
