@@ -204,6 +204,11 @@ class ServerDatabaseService {
         return { success: false, error: `该地址已被服务器 "${dup.label || dup.host}" (ID: ${dup.id}) 纳管，请勿重复添加` };
       }
 
+      // Validate credential value is non-empty
+      if (!data.credential_value || data.credential_value.trim() === '') {
+        return { success: false, error: 'SSH密码或私钥不能为空' };
+      }
+
       // Encrypt credentials
       const credentialPayload: Record<string, string> = { username: data.credential_username };
       if (data.credential_type === 'password') {

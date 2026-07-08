@@ -419,6 +419,10 @@ export class ServersPage extends LitElement {
       showToast("请填写主机地址和SSH用户名", "warning");
       return;
     }
+    if (!this._editingId && !this._form.credential_value) {
+      showToast("请输入SSH密码或私钥", "warning");
+      return;
+    }
 
     this._isSubmitting = true;
     try {
