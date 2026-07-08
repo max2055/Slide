@@ -502,7 +502,7 @@ class AlertDatabaseService {
       const [rows] = await pool.query<mysql.RowDataPacket[]>(
         `SELECT * FROM alerts
          WHERE server_id = ? AND metric_name = ?
-         AND JSON_EXTRACT(tags, '$.rule_id') = ?
+         AND JSON_EXTRACT(tags, '$.rule_id') = CAST(? AS JSON)
          AND status IN ('unread', 'read', 'acknowledged')
          ORDER BY created_at DESC LIMIT 1`,
         [serverId, metricName, ruleId]
