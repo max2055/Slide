@@ -384,7 +384,12 @@ class ServerReportService {
   }
 
   private _statusBadge(status: string): string {
-    return `<span class="status-badge ${status}">${status}</span>`;
+    const cssMap: Record<string, string> = {
+      online: 'online', offline: 'offline',
+      error: 'error', unreachable: 'unreachable',
+    };
+    const cssClass = cssMap[status] || 'offline';
+    return `<span class="status-badge ${cssClass}">${this._escapeHtml(status)}</span>`;
   }
 }
 
