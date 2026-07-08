@@ -260,14 +260,15 @@ class ServerDatabaseService {
         updates.push('credential_type = ?');
         values.push(data.credential_type);
       }
-      // Re-encrypt if credential username or value provided
-      if (data.credential_username !== undefined || data.credential_value !== undefined) {
+      // Re-encrypt if credential username or value provided (non-empty)
+      if ((data.credential_username !== undefined && data.credential_username !== '')
+          || (data.credential_value !== undefined && data.credential_value !== '')) {
         // Fetch existing to merge with new values
         const existing = await this.getServerById(id);
         if (existing) {
           const decrypted = this.decryptCredentials(existing.credential_encrypted);
           const credPayload: Record<string, string> = {
-            username: data.credential_username !== undefined ? data.credential_username : decrypted.username,
+            username: data.credential_username !== undefined && data.credential_username !== '' ? data.credential_username : decrypted.username,
           };
           if (data.credential_type === 'password' || (!data.credential_type && existing.credential_type === 'password')) {
             credPayload.password = data.credential_value !== undefined ? data.credential_value : (decrypted.password || '');

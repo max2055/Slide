@@ -370,8 +370,9 @@ export class ServersPage extends LitElement {
       const isEdit = this._editingId !== null;
       const url = isEdit ? `/api/servers/${this._editingId}` : "/api/servers";
       const body: Record<string, unknown> = { ...this._form };
-      if (isEdit && !body.credential_value) {
-        delete body.credential_value;
+      if (isEdit) {
+        if (!body.credential_value) delete body.credential_value;
+        if (!body.credential_username) delete body.credential_username;
       }
 
       const res = await authFetch(url, {
