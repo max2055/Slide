@@ -2650,6 +2650,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           db_types: data.db_types || (metricDef ? metricDef.db_types : null),
           instance_ids: data.instance_ids || null,
           template_id: data.template_id ?? null,
+          target_type: data.target_type || 'instance',
+          server_id: data.server_id ?? null,
           created_by: (request as any).user?.userId,
         });
         if (result.success) {
@@ -2700,6 +2702,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (data.db_types !== undefined) updateData.db_types = data.db_types;
         if (data.instance_ids !== undefined) updateData.instance_ids = data.instance_ids;
         if (data.template_id !== undefined) updateData.template_id = data.template_id;
+        if (data.target_type !== undefined) updateData.target_type = data.target_type;
+        if (data.server_id !== undefined) updateData.server_id = data.server_id;
 
         const result = await alertDatabaseService.updateAlertRule(Number(id), updateData);
         if (result.success) {
