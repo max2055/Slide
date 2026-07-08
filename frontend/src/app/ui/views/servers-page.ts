@@ -70,18 +70,54 @@ export class ServersPage extends LitElement {
       padding: 0;
     }
 
-    .page-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 24px;
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
     }
 
-    .page-header h1 {
-      font-size: 22px;
-      font-weight: 700;
-      margin: 0;
-      color: var(--text-strong);
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: var(--space-md);
+      padding: var(--space-md) var(--space-lg);
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+
+    .search-box {
+      position: relative;
+      flex: 1;
+      min-width: 200px;
+      max-width: 300px;
+    }
+
+    .search-input {
+      width: 100%;
+      padding: var(--space-sm) var(--space-md) var(--space-sm) 34px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: var(--text-base);
+      color: var(--text);
+      background: var(--card);
+      transition: all var(--duration-normal) var(--ease-out);
+    }
+
+    .search-input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-subtle);
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      display: flex;
+      opacity: 0.6;
     }
 
     /* Form styles */
@@ -265,6 +301,7 @@ export class ServersPage extends LitElement {
   `];
 
   @state() private _servers: ServerRow[] = [];
+  @state() private _searchQuery = "";
   @state() private _loading = true;
   @state() private _showDialog = false;
   @state() private _editingId: number | null = null;
@@ -554,6 +591,16 @@ export class ServersPage extends LitElement {
     }));
   }
 
+  private get _filteredServers(): ServerRow[] {
+    const q = this._searchQuery.trim().toLowerCase();
+    if (!q) return this._servers;
+    return this._servers.filter((srv) =>
+      srv.host.toLowerCase().includes(q) ||
+      (srv.label ?? "").toLowerCase().includes(q) ||
+      srv.os_type.toLowerCase().includes(q)
+    );
+  }
+
   private _getColumns() {
     return [
       { key: "host", label: "主机" },
@@ -569,7 +616,7 @@ export class ServersPage extends LitElement {
   }
 
   private _getRows() {
-    return this._servers.map((srv) => {
+    return this._filteredServers.map((srv) => {
       const cpuMetric = this._getServerMetric(srv.id, "cpu_usage");
       const memMetric = this._getServerMetric(srv.id, "memory_usage");
       const diskMetric = this._getServerMetric(srv.id, "disk_usage");
@@ -630,19 +677,19 @@ export class ServersPage extends LitElement {
     if (this._servers.length === 0) {
       return html`
         <div class="page">
-          <div class="page-header">
-            <h1>服务器管理</h1>
-            <button class="btn-primary" @click=${this._openAddDialog}>
-              + 添加服务器
-            </button>
-          </div>
-          <app-card>
+          <div class="card">
+            <div class="toolbar">
+              <div style="flex:1"></div>
+              <button class="btn" style="margin-left:auto;" @click=${this._openAddDialog}>
+                + 添加服务器
+              </button>
+            </div>
             <app-empty-state
               title="暂无服务器"
               description="点击右上角添加按钮创建第一个服务器"
               icon="server"
             ></app-empty-state>
-          </app-card>
+          </div>
         </div>
       `;
     }
@@ -652,15 +699,27 @@ export class ServersPage extends LitElement {
 
     return html`
       <div class="page">
-        <div class="page-header">
-          <h1>服务器管理</h1>
-          <button class="btn-primary" @click=${this._openAddDialog}>
-            + 添加服务器
-          </button>
+        <div class="card">
+          <div class="toolbar">
+            <div class="search-box">
+              <span class="search-icon"><span style="width:14px;height:14px;display:flex;">${icons['search']}</span></span>
+              <input
+                class="search-input"
+                placeholder="搜索主机、标签、操作系统..."
+                name="search-servers"
+                autocomplete="off"
+                .value=${this._searchQuery}
+                @input=${(e: any) => (this._searchQuery = e.target.value)}
+              />
+            </div>
+            <button class="btn" style="margin-left:auto;" @click=${this._openAddDialog}>
+              + 添加服务器
+            </button>
+          </div>
+          ${rows.length > 0
+            ? html`<app-data-table .columns=${columns} .rows=${rows}></app-data-table>`
+            : html`<app-empty-state title="无匹配服务器" description="尝试更换搜索关键词" icon="search"></app-empty-state>`}
         </div>
-        <app-card>
-          <app-data-table .columns=${columns} .rows=${rows}></app-data-table>
-        </app-card>
 
         <!-- Add/Edit Dialog -->
         ${this._renderFormDialog()}
