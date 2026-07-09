@@ -292,7 +292,40 @@ export class ServerDetailPage extends LitElement {
     }));
   }
 
+  private async _oneClickInspection() {
+    if (!this.serverId) return;
+    try {
+      const res = await authFetch(`/api/servers/reports/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ server_id: this.serverId }),
+      });
+      if (res.ok) {
+        showToast('巡检报告已生成', 'success');
+        window.dispatchEvent(new CustomEvent("slide-navigate", {
+          detail: { tab: "reports" },
+        }));
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || '巡检失败', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || '巡检失败', 'error');
+    }
+  }
+
+  private _viewAlerts() {
+    if (!this.serverId) return;
+    window.dispatchEvent(new CustomEvent("slide-navigate", {
+      detail: { tab: "alerts", serverId: this.serverId },
+    }));
+  }
+
   private _setTab(tab: string) {
+    if (tab === 'alerts' && this.serverId) {
+      this._viewAlerts();
+      return;
+    }
     this.activeTab = tab;
     if (tab === "metrics" && this.serverId) {
       this.loadMetricHistory(this.serverId, this.activeRange);
@@ -389,6 +422,8 @@ export class ServerDetailPage extends LitElement {
           </div>
           <div class="header-right">
             <span class="last-updated">${this._formatTimeAgo(this.lastUpdated)}</span>
+            <button class="action-btn" style="display:inline-flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm) var(--space-md);border:1px solid var(--accent);border-radius:var(--radius-sm);font-size:var(--text-sm);font-weight:500;color:var(--accent);background:transparent;cursor:pointer;" @click=${() => this._oneClickInspection()} ?disabled=${this.isRefreshing}>一键巡检</button>
+            <button class="action-btn" style="display:inline-flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm) var(--space-md);border:1px solid var(--warn);border-radius:var(--radius-sm);font-size:var(--text-sm);font-weight:500;color:var(--warn);background:transparent;cursor:pointer;" @click=${() => this._viewAlerts()}>查看告警</button>
             <button class="refresh-btn" @click=${this.refreshCurrentTab} ?disabled=${this.isRefreshing}>
               ${this.isRefreshing ? html`<span class="spinner" style="width:14px;height:14px;border-width:1.5px;"></span>` : icons['refresh']} 刷新
             </button>
@@ -400,6 +435,7 @@ export class ServerDetailPage extends LitElement {
             { key: "overview", label: "概览" },
             { key: "metrics", label: "指标" },
             { key: "config", label: "配置" },
+            { key: "alerts", label: "告警" },
           ].map(t => html`
             <button class="tab ${this.activeTab === t.key ? "active" : ""}" @click=${() => this._setTab(t.key)}>
               ${t.label}

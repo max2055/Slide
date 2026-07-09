@@ -14,6 +14,9 @@ interface Report {
   type?: string;
   title: string;
   instance_name?: string;
+  server_id?: number;
+  server_name?: string;
+  target_type?: string;
   status: "completed" | "running" | "failed";
   created_at: string;
   created_by?: string;
@@ -322,7 +325,10 @@ export class ReportsPage extends LitElement {
   @state() private error: string | null = null;
   @state() private stats = { total: 0, completed: 0, running: 0, failed: 0 };
   @state() private instances: Array<{ id: number; name: string }> = [];
+  @state() private servers: any[] = [];
   @state() private selectedInstanceId: number | null = null;
+  @state() private selectedTargetType: 'instance' | 'server' = 'instance';
+  @state() private selectedServerId: number | null = null;
   @state() private configs: ReportConfig[] = [];
   @state() private configsLoading = true;
   @state() private editingConfig: ReportConfig | null = null;
@@ -337,6 +343,7 @@ export class ReportsPage extends LitElement {
     { type: "performance", icon: "zap", title: "性能分析报告", desc: "SQL 性能分析和索引优化建议" },
     { type: "slow_query", icon: "clock", title: "慢查询报告", desc: "慢查询日志分析和性能瓶颈识别" },
     { type: "capacity", icon: "trending-up", title: "容量规划报告", desc: "存储使用趋势和扩容建议" },
+    { type: "server_health", icon: "server", title: "服务器巡检报告", desc: "所有纳管服务器健康状态检查与评分" },
   ];
 
   private get token() {
@@ -359,12 +366,19 @@ export class ReportsPage extends LitElement {
 
   private async loadInstances() {
     try {
-      const res = await authFetch('/api/database/instances');
-      if (res.ok) {
-        this.instances = await res.json();
+      const [instRes, srvRes] = await Promise.all([
+        authFetch('/api/database/instances'),
+        authFetch('/api/servers'),
+      ]);
+      if (instRes.ok) {
+        this.instances = await instRes.json();
+      }
+      if (srvRes.ok) {
+        const data = await srvRes.json();
+        this.servers = Array.isArray(data) ? data : (data.servers || []);
       }
     } catch (err: any) {
-      showToast('Failed to load instance list', 'error');
+      showToast('Failed to load data', 'error');
     }
   }
 
@@ -433,17 +447,28 @@ export class ReportsPage extends LitElement {
           <div slot="header">
             ${icons['bar-chart']} 生成报表
             <div style="font-size:var(--text-base);color:var(--muted);margin-top:var(--space-xs)">选择报表类型生成分析报告</div>
-            <div style="margin-top: var(--space-md);">
-              <label style="font-size: var(--text-base); color: var(--muted); margin-right: 8px;">目标实例：</label>
-              <select
-                style="padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--input); color: var(--text); font-size: var(--text-base); min-width: 200px;"
-                @change=${(e: Event) => { this.selectedInstanceId = Number((e.target as HTMLSelectElement).value); }}
-              >
-                <option value="">— 选择实例 —</option>
-                ${this.instances.map(i => html`
-                  <option value=${i.id}>${i.name}</option>
-                `)}
-              </select>
+            <div style="margin-top: var(--space-md);display:flex;align-items:center;gap:var(--space-md);flex-wrap:wrap;">
+              <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;">
+                <button style="padding:var(--space-sm) var(--space-lg);border:none;font-size:var(--text-sm);font-weight:500;cursor:pointer;background:${this.selectedTargetType === 'instance' ? 'var(--accent)' : 'var(--secondary)'};color:${this.selectedTargetType === 'instance' ? 'var(--accent-foreground)' : 'var(--text)'};" @click=${() => { this.selectedTargetType = 'instance'; this.selectedServerId = null; }}>数据库实例</button>
+                <button style="padding:var(--space-sm) var(--space-lg);border:none;font-size:var(--text-sm);font-weight:500;cursor:pointer;background:${this.selectedTargetType === 'server' ? 'var(--accent)' : 'var(--secondary)'};color:${this.selectedTargetType === 'server' ? 'var(--accent-foreground)' : 'var(--text)'};" @click=${() => { this.selectedTargetType = 'server'; this.selectedInstanceId = null; }}>服务器</button>
+              </div>
+              ${this.selectedTargetType === 'instance' ? html`
+                <select
+                  style="padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--input); color: var(--text); font-size: var(--text-base); min-width: 200px;"
+                  @change=${(e: Event) => { this.selectedInstanceId = Number((e.target as HTMLSelectElement).value); }}
+                >
+                  <option value="">— 选择实例 —</option>
+                  ${this.instances.map(i => html`<option value=${i.id}>${i.name}</option>`)}
+                </select>
+              ` : html`
+                <select
+                  style="padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--input); color: var(--text); font-size: var(--text-base); min-width: 200px;"
+                  @change=${(e: Event) => { this.selectedServerId = Number((e.target as HTMLSelectElement).value); }}
+                >
+                  <option value="">— 选择服务器 —</option>
+                  ${this.servers.map((srv: any) => html`<option value=${srv.id}>${srv.host}${srv.label ? ` (${srv.label})` : ''}</option>`)}
+                </select>
+              `}
             </div>
           </div>
 
@@ -475,7 +500,8 @@ export class ReportsPage extends LitElement {
                       <tr>
                         <th>标题</th>
                         <th style="width: 100px; text-align:center;">类型</th>
-                        <th style="width: 140px; text-align:center;">实例</th>
+                        <th style="width: 70px; text-align:center;">目标类型</th>
+                        <th style="width: 140px; text-align:center;">目标</th>
                         <th style="width: 90px; text-align:center;">状态</th>
                         <th style="width: 120px; text-align:center;">创建时间</th>
                         <th style="width: 140px; text-align:center;">操作</th>
@@ -487,9 +513,16 @@ export class ReportsPage extends LitElement {
                           <td class="report-title">${report.name || report.title}</td>
                           <td style="text-align:center;"><span class="type-badge">${this._reportTypeLabel(report.type)}</span></td>
                           <td style="text-align:center;">
-                            ${report.instance_name
-                              ? html`<span class="instance-badge">${report.instance_name}</span>`
-                              : html`<span style="color: var(--muted);">—</span>`
+                            <span class="type-badge" style="font-size:10px;background:${report.target_type === 'server' ? 'rgba(34,197,94,0.12);color:#16a34a' : 'rgba(59,130,246,0.12);color:var(--info)'}">${report.target_type === 'server' ? '服务器' : '实例'}</span>
+                          </td>
+                          <td style="text-align:center;">
+                            ${report.target_type === 'server'
+                              ? (report.server_name
+                                  ? html`<span class="instance-badge">${report.server_name}</span>`
+                                  : html`<span style="color: var(--muted);">—</span>`)
+                              : (report.instance_name
+                                  ? html`<span class="instance-badge">${report.instance_name}</span>`
+                                  : html`<span style="color: var(--muted);">—</span>`)
                             }
                           </td>
                           <td style="text-align:center;"><app-badge variant="${report.status === 'completed' ? 'ok' : report.status === 'running' ? 'info' : 'danger'}">${this._statusLabel(report.status)}</app-badge></td>
@@ -523,6 +556,7 @@ export class ReportsPage extends LitElement {
       performance: "性能分析",
       slow_query: "慢查询",
       capacity: "容量规划",
+      server_health: "服务器巡检",
     };
     return labels[type] || type;
   }
@@ -647,6 +681,27 @@ export class ReportsPage extends LitElement {
 
   private async _generateReport(type: string) {
     try {
+      if (type === 'server_health') {
+        const res = await authFetch('/api/reports/generate', {
+          method: 'POST',
+          headers: this.headers,
+          body: JSON.stringify({
+            type: 'server_health',
+            server_id: this.selectedServerId || null,
+          }),
+        });
+        if (res.ok) {
+          const result = await res.json();
+          showToast(`Report generated: ${result.name}`, 'success');
+          this.loadReports();
+          this.loadStats();
+        } else {
+          const err = await res.json();
+          showToast(`Generation failed: ${err.error}`, 'error');
+        }
+        return;
+      }
+
       if (!this.selectedInstanceId) {
         showToast('Please select a database instance first', 'warning');
         return;
