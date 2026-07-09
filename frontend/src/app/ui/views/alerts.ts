@@ -749,14 +749,6 @@ export class AlertsPage extends LitElement {
           server_name: a.server_name || (a.server_id ? serverMap.get(a.server_id) : undefined),
         }));
       }
-      // Map server_name from servers list if available
-      if (this.servers.length > 0) {
-        const serverMap = new Map(this.servers.map((s: any) => [s.id, s.host]));
-        this.alerts = this.alerts.map(a => ({
-          ...a,
-          server_name: a.server_name || (a.server_id ? serverMap.get(a.server_id) : undefined),
-        }));
-      }
       // 只在活跃 tab 时更新统计（已恢复 tab 的 unread/critical/warning 无意义）
       if (this.activeListTab === 'active') {
         this._statsUnread = data.unread ?? 0;
