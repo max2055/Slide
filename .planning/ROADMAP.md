@@ -1046,6 +1046,32 @@ Plans:
 
 - [x] 128-01-PLAN.md
 
+### Phase 129: 观测平台统一化 — 指标·告警·报告·前端整合
+
+**Goal**: 将服务器观测能力（指标/告警/报告/AI 分析）统一整合到现有平台基础设施中，使 metric_definitions、告警规则编辑器、告警中心、报告中心、模板系统同时支持 instance 和 server 两种 target_type，并为服务器详情页增加巡检和告警入口。Slide 作为开放观测平台，所有对象类型的指标-告警-报告-AI 分析共享同一套管道。
+
+**Depends on**: Phase 125, Phase 126, Phase 127, Phase 128
+**Requirements**: UNI-01, UNI-02, UNI-03, UNI-04, UNI-05, UNI-06
+**Mode**: mvp
+**Success Criteria** (what must be TRUE):
+
+  1. metric_definitions 表增加 target_type 列，注册 CPU/内存/磁盘/负载/swap/uptime 等服务器指标定义
+  2. 告警规则编辑器支持 target_type 选择（instance/server），server 模式下可选择目标服务器
+  3. 告警中心前端支持按 target_type 和 server_id 筛选，服务器告警正确展示 server_name
+  4. 报告中心前端增加"服务器巡检"入口，支持选择服务器生成个体/汇总巡检报告
+  5. server-report-service 报告持久化到 reports 表，支持历史查看、下载和定时调度
+  6. 服务器详情页增加"一键巡检"和"查看告警"操作入口
+
+**Plans**: 3/3 plans planned
+
+Plans:
+
+- [ ] 129-01-PLAN.md — Backend: metric_definitions target_type, server metrics registration, alert_rule_templates
+- [ ] 129-02-PLAN.md — Frontend: alert-rule-editor, alert center, report center, server-detail target_type support
+- [ ] 129-03-PLAN.md — Report persistence: server_id on reports/report_configs, server-report-service persistence
+
+**UI hint**: yes
+
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 124. 服务器注册与凭据管理 | v0.8 | 2/2 | Complete    | 2026-07-07 |
@@ -1053,3 +1079,4 @@ Plans:
 | 126. 服务器告警规则 | v0.8 | 1/1 | Complete   | 2026-07-07 |
 | 127. 定时自动化巡检 | v0.8 | 1/1 | Complete   | 2026-07-07 |
 | 128. AI 服务器分析 | v0.8 | 1/1 | Complete   | 2026-07-07 |
+| 129. 观测平台统一化 — 指标·告警·报告·前端整合 | v0.9 | 0/0 | Planned   | — |
