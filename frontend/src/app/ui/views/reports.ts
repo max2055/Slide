@@ -682,7 +682,7 @@ export class ReportsPage extends LitElement {
   private async _generateReport(type: string) {
     try {
       if (type === 'server_health') {
-        const res = await authFetch('/api/reports/generate', {
+        const res = await authFetch('/api/servers/reports/generate', {
           method: 'POST',
           headers: this.headers,
           body: JSON.stringify({

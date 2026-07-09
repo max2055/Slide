@@ -1558,7 +1558,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // POST /api/servers/reports/generate — Generate and persist server health report
   fastify.post('/api/servers/reports/generate', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
     try {
-      const result = await serverReportService.generateAndPersist();
+      const { server_id } = request.body as { server_id?: number };
+      const result = await serverReportService.generateAndPersist(server_id ? [server_id] : undefined);
       if (result.success) {
         reply.send({ reportId: result.reportId, message: '报告生成并持久化成功' });
       } else {
