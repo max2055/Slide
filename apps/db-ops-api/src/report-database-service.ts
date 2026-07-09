@@ -14,7 +14,9 @@ export interface Report {
   type: ReportType;
   format: ReportFormat;
   instance_id: number | null;
+  server_id?: number | null;
   instance_name?: string;
+  server_name?: string;
   content: string | null;
   data: any | null;
   generated_by: number | null;
@@ -27,6 +29,7 @@ export interface CreateReportData {
   type: ReportType;
   format?: ReportFormat;
   instance_id?: number;
+  server_id?: number;
   content?: string;
   data?: any;
   generated_by?: number;
@@ -36,6 +39,8 @@ export interface CreateReportData {
 export interface ReportFilters {
   type?: ReportType;
   instance_id?: number;
+  server_id?: number;
+  target_type?: 'instance' | 'server';
   status?: ReportStatus;
   date_from?: string;
   date_to?: string;
@@ -70,13 +75,14 @@ class ReportDatabaseService {
     try {
       const [result] = await pool.execute(
         `INSERT INTO reports
-         (name, type, format, instance_id, content, data, generated_by, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (name, type, format, instance_id, server_id, content, data, generated_by, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           data.name,
           data.type,
           data.format || 'html',
           data.instance_id || null,
+          data.server_id || null,
           data.content || null,
           data.data ? JSON.stringify(data.data) : null,
           data.generated_by || null,
@@ -102,11 +108,13 @@ class ReportDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT r.id, r.name, r.type, r.format, r.instance_id,
+        `SELECT r.id, r.name, r.type, r.format, r.instance_id, r.server_id,
                 r.content, r.data, r.generated_by, r.status, r.created_at,
-                i.name as instance_name
+                i.name as instance_name,
+                s.host as server_name
          FROM reports r
          LEFT JOIN database_instances i ON r.instance_id = i.id
+         LEFT JOIN servers s ON r.server_id = s.id
          WHERE r.id = ?`,
         [id]
       ) as any;
@@ -148,6 +156,17 @@ class ReportDatabaseService {
         params.push(filters.instance_id);
       }
 
+      if (filters.server_id) {
+        conditions.push('r.server_id = ?');
+        params.push(filters.server_id);
+      }
+
+      if (filters.target_type === 'server') {
+        conditions.push('r.server_id IS NOT NULL');
+      } else if (filters.target_type === 'instance') {
+        conditions.push('r.server_id IS NULL');
+      }
+
       if (filters.status) {
         conditions.push('r.status = ?');
         params.push(filters.status);
@@ -167,11 +186,13 @@ class ReportDatabaseService {
       const offset = filters.offset || 0;
 
       const [rows] = await pool.query(
-        `SELECT r.id, r.name, r.type, r.format, r.instance_id,
+        `SELECT r.id, r.name, r.type, r.format, r.instance_id, r.server_id,
                 r.content, r.data, r.generated_by, r.status, r.created_at,
-                i.name as instance_name
+                i.name as instance_name,
+                s.host as server_name
          FROM reports r
          LEFT JOIN database_instances i ON r.instance_id = i.id
+         LEFT JOIN servers s ON r.server_id = s.id
          WHERE ${conditions.join(' AND ')}
          ORDER BY r.created_at DESC
          LIMIT ? OFFSET ?`,

@@ -10,6 +10,7 @@ export interface ReportConfig {
   cron: string;
   type: string;
   instance_id: number;
+  server_id?: number | null;
   format: string;
   enabled: boolean;
   created_at: string;
@@ -21,6 +22,7 @@ export interface CreateReportConfigData {
   cron: string;
   type: string;
   instance_id: number;
+  server_id?: number;
   format?: string;
   enabled?: boolean;
 }
@@ -30,6 +32,7 @@ export interface UpdateReportConfigData {
   cron?: string;
   type?: string;
   instance_id?: number;
+  server_id?: number;
   format?: string;
   enabled?: boolean;
 }
@@ -60,7 +63,7 @@ class ReportConfigDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, cron, type, instance_id, format, enabled, created_at, updated_at
+        `SELECT id, name, cron, type, instance_id, server_id, format, enabled, created_at, updated_at
          FROM report_configs
          ORDER BY created_at DESC`
       ) as any;
@@ -83,7 +86,7 @@ class ReportConfigDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, cron, type, instance_id, format, enabled, created_at, updated_at
+        `SELECT id, name, cron, type, instance_id, server_id, format, enabled, created_at, updated_at
          FROM report_configs
          WHERE id = ?`,
         [id]
@@ -110,13 +113,14 @@ class ReportConfigDatabaseService {
 
     try {
       const [result] = await pool.execute(
-        `INSERT INTO report_configs (name, cron, type, instance_id, format, enabled)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO report_configs (name, cron, type, instance_id, server_id, format, enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           data.name,
           data.cron,
           data.type,
           data.instance_id,
+          data.server_id || null,
           data.format || 'html',
           data.enabled !== undefined ? data.enabled : true,
         ]
@@ -160,6 +164,11 @@ class ReportConfigDatabaseService {
       if (data.instance_id !== undefined) {
         updates.push('instance_id = ?');
         values.push(data.instance_id);
+      }
+
+      if (data.server_id !== undefined) {
+        updates.push('server_id = ?');
+        values.push(data.server_id);
       }
 
       if (data.format !== undefined) {
@@ -223,7 +232,7 @@ class ReportConfigDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, cron, type, instance_id, format, enabled, created_at, updated_at
+        `SELECT id, name, cron, type, instance_id, server_id, format, enabled, created_at, updated_at
          FROM report_configs
          WHERE enabled = 1
          ORDER BY created_at DESC`
