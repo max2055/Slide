@@ -466,7 +466,7 @@ export class MetricRegistry {
       },
       // ===== Server OS-level metrics (target_type: 'server') =====
       {
-        id: 'cpu_usage',
+        id: 'server_cpu_usage',
         name: 'CPU 使用率(OS)',
         description: '服务器操作系统级 CPU 使用率',
         unit: '%',
@@ -480,7 +480,7 @@ export class MetricRegistry {
         threshold_template: { warning: 80, error: 90, critical: 95 },
       },
       {
-        id: 'memory_usage',
+        id: 'server_memory_usage',
         name: '内存使用率(OS)',
         description: '服务器操作系统级内存使用率',
         unit: '%',
@@ -494,7 +494,7 @@ export class MetricRegistry {
         threshold_template: { warning: 80, error: 90, critical: 95 },
       },
       {
-        id: 'disk_usage',
+        id: 'server_disk_usage',
         name: '磁盘使用率(OS)',
         description: '服务器磁盘使用率（各挂载点聚合）',
         unit: '%',
