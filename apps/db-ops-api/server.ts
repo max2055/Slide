@@ -2428,8 +2428,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { name, cron, type, instance_id, server_id, format, enabled } = body;
 
         // Validate required fields
-        if (!name || !cron || !type || instance_id === undefined) {
-          return reply.code(400).send({ error: '缺少必要参数：name, cron, type, instance_id' });
+        if (!name || !cron || !type) {
+          return reply.code(400).send({ error: '缺少必要参数：name, cron, type' });
+        }
+        if (!server_id && instance_id === undefined) {
+          return reply.code(400).send({ error: 'instance_id 或 server_id 必须提供其一' });
         }
 
         const validTypes = ['health', 'performance', 'slow_query', 'capacity', 'server_health'];
