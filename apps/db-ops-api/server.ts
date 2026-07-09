@@ -158,8 +158,12 @@ async function start() {
         const fs = await import('fs');
         const migrationPath = new URL(`./sql/migrations/${migration}`, import.meta.url).pathname;
         const sql = fs.readFileSync(migrationPath, 'utf8');
-        await pool.query(sql);
-      } catch { /* migration may already exist */ }
+        // Split multi-statement SQL into individual queries
+        const statements = sql.split(';').filter((s: string) => s.trim());
+        for (const stmt of statements) {
+          try { await pool.query(stmt); } catch { /* individual stmt may already be applied */ }
+        }
+      } catch { /* migration file may not exist */ }
     }
   }
 
