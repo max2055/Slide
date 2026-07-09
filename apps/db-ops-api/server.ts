@@ -21,6 +21,7 @@ import { instanceDatabaseService } from './src/instance-database-service.js';
 import { llmDatabaseService } from './src/llm-database-service.js';
 import { resolveProviderFromBaseUrl, getProvider } from './src/llm/provider-catalog.js';
 import { alertDatabaseService } from './src/alert-database-service.js';
+import { alertRuleTemplateService } from './src/alert-rule-template-service.js';
 import { metricsDatabaseService } from './src/metrics-database-service.js';
 import { databaseService } from './src/database-service.js';
 import { llmService } from './src/llm-service.js';
@@ -151,6 +152,7 @@ async function start() {
       '014_add_user_preferences.sql',
       '018_add_execution_trace.sql',
       '021_add_server_alert_fields.sql',
+      '022_unified_observability.sql',
     ]) {
       try {
         const fs = await import('fs');
@@ -2735,6 +2737,121 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
+  // ========== 告警模板 API ==========
+
+  // 获取告警模板列表
+  fastify.get('/api/alert-rule-templates', {
+    preHandler: [verifyToken, requirePermission('alert:view')],
+    handler: async (request, reply) => {
+      try {
+        const { target_type, enabled } = request.query as { target_type?: string; enabled?: 'true' | 'false' };
+        const templates = await alertRuleTemplateService.listTemplates({
+          target_type: target_type || undefined,
+          enabled: enabled === 'true' || enabled === 'false' ? enabled === 'true' : undefined,
+        });
+        reply.send(templates);
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    }
+  });
+
+  // 获取单个告警模板
+  fastify.get('/api/alert-rule-templates/:id', {
+    preHandler: [verifyToken, requirePermission('alert:view')],
+    handler: async (request, reply) => {
+      try {
+        const { id } = request.params as any;
+        const template = await alertRuleTemplateService.getTemplate(Number(id));
+        if (!template) {
+          return reply.code(404).send({ error: '模板不存在' });
+        }
+        reply.send(template);
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    }
+  });
+
+  // 创建告警模板
+  fastify.post('/api/alert-rule-templates', {
+    preHandler: [verifyToken, requirePermission('alerts:manage')],
+    handler: async (request, reply) => {
+      try {
+        const data = request.body as any;
+        const result = await alertRuleTemplateService.createTemplate({
+          name: data.name,
+          description: data.description,
+          target_type: data.target_type || 'instance',
+          metric_name: data.metric_name,
+          operator: data.operator,
+          threshold_template: data.threshold_template,
+          duration_seconds: Number(data.duration_seconds) || 60,
+          severity: data.severity || 'warning',
+          silence_minutes: data.silence_minutes ?? 5,
+          enabled: data.enabled !== undefined ? data.enabled : true,
+          created_by: (request as any).user?.userId,
+        });
+        if (result.success) {
+          reply.send({ id: result.id, message: '创建成功' });
+        } else {
+          reply.code(400).send({ error: result.error });
+        }
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    }
+  });
+
+  // 更新告警模板
+  fastify.put('/api/alert-rule-templates/:id', {
+    preHandler: [verifyToken, requirePermission('alerts:manage')],
+    handler: async (request, reply) => {
+      try {
+        const { id } = request.params as any;
+        const data = request.body as any;
+        const updateData: Record<string, any> = {};
+        if (data.name !== undefined) updateData.name = data.name;
+        if (data.description !== undefined) updateData.description = data.description;
+        if (data.target_type !== undefined) updateData.target_type = data.target_type;
+        if (data.metric_name !== undefined) updateData.metric_name = data.metric_name;
+        if (data.operator !== undefined) updateData.operator = data.operator;
+        if (data.threshold_template !== undefined) updateData.threshold_template = data.threshold_template;
+        if (data.duration_seconds !== undefined) updateData.duration_seconds = Number(data.duration_seconds);
+        if (data.severity !== undefined) updateData.severity = data.severity;
+        if (data.silence_minutes !== undefined) updateData.silence_minutes = data.silence_minutes;
+        if (data.enabled !== undefined) updateData.enabled = data.enabled;
+
+        const result = await alertRuleTemplateService.updateTemplate(Number(id), updateData);
+        if (result.success) {
+          reply.send({ message: '更新成功' });
+        } else {
+          reply.code(400).send({ error: result.error });
+        }
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    }
+  });
+
+  // 删除告警模板
+  fastify.delete('/api/alert-rule-templates/:id', {
+    preHandler: [verifyToken, requirePermission('alerts:manage')],
+    handler: async (request, reply) => {
+      try {
+        const { id } = request.params as any;
+        const result = await alertRuleTemplateService.deleteTemplate(Number(id));
+        if (result.success) {
+          reply.send({ message: '删除成功' });
+        } else {
+          reply.code(400).send({ error: result.error });
+        }
+      } catch (error: any) {
+        reply.code(500).send({ error: error.message });
+      }
+    }
+  });
+
   // ─── 指标模板 (Metric Templates) ───────────────────────
   const { templateDatabaseService } = await import('./src/template-database-service.js');
 
@@ -4068,7 +4185,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // --- 指标注册表 (4 条) ---
   fastify.get('/api/metrics/registry', { preHandler: [verifyToken, requirePermission('metric:view')] }, async (request, reply) => {
     try {
-      const metrics = metricRegistry.getAll();
+      const { target_type } = request.query as { target_type?: string };
+      const metrics = target_type
+        ? metricRegistry.getByTargetType(target_type)
+        : metricRegistry.getAll();
       reply.send(metrics);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
