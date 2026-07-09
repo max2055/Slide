@@ -34,6 +34,9 @@ interface Alert {
   resolved_at?: string;
   resolved_by?: string;
   created_at: string;
+  server_id?: number;
+  server_name?: string;
+  target_type?: string;
 }
 
 @customElement("alert-list")
@@ -90,6 +93,8 @@ export class AlertList extends LitElement {
   @property() error: string | null = null;
   @property() activeListTab: 'active' | 'recovered' = 'active';
   @property() filterSeverity = '';
+  @property() filterTargetType = '';
+  @property({ type: Array }) servers: any[] = [];
   @property() searchText = '';
   @property({ type: Object }) stats: Record<string, number> = {};
   @property({ type: Number }) statsActiveTotal = 0;
@@ -146,6 +151,17 @@ export class AlertList extends LitElement {
             <option value="warning" ?selected=${this.filterSeverity==='warning'}>警告</option>
             <option value="info" ?selected=${this.filterSeverity==='info'}>提示</option>
           </select>
+          <select class="filter-btn" style="font-size:var(--text-sm);" @change=${(e: any) => this._emit('alert-filter-target-type', { value: e.target.value })}>
+            <option value="">全部目标</option>
+            <option value="instance" ?selected=${this.filterTargetType==='instance'}>实例</option>
+            <option value="server" ?selected=${this.filterTargetType==='server'}>服务器</option>
+          </select>
+          ${this.filterTargetType === 'server' ? html`
+            <select class="filter-btn" style="font-size:var(--text-sm);" @change=${(e: any) => this._emit('alert-filter-server-id', { value: e.target.value ? Number(e.target.value) : null })}>
+              <option value="">全部服务器</option>
+              ${this.servers.map((srv: any) => html`<option value="${srv.id}">${srv.host}${srv.label ? ` (${srv.label})` : ''}</option>`)}
+            </select>
+          ` : ''}
           <input class="form-input" type="text" placeholder="搜索编号/标题/实例..." style="flex:1;max-width:240px;padding:var(--space-sm) var(--space-md);font-size:var(--text-sm);" .value=${this.searchText} @input=${(e: any) => this._emit('alert-search', { value: e.target.value })} />
           <button class="btn" @click=${() => this._emit('alert-refresh')}>刷新</button>
         </div>
@@ -157,7 +173,8 @@ export class AlertList extends LitElement {
                 <th style="width:45px;text-align:center;">编号</th>
                 <th style="width:55px;text-align:center;">级别</th>
                 <th>告警内容</th>
-                <th style="width:100px;text-align:center;">实例</th>
+                <th style="width:70px;text-align:center;">目标类型</th>
+                <th style="width:100px;text-align:center;">目标</th>
                 <th style="width:70px;text-align:center;">类型</th>
                 <th style="width:70px;text-align:center;">状态</th>
                 <th style="width:90px;text-align:center;">分析状态</th>
@@ -196,7 +213,17 @@ export class AlertList extends LitElement {
           </div>
         </td>
         <td style="text-align:center;">
-          ${alert.instance_name ? html`<a href="#" class="instance-badge" @click=${(e: Event) => { e.preventDefault(); this._emit('alert-navigate-instance', { id: alert.instance_id }); }}>${alert.instance_name}</a>` : html`<span style="color:var(--muted);">—</span>`}
+          <span class="type-badge" style="font-size:10px;background:${alert.target_type === 'server' ? 'rgba(34,197,94,0.12);color:#16a34a' : 'rgba(59,130,246,0.12);color:var(--info)'}">${alert.target_type === 'server' ? '服务器' : alert.target_type === 'instance' ? '实例' : '—'}</span>
+        </td>
+        <td style="text-align:center;">
+          ${alert.target_type === 'server'
+            ? (alert.server_name
+                ? html`<span class="instance-badge">${alert.server_name}</span>`
+                : html`<span style="color:var(--muted);">—</span>`)
+            : (alert.instance_name
+                ? html`<a href="#" class="instance-badge" @click=${(e: Event) => { e.preventDefault(); this._emit('alert-navigate-instance', { id: alert.instance_id }); }}>${alert.instance_name}</a>`
+                : html`<span style="color:var(--muted);">—</span>`)
+          }
         </td>
         <td style="text-align:center;"><span class="type-badge" style="font-size:10px;">${this._typeLabel(alert.alert_type)}</span></td>
         <td style="text-align:center;">${this._renderStatusBadge(alert)}</td>

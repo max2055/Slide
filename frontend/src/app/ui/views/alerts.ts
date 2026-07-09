@@ -24,6 +24,9 @@ interface Alert {
   resolved_at?: string;
   resolved_by?: string;
   created_at: string;
+  server_id?: number;
+  server_name?: string;
+  target_type?: string;
 }
 
 interface AlertRule {
@@ -41,6 +44,8 @@ interface AlertRule {
   silence_minutes: number;
   db_types?: string[] | null;
   instance_ids?: number[] | null;
+  target_type?: string;
+  server_id?: number | null;
   enabled: boolean;
   notification_channels?: any;
   created_by?: number;
@@ -545,6 +550,9 @@ export class AlertsPage extends LitElement {
   @state() private activeListTab: 'active' | 'recovered' = 'active';
   @state() private searchText = '';
   @state() private filterSeverity = '';
+  @state() private filterTargetType = '';
+  @state() private filterServerId: number | null = null;
+  @state() private servers: any[] = [];
   @state() private analyzedStatuses: Map<number, { status: string; trigger_type: string; result?: any; sessionKey?: string }> = new Map();
   @state() private activeAnalysisRecord: { alert: Alert; record: any } | null = null;
   @state() private activeRCAAnalysis: { alertId: number; analysisId?: number; sessionKey?: string } | null = null;
@@ -598,6 +606,22 @@ export class AlertsPage extends LitElement {
 
   override firstUpdated() {
     this.loadAlerts();
+    // Check URL params for auto-filtering from server-detail navigation
+    const params = new URLSearchParams(window.location.search);
+    const tabParam = params.get("tab");
+    const idParam = params.get("id");
+    if (tabParam === "alerts" && idParam) {
+      // Auto-load servers list to populate the filter dropdown
+      authFetch("/api/servers").then(res => {
+        if (res.ok) return res.json();
+        return [];
+      }).then(data => {
+        const serverList = Array.isArray(data) ? data : (data.servers || []);
+        this.servers = serverList;
+        this.filterTargetType = 'server';
+        this.filterServerId = Number(idParam);
+      }).catch(() => {});
+    }
   }
 
   // ==================== Tab Navigation ====================
@@ -699,6 +723,15 @@ export class AlertsPage extends LitElement {
 
   private async loadAlerts() {
     try {
+      // Ensure servers list is loaded for server name mapping and filtering
+      if (this.servers.length === 0) {
+        authFetch("/api/servers").then(res => {
+          if (res.ok) return res.json();
+          return [];
+        }).then(data => {
+          this.servers = Array.isArray(data) ? data : (data.servers || []);
+        }).catch(() => {});
+      }
       const offset = this.page * this.pageSize;
       const statusFilter = this.activeListTab === 'active'
         ? 'unread,read,acknowledged'
@@ -708,6 +741,22 @@ export class AlertsPage extends LitElement {
       const data = await res.json();
       this.alerts = data.items ?? data;
       this.total = data.total ?? 0;
+      // Map server_name from servers list if available
+      if (this.servers.length > 0) {
+        const serverMap = new Map(this.servers.map((s: any) => [s.id, s.host]));
+        this.alerts = this.alerts.map(a => ({
+          ...a,
+          server_name: a.server_name || (a.server_id ? serverMap.get(a.server_id) : undefined),
+        }));
+      }
+      // Map server_name from servers list if available
+      if (this.servers.length > 0) {
+        const serverMap = new Map(this.servers.map((s: any) => [s.id, s.host]));
+        this.alerts = this.alerts.map(a => ({
+          ...a,
+          server_name: a.server_name || (a.server_id ? serverMap.get(a.server_id) : undefined),
+        }));
+      }
       // 只在活跃 tab 时更新统计（已恢复 tab 的 unread/critical/warning 无意义）
       if (this.activeListTab === 'active') {
         this._statsUnread = data.unread ?? 0;
@@ -754,6 +803,14 @@ export class AlertsPage extends LitElement {
     if (this.filterSeverity) {
       result = result.filter((a) => a.severity === this.filterSeverity);
     }
+    // Target type filter
+    if (this.filterTargetType) {
+      result = result.filter((a) => a.target_type === this.filterTargetType);
+    }
+    // Server ID filter (only when target_type is server)
+    if (this.filterServerId != null) {
+      result = result.filter((a) => a.server_id === this.filterServerId);
+    }
     // Text search
     if (this.searchText.trim()) {
       const q = this.searchText.trim().toLowerCase();
@@ -761,7 +818,8 @@ export class AlertsPage extends LitElement {
         String(a.id).includes(q) ||
         a.title.toLowerCase().includes(q) ||
         a.message.toLowerCase().includes(q) ||
-        (a.instance_name || '').toLowerCase().includes(q)
+        (a.instance_name || '').toLowerCase().includes(q) ||
+        (a.server_name || '').toLowerCase().includes(q)
       );
     }
     return result;
@@ -787,6 +845,7 @@ export class AlertsPage extends LitElement {
     return html`
       <alert-list .alerts=${this.filteredAlerts} .loading=${this.loading} .error=${this.error}
         .activeListTab=${this.activeListTab} .filterSeverity=${this.filterSeverity}
+        .filterTargetType=${this.filterTargetType} .servers=${this.servers}
         .searchText=${this.searchText} .stats=${this.stats}
         .statsActiveTotal=${this._statsActiveTotal} .statsResolved=${this._statsResolved}
         .analyzedStatuses=${this.analyzedStatuses} .activeRCAAnalysis=${this.activeRCAAnalysis}
@@ -800,6 +859,8 @@ export class AlertsPage extends LitElement {
         @alert-navigate-chat=${(e: CustomEvent) => this._navigateToChat(e.detail.sessionKey)}
         @alert-create=${() => { this.activeAlertTab = 'rules'; this._openRuleModal(); }}
         @alert-filter-severity=${(e: CustomEvent) => { this.filterSeverity = e.detail.value; }}
+        @alert-filter-target-type=${(e: CustomEvent) => { this.filterTargetType = e.detail.value; this.filterServerId = null; }}
+        @alert-filter-server-id=${(e: CustomEvent) => { this.filterServerId = e.detail.value; }}
         @alert-search=${(e: CustomEvent) => { this.searchText = e.detail.value; }}
         @alert-refresh=${() => this.loadAlerts()}
         @alert-page-change=${(e: CustomEvent) => { this.page = e.detail.page; this.loadAlerts(); }}
@@ -995,10 +1056,11 @@ export class AlertsPage extends LitElement {
   async loadRules() {
     this.rulesLoading = true;
     try {
-      const [rulesRes, metricsRes, instancesRes] = await Promise.all([
+      const [rulesRes, metricsRes, instancesRes, serversRes] = await Promise.all([
         authFetch("/api/alert-rules"),
         authFetch("/api/metrics/registry"),
         authFetch("/api/database/instances"),
+        authFetch("/api/servers"),
       ]);
       if (!rulesRes.ok) throw new Error("加载规则失败");
       this.rules = await rulesRes.json();
@@ -1009,6 +1071,10 @@ export class AlertsPage extends LitElement {
       if (instancesRes.ok) {
         const data = await instancesRes.json();
         this.instances = Array.isArray(data) ? data : (data.instances || []);
+      }
+      if (serversRes.ok) {
+        const data = await serversRes.json();
+        this.servers = Array.isArray(data) ? data : (data.servers || []);
       }
     } catch (err: any) {
       this.error = err.message;
@@ -1144,6 +1210,7 @@ export class AlertsPage extends LitElement {
                     <tr>
                       <th style="width:36px;text-align:center;">#</th>
                       <th>名称 / 指标</th>
+                      <th style="width:70px;text-align:center;">目标类型</th>
                       <th style="width:180px;">阈值</th>
                       <th style="width:60px;text-align:center;">等级</th>
                       <th style="width:55px;text-align:center;">静默</th>
@@ -1160,8 +1227,12 @@ export class AlertsPage extends LitElement {
                           <div style="font-size:11px;color:var(--muted);margin-top:1px;">
                             <span class="type-badge" style="font-size:10px;">${rule.metric_name}</span>
                             ${(rule.db_types && rule.db_types.length > 0) ? html`<span style="margin-left:4px;">${rule.db_types.join(', ')}</span>` : ''}
+                            ${rule.target_type === 'server' ? html`<span class="type-badge" style="font-size:10px;margin-left:4px;background:rgba(34,197,94,0.12);color:#16a34a;">server</span>` : ''}
                             ${rule.description ? html`<span style="margin-left:4px;">${rule.description.substring(0,40)}${rule.description.length>40?'...':''}</span>` : ''}
                           </div>
+                        </td>
+                        <td style="text-align:center;">
+                          <span class="type-badge" style="font-size:10px;background:${rule.target_type === 'server' ? 'rgba(34,197,94,0.12);color:#16a34a' : 'rgba(59,130,246,0.12);color:var(--info)'}">${rule.target_type === 'server' ? '服务器' : '实例'}</span>
                         </td>
                         <td>
                           ${rule.threshold_type === 'dynamic'
@@ -1208,7 +1279,7 @@ export class AlertsPage extends LitElement {
       </div>
 
       <alert-rule-editor .rule=${this.editingRule} .open=${this.showRuleModal}
-        .metricRegistry=${this.metricRegistry} .instances=${this.instances}
+        .metricRegistry=${this.metricRegistry} .instances=${this.instances} .servers=${this.servers}
         .error=${this.ruleFormError}
         @save=${this._onRuleSave} @close=${this._closeRuleModal}>
       </alert-rule-editor>
