@@ -25,6 +25,7 @@ export interface MetricDefinition {
   value_type?: 'gauge' | 'counter' | 'histogram';
   higher_is_worse?: boolean;
   threshold_template?: { warning: number; error: number; critical: number } | null;
+  target_type?: 'instance' | 'server';
 }
 
 /**
@@ -84,6 +85,7 @@ export class MetricRegistry {
           db_types: m.db_types, aggregation: m.aggregation,
           default_interval: m.default_interval,
           is_collected: m.is_collected,
+          target_type: m.target_type,
         });
         if (r.success) ok++; else { fail++; console.warn(`[MetricRegistry] seed ${m.id} failed: ${r.error}`); }
       } catch (e) { fail++; console.warn(`[MetricRegistry] seed ${m.id} error:`, (e as Error).message); }
@@ -128,6 +130,7 @@ export class MetricRegistry {
       threshold_template: row.threshold_template
         ? (typeof row.threshold_template === 'string' ? JSON.parse(row.threshold_template) : row.threshold_template)
         : null,
+      target_type: row.target_type === 'server' ? 'server' : row.target_type === 'instance' ? 'instance' : undefined,
     };
   }
 
@@ -461,6 +464,129 @@ export class MetricRegistry {
         is_builtin: true,
         threshold_template: { warning: 5, error: 10, critical: 20 },
       },
+      // ===== Server OS-level metrics (target_type: 'server') =====
+      {
+        id: 'cpu_usage',
+        name: 'CPU 使用率(OS)',
+        description: '服务器操作系统级 CPU 使用率',
+        unit: '%',
+        db_types: [],
+        aggregation: 'avg',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'server',
+        target_type: 'server',
+        threshold_template: { warning: 80, error: 90, critical: 95 },
+      },
+      {
+        id: 'memory_usage',
+        name: '内存使用率(OS)',
+        description: '服务器操作系统级内存使用率',
+        unit: '%',
+        db_types: [],
+        aggregation: 'avg',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'server',
+        target_type: 'server',
+        threshold_template: { warning: 80, error: 90, critical: 95 },
+      },
+      {
+        id: 'disk_usage',
+        name: '磁盘使用率(OS)',
+        description: '服务器磁盘使用率（各挂载点聚合）',
+        unit: '%',
+        db_types: [],
+        aggregation: 'last',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'server',
+        target_type: 'server',
+        threshold_template: { warning: 75, error: 85, critical: 95 },
+      },
+      {
+        id: 'load_1min',
+        name: '系统负载(1min)',
+        description: '系统 1 分钟平均负载',
+        unit: 'load',
+        db_types: [],
+        aggregation: 'avg',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'server',
+        target_type: 'server',
+        threshold_template: { warning: 4, error: 8, critical: 12 },
+      },
+      {
+        id: 'load_5min',
+        name: '系统负载(5min)',
+        description: '系统 5 分钟平均负载',
+        unit: 'load',
+        db_types: [],
+        aggregation: 'avg',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'server',
+        target_type: 'server',
+      },
+      {
+        id: 'load_15min',
+        name: '系统负载(15min)',
+        description: '系统 15 分钟平均负载',
+        unit: 'load',
+        db_types: [],
+        aggregation: 'avg',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'server',
+        target_type: 'server',
+      },
+      {
+        id: 'swap_usage',
+        name: 'Swap 使用率',
+        description: '服务器 Swap 使用率',
+        unit: '%',
+        db_types: [],
+        aggregation: 'avg',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'server',
+        target_type: 'server',
+        threshold_template: { warning: 50, error: 80, critical: 90 },
+      },
+      {
+        id: 'uptime',
+        name: '运行时间',
+        description: '服务器连续运行时间（秒）',
+        unit: 'seconds',
+        db_types: [],
+        aggregation: 'last',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'server',
+        target_type: 'server',
+      },
+      {
+        id: 'os_type',
+        name: '操作系统类型',
+        description: '服务器操作系统类型标识',
+        unit: 'string',
+        db_types: [],
+        aggregation: 'last',
+        default_interval: 3600,
+        is_collected: true,
+        is_builtin: true,
+        category: 'server',
+        target_type: 'server',
+      },
     ];
 
     for (const metric of metrics) {
@@ -477,8 +603,14 @@ export class MetricRegistry {
 
   /**
    * 获取所有已注册的指标定义
+   * @param targetType 可选 — 指定 target_type 过滤（'instance' 或 'server'），不传则返回全部
    */
-  getAll(): MetricDefinition[] {
+  getAll(targetType?: string): MetricDefinition[] {
+    if (targetType) {
+      return Array.from(this.definitions.values()).filter(
+        (m) => m.target_type === targetType
+      );
+    }
     return Array.from(this.definitions.values());
   }
 
@@ -489,6 +621,15 @@ export class MetricRegistry {
    */
   getById(id: string): MetricDefinition | null {
     return this.definitions.get(id) ?? null;
+  }
+
+  /**
+   * 获取指定 target_type 的指标定义
+   * @param targetType 目标类型 'instance' 或 'server'
+   * @returns 匹配的指标定义列表
+   */
+  getByTargetType(targetType: string): MetricDefinition[] {
+    return this.getAll(targetType);
   }
 
   /**

@@ -6,6 +6,7 @@ import { dbConnection } from './db-connection';
 
 export interface MetricDefinitionRow {
   id: string;
+  target_type?: string;
   name: string;
   description: string | null;
   unit: string;
@@ -138,6 +139,7 @@ class MetricDatabaseService {
     compute_expr?: string;
     value_type?: string;
     category?: string;
+    target_type?: string;
   }): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
     if (!pool) {
@@ -147,10 +149,11 @@ class MetricDatabaseService {
     try {
       await pool.execute(
         `INSERT INTO metric_definitions
-         (id, name, description, unit, db_types, aggregation, default_interval, is_collected, is_builtin, collection_sqls, compute_expr, value_type, category)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?)`,
+         (id, target_type, name, description, unit, db_types, aggregation, default_interval, is_collected, is_builtin, collection_sqls, compute_expr, value_type, category)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?)`,
         [
           data.id,
+          data.target_type || 'instance',
           data.name,
           data.description || null,
           data.unit,
