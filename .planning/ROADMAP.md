@@ -1062,13 +1062,13 @@ Plans:
   5. server-report-service 报告持久化到 reports 表，支持历史查看、下载和定时调度
   6. 服务器详情页增加"一键巡检"和"查看告警"操作入口
 
-**Plans**: 3/3 plans planned
+**Plans**: 3/3 plans complete
 
 Plans:
 
-- [ ] 129-01-PLAN.md — Backend: metric_definitions target_type, server metrics registration, alert_rule_templates
-- [ ] 129-02-PLAN.md — Frontend: alert-rule-editor, alert center, report center, server-detail target_type support
-- [ ] 129-03-PLAN.md — Report persistence: server_id on reports/report_configs, server-report-service persistence
+- [x] 129-01-PLAN.md — Backend: metric_definitions target_type, server metrics registration, alert_rule_templates
+- [x] 129-02-PLAN.md — Frontend: alert-rule-editor, alert center, report center, server-detail target_type support
+- [x] 129-03-PLAN.md — Report persistence: server_id on reports/report_configs, server-report-service persistence
 
 **UI hint**: yes
 
@@ -1079,4 +1079,4 @@ Plans:
 | 126. 服务器告警规则 | v0.8 | 1/1 | Complete   | 2026-07-07 |
 | 127. 定时自动化巡检 | v0.8 | 1/1 | Complete   | 2026-07-07 |
 | 128. AI 服务器分析 | v0.8 | 1/1 | Complete   | 2026-07-07 |
-| 129. 观测平台统一化 — 指标·告警·报告·前端整合 | v0.9 | 0/0 | Planned   | — |
+| 129. 观测平台统一化 — 指标·告警·报告·前端整合 | v0.9 | 3/3 | Complete | 2026-07-09 |
