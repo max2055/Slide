@@ -2425,14 +2425,14 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const body = request.body as any;
-        const { name, cron, type, instance_id, format, enabled } = body;
+        const { name, cron, type, instance_id, server_id, format, enabled } = body;
 
         // Validate required fields
         if (!name || !cron || !type || instance_id === undefined) {
           return reply.code(400).send({ error: '缺少必要参数：name, cron, type, instance_id' });
         }
 
-        const validTypes = ['health', 'performance', 'slow_query', 'capacity'];
+        const validTypes = ['health', 'performance', 'slow_query', 'capacity', 'server_health'];
         if (!validTypes.includes(type)) {
           return reply.code(400).send({ error: `无效的报表类型：${type}，有效值：${validTypes.join(', ')}` });
         }
@@ -2447,6 +2447,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           cron,
           type,
           instance_id: Number(instance_id),
+          server_id: server_id ? Number(server_id) : undefined,
           format: format || 'html',
           enabled: enabled !== undefined ? enabled : true,
         });
@@ -2493,6 +2494,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           cron: body.cron,
           type: body.type,
           instance_id: body.instance_id !== undefined ? Number(body.instance_id) : undefined,
+          server_id: body.server_id !== undefined ? Number(body.server_id) : undefined,
           format: body.format,
           enabled: body.enabled !== undefined ? body.enabled : undefined,
         });
