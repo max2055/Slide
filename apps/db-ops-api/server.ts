@@ -2797,7 +2797,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 创建告警模板
   fastify.post('/api/alert-rule-templates', {
-    preHandler: [verifyToken, requirePermission('alerts:manage')],
+    preHandler: [verifyToken, requirePermission('alert:manage')],
     handler: async (request, reply) => {
       try {
         const data = request.body as any;
@@ -2827,7 +2827,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 更新告警模板
   fastify.put('/api/alert-rule-templates/:id', {
-    preHandler: [verifyToken, requirePermission('alerts:manage')],
+    preHandler: [verifyToken, requirePermission('alert:manage')],
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
@@ -2858,7 +2858,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 删除告警模板
   fastify.delete('/api/alert-rule-templates/:id', {
-    preHandler: [verifyToken, requirePermission('alerts:manage')],
+    preHandler: [verifyToken, requirePermission('alert:manage')],
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
