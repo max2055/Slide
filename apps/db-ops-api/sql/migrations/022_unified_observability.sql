@@ -65,3 +65,87 @@ VALUES
   ('服务器不可达', '服务器连接超时或无法访问', 'server', 'reachability', '=', '{"warning":1,"error":2,"critical":3}', 600, 'error', 5);
 
 COMMIT;
+
+-- ==============================================================
+-- Section 4: reports — add server_id column
+-- ==============================================================
+
+START TRANSACTION;
+
+SET @col_exists = (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reports' AND COLUMN_NAME = 'server_id');
+SET @sql = IF(@col_exists = 0,
+  'ALTER TABLE `reports` ADD COLUMN `server_id` INT UNSIGNED DEFAULT NULL AFTER `instance_id`',
+  'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add FK constraint for server_id (idempotent — IF NOT EXISTS not supported, use error-ignore pattern)
+SET @fk_exists = (SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'reports' AND CONSTRAINT_NAME = 'fk_report_server');
+SET @sql = IF(@fk_exists = 0,
+  'ALTER TABLE `reports` ADD CONSTRAINT `fk_report_server` FOREIGN KEY (`server_id`) REFERENCES `servers`(`id`) ON DELETE CASCADE',
+  'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add index for server_id (idempotent)
+SET @idx_exists = (SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reports' AND INDEX_NAME = 'idx_report_server_id');
+SET @sql = IF(@idx_exists = 0,
+  'ALTER TABLE `reports` ADD INDEX `idx_report_server_id` (`server_id`)',
+  'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+COMMIT;
+
+-- ==============================================================
+-- Section 5: report_configs — add server_id column
+-- ==============================================================
+
+START TRANSACTION;
+
+SET @col_exists = (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'report_configs' AND COLUMN_NAME = 'server_id');
+SET @sql = IF(@col_exists = 0,
+  'ALTER TABLE `report_configs` ADD COLUMN `server_id` INT UNSIGNED DEFAULT NULL AFTER `instance_id`',
+  'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add FK constraint for server_id
+SET @fk_exists = (SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'report_configs' AND CONSTRAINT_NAME = 'fk_rc_server');
+SET @sql = IF(@fk_exists = 0,
+  'ALTER TABLE `report_configs` ADD CONSTRAINT `fk_rc_server` FOREIGN KEY (`server_id`) REFERENCES `servers`(`id`) ON DELETE CASCADE',
+  'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add index for server_id
+SET @idx_exists = (SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'report_configs' AND INDEX_NAME = 'idx_rc_server_id');
+SET @sql = IF(@idx_exists = 0,
+  'ALTER TABLE `report_configs` ADD INDEX `idx_rc_server_id` (`server_id`)',
+  'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Extend type ENUM to include 'server_health'
+SET @enum_has_server_health = (SELECT LOCATE('server_health', COLUMN_TYPE) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'report_configs' AND COLUMN_NAME = 'type');
+SET @sql = IF(@enum_has_server_health = 0,
+  "ALTER TABLE `report_configs` MODIFY COLUMN `type` ENUM('health','performance','slow_query','capacity','server_health') NOT NULL DEFAULT 'health'",
+  'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+COMMIT;
