@@ -588,10 +588,6 @@ export class MetricRegistry {
         target_type: 'server',
       },
     ];
-
-    for (const metric of metrics) {
-      this.definitions.set(metric.id, metric);
-    }
   }
 
   private loadPredefinedMetrics(): void {
