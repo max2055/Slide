@@ -8,6 +8,7 @@
  */
 import { dbConnection } from './db-connection';
 import { serverDatabaseService } from './server-database-service';
+import { reportDatabaseService } from './report-database-service.js';
 
 // ── Types ───────────────────────────────────────────────────────────────────────
 
@@ -194,6 +195,32 @@ class ServerReportService {
       critical_count,
       servers: serverEntries,
     };
+  }
+
+  /**
+   * Generate and persist a server health report to the reports table.
+   * Wraps generateReport() with persistence to enable report history viewing.
+   */
+  async generateAndPersist(serverIds?: number[]): Promise<{ success: boolean; reportId?: number; error?: string }> {
+    try {
+      const reportData = await this.generateReport();
+      const htmlContent = this.generateHtml(reportData);
+
+      const report = await reportDatabaseService.createReport({
+        name: `服务器巡检报告 - ${new Date().toISOString().substring(0, 10)}`,
+        type: 'server_health',
+        format: 'html',
+        instance_id: null,
+        server_id: serverIds?.length === 1 ? serverIds[0] : null,
+        content: htmlContent,
+        data: reportData,
+        status: 'completed',
+      });
+
+      return { success: true, reportId: report.id };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   }
 
   /**

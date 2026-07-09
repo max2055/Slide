@@ -1551,11 +1551,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // ========== 服务器报告 API ==========
 
-  // POST /api/servers/reports/generate — Generate server health report
+  // POST /api/servers/reports/generate — Generate and persist server health report
   fastify.post('/api/servers/reports/generate', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
     try {
-      const reportData = await serverReportService.generateReport();
-      reply.send(reportData);
+      const result = await serverReportService.generateAndPersist();
+      if (result.success) {
+        reply.send({ reportId: result.reportId, message: '报告生成并持久化成功' });
+      } else {
+        reply.code(500).send({ error: result.error || '生成服务器健康报告失败' });
+      }
     } catch (error: any) {
       reply.code(500).send({ error: '生成服务器健康报告失败：' + error.message });
     }
@@ -2354,11 +2358,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('report:view')],
     handler: async (request, reply) => {
       try {
-        const { type, instance_id, status, page = '1', limit = '20' } = request.query as any;
+        const { type, instance_id, status, target_type, page = '1', limit = '20' } = request.query as any;
         const filters = {
           type: type as any,
           instance_id: instance_id ? Number(instance_id) : undefined,
           status: status as any,
+          target_type: target_type as any,
           limit: Number(limit),
           offset: (Number(page) - 1) * Number(limit),
         };
@@ -2377,9 +2382,19 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('report:view')],
     handler: async (request, reply) => {
       try {
+        const { target_type } = request.query as any;
         const configs = await reportConfigService.getConfigs();
+
+        // Filter by target_type at route level
+        let filtered = configs;
+        if (target_type === 'server') {
+          filtered = configs.filter((c: any) => c.server_id != null);
+        } else if (target_type === 'instance') {
+          filtered = configs.filter((c: any) => c.server_id == null);
+        }
+
         // Compute next_run for each config
-        const result = configs.map((config: any) => {
+        const result = filtered.map((config: any) => {
           let next_run: string | null = null;
           try {
             const job = new CronJob(config.cron, () => {});

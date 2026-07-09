@@ -4,7 +4,7 @@
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection';
 
-export type ReportType = 'health' | 'performance' | 'slow_query' | 'capacity';
+export type ReportType = 'health' | 'performance' | 'slow_query' | 'capacity' | 'server_health';
 export type ReportFormat = 'pdf' | 'html' | 'json' | 'csv';
 export type ReportStatus = 'pending' | 'completed' | 'failed';
 
