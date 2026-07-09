@@ -28,6 +28,8 @@ interface AlertRule {
   silence_minutes: number;
   db_types?: string[] | null;
   instance_ids?: number[] | null;
+  target_type?: 'instance' | 'server';
+  server_id?: number | null;
   enabled: boolean;
 }
 
@@ -59,6 +61,7 @@ export class AlertRuleEditor extends LitElement {
   @property({ type: Boolean }) open = false;
   @property({ type: Array }) metricRegistry: any[] = [];
   @property({ type: Array }) instances: any[] = [];
+  @property({ type: Array }) servers: any[] = [];
   @property() error = '';
 
   @state() private _form: Record<string, any> = {};
@@ -83,6 +86,7 @@ export class AlertRuleEditor extends LitElement {
         name: '', description: '', metric_name: '', operator: '>', threshold: 0,
         duration_seconds: 60, severity: 'warning', enabled: true,
         threshold_type: 'static' as const, silence_minutes: 5, db_types: null, instance_ids: null,
+        target_type: 'instance', server_id: null,
       };
     }
     this._error = '';
@@ -123,8 +127,14 @@ export class AlertRuleEditor extends LitElement {
         threshold: Number(f.threshold) || 0, duration_seconds: Number(f.duration_seconds) || 60,
         severity: f.severity || 'warning', threshold_type: f.threshold_type || 'static',
         threshold_template: f.threshold_template || null, silence_minutes: Number(f.silence_minutes) || 5,
-        db_types: f.db_types || null, instance_ids: f.instance_ids || null,
+        target_type: f.target_type || 'instance',
       };
+      if (body.target_type === 'server') {
+        body.server_id = Number(f.server_id) || null;
+      } else {
+        body.db_types = f.db_types || null;
+        body.instance_ids = f.instance_ids || null;
+      }
       if (body.threshold_template && body.threshold_type === 'static') body.threshold = 0;
       this._emit('save', { isEdit: !!this.rule, id: this.rule?.id, body });
     } catch (err: any) {
@@ -148,6 +158,13 @@ export class AlertRuleEditor extends LitElement {
           <input class="form-input" .value=${f.name || ''} @input=${(e: any) => this._update('name', e.target.value)} placeholder="例如：CPU 使用率过高" />
         </app-form-field>
 
+        <app-form-field label="目标类型" required>
+          <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;">
+            <button style="flex:1;padding:var(--space-sm) var(--space-lg);border:none;background:var(--secondary);color:var(--text);font-size:var(--text-base);font-weight:500;cursor:pointer;${(f.target_type||'instance') === 'instance' ? 'background:var(--accent);color:var(--accent-foreground);' : ''}" @click=${() => { this._update('target_type', 'instance'); if (f.server_id) this._update('server_id', null); }}>实例</button>
+            <button style="flex:1;padding:var(--space-sm) var(--space-lg);border:none;background:var(--secondary);color:var(--text);font-size:var(--text-base);font-weight:500;cursor:pointer;${(f.target_type||'instance') === 'server' ? 'background:var(--accent);color:var(--accent-foreground);' : ''}" @click=${() => { this._update('target_type', 'server'); if (f.db_types || f.instance_ids) this._update('db_types', null); this._update('instance_ids', null); }}>服务器</button>
+          </div>
+        </app-form-field>
+
         <app-form-field label="指标" required>
           <select class="form-input" .value=${f.metric_name || ''} @change=${(e: any) => this._update('metric_name', e.target.value)}>
             <option value="">请选择指标</option>
@@ -155,28 +172,37 @@ export class AlertRuleEditor extends LitElement {
           </select>
         </app-form-field>
 
-        <app-form-field label="适用数据库类型" hint="留空=所有类型">
-          <div style="display:flex;flex-wrap:wrap;gap:var(--space-sm);">
-            ${dbTypes.map(t => html`<label style="display:flex;align-items:center;gap:4px;font-size:var(--text-sm);cursor:pointer;">
-              <input type="checkbox" .checked=${f.db_types?.includes(t) ?? false}
-                @change=${(e: any) => {
-                  const cur = f.db_types ? [...f.db_types] : [];
-                  e.target.checked ? cur.push(t) : cur.splice(cur.indexOf(t), 1);
-                  this._update('db_types', cur.length > 0 ? cur : null);
-                }} /> ${t}
-            </label>`)}
-          </div>
-        </app-form-field>
+        ${(f.target_type||'instance') !== 'server' ? html`
+          <app-form-field label="适用数据库类型" hint="留空=所有类型">
+            <div style="display:flex;flex-wrap:wrap;gap:var(--space-sm);">
+              ${dbTypes.map(t => html`<label style="display:flex;align-items:center;gap:4px;font-size:var(--text-sm);cursor:pointer;">
+                <input type="checkbox" .checked=${f.db_types?.includes(t) ?? false}
+                  @change=${(e: any) => {
+                    const cur = f.db_types ? [...f.db_types] : [];
+                    e.target.checked ? cur.push(t) : cur.splice(cur.indexOf(t), 1);
+                    this._update('db_types', cur.length > 0 ? cur : null);
+                  }} /> ${t}
+              </label>`)}
+            </div>
+          </app-form-field>
 
-        <app-form-field label="适用实例" hint="按住 Ctrl/Cmd 多选。留空=所有实例">
-          <select class="form-input" multiple style="min-height:80px;" @change=${(e: any) => {
-            const sel = Array.from(e.target.selectedOptions, (o: any) => Number(o.value)).filter((v: number) => v > 0);
-            this._update('instance_ids', sel.length > 0 ? sel : null);
-          }}>
-            <option value="">所有实例</option>
-            ${this.instances.map((inst: any) => html`<option value="${inst.id}" ?selected=${f.instance_ids?.includes(inst.id)}>${inst.name} (${inst.db_type || ''})</option>`)}
-          </select>
-        </app-form-field>
+          <app-form-field label="适用实例" hint="按住 Ctrl/Cmd 多选。留空=所有实例">
+            <select class="form-input" multiple style="min-height:80px;" @change=${(e: any) => {
+              const sel = Array.from(e.target.selectedOptions, (o: any) => Number(o.value)).filter((v: number) => v > 0);
+              this._update('instance_ids', sel.length > 0 ? sel : null);
+            }}>
+              <option value="">所有实例</option>
+              ${this.instances.map((inst: any) => html`<option value="${inst.id}" ?selected=${f.instance_ids?.includes(inst.id)}>${inst.name} (${inst.db_type || ''})</option>`)}
+            </select>
+          </app-form-field>
+        ` : html`
+          <app-form-field label="适用服务器">
+            <select class="form-input" .value=${f.server_id || ''} @change=${(e: any) => this._update('server_id', e.target.value ? Number(e.target.value) : null)}>
+              <option value="">所有服务器</option>
+              ${this.servers.map((srv: any) => html`<option value="${srv.id}">${srv.host}${srv.label ? ` (${srv.label})` : ''}</option>`)}
+            </select>
+          </app-form-field>
+        `}
 
         <app-form-field label="操作符">
           <select class="form-input" .value=${f.operator || '>'} @change=${(e: any) => this._update('operator', e.target.value)}>
