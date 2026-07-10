@@ -22,7 +22,22 @@
 
 ## 输出格式
 
-使用以下 Markdown 结构：
+使用以下 Markdown 结构。分析开头必须包含一段结构化 JSON 摘要（```json 代码块），便于下游系统解析：
+
+```json
+{
+  "hypotheses": [
+    {"cause": "根因假设", "evidence": "支持的证据", "likelihood": "high|medium|low"}
+  ],
+  "evidence": [
+    {"type": "metric|alert|log", "source": "数据来源", "value": "具体值", "relevance": "相关性说明"}
+  ],
+  "confidence": 0.86,
+  "recommendations": [
+    {"action": "建议操作", "priority": "P0|P1|P2", "rationale": "理由", "verification": "验证方法"}
+  ]
+}
+```
 
 ## 分析摘要
 告警概述：告警类型、触发时间、严重级别、受影响的实例。

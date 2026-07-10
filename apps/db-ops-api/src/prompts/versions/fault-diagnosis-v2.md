@@ -22,7 +22,22 @@
 
 ## 输出格式
 
-使用以下 Markdown 结构：
+使用以下 Markdown 结构。分析开头必须包含一段结构化 JSON 摘要（```json 代码块），便于下游系统解析：
+
+```json
+{
+  "hypotheses": [
+    {"cause": "故障假设", "evidence": "支持的证据", "likelihood": "high|medium|low"}
+  ],
+  "evidence": [
+    {"type": "metric|alert|log", "source": "数据来源", "value": "具体值", "relevance": "相关性说明"}
+  ],
+  "confidence": 0.86,
+  "recommendations": [
+    {"action": "修复操作", "priority": "P0|P1|P2", "rationale": "理由", "verification": "验证方法"}
+  ]
+}
+```
 
 ## 诊断概述
 简要描述诊断的问题、受影响的组件、严重程度。

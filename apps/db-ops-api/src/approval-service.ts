@@ -15,7 +15,7 @@ interface ApprovalRequest {
   sql_hash: string;
   risk_level: 'low' | 'medium' | 'high' | 'critical';
   ai_recommendation: any;
-  status: 'pending' | 'approved' | 'rejected' | 'executed' | 'cancelled';
+  status: 'pending' | 'approved' | 'rejected' | 'executed' | 'execution_failed' | 'cancelled';
   submitted_by: number | null;
   reviewed_by: number | null;
   review_notes: string | null;
@@ -165,7 +165,7 @@ class ApprovalService {
         username: 'dba-approver',
         database: req.target_database || undefined,
       });
-      const status = execResult.success ? 'executed' : 'approved';
+      const status = execResult.success ? 'executed' : 'execution_failed';
       await pool.execute(
         'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ?, execution_result = ? WHERE id = ?',
         [status, review.reviewed_by || null, review.notes || null,
@@ -211,7 +211,7 @@ class ApprovalService {
     if (!pool) return [];
     const safeLimit = Math.min(Math.max(1, limit), 200);
     const [rows] = await pool.query(
-      'SELECT * FROM approval_requests WHERE status IN (\'approved\',\'rejected\',\'executed\') ORDER BY updated_at DESC LIMIT ?',
+      'SELECT * FROM approval_requests WHERE status IN (\'approved\',\'rejected\',\'executed\',\'execution_failed\') ORDER BY updated_at DESC LIMIT ?',
       [safeLimit]
     ) as any;
     return rows;

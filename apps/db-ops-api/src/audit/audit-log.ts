@@ -224,8 +224,8 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
     await this.pool.execute(
       `INSERT INTO sql_execution_history
        (user_id, username, instance_id, instance_name, db_type, database_name,
-        sql_text, status, duration_ms, row_count, error_message, ip_address)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        sql_text, status, duration_ms, row_count, error_message, ip_address, approval_request_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
         entry.username ?? null,
@@ -239,6 +239,7 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
         entry.details?.rowCount ?? 0,
         entry.details?.errorMessage ?? null,
         entry.clientIp ?? null,
+        entry.approvalRequestId ? parseInt(entry.approvalRequestId, 10) : null,
       ]
     );
   }
