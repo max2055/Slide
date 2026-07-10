@@ -1320,7 +1320,9 @@ SELECT r.id, p.id FROM roles r, permissions p
 WHERE r.name = 'dba' AND p.code = 'metric:write';
 
 -- ============================================
--- 16. 指标模板系统 (Phase: metric-templates)
+-- 16. 指标模板系统 (Phase: metric-templates) -- DEPRECATED (Phase 130)
+-- metric_templates / instance_templates 已废弃，表保留仅用于数据兼容
+-- 替代模型: metric_registry + alert_rules.threshold_template
 -- ============================================
 
 -- 指标模板定义表

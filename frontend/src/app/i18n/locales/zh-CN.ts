@@ -163,7 +163,6 @@ export const zh_CN: TranslationMap = {
     indexes: "索引管理",
     reports: "报表中心",
     "metric-registry": "指标定义",
-    "metric-templates": "模板管理",
     events: "告警事件",
     "sql-console": "SQL 控制台",
     "approval": "审批管理",
@@ -208,7 +207,6 @@ export const zh_CN: TranslationMap = {
     indexes: "索引采集与冗余检测",
     reports: "报表生成与历史",
     "metric-registry": "指标采集定义与阈值配置",
-    "metric-templates": "模板管理 — 指标、告警规则、实例关联一站式配置",
     events: "告警聚合事件全生命周期管理",
     // Chat 菜单组
     chat: "与 AI 助手交互",

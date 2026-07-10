@@ -81,17 +81,17 @@ describe('resolveThresholdTemplate', () => {
 
 describe('loadMetricDefaultMacros', () => {
   it('extracts macros from metric threshold_template', () => {
-    const macros = loadMetricDefaultMacros('tps', { warning: 500, error: 2000, critical: 5000 });
+    const macros = loadMetricDefaultMacros({ warning: 500, error: 2000, critical: 5000 });
     expect(macros).toEqual({ warning: 500, error: 2000, critical: 5000 });
   });
 
   it('returns empty for null template', () => {
-    const macros = loadMetricDefaultMacros('tps', null);
+    const macros = loadMetricDefaultMacros(null);
     expect(macros).toEqual({});
   });
 
   it('handles partial template', () => {
-    const macros = loadMetricDefaultMacros('tps', { warning: 100 });
+    const macros = loadMetricDefaultMacros({ warning: 100 });
     expect(macros).toEqual({ warning: 100 });
   });
 });

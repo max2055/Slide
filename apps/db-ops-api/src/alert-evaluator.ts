@@ -6,6 +6,7 @@ import { alertDatabaseService, AlertRule } from './alert-database-service';
 import { metricsDatabaseService } from './metrics-database-service';
 import { instanceDatabaseService } from './instance-database-service';
 import { baselineCalculator } from './baseline-calculator';
+import { metricRegistry } from './metric-registry';
 
 export interface AlertRuleExtended extends AlertRule {
   dynamic_config?: {
@@ -382,7 +383,7 @@ export async function evaluateAllRules(): Promise<
         //       → macros = { warning: 500, error: 2000, critical: 5000 }
         //       规则 threshold_template = {warning: "${warning}", error: "${error}", critical: 10000}
         //       → 解析后 {warning: 500, error: 2000, critical: 10000}
-        const macroCtx = await resolveMacrosForRule(rule, instance.id);
+        const macroCtx = await resolveMacrosForRule(rule);
 
         const triggeredLevel = evaluateRuleWithLevels(effectiveRule, currentValue, macroCtx);
         if (triggeredLevel) {
@@ -410,19 +411,14 @@ export async function evaluateAllRules(): Promise<
 /**
  * 为规则解析 macros 上下文
  *
- * 优先级（由低到高）：
- *   1. metric_definition.threshold_template  → 指标默认值（示例: {warning: 500, error: 2000, critical: 5000}）
- *   2. metric_templates.macro_defaults       → 模板宏变量（示例: {tps_warning: 5000}）
- *   3. instance_templates.macro_overrides    → 实例覆盖（示例: {tps_warning: 100000}）
- *
+ * 从 metric_definition.threshold_template 提取默认值（示例: {warning: 500, error: 2000, critical: 5000}）
  * 指标默认值的键自动作为 ${warning}, ${error}, ${critical} macro 变量可用。
  */
-export async function resolveMacrosForRule(rule: AlertRule, instanceId: number): Promise<Record<string, number>> {
+export async function resolveMacrosForRule(rule: AlertRule): Promise<Record<string, number>> {
   const macros: Record<string, number> = {};
 
-  // 1. 从 metric_definition 的 threshold_template 提取默认值
+  // 从 metric_definition 的 threshold_template 提取默认值
   try {
-    const { metricRegistry } = require('./metric-registry');
     const def = metricRegistry.getById(rule.metric_name);
     if (def?.threshold_template) {
       const tt = def.threshold_template;
@@ -432,39 +428,11 @@ export async function resolveMacrosForRule(rule: AlertRule, instanceId: number):
     }
   } catch { /* skip */ }
 
-  // 2. 从模板 macro_defaults 加载（按规则所属模板，或实例关联的模板）
-  try {
-    const { templateDatabaseService } = require('./template-database-service');
-
-    // 2a. 如果规则有 template_id，加载该模板的宏
-    if (rule.template_id) {
-      const tpl = await templateDatabaseService.getTemplate(rule.template_id);
-      if (tpl?.macro_defaults) {
-        Object.assign(macros, tpl.macro_defaults);
-      }
-    }
-
-    // 2b. 加载实例关联的所有模板的宏（实例级绑定独立于规则级绑定）
-    const links = await templateDatabaseService.getInstanceTemplates(instanceId);
-    for (const link of links) {
-      if (link.template?.macro_defaults) {
-        Object.assign(macros, link.template.macro_defaults);
-      }
-    }
-
-    // 3. 实例 macro_overrides（最高优先级）— 必须在模板 macro_defaults 之后
-    for (const link of links) {
-      if (link.macro_overrides) {
-        Object.assign(macros, link.macro_overrides);
-      }
-    }
-  } catch { /* template service not available, skip */ }
-
   return macros;
 }
 
 /** 从 metric_definition 的 threshold_template 加载默认 macros（供外部使用） */
-export function loadMetricDefaultMacros(metricName: string, thresholdTemplate: { warning?: number; error?: number; critical?: number } | null): Record<string, number> {
+export function loadMetricDefaultMacros(thresholdTemplate: { warning?: number; error?: number; critical?: number } | null): Record<string, number> {
   const macros: Record<string, number> = {};
   if (thresholdTemplate) {
     if (thresholdTemplate.warning != null) macros.warning = Number(thresholdTemplate.warning);

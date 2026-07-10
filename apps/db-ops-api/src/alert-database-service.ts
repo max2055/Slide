@@ -45,6 +45,7 @@ export interface AlertRule {
   silence_minutes: number;
   db_types?: string[] | null;
   instance_ids?: number[] | null;
+  /** @deprecated metric_templates system removed (Phase 130) — kept for backward compat with existing data */
   template_id?: number | null;
   target_type?: 'instance' | 'server';
   server_id?: number | null;
@@ -659,6 +660,7 @@ class AlertDatabaseService {
     notification_channels?: any;
     db_types?: string[] | null;
     instance_ids?: number[] | null;
+    /** @deprecated metric_templates system removed (Phase 130), kept for data compat */
     template_id?: number | null;
     target_type?: 'instance' | 'server';
     server_id?: number;
@@ -727,6 +729,7 @@ class AlertDatabaseService {
       notification_channels?: any;
       db_types?: string[] | null;
       instance_ids?: number[] | null;
+      /** @deprecated metric_templates system removed (Phase 130), kept for data compat */
       template_id?: number | null;
       target_type?: 'instance' | 'server';
       server_id?: number | null;

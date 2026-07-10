@@ -134,7 +134,7 @@ class AlertEngine {
           // 使用与触发对称的持续时间检查：需要持续健康才恢复
           // 并加载该规则的 macros（包括模板和实例覆盖）
           const duration = (rule.duration_seconds as number) || 60;
-          const macros = await resolveMacrosForRule(rule, alert.instance_id);
+          const macros = await resolveMacrosForRule(rule);
           const recovered = await checkRecoveryDuration(alert.instance_id, rule, duration, macros);
           if (recovered) {
             await alertDatabaseService.resolveAlert(alert.id);

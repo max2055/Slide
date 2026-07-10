@@ -5,7 +5,7 @@ import { normalizeLowercaseStringOrEmpty } from "./string-coerce.ts";
 export const TAB_GROUPS = [
   {
     label: "slide",
-    tabs: ["chat", "dashboard", "servers", "instances-db", "sql-console", "approval", "alerts", "metric-registry", "metric-templates", "reports", "events", "cron-jobs"],
+    tabs: ["chat", "dashboard", "servers", "instances-db", "sql-console", "approval", "alerts", "metric-registry", "reports", "events", "cron-jobs"],
   },
   {
     label: "settings",
@@ -34,7 +34,6 @@ export type Tab =
   | "indexes"
   | "reports"
   | "metric-registry"
-  | "metric-templates"
   | "events"
   | "users"
   | "llm-config"
@@ -69,7 +68,6 @@ const TAB_PATHS: Record<Tab, string> = {
   indexes: "/indexes",
   reports: "/reports",
   "metric-registry": "/metric-registry",
-  "metric-templates": "/metric-templates",
   events: "/events",
   users: "/users",
   "llm-config": "/llm-config",
@@ -93,7 +91,7 @@ const PATH_TO_TAB = new Map<string, Tab>([
 /** Tabs suitable as a default landing page (excludes context-dependent tabs). */
 export const DEFAULT_TAB_OPTIONS: Tab[] = [
   "chat", "dashboard", "instances-db", "servers", "sql-console",
-  "alerts", "metric-registry", "metric-templates", "reports",
+  "alerts", "metric-registry", "reports",
   "events", "approval", "cron-jobs", "sessions",
   "schema", "indexes", "settings", "ai-settings",
   "llm-config", "scoring-settings",
@@ -108,7 +106,6 @@ export const TAB_REQUIRED_PERMISSIONS: Partial<Record<Tab, string>> = {
   'alerts': 'alert:view',
   'reports': 'report:view',
   'metric-registry': 'metric:view',
-  'metric-templates': 'metric:view',
   'events': 'alert:view',
   'ai-settings': 'ai:view',
   'agent-sessions': 'ai:view',
@@ -237,8 +234,6 @@ export function iconForTab(tab: Tab): IconName {
       return "file-text";
     case "metric-registry":
       return "puzzle";
-    case "metric-templates":
-      return "layout-grid";
     case "events":
       return "radio";
     case "sessions":

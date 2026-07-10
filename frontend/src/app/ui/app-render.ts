@@ -44,7 +44,6 @@ import "./views/schema-management.ts";
 import "./views/index-management.ts";
 import "./views/reports.ts";
 import "./views/metric-registry.ts";
-import "./views/metric-templates.ts";
 import "./views/event-management.ts";
 import "./views/users-management.ts";
 import "./views/rbac-page.ts";
@@ -748,9 +747,6 @@ export function renderApp(state: AppViewState) {
           : nothing}
         ${state.tab === "metric-registry"
           ? html`<metric-registry-viewer></metric-registry-viewer>`
-          : nothing}
-        ${state.tab === "metric-templates"
-          ? html`<metric-templates-page></metric-templates-page>`
           : nothing}
         ${state.tab === "events"
           ? html`<event-management-page></event-management-page>`
