@@ -1,7 +1,7 @@
 # Slide — AI 驱动的数据库运维平台
 
-**Shipped:** v0.7 (2026-07-07)
-**Status:** Complete — v0.7 打磨与优化 shipped (Phases 119-123)
+**Shipped:** v0.8 (2026-07-11)
+**Status:** Complete — v0.8 服务器纳管 shipped (Phases 124-129)
 
 ## What This Is
 
@@ -217,16 +217,20 @@ AgentRunner (agent-core)
 - No OS-level access (log collection via SQL queries only)
 - LLM available for AI features (Anthropic/OpenAI/Ollama)
 
-## Current Milestone: v0.8 服务器纳管 🚧
+## Current Milestone: v0.8 服务器纳管 ✅ Shipped (2026-07-11)
 
-**Goal:** 支持通用服务器 SSH 无 Agent 纳管 + 定时自动化巡检
+Phases 124-129 completed:
 
-**Target features:**
-- 服务器注册与管理 — 添加服务器、配置 SSH 连接（IP/端口/凭据）
-- SSH 指标采集 — 采集 CPU、内存、磁盘、网络等系统指标
-- 服务器监控界面 — 列表页、详情页、指标趋势图
-- 服务器告警规则 — 服务器指标超出阈值时触发告警
-- 定时自动化服务器巡检 — 定期生成服务器健康巡检报告
+| Phase | Plans | Description |
+|-------|-------|-------------|
+| 124 | 2 | 服务器注册与凭据管理 — servers 表，SSH 凭据 AES-256 加密，连接测试，密钥轮换 |
+| 125 | 2 | SSH 指标采集与监控视图 — 19 个系统指标，KV 存储，详情页 + ECharts 趋势图 |
+| 126 | 1 | 服务器告警规则 — target_type='server'，阈值评估 + 不可达检测 |
+| 127 | 1 | 定时自动化巡检 — ServerReportService，多格式输出（HTML/MD/JSON） |
+| 128 | 1 | AI 服务器分析 — 4 个 Agent 工具，自然语言查询 |
+| 129 | 3 | 观测平台统一化 — target_type 感知，alert_rule_templates，前端整合，报告持久化 |
+
+**Ad-hoc:** Phase 130 移除 metric_templates + data-loom 集成 (migration 024)
 
 ---
 

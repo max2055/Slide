@@ -35,7 +35,7 @@ curl http://localhost:3000/api/health
 ## Configuration (apps/db-ops-api/.env)
 ```bash
 DB_HOST=localhost; DB_PORT=3306; DB_USER=root; DB_PASSWORD=your_password; DB_NAME=db_ops_ai
-ANTHROPIC_API_KEY=sk-ant-...; ANTHROPIC_MODEL=Codex-sonnet-4-20250929
+ANTHROPIC_API_KEY=sk-ant-...; ANTHROPIC_MODEL=claude-sonnet-4-20250929
 JWT_SECRET_KEY=your-secret-key-min-32-chars
 ```
 

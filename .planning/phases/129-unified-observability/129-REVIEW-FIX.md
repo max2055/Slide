@@ -1,23 +1,23 @@
 ---
 phase: 129-unified-observability
-fixed_at: 2026-07-09T05:52:00Z
+fixed_at: 2026-07-09T06:00:00Z
 review_path: .planning/phases/129-unified-observability/129-REVIEW.md
-iteration: 1
-findings_in_scope: 7
-fixed: 7
+iteration: 2
+findings_in_scope: 8
+fixed: 8
 skipped: 0
 status: all_fixed
 ---
 
 # Phase 129: Code Review Fix Report
 
-**Fixed at:** 2026-07-09T05:52:00Z
+**Fixed at:** 2026-07-09T06:00:00Z
 **Source review:** .planning/phases/129-unified-observability/129-REVIEW.md
-**Iteration:** 1
+**Iteration:** 2
 
 **Summary:**
-- Findings in scope: 7
-- Fixed: 7
+- Findings in scope: 8
+- Fixed: 8
 - Skipped: 0
 
 ## Fixed Issues
@@ -66,8 +66,14 @@ status: all_fixed
 **Commit:** `c26bfff`
 **Applied fix:** Made the validation conditional: split the required field check into two parts. `name`, `cron`, `type` remain required always. `instance_id` is only required when `server_id` is not provided. Error message updated to reflect the OR condition.
 
+### IN-01: Duplicate server_name mapping block in alerts page
+
+**Files modified:** `frontend/src/app/ui/views/alerts.ts`
+**Commit:** `8aac04a`
+**Applied fix:** Removed the duplicate `server_name` mapping block (second occurrence of the same `if (this.servers.length > 0)` block performing `map()` to set `server_name` from the server map). The first instance at the same location already handles this mapping correctly.
+
 ---
 
-_Fixed: 2026-07-09T05:52:00Z_
+_Fixed: 2026-07-09T06:00:00Z_
 _Fixer: Claude (gsd-code-fixer)_
-_Iteration: 1_
+_Iteration: 2_

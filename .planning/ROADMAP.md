@@ -7,7 +7,7 @@
 - ✅ **v0.5 系统加固与体验优化** — Phases 100-107 (shipped 2026-05-22)
 - ✅ **v0.6 Agent 解耦与替换** — Phases 108-118 (shipped 2026-06-08)
 - ✅ **v0.7 打磨与优化** — Phases 119-123 (shipped 2026-07-01)
-- 🚧 **v0.8 服务器纳管** — Phases 124-128 (in progress)
+- ✅ **v0.8 服务器纳管** — Phases 124-129 (shipped 2026-07-11)
 
 ## Phases
 
@@ -942,7 +942,7 @@ Phase 120 的 8 个 plans 于 2026-06-20 完成并标记 shipped。之后进行�
 
 **UI hint:** yes
 
-## 📋 v0.8 服务器纳管 (In Progress)
+## 📋 v0.8 服务器纳管 (Shipped 2026-07-11)
 
 - [x] **Phase 124: 服务器注册与凭据管理** - 服务器 CRUD、SSH 凭据加密存储、连接测试、服务器列表导航 (completed 2026-07-07)
 - [x] **Phase 125: SSH 指标采集与监控视图** - SshSessionPool、核心指标采集、KV 存储、服务器详情页与 ECharts 趋势图 (completed 2026-07-07)
