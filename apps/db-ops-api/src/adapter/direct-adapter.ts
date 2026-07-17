@@ -462,6 +462,7 @@ export class DirectAdapter implements IAgentEngine {
             if (await agentRunService.cancelForActor(runId, connectionActor.userId, cancelSession)) {
               active.controller.abort();
               ws.send(JSON.stringify({ type: 'run.cancelled', runId, sessionKey: cancelSession }));
+              ws.send(JSON.stringify({ type: 'error', error: 'Cancelled' }));
             } else ws.send(JSON.stringify({ type: 'protocol.error', code: 'RUN_NOT_CANCELLABLE' }));
             break;
           }
