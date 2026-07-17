@@ -67,6 +67,8 @@ import { brandingConfigService } from './src/branding-config-service.js';
 import { consistencyChecker } from './src/consistency-checker.js';
 import { userPreferenceService } from './src/user-preference-service.js';
 import { collectionCapabilityTracker } from './src/collection-capabilities.js';
+import { resourceService } from './src/resources/resource-service.js';
+import { capabilityService } from './src/resources/capability-service.js';
 import { sqlAuditService } from './src/sql-audit-service.js';
 import { queryAuditLogs, auditLogManager, DatabaseAuditLogStore } from './src/audit/audit-log.js';
 import { sqlExecutor } from './src/sql-executor.js';
@@ -804,6 +806,68 @@ async function start() {
     verifyToken,
     service: chatDatabaseService,
     handleChatSend,
+  });
+
+  fastify.get('/api/resources/:type/:id/relations', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { type, id } = request.params as { type: 'instance' | 'server'; id: string };
+      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || Number(id) < 1) {
+        return reply.code(400).send({ error: 'Invalid resource reference' });
+      }
+      const relations = await resourceService.currentRelations((request as any).user, { type, id: Number(id) });
+      return reply.send({ relations });
+    } catch (error: any) {
+      return reply.code(error?.message === 'RESOURCE_FORBIDDEN' ? 404 : 500).send({ error: error?.message || 'Resource lookup failed' });
+    }
+  });
+
+  fastify.post('/api/resources/:type/:id/relations', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { type, id } = request.params as { type: 'instance' | 'server'; id: string };
+      const body = request.body as Record<string, unknown>;
+      const target = body?.target as { type?: 'instance' | 'server'; id?: number } | undefined;
+      if ((type !== 'instance' && type !== 'server') || !target || (target.type !== 'instance' && target.type !== 'server') || !Number.isInteger(Number(id)) || !Number.isInteger(target.id)) {
+        return reply.code(400).send({ error: 'Invalid relation reference' });
+      }
+      await resourceService.createRelation((request as any).user, {
+        source: { type, id: Number(id) }, target: { type: target.type, id: target.id },
+        relationType: body.relationType as any, provenance: typeof body.provenance === 'string' ? body.provenance : '',
+        validFrom: body.validFrom ? new Date(String(body.validFrom)) : new Date(),
+        validUntil: body.validUntil ? new Date(String(body.validUntil)) : null,
+      });
+      return reply.code(201).send({ ok: true });
+    } catch (error: any) {
+      const code = error?.message === 'RESOURCE_FORBIDDEN' ? 404 : error?.message?.startsWith('RESOURCE_') ? 400 : 500;
+      return reply.code(code).send({ error: error?.message || 'Resource relation failed' });
+    }
+  });
+
+  fastify.get('/api/resources/:type/:id/capabilities/:key', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { type, id, key } = request.params as { type: 'instance' | 'server'; id: string; key: string };
+      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || !key) return reply.code(400).send({ error: 'Invalid capability reference' });
+      const capability = await capabilityService.get((request as any).user, { type, id: Number(id) }, key);
+      return reply.send({ capability });
+    } catch (error: any) {
+      return reply.code(error?.message === 'RESOURCE_FORBIDDEN' ? 404 : 500).send({ error: error?.message || 'Capability lookup failed' });
+    }
+  });
+
+  fastify.put('/api/resources/:type/:id/capabilities/:key', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { type, id, key } = request.params as { type: 'instance' | 'server'; id: string; key: string };
+      const body = request.body as Record<string, unknown>;
+      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || !key || typeof body.state !== 'string') return reply.code(400).send({ error: 'Invalid capability payload' });
+      await capabilityService.put((request as any).user, {
+        resource: { type, id: Number(id) }, key, state: body.state as any,
+        evidence: body.evidence as Record<string, unknown> | undefined, reason: typeof body.reason === 'string' ? body.reason : undefined,
+        checkedAt: body.checkedAt ? new Date(String(body.checkedAt)) : new Date(), validUntil: body.validUntil ? new Date(String(body.validUntil)) : null,
+      });
+      return reply.send({ ok: true });
+    } catch (error: any) {
+      const code = error?.message === 'RESOURCE_FORBIDDEN' ? 404 : error?.message?.startsWith('CAPABILITY_') ? 400 : 500;
+      return reply.code(code).send({ error: error?.message || 'Capability update failed' });
+    }
   });
 
   // ========== Agent List API (DirectAdapter) ==========
