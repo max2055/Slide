@@ -154,6 +154,15 @@ export class PersistentOperationService {
     return rows.map((row) => ({ operationId: row.operation_id, fromState: row.from_state, toState: row.to_state, reasonCode: row.reason_code, actorId: row.actor_id ?? undefined, metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata ?? undefined, createdAt: new Date(row.created_at) }));
   }
 
+  async cancelForActor(id: string, actorId: number): Promise<Operation | null> {
+    const operation = await this.getForActor(id, actorId);
+    if (!operation) return null;
+    if (!['queued', 'waiting_approval', 'claimed'].includes(operation.state)) {
+      throw new Error('Operation cannot be cancelled in its current state');
+    }
+    return this.transition(id, 'cancelled', 'CANCELLED_BY_ACTOR', actorId);
+  }
+
   private async append(connection: QueryExecutor, id: string, fromState: OperationState | null, toState: OperationState, reasonCode: string, actorId?: number, metadata?: Record<string, unknown>): Promise<void> {
     await connection.query(
       `INSERT INTO operation_events (operation_id, from_state, to_state, reason_code, actor_id, metadata) VALUES (?, ?, ?, ?, ?, ?)`,

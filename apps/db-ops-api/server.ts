@@ -1690,6 +1690,16 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     return events ? reply.send({ events }) : reply.code(404).send({ error: 'Operation not found' });
   });
 
+  fastify.post('/api/operations/:id/cancel', { preHandler: [verifyToken] }, async (request, reply) => {
+    const user = (request as any).user;
+    try {
+      const operation = await operationService.cancelForActor(String((request.params as any).id), user.userId);
+      return operation ? reply.send({ operation }) : reply.code(404).send({ error: 'Operation not found' });
+    } catch (error) {
+      return reply.code(409).send({ reasonCode: 'CANCEL_NOT_AVAILABLE' });
+    }
+  });
+
   // NOTE: /history MUST be registered BEFORE /:id to avoid Fastify route conflict
   fastify.get('/api/approval/history', { preHandler: [verifyToken, requirePermission('approval:view')] }, async (request, reply) => {
     try {
