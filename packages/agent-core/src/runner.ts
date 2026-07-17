@@ -801,7 +801,7 @@ function backfillMissingToolResults(messages: Message[]): Message[] {
   const updated = [...messages];
   let offset = 0;
   for (const m of missing) {
-    const insertAt = m.idx + 1 + offset;
+    let insertAt = m.idx + 1 + offset;
     while (insertAt < updated.length && updated[insertAt].role === "tool") {
       insertAt++;
     }

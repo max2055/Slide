@@ -207,7 +207,7 @@ class AiAnalysisDatabaseService {
     data: { usage?: any; duration_ms?: number; executionTrace?: any } = {},
   ): Promise<{ success: boolean; error?: string }> {
     const parsed = validateAnalysisEnvelope(envelope);
-    if (!parsed.ok) return { success: false, error: parsed.error };
+    if (!parsed.ok) return { success: false, error: 'error' in parsed ? parsed.error : 'ANALYSIS_ENVELOPE_INVALID' };
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 

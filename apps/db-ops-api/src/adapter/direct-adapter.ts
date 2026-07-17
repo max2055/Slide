@@ -349,7 +349,7 @@ export class DirectAdapter implements IAgentEngine {
             if ((msg as any).protocolVersion === 2) {
               const parsed = validateChatSendV2(msg);
               if (!parsed.ok) {
-                ws.send(JSON.stringify({ type: 'protocol.error', code: parsed.error }));
+                ws.send(JSON.stringify({ type: 'protocol.error', code: 'error' in parsed ? parsed.error : 'PROTOCOL_INVALID' }));
                 return;
               }
             } else if ((msg as any).protocolVersion !== undefined) {

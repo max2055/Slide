@@ -108,7 +108,7 @@ export class OpenAIProvider implements LLMProvider {
       const THINK_CLOSE = /<\s*\/\s*think(?:ing)?\s*>/i;
       const toolCalls: Record<number, { id: string; name: string; arguments: string }> = {};
 
-      for await (const chunk of stream) {
+      for await (const chunk of stream as unknown as AsyncIterable<any>) {
         resetIdleTimer();
         const delta = chunk.choices?.[0]?.delta;
         const hasReasoningField = !!(delta as any)?.reasoning_content;

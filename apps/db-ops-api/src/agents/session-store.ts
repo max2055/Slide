@@ -5,6 +5,7 @@
  */
 
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import type { Dirent } from 'node:fs';
 
@@ -74,7 +75,7 @@ export async function resolveAgentSessionDirsFromAgentsDir(
 export function resolveAgentSessionDirsFromAgentsDirSync(agentsDir: string): string[] {
   let entries: Dirent[] = [];
   try {
-    entries = fs.readdirSync(agentsDir, { withFileTypes: true });
+    entries = fsSync.readdirSync(agentsDir, { withFileTypes: true });
   } catch (err) {
     const code = (err as { code?: string }).code;
     if (code === 'ENOENT') {
@@ -114,7 +115,7 @@ export function resolveStorePath(
  */
 export function loadSessionStore(storePath: string): SessionStore {
   try {
-    const raw = fs.readFileSync(storePath, 'utf-8');
+    const raw = fsSync.readFileSync(storePath, 'utf-8');
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as SessionStore;
@@ -146,7 +147,7 @@ export async function updateSessionStore(
 ): Promise<SessionStore> {
   const store = loadSessionStore(storePath);
   const result = mutator(store);
-  const finalStore = result ?? store;
+  const finalStore: SessionStore = result && typeof result === 'object' ? result : store;
   await saveSessionStore(storePath, finalStore);
   return finalStore;
 }
