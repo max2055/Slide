@@ -1632,8 +1632,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             const channels = await notificationDatabaseService.getEnabledChannels();
             for (const channel of channels) {
               const message = notificationService.buildApprovalMessage(channel.type, {
-                action,
-                notes,
+                action: action as 'approve' | 'reject',
+                notes: typeof notes === 'string' ? notes : '',
                 sqlSummary: reqDetail.sql_text.substring(0, 100),
                 instanceName,
                 submitTime: reqDetail.created_at,
@@ -1669,6 +1669,25 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
     }
+  });
+
+  fastify.get('/api/operations', { preHandler: [verifyToken] }, async (request, reply) => {
+    const user = (request as any).user;
+    const rawLimit = Number((request.query as any)?.limit ?? 50);
+    const operations = await operationService.listForActor(user.userId, Number.isSafeInteger(rawLimit) ? rawLimit : 50);
+    return reply.send({ operations });
+  });
+
+  fastify.get('/api/operations/:id', { preHandler: [verifyToken] }, async (request, reply) => {
+    const user = (request as any).user;
+    const operation = await operationService.getForActor(String((request.params as any).id), user.userId);
+    return operation ? reply.send(operation) : reply.code(404).send({ error: 'Operation not found' });
+  });
+
+  fastify.get('/api/operations/:id/events', { preHandler: [verifyToken] }, async (request, reply) => {
+    const user = (request as any).user;
+    const events = await operationService.eventsForActor(String((request.params as any).id), user.userId);
+    return events ? reply.send({ events }) : reply.code(404).send({ error: 'Operation not found' });
   });
 
   // NOTE: /history MUST be registered BEFORE /:id to avoid Fastify route conflict

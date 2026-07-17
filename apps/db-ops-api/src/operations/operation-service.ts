@@ -128,6 +128,32 @@ export class PersistentOperationService {
     await pool.query('UPDATE operations SET approval_id = ? WHERE id = ?', [approvalId, id]);
   }
 
+  async getForActor(id: string, actorId: number): Promise<Operation | null> {
+    const pool = this.poolProvider();
+    if (!pool) throw new Error('Operation database unavailable');
+    const [rows] = await pool.query<any[]>('SELECT * FROM operations WHERE id = ? AND actor_id = ?', [id, actorId]);
+    return rows[0] ? this.map(rows[0]) : null;
+  }
+
+  async listForActor(actorId: number, limit = 50): Promise<Operation[]> {
+    const pool = this.poolProvider();
+    if (!pool) throw new Error('Operation database unavailable');
+    const [rows] = await pool.query<any[]>('SELECT * FROM operations WHERE actor_id = ? ORDER BY created_at DESC LIMIT ?', [actorId, Math.min(Math.max(limit, 1), 200)]);
+    return rows.map((row) => this.map(row));
+  }
+
+  async eventsForActor(id: string, actorId: number): Promise<OperationEvent[] | null> {
+    const pool = this.poolProvider();
+    if (!pool) throw new Error('Operation database unavailable');
+    const [rows] = await pool.query<any[]>(
+      `SELECT oe.* FROM operation_events oe JOIN operations o ON o.id = oe.operation_id
+       WHERE oe.operation_id = ? AND o.actor_id = ? ORDER BY oe.created_at ASC, oe.id ASC`, [id, actorId],
+    );
+    const exists = await this.getForActor(id, actorId);
+    if (!exists) return null;
+    return rows.map((row) => ({ operationId: row.operation_id, fromState: row.from_state, toState: row.to_state, reasonCode: row.reason_code, actorId: row.actor_id ?? undefined, metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata ?? undefined, createdAt: new Date(row.created_at) }));
+  }
+
   private async append(connection: QueryExecutor, id: string, fromState: OperationState | null, toState: OperationState, reasonCode: string, actorId?: number, metadata?: Record<string, unknown>): Promise<void> {
     await connection.query(
       `INSERT INTO operation_events (operation_id, from_state, to_state, reason_code, actor_id, metadata) VALUES (?, ?, ?, ?, ?, ?)`,
