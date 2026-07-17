@@ -39,6 +39,7 @@ import {
   type ActorContext,
   type ActorContextService,
 } from '../auth/actor-context.js';
+import { validateChatSendV2 } from './protocol-v2.js';
 
 let _subagentManagerInitialized = false;
 
@@ -347,6 +348,16 @@ export class DirectAdapter implements IAgentEngine {
 
         switch (msg.type) {
           case 'chat.send': {
+            if ((msg as any).protocolVersion === 2) {
+              const parsed = validateChatSendV2(msg);
+              if (!parsed.ok) {
+                ws.send(JSON.stringify({ type: 'protocol.error', code: parsed.error }));
+                return;
+              }
+            } else if ((msg as any).protocolVersion !== undefined) {
+              ws.send(JSON.stringify({ type: 'protocol.error', code: 'PROTOCOL_VERSION_UNSUPPORTED' }));
+              return;
+            }
             const messageActor = connectionActor;
             const rawSessionKey = (msg.sessionKey as string | undefined)?.trim() || '';
             // Validate sessionKey length to prevent resource exhaustion (WR-03)

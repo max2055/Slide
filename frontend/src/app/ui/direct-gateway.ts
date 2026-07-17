@@ -316,6 +316,9 @@ export class DirectGatewayClient {
   private chatSendFrame(sessionKey: string | undefined, message: string): Record<string, unknown> {
     return {
       type: 'chat.send',
+      protocolVersion: 2,
+      messageId: crypto.randomUUID(),
+      idempotencyKey: crypto.randomUUID(),
       ...(sessionKey ? { sessionKey } : {}),
       message,
     };
