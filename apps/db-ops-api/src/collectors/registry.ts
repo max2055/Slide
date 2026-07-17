@@ -64,7 +64,7 @@ export class Registry<T extends { readonly name: string; readonly supportedDbTyp
   }
 
   getProvidersByDbType(dbType: string): T[] {
-    return this.list().filter(
+    return this.listEnabled().filter(
       (p) => Array.isArray(p.supportedDbTypes) && p.supportedDbTypes.includes(dbType)
     );
   }
