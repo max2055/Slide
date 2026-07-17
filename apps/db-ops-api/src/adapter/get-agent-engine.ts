@@ -109,9 +109,12 @@ function actorBoundRegistry(actor: ActorContext): ToolRegistry {
       execute: async (params: Record<string, unknown>) => {
         const { decision, result } = await executeToolWithPolicy(actor, anyTool, params);
         if (!decision.allow) return { ...result, policyDecision: decision };
-        return result && typeof result === 'object' && 'data' in result
+        const value = result && typeof result === 'object' && 'data' in result
           ? (result as { data?: unknown }).data ?? result
           : result;
+        return value && typeof value === 'object'
+          ? { ...(value as Record<string, unknown>), policyDecision: decision }
+          : { value, policyDecision: decision };
       },
     });
   }
