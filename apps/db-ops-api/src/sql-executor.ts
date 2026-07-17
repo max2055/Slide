@@ -4,6 +4,7 @@
  */
 import { databaseService } from './database-service';
 import { auditLogManager } from './audit/audit-log';
+import { classifySql } from './sql-validator.js';
 
 class SqlExecutor {
   /**
@@ -30,6 +31,11 @@ class SqlExecutor {
     const conn = databaseService.getConnection(instanceId);
     if (!conn) {
       return { success: false, error: '实例未连接' };
+    }
+
+    const classification = classifySql(sql, conn.db_type as 'mysql' | 'postgresql' | 'oracle' | 'dameng');
+    if (classification.commandType !== 'read') {
+      return { success: false, error: `SQL_READ_ONLY_${classification.reasonCode}` };
     }
 
     // 切换数据库/模式（如果指定了 database 参数）

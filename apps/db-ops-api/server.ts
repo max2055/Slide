@@ -71,6 +71,7 @@ import { collectionCapabilityTracker } from './src/collection-capabilities.js';
 import { sqlAuditService } from './src/sql-audit-service.js';
 import { queryAuditLogs, auditLogManager, DatabaseAuditLogStore } from './src/audit/audit-log.js';
 import { sqlExecutor } from './src/sql-executor.js';
+import { classifySql } from './src/sql-validator.js';
 import { approvalService } from './src/approval-service.js';
 import { databaseLogService } from './src/database-log-service.js';
 import * as fs from 'fs/promises';
@@ -1406,7 +1407,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // SQL 执行
-  fastify.post('/api/database/instances/:id/execute', { preHandler: [verifyToken, requirePermission('instance:query'), requireInstanceAccess('read-write')] }, async (request, reply) => {
+  fastify.post('/api/database/instances/:id/execute', { preHandler: [verifyToken, requirePermission('instance:query'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const check = strictBody(request.body as Record<string, unknown>,
@@ -1414,6 +1415,18 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (check.error) return reply.code(400).send(check.error);
         const { sql, database } = check.body;
       if (!sql) return reply.code(400).send({ error: '缺少参数：sql' });
+
+      const instance = await instanceDatabaseService.getInstanceById(Number(id));
+      if (!instance) return reply.code(404).send({ error: '实例不存在' });
+      const classification = classifySql(String(sql), instance.db_type);
+      if (classification.commandType !== 'read') {
+        return reply.code(409).send({
+          reasonCode: 'NEEDS_APPROVAL',
+          classification: classification.commandType,
+          detail: classification.reasonCode,
+          approvalUrl: '/api/approval/submit',
+        });
+      }
 
       const user = (request as any).user;
       const result = await sqlExecutor.executeSql(Number(id), sql, {
