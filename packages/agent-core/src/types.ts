@@ -84,6 +84,7 @@ export interface LLMCallOptions {
   timeoutS?: number;
   /** Idle timeout in seconds for streaming requests (no token for this long → abort). */
   streamIdleTimeoutS?: number;
+  signal?: AbortSignal;
 }
 
 export interface StreamCallbacks {
@@ -179,6 +180,7 @@ export interface AgentRunSpec {
   checkpointCallback?: ((payload: Record<string, unknown>) => Promise<void>) | null;
   injectionCallback?: ((limit?: number) => Promise<Message[]>) | null;
   llmTimeoutS?: number;
+  signal?: AbortSignal;
 }
 
 export interface AgentRunResult {

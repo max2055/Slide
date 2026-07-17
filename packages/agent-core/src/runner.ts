@@ -102,6 +102,7 @@ export class AgentRunner {
     let injectionCycles = 0;
 
     for (let iteration = 0; iteration < spec.maxIterations; iteration++) {
+      if (spec.signal?.aborted) { stopReason = 'cancelled'; error = 'Cancelled'; break; }
       // ── Context governance ──
       let messagesForModel: Message[];
       try {
@@ -156,6 +157,7 @@ export class AgentRunner {
         };
         if (!isTimeout) console.error("[AgentRunner] LLM request failed:", errMsg);
       }
+      if (spec.signal?.aborted) { stopReason = 'cancelled'; error = 'Cancelled'; break; }
       const rawUsage = usageDict(response.usage);
       context.response = response;
       context.usage = { ...rawUsage };
@@ -450,6 +452,7 @@ export class AgentRunner {
           streamIdleTimeoutS: spec.llmTimeoutS
             ? spec.llmTimeoutS
             : parseFloat(process.env.NANOBOT_STREAM_IDLE_TIMEOUT_S || '0') || undefined,
+          signal: spec.signal,
         }
       );
     }
@@ -462,6 +465,7 @@ export class AgentRunner {
         maxTokens: spec.maxTokens,
         reasoningEffort: spec.reasoningEffort,
         timeoutS,
+        signal: spec.signal,
       }),
       timeoutS,
     );
