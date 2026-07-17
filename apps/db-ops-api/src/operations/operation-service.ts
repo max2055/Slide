@@ -163,6 +163,28 @@ export class PersistentOperationService {
     return this.transition(id, 'cancelled', 'CANCELLED_BY_ACTOR', actorId);
   }
 
+  async retryForActor(id: string, actorId: number): Promise<Operation | null> {
+    const previous = await this.getForActor(id, actorId);
+    if (!previous) return null;
+    if (!['failed', 'unknown', 'cancelled'].includes(previous.state)) {
+      throw new Error('Operation cannot be retried in its current state');
+    }
+    const retry = await this.create({
+      actorId,
+      origin: previous.origin,
+      resource: previous.resource,
+      commandType: previous.commandType,
+      risk: previous.risk,
+      idempotencyKey: `${previous.idempotencyKey}:retry:${previous.attempt + 1}`,
+      correlationId: previous.correlationId,
+      approvalId: previous.approvalId,
+    });
+    const pool = this.poolProvider();
+    if (!pool) throw new Error('Operation database unavailable');
+    await pool.query('UPDATE operations SET attempt = ? WHERE id = ?', [previous.attempt + 1, retry.id]);
+    return { ...retry, attempt: previous.attempt + 1 };
+  }
+
   private async append(connection: QueryExecutor, id: string, fromState: OperationState | null, toState: OperationState, reasonCode: string, actorId?: number, metadata?: Record<string, unknown>): Promise<void> {
     await connection.query(
       `INSERT INTO operation_events (operation_id, from_state, to_state, reason_code, actor_id, metadata) VALUES (?, ?, ?, ?, ?, ?)`,

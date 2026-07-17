@@ -242,6 +242,14 @@ export class ApprovalDashboard extends LitElement {
     await this._loadDetail(this.selectedRequest.id);
   }
 
+  private async _retryOperation() {
+    const operationId = this.selectedRequest?.operation_id;
+    if (!operationId || !this.selectedRequest) return;
+    const response = await authFetch(`/api/operations/${operationId}/retry`, { method: 'POST' });
+    if (!response.ok) { this.detailError = '当前状态不允许重试'; return; }
+    await this._loadDetail(this.selectedRequest.id);
+  }
+
   // --- CodeMirror mount/destroy ---
   private _mountCodeMirror(containerId: string, sqlText: string, dbType: string = 'mysql') {
     this._destroyCodeMirror();
@@ -504,6 +512,7 @@ export class ApprovalDashboard extends LitElement {
               <div class="meta-row"><span class="meta-label">当前状态</span><span class="meta-value">${this._statusLabel(r.status)}</span></div>
               ${r.operation_id ? html`<div class="meta-row"><span class="meta-label">Operation</span><span class="meta-value">${this.operationState ?? '加载中'}</span></div>` : ''}
               ${r.operation_id && ['queued', 'waiting_approval', 'claimed'].includes(this.operationState ?? '') ? html`<div class="actions"><button class="btn btn-reject" @click=${this._cancelOperation}>取消 Operation</button></div>` : ''}
+              ${r.operation_id && ['failed', 'unknown', 'cancelled'].includes(this.operationState ?? '') ? html`<div class="actions"><button class="btn btn-approve" @click=${this._retryOperation}>创建重试尝试</button></div>` : ''}
               ${r.ai_recommendation ? html`
                 <div class="meta-row"><span class="meta-label">AI 分析</span><span class="meta-value"><span class="ai-badge">AI: ${r.ai_recommendation.recommendation === 'approve' ? '建议通过' : '建议驳回'}</span></span></div>
                 ${r.ai_recommendation?.reasoning ? html`<div class="meta-row"><span class="meta-label">AI 理由</span><span class="meta-value" style="font-size:12px;color:var(--muted);">${r.ai_recommendation.reasoning}</span></div>` : ''}

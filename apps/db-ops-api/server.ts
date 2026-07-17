@@ -1700,6 +1700,16 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
+  fastify.post('/api/operations/:id/retry', { preHandler: [verifyToken] }, async (request, reply) => {
+    const user = (request as any).user;
+    try {
+      const operation = await operationService.retryForActor(String((request.params as any).id), user.userId);
+      return operation ? reply.code(202).send({ operation }) : reply.code(404).send({ error: 'Operation not found' });
+    } catch {
+      return reply.code(409).send({ reasonCode: 'RETRY_NOT_AVAILABLE' });
+    }
+  });
+
   // NOTE: /history MUST be registered BEFORE /:id to avoid Fastify route conflict
   fastify.get('/api/approval/history', { preHandler: [verifyToken, requirePermission('approval:view')] }, async (request, reply) => {
     try {

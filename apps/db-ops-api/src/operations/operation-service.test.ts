@@ -50,6 +50,7 @@ class FakeOperationPool {
     if (sql.includes('FROM operations WHERE actor_id')) return [[this.rows.find((row) => row.actor_id === values[0] && row.idempotency_key === values[1])]];
     if (sql.includes('FROM operations WHERE id = ? FOR UPDATE') || sql.includes('SELECT * FROM operations WHERE id = ?')) return [[this.rows.find((row) => row.id === values[0])]];
     if (sql.includes('UPDATE operations SET state')) { const row = this.rows.find((candidate) => candidate.id === values.at(-1)); row.state = values[0]; row.updated_at = new Date(); return [{}]; }
+    if (sql.includes('UPDATE operations SET attempt')) { const row = this.rows.find((candidate) => candidate.id === values[1]); row.attempt = values[0]; return [{}]; }
     if (sql.includes('INSERT INTO operation_events')) { this.events.push(values); return [{}]; }
     throw new Error(`Unexpected SQL ${sql}`);
   }
@@ -76,5 +77,18 @@ describe('PersistentOperationService', () => {
     await expect(service.transition(operation.id, 'succeeded', 'INVALID')).rejects.toThrow('Illegal operation transition');
     expect(pool.rollbacks).toBe(1);
     expect(pool.events).toHaveLength(1);
+  });
+
+  it('creates a distinct retry attempt without replaying an existing operation', async () => {
+    const pool = new FakeOperationPool();
+    const service = new PersistentOperationService(() => pool as any);
+    const operation = await service.create({ actorId: 7, origin: 'api', resource: { type: 'instance', id: '12' }, commandType: 'write', risk: 'high', idempotencyKey: 'write', correlationId: 'corr' });
+    await service.transition(operation.id, 'waiting_approval', 'NEEDS_APPROVAL');
+    await service.transition(operation.id, 'claimed', 'CLAIMED');
+    await service.transition(operation.id, 'running', 'STARTED');
+    await service.transition(operation.id, 'failed', 'FAILED');
+    const retry = await service.retryForActor(operation.id, 7);
+    expect(retry).toMatchObject({ state: 'queued', attempt: 2, correlationId: 'corr' });
+    expect(retry?.id).not.toBe(operation.id);
   });
 });
