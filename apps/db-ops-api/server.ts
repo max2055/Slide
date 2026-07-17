@@ -73,6 +73,7 @@ import { sqlExecutor } from './src/sql-executor.js';
 import { classifySql } from './src/sql-validator.js';
 import { PersistentOperationService } from './src/operations/operation-service.js';
 import { MigrationRunner } from './src/migrations/runner.js';
+import { WorkerLease } from './src/lifecycle/worker-lease.js';
 import { approvalService } from './src/approval-service.js';
 import { databaseLogService } from './src/database-log-service.js';
 import * as fs from 'fs/promises';
@@ -4985,7 +4986,23 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // 启动 HTTP API 服务器
   const port = process.env.BACKEND_PORT || process.env.API_PORT || 3000;
   await fastify.listen({ port: Number(port), host: '0.0.0.0' });
-  await startWorkers();
+  const workerLease = new WorkerLease(pool as any);
+  if (await workerLease.acquire()) {
+    await startWorkers();
+    const heartbeat = setInterval(() => {
+      void workerLease.renew().then((renewed) => {
+        if (!renewed) console.error('Worker lease lost; workers require operator intervention');
+      }).catch((error) => console.error('Worker lease heartbeat failed:', error));
+    }, 10_000);
+    const releaseLease = () => {
+      clearInterval(heartbeat);
+      void workerLease.release().catch((error) => console.error('Worker lease release failed:', error));
+    };
+    process.once('SIGTERM', releaseLease);
+    process.once('SIGINT', releaseLease);
+  } else {
+    console.warn('Worker lease is held by another process; this replica will serve API requests only');
+  }
   console.log(`🚀 服务器已启动：http://localhost:${port}`);
 }
 
