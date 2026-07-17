@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolRegistry } from '@slide/agent-core';
 import { WebSocket } from 'ws';
+import { createHash } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import {
   ActorAuthenticationError,
@@ -13,6 +14,8 @@ import { DirectAdapter } from '../adapter/direct-adapter.js';
 import { authDatabaseService } from '../auth-database-service.js';
 import { RbacService } from './rbac-service.js';
 import { dbConnection } from '../db-connection.js';
+import { requirePermission } from './require-permission.js';
+import { requireInstanceAccess } from './require-instance-access.js';
 
 vi.mock('../chat-database-service.js', () => ({
   chatDatabaseService: {
@@ -55,6 +58,10 @@ function actor(requestId = 'request-1'): ActorContext {
     instanceScopes: Object.freeze({ 12: 'read-write' as const }),
     requestId,
   });
+}
+
+function replyMock() {
+  return { code: vi.fn().mockReturnThis(), send: vi.fn() };
 }
 
 function waitForMessage(ws: WebSocket): Promise<Record<string, unknown>> {
@@ -263,6 +270,217 @@ describe('actor context security boundary', () => {
   });
 });
 
+describe('actor authorization snapshot', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('actor permissions are the only REST permission fact and do not query RBAC again', async () => {
+    const execute = vi.fn().mockResolvedValue([[{ code: 'instance:view' }]]);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+    const reply = replyMock();
+
+    await requirePermission('instance:view')({
+      user: { ...actor(), permissions: Object.freeze([]) },
+    } as any, reply as any);
+
+    expect(reply.code).toHaveBeenCalledWith(403);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('actor wildcard permissions authorize without a second database read', async () => {
+    const execute = vi.fn().mockRejectedValue(new Error('must not be called'));
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+    const reply = replyMock();
+
+    await requirePermission('instance:view')({
+      user: { ...actor(), permissions: Object.freeze(['*:view']) },
+    } as any, reply as any);
+
+    expect(reply.code).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('actor instanceScopes are the only REST instance authorization fact', async () => {
+    const execute = vi.fn().mockRejectedValue(new Error('must not be called'));
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+    const reply = replyMock();
+
+    await requireInstanceAccess('read-write')({
+      user: {
+        ...actor(),
+        permissions: Object.freeze([]),
+        instanceScopes: Object.freeze({ 42: 'admin' }),
+      },
+      params: { id: '42' },
+    } as any, reply as any);
+
+    expect(reply.code).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('actor instance scope denial cannot be overridden by a later RBAC read', async () => {
+    const execute = vi.fn().mockResolvedValue([[{ access_level: 'admin' }]]);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+    const reply = replyMock();
+
+    await requireInstanceAccess()({
+      user: { ...actor(), permissions: Object.freeze([]), instanceScopes: Object.freeze({}) },
+      params: { id: '42' },
+    } as any, reply as any);
+
+    expect(reply.code).toHaveBeenCalledWith(403);
+    expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+interface RefreshFixtureOptions {
+  missing?: boolean;
+  revoked?: boolean;
+  expired?: boolean;
+  sessionVersion?: number;
+  actorSessionVersion?: number;
+  failAt?: 'select' | 'insert' | 'commit';
+  additionalActiveToken?: boolean;
+}
+
+function refreshFixture(options: RefreshFixtureOptions = {}) {
+  const initialHash = createHash('sha256').update('raw-refresh-token').digest('hex');
+  let committed = {
+    user: { status: 'active', sessionVersion: options.actorSessionVersion ?? 4 },
+    tokens: options.missing ? [] : [{
+      id: 31,
+      hash: initialHash,
+      revoked: options.revoked ?? false,
+      expiresAt: options.expired
+        ? new Date(Date.now() - 60_000)
+        : new Date(Date.now() + 60_000),
+      sessionVersion: options.sessionVersion ?? 4,
+    }],
+  };
+  if (options.additionalActiveToken) {
+    committed.tokens.push({
+      id: 30,
+      hash: 'different-token-hash',
+      revoked: false,
+      expiresAt: new Date(Date.now() + 60_000),
+      sessionVersion: 4,
+    });
+  }
+  let transaction = structuredClone(committed);
+  const connection = {
+    beginTransaction: vi.fn(async () => { transaction = structuredClone(committed); }),
+    execute: vi.fn(async (sql: string, values: any[] = []) => {
+      if (options.failAt === 'select' && sql.includes('FROM refresh_tokens')) {
+        throw new Error('select failed');
+      }
+      if (sql.includes('FROM refresh_tokens')) {
+        const found = transaction.tokens.find((token) => token.hash === values[0]);
+        return [found ? [{
+          id: found.id,
+          user_id: 7,
+          revoked: found.revoked,
+          expires_at: found.expiresAt,
+          session_version: found.sessionVersion,
+        }] : []];
+      }
+      if (sql.includes('FROM users')) {
+        return [[{
+          ...ACTIVE_ROWS[0],
+          status: transaction.user.status,
+          session_version: transaction.user.sessionVersion,
+        }]];
+      }
+      if (sql.startsWith('UPDATE refresh_tokens') && sql.includes('WHERE user_id')) {
+        transaction.tokens.forEach((token) => { token.revoked = true; });
+        return [{ affectedRows: transaction.tokens.length }];
+      }
+      if (sql.startsWith('UPDATE refresh_tokens')) {
+        const found = transaction.tokens.find((token) => token.id === values[0] && !token.revoked);
+        if (found) found.revoked = true;
+        return [{ affectedRows: found ? 1 : 0 }];
+      }
+      if (sql.startsWith('INSERT INTO refresh_tokens')) {
+        if (options.failAt === 'insert') throw new Error('insert failed');
+        transaction.tokens.push({
+          id: 32,
+          hash: values[0],
+          revoked: false,
+          expiresAt: values[3],
+          sessionVersion: values[2],
+        });
+        return [{ affectedRows: 1 }];
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    }),
+    commit: vi.fn(async () => {
+      if (options.failAt === 'commit') throw new Error('commit failed');
+      committed = structuredClone(transaction);
+    }),
+    rollback: vi.fn(async () => { transaction = structuredClone(committed); }),
+    release: vi.fn(),
+  };
+  const service = new ActorContextService(() => ({
+    getConnection: vi.fn().mockResolvedValue(connection),
+  } as any));
+  return { service, connection, state: () => structuredClone(committed) };
+}
+
+const REFRESH_REJECTION_CASES: Array<[string, RefreshFixtureOptions]> = [
+  ['missing', { missing: true }],
+  ['expired', { expired: true }],
+  ['database error', { failAt: 'select' }],
+  ['stale session version', { actorSessionVersion: 5 }],
+];
+
+describe('refresh failure-closed state machine', () => {
+  it.each(REFRESH_REJECTION_CASES)(
+    'refresh rejects %s without returning a rotated token',
+    async (_name, options) => {
+      const fixture = refreshFixture(options);
+
+      await expect(fixture.service.rotateRefreshToken('raw-refresh-token'))
+        .rejects.toBeInstanceOf(ActorAuthenticationError);
+      expect(fixture.connection.rollback).toHaveBeenCalledOnce();
+      expect(fixture.state().tokens).toHaveLength(options.missing ? 0 : 1);
+    },
+  );
+
+  it('refresh replay revokes every token for the user', async () => {
+    const fixture = refreshFixture({ revoked: true, additionalActiveToken: true });
+
+    await expect(fixture.service.rotateRefreshToken('raw-refresh-token'))
+      .rejects.toBeInstanceOf(ActorAuthenticationError);
+
+    expect(fixture.state().tokens).toHaveLength(2);
+    expect(fixture.state().tokens.every((token) => token.revoked)).toBe(true);
+    expect(fixture.connection.commit).toHaveBeenCalledOnce();
+  });
+
+  it('refresh allows one consumption and rejects a second use while revoking the rotation', async () => {
+    const fixture = refreshFixture();
+
+    const first = await fixture.service.rotateRefreshToken('raw-refresh-token');
+    await expect(fixture.service.rotateRefreshToken('raw-refresh-token'))
+      .rejects.toBeInstanceOf(ActorAuthenticationError);
+
+    expect(first.refreshToken).toMatch(/^[a-f0-9]{96}$/);
+    expect(fixture.state().tokens).toHaveLength(2);
+    expect(fixture.state().tokens.every((token) => token.revoked)).toBe(true);
+  });
+
+  it.each(['insert', 'commit'] as const)(
+    'refresh %s failure rolls back consumption and returns no token',
+    async (failAt) => {
+      const fixture = refreshFixture({ failAt });
+
+      await expect(fixture.service.rotateRefreshToken('raw-refresh-token'))
+        .rejects.toBeInstanceOf(ActorAuthenticationError);
+      expect(fixture.connection.rollback).toHaveBeenCalledOnce();
+      expect(fixture.state().tokens).toHaveLength(1);
+      expect(fixture.state().tokens[0].revoked).toBe(false);
+    },
+  );
+});
+
 describe('actor session revocation', () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -329,6 +547,174 @@ describe('actor session revocation', () => {
     expect(result.success).toBe(true);
     expect(state).toEqual({ roleAssigned: true, sessionVersion: 5, refreshRevoked: true });
     expect(connection.commit).toHaveBeenCalledOnce();
+  });
+
+  it('actor role mutation fails closed when the pool cannot provide a transaction', async () => {
+    const execute = vi.fn().mockResolvedValue([{ affectedRows: 1 }]);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+
+    const result = await new RbacService().assignRoleToUser(7, 2);
+
+    expect(result.success).toBe(false);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('actor password changes bump the session and revoke refresh tokens', async () => {
+    const operations: string[] = [];
+    const connection = {
+      beginTransaction: vi.fn(),
+      execute: vi.fn(async (sql: string) => {
+        if (sql.startsWith('UPDATE users')) operations.push('password+bump');
+        if (sql.startsWith('UPDATE refresh_tokens')) operations.push('revoke');
+        return [{ affectedRows: 1 }];
+      }),
+      commit: vi.fn(async () => { operations.push('commit'); }),
+      rollback: vi.fn(),
+      release: vi.fn(),
+    };
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({
+      getConnection: vi.fn().mockResolvedValue(connection),
+    } as any);
+
+    const result = await authDatabaseService.changePassword(7, 'new-password-123');
+
+    expect(result.success).toBe(true);
+    expect(operations).toEqual(['password+bump', 'revoke', 'commit']);
+  });
+
+  it('actor role revocation bumps the session and revokes refresh tokens', async () => {
+    const operations: string[] = [];
+    const connection = {
+      beginTransaction: vi.fn(),
+      execute: vi.fn(async (sql: string) => {
+        if (sql.startsWith('DELETE FROM user_roles')) operations.push('role');
+        if (sql.startsWith('UPDATE users')) operations.push('bump');
+        if (sql.startsWith('UPDATE refresh_tokens')) operations.push('revoke');
+        return [{ affectedRows: 1 }];
+      }),
+      commit: vi.fn(async () => { operations.push('commit'); }),
+      rollback: vi.fn(),
+      release: vi.fn(),
+    };
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({
+      getConnection: vi.fn().mockResolvedValue(connection),
+    } as any);
+
+    const result = await new RbacService().revokeRoleFromUser(7, 2);
+
+    expect(result.success).toBe(true);
+    expect(operations).toEqual(['role', 'bump', 'revoke', 'commit']);
+  });
+
+  it('actor role deletion bumps and revokes every affected user in one transaction', async () => {
+    const operations: string[] = [];
+    const connection = {
+      beginTransaction: vi.fn(),
+      execute: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT is_system')) return [[{ is_system: false }]];
+        if (sql.includes('SELECT DISTINCT user_id')) return [[{ user_id: 7 }, { user_id: 8 }]];
+        if (sql.startsWith('DELETE FROM roles')) operations.push('delete-role');
+        if (sql.startsWith('UPDATE users')) operations.push('bump-users');
+        if (sql.startsWith('UPDATE refresh_tokens')) operations.push('revoke-users');
+        return [{ affectedRows: 1 }];
+      }),
+      commit: vi.fn(async () => { operations.push('commit'); }),
+      rollback: vi.fn(),
+      release: vi.fn(),
+    };
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({
+      getConnection: vi.fn().mockResolvedValue(connection),
+    } as any);
+
+    const result = await new RbacService().deleteRole(2);
+
+    expect(result.success).toBe(true);
+    expect(operations).toEqual(['delete-role', 'bump-users', 'revoke-users', 'commit']);
+  });
+
+  it('actor role rename bumps and revokes every affected user', async () => {
+    const operations: string[] = [];
+    const connection = {
+      beginTransaction: vi.fn(),
+      execute: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT DISTINCT user_id')) return [[{ user_id: 7 }]];
+        if (sql.startsWith('UPDATE roles')) operations.push('rename');
+        if (sql.startsWith('UPDATE users')) operations.push('bump');
+        if (sql.startsWith('UPDATE refresh_tokens')) operations.push('revoke');
+        return [{ affectedRows: 1 }];
+      }),
+      commit: vi.fn(async () => { operations.push('commit'); }),
+      rollback: vi.fn(),
+      release: vi.fn(),
+    };
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({
+      getConnection: vi.fn().mockResolvedValue(connection),
+    } as any);
+
+    const result = await new RbacService().updateRole(2, { name: 'renamed' });
+
+    expect(result.success).toBe(true);
+    expect(operations).toEqual(['rename', 'bump', 'revoke', 'commit']);
+  });
+
+  it.each([
+    ['assign', 'INSERT IGNORE INTO role_permissions'],
+    ['revoke', 'DELETE FROM role_permissions'],
+  ])('actor role permission %s bumps and revokes assigned users', async (_name, mutationSql) => {
+    const operations: string[] = [];
+    const connection = {
+      beginTransaction: vi.fn(),
+      execute: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT DISTINCT user_id')) return [[{ user_id: 7 }]];
+        if (sql.startsWith(mutationSql)) operations.push('permission');
+        if (sql.startsWith('UPDATE users')) operations.push('bump');
+        if (sql.startsWith('UPDATE refresh_tokens')) operations.push('revoke');
+        return [{ affectedRows: 1 }];
+      }),
+      commit: vi.fn(async () => { operations.push('commit'); }),
+      rollback: vi.fn(),
+      release: vi.fn(),
+    };
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({
+      getConnection: vi.fn().mockResolvedValue(connection),
+    } as any);
+    const service = new RbacService();
+
+    const result = _name === 'assign'
+      ? await service.assignPermissionToRole(2, 3)
+      : await service.revokePermissionFromRole(2, 3);
+
+    expect(result.success).toBe(true);
+    expect(operations).toEqual(['permission', 'bump', 'revoke', 'commit']);
+  });
+
+  it('actor role permission rollback preserves state when revocation fails midway', async () => {
+    let committedPermission = false;
+    let transactionalPermission = false;
+    const connection = {
+      beginTransaction: vi.fn(async () => { transactionalPermission = committedPermission; }),
+      execute: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT DISTINCT user_id')) return [[{ user_id: 7 }]];
+        if (sql.startsWith('INSERT IGNORE INTO role_permissions')) {
+          transactionalPermission = true;
+          return [{ affectedRows: 1 }];
+        }
+        if (sql.startsWith('UPDATE users')) throw new Error('bump failed');
+        throw new Error(`unexpected SQL: ${sql}`);
+      }),
+      commit: vi.fn(async () => { committedPermission = transactionalPermission; }),
+      rollback: vi.fn(async () => { transactionalPermission = committedPermission; }),
+      release: vi.fn(),
+    };
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({
+      getConnection: vi.fn().mockResolvedValue(connection),
+    } as any);
+
+    const result = await new RbacService().assignPermissionToRole(2, 3);
+
+    expect(result.success).toBe(false);
+    expect(committedPermission).toBe(false);
+    expect(connection.rollback).toHaveBeenCalledOnce();
   });
 });
 
