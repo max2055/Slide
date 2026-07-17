@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { latestObservation } from './observation-service.js';
+import { latestObservation, ObservationService } from './observation-service.js';
 import { ResourceService } from './resource-service.js';
 import { CapabilityService } from './capability-service.js';
 import type { ActorContext } from '../auth/actor-context.js';
@@ -9,6 +9,18 @@ describe('Observation freshness', () => {
   it('marks stale and missing values unknown instead of healthy', () => {
     expect(latestObservation({ resource, metricId: 'cpu_usage', value: 10, observedAt: new Date(0), validForMs: 1, now: new Date(2), source: 'collector' })).toMatchObject({ quality: 'unknown', reason: 'stale_observation' });
     expect(latestObservation({ resource, metricId: 'cpu_usage', validForMs: 1, source: 'collector' })).toMatchObject({ quality: 'unknown', reason: 'missing_observation' });
+  });
+
+  it('normalizes instance and server rows with the same freshness semantics', async () => {
+    const service = new ObservationService({
+      latestInstanceMetric: async () => ({ value: 42, observedAt: new Date(100) }),
+      latestServerMetric: async () => ({ value: 42, observedAt: new Date(100) }),
+    });
+    const privileged = actor({}, ['*']);
+    await expect(service.latest(privileged, { type: 'instance', id: 1 }, 'cpu_usage', { now: new Date(101), validForMs: 10 }))
+      .resolves.toMatchObject({ quality: 'good', value: 42 });
+    await expect(service.latest(privileged, { type: 'server', id: 1 }, 'cpu_usage', { now: new Date(111), validForMs: 10 }))
+      .resolves.toMatchObject({ quality: 'unknown', reason: 'stale_observation' });
   });
 });
 

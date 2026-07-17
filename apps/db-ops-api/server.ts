@@ -69,6 +69,7 @@ import { userPreferenceService } from './src/user-preference-service.js';
 import { collectionCapabilityTracker } from './src/collection-capabilities.js';
 import { resourceService } from './src/resources/resource-service.js';
 import { capabilityService } from './src/resources/capability-service.js';
+import { observationService } from './src/resources/observation-service.js';
 import { sqlAuditService } from './src/sql-audit-service.js';
 import { queryAuditLogs, auditLogManager, DatabaseAuditLogStore } from './src/audit/audit-log.js';
 import { sqlExecutor } from './src/sql-executor.js';
@@ -867,6 +868,22 @@ async function start() {
     } catch (error: any) {
       const code = error?.message === 'RESOURCE_FORBIDDEN' ? 404 : error?.message?.startsWith('CAPABILITY_') ? 400 : 500;
       return reply.code(code).send({ error: error?.message || 'Capability update failed' });
+    }
+  });
+
+  fastify.get('/api/resources/:type/:id/observations/:metricId', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { type, id, metricId } = request.params as { type: 'instance' | 'server'; id: string; metricId: string };
+      const { validForMs } = request.query as { validForMs?: string };
+      const validity = validForMs === undefined ? 300_000 : Number(validForMs);
+      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || !metricId || !Number.isFinite(validity) || validity < 1 || validity > 86_400_000) {
+        return reply.code(400).send({ error: 'Invalid observation query' });
+      }
+      const observation = await observationService.latest((request as any).user, { type, id: Number(id) }, metricId, { validForMs: validity });
+      return reply.send({ observation });
+    } catch (error: any) {
+      const code = error?.message === 'RESOURCE_FORBIDDEN' ? 404 : error?.message === 'METRIC_ID_UNSUPPORTED' ? 400 : 500;
+      return reply.code(code).send({ error: error?.message || 'Observation lookup failed' });
     }
   });
 
