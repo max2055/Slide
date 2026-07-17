@@ -882,15 +882,27 @@ async function start() {
   fastify.get('/api/resources/:type/:id/observations/:metricId', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
       const { type, id, metricId } = request.params as { type: 'instance' | 'server'; id: string; metricId: string };
-      const { validForMs } = request.query as { validForMs?: string };
+      const { validForMs, from, to, limit } = request.query as { validForMs?: string; from?: string; to?: string; limit?: string };
       const validity = validForMs === undefined ? 300_000 : Number(validForMs);
       if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || !metricId || !Number.isFinite(validity) || validity < 1 || validity > 86_400_000) {
         return reply.code(400).send({ error: 'Invalid observation query' });
       }
+      if (from !== undefined || to !== undefined || limit !== undefined) {
+        const fromAt = new Date(String(from));
+        const toAt = new Date(String(to));
+        const parsedLimit = limit === undefined ? undefined : Number(limit);
+        if (!from || !to || Number.isNaN(fromAt.getTime()) || Number.isNaN(toAt.getTime()) || (parsedLimit !== undefined && (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 1_000))) {
+          return reply.code(400).send({ error: 'Invalid observation range query' });
+        }
+        const observations = await observationService.range((request as any).user, { type, id: Number(id) }, metricId, {
+          from: fromAt, to: toAt, validForMs: validity, limit: parsedLimit,
+        });
+        return reply.send({ observations });
+      }
       const observation = await observationService.latest((request as any).user, { type, id: Number(id) }, metricId, { validForMs: validity });
       return reply.send({ observation });
     } catch (error: any) {
-      const code = error?.message === 'RESOURCE_FORBIDDEN' ? 404 : error?.message === 'METRIC_ID_UNSUPPORTED' ? 400 : 500;
+      const code = error?.message === 'RESOURCE_FORBIDDEN' ? 404 : error?.message === 'METRIC_ID_UNSUPPORTED' || error?.message === 'OBSERVATION_RANGE_INVALID' ? 400 : 500;
       return reply.code(code).send({ error: error?.message || 'Observation lookup failed' });
     }
   });

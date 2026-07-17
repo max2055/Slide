@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dueMetricIds, recordCollectionResult } from '../src/collection-scheduler.js';
+import { dueMetricIds, dueStoredMetricIds, recordCollectionResult } from '../src/collection-scheduler.js';
 
 describe('due-only collection scheduler', () => {
   const definitions = [
@@ -23,5 +23,12 @@ describe('due-only collection scheduler', () => {
     expect(dueMetricIds(definitions, state, 1)).toContain('cpu_usage');
     recordCollectionResult(state, 'cpu_usage', 1, true);
     expect(dueMetricIds(definitions, state, 30_000)).not.toContain('cpu_usage');
+  });
+
+  it('uses persisted next-due state for each resource/provider/metric tuple', async () => {
+    const calls: unknown[] = [];
+    const store = { list: async () => [{ metricId: 'cpu_usage', nextDueMs: 31_000 }], record: async (...args: unknown[]) => { calls.push(args); } };
+    await expect(dueStoredMetricIds(store, 'instance', 9, 'unified', definitions, 30_000)).resolves.toEqual(['connections', 'disk_usage']);
+    expect(calls).toEqual([]);
   });
 });

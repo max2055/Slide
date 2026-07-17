@@ -14,10 +14,11 @@ import { metricRegistry } from './metric-registry';
 import { collectionCapabilityTracker } from './collection-capabilities';
 import { unifiedCollector } from './collector';
 import serverCollector from './server-collector';
+import { dbConnection } from './db-connection';
+import { dueStoredMetricIds, MysqlCollectionScheduleStore } from './collection-scheduler';
 
 interface InstanceSchedule {
-  lastCollected: number;
-  intervalMs: number;  // 该实例最短的指标间隔
+  lastSuccessByMetric: Map<string, number>;
 }
 
 interface MonitorConfig {
@@ -47,6 +48,7 @@ class MonitorCollector {
       slow_queries: 10,
     },
   };
+  private readonly scheduleStore = new MysqlCollectionScheduleStore(() => dbConnection.getPool() as any);
 
   /**
    * 启动监控采集
@@ -82,7 +84,7 @@ class MonitorCollector {
     console.log('   - 慢查询: 每 5 分钟');
     console.log('   - 容量: 每 1 小时');
     for (const [id, s] of this.schedule) {
-      console.log(`   - 实例 #${id}: 每 ${s.intervalMs / 1000}s`);
+      console.log(`   - 实例 #${id}: ${s.lastSuccessByMetric.size} 个指标已有采集状态`);
     }
   }
 
@@ -110,9 +112,7 @@ class MonitorCollector {
       heartbeatMs: this.config.heartbeatMs,
       schedule: Array.from(this.schedule.entries()).map(([id, s]) => ({
         instanceId: id,
-        intervalMs: s.intervalMs,
-        lastCollected: new Date(s.lastCollected).toISOString(),
-        nextCollect: new Date(s.lastCollected + s.intervalMs).toISOString(),
+        metrics: Array.from(s.lastSuccessByMetric.entries()).map(([metricId, lastSuccess]) => ({ metricId, lastSuccess: new Date(lastSuccess).toISOString() })),
       })),
     };
   }
@@ -131,17 +131,13 @@ class MonitorCollector {
    * 取该实例支持的所有指标中最小 default_interval
    */
   private async _rebuildSchedule() {
-    const metrics = metricRegistry.getAll().filter(m => m.is_collected);
-    const minIntervalMs = metrics.length > 0
-      ? Math.max(15000, Math.min(...metrics.map(m => (m.default_interval ?? 30) * 1000)))
-      : 60000;
     // Rebuild schedule from scratch to prevent stale instance leaks
     const newSchedule = new Map<number, InstanceSchedule>();
     const instances = await instanceDatabaseService.getAllInstances();
     for (const inst of instances) {
       if (inst.status !== 'active') continue;
       const existing = this.schedule.get(inst.id);
-      newSchedule.set(inst.id, existing ?? { lastCollected: 0, intervalMs: minIntervalMs });
+      newSchedule.set(inst.id, existing ?? { lastSuccessByMetric: new Map() });
     }
     this.schedule = newSchedule;
   }
@@ -154,27 +150,21 @@ class MonitorCollector {
     const instances = await instanceDatabaseService.getAllInstances();
     if (instances.length === 0) return;
 
-    const metrics = metricRegistry.getAll().filter(m => m.is_collected);
-    const minInterval = metrics.length > 0
-      ? Math.max(15000, Math.min(...metrics.map(m => (m.default_interval ?? 30) * 1000)))
-      : 60000;
-
     for (const inst of instances) {
       if (inst.status !== 'active') continue;
 
-      let sched = this.schedule.get(inst.id);
-      // 首次遇到该实例：用最小间隔初始化
-      if (!sched) {
-        sched = { lastCollected: 0, intervalMs: minInterval };
-        this.schedule.set(inst.id, sched);
-      }
-
-      if (now >= sched.lastCollected + sched.intervalMs) {
-        await this.collectInstanceMetrics(inst);
-        this.schedule.set(inst.id, {
-          lastCollected: Date.now(),
-          intervalMs: sched.intervalMs,
-        });
+      const definitions = metricRegistry.getByDbType(inst.db_type).filter((metric) => metric.is_collected);
+      const dueIds = await dueStoredMetricIds(this.scheduleStore, 'instance', inst.id, 'unified', definitions, now);
+      const due = definitions.filter((metric) => dueIds.includes(metric.id));
+      if (due.length === 0) continue;
+      const results = await this.collectInstanceMetrics(inst, dueIds);
+      const collectedAt = Date.now();
+      const status = this.schedule.get(inst.id) ?? { lastSuccessByMetric: new Map<string, number>() };
+      this.schedule.set(inst.id, status);
+      for (const metric of due) {
+        const succeeded = Boolean(results[metric.id]);
+        await this.scheduleStore.record('instance', inst.id, 'unified', metric, collectedAt, succeeded);
+        if (succeeded) status.lastSuccessByMetric.set(metric.id, collectedAt);
       }
     }
   }
@@ -182,56 +172,19 @@ class MonitorCollector {
   /**
    * 采集单个实例的指标
    */
-  private async collectInstanceMetrics(instance: any) {
+  private async collectInstanceMetrics(instance: any, dueMetricIds: readonly string[]): Promise<Record<string, boolean>> {
     try {
-      // 通过 UnifiedCollector 调度 Provider 架构采集指标
-      await unifiedCollector.collectInstance(instance);
-      // 仍通过 getRealtimeMetrics 获取最新完整指标用于日志和向后兼容
-      const metrics = await databaseService.getRealtimeMetrics(instance.id);
-      if (metrics) {
-        console.log(`📊 [${instance.name}] CPU: ${metrics.cpu_usage}%, Memory: ${metrics.memory_usage}%, Connections: ${metrics.connections}`);
-      } else {
-        // getRealtimeMetrics 返回 null —— 连接不可用或重连失败
-        // 尝试主动重连
-        console.log(`⚠️ [${instance.name}] 指标采集返回 null，尝试主动重连...`);
-        // 记录采集失败
-        const expectedMetrics = metricRegistry.getAll()
-          .filter((m: any) => m.is_collected && m.db_types.includes(instance.db_type));
-        for (const m of expectedMetrics) {
-          collectionCapabilityTracker.recordMetricAttempt(instance.id, m.name, false);
-        }
-        const reconnected = await this.tryReconnect(instance);
-        if (reconnected) {
-          console.log(`✅ [${instance.name}] 主动重连成功，更新健康状态`);
-          // 重连后立即标记为 healthy（不等待下一个 tick）
-          const healthCheck = await databaseService.checkHealth(instance.id);
-          if (healthCheck) {
-            await instanceDatabaseService.updateHealthStatus(instance.id, healthCheck.health_score, healthCheck.status);
-          } else {
-            await instanceDatabaseService.updateHealthStatus(instance.id, 0, 'critical');
-          }
-          // 尝试重新采集一次
-          const retryMetrics = await databaseService.getRealtimeMetrics(instance.id);
-          if (retryMetrics) {
-            await metricsDatabaseService.recordMetrics({
-              ...retryMetrics,
-              instance_id: instance.id,
-            });
-            console.log(`📊 [${instance.name}] 重连后采集成功：CPU: ${retryMetrics.cpu_usage}%`);
-          }
-        } else {
-          console.error(`❌ [${instance.name}] 主动重连失败`);
-        }
+      const results = await unifiedCollector.collectInstance(instance, dueMetricIds);
+      for (const metricId of dueMetricIds) {
+        collectionCapabilityTracker.recordMetricAttempt(instance.id, metricId, Boolean(results[metricId]));
       }
-      // 无论 metrics 是否成功，都执行健康状态检查
       await this.updateHealthStatusFromCheck(instance.id);
+      return results;
     } catch (error) {
       console.error(`采集实例 ${instance.name} 指标失败:`, error);
       // 记录采集失败
-      const expectedMetrics = metricRegistry.getAll()
-        .filter((m: any) => m.is_collected && m.db_types.includes(instance.db_type));
-      for (const m of expectedMetrics) {
-        collectionCapabilityTracker.recordMetricAttempt(instance.id, m.name, false);
+      for (const metricId of dueMetricIds) {
+        collectionCapabilityTracker.recordMetricAttempt(instance.id, metricId, false);
       }
       // 异常路径：尝试主动重连恢复
       let recoverySucceeded = false;
@@ -261,6 +214,7 @@ class MonitorCollector {
       if (!recoverySucceeded) {
         await instanceDatabaseService.updateHealthStatus(instance.id, 0, 'critical');
       }
+      return Object.fromEntries(dueMetricIds.map((metricId) => [metricId, false]));
     }
   }
 

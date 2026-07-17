@@ -15,14 +15,17 @@ function hasGlobalResourceAccess(actor: ActorContext): boolean {
 }
 
 export function canReadResource(actor: ActorContext, ref: ResourceRef): boolean {
-  return ref.type === 'instance' ? hasGlobalResourceAccess(actor) || Boolean(actor.instanceScopes[ref.id]) : hasGlobalResourceAccess(actor);
+  return ref.type === 'instance'
+    ? hasGlobalResourceAccess(actor) || Boolean(actor.instanceScopes[ref.id])
+    : hasGlobalResourceAccess(actor) || actor.permissions.includes('servers:view');
 }
 
 export function canManageResource(actor: ActorContext, ref: ResourceRef): boolean {
   if (hasGlobalResourceAccess(actor)) return true;
   return ref.type === 'instance'
     && actor.permissions.includes('instance:manage')
-    && (actor.instanceScopes[ref.id] === 'read-write' || actor.instanceScopes[ref.id] === 'admin');
+    && (actor.instanceScopes[ref.id] === 'read-write' || actor.instanceScopes[ref.id] === 'admin')
+    || ref.type === 'server' && actor.permissions.includes('servers:manage');
 }
 
 export class ResourceService {

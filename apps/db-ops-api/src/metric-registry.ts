@@ -36,6 +36,10 @@ export interface MetricDefinition {
 export class MetricRegistry {
   private definitions: Map<string, MetricDefinition>;
 
+  private definitionKey(metric: Pick<MetricDefinition, 'id' | 'target_type'>): string {
+    return `${metric.target_type ?? 'instance'}:${metric.id}`;
+  }
+
   constructor() {
     this.definitions = new Map();
     this.loadPredefinedMetrics();
@@ -57,12 +61,13 @@ export class MetricRegistry {
       // Load DB rows into memory, then fill gaps with predefined defaults
       this.definitions.clear();
       for (const row of rows) {
-        this.definitions.set(row.id, this._rowToDefinition(row));
+        const definition = this._rowToDefinition(row);
+        this.definitions.set(this.definitionKey(definition), definition);
       }
       const predefined = this._getPredefinedMetrics();
       for (const m of predefined) {
-        if (!this.definitions.has(m.id)) {
-          this.definitions.set(m.id, m);
+        if (!this.definitions.has(this.definitionKey(m))) {
+          this.definitions.set(this.definitionKey(m), m);
         }
       }
       console.log(`[MetricRegistry] loaded ${this.definitions.size} definitions (${rows.length} DB + ${this.definitions.size - rows.length} predefined)`);
@@ -466,7 +471,7 @@ export class MetricRegistry {
       },
       // ===== Server OS-level metrics (target_type: 'server') =====
       {
-        id: 'server_cpu_usage',
+        id: 'cpu_usage',
         name: 'CPU 使用率(OS)',
         description: '服务器操作系统级 CPU 使用率',
         unit: '%',
@@ -480,7 +485,7 @@ export class MetricRegistry {
         threshold_template: { warning: 80, error: 90, critical: 95 },
       },
       {
-        id: 'server_memory_usage',
+        id: 'memory_usage',
         name: '内存使用率(OS)',
         description: '服务器操作系统级内存使用率',
         unit: '%',
@@ -494,7 +499,7 @@ export class MetricRegistry {
         threshold_template: { warning: 80, error: 90, critical: 95 },
       },
       {
-        id: 'server_disk_usage',
+        id: 'disk_usage',
         name: '磁盘使用率(OS)',
         description: '服务器磁盘使用率（各挂载点聚合）',
         unit: '%',
@@ -593,7 +598,7 @@ export class MetricRegistry {
   private loadPredefinedMetrics(): void {
     const metrics = this._getPredefinedMetrics();
     for (const metric of metrics) {
-      this.definitions.set(metric.id, metric);
+      this.definitions.set(this.definitionKey(metric), metric);
     }
   }
 
@@ -615,8 +620,8 @@ export class MetricRegistry {
    * @param id 指标 ID
    * @returns MetricDefinition 或 null
    */
-  getById(id: string): MetricDefinition | null {
-    return this.definitions.get(id) ?? null;
+  getById(id: string, targetType: 'instance' | 'server' = 'instance'): MetricDefinition | null {
+    return this.definitions.get(`${targetType}:${id}`) ?? null;
   }
 
   /**
@@ -634,7 +639,7 @@ export class MetricRegistry {
    * @returns 匹配的指标定义列表
    */
   getByDbType(dbType: string): MetricDefinition[] {
-    return this.getAll().filter((m) => m.db_types.includes(dbType));
+    return this.getAll('instance').filter((m) => m.db_types.includes(dbType));
   }
 
   /**
@@ -642,8 +647,8 @@ export class MetricRegistry {
    * @param id 指标 ID
    * @returns 是否存在
    */
-  isValidMetric(id: string): boolean {
-    return this.definitions.has(id);
+  isValidMetric(id: string, targetType: 'instance' | 'server' = 'instance'): boolean {
+    return this.definitions.has(`${targetType}:${id}`);
   }
 
   /**
@@ -651,7 +656,7 @@ export class MetricRegistry {
    * @returns 指标 ID 数组
    */
   getMetricIds(): string[] {
-    return Array.from(this.definitions.keys());
+    return Array.from(this.definitions.values()).map((metric) => metric.id);
   }
 }
 

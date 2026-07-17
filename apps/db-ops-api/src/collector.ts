@@ -36,21 +36,24 @@ class UnifiedCollector {
    * 3) 记录采集结果到 metrics_history
    * 4) 更新采集能力追踪
    */
-  async collectInstance(instance: DatabaseInstance): Promise<void> {
+  async collectInstance(instance: DatabaseInstance, dueMetricIds?: readonly string[]): Promise<Record<string, boolean>> {
     const dbType = instance.db_type;
     const providers = collectorRegistry.getProvidersByDbType(dbType);
-    if (providers.length === 0) return;
+    if (providers.length === 0) return {};
 
     const conn = databaseService.getConnection(instance.id) as DatabaseConnection;
-    if (!conn) return;
+    if (!conn) return {};
 
     // 读取该 db_type 的指标定义
+    const due = dueMetricIds ? new Set(dueMetricIds) : null;
     const definitions = metricRegistry.getByDbType(dbType)
-      .filter((m: MetricDefinition) => m.is_collected);
+      .filter((m: MetricDefinition) => m.is_collected && (!due || due.has(m.id)));
 
     const results: Record<string, number> = {};
+    const scope = `instance:${instance.id}`;
 
     for (const provider of providers) {
+      if (!collectorRegistry.isEnabled(provider.name, scope)) continue;
       let providerSucceeded = false;
 
       for (const def of definitions) {
@@ -61,15 +64,15 @@ class UnifiedCollector {
             providerSucceeded = true;
           }
         } catch (e: any) {
-          const failures = collectorRegistry.recordFailure(provider.name);
+          const failures = collectorRegistry.recordFailure(provider.name, scope);
           console.error(`[Collector] ${provider.name} ${def.id} 采集异常:`, e.message);
           if (failures >= 3) {
-            collectorRegistry.disable(provider.name);
-            console.error(`[Collector] Provider ${provider.name} 连续失败 ${failures} 次，已自动禁用`);
+            collectorRegistry.disable(provider.name, scope);
+            console.error(`[Collector] Provider ${provider.name} 在 ${scope} 连续失败 ${failures} 次，已自动禁用`);
           }
         }
       }
-      if (providerSucceeded) collectorRegistry.resetFailures(provider.name);
+      if (providerSucceeded) collectorRegistry.resetFailures(provider.name, scope);
     }
 
     // 记录到 metrics_history
@@ -105,6 +108,7 @@ class UnifiedCollector {
         );
       }
     }
+    return Object.fromEntries(definitions.map((definition) => [definition.id, results[definition.id] !== undefined]));
   }
 }
 

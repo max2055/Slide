@@ -181,7 +181,7 @@ class ServerCollector {
       }
 
       const now = new Date();
-      const rows: Array<[number, string, number, Date]> = [];
+      const rows: Array<[number, string, Record<string, string> | null, number, Date]> = [];
       let metricsCount = 0;
 
       for (let i = 0; i < metricsToCollect.length; i++) {
@@ -201,8 +201,7 @@ class ServerCollector {
 
             if (isNaN(usagePct)) continue;
 
-            const sanitizedMount = this._sanitizeMountName(mountPoint);
-            rows.push([server.id, `disk_usage_${sanitizedMount}`, usagePct, now]);
+            rows.push([server.id, 'disk_usage', { mount: mountPoint }, usagePct, now]);
             metricsCount++;
           }
           continue;
@@ -212,20 +211,20 @@ class ServerCollector {
         const value = def.parse(stdout);
         if (value === null) continue;
 
-        rows.push([server.id, def.name, value, now]);
+        rows.push([server.id, def.name, null, value, now]);
         metricsCount++;
       }
 
       if (rows.length > 0) {
         // Batch insert
-        const placeholders = rows.map(() => '(?, ?, ?, ?)').join(', ');
+        const placeholders = rows.map(() => '(?, ?, ?, ?, ?)').join(', ');
         const values: any[] = [];
         for (const row of rows) {
-          values.push(row[0], row[1], row[2], row[3]);
+          values.push(row[0], row[1], row[2] ? JSON.stringify(row[2]) : null, row[3], row[4]);
         }
 
         await pool.execute(
-          `INSERT INTO server_metrics (server_id, metric_name, metric_value, recorded_at) VALUES ${placeholders}`,
+          `INSERT INTO server_metrics (server_id, metric_name, dimensions, metric_value, recorded_at) VALUES ${placeholders}`,
           values
         );
       }
@@ -249,15 +248,6 @@ class ServerCollector {
     }
   }
 
-  /**
-   * Sanitize a mount point path for use as a metric name suffix.
-   * Examples: '/' → 'root', '/boot' → 'boot', '/var/log' → 'var_log'
-   */
-  private _sanitizeMountName(mount: string): string {
-    let sanitized = mount.replace(/^\/+/, '').replace(/\/+$/, '');
-    if (sanitized.length === 0) return 'root';
-    return sanitized.replace(/[^a-zA-Z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
-  }
 }
 
 // Singleton

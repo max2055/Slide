@@ -15,12 +15,31 @@ describe('Observation freshness', () => {
     const service = new ObservationService({
       latestInstanceMetric: async () => ({ value: 42, observedAt: new Date(100) }),
       latestServerMetric: async () => ({ value: 42, observedAt: new Date(100) }),
+      rangeInstanceMetric: async () => [],
+      rangeServerMetric: async () => [],
     });
     const privileged = actor({}, ['*']);
     await expect(service.latest(privileged, { type: 'instance', id: 1 }, 'cpu_usage', { now: new Date(101), validForMs: 10 }))
       .resolves.toMatchObject({ quality: 'good', value: 42 });
     await expect(service.latest(privileged, { type: 'server', id: 1 }, 'cpu_usage', { now: new Date(111), validForMs: 10 }))
       .resolves.toMatchObject({ quality: 'unknown', reason: 'stale_observation' });
+  });
+
+  it('keeps disk mount identity in canonical dimensions and bounds range results', async () => {
+    const service = new ObservationService({
+      latestInstanceMetric: async () => null,
+      latestServerMetric: async () => null,
+      rangeInstanceMetric: async () => [],
+      rangeServerMetric: async () => [
+        { metricId: 'disk_usage_/var/lib/mysql', value: 91, observedAt: new Date(100) },
+        { metricId: 'cpu_usage', value: 20, observedAt: new Date(110) },
+      ],
+    });
+    await expect(service.range(actor({}, ['servers:view']), { type: 'server', id: 1 }, 'disk_usage', {
+      from: new Date(0), to: new Date(200), validForMs: 1_000, limit: 1,
+    })).resolves.toEqual([expect.objectContaining({
+      metricId: 'disk_usage', dimensions: { mount: '/var/lib/mysql' }, value: 91,
+    })]);
   });
 });
 
@@ -65,6 +84,16 @@ describe('Resource relations', () => {
       relationType: 'depends_on', provenance: 'manual', validFrom: new Date('invalid'),
     })).rejects.toThrow('RESOURCE_RELATION_WINDOW_INVALID');
     await expect(service.currentRelations(actor({ 1: 'read-only', 2: 'read-only' }), { type: 'instance', id: 1 }, new Date(2))).resolves.toEqual([]);
+  });
+});
+
+describe('Resource authorization', () => {
+  it('requires the established server permission rather than granting all authenticated users server access', () => {
+    expect((new ObservationService({
+      latestInstanceMetric: async () => null, latestServerMetric: async () => null,
+      rangeInstanceMetric: async () => [], rangeServerMetric: async () => [],
+    })).latest(actor({}), { type: 'server', id: 1 }, 'cpu_usage', { validForMs: 1 }))
+      .rejects.toThrow('RESOURCE_FORBIDDEN');
   });
 });
 
