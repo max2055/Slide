@@ -7,33 +7,37 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/db-ops-api
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci
-      - run: npm run typecheck
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter slide-api typecheck
       - name: Run tests
-        run: npx vitest run
+        run: pnpm --filter slide-api test
 
   frontend:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - name: Lint
-        run: npm run lint
+        run: pnpm lint
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: pnpm --filter slide-frontend typecheck
       - name: Run tests
-        run: npx vitest run
+        run: pnpm --filter slide-frontend test
+      - name: Build
+        run: pnpm --filter slide-frontend build
