@@ -55,6 +55,15 @@ describe('ConsistencyChecker', () => {
       expect(result.overall).toBe('critical');
       expect(result.managedAvailability).toMatchObject({ numerator: 1, denominator: 5 });
     });
+
+    it('marks per-resource stale metrics degraded even when the resource is healthy', async () => {
+      mockExecute.mockResolvedValueOnce([[
+        { id: 1, health_status: 'healthy', latest_metric: new Date(Date.now() - 11 * 60_000) },
+      ], []]);
+      const result = await checker.resourceHealthTruth();
+      expect(result.dataFreshness).toMatchObject({ status: 'critical', numerator: 0, denominator: 1 });
+      expect(result.overall).toBe('critical');
+    });
   });
 
   // ── runAllChecks ──────────────────────────────────────
