@@ -174,7 +174,7 @@ describe("AgentRunner timeout layering", () => {
 
     const result = await runner.run(spec);
     expect(result.error).toMatch(/timed out/);
-    expect(result.stopReason).toBe("error");
+    expect(result.stopReason).toBe("timed_out");
     // The finalContent should contain the timeout error
     expect(result.finalContent).toMatch(/timeout|timed out/i);
   });
@@ -208,7 +208,7 @@ describe("AgentRunner timeout layering", () => {
 
     const result = await runner.run(spec);
     expect(result.error).toMatch(/timed out/);
-    expect(result.stopReason).toBe("error");
+    expect(result.stopReason).toBe("timed_out");
   });
 
   it("error kind is 'timeout', not an exception", async () => {
@@ -225,7 +225,7 @@ describe("AgentRunner timeout layering", () => {
       expect.unreachable("Should not throw an exception");
     }
     expect(result!.error).toMatch(/timed out/);
-    expect(result!.stopReason).toBe("error");
+    expect(result!.stopReason).toBe("timed_out");
   });
 
   it("non-streaming fast provider does NOT trigger timeout", async () => {
