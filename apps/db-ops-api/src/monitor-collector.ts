@@ -348,6 +348,8 @@ class MonitorCollector {
       console.error('容量采集失败:', error);
     }
   }
+
+  async collectCapacityNow(): Promise<void> { await this.collectCapacity(); }
 }
 
 // 单例

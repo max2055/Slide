@@ -2,6 +2,7 @@
  * Slide - Database Operations API Server
  */
 import 'dotenv/config';
+import { randomUUID } from 'node:crypto';
 
 // 防止 cron 任务中的未处理异常导致进程退出
 process.on('uncaughtException', (err) => console.error('⚠️ 未捕获异常:', err.message));
@@ -77,6 +78,8 @@ import { classifySql } from './src/sql-validator.js';
 import { PersistentOperationService } from './src/operations/operation-service.js';
 import { MigrationRunner } from './src/migrations/runner.js';
 import { WorkerLease } from './src/lifecycle/worker-lease.js';
+import { JobRegistry } from './src/workflows/job-registry.js';
+import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.js';
 import { approvalService } from './src/approval-service.js';
 import { databaseLogService } from './src/database-log-service.js';
 import * as fs from 'fs/promises';
@@ -107,6 +110,7 @@ const JWT_SECRET = securityConfig.jwtSecret || 'development-only-jwt-secret-not-
 const JWT_EXPIRES_IN = '1h';
 const rbacService = new RbacService();
 const operationService = new PersistentOperationService(() => dbConnection.getPool() as any);
+const workflowWorkerId = randomUUID();
 
 function approvalOperationLifecycle(actorId: number) {
   return {
@@ -4622,6 +4626,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   let cronManager: CronManager | undefined;
   let engine: any;
+  let workflowTimer: ReturnType<typeof setInterval> | undefined;
   const startWorkers = async () => {
   await initializeControlPlane();
   // 初始化 Agent Engine 并启动 WS 传输层
@@ -4632,6 +4637,16 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 从数据库加载指标定义（含 collection_sqls 和 compute_expr）
   await metricRegistry.initialize();
+
+  const workflowStore = new MysqlWorkflowStore(() => dbConnection.getPool() as any);
+  const workflowRegistry = new JobRegistry();
+  workflowRegistry.register('capacity.collect', async () => { await monitorCollector.collectCapacityNow(); });
+  workflowRegistry.register('baseline.cleanup', async () => { await baselineCalculator.cleanupOldBaselines(); });
+  workflowRegistry.register('alert.evaluate', async () => { await alertEngine.triggerEvaluation(); });
+  workflowRegistry.register('report.schedule', async () => { throw new Error('WORKFLOW_HANDLER_NOT_IMPLEMENTED:report.schedule'); });
+  workflowRegistry.register('notification.dispatch', async () => { throw new Error('WORKFLOW_HANDLER_NOT_IMPLEMENTED:notification.dispatch'); });
+  const workflowRuntime = new WorkerRuntime(workflowStore, workflowWorkerId);
+  workflowTimer = setInterval(() => { void workflowRuntime.runOnce((job) => workflowRegistry.execute(job)).catch((error) => console.error('Workflow worker failed:', error)); }, 1_000);
 
   // 启动监控采集
   monitorCollector.start();
@@ -4697,7 +4712,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const cronRunner = new AgentRunner(cronProvider);
   const cronTools = await loadPlatformTools();
   const cronExecutor = new CronExecutor(cronRunner, cronTools, cronProvider);
-  cronManager = new CronManager(cronJobService, cronExecutor);
+  cronManager = new CronManager(cronJobService, cronExecutor, workflowStore);
   await cronManager.start();
 
   // 清理崩溃残留的 running 日志
@@ -5113,6 +5128,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (shuttingDown) return;
       shuttingDown = true;
       clearInterval(heartbeat);
+      if (workflowTimer) clearInterval(workflowTimer);
       monitorCollector.stop();
       alertEngine.stopEvaluationLoop();
       alertEscalationService.stop();
