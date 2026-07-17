@@ -105,6 +105,8 @@ export interface RealtimeMetrics {
   dm_os_memory_usage?: number;            // 操作系统内存使用
   // MySQL 扩增指标
   table_open_cache_hit_rate?: number;
+  buffer_pool_hit_rate?: number;
+  cache_hit_ratio?: number;
   handler_read_rnd_next?: number;
   handler_read_rnd_next_rate?: number;
   key_blocks_usage?: number;
@@ -182,6 +184,7 @@ class DatabaseService {
           pool: null,
           pgClient,
           oracleConnection: null,
+          oraclePool: null,
           dmConnection: null,
           connected: true,
           db_type: 'postgresql',
@@ -200,7 +203,7 @@ class DatabaseService {
         }
         // D-18: NLS_LANG 默认 AMERICAN_AMERICA.AL32UTF8 (oracledb 默认值)
 
-        const pool = await oracledb.createPool({
+        const pool = await (oracledb.createPool({
           user: config.user,
           password: config.password,
           connectString: `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${config.host})(PORT=${config.port}))(CONNECT_DATA=(SERVICE_NAME=${config.database || 'ORCL'})))`,
@@ -209,10 +212,10 @@ class DatabaseService {
           poolMax: 4,
           poolMin: 0,
           poolTimeout: 60,
-          queueRequests: true,
+          queueRequests: 1,
           queueMax: 500,
           queueTimeout: 60000,
-        });
+        }) as unknown as Promise<oracledb.Pool>);
 
         // 获取持久连接（保持向后兼容）
         const connection = await pool.getConnection();
@@ -255,6 +258,7 @@ class DatabaseService {
           pool: null,
           pgClient: null,
           oracleConnection: null,
+          oraclePool: null,
           dmConnection,
           connected: true,
           db_type: 'dameng',
@@ -289,6 +293,7 @@ class DatabaseService {
           pool,
           pgClient: null,
           oracleConnection: null,
+          oraclePool: null,
           dmConnection: null,
           connected: true,
           db_type: 'mysql',
