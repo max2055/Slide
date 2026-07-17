@@ -1330,6 +1330,7 @@ export class SqlConsolePage extends LitElement {
           ${this.approvalResult ? html`
             <div class="approval-notice">
               ⚠ 已提交审批 (ID: ${this.approvalResult.request_id}, 风险: ${this.approvalResult.risk_level})
+              ${this.approvalResult.operationId ? html`<div>Operation: ${this.approvalResult.operationId}</div>` : nothing}
               ${this.approvalResult.ai_recommendation ? ` — AI建议: ${this.approvalResult.ai_recommendation.recommendation}` : ""}
             </div>` : ""}
           ${this.error ? html`<div class="error-box">❌ ${this.error}</div>` : ""}
