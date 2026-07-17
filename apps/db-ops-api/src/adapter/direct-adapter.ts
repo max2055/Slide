@@ -405,7 +405,7 @@ export class DirectAdapter implements IAgentEngine {
               }
               this.sessionSubscribers.get(sessionKey)!.add(ws);
 
-              await this.chat(sessionKey, userMessage, async (event) => {
+              const chatResult = await this.chat(sessionKey, userMessage, async (event) => {
                 // Persist assistant's final response BEFORE sending to client,
                 // so the history API returns the complete conversation.
                 if (event.type === 'complete' && event.finalContent) {
@@ -427,7 +427,12 @@ export class DirectAdapter implements IAgentEngine {
                 }
                 ws.send(JSON.stringify(event));
               }, messageActor);
-              if (persistentRun) await agentRunService.finish(persistentRun.run.id, 'completed');
+              if (persistentRun) {
+                const terminal = chatResult.stopReason === 'completed'
+                  ? 'completed'
+                  : chatResult.stopReason === 'max_iterations' ? 'partial' : 'failed';
+                await agentRunService.finish(persistentRun.run.id, terminal, { stopReason: chatResult.stopReason });
+              }
             } catch (err) {
               const errorMsg = err instanceof Error ? err.message : String(err);
               // A failed chat retains its run record so replay returns the terminal snapshot.
@@ -590,12 +595,12 @@ export class DirectAdapter implements IAgentEngine {
 
       await this.sessionManager.save(session);
 
-      onEvent({
-        type: 'complete',
-        finalContent: cleanContent || undefined,
-        thinkingContent,
-      });
-      return { finalContent: cleanContent || null, usage: result.usage };
+      if (result.stopReason === 'completed') {
+        onEvent({ type: 'complete', finalContent: cleanContent || undefined, thinkingContent });
+      } else {
+        onEvent({ type: 'error', error: result.error || `Agent run ended: ${result.stopReason}` });
+      }
+      return { finalContent: cleanContent || null, usage: result.usage, stopReason: result.stopReason };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       // Checkpoint remains in metadata for next turn to restore

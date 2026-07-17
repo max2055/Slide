@@ -89,6 +89,7 @@ export interface ChatResult {
   finalContent: string | null;
   /** Token usage stats (input/output tokens) */
   usage?: Record<string, number>;
+  stopReason?: string;
 }
 
 // ── Invoke result ──
