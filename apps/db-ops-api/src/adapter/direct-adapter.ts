@@ -141,6 +141,7 @@ export class DirectAdapter implements IAgentEngine {
   private actorContexts: Pick<ActorContextService, 'authenticateAccessToken' | 'revalidateActor'>;
   private heartbeatIntervalMs: number;
   private wsServer: WebSocketServer | null = null;
+  private activeRuns = new Map<string, { actorId: number; sessionId: string; controller: AbortController }>();
   /** Track WebSocket clients subscribed to each session for invoke() broadcast. */
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
 
@@ -392,6 +393,8 @@ export class DirectAdapter implements IAgentEngine {
                 ws.send(JSON.stringify({ type: 'run.snapshot', run: persistentRun.run }));
                 return;
               }
+              const controller = persistentRun ? new AbortController() : undefined;
+              if (persistentRun) this.activeRuns.set(persistentRun.run.id, { actorId: messageActor.userId, sessionId: sessionKey, controller: controller! });
 
               await chatDatabaseService.addMessage(messageActor, sessionKey, {
                 messageId: `msg_${Date.now()}_user`,
@@ -426,12 +429,13 @@ export class DirectAdapter implements IAgentEngine {
                   }
                 }
                 ws.send(JSON.stringify(event));
-              }, messageActor);
+              }, messageActor, controller?.signal);
               if (persistentRun) {
                 const terminal = chatResult.stopReason === 'completed'
                   ? 'completed'
                   : chatResult.stopReason === 'max_iterations' ? 'partial' : 'failed';
                 await agentRunService.finish(persistentRun.run.id, terminal, { stopReason: chatResult.stopReason });
+                this.activeRuns.delete(persistentRun.run.id);
               }
             } catch (err) {
               const errorMsg = err instanceof Error ? err.message : String(err);
@@ -439,10 +443,26 @@ export class DirectAdapter implements IAgentEngine {
               if (persistentRun?.created) {
                 try {
                   await agentRunService.finish(persistentRun.run.id, 'failed', undefined, { message: errorMsg });
+                  this.activeRuns.delete(persistentRun.run.id);
                 } catch { /* preserve the original request failure */ }
               }
               ws.send(JSON.stringify({ type: 'error', error: errorMsg }));
             }
+            break;
+          }
+
+          case 'chat.cancel': {
+            const runId = typeof msg.runId === 'string' ? msg.runId : '';
+            const cancelSession = typeof msg.sessionKey === 'string' ? msg.sessionKey : '';
+            const active = this.activeRuns.get(runId);
+            if (!active || active.actorId !== connectionActor.userId || active.sessionId !== cancelSession) {
+              ws.send(JSON.stringify({ type: 'protocol.error', code: 'RUN_NOT_CANCELLABLE' }));
+              return;
+            }
+            if (await agentRunService.cancelForActor(runId, connectionActor.userId, cancelSession)) {
+              active.controller.abort();
+              ws.send(JSON.stringify({ type: 'run.cancelled', runId, sessionKey: cancelSession }));
+            } else ws.send(JSON.stringify({ type: 'protocol.error', code: 'RUN_NOT_CANCELLABLE' }));
             break;
           }
 
@@ -510,6 +530,7 @@ export class DirectAdapter implements IAgentEngine {
     message: string,
     onEvent: (event: ChatEvent) => void,
     _actor?: ActorContext,
+    signal?: AbortSignal,
   ): Promise<ChatResult> {
     // Get or create session via SessionManager (D-07)
     const session = this.sessionManager.getOrCreate(sessionKey);
@@ -569,6 +590,7 @@ export class DirectAdapter implements IAgentEngine {
         contextWindowTokens: 200_000,
         maxTokens: 4096,
         sessionKey,
+        signal,
       });
 
       // Embed reasoning as <think> tags in the session/DB content string.
