@@ -52,7 +52,7 @@ export class ConsistencyChecker {
     const total = rows.length;
     const available = rows.filter((row: any) => row.health_status === 'healthy').length;
     const fresh = rows.filter((row: any) => row.latest_metric && Date.now() - new Date(row.latest_metric).getTime() <= 10 * 60_000).length;
-    const status = (good: number): import('./health-truth.js').HealthStatus => total === 0 ? 'unknown' : good === total ? 'healthy' : good === 0 ? 'critical' : 'degraded';
+    const status = (good: number): import('./health-truth.js').HealthStatus => total === 0 ? 'unknown' : good === total ? 'healthy' : good / total <= 0.2 ? 'critical' : 'degraded';
     return aggregateHealth({
       controlPlane: { status: 'healthy', numerator: 1, denominator: 1 },
       managedAvailability: { status: status(available), numerator: available, denominator: total },

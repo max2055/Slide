@@ -42,6 +42,21 @@ describe('ConsistencyChecker', () => {
     });
   });
 
+  describe('resourceHealthTruth', () => {
+    it('keeps four unhealthy instances visible in the managed-resource denominator', async () => {
+      mockExecute.mockResolvedValueOnce([[
+        { id: 1, health_status: 'healthy', latest_metric: new Date() },
+        { id: 2, health_status: 'critical', latest_metric: new Date() },
+        { id: 3, health_status: 'critical', latest_metric: new Date() },
+        { id: 4, health_status: 'critical', latest_metric: new Date() },
+        { id: 5, health_status: 'critical', latest_metric: new Date() },
+      ], []]);
+      const result = await checker.resourceHealthTruth();
+      expect(result.overall).toBe('critical');
+      expect(result.managedAvailability).toMatchObject({ numerator: 1, denominator: 5 });
+    });
+  });
+
   // ── runAllChecks ──────────────────────────────────────
 
   describe('runAllChecks', () => {
