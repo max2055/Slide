@@ -83,6 +83,10 @@ export class AgentRunner {
     this.provider = provider;
   }
 
+  getDefaultModel(): string {
+    return this.provider.getDefaultModel();
+  }
+
   // ── Main run loop ──
 
   async run(spec: AgentRunSpec): Promise<AgentRunResult> {

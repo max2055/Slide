@@ -123,7 +123,7 @@ export class SubagentManager {
           { role: 'user', content: run.task },
         ],
         tools: this._buildSubagentTools(),
-        // model omitted — uses provider's getDefaultModel()
+        model: this.agentRunner.getDefaultModel(),
         maxIterations: 200,
         maxToolResultChars: 20000,
         temperature: 0.0,
