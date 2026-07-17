@@ -609,18 +609,10 @@ export class DirectAdapter implements IAgentEngine {
       ];
     }
 
-    // Persist user message to both SessionManager (JSONL) and chatDatabaseService (MySQL)
-    const userMsgId = `msg_${Date.now()}_user`;
+    // invoke() is intentionally detached from a browser ActorContext. It may retain
+    // ephemeral agent state, but must never use a maintenance path to mutate a
+    // user-owned chat session.
     session.addMessage('user', message);
-    try {
-      await chatDatabaseService.addMessageForMaintenance(sessionKey, {
-        messageId: userMsgId,
-        role: 'user',
-        content: message,
-      });
-    } catch (dbErr) {
-      console.error('[DirectAdapter] invoke() failed to persist user message to DB:', dbErr instanceof Error ? dbErr.message : String(dbErr));
-    }
 
     const thinkingHolder: { text: string } = { text: '' };
     const toolCalls: Array<{ name: string; args: any; result?: string; status: string }> = [];
@@ -671,15 +663,6 @@ ${result.finalContent || ''}`
         : (result.finalContent || '');
       if (finalContent) {
         session.addMessage('assistant', finalContent);
-        try {
-          await chatDatabaseService.addMessageForMaintenance(sessionKey, {
-            messageId: `msg_${Date.now()}_asst`,
-            role: 'assistant',
-            content: finalContent,
-          });
-        } catch (dbErr) {
-          console.error('[DirectAdapter] invoke() failed to persist assistant message to DB:', dbErr instanceof Error ? dbErr.message : String(dbErr));
-        }
       }
       await this.sessionManager.save(session);
 
@@ -702,14 +685,6 @@ ${result.finalContent || ''}`
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(`[DirectAdapter] invoke() failed for session ${sessionKey}:`, errorMessage);
-      // Persist error as system message so it's visible in chat
-      try {
-        await chatDatabaseService.addMessageForMaintenance(sessionKey, {
-          messageId: `msg_${Date.now()}_error`,
-          role: 'system',
-          content: `分析失败: ${errorMessage}`,
-        });
-      } catch { /* best-effort */ }
       // Save session even on error so partial state is not lost
       try { await this.sessionManager.save(session); } catch { /* best-effort */ }
       throw err;

@@ -515,6 +515,14 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
           lastActiveSessionKey: nextSessionKey,
         });
       }
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        url.searchParams.set('session', nextSessionKey);
+        window.history.replaceState({}, '', url);
+      }
+      void loadSessions(host as unknown as SessionsState, {
+        activeMinutes: CHAT_SESSIONS_ACTIVE_MINUTES,
+      });
       break;
     }
     case 'thinking_delta':

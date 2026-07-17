@@ -435,6 +435,9 @@ export class ChatDatabaseService {
     sessionId: string,
     maxMessages: number,
   ): Promise<number> {
+    if (!Number.isSafeInteger(maxMessages) || maxMessages < 1 || maxMessages > 10_000) {
+      throw new TypeError('maxMessages must be a positive integer up to 10000');
+    }
     const pool = this.getPool();
     if (!pool.getConnection) throw new Error('Chat transaction support is unavailable');
     const connection = await pool.getConnection();
@@ -459,19 +462,17 @@ export class ChatDatabaseService {
         return 0;
       }
 
-      const [cutoffRows] = await connection.query<RowDataPacket[]>(
-        `SELECT created_at FROM chat_messages
-         WHERE session_id = ? ORDER BY created_at DESC
-         LIMIT 1 OFFSET ?`,
-        [sessionId, maxMessages - 1],
-      );
-      if (!cutoffRows[0]) {
-        await connection.commit();
-        return 0;
-      }
       const [result] = await connection.query<ResultSetHeader>(
-        'DELETE FROM chat_messages WHERE session_id = ? AND created_at < ?',
-        [sessionId, cutoffRows[0].created_at],
+        `DELETE FROM chat_messages
+         WHERE session_id = ? AND id NOT IN (
+           SELECT id FROM (
+             SELECT id FROM chat_messages
+             WHERE session_id = ?
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?
+           ) AS retained_messages
+         )`,
+        [sessionId, sessionId, maxMessages],
       );
       await this.updateSessionStats(connection, sessionId, actor?.userId);
       await connection.commit();

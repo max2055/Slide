@@ -144,4 +144,27 @@ describe('chat REST actor boundary', () => {
     });
     await app.close();
   });
+
+  it('rejects malformed, fractional, and unbounded pagination and cap values', async () => {
+    const registerChatRoutes = await loadRegisterChatRoutes();
+    expect(registerChatRoutes).toBeTypeOf('function');
+    if (!registerChatRoutes) return;
+    const app = Fastify();
+    const deps = routeDependencies();
+    await registerChatRoutes(app, deps);
+
+    for (const limit of ['0', '-1', '1.5', 'NaN', '501']) {
+      expect((await app.inject({
+        method: 'GET', url: `/api/chat/history?sessionKey=owner-session&limit=${limit}`,
+      })).statusCode).toBe(400);
+    }
+    for (const maxMessages of [0, -1, 1.5, 'NaN', 10_001]) {
+      expect((await app.inject({
+        method: 'POST', url: '/api/sessions/owner-session/cap', payload: { maxMessages },
+      })).statusCode).toBe(400);
+    }
+    expect(deps.service.getMessages).not.toHaveBeenCalled();
+    expect(deps.service.enforceMessageCap).not.toHaveBeenCalled();
+    await app.close();
+  });
 });

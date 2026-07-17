@@ -36,6 +36,17 @@ function isNotFound(error: unknown): error is ChatSessionNotFoundError {
   return error instanceof ChatSessionNotFoundError;
 }
 
+const MAX_HISTORY_LIMIT = 500;
+const MAX_SESSION_MESSAGES = 10_000;
+
+function parseBoundedPositiveInteger(value: unknown, maximum: number): number | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const text = String(value).trim();
+  if (!/^[1-9]\d*$/.test(text)) return null;
+  const parsed = Number(text);
+  return Number.isSafeInteger(parsed) && parsed <= maximum ? parsed : null;
+}
+
 export async function registerChatRoutes(
   fastify: FastifyInstance,
   deps: ChatRouteDependencies,
@@ -71,7 +82,8 @@ export async function registerChatRoutes(
     try {
       const { sessionKey, limit: limitText } = request.query as { sessionKey?: string; limit?: string };
       if (!sessionKey) return reply.code(400).send({ error: 'sessionKey parameter is required' });
-      const limit = limitText ? Number.parseInt(limitText, 10) || 200 : 200;
+      const limit = limitText === undefined ? 200 : parseBoundedPositiveInteger(limitText, MAX_HISTORY_LIMIT);
+      if (limit === null) return reply.code(400).send({ error: `limit must be a positive integer up to ${MAX_HISTORY_LIMIT}` });
       const messages = await deps.service.getMessages(
         authenticatedActor(request as any),
         sessionKey,
@@ -162,14 +174,15 @@ export async function registerChatRoutes(
   fastify.post('/api/sessions/:key/cap', { preHandler }, async (request, reply) => {
     try {
       const { key } = request.params as { key: string };
-      const { maxMessages } = request.body as { maxMessages: number };
-      if (!maxMessages || maxMessages < 1) {
-        return reply.code(400).send({ ok: false, error: 'maxMessages must be a positive number' });
+      const { maxMessages } = request.body as { maxMessages?: unknown };
+      const parsedMaxMessages = parseBoundedPositiveInteger(maxMessages, MAX_SESSION_MESSAGES);
+      if (parsedMaxMessages === null) {
+        return reply.code(400).send({ ok: false, error: `maxMessages must be a positive integer up to ${MAX_SESSION_MESSAGES}` });
       }
       const deleted = await deps.service.enforceMessageCap(
         authenticatedActor(request as any),
         key,
-        maxMessages,
+        parsedMaxMessages,
       );
       return reply.send({ ok: true, deleted });
     } catch (error) {
