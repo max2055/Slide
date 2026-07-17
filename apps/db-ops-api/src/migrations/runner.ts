@@ -3,6 +3,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { MigrationConnection, MigrationLedgerEntry, MigrationPool, SqlMigration } from './types.js';
+import { assertSchemaInvariants } from './invariants.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const defaultDirectory = join(here, '../../sql/migrations');
@@ -65,7 +66,10 @@ export class MigrationRunner {
     try {
       const [locks] = await connection.query<Array<{ locked: number }>>('SELECT GET_LOCK(?, 30) AS locked', [lockName]);
       if (Number(locks[0]?.locked) !== 1) throw new MigrationError('Could not acquire migration lock');
-      try { await this.runLocked(connection); }
+      try {
+        await this.runLocked(connection);
+        await assertSchemaInvariants(this.pool);
+      }
       finally { await connection.query('SELECT RELEASE_LOCK(?)', [lockName]); }
     } finally { connection.release(); }
   }
@@ -80,6 +84,7 @@ export class MigrationRunner {
       `SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('users', 'approval_requests', 'operations')`,
     );
     if (tables.length < 3) throw new MigrationError('Schema cannot be baselined: required tables are missing');
+    await assertSchemaInvariants(this.pool);
     for (const migration of migrations) {
       await this.pool.query(
         `INSERT INTO app_schema_migrations (migration_id, checksum, status, finished_at, error)
@@ -95,7 +100,7 @@ export class MigrationRunner {
     const migration = migrations.find((item) => item.id === id);
     if (!migration) throw new MigrationError(`Unknown migration ${id}`);
     const [result] = await this.pool.query<{ affectedRows: number }>(
-      `UPDATE app_schema_migrations SET status = 'repaired', error = ?, finished_at = NOW()
+      `UPDATE app_schema_migrations SET status = 'completed', error = ?, finished_at = NOW()
        WHERE migration_id = ? AND status = 'failed'`,
       [`repair by ${actor}: ${reason}`, id],
     );
@@ -152,7 +157,7 @@ export class MigrationRunner {
     await this.pool.query(`CREATE TABLE IF NOT EXISTS app_schema_migrations (
       migration_id VARCHAR(255) NOT NULL PRIMARY KEY,
       checksum CHAR(64) NOT NULL,
-      status ENUM('running','completed','failed','baselined','repaired') NOT NULL,
+      status ENUM('running','completed','failed','baselined') NOT NULL,
       statement_index INT NULL,
       error TEXT NULL,
       started_at DATETIME NULL,

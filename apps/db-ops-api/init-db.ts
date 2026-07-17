@@ -37,13 +37,21 @@ async function initializeDatabase() {
     await connection.query(`CREATE DATABASE IF NOT EXISTS \`${databaseName}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     await connection.query(`USE \`${databaseName}\``);
 
-    await new MigrationRunner({
+    const runner = new MigrationRunner({
       query: (sql, values) => connection.query(sql, values as any) as any,
       getConnection: async () => ({
         query: (sql, values) => connection.query(sql, values as any) as any,
         release: () => {},
       }),
-    }).run();
+    });
+    const baseline = process.argv.includes('--baseline');
+    if (baseline) {
+      const actor = process.env.MIGRATION_ACTOR || '';
+      const reason = process.env.MIGRATION_REASON || '';
+      await runner.baseline(actor, reason);
+    } else {
+      await runner.run();
+    }
 
     console.log('✅ 数据库 migrations 创建成功');
 

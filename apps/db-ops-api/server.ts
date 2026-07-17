@@ -160,6 +160,9 @@ async function start() {
     console.log('✅ SQL 执行历史持久化存储已就绪');
   }
 
+  // No timers, connection recovery, or provider work may run before the
+  // listener is acquired. A second process must fail without worker effects.
+  const initializeControlPlane = async () => {
   // 加载预定义技能到 skillRegistry
   try {
     const skills = await loadPredefinedSkills();
@@ -225,6 +228,7 @@ async function start() {
   } catch (e: any) {
     console.warn('⚠️ 清理过期 refresh token 失败:', e.message);
   }
+  };
 
   // 注册 CORS
   await fastify.register(cors, {
@@ -4502,6 +4506,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
+  let cronManager: CronManager;
+  const startWorkers = async () => {
+  await initializeControlPlane();
   // 初始化 Agent Engine 并启动 WS 传输层
   console.log('🚀 正在启动 Agent Engine...');
   const engine = await getAgentEngine();
@@ -4575,7 +4582,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const cronRunner = new AgentRunner(cronProvider);
   const cronTools = await loadPlatformTools();
   const cronExecutor = new CronExecutor(cronRunner, cronTools, cronProvider);
-  const cronManager = new CronManager(cronJobService, cronExecutor);
+  cronManager = new CronManager(cronJobService, cronExecutor);
   await cronManager.start();
 
   // 清理崩溃残留的 running 日志
@@ -4606,6 +4613,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (result.affectedRows > 0) console.log(`📊 已标记 ${result.affectedRows} 条历史指标为估算值`);
     }
   } catch (e) { /* 非阻塞 */ }
+
+  };
 
   // ========== Cron 任务管理 API ==========
 
@@ -4976,6 +4985,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // 启动 HTTP API 服务器
   const port = process.env.BACKEND_PORT || process.env.API_PORT || 3000;
   await fastify.listen({ port: Number(port), host: '0.0.0.0' });
+  await startWorkers();
   console.log(`🚀 服务器已启动：http://localhost:${port}`);
 }
 

@@ -15,6 +15,19 @@ class FakePool {
     if (sql.includes('GET_LOCK')) return [[{ locked: this.lockAvailable ? 1 : 0 }]];
     if (sql.includes('RELEASE_LOCK') || sql.startsWith('CREATE TABLE')) return [[{}]];
     if (sql.includes('COUNT(*) AS count') || sql.includes('information_schema.TABLES')) return [[]];
+    if (sql.includes('information_schema.COLUMNS')) return [[
+      ...['id', 'username', 'password_hash', 'session_version'].map((column_name) => ({ table_name: 'users', column_name })),
+      ...['id', 'token_hash', 'user_id', 'session_version', 'revoked'].map((column_name) => ({ table_name: 'refresh_tokens', column_name })),
+      ...['id', 'status', 'operation_id'].map((column_name) => ({ table_name: 'approval_requests', column_name })),
+      ...['id', 'actor_id', 'idempotency_key', 'state', 'correlation_id'].map((column_name) => ({ table_name: 'operations', column_name })),
+      ...['id', 'operation_id', 'to_state', 'reason_code'].map((column_name) => ({ table_name: 'operation_events', column_name })),
+      ...['id', 'session_id', 'granted_by', 'recipient_user_id'].map((column_name) => ({ table_name: 'chat_session_shares', column_name })),
+    ]];
+    if (sql.includes('information_schema.STATISTICS')) return [[
+      { table_name: 'refresh_tokens', index_name: 'idx_rt_user_session' },
+      { table_name: 'operations', index_name: 'uq_operations_actor_idempotency' },
+      { table_name: 'operation_events', index_name: 'idx_operation_events_operation_created' },
+    ]];
     if (sql.startsWith('SELECT migration_id')) return [[this.entries.get(values[0])].filter(Boolean)];
     if (sql.startsWith('INSERT INTO app_schema_migrations')) {
       this.entries.set(values[0], { migration_id: values[0], checksum: values[1], status: sql.includes("'running'") ? 'running' : 'baselined' });
