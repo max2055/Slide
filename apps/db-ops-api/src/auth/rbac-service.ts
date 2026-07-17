@@ -9,7 +9,6 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from '../db-connection.js';
-import { randomBytes, createHash } from 'crypto';
 
 export class RbacService {
   private getPool(): mysql.Pool | null {
@@ -18,6 +17,44 @@ export class RbacService {
 
   private isConnected(): boolean {
     return dbConnection.isConnected();
+  }
+
+  private async mutateUserRoleAndRevokeSessions(
+    pool: mysql.Pool,
+    userId: number,
+    sql: string,
+    values: number[],
+  ): Promise<void> {
+    if (typeof pool.getConnection !== 'function') {
+      await pool.execute(sql, values);
+      return;
+    }
+
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [result] = await connection.execute(sql, values) as any;
+      if (Number(result.affectedRows) > 0) {
+        await connection.execute(
+          'UPDATE users SET session_version = session_version + 1 WHERE id = ?',
+          [userId],
+        );
+        await connection.execute(
+          'UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = ?',
+          [userId],
+        );
+      }
+      await connection.commit();
+    } catch (error) {
+      try {
+        await connection.rollback();
+      } catch {
+        // Preserve the role mutation failure.
+      }
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   // =========================================================================
@@ -383,9 +420,11 @@ export class RbacService {
     }
 
     try {
-      await pool.execute(
+      await this.mutateUserRoleAndRevokeSessions(
+        pool,
+        userId,
         'INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
-        [userId, roleId]
+        [userId, roleId],
       );
       return { success: true };
     } catch (error: any) {
@@ -401,9 +440,11 @@ export class RbacService {
     }
 
     try {
-      await pool.execute(
+      await this.mutateUserRoleAndRevokeSessions(
+        pool,
+        userId,
         'DELETE FROM user_roles WHERE user_id = ? AND role_id = ?',
-        [userId, roleId]
+        [userId, roleId],
       );
       return { success: true };
     } catch (error: any) {
@@ -605,75 +646,8 @@ export class RbacService {
   }
 
   // =========================================================================
-  // Refresh Token methods
+  // Refresh Token maintenance
   // =========================================================================
-
-  async createRefreshToken(userId: number, expiresAt: Date): Promise<{ token: string; hash: string }> {
-    const pool = this.getPool();
-    const token = randomBytes(48).toString('hex');
-    const hash = createHash('sha256').update(token).digest('hex');
-
-    if (pool) {
-      try {
-        await pool.execute(
-          'INSERT INTO refresh_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)',
-          [hash, userId, expiresAt]
-        );
-      } catch (error) {
-        console.error('创建 refresh token 失败:', error);
-      }
-    }
-
-    return { token, hash };
-  }
-
-  async validateRefreshToken(tokenHash: string): Promise<{ id: number; user_id: number; revoked: boolean; expires_at: Date } | null> {
-    const pool = this.getPool();
-    if (!pool) return null;
-
-    try {
-      const [rows] = await pool.execute(
-        'SELECT id, user_id, revoked, expires_at FROM refresh_tokens WHERE token_hash = ?',
-        [tokenHash]
-      ) as any;
-
-      if (Array.isArray(rows) && rows.length > 0) {
-        return rows[0];
-      }
-      return null;
-    } catch (error) {
-      console.error('验证 refresh token 失败:', error);
-      return null;
-    }
-  }
-
-  async revokeRefreshToken(id: number): Promise<void> {
-    const pool = this.getPool();
-    if (!pool) return;
-
-    try {
-      await pool.execute(
-        'UPDATE refresh_tokens SET revoked = TRUE WHERE id = ?',
-        [id]
-      );
-    } catch (error) {
-      console.error('撤销 refresh token 失败:', error);
-    }
-  }
-
-  async revokeAllUserTokens(userId: number): Promise<void> {
-    const pool = this.getPool();
-    if (!pool) return;
-
-    try {
-      await pool.execute(
-        'UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = ?',
-        [userId]
-      );
-    } catch (error) {
-      console.error('撤销用户所有 refresh token 失败:', error);
-    }
-  }
 
   async cleanupExpiredRefreshTokens(): Promise<number> {
     const pool = this.getPool();

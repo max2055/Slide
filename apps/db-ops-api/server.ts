@@ -8,10 +8,11 @@ process.on('uncaughtException', (err) => console.error('⚠️ 未捕获异常:'
 process.on('unhandledRejection', (reason) => console.error('⚠️ 未处理拒绝:', reason));
 
 import Fastify from 'fastify';
-import { randomBytes, createHash } from 'crypto';
-import jwt from 'jsonwebtoken';
+import { randomBytes } from 'crypto';
 import cors from '@fastify/cors';
 import { authDatabaseService } from './src/auth-database-service.js';
+import { createVerifyToken } from './src/auth-middleware.js';
+import { actorContextService, signAccessToken } from './src/auth/actor-context.js';
 import { requirePermission } from './src/auth/require-permission.js';
 import { requireInstanceAccess } from './src/auth/require-instance-access.js';
 import { RbacService } from './src/auth/rbac-service.js';
@@ -92,34 +93,7 @@ const JWT_SECRET = process.env.JWT_SECRET_KEY || randomBytes(32).toString('hex')
 const JWT_EXPIRES_IN = '1h';
 const rbacService = new RbacService();
 
-// JWT 验证中间件
-async function verifyToken(request: any, reply: any) {
-  const authHeader = request.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return reply.code(401).send({ error: '未提供认证令牌' });
-  }
-
-  const token = authHeader.split(' ')[1];
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
-    // 验证用户状态和角色（防止 JWT 在角色/状态变更后仍然有效）
-    try {
-      const currentUser = await authDatabaseService.getUserById(decoded.userId);
-      if (!currentUser) {
-        // 用户不存在、被删除或状态已改为 inactive/locked
-        return reply.code(401).send({ error: '用户已失效，请重新登录' });
-      }
-      // role removed in Phase 84: users.role column dropped by migration
-      (request as any).user = decoded;
-    } catch {
-      // DB 查询失败时降级处理：使用 JWT 中的缓存角色，不影响现有请求
-      console.warn('[auth] 用户状态查询失败，使用 JWT 缓存角色');
-      (request as any).user = decoded;
-    }
-  } catch (err) {
-    return reply.code(401).send({ error: '无效的认证令牌' });
-  }
-}
+const verifyToken = createVerifyToken(JWT_SECRET, actorContextService);
 
 async function start() {
   // 安全检查：ENCRYPTION_KEY 必须配置
@@ -366,28 +340,21 @@ async function start() {
         return reply.code(401).send({ error: '用户名或密码错误' });
       }
 
-      // 生成 JWT 令牌
-      const token = jwt.sign(
-        {
-          userId: user.id,
-          username: user.username,
-          // role removed in Phase 84: users.role column dropped by migration
-        },
-        JWT_SECRET,
-        { expiresIn: JWT_EXPIRES_IN }
+      const actor = await actorContextService.loadActiveActor(
+        user.id,
+        undefined,
+        String(request.id),
       );
-
-      // 生成 refresh token (7天有效期)
-      const rt = await rbacService.createRefreshToken(user.id, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+      const token = signAccessToken(actor, JWT_SECRET, JWT_EXPIRES_IN);
+      const refreshToken = await actorContextService.issueRefreshToken(actor);
 
       reply.send({
         token,
-        refreshToken: rt.token,
+        refreshToken,
         expiresIn: 3600,
         user: {
-          id: user.id,
-          username: user.username,
-          // role removed in Phase 84: users.role column dropped by migration
+          id: actor.userId,
+          username: actor.username,
         },
       });
     } catch (error: any) {
@@ -402,46 +369,20 @@ async function start() {
     const { refreshToken } = request.body as { refreshToken: string };
     if (!refreshToken) return reply.code(400).send({ error: '缺少 refreshToken' });
 
-    const tokenHash = createHash('sha256').update(refreshToken).digest('hex');
-    const stored = await rbacService.validateRefreshToken(tokenHash);
-    if (!stored) return reply.code(401).send({ error: '无效的 refresh token' });
-
-    // Replay detection per D-02: if already revoked, revoke ALL tokens for this user
-    if (stored.revoked) {
-      console.warn('[security] Refresh token replay detected for user', stored.user_id);
-      await rbacService.revokeAllUserTokens(stored.user_id);
-      return reply.code(401).send({ error: 'refresh token 已被使用，请重新登录' });
-    }
-
-    // Check expiry
-    if (new Date(stored.expires_at) < new Date()) {
-      return reply.code(401).send({ error: 'refresh token 已过期，请重新登录' });
-    }
-
-    // Revoke current token (rotation)
-    await rbacService.revokeRefreshToken(stored.id);
-
-    // Fetch user for username claim in JWT
-    let username = String(stored.user_id);
     try {
-      const user = await authDatabaseService.getUserById(stored.user_id);
-      if (user) username = user.username;
-    } catch {}
-
-    // Issue new tokens
-    const newAccessToken = jwt.sign(
-      { userId: stored.user_id, username },
-      JWT_SECRET,
-      { expiresIn: '1h' }
-    );
-
-    const rt = await rbacService.createRefreshToken(stored.user_id, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
-
-    reply.send({
-      token: newAccessToken,
-      refreshToken: rt.token,
-      expiresIn: 3600,
-    });
+      const rotated = await actorContextService.rotateRefreshToken(
+        refreshToken,
+        String(request.id),
+      );
+      const newAccessToken = signAccessToken(rotated.actor, JWT_SECRET, JWT_EXPIRES_IN);
+      reply.send({
+        token: newAccessToken,
+        refreshToken: rotated.refreshToken,
+        expiresIn: 3600,
+      });
+    } catch {
+      reply.code(401).send({ error: '无效的 refresh token' });
+    }
   });
 
   // ========== 权限查询 API ==========
@@ -450,8 +391,7 @@ async function start() {
     try {
       const user = (request as any).user;
       if (!user) return reply.code(401).send({ error: '请先登录' });
-      const permissions = await rbacService.getUserPermissions(user.userId);
-      reply.send(Array.from(permissions));
+      reply.send([...user.permissions]);
     } catch (error: any) {
       console.error('获取权限失败:', error);
       reply.code(500).send({ error: '获取权限失败：' + error.message });

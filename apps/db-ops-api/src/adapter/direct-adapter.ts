@@ -19,7 +19,7 @@
 
 import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import jwt from 'jsonwebtoken';
+import { randomUUID } from 'node:crypto';
 import {
   AgentRunner,
   NoopHook,
@@ -34,6 +34,11 @@ import type { IAgentEngine, ChatEvent, AgentCapabilities, ChatResult, InvokeResu
 import { chatDatabaseService } from '../chat-database-service.js';
 import { SubagentManager } from '../agents/subagent-manager.js';
 import { setSubagentManager } from '../agents/subagent-spawn-tool.js';
+import {
+  actorContextService,
+  type ActorContext,
+  type ActorContextService,
+} from '../auth/actor-context.js';
 
 let _subagentManagerInitialized = false;
 
@@ -114,6 +119,8 @@ export interface DirectAdapterOptions {
   contextBuilder?: ContextBuilder; // optional, created from workspace if not provided
   skillsLoader?: SkillsLoader;     // optional, created from workspace if not provided
   memoryStore?: MemoryStore;       // optional, created from workspace if not provided
+  actorContextService?: Pick<ActorContextService, 'authenticateAccessToken' | 'revalidateActor'>;
+  heartbeatIntervalMs?: number;
 }
 
 // ── DirectAdapter ──
@@ -126,6 +133,8 @@ export class DirectAdapter implements IAgentEngine {
   private contextBuilder: ContextBuilder;
   private skillsLoader: SkillsLoader;
   private memoryStore: MemoryStore;
+  private actorContexts: Pick<ActorContextService, 'authenticateAccessToken' | 'revalidateActor'>;
+  private heartbeatIntervalMs: number;
   private wsServer: WebSocketServer | null = null;
   /** Track WebSocket clients subscribed to each session for invoke() broadcast. */
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
@@ -134,6 +143,8 @@ export class DirectAdapter implements IAgentEngine {
     this.runner = new AgentRunner(opts.llmProvider);
     this.registry = opts.tools;
     this.provider = opts.llmProvider;
+    this.actorContexts = opts.actorContextService || actorContextService;
+    this.heartbeatIntervalMs = opts.heartbeatIntervalMs || 30_000;
 
     const workspace = opts.workspace || process.cwd();
     this.memoryStore = opts.memoryStore || new MemoryStore(workspace);
@@ -195,16 +206,30 @@ export class DirectAdapter implements IAgentEngine {
       console.log('[DirectAdapter] WS client connected');
       (ws as any)._isAlive = true;
 
-      // Heartbeat ping every 30s, terminate if pong not received (WR-07)
-      const heartbeatTimer = setInterval(() => {
+      // Heartbeat and authorization revalidation share the existing 30s cycle.
+      const heartbeatTimer = setInterval(async () => {
         if ((ws as any)._isAlive === false) {
           console.warn('[DirectAdapter] WS heartbeat timeout, terminating connection');
           ws.terminate();
           return;
         }
+
+        const currentActor = (ws as any)._actorContext as ActorContext | undefined;
+        if (currentActor) {
+          try {
+            (ws as any)._actorContext = await this.actorContexts.revalidateActor(
+              currentActor,
+              randomUUID(),
+            );
+          } catch {
+            ws.close(4001, 'Unauthorized');
+            return;
+          }
+        }
+
         (ws as any)._isAlive = false;
         ws.ping();
-      }, 30_000);
+      }, this.heartbeatIntervalMs);
 
       ws.on('pong', () => {
         (ws as any)._isAlive = true;
@@ -237,8 +262,11 @@ export class DirectAdapter implements IAgentEngine {
             return;
           }
           try {
-            const decoded = jwt.verify(token, JWT_SECRET);
-            (ws as any)._authUserId = (decoded as any).userId;
+            (ws as any)._actorContext = await this.actorContexts.authenticateAccessToken(
+              token,
+              JWT_SECRET,
+              randomUUID(),
+            );
             ws.send(JSON.stringify({ type: 'auth_ok' }));
           } catch {
             ws.close(4001, 'Unauthorized');
@@ -247,7 +275,8 @@ export class DirectAdapter implements IAgentEngine {
         }
 
         // D-11: Reject unauthenticated messages before auth
-        if (!(ws as any)._authUserId) {
+        const connectionActor = (ws as any)._actorContext as ActorContext | undefined;
+        if (!connectionActor) {
           ws.close(4002, 'Authenticate first');
           return;
         }
@@ -296,7 +325,6 @@ export class DirectAdapter implements IAgentEngine {
 
             try {
               // Persist user message
-              const userId = (msg as any).userId || 1;
               try {
                 await chatDatabaseService.addMessage(sessionKey, `msg_${Date.now()}_user`, 'user', userMessage, null, null, null, null);
               } catch (dbErr) {
@@ -320,7 +348,7 @@ export class DirectAdapter implements IAgentEngine {
                   }
                 }
                 ws.send(JSON.stringify(event));
-              });
+              }, connectionActor);
             } catch (err) {
               const errorMsg = err instanceof Error ? err.message : String(err);
               ws.send(JSON.stringify({ type: 'error', error: errorMsg }));
@@ -386,6 +414,7 @@ export class DirectAdapter implements IAgentEngine {
     sessionKey: string,
     message: string,
     onEvent: (event: ChatEvent) => void,
+    _actor?: ActorContext,
   ): Promise<ChatResult> {
     // Get or create session via SessionManager (D-07)
     const session = this.sessionManager.getOrCreate(sessionKey);
