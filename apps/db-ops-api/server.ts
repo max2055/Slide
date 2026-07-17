@@ -80,6 +80,7 @@ import { MigrationRunner } from './src/migrations/runner.js';
 import { WorkerLease } from './src/lifecycle/worker-lease.js';
 import { JobRegistry } from './src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.js';
+import { MysqlReportOccurrenceStore, ReportScheduler } from './src/report-scheduler.js';
 import { approvalService } from './src/approval-service.js';
 import { databaseLogService } from './src/database-log-service.js';
 import * as fs from 'fs/promises';
@@ -4643,8 +4644,25 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   workflowRegistry.register('capacity.collect', async () => { await monitorCollector.collectCapacityNow(); });
   workflowRegistry.register('baseline.cleanup', async () => { await baselineCalculator.cleanupOldBaselines(); });
   workflowRegistry.register('alert.evaluate', async () => { await alertEngine.triggerEvaluation(); });
-  workflowRegistry.register('report.schedule', async () => { throw new Error('WORKFLOW_HANDLER_NOT_IMPLEMENTED:report.schedule'); });
-  workflowRegistry.register('notification.dispatch', async () => { throw new Error('WORKFLOW_HANDLER_NOT_IMPLEMENTED:notification.dispatch'); });
+  workflowRegistry.register('report.schedule', async () => {
+    const occurrences = new MysqlReportOccurrenceStore(() => dbConnection.getPool() as any);
+    const scheduler = new ReportScheduler(reportConfigService, occurrences);
+    for (const occurrence of await scheduler.claimDue()) {
+      try {
+        const config = await reportConfigService.getConfigById(occurrence.configId);
+        if (!config) throw new Error('REPORT_CONFIG_NOT_FOUND');
+        const reportId = config.type === 'server_health'
+          ? (await serverReportService.generateAndPersist(config.server_id ? [config.server_id] : undefined)).reportId
+          : (await reportService.generateReport(config.type as any, config.instance_id, { format: config.format as any })).id;
+        if (!reportId) throw new Error('REPORT_GENERATION_FAILED');
+        await occurrences.complete(occurrence, reportId);
+      } catch (error) {
+        await occurrences.fail(occurrence, error instanceof Error ? error : new Error(String(error)));
+        throw error;
+      }
+    }
+  });
+  workflowRegistry.register('notification.dispatch', async () => { await notificationService.pollLoop(); });
   const workflowRuntime = new WorkerRuntime(workflowStore, workflowWorkerId);
   workflowTimer = setInterval(() => { void workflowRuntime.runOnce((job) => workflowRegistry.execute(job)).catch((error) => console.error('Workflow worker failed:', error)); }, 1_000);
 
