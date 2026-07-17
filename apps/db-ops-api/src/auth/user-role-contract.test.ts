@@ -5,7 +5,7 @@
  * These tests catch issues like the Phase 84 partial migration where roles
  * were sent to the wrong API endpoint and silently dropped.
  *
- * Uses mocked pool.execute() — no database connection required.
+ * Uses mocked pool/transaction connections — no database connection required.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { RbacService } from './rbac-service.js';
@@ -32,6 +32,20 @@ function mockPool(responses: Array<[any, any]>) {
   return mockExecute;
 }
 
+function useTransaction(mockExecute: ReturnType<typeof mockPool>) {
+  const connection = {
+    beginTransaction: vi.fn(),
+    execute: mockExecute,
+    commit: vi.fn(),
+    rollback: vi.fn(),
+    release: vi.fn(),
+  };
+  (dbConnection.getPool as any).mockReturnValue({
+    getConnection: vi.fn().mockResolvedValue(connection),
+  });
+  return connection;
+}
+
 describe('User ↔ Role Contract', () => {
   let rbacService: RbacService;
   let mockExec: ReturnType<typeof mockPool>;
@@ -55,8 +69,12 @@ describe('User ↔ Role Contract', () => {
   });
 
   it('should return assigned roles after assignRoleToUser', async () => {
-    // assignRoleToUser: INSERT IGNORE
-    mockExec.mockResolvedValueOnce([{ insertId: 99, affectedRows: 1 }]);
+    // assignRoleToUser: INSERT IGNORE + session bump + refresh revocation
+    mockExec
+      .mockResolvedValueOnce([{ insertId: 99, affectedRows: 1 }])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
+    useTransaction(mockExec);
     const assignResult = await rbacService.assignRoleToUser(42, 3);
     expect(assignResult.success).toBe(true);
 
@@ -92,7 +110,11 @@ describe('User ↔ Role Contract', () => {
   // ─── Scenario 3: Role assignment uses role_id (not user_roles.id) ───
 
   it('revokeRoleFromUser should use role_id in WHERE clause', async () => {
-    mockExec.mockResolvedValueOnce([{ affectedRows: 1 }]);
+    mockExec
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
+    useTransaction(mockExec);
     await rbacService.revokeRoleFromUser(42, 3);
 
     // Verify the SQL uses role_id (the second parameter), not user_roles.id
