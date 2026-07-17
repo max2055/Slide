@@ -8,7 +8,6 @@ process.on('uncaughtException', (err) => console.error('⚠️ 未捕获异常:'
 process.on('unhandledRejection', (reason) => console.error('⚠️ 未处理拒绝:', reason));
 
 import Fastify from 'fastify';
-import { randomBytes } from 'crypto';
 import cors from '@fastify/cors';
 import { authDatabaseService } from './src/auth-database-service.js';
 import { createVerifyToken } from './src/auth-middleware.js';
@@ -31,6 +30,8 @@ import { metricsDatabaseService } from './src/metrics-database-service.js';
 import { databaseService } from './src/database-service.js';
 import { llmService } from './src/llm-service.js';
 import { dbConnection } from './src/db-connection.js';
+import { loadSecurityConfig } from './src/config/security-config.js';
+import { publicInstanceDto, publicNotificationDto, publicServerDto } from './src/security/public-dto.js';
 import { monitorCollector } from './src/monitor-collector.js';
 import { chatDatabaseService } from './src/chat-database-service.js';
 import { handleChatSend } from './src/chat-handler.js';
@@ -95,20 +96,14 @@ const fastify = Fastify({
 });
 
 // JWT 密钥
-const JWT_SECRET = process.env.JWT_SECRET_KEY || randomBytes(32).toString('hex');
+const securityConfig = loadSecurityConfig();
+const JWT_SECRET = securityConfig.jwtSecret || 'development-only-jwt-secret-not-for-production';
 const JWT_EXPIRES_IN = '1h';
 const rbacService = new RbacService();
 
 const verifyToken = createVerifyToken(JWT_SECRET, actorContextService);
 
 async function start() {
-  // 安全检查：ENCRYPTION_KEY 必须配置
-  if (!process.env.ENCRYPTION_KEY || process.env.ENCRYPTION_KEY.length < 32) {
-    console.warn('⚠  ENCRYPTION_KEY 未设置或长度不足 32 字符');
-    console.warn('   请在 .env 中添加：ENCRYPTION_KEY=your-random-key-at-least-32-chars');
-    console.warn('   已加密的数据库密码仍可用旧默认值解密，但新加密数据不安全。');
-  }
-
   // 初始化数据库连接
   console.log('🔄 正在初始化数据库连接...');
   const dbInitialized = await dbConnection.initialize();
@@ -553,7 +548,7 @@ async function start() {
   fastify.get('/api/database/instances', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
       const instances = await instanceDatabaseService.getAllInstances();
-      reply.send(instances);
+      reply.send(instances.map((instance) => publicInstanceDto(instance as unknown as Record<string, unknown>)));
     } catch (error: any) {
       reply.code(500).send({ error: '获取实例列表失败：' + error.message });
     }
@@ -1009,7 +1004,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (!instance) {
         return reply.code(404).send({ error: '实例不存在' });
       }
-      reply.send(instance);
+      reply.send(publicInstanceDto(instance as unknown as Record<string, unknown>));
     } catch (error: any) {
       reply.code(500).send({ error: '获取实例详情失败：' + error.message });
     }
@@ -1104,9 +1099,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.get('/api/servers', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
     try {
       const servers = await serverDatabaseService.getAllServers();
-      // Strip credential_encrypted from list response — never send encrypted blob to frontend
-      const safeServers = servers.map(({ credential_encrypted, ...rest }: any) => rest);
-      reply.send(safeServers);
+      reply.send(servers.map((server) => publicServerDto(server as unknown as Record<string, unknown>)));
     } catch (error: any) {
       reply.code(500).send({ error: '获取服务器列表失败：' + error.message });
     }
@@ -1129,7 +1122,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       } catch {
         // If decryption fails, skip — frontend will show empty username field
       }
-      reply.send(safeServer);
+      reply.send(publicServerDto({ ...safeServer, credential_encrypted }));
     } catch (error: any) {
       reply.code(500).send({ error: '获取服务器详情失败：' + error.message });
     }
@@ -2768,7 +2761,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { enabled } = request.query as { enabled?: 'true' | 'false' };
         const enabledFilter = enabled === 'true' ? true : enabled === 'false' ? false : undefined;
         const channels = await notificationDatabaseService.getChannels(enabledFilter);
-        reply.send(channels);
+        reply.send(channels.map((channel) => publicNotificationDto(channel as unknown as Record<string, unknown>)));
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
