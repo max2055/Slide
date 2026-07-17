@@ -53,6 +53,7 @@ class ApprovalService {
     sql_text: string;
     submitted_by?: number;
     target_database?: string;
+    operation_id?: string;
   }): Promise<{
     request_id?: number;
     risk_level: string;
@@ -60,7 +61,7 @@ class ApprovalService {
     requires_approval: boolean;
     auto_approved?: boolean;
   }> {
-    const { instance_id, sql_text, submitted_by, target_database } = data;
+    const { instance_id, sql_text, submitted_by, target_database, operation_id } = data;
     const sqlHash = crypto.createHash('md5').update(sql_text).digest('hex');
     const isDangerous = isHighRisk(sql_text);
 
@@ -98,9 +99,9 @@ class ApprovalService {
     if (!pool) return { requires_approval: true, risk_level: riskLevel, ai_recommendation: aiRecommendation };
 
     const [result] = await pool.execute(
-      `INSERT INTO approval_requests (instance_id, sql_text, sql_hash, risk_level, ai_recommendation, status, submitted_by, target_database)
-       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
-      [instance_id, sql_text, sqlHash, riskLevel, aiRecommendation ? JSON.stringify(aiRecommendation) : null, submitted_by || null, target_database || null]
+      `INSERT INTO approval_requests (instance_id, sql_text, sql_hash, risk_level, ai_recommendation, status, submitted_by, target_database, operation_id)
+       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      [instance_id, sql_text, sqlHash, riskLevel, aiRecommendation ? JSON.stringify(aiRecommendation) : null, submitted_by || null, target_database || null, operation_id ?? null]
     ) as any;
 
     const requestId = (result as any).insertId;

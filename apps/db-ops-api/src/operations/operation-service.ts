@@ -122,6 +122,12 @@ export class PersistentOperationService {
     } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
   }
 
+  async setApproval(id: string, approvalId: number): Promise<void> {
+    const pool = this.poolProvider();
+    if (!pool) throw new Error('Operation database unavailable');
+    await pool.query('UPDATE operations SET approval_id = ? WHERE id = ?', [approvalId, id]);
+  }
+
   private async append(connection: QueryExecutor, id: string, fromState: OperationState | null, toState: OperationState, reasonCode: string, actorId?: number, metadata?: Record<string, unknown>): Promise<void> {
     await connection.query(
       `INSERT INTO operation_events (operation_id, from_state, to_state, reason_code, actor_id, metadata) VALUES (?, ?, ?, ?, ?, ?)`,

@@ -137,6 +137,8 @@ async function start() {
       '018_add_execution_trace.sql',
       '021_add_server_alert_fields.sql',
       '022_unified_observability.sql',
+      '025_security_actor_context.sql',
+      '026_operations.sql',
     ]) {
       try {
         const fs = await import('fs');
@@ -1480,13 +1482,34 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { instance_id, sql_text, database_name } = check.body;
       if (!instance_id || !sql_text) return reply.code(400).send({ error: '缺少参数' });
       const user = (request as any).user;
-      const result = await approvalService.submitForApproval({
-        instance_id: Number(instance_id),
-        sql_text,
-        submitted_by: user?.userId,
-        target_database: database_name,
+      const targetInstanceId = Number(instance_id);
+      const canAccess = user.permissions?.includes?.('*') || user.permissions?.includes?.('instance:*') || user.instanceScopes?.[targetInstanceId];
+      if (!canAccess) return reply.code(403).send({ error: '无权访问该实例' });
+      const classification = classifySql(String(sql_text));
+      if (classification.commandType === 'read') {
+        return reply.code(400).send({ reasonCode: 'READ_DOES_NOT_REQUIRE_APPROVAL', executeUrl: `/api/database/instances/${targetInstanceId}/execute` });
+      }
+      const rawIdempotency = request.headers['idempotency-key'];
+      const operation = await operationService.create({
+        actorId: user.userId,
+        origin: 'sql-approval',
+        resource: { type: 'database-instance', id: String(targetInstanceId) },
+        commandType: classification.commandType,
+        risk: classification.commandType === 'ddl' ? 'high' : 'medium',
+        idempotencyKey: typeof rawIdempotency === 'string' && rawIdempotency.length <= 128 ? rawIdempotency : user.requestId,
+        correlationId: user.requestId,
       });
-      reply.send(result);
+      if (operation.state !== 'queued') return reply.code(409).send({ reasonCode: 'OPERATION_ALREADY_EXISTS', operationId: operation.id, state: operation.state });
+      const result = await approvalService.submitForApproval({
+        instance_id: targetInstanceId,
+        sql_text: String(sql_text),
+        submitted_by: user.userId,
+        target_database: typeof database_name === 'string' ? database_name : undefined,
+        operation_id: operation.id,
+      });
+      if (result.request_id) await operationService.setApproval(operation.id, result.request_id);
+      await operationService.transition(operation.id, 'waiting_approval', 'NEEDS_APPROVAL', user.userId, { approvalRequestId: result.request_id ?? null, commandType: classification.commandType });
+      reply.send({ ...result, operationId: operation.id, correlationId: user.requestId });
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
     }

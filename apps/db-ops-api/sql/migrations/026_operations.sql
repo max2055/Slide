@@ -37,3 +37,10 @@ CREATE TABLE IF NOT EXISTS operation_events (
   KEY idx_operation_events_operation_created (operation_id, created_at, id),
   CONSTRAINT fk_operation_events_operation FOREIGN KEY (operation_id) REFERENCES operations(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+SET @approval_operation_col_exists = (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'approval_requests' AND COLUMN_NAME = 'operation_id');
+SET @approval_operation_sql = IF(@approval_operation_col_exists = 0,
+  'ALTER TABLE approval_requests ADD COLUMN operation_id CHAR(36) NULL, ADD KEY idx_approval_operation (operation_id)',
+  'SELECT 1');
+PREPARE approval_operation_stmt FROM @approval_operation_sql; EXECUTE approval_operation_stmt; DEALLOCATE PREPARE approval_operation_stmt;
