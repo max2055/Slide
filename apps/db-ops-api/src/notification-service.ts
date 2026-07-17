@@ -4,11 +4,11 @@
  */
 import { CronJob } from 'cron';
 import * as crypto from 'crypto';
-import * as net from 'net';
-import * as dns from 'dns';
+import * as https from 'node:https';
 import { notificationDatabaseService } from './notification-database-service';
 import type { PendingAlert, NotificationChannel } from './notification-database-service';
 import { maintenanceWindowService } from './maintenance-window-service';
+import { resolveOutboundTarget, OutboundPolicyError } from './security/outbound-policy.js';
 
 class NotificationService {
   private pollingJob: CronJob | null = null;
@@ -337,80 +337,6 @@ class NotificationService {
   }
 
   /**
-   * 验证 Webhook URL 防止 SSRF
-   */
-  private async validateWebhookUrl(urlStr: string): Promise<boolean> {
-    try {
-      const url = new URL(urlStr);
-      const hostname = url.hostname.toLowerCase();
-
-      // 屏蔽已知内网主机名模式
-      if (hostname === 'localhost' || hostname === '::1' ||
-          hostname.endsWith('.internal') || hostname.endsWith('.local') ||
-          hostname.endsWith('.localhost')) {
-        return false;
-      }
-
-      // 标准 IP 检测（net.isIP 识别 dotted-quad 和 IPv6 格式）
-      if (net.isIP(hostname) !== 0) {
-        if (this._isReservedIp(hostname)) return false;
-      } else {
-        // 展开数值/短格式 IP 表示（如 2130706433, 0x7f000001, 127.1）
-        const expanded = this._expandNumericIp(hostname);
-        if (expanded) {
-          if (this._isReservedIp(expanded)) return false;
-        } else {
-          // DNS 主机名 — 解析并检查是否指向内网
-          try {
-            const addresses = await dns.promises.resolve4(hostname);
-            for (const addr of addresses) {
-              if (this._isReservedIp(addr)) return false;
-            }
-          } catch {
-            /* DNS 解析失败不做拦截 */
-          }
-        }
-      }
-
-      return true;
-    } catch { return false; }
-  }
-
-  /** 将数值/短格式 IP 展开为 dotted-quad 表示法 */
-  private _expandNumericIp(hostname: string): string | null {
-    // 十进制：2130706433 -> 127.0.0.1
-    if (/^\d{1,10}$/.test(hostname)) {
-      const num = Number(hostname);
-      if (num >= 0 && num <= 0xFFFFFFFF && Number.isSafeInteger(num)) {
-        return `${(num >>> 24) & 255}.${(num >>> 16) & 255}.${(num >>> 8) & 255}.${num & 255}`;
-      }
-    }
-    // 十六进制：0x7f000001 -> 127.0.0.1
-    if (/^0x[0-9a-f]{1,8}$/i.test(hostname)) {
-      const num = parseInt(hostname, 16);
-      if (num >= 0 && num <= 0xFFFFFFFF) {
-        return `${(num >>> 24) & 255}.${(num >>> 16) & 255}.${(num >>> 8) & 255}.${num & 255}`;
-      }
-    }
-    // 短格式：127.1 -> 127.0.0.1
-    if (/^\d{1,3}\.\d{1,3}$/.test(hostname)) {
-      const [a, b] = hostname.split('.').map(Number);
-      if (a >= 0 && a <= 255 && b >= 0 && b <= 255) {
-        return `${a}.0.0.${b}`;
-      }
-    }
-    return null;
-  }
-
-  /** 检查 IP 地址是否属于私有/保留地址段 */
-  private _isReservedIp(ip: string): boolean {
-    // 去除 IPv6 映射 IPv4 前缀
-    const clean = ip.replace(/^::ffff:/, '');
-    if (clean === '::1') return true;
-    return /^(0$|0\.|127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|169\.254\.)/.test(clean);
-  }
-
-  /**
    * 发送通知
    */
   async send(channel: NotificationChannel, message: any): Promise<{ success: boolean; error?: string }> {
@@ -419,24 +345,21 @@ class NotificationService {
       return { success: false, error: '渠道未配置 webhook_url' };
     }
 
-    if (!(await this.validateWebhookUrl(webhookUrl))) {
-      return { success: false, error: 'Webhook URL 指向内网地址，已拦截' };
-    }
-
     try {
+      const target = await resolveOutboundTarget(webhookUrl);
       const url = this.buildSignedUrl(webhookUrl, channel.config?.secret);
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(message),
-      });
+      const response = await this.postJsonToVerifiedTarget(url, target.addresses, message);
 
-      if (!response.ok) {
-        const text = await response.text();
-        return { success: false, error: `HTTP ${response.status}: ${text}` };
+      if (response.statusCode >= 300 && response.statusCode < 400) {
+        return { success: false, error: 'OUTBOUND_REDIRECT_DENIED' };
       }
 
-      const result = await response.json();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return { success: false, error: `OUTBOUND_HTTP_${response.statusCode}` };
+      }
+
+      let result: any = {};
+      try { result = response.body ? JSON.parse(response.body) : {}; } catch { result = {}; }
       // 检查各平台的错误码
       if (result.errcode !== undefined && result.errcode !== 0) {
         return { success: false, error: result.errmsg || `平台错误码: ${result.errcode}` };
@@ -447,8 +370,33 @@ class NotificationService {
 
       return { success: true };
     } catch (error: any) {
-      return { success: false, error: error.message };
+      if (error instanceof OutboundPolicyError) return { success: false, error: error.reasonCode };
+      return { success: false, error: 'OUTBOUND_REQUEST_FAILED' };
     }
+  }
+
+  /** Pin requests to validated DNS results while retaining TLS hostname verification. */
+  private postJsonToVerifiedTarget(urlText: string, addresses: string[], message: unknown): Promise<{ statusCode: number; body: string }> {
+    const url = new URL(urlText);
+    const payload = JSON.stringify(message);
+    const address = addresses[0];
+    return new Promise((resolve, reject) => {
+      const request = https.request({
+        protocol: 'https:', hostname: url.hostname, port: 443,
+        path: `${url.pathname}${url.search}`, method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+        servername: url.hostname, rejectUnauthorized: true,
+        lookup: (_hostname, _options, callback) => callback(null, address, address.includes(':') ? 6 : 4),
+      }, (response) => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => { body += chunk; });
+        response.on('end', () => resolve({ statusCode: response.statusCode ?? 0, body }));
+      });
+      request.setTimeout(10_000, () => request.destroy(new Error('OUTBOUND_TIMEOUT')));
+      request.once('error', reject);
+      request.end(payload);
+    });
   }
 
   /**
