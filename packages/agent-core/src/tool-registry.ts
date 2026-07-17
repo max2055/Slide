@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url';
 import type {
   JsonSchemaProperty as JSP,
   Tool,
+  ToolExecutionContext,
   ToolRegistry as IToolRegistry,
   ToolSchema,
 } from "./types.js";
@@ -101,14 +102,14 @@ export class ToolRegistry implements IToolRegistry {
     return { tool, params: castParams, error: null };
   }
 
-  async execute(name: string, params: Record<string, unknown>): Promise<unknown> {
+  async execute(name: string, params: Record<string, unknown>, context?: ToolExecutionContext): Promise<unknown> {
     const HINT = "\n\n[Analyze the error above and try a different approach.]";
     const { tool, params: castParams, error } = this.prepareCall(name, params);
 
     if (error) return error + HINT;
 
     try {
-      const result = await tool!.execute(castParams);
+      const result = await tool!.execute(castParams, context);
       if (typeof result === "string" && result.startsWith("Error")) {
         return result + HINT;
       }
@@ -372,4 +373,3 @@ function isToolLike(obj: unknown): boolean {
   const t = obj as Record<string, unknown>;
   return typeof t['name'] === 'string' && typeof t['execute'] === 'function';
 }
-

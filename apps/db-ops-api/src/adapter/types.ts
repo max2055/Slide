@@ -59,6 +59,10 @@ export interface ErrorEvent {
   error: string;
 }
 
+export interface CancelledEvent {
+  type: 'cancelled';
+}
+
 export type ChatEvent =
   | TextDeltaEvent
   | ToolStartEvent
@@ -67,6 +71,7 @@ export type ChatEvent =
   | ThinkingDeltaEvent
   | ThinkingEndEvent
   | CompleteEvent
+  | CancelledEvent
   | ErrorEvent;
 
 // ── Adapter capabilities ──

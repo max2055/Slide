@@ -111,7 +111,10 @@ describe('109-04: DirectGatewayClient', () => {
 
     await client.request('chat.send', { sessionKey: '', message: 'hello' });
 
-    expect(socket.frames.at(-1)).toEqual({ type: 'chat.send', message: 'hello' });
+    expect(socket.frames.at(-1)).toEqual(expect.objectContaining({
+      type: 'chat.send', protocolVersion: 2, message: 'hello',
+      messageId: expect.any(String), idempotencyKey: expect.any(String),
+    }));
   });
 
   it('forwards session.created as a first-class adapter event', () => {
@@ -126,6 +129,17 @@ describe('109-04: DirectGatewayClient', () => {
     socket.receive(created);
 
     expect(onEvent).toHaveBeenCalledWith(created);
+  });
+
+  it('forwards an explicit cancelled terminal event', () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    const cancelled = { type: 'cancelled', runId: 'run-1', sessionKey: 'session-1' };
+
+    socket.receive(cancelled);
+
+    expect(onEvent).toHaveBeenCalledWith(cancelled);
   });
 
   it('adopts the server session key without resetting the active run and uses it next', async () => {
@@ -158,11 +172,10 @@ describe('109-04: DirectGatewayClient', () => {
       sessionKey: 'server-session',
       lastActiveSessionKey: 'server-session',
     }));
-    expect(socket.frames.at(-1)).toEqual({
-      type: 'chat.send',
-      sessionKey: 'server-session',
-      message: 'follow-up',
-    });
+    expect(socket.frames.at(-1)).toEqual(expect.objectContaining({
+      type: 'chat.send', protocolVersion: 2, sessionKey: 'server-session', message: 'follow-up',
+      messageId: expect.any(String), idempotencyKey: expect.any(String),
+    }));
   });
 });
 

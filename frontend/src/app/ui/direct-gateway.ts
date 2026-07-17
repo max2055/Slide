@@ -18,6 +18,7 @@ export type AdapterToolErrorEvent = { type: 'tool_error'; toolName: string; erro
 export type AdapterThinkingDeltaEvent = { type: 'thinking_delta'; delta: string };
 export type AdapterThinkingEndEvent = { type: 'thinking_end' };
 export type AdapterCompleteEvent = { type: 'complete'; finalContent?: string; thinkingContent?: string };
+export type AdapterCancelledEvent = { type: 'cancelled'; runId?: string; sessionKey?: string };
 export type AdapterErrorEvent = { type: 'error'; error: string };
 export type AdapterSessionCreatedEvent = { type: 'session.created'; sessionKey: string };
 
@@ -31,6 +32,7 @@ export type AdapterChatEvent =
   | AdapterThinkingDeltaEvent
   | AdapterThinkingEndEvent
   | AdapterCompleteEvent
+  | AdapterCancelledEvent
   | AdapterErrorEvent;
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'auth_failed' | 'exhausted';
@@ -311,6 +313,7 @@ export class DirectGatewayClient {
       case 'tool_result':
       case 'tool_error':
       case 'complete':
+      case 'cancelled':
       case 'error':
         this.onEvent(data as AdapterChatEvent);
         break;
@@ -415,6 +418,12 @@ function mapAdapterChatEventToPayload(
         message: { role: 'assistant', content },
       };
     }
+    case 'cancelled':
+      return {
+        runId: event.runId ?? runId ?? '',
+        sessionKey: event.sessionKey ?? sessionKey,
+        state: 'aborted',
+      };
     case 'error':
       return {
         runId: runId ?? '',
@@ -545,6 +554,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
       break;
     case 'text_delta':
     case 'complete':
+    case 'cancelled':
     case 'error': {
       const payload = mapAdapterChatEventToPayload(event, runId, sessionKey);
       if (payload) {

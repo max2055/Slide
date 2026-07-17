@@ -428,12 +428,18 @@ export class DirectAdapter implements IAgentEngine {
                     console.error('[DirectAdapter] Failed to persist assistant message:', dbErr instanceof Error ? dbErr.message : String(dbErr));
                   }
                 }
-                ws.send(JSON.stringify(event));
+                ws.send(JSON.stringify({
+                  ...event,
+                  ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
+                }));
               }, messageActor, controller?.signal);
               if (persistentRun) {
                 const terminal = chatResult.stopReason === 'completed'
                   ? 'completed'
-                  : chatResult.stopReason === 'max_iterations' ? 'partial' : 'failed';
+                  : chatResult.stopReason === 'max_iterations' ? 'partial'
+                  : chatResult.stopReason === 'cancelled' ? 'cancelled'
+                  : chatResult.stopReason === 'timed_out' ? 'timed_out'
+                  : 'failed';
                 await agentRunService.finish(persistentRun.run.id, terminal, { stopReason: chatResult.stopReason });
                 this.activeRuns.delete(persistentRun.run.id);
               }
@@ -461,8 +467,6 @@ export class DirectAdapter implements IAgentEngine {
             }
             if (await agentRunService.cancelForActor(runId, connectionActor.userId, cancelSession)) {
               active.controller.abort();
-              ws.send(JSON.stringify({ type: 'run.cancelled', runId, sessionKey: cancelSession }));
-              ws.send(JSON.stringify({ type: 'error', error: 'Cancelled' }));
             } else ws.send(JSON.stringify({ type: 'protocol.error', code: 'RUN_NOT_CANCELLABLE' }));
             break;
           }
@@ -620,6 +624,8 @@ export class DirectAdapter implements IAgentEngine {
 
       if (result.stopReason === 'completed') {
         onEvent({ type: 'complete', finalContent: cleanContent || undefined, thinkingContent });
+      } else if (result.stopReason === 'cancelled') {
+        onEvent({ type: 'cancelled' });
       } else {
         onEvent({ type: 'error', error: result.error || `Agent run ended: ${result.stopReason}` });
       }

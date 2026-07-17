@@ -509,7 +509,15 @@ export class AgentRunner {
     }
 
     try {
-      const result = await spec.tools.execute(toolCall.name, toolCall.arguments);
+      if (spec.signal?.aborted) {
+        const error = new Error('Tool execution cancelled');
+        return {
+          result: `Error: ${error.message}`,
+          event: { name: toolCall.name, status: 'error', detail: error.message },
+          error,
+        };
+      }
+      const result = await spec.tools.execute(toolCall.name, toolCall.arguments, { signal: spec.signal });
       const detail = result === undefined || result === null
         ? "(empty)"
         : String(result).replace(/\n/g, " ").trim().slice(0, 120);

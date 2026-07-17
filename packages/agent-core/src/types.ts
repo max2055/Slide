@@ -202,7 +202,7 @@ export interface ToolRegistry {
   get(name: string): Tool | undefined;
   has(name: string): boolean;
   getDefinitions(): ToolSchema[];
-  execute(name: string, params: Record<string, unknown>): Promise<unknown>;
+  execute(name: string, params: Record<string, unknown>, context?: ToolExecutionContext): Promise<unknown>;
   readonly toolNames: string[];
 }
 
@@ -216,6 +216,10 @@ export interface RuntimeCheckpoint {
 
 // ── Tool interface ──
 
+export interface ToolExecutionContext {
+  signal?: AbortSignal;
+}
+
 export interface Tool {
   readonly name: string;
   readonly description: string;
@@ -225,6 +229,6 @@ export interface Tool {
   readonly exclusive: boolean;
   /** Tool scopes for auto-discovery filtering. Default ["core"]. "subagent" scope allows use in subagents. Mirrors nanobot's _scopes. */
   readonly scope?: string[];
-  execute(params: Record<string, unknown>): Promise<unknown>;
+  execute(params: Record<string, unknown>, context?: ToolExecutionContext): Promise<unknown>;
   castParams?(params: Record<string, unknown>): Record<string, unknown>;
 }
