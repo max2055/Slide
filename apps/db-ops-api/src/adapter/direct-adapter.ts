@@ -40,6 +40,7 @@ import {
   type ActorContextService,
 } from '../auth/actor-context.js';
 import { validateChatSendV2 } from './protocol-v2.js';
+import { agentRunService } from './agent-run-service.js';
 
 let _subagentManagerInitialized = false;
 
@@ -342,10 +343,6 @@ export class DirectAdapter implements IAgentEngine {
           return;
         }
 
-        // Per-connection idempotency tracking to prevent duplicate messages (WR-04)
-        const seenIdempotencyKeys = new Set<string>();
-        const IDEMPOTENCY_CACHE_SIZE = 100;
-
         switch (msg.type) {
           case 'chat.send': {
             if ((msg as any).protocolVersion === 2) {
@@ -375,20 +372,10 @@ export class DirectAdapter implements IAgentEngine {
               return;
             }
 
-            // Deduplicate via idempotencyKey (WR-04)
             const idempotencyKey = msg.idempotencyKey as string | undefined;
-            if (idempotencyKey) {
-              if (seenIdempotencyKeys.has(idempotencyKey)) {
-                // Already processed, skip silently
-                return;
-              }
-              seenIdempotencyKeys.add(idempotencyKey);
-              if (seenIdempotencyKeys.size > IDEMPOTENCY_CACHE_SIZE) {
-                const first = seenIdempotencyKeys.values().next().value;
-                if (first !== undefined) seenIdempotencyKeys.delete(first);
-              }
-            }
+            const messageId = msg.messageId as string | undefined;
 
+            let persistentRun: { run: { id: string }; created: boolean } | undefined;
             try {
               if (!sessionKey) {
                 const created = await chatDatabaseService.createSession(messageActor, { title: '新会话' });
@@ -396,6 +383,14 @@ export class DirectAdapter implements IAgentEngine {
                 ws.send(JSON.stringify({ type: 'session.created', sessionKey }));
               } else {
                 await chatDatabaseService.authorizeSession(messageActor, sessionKey, 'append');
+              }
+
+              persistentRun = idempotencyKey && messageId
+                ? await agentRunService.claim(messageActor.userId, sessionKey, messageId, idempotencyKey)
+                : undefined;
+              if (persistentRun && !persistentRun.created) {
+                ws.send(JSON.stringify({ type: 'run.snapshot', run: persistentRun.run }));
+                return;
               }
 
               await chatDatabaseService.addMessage(messageActor, sessionKey, {
@@ -432,8 +427,15 @@ export class DirectAdapter implements IAgentEngine {
                 }
                 ws.send(JSON.stringify(event));
               }, messageActor);
+              if (persistentRun) await agentRunService.finish(persistentRun.run.id, 'completed');
             } catch (err) {
               const errorMsg = err instanceof Error ? err.message : String(err);
+              // A failed chat retains its run record so replay returns the terminal snapshot.
+              if (persistentRun?.created) {
+                try {
+                  await agentRunService.finish(persistentRun.run.id, 'failed', undefined, { message: errorMsg });
+                } catch { /* preserve the original request failure */ }
+              }
               ws.send(JSON.stringify({ type: 'error', error: errorMsg }));
             }
             break;
