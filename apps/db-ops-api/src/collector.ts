@@ -51,13 +51,14 @@ class UnifiedCollector {
     const results: Record<string, number> = {};
 
     for (const provider of providers) {
-      if (!provider.enabled) continue;
+      let providerSucceeded = false;
 
       for (const def of definitions) {
         try {
           const val = await provider.collect(conn, def);
           if (val !== null) {
             results[def.id] = val;
+            providerSucceeded = true;
           }
         } catch (e: any) {
           const failures = collectorRegistry.recordFailure(provider.name);
@@ -68,6 +69,7 @@ class UnifiedCollector {
           }
         }
       }
+      if (providerSucceeded) collectorRegistry.resetFailures(provider.name);
     }
 
     // 记录到 metrics_history
