@@ -60,7 +60,7 @@ export class DirectGatewayClient {
   private maxReconnectAttempts = MAX_RECONNECT_ATTEMPTS;
   private closed = false;
   private authenticated = false;
-  private pendingMessages: Array<{ sessionKey?: string; message: string }> = [];
+  private pendingMessages: Array<{ sessionKey?: string; message: string; messageId: string; idempotencyKey: string }> = [];
 
   constructor(opts: DirectGatewayClientOptions) {
     this.url = opts.url ?? `ws://${typeof location !== 'undefined' ? location.hostname : 'localhost'}:${DEFAULT_PORT}`;
@@ -235,16 +235,17 @@ export class DirectGatewayClient {
   }
 
   sendChat(sessionKey: string | undefined, message: string): void {
+    const frame = this.chatSendFrame(sessionKey, message);
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.warn('[DirectGatewayClient] cannot sendChat: not connected');
       return;
     }
     // Queue messages until auth_ok is received to avoid race condition
     if (!this.authenticated) {
-      this.pendingMessages.push({ sessionKey, message });
+      this.pendingMessages.push(frame as { sessionKey?: string; message: string; messageId: string; idempotencyKey: string });
       return;
     }
-    this.ws.send(JSON.stringify(this.chatSendFrame(sessionKey, message)));
+    this.ws.send(JSON.stringify(frame));
   }
 
   cancelChat(runId: string, sessionKey: string): void {
@@ -295,7 +296,7 @@ export class DirectGatewayClient {
       const pending = this.pendingMessages;
       this.pendingMessages = [];
       for (const pendingMsg of pending) {
-        this.ws?.send(JSON.stringify(this.chatSendFrame(pendingMsg.sessionKey, pendingMsg.message)));
+        this.ws?.send(JSON.stringify(pendingMsg));
       }
       return;
     }
