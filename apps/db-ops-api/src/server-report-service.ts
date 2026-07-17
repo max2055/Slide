@@ -80,14 +80,15 @@ class ServerReportService {
   /**
    * Generate a health report for all servers with their latest metrics.
    */
-  async generateReport(): Promise<ReportData> {
+  async generateReport(serverIds?: readonly number[]): Promise<ReportData> {
     const pool = dbConnection.getPool();
     if (!pool) {
       throw new Error('数据库未连接');
     }
 
-    // Get all servers
-    const servers = await serverDatabaseService.getAllServers();
+    // Enforce the configured target set before querying or rendering.
+    const requested = serverIds ? new Set(serverIds) : null;
+    const servers = (await serverDatabaseService.getAllServers()).filter((server) => !requested || requested.has(server.id));
 
     // Fetch latest metrics per server
     const serverEntries: ServerReportEntry[] = [];
@@ -95,7 +96,7 @@ class ServerReportService {
     for (const server of servers) {
       // Get latest metric values
       const [rows] = await pool.execute(
-        `SELECT sm.server_id, sm.metric_name, sm.metric_value, sm.recorded_at
+        `SELECT sm.server_id, sm.metric_name, sm.dimensions, sm.metric_value, sm.recorded_at
          FROM server_metrics sm
          INNER JOIN (
            SELECT metric_name, MAX(recorded_at) AS max_time
@@ -122,9 +123,10 @@ class ServerReportService {
           metrics.memory_usage = value;
         } else if (name === 'load_1min') {
           metrics.load_1min = value;
-        } else if (name.startsWith('disk_usage_')) {
+        } else if (name === 'disk_usage' || name.startsWith('disk_usage_')) {
+          const dimensions = typeof row.dimensions === 'string' ? JSON.parse(row.dimensions) : row.dimensions;
           diskMetrics.push({
-            mount: name.replace('disk_usage_', ''),
+            mount: dimensions?.mount || name.replace('disk_usage_', ''),
             value,
           });
         }
@@ -203,7 +205,7 @@ class ServerReportService {
    */
   async generateAndPersist(serverIds?: number[]): Promise<{ success: boolean; reportId?: number; error?: string }> {
     try {
-      const reportData = await this.generateReport();
+      const reportData = await this.generateReport(serverIds);
       const htmlContent = this.generateHtml(reportData);
 
       const report = await reportDatabaseService.createReport({
