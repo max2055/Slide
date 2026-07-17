@@ -211,8 +211,8 @@ class SchemaDatabaseService {
             table_name: latestRow.table_name,
             column_name: latestRow.column_name,
             details: {
-              column_type: { new: latestRow.column_type },
-              column_key: { new: latestRow.column_key },
+              column_type: { old: null, new: latestRow.column_type },
+              column_key: { old: null, new: latestRow.column_key },
             },
             detected_at: detectedAt,
           });

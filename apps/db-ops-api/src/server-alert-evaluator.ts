@@ -61,7 +61,7 @@ class ServerAlertEvaluator {
         return; // No server rules configured
       }
 
-      const serverRules = rules as ServerAlertRuleRaw[];
+      const serverRules = rules as unknown as ServerAlertRuleRaw[];
 
       // 2. Get all collection-enabled servers
       const servers = await serverDatabaseService.getCollectionEnabledServers();
