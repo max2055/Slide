@@ -31,7 +31,7 @@ class AlertEventService {
     offset?: number;
   }): Promise<{ items: any[]; total: number }> {
     const pool = this.getPool();
-    if (!pool) return [];
+    if (!pool) return { items: [], total: 0 };
 
     try {
       let sql = `

@@ -199,6 +199,8 @@ export interface RoleToolPolicy {
   policy: ToolPolicy;
   /** 危险操作审批要求 */
   requiresApprovalFor?: string[];
+  /** Product-level access tier used by the authorization UI and policy registry. */
+  permissionLevel?: 'read' | 'write' | 'admin' | 'audit';
 }
 
 // ============== 技能相关类型（为阶段二准备） ==============

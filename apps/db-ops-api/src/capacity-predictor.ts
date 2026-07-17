@@ -201,6 +201,7 @@ class CapacityPredictor {
           saturation_threshold: SATURATION_THRESHOLDS[metric] ?? null,
           warning: `预测失败: ${err.message}`,
           data_points_used: 0,
+          effective_lookback_days: 0,
         });
       }
     }
