@@ -26,6 +26,13 @@ interface ApprovalRequest {
   updated_at: string;
 }
 
+interface ApprovalLifecycle {
+  onClaimed?(request: ApprovalRequest): Promise<void>;
+  onExecutionStarted?(request: ApprovalRequest): Promise<void>;
+  onCompleted?(request: ApprovalRequest, result: { success: boolean; error?: string }, executed: boolean): Promise<void>;
+  onRejected?(requestId: number): Promise<void>;
+}
+
 const HIGH_RISK_PATTERNS = [
   /\bDROP\b/i,
   /\bTRUNCATE\b/i,
@@ -137,7 +144,7 @@ class ApprovalService {
     reviewed_by?: number;
     notes?: string;
     execute_after_approve?: boolean;
-  }): Promise<{ success: boolean; error?: string; execution_result?: any }> {
+  }, lifecycle?: ApprovalLifecycle): Promise<{ success: boolean; error?: string; execution_result?: any }> {
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 
@@ -148,6 +155,7 @@ class ApprovalService {
       ) as any;
       if (result.affectedRows === 0) return { success: false, error: '审批请求不存在或已处理' };
       await this.writeEvent(requestId, 'rejected', { notes: review.notes }, review.reviewed_by);
+      await lifecycle?.onRejected?.(requestId);
       return { success: true };
     }
 
@@ -165,10 +173,21 @@ class ApprovalService {
     ) as any;
     if (claim.affectedRows === 0) return { success: false, error: '审批请求不存在或已被认领' };
     await this.writeEvent(requestId, 'claimed', { execute_after_approve: review.execute_after_approve !== false }, review.reviewed_by);
+    try {
+      await lifecycle?.onClaimed?.(req);
+    } catch (error: any) {
+      const message = error instanceof Error ? error.message : 'Operation lifecycle claim failed';
+      await pool.execute(
+        'UPDATE approval_requests SET status = ?, execution_result = ? WHERE id = ? AND status = ?',
+        ['execution_failed', JSON.stringify({ error: message }), requestId, 'executing'],
+      );
+      await this.writeEvent(requestId, 'execution_failed', { error: message, stage: 'operation_claim' }, review.reviewed_by);
+      return { success: false, error: message };
+    }
 
     let execResult = null;
     if (review.execute_after_approve !== false) {
-      // 先执行 SQL，再根据执行结果设置状态，避免状态不一致窗口
+      await lifecycle?.onExecutionStarted?.(req);
       execResult = await sqlExecutor.executeSql(req.instance_id, req.sql_text, {
         userId: String(review.reviewed_by || ''),
         username: 'dba-approver',
@@ -197,6 +216,7 @@ class ApprovalService {
     }
 
     const success = execResult ? execResult.success : true;
+    await lifecycle?.onCompleted?.(req, { success, error: execResult?.error }, review.execute_after_approve !== false);
     return { success, execution_result: execResult };
   }
 
@@ -279,7 +299,7 @@ class ApprovalService {
     items: Array<{ id: number; action: 'approve' | 'reject'; execute_after_approve: boolean }>;
     reviewed_by: number;
     notes: string;
-  }): Promise<Array<{ id: number; success: boolean; error?: string; execution_result?: any }>> {
+  }, lifecycleFactory?: (item: { id: number; action: 'approve' | 'reject'; execute_after_approve: boolean }) => ApprovalLifecycle): Promise<Array<{ id: number; success: boolean; error?: string; execution_result?: any }>> {
     const results: Array<{ id: number; success: boolean; error?: string; execution_result?: any }> = [];
     for (const item of data.items) {
       try {
@@ -288,7 +308,7 @@ class ApprovalService {
           reviewed_by: data.reviewed_by,
           notes: data.notes,
           execute_after_approve: item.execute_after_approve,
-        });
+        }, lifecycleFactory?.(item));
         results.push({ id: item.id, ...result });
       } catch (e: any) {
         results.push({ id: item.id, success: false, error: e.message });

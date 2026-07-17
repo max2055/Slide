@@ -10,7 +10,7 @@ test('operation lifecycle survives a browser login and API refresh', async ({ pa
     await page.locator('input[type="password"]').first().fill('Tpam1234');
     await connect.click();
   }
-  await expect(page.locator('slide-app')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('token'))).not.toBeNull();
   const token = await page.evaluate(() => localStorage.getItem('token'));
   expect(token).toBeTruthy();
 

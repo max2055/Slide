@@ -110,6 +110,23 @@ describe('ApprovalService', () => {
   });
 
   describe('reviewRequest - event writing', () => {
+    it('advances the operation lifecycle before invoking the SQL driver', async () => {
+      mockPool.execute
+        .mockResolvedValueOnce([[{ id: 1, instance_id: 1, sql_text: 'UPDATE x SET y = 1', status: 'pending', operation_id: 'operation-1' }]] as any)
+        .mockResolvedValue([{}, null] as any);
+      (sqlExecutor.executeSql as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+      const steps: string[] = [];
+
+      await approvalService.reviewRequest(1, { action: 'approve', reviewed_by: 2 }, {
+        onClaimed: async () => { steps.push('claimed'); },
+        onExecutionStarted: async () => { steps.push('running'); },
+        onCompleted: async () => { steps.push('completed'); },
+      });
+
+      expect(steps).toEqual(['claimed', 'running', 'completed']);
+      expect(sqlExecutor.executeSql).toHaveBeenCalled();
+    });
+
     it('rejects a competing claim before calling the SQL driver', async () => {
       mockPool.execute
         .mockResolvedValueOnce([[{ id: 1, instance_id: 1, sql_text: 'UPDATE x SET y = 1', status: 'pending' }]] as any)
