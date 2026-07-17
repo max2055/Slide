@@ -9,6 +9,9 @@ import { ToolRegistry } from '@slide/agent-core';
 import type { Tool } from '@slide/agent-core';
 import type { IAgentEngine } from './types.js';
 import { DirectAdapter } from './direct-adapter.js';
+import type { ActorContext } from '../auth/actor-context.js';
+import type { AnyAgentTool } from '../tools/types.js';
+import { executeToolWithPolicy } from '../tools/policy.js';
 
 let directEngine: IAgentEngine | null = null;
 
@@ -16,6 +19,7 @@ let directEngine: IAgentEngine | null = null;
 
 let toolsLoaded = false;
 let platformToolRegistry: ToolRegistry | null = null;
+let platformTools: AnyAgentTool[] = [];
 
 /**
  * Load Slide platform tools from catalog.ts into a ToolRegistry.
@@ -50,6 +54,7 @@ export async function loadPlatformTools(): Promise<ToolRegistry> {
     // Collect all AnyAgentTool-formatted tools: catalog + subagent tools
     const { getSubagentTools } = await import('../agents/subagent-spawn-tool.js');
     const allTools = [...toolCatalog.getAll(), ...getSubagentTools()];
+    platformTools = allTools;
     let registeredCount = 0;
 
     for (const anyTool of allTools) {
@@ -84,6 +89,32 @@ export async function loadPlatformTools(): Promise<ToolRegistry> {
 
   platformToolRegistry = registry;
   toolsLoaded = true;
+  return registry;
+}
+
+function actorBoundRegistry(actor: ActorContext): ToolRegistry {
+  const registry = new ToolRegistry();
+  for (const anyTool of platformTools) {
+    // Delegation inherits no ActorContext in the current subagent transport.
+    // Do not expose a route that could re-enter the unbound parent registry.
+    if (anyTool.name === 'spawn_subagent' || anyTool.name === 'access_subagent') continue;
+    registry.register({
+      name: anyTool.name,
+      description: anyTool.description,
+      parameters: anyTool.parameters as Tool['parameters'],
+      readOnly: Boolean(anyTool.readOnly),
+      concurrencySafe: !anyTool.ownerOnly,
+      exclusive: false,
+      scope: anyTool.scope,
+      execute: async (params: Record<string, unknown>) => {
+        const { decision, result } = await executeToolWithPolicy(actor, anyTool, params);
+        if (!decision.allow) return { ...result, policyDecision: decision };
+        return result && typeof result === 'object' && 'data' in result
+          ? (result as { data?: unknown }).data ?? result
+          : result;
+      },
+    });
+  }
   return registry;
 }
 
@@ -137,6 +168,7 @@ async function createDirectAdapter(): Promise<DirectAdapter> {
 
   const adapter = new DirectAdapter({
     tools,
+    toolsForActor: actorBoundRegistry,
     llmProvider: provider,
   });
 

@@ -113,6 +113,8 @@ function normalizeThinkingLevel(level?: string): string | undefined {
 
 export interface DirectAdapterOptions {
   tools: ToolRegistry;
+  /** Builds an actor-bound registry so LLM calls cannot supply their own identity. */
+  toolsForActor?: (actor: ActorContext) => ToolRegistry;
   llmProvider: import('@slide/agent-core').LLMProvider;
   workspace?: string;              // workspace root path (defaults to process.cwd())
   sessionManager?: SessionManager; // optional, created from workspace if not provided
@@ -128,6 +130,7 @@ export interface DirectAdapterOptions {
 export class DirectAdapter implements IAgentEngine {
   private runner: AgentRunner;
   private registry: ToolRegistry;
+  private toolsForActor?: (actor: ActorContext) => ToolRegistry;
   private provider: import('@slide/agent-core').LLMProvider;
   private sessionManager: SessionManager;
   private contextBuilder: ContextBuilder;
@@ -142,6 +145,7 @@ export class DirectAdapter implements IAgentEngine {
   constructor(opts: DirectAdapterOptions) {
     this.runner = new AgentRunner(opts.llmProvider);
     this.registry = opts.tools;
+    this.toolsForActor = opts.toolsForActor;
     this.provider = opts.llmProvider;
     this.actorContexts = opts.actorContextService || actorContextService;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs || 30_000;
@@ -536,7 +540,7 @@ export class DirectAdapter implements IAgentEngine {
     try {
       const result = await this.runner.run({
         initialMessages: contextMessages as Message[],
-        tools: this.registry,
+        tools: _actor && this.toolsForActor ? this.toolsForActor(_actor) : new ToolRegistry(),
         model: sessModel || this.provider.getDefaultModel(),
         maxIterations: 200,
         maxToolResultChars: 20000,
@@ -644,7 +648,9 @@ export class DirectAdapter implements IAgentEngine {
     try {
       const result = await this.runner.run({
         initialMessages: messages,
-        tools: this.registry,
+        // Background invoke has no authenticated ActorContext; running tools here
+        // would let a scheduler or prompt select an authority implicitly.
+        tools: new ToolRegistry(),
         model: this.provider.getDefaultModel(),
         maxIterations: 200,
         maxToolResultChars: 20000,
