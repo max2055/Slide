@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { OutboxService } from './outbox-service.js';
-import { WorkerRuntime, type ClaimedJob, type WorkflowStore } from './worker-runtime.js';
+import { MysqlWorkflowStore, WorkerRuntime, type ClaimedJob, type WorkflowStore } from './worker-runtime.js';
 
 describe('outbox transaction and dedupe', () => {
   it('rolls back an event with its business transaction and commits only once', async () => {
@@ -8,6 +8,18 @@ describe('outbox transaction and dedupe', () => {
     const service = new OutboxService({ getConnection: async () => connection });
     await expect(service.transaction(async (_connection, append) => { await append({ eventType: 'report.ready', schemaVersion: 1, aggregateType: 'report', aggregateId: '1', aggregateVersion: 1, payload: {}, idempotencyKey: 'report:1' }); throw new Error('rollback'); })).rejects.toThrow('rollback');
     expect(calls).toEqual(['begin', 'event', 'rollback', 'release']);
+  });
+});
+
+describe('mysql workflow store', () => {
+  it('uses unique idempotency keys and fencing predicates in persistent transitions', async () => {
+    const statements: Array<{ sql: string; values?: unknown[] }> = [];
+    const store = new MysqlWorkflowStore(() => ({ execute: async (sql, values) => { statements.push({ sql, values }); return [{ affectedRows: 0 } as any]; } }));
+    await store.enqueue({ id: 'job-1', type: 'report.generate', schemaVersion: 1, payload: {}, idempotencyKey: 'occurrence:1' });
+    expect(statements[0].sql).toContain('ON DUPLICATE KEY UPDATE');
+    await expect(store.complete('job-1', 'worker-a', 2)).resolves.toBe(false);
+    expect(statements[1].sql).toContain('fencing_token = ?');
+    expect(statements[1].sql).toContain('lease_expires_at > NOW()');
   });
 });
 
