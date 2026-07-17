@@ -87,7 +87,7 @@ import { getAgentEngine, createLLMProvider, loadPlatformTools } from './src/adap
 import { DirectAdapter } from './src/adapter/direct-adapter.js';
 import { AgentRunner } from '@slide/agent-core';
 import { agentManagementService } from './src/agent-management-service.js';
-import { startSessionCleanup } from './src/session-cleanup.js';
+import { startSessionCleanup, stopSessionCleanup } from './src/session-cleanup.js';
 import { loadPredefinedSkills, skillRegistry } from './src/skills/loader.js';
 import { promptManager } from './src/prompts/prompt-manager.js';
 import { serverDatabaseService } from './src/server-database-service.js';
@@ -4507,12 +4507,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  let cronManager: CronManager;
+  let cronManager: CronManager | undefined;
+  let engine: any;
   const startWorkers = async () => {
   await initializeControlPlane();
   // 初始化 Agent Engine 并启动 WS 传输层
   console.log('🚀 正在启动 Agent Engine...');
-  const engine = await getAgentEngine();
+  engine = await getAgentEngine();
   await engine.start();
   console.log('🔌 Agent Engine 已启动: DirectAdapter');
 
@@ -4679,7 +4680,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           retry_count: body.retry_count,
         });
 
-        await cronManager.reload();
+        await cronManager!.reload();
         reply.code(201).send({ id, message: '创建成功' });
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -4725,7 +4726,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         }
 
         // Reload CronManager to apply changes
-        await cronManager.reload();
+        await cronManager!.reload();
 
         reply.send({ message: '更新成功' });
       } catch (error: any) {
@@ -4752,7 +4753,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         await cronJobService.toggleJob(Number(id), body.enabled);
 
         // Reload CronManager to apply changes
-        await cronManager.reload();
+        await cronManager!.reload();
 
         reply.send({ message: body.enabled ? '已启用' : '已停用' });
       } catch (error: any) {
@@ -4773,7 +4774,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         // Route through CronManager.executeJob() which handles task_type branching:
         // script jobs → executeScriptJob() (SqlExecutor), agent jobs → cronExecutor.execute()
-        await cronManager.executeJob(config);
+        await cronManager!.executeJob(config);
 
         reply.send({ message: '执行完成' });
       } catch (error: any) {
@@ -4796,7 +4797,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!deleted) {
           return reply.code(500).send({ error: '删除失败，数据库操作未生效' });
         }
-        await cronManager.reload();
+        await cronManager!.reload();
         reply.send({ message: '删除成功' });
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -4994,12 +4995,24 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!renewed) console.error('Worker lease lost; workers require operator intervention');
       }).catch((error) => console.error('Worker lease heartbeat failed:', error));
     }, 10_000);
-    const releaseLease = () => {
+    let shuttingDown = false;
+    const shutdown = async () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
       clearInterval(heartbeat);
-      void workerLease.release().catch((error) => console.error('Worker lease release failed:', error));
+      monitorCollector.stop();
+      alertEngine.stopEvaluationLoop();
+      alertEscalationService.stop();
+      stopSessionCleanup();
+      promptManager.stopWatch();
+      await cronManager?.stop();
+      await engine?.dispose?.();
+      await workerLease.release();
+      await fastify.close();
+      await dbConnection.close();
     };
-    process.once('SIGTERM', releaseLease);
-    process.once('SIGINT', releaseLease);
+    process.once('SIGTERM', () => void shutdown());
+    process.once('SIGINT', () => void shutdown());
   } else {
     console.warn('Worker lease is held by another process; this replica will serve API requests only');
   }
