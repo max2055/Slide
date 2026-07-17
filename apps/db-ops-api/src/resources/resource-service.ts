@@ -1,11 +1,12 @@
 import type { ActorContext } from '../auth/actor-context.js';
 import { dbConnection } from '../db-connection.js';
-import type { ResourceRef, ResourceRelation, ResourceRelationType } from './types.js';
+import type { ResourceDetail, ResourceRef, ResourceRelation, ResourceRelationType } from './types.js';
 
 export interface ResourceRelationStore {
   exists(ref: ResourceRef): Promise<boolean>;
   insertRelation(relation: ResourceRelation): Promise<void>;
   listRelations(ref: ResourceRef): Promise<ResourceRelation[]>;
+  describe?(ref: ResourceRef): Promise<ResourceDetail | null>;
 }
 
 const relationTypes = new Set<ResourceRelationType>(['runs_on', 'hosts', 'replicates_to', 'depends_on']);
@@ -50,6 +51,13 @@ export class ResourceService {
     const relations = await this.store.listRelations(ref);
     return relations.filter((relation) => !relation.validUntil || relation.validUntil > now);
   }
+
+  async detail(actor: ActorContext, ref: ResourceRef): Promise<ResourceDetail> {
+    if (!canReadResource(actor, ref)) throw new Error('RESOURCE_FORBIDDEN');
+    const detail = await this.store.describe?.(ref);
+    if (!detail) throw new Error('RESOURCE_NOT_FOUND');
+    return detail;
+  }
 }
 
 interface SqlPool {
@@ -89,6 +97,18 @@ export class MysqlResourceRelationStore implements ResourceRelationStore {
       relationType: row.relation_type, provenance: row.provenance,
       validFrom: new Date(row.valid_from), validUntil: row.valid_until ? new Date(row.valid_until) : null,
     }));
+  }
+
+  async describe(ref: ResourceRef): Promise<ResourceDetail | null> {
+    const [rows] = ref.type === 'instance'
+      ? await this.pool().execute<Array<any>>('SELECT id, name, db_type, environment, host, port, status, health_status FROM database_instances WHERE id = ? LIMIT 1', [ref.id])
+      : await this.pool().execute<Array<any>>('SELECT id, label, host, port, os_type, status, collection_enabled FROM servers WHERE id = ? LIMIT 1', [ref.id]);
+    const row = rows[0];
+    if (!row) return null;
+    const attributes = ref.type === 'instance'
+      ? { dbType: row.db_type, environment: row.environment, host: row.host, port: Number(row.port), healthStatus: row.health_status }
+      : { host: row.host, port: Number(row.port), osType: row.os_type, collectionEnabled: Boolean(row.collection_enabled) };
+    return { resource: ref, label: ref.type === 'instance' ? row.name : row.label || row.host, status: row.status, attributes };
   }
 
   private pool(): SqlPool {

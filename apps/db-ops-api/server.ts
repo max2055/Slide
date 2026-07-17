@@ -817,6 +817,16 @@ async function start() {
     handleChatSend,
   });
 
+  fastify.get('/api/resources/:type/:id', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { type, id } = request.params as { type: 'instance' | 'server'; id: string };
+      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || Number(id) < 1) return reply.code(400).send({ error: 'Invalid resource reference' });
+      return reply.send({ detail: await resourceService.detail((request as any).user, { type, id: Number(id) }) });
+    } catch (error: any) {
+      return reply.code(error?.message === 'RESOURCE_FORBIDDEN' || error?.message === 'RESOURCE_NOT_FOUND' ? 404 : 500).send({ error: error?.message || 'Resource lookup failed' });
+    }
+  });
+
   fastify.get('/api/resources/:type/:id/relations', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
       const { type, id } = request.params as { type: 'instance' | 'server'; id: string };

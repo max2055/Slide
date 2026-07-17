@@ -97,6 +97,17 @@ describe('Resource authorization', () => {
   });
 });
 
+describe('Resource detail', () => {
+  it('uses a common detail contract without returning credentials', async () => {
+    const service = new ResourceService({
+      exists: async () => true, insertRelation: async () => {}, listRelations: async () => [],
+      describe: async (resource) => ({ resource, label: 'db-a', status: 'active', attributes: { host: 'db.example', port: 3306 } }),
+    });
+    await expect(service.detail(actor({ 1: 'read-only' }), { type: 'instance', id: 1 }))
+      .resolves.toEqual(expect.objectContaining({ label: 'db-a', attributes: { host: 'db.example', port: 3306 } }));
+  });
+});
+
 describe('Resource capabilities', () => {
   it('does not let an expired verified capability continue to claim verification', async () => {
     const service = new CapabilityService({
