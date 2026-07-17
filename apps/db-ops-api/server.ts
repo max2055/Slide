@@ -13,7 +13,6 @@ import { authDatabaseService } from './src/auth-database-service.js';
 import { createVerifyToken } from './src/auth-middleware.js';
 import {
   actorContextService,
-  applyActorSecuritySchema,
   signAccessToken,
 } from './src/auth/actor-context.js';
 import { requirePermission } from './src/auth/require-permission.js';
@@ -73,6 +72,7 @@ import { queryAuditLogs, auditLogManager, DatabaseAuditLogStore } from './src/au
 import { sqlExecutor } from './src/sql-executor.js';
 import { classifySql } from './src/sql-validator.js';
 import { PersistentOperationService } from './src/operations/operation-service.js';
+import { MigrationRunner } from './src/migrations/runner.js';
 import { approvalService } from './src/approval-service.js';
 import { databaseLogService } from './src/database-log-service.js';
 import * as fs from 'fs/promises';
@@ -151,36 +151,13 @@ async function start() {
   if (!pool) throw new Error('数据库连接池不可用');
 
   // Fail fast before registering auth routes or starting the WS adapter.
-  await applyActorSecuritySchema(pool);
-  console.log('✅ Actor 安全会话结构已就绪');
+  await new MigrationRunner(pool as any).run();
+  console.log('✅ Schema migration ledger is current');
 
   if (pool) {
     const dbAuditLogStore = new DatabaseAuditLogStore(pool);
     auditLogManager.setPersistentStore(dbAuditLogStore);
     console.log('✅ SQL 执行历史持久化存储已就绪');
-  }
-
-  // 自动应用必要的数据表迁移
-  if (pool) {
-    for (const migration of [
-      '014_add_user_preferences.sql',
-      '018_add_execution_trace.sql',
-      '021_add_server_alert_fields.sql',
-      '022_unified_observability.sql',
-      '025_security_actor_context.sql',
-      '026_operations.sql',
-    ]) {
-      try {
-        const fs = await import('fs');
-        const migrationPath = new URL(`./sql/migrations/${migration}`, import.meta.url).pathname;
-        const sql = fs.readFileSync(migrationPath, 'utf8');
-        // Split multi-statement SQL into individual queries
-        const statements = sql.split(';').filter((s: string) => s.trim());
-        for (const stmt of statements) {
-          try { await pool.query(stmt); } catch { /* individual stmt may already be applied */ }
-        }
-      } catch { /* migration file may not exist */ }
-    }
   }
 
   // 加载预定义技能到 skillRegistry
