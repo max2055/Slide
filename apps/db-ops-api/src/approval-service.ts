@@ -15,7 +15,7 @@ interface ApprovalRequest {
   sql_hash: string;
   risk_level: 'low' | 'medium' | 'high' | 'critical';
   ai_recommendation: any;
-  status: 'pending' | 'approved' | 'rejected' | 'executed' | 'execution_failed' | 'cancelled';
+  status: 'pending' | 'executing' | 'approved' | 'rejected' | 'executed' | 'execution_failed' | 'cancelled';
   submitted_by: number | null;
   reviewed_by: number | null;
   review_notes: string | null;
@@ -139,23 +139,30 @@ class ApprovalService {
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 
-    const [rows] = await pool.execute(
-      'SELECT * FROM approval_requests WHERE id = ? AND status = ?',
-      [requestId, 'pending']
-    ) as any;
-
-    if (!rows.length) return { success: false, error: '审批请求不存在或已处理' };
-
-    const req = rows[0] as ApprovalRequest;
-
     if (review.action === 'reject') {
-      await pool.execute(
-        'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ? WHERE id = ?',
-        ['rejected', review.reviewed_by || null, review.notes || null, requestId]
-      );
+      const [result] = await pool.execute(
+        'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ? WHERE id = ? AND status = ?',
+        ['rejected', review.reviewed_by || null, review.notes || null, requestId, 'pending']
+      ) as any;
+      if (result.affectedRows === 0) return { success: false, error: '审批请求不存在或已处理' };
       await this.writeEvent(requestId, 'rejected', { notes: review.notes }, review.reviewed_by);
       return { success: true };
     }
+
+    // This read supplies the command text only. It does not authorize work;
+    // the following compare-and-swap is the only side-effect gate.
+    const [rows] = await pool.execute('SELECT * FROM approval_requests WHERE id = ? AND status = ?', [requestId, 'pending']) as any;
+    const req = rows[0] as ApprovalRequest;
+    if (!req) return { success: false, error: '审批请求不存在或已处理' };
+
+    // Atomically claim pending work before an external side effect. Only the
+    // request that changes one row is allowed to invoke the target driver.
+    const [claim] = await pool.execute(
+      'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ? WHERE id = ? AND status = ?',
+      ['executing', review.reviewed_by || null, review.notes || null, requestId, 'pending'],
+    ) as any;
+    if (claim.affectedRows === 0) return { success: false, error: '审批请求不存在或已被认领' };
+    await this.writeEvent(requestId, 'claimed', { execute_after_approve: review.execute_after_approve !== false }, review.reviewed_by);
 
     let execResult = null;
     if (review.execute_after_approve !== false) {
@@ -164,6 +171,7 @@ class ApprovalService {
         userId: String(review.reviewed_by || ''),
         username: 'dba-approver',
         database: req.target_database || undefined,
+        approvedOperationId: `approval:${requestId}`,
       });
       const status = execResult.success ? 'executed' : 'execution_failed';
       await pool.execute(

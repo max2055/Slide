@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import crypto from 'crypto';
 
 // Mock pool as hoisted variable so factory functions can access it
@@ -34,11 +34,11 @@ import { llmService } from './llm-service.js';
 
 describe('ApprovalService', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
+    mockPool.execute.mockReset();
+    mockPool.query.mockReset();
+    (sqlExecutor.executeSql as ReturnType<typeof vi.fn>).mockReset();
+    (llmService.chat as ReturnType<typeof vi.fn>).mockReset();
+    mockPool.execute.mockResolvedValue([{}, null] as any);
   });
 
   describe('writeEvent', () => {
@@ -110,6 +110,16 @@ describe('ApprovalService', () => {
   });
 
   describe('reviewRequest - event writing', () => {
+    it('rejects a competing claim before calling the SQL driver', async () => {
+      mockPool.execute
+        .mockResolvedValueOnce([[{ id: 1, instance_id: 1, sql_text: 'UPDATE x SET y = 1', status: 'pending' }]] as any)
+        .mockResolvedValueOnce([{ affectedRows: 0 }, null] as any);
+
+      const result = await approvalService.reviewRequest(1, { action: 'approve', reviewed_by: 2 });
+      expect(result).toEqual({ success: false, error: '审批请求不存在或已被认领' });
+      expect(sqlExecutor.executeSql).not.toHaveBeenCalled();
+    });
+
     it('Test 5: should write approved and executed events to approval_events after approve+execute', async () => {
       mockPool.execute
         .mockResolvedValueOnce([[{ id: 1, instance_id: 1, sql_text: 'SELECT 1', status: 'pending' }]] as any)
@@ -151,7 +161,7 @@ describe('ApprovalService', () => {
       // Check UPDATE sets review_notes
       expect(mockPool.execute).toHaveBeenCalledWith(
         expect.stringContaining('UPDATE approval_requests'),
-        ['rejected', 1, 'Not safe', 1],
+        ['rejected', 1, 'Not safe', 1, 'pending'],
       );
       // Check writeEvent was called with 'rejected'
       expect(mockPool.execute).toHaveBeenCalledWith(
@@ -165,12 +175,14 @@ describe('ApprovalService', () => {
 
   describe('batchReview', () => {
     it('Test 6: should process all items sequentially and return per-item results', async () => {
-      // First item (approve with execute) — 4 pool calls
+      // First item (approve with execute) — read, CAS claim, claimed event, terminal update, two terminal events
       mockPool.execute
         .mockResolvedValueOnce([[{ id: 1, instance_id: 1, sql_text: 'SELECT 1', status: 'pending' }]] as any)
         .mockResolvedValueOnce([{}, null] as any)   // UPDATE status + execution_result
         .mockResolvedValueOnce([{}, null] as any)   // writeEvent approved
-        .mockResolvedValueOnce([{}, null] as any);  // writeEvent executed
+        .mockResolvedValueOnce([{}, null] as any)   // writeEvent executed
+        .mockResolvedValueOnce([{}, null] as any)
+        .mockResolvedValueOnce([{}, null] as any);
 
       (sqlExecutor.executeSql as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ success: true, rowsAffected: 1, duration: 10 });
 
@@ -200,6 +212,8 @@ describe('ApprovalService', () => {
         .mockRejectedValueOnce(new Error('DB connection lost'))
         // Second item: approve with execute_after_approve=false
         .mockResolvedValueOnce([[{ id: 2, instance_id: 1, sql_text: 'SELECT 2', status: 'pending' }]] as any)
+        .mockResolvedValueOnce([{}, null] as any)   // CAS claim
+        .mockResolvedValueOnce([{}, null] as any)   // claimed event
         .mockResolvedValueOnce([{}, null] as any)   // UPDATE approved
         .mockResolvedValueOnce([{}, null] as any);  // writeEvent approved
 
@@ -230,7 +244,7 @@ describe('ApprovalService', () => {
 
     it('Test 9: should write submitted event after INSERT INTO approval_requests when requestId is available', async () => {
       mockPool.execute
-        .mockResolvedValueOnce([{ insertId: 5 }] as any)      // INSERT approval_requests
+        .mockResolvedValueOnce([{ insertId: 5 }, null] as any)      // INSERT approval_requests
         .mockResolvedValueOnce([{}, null] as any);             // writeEvent submitted
 
       (llmService.chat as ReturnType<typeof vi.fn>).mockResolvedValue(null);
@@ -249,7 +263,7 @@ describe('ApprovalService', () => {
 
     it('Test 10: should write ai_reviewed event when AI recommendation exists', async () => {
       mockPool.execute
-        .mockResolvedValueOnce([{ insertId: 5 }] as any)      // INSERT approval_requests
+        .mockResolvedValueOnce([{ insertId: 5 }, null] as any)      // INSERT approval_requests
         .mockResolvedValueOnce([{}, null] as any)             // writeEvent submitted
         .mockResolvedValueOnce([{}, null] as any);            // writeEvent ai_reviewed
 

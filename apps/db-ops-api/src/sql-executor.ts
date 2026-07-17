@@ -11,7 +11,7 @@ class SqlExecutor {
    * 执行 SQL 查询（仅 SELECT）
    */
   async executeSql(instanceId: number, sql: string, context?: {
-    userId?: string; username?: string; ipAddress?: string; database?: string; timeoutMs?: number;
+    userId?: string; username?: string; ipAddress?: string; database?: string; timeoutMs?: number; approvedOperationId?: string;
   }): Promise<{
     success: boolean;
     columns?: string[];
@@ -34,7 +34,7 @@ class SqlExecutor {
     }
 
     const classification = classifySql(sql, conn.db_type as 'mysql' | 'postgresql' | 'oracle' | 'dameng');
-    if (classification.commandType !== 'read') {
+    if (classification.commandType !== 'read' && !context?.approvedOperationId) {
       return { success: false, error: `SQL_READ_ONLY_${classification.reasonCode}` };
     }
 
