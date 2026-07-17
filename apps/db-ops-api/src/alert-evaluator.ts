@@ -7,6 +7,7 @@ import { metricsDatabaseService } from './metrics-database-service';
 import { instanceDatabaseService } from './instance-database-service';
 import { baselineCalculator } from './baseline-calculator';
 import { metricRegistry } from './metric-registry';
+import { compileAlertRule, evaluateCompiledRule } from './alerts/compiled-rule.js';
 
 export interface AlertRuleExtended extends AlertRule {
   dynamic_config?: {
@@ -97,6 +98,12 @@ export function evaluateRuleWithLevels(
   currentValue: number,
   macros?: Record<string, number>
 ): 'warning' | 'error' | 'critical' | null {
+  try {
+    return evaluateCompiledRule(compileAlertRule(rule, 'instance', macros), currentValue);
+  } catch {
+    return null;
+  }
+  /* Legacy implementation retained below for source compatibility. */
   // 阈值优先级：
   //   1. 规则显式 threshold（threshold_type='static' 且 threshold > 0）→ 单阈值评估
   //   2. 规则 threshold_template → 多级别模板评估（macros 解析 ${var} 占位符）
@@ -331,7 +338,7 @@ export async function evaluateAllRules(): Promise<
   }> = [];
 
   try {
-    const rules = await alertDatabaseService.getAlertRules(true) as AlertRuleExtended[];
+    const rules = (await alertDatabaseService.getAlertRules(true) as AlertRuleExtended[]).filter((rule) => !rule.target_type || rule.target_type === 'instance');
     if (rules.length === 0) {
       return [];
     }

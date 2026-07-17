@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateHealth } from '../src/health-truth.js';
+import { aggregateHealth, statusFromCounts } from '../src/health-truth.js';
 
 describe('four-dimensional health truth', () => {
   it('caps overall health when managed resources are critical or freshness is unknown', () => {
@@ -22,5 +22,10 @@ describe('four-dimensional health truth', () => {
     });
     expect(health.overall).toBe('critical');
     expect(health.managedAvailability.numerator / health.managedAvailability.denominator).toBe(0.2);
+  });
+
+  it('does not treat a missing resource denominator as healthy', () => {
+    expect(statusFromCounts(0, 0)).toBe('unknown');
+    expect(statusFromCounts(1, 5)).toBe('critical');
   });
 });

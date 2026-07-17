@@ -4,7 +4,7 @@
  */
 import { dbConnection } from './db-connection';
 import * as net from 'net';
-import { aggregateHealth, type HealthTruth } from './health-truth.js';
+import { aggregateHealth, statusFromCounts, type HealthDimension, type HealthTruth } from './health-truth.js';
 
 // ── Types ────────────────────────────────────────────────
 
@@ -42,23 +42,53 @@ export class ConsistencyChecker {
   async resourceHealthTruth(): Promise<HealthTruth> {
     const pool = dbConnection.getPool();
     if (!pool) throw new Error('数据库未连接');
-    const [rows] = await pool.execute(`
+    const [instances] = await pool.execute(`
       SELECT di.id, di.health_status, MAX(mh.recorded_at) AS latest_metric
       FROM database_instances di
       LEFT JOIN metrics_history mh ON mh.instance_id = di.id
       WHERE di.status = 'active'
       GROUP BY di.id, di.health_status
     `) as any;
-    const total = rows.length;
-    const available = rows.filter((row: any) => row.health_status === 'healthy').length;
-    const fresh = rows.filter((row: any) => row.latest_metric && Date.now() - new Date(row.latest_metric).getTime() <= 10 * 60_000).length;
-    const status = (good: number): import('./health-truth.js').HealthStatus => total === 0 ? 'unknown' : good === total ? 'healthy' : good / total <= 0.2 ? 'critical' : 'degraded';
+    const [servers] = await pool.execute(`
+      SELECT s.id, s.status, MAX(sm.recorded_at) AS latest_metric
+      FROM servers s
+      LEFT JOIN server_metrics sm ON sm.server_id = s.id
+      WHERE s.collection_enabled = 1
+      GROUP BY s.id, s.status
+    `) as any;
+    const resources = [
+      ...instances.map((row: any) => ({ type: 'instance' as const, id: Number(row.id), available: row.health_status === 'healthy', fresh: this.isFresh(row.latest_metric) })),
+      ...servers.map((row: any) => ({ type: 'server' as const, id: Number(row.id), available: row.status === 'online', fresh: this.isFresh(row.latest_metric) })),
+    ];
+    const availability = this.resourceDimension(resources, 'available', 'managed_resource_unavailable');
+    const freshness = this.resourceDimension(resources, 'fresh', 'required_metric_stale_or_missing');
+    const controlPlane: HealthDimension = {
+      status: dbConnection.isConnected() ? 'healthy' : 'critical', numerator: dbConnection.isConnected() ? 1 : 0, denominator: 1,
+      failedRefs: dbConnection.isConnected() ? [] : [{ type: 'system', id: 'mysql' }], observedAt: new Date().toISOString(), reason: dbConnection.isConnected() ? undefined : 'primary_database_unavailable',
+    };
+    const workflow = await this.workflowDimension(pool);
     return aggregateHealth({
-      controlPlane: { status: 'healthy', numerator: 1, denominator: 1 },
-      managedAvailability: { status: status(available), numerator: available, denominator: total },
-      dataFreshness: { status: status(fresh), numerator: fresh, denominator: total },
-      workflow: { status: 'unknown', numerator: 0, denominator: 0 },
+      controlPlane,
+      managedAvailability: availability,
+      dataFreshness: freshness,
+      workflow,
     });
+  }
+
+  private isFresh(value: unknown): boolean { return Boolean(value) && Date.now() - new Date(value as string).getTime() <= 10 * 60_000; }
+  private resourceDimension(resources: Array<{ type: 'instance' | 'server'; id: number; available: boolean; fresh: boolean }>, key: 'available' | 'fresh', reason: string): HealthDimension {
+    const good = resources.filter((resource) => resource[key]).length;
+    const failedRefs = resources.filter((resource) => !resource[key]).map(({ type, id }) => ({ type, id }));
+    return { status: statusFromCounts(good, resources.length), numerator: good, denominator: resources.length, failedRefs, observedAt: new Date().toISOString(), reason: failedRefs.length ? reason : undefined };
+  }
+  private async workflowDimension(pool: any): Promise<HealthDimension> {
+    try {
+      const [rows] = await pool.execute(`SELECT COUNT(*) AS failed FROM cron_job_logs WHERE status = 'error' AND started_at > NOW() - INTERVAL 15 MINUTE`);
+      const failed = Number(rows[0]?.failed ?? 0);
+      return { status: failed ? 'degraded' : 'healthy', numerator: failed ? 0 : 1, denominator: 1, failedRefs: failed ? [{ type: 'system', id: 'cron_jobs' }] : [], observedAt: new Date().toISOString(), reason: failed ? 'recent_workflow_failures' : undefined };
+    } catch {
+      return { status: 'unknown', numerator: 0, denominator: 1, failedRefs: [{ type: 'system', id: 'workflow' }], observedAt: new Date().toISOString(), reason: 'workflow_state_unavailable' };
+    }
   }
   // ── Safe wrapper ─────────────────────────────────────
 
