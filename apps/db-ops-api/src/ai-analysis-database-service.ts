@@ -3,6 +3,7 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection.js';
+import { type AnalysisEnvelope, validateAnalysisEnvelope } from './analysis/analysis-envelope.js';
 
 export interface AiAnalysisRecord {
   id: number;
@@ -195,6 +196,52 @@ class AiAnalysisDatabaseService {
       return { success: true };
     } catch (error: any) {
       console.error('完成分析失败:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /** Persist new Agent output only after it satisfies the versioned envelope contract. */
+  async completeAnalysisEnvelope(
+    analysisId: number,
+    envelope: unknown,
+    data: { usage?: any; duration_ms?: number; executionTrace?: any } = {},
+  ): Promise<{ success: boolean; error?: string }> {
+    const parsed = validateAnalysisEnvelope(envelope);
+    if (!parsed.ok) return { success: false, error: parsed.error };
+    const pool = this.getPool();
+    if (!pool) return { success: false, error: '数据库未连接' };
+
+    try {
+      const safeEnvelope: AnalysisEnvelope = {
+        ...parsed.value,
+        provenance: {
+          ...parsed.value.provenance,
+          modelVersion: process.env.ANALYSIS_MODEL_VERSION || 'configured-provider',
+          promptVersion: process.env.PROMPT_VERSION || 'managed',
+        },
+      };
+      const [result] = await pool.execute(
+        `UPDATE ai_analysis SET
+           status = 'completed', result = ?, analysis_envelope = ?, envelope_backfill_status = 'parsed',
+           execution_trace = ?, \`usage\` = ?, duration_ms = ?, completed_at = NOW()
+         WHERE id = ? AND status <> 'completed'`,
+        [
+          JSON.stringify(safeEnvelope.displayMarkdown), JSON.stringify(safeEnvelope),
+          data.executionTrace ? JSON.stringify(data.executionTrace) : null,
+          data.usage ? JSON.stringify(data.usage) : null, data.duration_ms || null, analysisId,
+        ],
+      ) as any;
+      if (result.affectedRows === 0) {
+        const [rows] = await pool.execute('SELECT analysis_envelope FROM ai_analysis WHERE id = ?', [analysisId]) as any;
+        const existing = rows?.[0]?.analysis_envelope;
+        if (existing && JSON.stringify(typeof existing === 'string' ? JSON.parse(existing) : existing) === JSON.stringify(safeEnvelope)) {
+          return { success: true };
+        }
+        return { success: false, error: '分析已完成或不存在' };
+      }
+      return { success: true };
+    } catch (error: any) {
+      console.error('保存 AnalysisEnvelope 失败:', error);
       return { success: false, error: error.message };
     }
   }
@@ -474,6 +521,10 @@ class AiAnalysisDatabaseService {
       }
     } catch {
       row.usage = null;
+    }
+
+    if (typeof row.analysis_envelope === 'string') {
+      try { row.analysis_envelope = JSON.parse(row.analysis_envelope); } catch { row.analysis_envelope = null; }
     }
 
     return row as AiAnalysisRecord;

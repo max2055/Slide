@@ -55,25 +55,22 @@ export async function dispatchOrReuse(params: {
 
   // Dispatch via IAgentEngine.invoke() — adapter handles execution
   const basePrompt = params.systemPrompt || buildDefaultPrompt(params.type);
-  const fullMessage = `${basePrompt}\n\n分析完成后必须调用 slide_complete_analysis 保存结果，analysisId = ${analysisId}。\n\n${params.userMessage}`;
+  const fullMessage = `${basePrompt}\n\n分析完成后必须调用 slide_complete_analysis 保存结果，analysisId = ${analysisId}。该工具只接受 schemaVersion=1 的结构化 envelope，必须包含 subject、conclusions、hypotheses、evidenceRefs、confidence、recommendations、displayMarkdown 和 provenance。\n\n${params.userMessage}`;
 
-  // Invoke Agent, then always persist result regardless of slide_complete_analysis
+  // A successful model response is not a successful analysis. The tool must persist
+  // the validated envelope before this run can be considered completed.
   getAgentEngine()
     .then((engine) =>
       engine.invoke(params.sessionKey, fullMessage, basePrompt).then((result) => {
-        console.log(`[AI Bridge] Analysis agent completed: ${analysisId}, finalContent=${(result.content || '').substring(0, 80)}`);
-        // Always persist: if Agent already called slide_complete_analysis, this is a no-op overwrite
-        // If not, this saves the agent's response as the diagnosis result
-        aiAnalysisDatabaseService.completeAnalysis(analysisId, {
-          result: result.content || '',
-          executionTrace: result.toolEvents ? {
-            tools_used: [...new Set((result.toolEvents || []).map(e => e.name))],
-            tool_events: result.toolEvents,
-            stop_reason: result.stopReason || 'completed',
-            iteration_count: result.iterationCount || 0,
-          } : null,
-        }).then(() => {
-          console.log(`[AI Bridge] Persisted analysis ${analysisId} result (length=${(result.content || '').length})`);
+        aiAnalysisDatabaseService.getAnalysisById(analysisId).then((record) => {
+          if (result.stopReason === 'completed' && record?.status === 'completed') {
+            console.log(`[AI Bridge] Persisted structured analysis ${analysisId}`);
+            return;
+          }
+          const reason = result.stopReason === 'completed'
+            ? 'Agent 未保存有效的结构化 AnalysisEnvelope'
+            : `Agent run ended: ${result.stopReason || 'unknown'}`;
+          return aiAnalysisDatabaseService.failAnalysis(analysisId, reason);
         });
       }),
     )
