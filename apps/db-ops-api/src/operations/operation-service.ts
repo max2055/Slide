@@ -8,7 +8,7 @@ interface OperationPool extends QueryExecutor { getConnection(): Promise<Transac
 const TRANSITIONS: Readonly<Record<OperationState, readonly OperationState[]>> = {
   queued: ['waiting_approval', 'claimed', 'cancelled', 'failed'],
   waiting_approval: ['claimed', 'cancelled'],
-  claimed: ['running', 'queued', 'unknown', 'cancelled'],
+  claimed: ['running', 'succeeded', 'queued', 'unknown', 'cancelled'],
   running: ['succeeded', 'failed', 'unknown'],
   succeeded: [], failed: [], cancelled: [], unknown: [],
 };

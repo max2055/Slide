@@ -21,6 +21,7 @@ interface ApprovalRequest {
   review_notes: string | null;
   execution_result: any;
   target_database: string | null;
+  operation_id: string | null;
   created_at: string;
   updated_at: string;
 }

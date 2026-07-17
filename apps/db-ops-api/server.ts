@@ -1591,11 +1591,34 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
       const user = (request as any).user;
       const result = await approvalService.reviewRequest(Number(id), {
-        action,
+        action: action as 'approve' | 'reject',
         reviewed_by: user?.userId,
-        notes,
+        notes: typeof notes === 'string' ? notes : undefined,
         execute_after_approve: execute_after_approve !== false,
       });
+
+      const operationRequest = await approvalService.getRequestById(Number(id));
+      if (operationRequest?.operation_id) {
+        try {
+          if (action === 'reject') {
+            await operationService.transition(operationRequest.operation_id, 'cancelled', 'APPROVAL_REJECTED', user?.userId, { approvalRequestId: Number(id) });
+          } else {
+            await operationService.transition(operationRequest.operation_id, 'claimed', 'APPROVAL_CLAIMED', user?.userId, { approvalRequestId: Number(id) });
+            if (execute_after_approve !== false) {
+              await operationService.transition(operationRequest.operation_id, 'running', 'APPROVAL_EXECUTION_STARTED', user?.userId);
+            }
+            await operationService.transition(
+              operationRequest.operation_id,
+              result.success ? 'succeeded' : 'failed',
+              result.success ? (execute_after_approve !== false ? 'APPROVAL_EXECUTION_SUCCEEDED' : 'APPROVAL_GRANTED') : 'APPROVAL_EXECUTION_FAILED',
+              user?.userId,
+              result.success ? { approvalRequestId: Number(id) } : { approvalRequestId: Number(id), error: result.error ?? 'execution_failed' },
+            );
+          }
+        } catch (operationError) {
+          console.error(`Operation lineage update failed for approval #${id}:`, operationError);
+        }
+      }
 
       // Fire-and-forget notification
       if (result.success) {
