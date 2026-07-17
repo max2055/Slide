@@ -12,7 +12,11 @@ import { randomBytes } from 'crypto';
 import cors from '@fastify/cors';
 import { authDatabaseService } from './src/auth-database-service.js';
 import { createVerifyToken } from './src/auth-middleware.js';
-import { actorContextService, signAccessToken } from './src/auth/actor-context.js';
+import {
+  actorContextService,
+  applyActorSecuritySchema,
+  signAccessToken,
+} from './src/auth/actor-context.js';
 import { requirePermission } from './src/auth/require-permission.js';
 import { requireInstanceAccess } from './src/auth/require-instance-access.js';
 import { RbacService } from './src/auth/rbac-service.js';
@@ -114,6 +118,12 @@ async function start() {
 
   // 初始化 SQL 执行历史持久化存储
   const pool = dbConnection.getPool();
+  if (!pool) throw new Error('数据库连接池不可用');
+
+  // Fail fast before registering auth routes or starting the WS adapter.
+  await applyActorSecuritySchema(pool);
+  console.log('✅ Actor 安全会话结构已就绪');
+
   if (pool) {
     const dbAuditLogStore = new DatabaseAuditLogStore(pool);
     auditLogManager.setPersistentStore(dbAuditLogStore);

@@ -205,26 +205,64 @@ export class DirectAdapter implements IAgentEngine {
     this.wsServer.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
       console.log('[DirectAdapter] WS client connected');
       (ws as any)._isAlive = true;
+      type ConnectionAuthState = 'unauthenticated' | 'authenticating' | 'authenticated' | 'closed';
+      let authState: ConnectionAuthState = 'unauthenticated';
+      let authGeneration = 0;
+      let connectionActor: ActorContext | undefined;
+      let revalidationInFlight = false;
+      (ws as any)._authState = authState;
+      (ws as any)._actorContext = undefined;
+
+      const clearAuthentication = () => {
+        authGeneration += 1;
+        authState = 'closed';
+        connectionActor = undefined;
+        revalidationInFlight = false;
+        (ws as any)._authState = authState;
+        (ws as any)._actorContext = undefined;
+        (ws as any)._revalidationInFlight = false;
+      };
+
+      const closeAfterAuthFailure = (code: number, reason: string) => {
+        clearAuthentication();
+        if (ws.readyState === WebSocket.OPEN) ws.close(code, reason);
+      };
 
       // Heartbeat and authorization revalidation share the existing 30s cycle.
-      const heartbeatTimer = setInterval(async () => {
+      const heartbeatTimer = setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN) return;
         if ((ws as any)._isAlive === false) {
           console.warn('[DirectAdapter] WS heartbeat timeout, terminating connection');
+          clearAuthentication();
           ws.terminate();
           return;
         }
 
-        const currentActor = (ws as any)._actorContext as ActorContext | undefined;
-        if (currentActor) {
-          try {
-            (ws as any)._actorContext = await this.actorContexts.revalidateActor(
-              currentActor,
-              randomUUID(),
-            );
-          } catch {
-            ws.close(4001, 'Unauthorized');
-            return;
-          }
+        if (authState === 'authenticated' && connectionActor && !revalidationInFlight) {
+          const revalidationGeneration = authGeneration;
+          const actorAtStart = connectionActor;
+          revalidationInFlight = true;
+          (ws as any)._revalidationInFlight = true;
+          void this.actorContexts.revalidateActor(
+            actorAtStart,
+            randomUUID(),
+          ).then((nextActor) => {
+            if (ws.readyState === WebSocket.OPEN
+              && authState === 'authenticated'
+              && authGeneration === revalidationGeneration) {
+              connectionActor = nextActor;
+              (ws as any)._actorContext = nextActor;
+            }
+          }).catch(() => {
+            if (authState === 'authenticated' && authGeneration === revalidationGeneration) {
+              closeAfterAuthFailure(4001, 'Unauthorized');
+            }
+          }).finally(() => {
+            if (authGeneration === revalidationGeneration) {
+              revalidationInFlight = false;
+              (ws as any)._revalidationInFlight = false;
+            }
+          });
         }
 
         (ws as any)._isAlive = false;
@@ -237,6 +275,7 @@ export class DirectAdapter implements IAgentEngine {
 
       ws.on('close', () => {
         clearInterval(heartbeatTimer);
+        clearAuthentication();
         // Unsubscribe from all session broadcasts
         for (const [, subs] of this.sessionSubscribers) {
           subs.delete(ws);
@@ -254,30 +293,47 @@ export class DirectAdapter implements IAgentEngine {
 
         // D-09/D-10: JWT auth frame -- must be first message after WS connect
         if (msg.type === 'auth') {
+          if (authState !== 'unauthenticated') {
+            closeAfterAuthFailure(4001, 'Authentication already attempted');
+            return;
+          }
           const token = msg.token as string;
           const JWT_SECRET = process.env.JWT_SECRET_KEY;
           if (!JWT_SECRET) {
             console.error('[DirectAdapter] JWT_SECRET_KEY not set, rejecting all auth');
-            ws.close(4001, 'Server misconfigured: JWT_SECRET_KEY not set');
+            closeAfterAuthFailure(4001, 'Server misconfigured: JWT_SECRET_KEY not set');
             return;
           }
+          authState = 'authenticating';
+          authGeneration += 1;
+          const authenticationGeneration = authGeneration;
+          (ws as any)._authState = authState;
           try {
-            (ws as any)._actorContext = await this.actorContexts.authenticateAccessToken(
+            const authenticatedActor = await this.actorContexts.authenticateAccessToken(
               token,
               JWT_SECRET,
               randomUUID(),
             );
-            ws.send(JSON.stringify({ type: 'auth_ok' }));
+            if (ws.readyState === WebSocket.OPEN
+              && authState === 'authenticating'
+              && authGeneration === authenticationGeneration) {
+              connectionActor = authenticatedActor;
+              authState = 'authenticated';
+              (ws as any)._actorContext = authenticatedActor;
+              (ws as any)._authState = authState;
+              ws.send(JSON.stringify({ type: 'auth_ok' }));
+            }
           } catch {
-            ws.close(4001, 'Unauthorized');
+            if (authGeneration === authenticationGeneration) {
+              closeAfterAuthFailure(4001, 'Unauthorized');
+            }
           }
           return;
         }
 
         // D-11: Reject unauthenticated messages before auth
-        const connectionActor = (ws as any)._actorContext as ActorContext | undefined;
-        if (!connectionActor) {
-          ws.close(4002, 'Authenticate first');
+        if (authState !== 'authenticated' || !connectionActor) {
+          closeAfterAuthFailure(4002, 'Authenticate first');
           return;
         }
 

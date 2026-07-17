@@ -6,6 +6,7 @@ import jwt from 'jsonwebtoken';
 import {
   ActorAuthenticationError,
   ActorContextService,
+  applyActorSecuritySchema,
   signAccessToken,
   type ActorContext,
 } from './actor-context.js';
@@ -62,6 +63,16 @@ function actor(requestId = 'request-1'): ActorContext {
 
 function replyMock() {
   return { code: vi.fn().mockReturnThis(), send: vi.fn() };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 function waitForMessage(ws: WebSocket): Promise<Record<string, unknown>> {
@@ -270,6 +281,60 @@ describe('actor context security boundary', () => {
   });
 });
 
+describe('actor schema bootstrap', () => {
+  it('actor schema applies all missing security fields on one checked-out connection', async () => {
+    const operations: string[] = [];
+    const execute = vi.fn(async (sql: string, values: unknown[] = []) => {
+      if (sql.includes('information_schema.COLUMNS')) {
+        operations.push(`check:${values[0]}.${values[1]}`);
+        return [[{ count: 0 }]];
+      }
+      if (sql.includes('information_schema.STATISTICS')) {
+        operations.push(`check-index:${values[1]}`);
+        return [[{ count: 0 }]];
+      }
+      if (sql.startsWith('ALTER TABLE')) {
+        operations.push(sql.includes('ADD INDEX') ? 'alter:index' : `alter:${values.length}`);
+        return [{ affectedRows: 0 }];
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+    const connection = { execute, release: vi.fn() };
+    const poolExecute = vi.fn();
+    const pool = {
+      execute: poolExecute,
+      getConnection: vi.fn().mockResolvedValue(connection),
+    };
+
+    await applyActorSecuritySchema(pool as any);
+
+    expect(pool.getConnection).toHaveBeenCalledOnce();
+    expect(poolExecute).not.toHaveBeenCalled();
+    expect(operations).toEqual([
+      'check:users.session_version',
+      'alter:0',
+      'check:refresh_tokens.session_version',
+      'alter:0',
+      'check-index:idx_rt_user_session',
+      'alter:index',
+    ]);
+    expect(connection.release).toHaveBeenCalledOnce();
+  });
+
+  it('actor schema fails startup work immediately and releases the same connection', async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce([[{ count: 0 }]])
+      .mockRejectedValueOnce(new Error('alter denied'));
+    const connection = { execute, release: vi.fn() };
+    const pool = { getConnection: vi.fn().mockResolvedValue(connection) };
+
+    await expect(applyActorSecuritySchema(pool as any)).rejects.toThrow('alter denied');
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(connection.release).toHaveBeenCalledOnce();
+  });
+});
+
 describe('actor authorization snapshot', () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -340,6 +405,7 @@ interface RefreshFixtureOptions {
   actorSessionVersion?: number;
   failAt?: 'select' | 'insert' | 'commit';
   additionalActiveToken?: boolean;
+  commitAppliedBeforeError?: boolean;
 }
 
 function refreshFixture(options: RefreshFixtureOptions = {}) {
@@ -412,7 +478,10 @@ function refreshFixture(options: RefreshFixtureOptions = {}) {
       throw new Error(`unexpected SQL: ${sql}`);
     }),
     commit: vi.fn(async () => {
-      if (options.failAt === 'commit') throw new Error('commit failed');
+      if (options.failAt === 'commit') {
+        if (options.commitAppliedBeforeError) committed = structuredClone(transaction);
+        throw new Error('commit failed');
+      }
       committed = structuredClone(transaction);
     }),
     rollback: vi.fn(async () => { transaction = structuredClone(committed); }),
@@ -467,16 +536,24 @@ describe('refresh failure-closed state machine', () => {
     expect(fixture.state().tokens.every((token) => token.revoked)).toBe(true);
   });
 
-  it.each(['insert', 'commit'] as const)(
-    'refresh %s failure rolls back consumption and returns no token',
-    async (failAt) => {
-      const fixture = refreshFixture({ failAt });
+  it('refresh insert failure rolls back consumption and returns no token', async () => {
+    const fixture = refreshFixture({ failAt: 'insert' });
+
+    await expect(fixture.service.rotateRefreshToken('raw-refresh-token'))
+      .rejects.toBeInstanceOf(ActorAuthenticationError);
+    expect(fixture.connection.rollback).toHaveBeenCalledOnce();
+    expect(fixture.state().tokens).toHaveLength(1);
+    expect(fixture.state().tokens[0].revoked).toBe(false);
+  });
+
+  it.each([false, true])(
+    'refresh commit response failure closes safely when commit applied=%s',
+    async (commitAppliedBeforeError) => {
+      const fixture = refreshFixture({ failAt: 'commit', commitAppliedBeforeError });
 
       await expect(fixture.service.rotateRefreshToken('raw-refresh-token'))
         .rejects.toBeInstanceOf(ActorAuthenticationError);
-      expect(fixture.connection.rollback).toHaveBeenCalledOnce();
-      expect(fixture.state().tokens).toHaveLength(1);
-      expect(fixture.state().tokens[0].revoked).toBe(false);
+      expect(fixture.connection.release).toHaveBeenCalledOnce();
     },
   );
 });
@@ -807,5 +884,115 @@ describe('websocket actor boundary', () => {
 
     expect(contexts.revalidateActor).toHaveBeenCalledWith(currentActor, expect.any(String));
     expect(closeCode).toBe(4001);
+  });
+
+  it('websocket accepts only one authentication attempt and ignores a forged second token', async () => {
+    const firstActor = actor('first-auth');
+    const forgedActor = Object.freeze({ ...actor('forged-auth'), userId: 999 });
+    const contexts = {
+      authenticateAccessToken: vi.fn()
+        .mockResolvedValueOnce(firstActor)
+        .mockResolvedValueOnce(forgedActor),
+      revalidateActor: vi.fn().mockResolvedValue(firstActor),
+    };
+    const adapter = new DirectAdapter({
+      tools: new ToolRegistry(),
+      llmProvider: {} as any,
+      actorContextService: contexts as any,
+      heartbeatIntervalMs: 30_000,
+    });
+    adapters.push(adapter);
+    process.env.AGENT_WS_PORT = String(nextPort++);
+    await adapter.start();
+
+    const ws = new WebSocket(`ws://127.0.0.1:${process.env.AGENT_WS_PORT}`);
+    sockets.push(ws);
+    await new Promise<void>((resolve, reject) => {
+      ws.once('open', resolve);
+      ws.once('error', reject);
+    });
+    ws.send(JSON.stringify({ type: 'auth', token: 'first-token' }));
+    expect(await waitForMessage(ws)).toEqual({ type: 'auth_ok' });
+
+    const closePromise = waitForClose(ws);
+    ws.send(JSON.stringify({ type: 'auth', token: 'forged-second-token' }));
+    expect(await closePromise).toBe(4001);
+
+    expect(contexts.authenticateAccessToken).toHaveBeenCalledOnce();
+  });
+
+  it('websocket concurrent authentication cannot write actor after the connection closes', async () => {
+    const authentication = deferred<ActorContext>();
+    const contexts = {
+      authenticateAccessToken: vi.fn().mockReturnValue(authentication.promise),
+      revalidateActor: vi.fn(),
+    };
+    const adapter = new DirectAdapter({
+      tools: new ToolRegistry(),
+      llmProvider: {} as any,
+      actorContextService: contexts as any,
+      heartbeatIntervalMs: 30_000,
+    });
+    adapters.push(adapter);
+    process.env.AGENT_WS_PORT = String(nextPort++);
+    await adapter.start();
+
+    const ws = new WebSocket(`ws://127.0.0.1:${process.env.AGENT_WS_PORT}`);
+    sockets.push(ws);
+    await new Promise<void>((resolve, reject) => {
+      ws.once('open', resolve);
+      ws.once('error', reject);
+    });
+    const serverSocket = [...(adapter as any).wsServer.clients][0] as WebSocket & Record<string, unknown>;
+    const closePromise = waitForClose(ws);
+    ws.send(JSON.stringify({ type: 'auth', token: 'slow-first-token' }));
+    ws.send(JSON.stringify({ type: 'auth', token: 'concurrent-token' }));
+    expect(await closePromise).toBe(4001);
+
+    authentication.resolve(actor('late-auth'));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(contexts.authenticateAccessToken).toHaveBeenCalledOnce();
+    expect(serverSocket._actorContext).toBeUndefined();
+  });
+
+  it('websocket serializes slow revalidation and discards its result after close', async () => {
+    const currentActor = actor('ws-current');
+    const revalidation = deferred<ActorContext>();
+    const contexts = {
+      authenticateAccessToken: vi.fn().mockResolvedValue(currentActor),
+      revalidateActor: vi.fn().mockReturnValue(revalidation.promise),
+    };
+    const adapter = new DirectAdapter({
+      tools: new ToolRegistry(),
+      llmProvider: {} as any,
+      actorContextService: contexts as any,
+      heartbeatIntervalMs: 10,
+    });
+    adapters.push(adapter);
+    process.env.AGENT_WS_PORT = String(nextPort++);
+    await adapter.start();
+
+    const ws = new WebSocket(`ws://127.0.0.1:${process.env.AGENT_WS_PORT}`);
+    sockets.push(ws);
+    await new Promise<void>((resolve, reject) => {
+      ws.once('open', resolve);
+      ws.once('error', reject);
+    });
+    const serverSocket = [...(adapter as any).wsServer.clients][0] as WebSocket & Record<string, unknown>;
+    ws.send(JSON.stringify({ type: 'auth', token: 'ws-access-token' }));
+    expect(await waitForMessage(ws)).toEqual({ type: 'auth_ok' });
+
+    await vi.waitFor(() => expect(contexts.revalidateActor).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    expect(contexts.revalidateActor).toHaveBeenCalledOnce();
+
+    const serverClose = new Promise<void>((resolve) => serverSocket.once('close', resolve));
+    ws.close();
+    await serverClose;
+    revalidation.resolve(Object.freeze({ ...currentActor, username: 'late-result' }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(serverSocket._actorContext).toBeUndefined();
   });
 });

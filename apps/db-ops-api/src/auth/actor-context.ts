@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
+import type { Pool, PoolConnection } from 'mysql2/promise';
 import { dbConnection } from '../db-connection.js';
 
 export type InstanceAccessLevel = 'read-only' | 'read-write' | 'admin';
@@ -83,6 +84,71 @@ function asAuthenticationError(error: unknown): ActorAuthenticationError {
   return error instanceof ActorAuthenticationError
     ? error
     : new ActorAuthenticationError({ cause: error });
+}
+
+async function schemaObjectExists(
+  connection: PoolConnection,
+  sql: string,
+  values: string[],
+): Promise<boolean> {
+  const [rows] = await connection.execute(sql, values);
+  const countRows = rows as Array<{ count: number }>;
+  return Number(countRows[0]?.count ?? 0) > 0;
+}
+
+/**
+ * Applies the runtime security delta on one checked-out connection.
+ * Full schema rebuild parity belongs to Phase 134 (HI-01); startup only ensures
+ * the columns/index required before ActorContext can authenticate requests.
+ */
+export async function applyActorSecuritySchema(pool: Pick<Pool, 'getConnection'>): Promise<void> {
+  const connection = await pool.getConnection();
+  try {
+    const userVersionExists = await schemaObjectExists(
+      connection,
+      `SELECT COUNT(*) AS count FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+      ['users', 'session_version'],
+    );
+    if (!userVersionExists) {
+      await connection.execute(
+        `ALTER TABLE users
+         ADD COLUMN session_version BIGINT UNSIGNED NOT NULL DEFAULT 1
+         COMMENT 'Incremented when security-sensitive user state changes'
+         AFTER status`,
+      );
+    }
+
+    const refreshVersionExists = await schemaObjectExists(
+      connection,
+      `SELECT COUNT(*) AS count FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+      ['refresh_tokens', 'session_version'],
+    );
+    if (!refreshVersionExists) {
+      await connection.execute(
+        `ALTER TABLE refresh_tokens
+         ADD COLUMN session_version BIGINT UNSIGNED NOT NULL DEFAULT 1
+         COMMENT 'User session version at issuance'
+         AFTER user_id`,
+      );
+    }
+
+    const sessionIndexExists = await schemaObjectExists(
+      connection,
+      `SELECT COUNT(*) AS count FROM information_schema.STATISTICS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?`,
+      ['refresh_tokens', 'idx_rt_user_session'],
+    );
+    if (!sessionIndexExists) {
+      await connection.execute(
+        `ALTER TABLE refresh_tokens
+         ADD INDEX idx_rt_user_session (user_id, session_version, revoked)`,
+      );
+    }
+  } finally {
+    connection.release();
+  }
 }
 
 export class ActorContextService {
