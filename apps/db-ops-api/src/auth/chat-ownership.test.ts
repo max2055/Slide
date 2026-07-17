@@ -1,5 +1,4 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
 import type { ActorContext } from './actor-context.js';
 import { dbConnection } from '../db-connection.js';
 import { chatDatabaseService } from '../chat-database-service.js';
@@ -348,32 +347,12 @@ describe('chat ownership repository boundary', () => {
     await expect(service.grantSessionShare(other, 'owner-session', 10, 'read'))
       .rejects.toThrow('Chat session not found');
   });
-});
 
-describe('chat ownership deployment boundary', () => {
-  it('defines a durable read-share ACL with attribution and uniqueness', () => {
-    const migration = readFileSync(
-      new URL('../../sql/migrations/025_security_actor_context.sql', import.meta.url),
-      'utf8',
-    );
+  it('exposes retention deletion only through an explicitly named maintenance API', async () => {
+    pool.query.mockResolvedValueOnce([{ affectedRows: 2 }]);
+    pool.query.mockResolvedValueOnce([{ affectedRows: 0 }]);
 
-    expect(migration).toContain('chat_session_shares');
-    expect(migration).toContain('granted_by');
-    expect(migration).toContain('recipient_user_id');
-    expect(migration).toContain('permission');
-    expect(migration).toContain('created_at');
-    expect(migration).toMatch(/FOREIGN KEY[^;]+chat_sessions/i);
-    expect(migration).toMatch(/UNIQUE KEY[^;]+session_id[^;]+recipient_user_id/i);
-  });
-
-  it('wires every REST chat/session operation to request.user', () => {
-    const server = readFileSync(new URL('../../server.ts', import.meta.url), 'utf8');
-
-    expect(server).toMatch(/handleChatSend\(authenticatedActor\(request as any\),/);
-    expect(server).toMatch(/getMessages\(authenticatedActor\(request as any\),\s*sessionKey/);
-    expect(server).toMatch(/getSessions\(authenticatedActor\(request as any\)\)/);
-    expect(server).toMatch(/updateSessionSettings\(authenticatedActor\(request as any\),\s*key/);
-    expect(server).toMatch(/deleteSession\(authenticatedActor\(request as any\),\s*key/);
-    expect(server).toMatch(/enforceMessageCap\(authenticatedActor\(request as any\),\s*key/);
+    await expect(service.deleteOldSessionsForMaintenance(30)).resolves.toBe(2);
+    expect(service.deleteOldSessions).toBeUndefined();
   });
 });

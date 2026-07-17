@@ -286,23 +286,60 @@ describe('actor context security boundary', () => {
 });
 
 describe('actor schema bootstrap', () => {
-  it('actor schema applies all missing security fields on one checked-out connection', async () => {
-    const operations: string[] = [];
+  it('actor schema creates the attributed read-share ACL and is idempotent', async () => {
+    const schema = {
+      columns: new Set<string>(),
+      indexes: new Set<string>(),
+      tables: new Map<string, {
+        columns: Set<string>;
+        foreignKeys: Set<string>;
+        unique: Set<string>;
+        indexes: Set<string>;
+        permissions: Set<string>;
+      }>(),
+      alterCount: 0,
+    };
     const execute = vi.fn(async (sql: string, values: unknown[] = []) => {
       if (sql.includes('information_schema.COLUMNS')) {
-        operations.push(`check:${values[0]}.${values[1]}`);
-        return [[{ count: 0 }]];
+        return [[{ count: schema.columns.has(`${values[0]}.${values[1]}`) ? 1 : 0 }]];
       }
       if (sql.includes('information_schema.STATISTICS')) {
-        operations.push(`check-index:${values[1]}`);
-        return [[{ count: 0 }]];
+        return [[{ count: schema.indexes.has(String(values[1])) ? 1 : 0 }]];
       }
       if (sql.startsWith('ALTER TABLE')) {
-        operations.push(sql.includes('ADD INDEX') ? 'alter:index' : `alter:${values.length}`);
+        schema.alterCount += 1;
+        if (sql.includes('ALTER TABLE users')) schema.columns.add('users.session_version');
+        if (sql.includes('ALTER TABLE refresh_tokens') && sql.includes('ADD COLUMN')) {
+          schema.columns.add('refresh_tokens.session_version');
+        }
+        if (sql.includes('ADD INDEX idx_rt_user_session')) schema.indexes.add('idx_rt_user_session');
         return [{ affectedRows: 0 }];
       }
       if (sql.startsWith('CREATE TABLE IF NOT EXISTS chat_session_shares')) {
-        operations.push('create:chat_session_shares');
+        if (!schema.tables.has('chat_session_shares')) {
+          schema.tables.set('chat_session_shares', {
+            columns: new Set(
+              ['session_id', 'granted_by', 'recipient_user_id', 'permission', 'created_at']
+                .filter((column) => sql.includes(`${column} `)),
+            ),
+            foreignKeys: new Set(
+              ['chat_sessions.session_id', 'users.granted_by', 'users.recipient_user_id']
+                .filter((relation) => {
+                  const [table, column] = relation.split('.');
+                  return sql.includes(`FOREIGN KEY (${column === 'session_id' ? 'session_id' : column})`)
+                    && sql.includes(`REFERENCES ${table}`);
+                }),
+            ),
+            unique: new Set(sql.includes('(session_id, recipient_user_id)')
+              ? ['session_id,recipient_user_id']
+              : []),
+            indexes: new Set([
+              ...(sql.includes('(recipient_user_id, permission)') ? ['recipient_user_id,permission'] : []),
+              ...(sql.includes('KEY idx_chat_share_grantor (granted_by)') ? ['granted_by'] : []),
+            ]),
+            permissions: new Set(sql.includes("ENUM('read')") ? ['read'] : []),
+          });
+        }
         return [{ affectedRows: 0 }];
       }
       throw new Error(`unexpected SQL: ${sql}`);
@@ -315,19 +352,19 @@ describe('actor schema bootstrap', () => {
     };
 
     await applyActorSecuritySchema(pool as any);
+    await applyActorSecuritySchema(pool as any);
 
-    expect(pool.getConnection).toHaveBeenCalledOnce();
+    expect(pool.getConnection).toHaveBeenCalledTimes(2);
     expect(poolExecute).not.toHaveBeenCalled();
-    expect(operations).toEqual([
-      'check:users.session_version',
-      'alter:0',
-      'check:refresh_tokens.session_version',
-      'alter:0',
-      'check-index:idx_rt_user_session',
-      'alter:index',
-      'create:chat_session_shares',
-    ]);
-    expect(connection.release).toHaveBeenCalledOnce();
+    expect(schema.alterCount).toBe(3);
+    expect(schema.tables.get('chat_session_shares')).toEqual({
+      columns: new Set(['session_id', 'granted_by', 'recipient_user_id', 'permission', 'created_at']),
+      foreignKeys: new Set(['chat_sessions.session_id', 'users.granted_by', 'users.recipient_user_id']),
+      unique: new Set(['session_id,recipient_user_id']),
+      indexes: new Set(['recipient_user_id,permission', 'granted_by']),
+      permissions: new Set(['read']),
+    });
+    expect(connection.release).toHaveBeenCalledTimes(2);
   });
 
   it('actor schema fails startup work immediately and releases the same connection', async () => {

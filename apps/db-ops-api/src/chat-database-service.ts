@@ -484,7 +484,7 @@ export class ChatDatabaseService {
     }
   }
 
-  async deleteOldSessions(retentionDays: number): Promise<number> {
+  async deleteOldSessionsForMaintenance(retentionDays: number): Promise<number> {
     const pool = this.getPool();
     const [result] = await pool.query<ResultSetHeader>(
       `DELETE FROM chat_sessions

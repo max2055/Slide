@@ -16,7 +16,6 @@ import {
   actorContextService,
   applyActorSecuritySchema,
   signAccessToken,
-  type ActorContext,
 } from './src/auth/actor-context.js';
 import { requirePermission } from './src/auth/require-permission.js';
 import { requireInstanceAccess } from './src/auth/require-instance-access.js';
@@ -33,10 +32,9 @@ import { databaseService } from './src/database-service.js';
 import { llmService } from './src/llm-service.js';
 import { dbConnection } from './src/db-connection.js';
 import { monitorCollector } from './src/monitor-collector.js';
-import {
-  ChatSessionNotFoundError,
-  chatDatabaseService,
-} from './src/chat-database-service.js';
+import { chatDatabaseService } from './src/chat-database-service.js';
+import { handleChatSend } from './src/chat-handler.js';
+import { registerChatRoutes } from './src/chat-routes.js';
 import { reportService } from './src/report-service.js';
 import { reportDatabaseService } from './src/report-database-service.js';
 import { reportConfigService } from './src/report-config-database-service.js';
@@ -102,11 +100,6 @@ const JWT_EXPIRES_IN = '1h';
 const rbacService = new RbacService();
 
 const verifyToken = createVerifyToken(JWT_SECRET, actorContextService);
-
-function authenticatedActor(request: { user?: ActorContext }): ActorContext {
-  if (!request.user) throw new Error('Authenticated actor is unavailable');
-  return request.user;
-}
 
 async function start() {
   // 安全检查：ENCRYPTION_KEY 必须配置
@@ -795,66 +788,10 @@ async function start() {
     }
   });
 
-  // 聊天历史
-
-	  // 聊天发送 (DirectAdapter / IAgentEngine)
-	  fastify.post('/api/chat/send', { preHandler: [verifyToken] }, async (request, reply) => {
-	    try {
-	      const check = strictBody(request.body as Record<string, unknown>,
-	        ['message', 'sessionKey'], 'POST /api/chat/send');
-	      if (check.error) return reply.code(400).send(check.error);
-	      const { message, sessionKey } = check.body;
-	      if (!message) {
-	        return reply.code(400).send({ error: 'message is required' });
-	      }
-	      const { handleChatSend } = await import('./src/chat-handler.js');
-		      const result = await handleChatSend(authenticatedActor(request as any), {
-		        sessionKey: typeof sessionKey === 'string' ? sessionKey : undefined,
-		        message: String(message),
-		      });
-		      reply.send({
-            reply: result.finalContent,
-            usage: result.usage,
-            sessionKey: result.sessionKey,
-          });
-		    } catch (error: any) {
-		      if (error instanceof ChatSessionNotFoundError) {
-            return reply.code(404).send({ error: 'Session not found' });
-          }
-		      reply.code(500).send({ error: 'Chat send failed: ' + error.message });
-	    }
-	  });
-
-  fastify.get('/api/chat/history', { preHandler: [verifyToken] }, async (request, reply) => {
-    try {
-      const { sessionKey, limit: limitStr } = request.query as { sessionKey?: string; limit?: string };
-      const limit = limitStr ? parseInt(limitStr, 10) || 200 : 200;
-      const parseContent = (rawContent: string) => {
-        const thinkRe = /<think>([\s\S]*?)<\/think>/;
-        const match = thinkRe.exec(rawContent);
-        if (match) {
-          const thinking = match[1].trim();
-          const text = rawContent.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
-          return { content: [{ type: 'thinking', thinking }, { type: 'text', text }] };
-        }
-        return { content: rawContent };
-      };
-      const formatMsg = (msg: any) => ({
-        role: msg.role,
-        ...parseContent(msg.content || ''),
-        timestamp: msg.created_at ? new Date(msg.created_at).getTime() : Date.now(),
-      });
-      if (!sessionKey) {
-        return reply.code(400).send({ error: 'sessionKey parameter is required' });
-      }
-	      const msgs = await chatDatabaseService.getMessages(authenticatedActor(request as any), sessionKey, limit);
-	      return reply.send({ messages: msgs.map(formatMsg) });
-	    } catch (error: any) {
-	      if (error instanceof ChatSessionNotFoundError) {
-          return reply.code(404).send({ error: 'Session not found' });
-        }
-	      reply.code(500).send({ error: '获取聊天历史失败：' + error.message });
-    }
+  await registerChatRoutes(fastify, {
+    verifyToken,
+    service: chatDatabaseService,
+    handleChatSend,
   });
 
   // ========== Agent List API (DirectAdapter) ==========
@@ -867,90 +804,6 @@ async function start() {
         { id: 'slide-db-ops', name: 'Slide', identity: { name: 'Slide', avatarUrl: '' } },
       ],
     });
-  });
-
-  // ========== Chat Sessions List API (DirectAdapter) ==========
-  fastify.get('/api/sessions', { preHandler: [verifyToken] }, async (request, reply) => {
-    try {
-      const { activeMinutes } = request.query as { activeMinutes?: string };
-      const chatDb = (await import('./src/chat-database-service.js')).chatDatabaseService;
-	      const sessions = await chatDb.getSessions(authenticatedActor(request as any));
-      const now = Date.now();
-      const filtered = activeMinutes
-        ? (sessions || []).filter((s: any) => {
-            const lastMsg = s.last_message_at ? new Date(s.last_message_at).getTime() : 0;
-            return (now - lastMsg) < parseInt(activeMinutes, 10) * 60 * 1000;
-          })
-        : (sessions || []);
-      reply.send({
-        ok: true,
-        sessions: await Promise.all(filtered.map(async (s: any) => {
-          const metadata = s.metadata ? (typeof s.metadata === 'string' ? JSON.parse(s.metadata) : s.metadata) : null;
-          return {
-            key: s.session_id,
-            kind: 'direct',
-            label: s.title || s.session_id,
-            updatedAt: s.last_message_at ? new Date(s.last_message_at).getTime() : null,
-            message_count: s.message_count ?? 0,
-            status: metadata?.status || 'active',
-            instance_id: s.instance_id ?? null,
-          };
-        })),
-        defaults: {},
-      });
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取会话列表失败：' + error.message });
-    }
-  });
-
-  // PATCH /api/sessions/:key — 更新会话设置（model、thinkingLevel）
-  fastify.patch('/api/sessions/:key', { preHandler: [verifyToken] }, async (request, reply) => {
-    try {
-      const { key } = request.params as { key: string };
-      const body = request.body as { model?: string | null; thinkingLevel?: string | null };
-	      await chatDatabaseService.updateSessionSettings(authenticatedActor(request as any), key, {
-        model: body.model,
-        thinkingLevel: body.thinkingLevel,
-      });
-	      reply.send({ ok: true });
-	    } catch (error: any) {
-	      if (error instanceof ChatSessionNotFoundError) {
-          return reply.code(404).send({ ok: false, error: 'Session not found' });
-        }
-	      reply.code(500).send({ error: '更新会话设置失败：' + error.message });
-    }
-  });
-
-  // DELETE /api/sessions/:key — 删除会话及其消息
-  fastify.delete('/api/sessions/:key', { preHandler: [verifyToken] }, async (request, reply) => {
-    try {
-      const { key } = request.params as { key: string };
-	      const deleted = await chatDatabaseService.deleteSession(authenticatedActor(request as any), key);
-	      return { ok: deleted };
-	    } catch (error: any) {
-	      if (error instanceof ChatSessionNotFoundError) {
-          return reply.code(404).send({ ok: false, error: 'Session not found' });
-        }
-	      reply.code(500).send({ error: '删除会话失败：' + error.message });
-    }
-  });
-
-  // POST /api/sessions/:key/cap — 强制限制会话消息数量
-  fastify.post('/api/sessions/:key/cap', { preHandler: [verifyToken] }, async (request, reply) => {
-    try {
-      const { key } = request.params as { key: string };
-      const { maxMessages } = request.body as { maxMessages: number };
-      if (!maxMessages || maxMessages < 1) {
-        return reply.code(400).send({ ok: false, error: 'maxMessages must be a positive number' });
-      }
-	      const deleted = await chatDatabaseService.enforceMessageCap(authenticatedActor(request as any), key, maxMessages);
-	      return { ok: true, deleted };
-	    } catch (error: any) {
-	      if (error instanceof ChatSessionNotFoundError) {
-          return reply.code(404).send({ ok: false, error: 'Session not found' });
-        }
-	      reply.code(500).send({ error: '限制消息数量失败：' + error.message });
-    }
   });
 
   // ========== Agent Management API ==========

@@ -19,9 +19,11 @@ export type AdapterThinkingDeltaEvent = { type: 'thinking_delta'; delta: string 
 export type AdapterThinkingEndEvent = { type: 'thinking_end' };
 export type AdapterCompleteEvent = { type: 'complete'; finalContent?: string; thinkingContent?: string };
 export type AdapterErrorEvent = { type: 'error'; error: string };
+export type AdapterSessionCreatedEvent = { type: 'session.created'; sessionKey: string };
 
 /** ChatEvent discriminated union — mirrors apps/db-ops-api/src/adapter/types.ts */
 export type AdapterChatEvent =
+  | AdapterSessionCreatedEvent
   | AdapterTextDeltaEvent
   | AdapterToolStartEvent
   | AdapterToolResultEvent
@@ -58,7 +60,7 @@ export class DirectGatewayClient {
   private maxReconnectAttempts = MAX_RECONNECT_ATTEMPTS;
   private closed = false;
   private authenticated = false;
-  private pendingMessages: Array<{ sessionKey: string; message: string }> = [];
+  private pendingMessages: Array<{ sessionKey?: string; message: string }> = [];
 
   constructor(opts: DirectGatewayClientOptions) {
     this.url = opts.url ?? `ws://${typeof location !== 'undefined' ? location.hostname : 'localhost'}:${DEFAULT_PORT}`;
@@ -142,7 +144,9 @@ export class DirectGatewayClient {
   async request<T = unknown>(method: string, params?: unknown): Promise<T> {
     if (method === 'chat.send') {
       const p = params as Record<string, unknown> | undefined;
-      const sessionKey = (p?.sessionKey as string) || `ui_${Date.now()}`;
+      const sessionKey = typeof p?.sessionKey === 'string' && p.sessionKey.trim()
+        ? p.sessionKey.trim()
+        : undefined;
       const message = (p?.message as string) || '';
       this.sendChat(sessionKey, message);
       return undefined as T;
@@ -230,7 +234,7 @@ export class DirectGatewayClient {
     return response.json() as Promise<T>;
   }
 
-  sendChat(sessionKey: string, message: string): void {
+  sendChat(sessionKey: string | undefined, message: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.warn('[DirectGatewayClient] cannot sendChat: not connected');
       return;
@@ -240,7 +244,7 @@ export class DirectGatewayClient {
       this.pendingMessages.push({ sessionKey, message });
       return;
     }
-    this.ws.send(JSON.stringify({ type: 'chat.send', sessionKey, message }));
+    this.ws.send(JSON.stringify(this.chatSendFrame(sessionKey, message)));
   }
 
   requestHistory(sessionKey: string): void {
@@ -285,13 +289,14 @@ export class DirectGatewayClient {
       const pending = this.pendingMessages;
       this.pendingMessages = [];
       for (const pendingMsg of pending) {
-        this.ws?.send(JSON.stringify({ type: 'chat.send', sessionKey: pendingMsg.sessionKey, message: pendingMsg.message }));
+        this.ws?.send(JSON.stringify(this.chatSendFrame(pendingMsg.sessionKey, pendingMsg.message)));
       }
       return;
     }
 
     // Forward known AdapterChatEvent shapes
     switch (type) {
+      case 'session.created':
       case 'text_delta':
       case 'thinking_delta':
       case 'thinking_end':
@@ -306,6 +311,14 @@ export class DirectGatewayClient {
         // Unknown type — drop silently
         break;
     }
+  }
+
+  private chatSendFrame(sessionKey: string | undefined, message: string): Record<string, unknown> {
+    return {
+      type: 'chat.send',
+      ...(sessionKey ? { sessionKey } : {}),
+      message,
+    };
   }
 
   private scheduleReconnect(): void {
@@ -484,11 +497,26 @@ function handleChatGatewayEvent(host: Record<string, unknown>, payload: ChatEven
   }
 }
 
-function handleDirectAdapterEvent(host: Record<string, unknown>, event: AdapterChatEvent): void {
+export function handleDirectAdapterEvent(host: Record<string, unknown>, event: AdapterChatEvent): void {
   const runId = host.chatRunId as string | null;
   const sessionKey = host.sessionKey as string;
 
   switch (event.type) {
+    case 'session.created': {
+      const nextSessionKey = event.sessionKey.trim();
+      if (!nextSessionKey) break;
+      host.sessionKey = nextSessionKey;
+      const settings = host.settings as Record<string, unknown> | undefined;
+      const applySettings = host.applySettings as ((next: Record<string, unknown>) => void) | undefined;
+      if (settings && applySettings) {
+        applySettings.call(host, {
+          ...settings,
+          sessionKey: nextSessionKey,
+          lastActiveSessionKey: nextSessionKey,
+        });
+      }
+      break;
+    }
     case 'thinking_delta':
       // Accumulate thinking text
       host.chatThinkingText = ((host.chatThinkingText as string) || '') + event.delta;

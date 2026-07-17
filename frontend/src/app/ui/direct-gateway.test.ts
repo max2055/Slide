@@ -7,9 +7,11 @@
  * - sendChat produces correct JSON wire format
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as directGateway from './direct-gateway.ts';
 import { DirectGatewayClient } from './direct-gateway.ts';
 import type {
   AdapterChatEvent,
+  AdapterSessionCreatedEvent,
   AdapterTextDeltaEvent,
   ConnectionState,
 } from './direct-gateway.ts';
@@ -25,6 +27,7 @@ describe('109-04: DirectGatewayClient', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('can be constructed with required options', () => {
@@ -89,6 +92,7 @@ describe('109-04: DirectGatewayClient', () => {
     expect(delta.delta).toBe('hello');
 
     const all: AdapterChatEvent[] = [
+      { type: 'session.created', sessionKey: 'server-session' },
       { type: 'text_delta', delta: '' },
       { type: 'tool_start', toolName: 'test', args: {} },
       { type: 'tool_result', toolName: 'test', result: null },
@@ -96,6 +100,105 @@ describe('109-04: DirectGatewayClient', () => {
       { type: 'complete', finalContent: 'done' },
       { type: 'error', error: 'fail' },
     ];
-    expect(all.length).toBe(6);
+    expect(all.length).toBe(7);
+  });
+
+  it('sends a pending new-session chat without inventing a client session key', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+
+    await client.request('chat.send', { sessionKey: '', message: 'hello' });
+
+    expect(socket.frames.at(-1)).toEqual({ type: 'chat.send', message: 'hello' });
+  });
+
+  it('forwards session.created as a first-class adapter event', () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    const created: AdapterSessionCreatedEvent = {
+      type: 'session.created',
+      sessionKey: 'server-session',
+    };
+
+    socket.receive(created);
+
+    expect(onEvent).toHaveBeenCalledWith(created);
+  });
+
+  it('adopts the server session key without resetting the active run and uses it next', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+    const applySettings = vi.fn();
+    const host = {
+      sessionKey: '',
+      chatRunId: 'run-1',
+      chatStream: 'partial answer',
+      settings: { sessionKey: '', lastActiveSessionKey: '' },
+      applySettings(next: Record<string, unknown>) {
+        applySettings(next);
+        this.settings = next as typeof this.settings;
+      },
+    };
+
+    (directGateway as any).handleDirectAdapterEvent(host, {
+      type: 'session.created',
+      sessionKey: 'server-session',
+    });
+    await client.request('chat.send', { sessionKey: host.sessionKey, message: 'follow-up' });
+
+    expect(host.sessionKey).toBe('server-session');
+    expect(host.chatRunId).toBe('run-1');
+    expect(host.chatStream).toBe('partial answer');
+    expect(applySettings).toHaveBeenCalledWith(expect.objectContaining({
+      sessionKey: 'server-session',
+      lastActiveSessionKey: 'server-session',
+    }));
+    expect(socket.frames.at(-1)).toEqual({
+      type: 'chat.send',
+      sessionKey: 'server-session',
+      message: 'follow-up',
+    });
   });
 });
+
+class MockWebSocket {
+  static readonly OPEN = 1;
+  readonly readyState = MockWebSocket.OPEN;
+  readonly frames: Array<Record<string, unknown>> = [];
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent<string>) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+
+  send(raw: string): void {
+    this.frames.push(JSON.parse(raw));
+  }
+
+  close(): void {}
+
+  receive(frame: Record<string, unknown>): void {
+    this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent<string>);
+  }
+}
+
+function installMockWebSocket(): MockWebSocket {
+  let socket: MockWebSocket | undefined;
+  class InstalledWebSocket extends MockWebSocket {
+    constructor() {
+      super();
+      socket = this;
+    }
+  }
+  vi.stubGlobal('WebSocket', InstalledWebSocket);
+  queueMicrotask(() => socket?.onopen?.(new Event('open')));
+  return new Proxy({} as MockWebSocket, {
+    get(_target, property) {
+      return Reflect.get(socket as object, property, socket);
+    },
+  });
+}
