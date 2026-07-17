@@ -210,7 +210,7 @@ describe('92-02-01: ai-analysis-result component', () => {
       await el.updateComplete;
 
       const shadow = el.shadowRoot!;
-      expect(shadow.querySelector('.result-content')!.innerHTML).not.toContain('onclick');
+      expect(shadow.querySelector('.result-content')!.querySelector('a[onclick]')).toBeNull();
     });
   });
 

@@ -2,70 +2,25 @@ import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import { Marked } from "marked";
 import "../components/app-card.js";
-
-const marked = new Marked();
-
-/**
- * Sanitize HTML output to prevent XSS from untrusted Agent-generated Markdown.
- * Strips <script>, <iframe>, and on* event handlers.
- */
-function sanitize(html: string): string {
-  return html
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
-    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "")
-    .replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "");
-}
+import { toSanitizedMarkdownHtml } from "../markdown.ts";
 
 /**
  * Render analysis result that may be a Markdown string or structured JSON object.
  */
-function renderResult(result: any): string {
-  if (!result) return "";
-
-  if (typeof result === "string") {
-    const rawHtml = marked.parse(result, { async: false }) as string;
-    return sanitize(rawHtml);
-  }
-
-  // JSON backward-compat renderer
-  let html = "";
-  if (result.summary) {
-    html += `<div style="margin-bottom:16px;padding:12px;background:var(--bg-elevated);border-radius:var(--radius-md);border:1px solid var(--border);">
-      <strong style="color:var(--text-strong);">摘要</strong>
-      <p style="margin:8px 0 0;font-size:14px;color:var(--text);line-height:1.6;">${result.summary}</p>
-    </div>`;
-  }
-  for (const [key, value] of Object.entries(result)) {
-    if (key === "summary") continue;
-    if (Array.isArray(value)) {
-      html += `<div style="margin-bottom:12px;"><strong style="color:var(--text-strong);font-size:13px;">${key}</strong>
-        <ul style="margin:6px 0 0 20px;font-size:13px;color:var(--text);line-height:1.8;">
-          ${value.map((item: any) => {
-            if (typeof item === "string") return `<li>${item}</li>`;
-            if (typeof item === "object" && item !== null) {
-              const entries = Object.entries(item).map(([k, v]) => `${k}: ${v}`).join("; ");
-              return `<li>${entries}</li>`;
-            }
-            return `<li>${String(item)}</li>`;
-          }).join("")}
-        </ul></div>`;
-    } else if (typeof value === "object" && value !== null) {
-      html += `<div style="margin-bottom:12px;"><strong style="color:var(--text-strong);font-size:13px;">${key}</strong>
-        <pre style="margin:6px 0 0;padding:10px;background:var(--bg-elevated);border-radius:var(--radius-sm);font-size:12px;color:var(--text);white-space:pre-wrap;overflow-x:auto;">${JSON.stringify(value, null, 2)}</pre></div>`;
-    } else {
-      // Null-safe numeric formatting (Research Pitfall 5)
-      const displayVal = value != null ? String(value) : "0";
-      html += `<div style="margin-bottom:8px;font-size:13px;"><strong style="color:var(--text-strong);">${key}:</strong> <span style="color:var(--text);">${displayVal}</span></div>`;
-    }
-  }
-  return html;
+function renderStructuredResult(result: Record<string, unknown>) {
+  const summary = result.summary;
+  return html`${summary !== undefined ? html`<section><strong>摘要</strong><p>${String(summary)}</p></section>` : null}${Object.entries(result).map(([key, value]) => {
+    if (key === "summary") return null;
+    if (Array.isArray(value)) return html`<section><strong>${key}</strong><ul>${value.map((item) => html`<li>${typeof item === "object" && item !== null ? JSON.stringify(item) : String(item)}</li>`)}</ul></section>`;
+    if (typeof value === "object" && value !== null) return html`<section><strong>${key}</strong><pre>${JSON.stringify(value, null, 2)}</pre></section>`;
+    return html`<div><strong>${key}:</strong> <span>${value == null ? "0" : String(value)}</span></div>`;
+  })}`;
 }
 
 @customElement("ai-analysis-result")
 export class AIAnalysisResult extends LitElement {
-  @property({ type: String }) result: string | null = null;
+  @property({ attribute: false }) result: string | Record<string, unknown> | null = null;
   @property({ type: String }) analysisType: string = "alert_rca";
   @property({ type: String }) triggerType: string = "manual";
   @property({ type: Boolean }) loading: boolean = false;
@@ -277,7 +232,9 @@ export class AIAnalysisResult extends LitElement {
         </span>
         <div class="result-content">
           ${this.result
-            ? html`<div>${unsafeHTML(renderResult(this.result))}</div>`
+            ? typeof this.result === "string"
+              ? html`<div>${unsafeHTML(toSanitizedMarkdownHtml(this.result))}</div>`
+              : html`<div>${renderStructuredResult(this.result as unknown as Record<string, unknown>)}</div>`
             : html`<p style="color:var(--muted);">分析完成，但暂无结果数据</p>`}
         </div>
       </app-card>
