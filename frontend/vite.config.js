@@ -4,6 +4,8 @@
 import { defineConfig } from 'vite'
 import { fileURLToPath, URL } from 'node:url'
 
+const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://localhost:3000'
+
 export default defineConfig({
   plugins: [],
   resolve: {
@@ -26,7 +28,7 @@ export default defineConfig({
     strictPort: true, // 端口被占用时报错，不自动尝试其他端口
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: apiProxyTarget,
         changeOrigin: true
       },
       '/__slide': {
