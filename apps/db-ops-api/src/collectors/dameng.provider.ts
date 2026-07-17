@@ -8,6 +8,12 @@ import { BaseMetricProvider } from './base-provider.js';
 import type { DatabaseConnection } from '../database-service.js';
 import type { MetricDefinition } from '../metric-registry.js';
 
+function scalar(rows: unknown): number | undefined {
+  if (!Array.isArray(rows) || !Array.isArray(rows[0])) return undefined;
+  const numeric = Number(rows[0][0]);
+  return Number.isFinite(numeric) ? numeric : undefined;
+}
+
 export class DamengProvider extends BaseMetricProvider {
   readonly name = 'Dameng Provider';
   readonly supportedDbTypes = ['dameng'];
@@ -21,25 +27,25 @@ export class DamengProvider extends BaseMetricProvider {
           const result = await instance.dmConnection.execute<[[number]]>(
             'SELECT COUNT(*) as count FROM V$SESSIONS'
           );
-          return (result.rows?.[0]?.[0] as number) || 0;
+          return scalar(result.rows) ?? 0;
         }
 
         case 'connections_max': {
           const result = await instance.dmConnection.execute<[[number]]>(
             "SELECT VALUE FROM V$PARAMETER WHERE NAME = 'max_sessions'"
           );
-          return (result.rows?.[0]?.[0] as number) || 500;
+          return scalar(result.rows) ?? 500;
         }
 
         case 'cpu_usage': {
           const maxConnResult = await instance.dmConnection.execute<[[number]]>(
             "SELECT VALUE FROM V$PARAMETER WHERE NAME = 'max_sessions'"
           );
-          const maxConn = (maxConnResult.rows?.[0]?.[0] as number) || 500;
+          const maxConn = scalar(maxConnResult.rows) ?? 500;
           const activeResult = await instance.dmConnection.execute<[[number]]>(
             "SELECT COUNT(*) as count FROM V$SESSIONS WHERE STATE = 'ACTIVE'"
           );
-          const active = (activeResult.rows?.[0]?.[0] as number) || 0;
+          const active = scalar(activeResult.rows) ?? 0;
           return Math.min(100, Math.round((active / maxConn) * 100));
         }
 
@@ -48,7 +54,7 @@ export class DamengProvider extends BaseMetricProvider {
           const bufferResult = await instance.dmConnection.execute<[[number]]>(`
             SELECT NVL(RAT_HIT, 0) * 100 as hit_rate FROM V$BUFFERPOOL WHERE ID = 0
           `);
-          const dmBufferHitRate = (bufferResult.rows?.[0]?.[0] as number) || 100;
+          const dmBufferHitRate = scalar(bufferResult.rows) ?? 100;
           return Math.min(100, Math.round((100 - dmBufferHitRate) * 0.5 + 30));
         }
 
@@ -63,7 +69,7 @@ export class DamengProvider extends BaseMetricProvider {
             FROM V$SYSSTAT
             WHERE NAME IN ('sql executed count')
           `);
-          const executes = (statResult.rows?.[0]?.[0] as number) || 0;
+          const executes = scalar(statResult.rows) ?? 0;
           return Math.floor(executes / 100);
         }
 
@@ -74,7 +80,7 @@ export class DamengProvider extends BaseMetricProvider {
             FROM V$SYSSTAT
             WHERE NAME IN ('transaction commit count')
           `);
-          const commits = (statResult.rows?.[0]?.[0] as number) || 0;
+          const commits = scalar(statResult.rows) ?? 0;
           return Math.floor(commits / 10);
         }
 
@@ -85,7 +91,7 @@ export class DamengProvider extends BaseMetricProvider {
           const result = await instance.dmConnection.execute<[[number]]>(`
             SELECT NVL(RAT_HIT, 0) * 100 as hit_rate FROM V$BUFFERPOOL WHERE ID = 0
           `);
-          const rate = (result.rows?.[0]?.[0] as number) || 100;
+          const rate = scalar(result.rows) ?? 100;
           return Math.round(rate * 100) / 100;
         }
 
@@ -94,13 +100,13 @@ export class DamengProvider extends BaseMetricProvider {
             const result = await instance.dmConnection.execute<[[number]]>(
               "SELECT COUNT(*) as count FROM V$LOCK WHERE BLOCK = 1"
             );
-            return (result.rows?.[0]?.[0] as number) || 0;
+            return scalar(result.rows) ?? 0;
           } catch {
             try {
               const result = await instance.dmConnection.execute<[[number]]>(
                 "SELECT COUNT(*) as count FROM V$LOCK"
               );
-              return (result.rows?.[0]?.[0] as number) || 0;
+              return scalar(result.rows) ?? 0;
             } catch {
               return 0;
             }
@@ -111,7 +117,7 @@ export class DamengProvider extends BaseMetricProvider {
           const result = await instance.dmConnection.execute<[[number]]>(
             "SELECT COUNT(*) as count FROM V$DEADLOCK_HISTORY"
           );
-          return (result.rows?.[0]?.[0] as number) || 0;
+          return scalar(result.rows) ?? 0;
         }
 
         default:

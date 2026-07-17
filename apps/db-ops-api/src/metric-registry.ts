@@ -609,7 +609,7 @@ export class MetricRegistry {
   getAll(targetType?: string): MetricDefinition[] {
     if (targetType) {
       return Array.from(this.definitions.values()).filter(
-        (m) => m.target_type === targetType
+        (m) => (m.target_type ?? 'instance') === targetType
       );
     }
     return Array.from(this.definitions.values());
