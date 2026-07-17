@@ -36,6 +36,22 @@ export class AgentRunService {
     return Number(outcome.affectedRows) === 1;
   }
 
+  async getForActor(id: string, actorId: number, sessionId: string): Promise<AgentRun | null> {
+    const [rows] = await this.requirePool().query<any[]>(
+      'SELECT * FROM agent_runs WHERE id = ? AND actor_id = ? AND session_id = ?', [id, actorId, sessionId],
+    );
+    return rows[0] ? this.map(rows[0]) : null;
+  }
+
+  async cancelForActor(id: string, actorId: number, sessionId: string): Promise<boolean> {
+    const [outcome] = await this.requirePool().query<{ affectedRows: number }>(
+      `UPDATE agent_runs SET state = 'cancelled', finished_at = NOW(), error_json = ?
+       WHERE id = ? AND actor_id = ? AND session_id = ? AND state = 'running'`,
+      [JSON.stringify({ reasonCode: 'CANCELLED_BY_ACTOR' }), id, actorId, sessionId],
+    );
+    return Number(outcome.affectedRows) === 1;
+  }
+
   private requirePool(): Pool { const pool = this.poolProvider(); if (!pool) throw new Error('Agent run database unavailable'); return pool; }
   private map(row: any): AgentRun { return { id: row.id, actorId: Number(row.actor_id), sessionId: row.session_id, messageId: row.message_id, idempotencyKey: row.idempotency_key, state: row.state, result: typeof row.result_json === 'string' ? JSON.parse(row.result_json) : row.result_json, error: typeof row.error_json === 'string' ? JSON.parse(row.error_json) : row.error_json }; }
 }
