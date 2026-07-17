@@ -13,6 +13,7 @@ interface ApprovalRequest {
   ai_recommendation: any; status: string; reviewed_by: number | null;
   review_notes: string | null; execution_result: any; created_at: string;
   target_database?: string;
+  operation_id?: string | null;
 }
 
 interface ApprovalEvent {
@@ -23,6 +24,8 @@ interface ApprovalEvent {
   created_by: number | null;
   created_at: string;
 }
+
+interface OperationEvent { toState: string; reasonCode: string; metadata?: Record<string, unknown>; createdAt: string; }
 
 @customElement("approval-dashboard")
 export class ApprovalDashboard extends LitElement {
@@ -112,6 +115,8 @@ export class ApprovalDashboard extends LitElement {
   @state() private events: ApprovalEvent[] = [];
   @state() private detailLoading: boolean = false;
   @state() private detailError: string | null = null;
+  @state() private operationEvents: OperationEvent[] = [];
+  @state() private operationState: string | null = null;
 
   private _codeMirrorView: EditorView | null = null;
   private _codeMirrorContainer: HTMLElement | null = null;
@@ -154,6 +159,8 @@ export class ApprovalDashboard extends LitElement {
   private backToList() {
     this._destroyCodeMirror();
     this.events = [];
+    this.operationEvents = [];
+    this.operationState = null;
     this.detailError = null;
     this.detailLoading = false;
     this.view = "list";
@@ -175,6 +182,14 @@ export class ApprovalDashboard extends LitElement {
       this.selectedRequest = detail;
       if (eventsRes.ok) {
         this.events = await eventsRes.json() as ApprovalEvent[];
+      }
+      if (detail.operation_id) {
+        const [operationRes, operationEventsRes] = await Promise.all([
+          authFetch(`/api/operations/${detail.operation_id}`),
+          authFetch(`/api/operations/${detail.operation_id}/events`),
+        ]);
+        if (operationRes.ok) this.operationState = (await operationRes.json()).state ?? null;
+        if (operationEventsRes.ok) this.operationEvents = (await operationEventsRes.json()).events ?? [];
       }
       this.detailLoading = false;
       // Mount CodeMirror in next microtask to ensure DOM is rendered
@@ -476,11 +491,18 @@ export class ApprovalDashboard extends LitElement {
               <div class="meta-row"><span class="meta-label">提交时间</span><span class="meta-value">${new Date(r.created_at).toLocaleString("zh-CN")}</span></div>
               <div class="meta-row"><span class="meta-label">风险等级</span><span class="meta-value">${this._riskBadge(r.risk_level)}</span></div>
               <div class="meta-row"><span class="meta-label">当前状态</span><span class="meta-value">${this._statusLabel(r.status)}</span></div>
+              ${r.operation_id ? html`<div class="meta-row"><span class="meta-label">Operation</span><span class="meta-value">${this.operationState ?? '加载中'}</span></div>` : ''}
               ${r.ai_recommendation ? html`
                 <div class="meta-row"><span class="meta-label">AI 分析</span><span class="meta-value"><span class="ai-badge">AI: ${r.ai_recommendation.recommendation === 'approve' ? '建议通过' : '建议驳回'}</span></span></div>
                 ${r.ai_recommendation?.reasoning ? html`<div class="meta-row"><span class="meta-label">AI 理由</span><span class="meta-value" style="font-size:12px;color:var(--muted);">${r.ai_recommendation.reasoning}</span></div>` : ''}
               ` : ''}
             </div>
+            ${r.operation_id ? html`<div class="timeline-card">
+              <div class="timeline-header">Operation 时间线</div>
+              <div class="timeline-list">
+                ${this.operationEvents.map((ev, i) => html`<div class="timeline-node" style="animation-delay:${i * 50}ms"><div class="timeline-dot timeline-dot--${ev.toState}"></div><div class="timeline-content"><div class="timeline-event-name">${ev.reasonCode}</div><div class="timeline-timestamp">${new Date(ev.createdAt).toLocaleString("zh-CN")}</div></div></div>`)}
+              </div>
+            </div>` : ''}
             <div class="timeline-card">
               <div class="timeline-header">审批历程</div>
               <div class="timeline-list">
