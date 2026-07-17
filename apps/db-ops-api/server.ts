@@ -257,6 +257,14 @@ async function start() {
     }
   });
 
+  fastify.get('/api/health/readiness', { preHandler: [verifyToken] }, async (_request, reply) => {
+    try {
+      return reply.send(await consistencyChecker.resourceHealthTruth());
+    } catch (err: any) {
+      return reply.code(500).send({ error: err.message });
+    }
+  });
+
   // 手动触发容量采集（认证保护）
   fastify.post('/api/monitor/collect-capacity', { preHandler: [verifyToken] }, async (_request, reply) => {
     try {

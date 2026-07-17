@@ -4,6 +4,7 @@
  */
 import { dbConnection } from './db-connection';
 import * as net from 'net';
+import { aggregateHealth, type HealthTruth } from './health-truth.js';
 
 // ── Types ────────────────────────────────────────────────
 
@@ -38,6 +39,27 @@ export interface ConsistencyResponse {
 // ── ConsistencyChecker ───────────────────────────────────
 
 export class ConsistencyChecker {
+  async resourceHealthTruth(): Promise<HealthTruth> {
+    const pool = dbConnection.getPool();
+    if (!pool) throw new Error('数据库未连接');
+    const [rows] = await pool.execute(`
+      SELECT di.id, di.health_status, MAX(mh.recorded_at) AS latest_metric
+      FROM database_instances di
+      LEFT JOIN metrics_history mh ON mh.instance_id = di.id
+      WHERE di.status = 'active'
+      GROUP BY di.id, di.health_status
+    `) as any;
+    const total = rows.length;
+    const available = rows.filter((row: any) => row.health_status === 'healthy').length;
+    const fresh = rows.filter((row: any) => row.latest_metric && Date.now() - new Date(row.latest_metric).getTime() <= 10 * 60_000).length;
+    const status = (good: number): import('./health-truth.js').HealthStatus => total === 0 ? 'unknown' : good === total ? 'healthy' : good === 0 ? 'critical' : 'degraded';
+    return aggregateHealth({
+      controlPlane: { status: 'healthy', numerator: 1, denominator: 1 },
+      managedAvailability: { status: status(available), numerator: available, denominator: total },
+      dataFreshness: { status: status(fresh), numerator: fresh, denominator: total },
+      workflow: { status: 'unknown', numerator: 0, denominator: 0 },
+    });
+  }
   // ── Safe wrapper ─────────────────────────────────────
 
   async _checkSafe(
