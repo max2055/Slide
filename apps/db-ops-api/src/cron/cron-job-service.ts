@@ -32,7 +32,7 @@ export class CronJobDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, task_description, cron_expr, enabled, task_type, script_id, target_instance_id, timezone, description,
+        `SELECT id, name, task_description, cron_expr, enabled, task_type, handler_key, script_id, target_instance_id, timezone, description,
                 last_run_at, next_run_at, last_result, timeout_seconds, retry_count,
                 created_at, updated_at
          FROM cron_jobs
@@ -54,7 +54,7 @@ export class CronJobDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, task_description, cron_expr, enabled, task_type, script_id, target_instance_id, timezone, description,
+        `SELECT id, name, task_description, cron_expr, enabled, task_type, handler_key, script_id, target_instance_id, timezone, description,
                 last_run_at, next_run_at, last_result, timeout_seconds, retry_count,
                 created_at, updated_at
          FROM cron_jobs
@@ -77,7 +77,7 @@ export class CronJobDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, task_description, output_schema, cron_expr, enabled, task_type, script_id, target_instance_id, timezone, description,
+        `SELECT id, name, task_description, output_schema, cron_expr, enabled, task_type, handler_key, script_id, target_instance_id, timezone, description,
                 last_run_at, next_run_at, last_result, timeout_seconds, retry_count,
                 created_at, updated_at
          FROM cron_jobs

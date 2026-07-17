@@ -14,6 +14,7 @@ export interface CronJobConfig {
   cron_expr: string;
   enabled: boolean;
   task_type: 'script' | 'agent';
+  handler_key: string | null;
   script_id: number | null;
   target_instance_id: number | null;
   timezone: string;
@@ -84,4 +85,3 @@ export interface UpdateScriptInput {
   target_db_type?: 'mysql' | 'postgresql' | 'oracle' | 'dameng' | 'mongodb' | 'redis' | 'elasticsearch';
   script_type?: 'sql' | 'shell';
 }
-

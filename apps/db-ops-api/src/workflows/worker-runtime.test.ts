@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { OutboxService } from './outbox-service.js';
 import { MysqlWorkflowStore, WorkerRuntime, type ClaimedJob, type WorkflowStore } from './worker-runtime.js';
+import { JobRegistry } from './job-registry.js';
 
 describe('outbox transaction and dedupe', () => {
   it('rolls back an event with its business transaction and commits only once', async () => {
@@ -8,6 +9,16 @@ describe('outbox transaction and dedupe', () => {
     const service = new OutboxService({ getConnection: async () => connection });
     await expect(service.transaction(async (_connection, append) => { await append({ eventType: 'report.ready', schemaVersion: 1, aggregateType: 'report', aggregateId: '1', aggregateVersion: 1, payload: {}, idempotencyKey: 'report:1' }); throw new Error('rollback'); })).rejects.toThrow('rollback');
     expect(calls).toEqual(['begin', 'event', 'rollback', 'release']);
+  });
+});
+
+describe('typed handler registry', () => {
+  it('executes a registered deterministic handler and rejects a free-text fallback', async () => {
+    const registry = new JobRegistry(); let invoked = 0;
+    registry.register('capacity.collect', async () => { invoked++; });
+    await registry.execute({ id: 'job', type: 'capacity.collect', payload: {}, attempts: 1, maxAttempts: 3, fencingToken: 1 });
+    expect(invoked).toBe(1);
+    await expect(registry.execute({ id: 'job', type: 'prompt.do-anything', payload: {}, attempts: 1, maxAttempts: 3, fencingToken: 1 })).rejects.toThrow('WORKFLOW_HANDLER_UNSUPPORTED');
   });
 });
 
