@@ -16,6 +16,7 @@ import {
   actorContextService,
   applyActorSecuritySchema,
   signAccessToken,
+  type ActorContext,
 } from './src/auth/actor-context.js';
 import { requirePermission } from './src/auth/require-permission.js';
 import { requireInstanceAccess } from './src/auth/require-instance-access.js';
@@ -32,7 +33,10 @@ import { databaseService } from './src/database-service.js';
 import { llmService } from './src/llm-service.js';
 import { dbConnection } from './src/db-connection.js';
 import { monitorCollector } from './src/monitor-collector.js';
-import { chatDatabaseService } from './src/chat-database-service.js';
+import {
+  ChatSessionNotFoundError,
+  chatDatabaseService,
+} from './src/chat-database-service.js';
 import { reportService } from './src/report-service.js';
 import { reportDatabaseService } from './src/report-database-service.js';
 import { reportConfigService } from './src/report-config-database-service.js';
@@ -98,6 +102,11 @@ const JWT_EXPIRES_IN = '1h';
 const rbacService = new RbacService();
 
 const verifyToken = createVerifyToken(JWT_SECRET, actorContextService);
+
+function authenticatedActor(request: { user?: ActorContext }): ActorContext {
+  if (!request.user) throw new Error('Authenticated actor is unavailable');
+  return request.user;
+}
 
 async function start() {
   // 安全检查：ENCRYPTION_KEY 必须配置
@@ -799,13 +808,20 @@ async function start() {
 	        return reply.code(400).send({ error: 'message is required' });
 	      }
 	      const { handleChatSend } = await import('./src/chat-handler.js');
-	      const result = await handleChatSend({
-	        sessionKey: sessionKey || `api_${Date.now()}`,
-	        message,
-	      });
-	      reply.send({ reply: result.finalContent, usage: result.usage });
-	    } catch (error: any) {
-	      reply.code(500).send({ error: 'Chat send failed: ' + error.message });
+		      const result = await handleChatSend(authenticatedActor(request as any), {
+		        sessionKey: typeof sessionKey === 'string' ? sessionKey : undefined,
+		        message: String(message),
+		      });
+		      reply.send({
+            reply: result.finalContent,
+            usage: result.usage,
+            sessionKey: result.sessionKey,
+          });
+		    } catch (error: any) {
+		      if (error instanceof ChatSessionNotFoundError) {
+            return reply.code(404).send({ error: 'Session not found' });
+          }
+		      reply.code(500).send({ error: 'Chat send failed: ' + error.message });
 	    }
 	  });
 
@@ -831,10 +847,13 @@ async function start() {
       if (!sessionKey) {
         return reply.code(400).send({ error: 'sessionKey parameter is required' });
       }
-      const msgs = await chatDatabaseService.getMessages(sessionKey, limit);
-      return reply.send({ messages: msgs.map(formatMsg) });
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取聊天历史失败：' + error.message });
+	      const msgs = await chatDatabaseService.getMessages(authenticatedActor(request as any), sessionKey, limit);
+	      return reply.send({ messages: msgs.map(formatMsg) });
+	    } catch (error: any) {
+	      if (error instanceof ChatSessionNotFoundError) {
+          return reply.code(404).send({ error: 'Session not found' });
+        }
+	      reply.code(500).send({ error: '获取聊天历史失败：' + error.message });
     }
   });
 
@@ -855,7 +874,7 @@ async function start() {
     try {
       const { activeMinutes } = request.query as { activeMinutes?: string };
       const chatDb = (await import('./src/chat-database-service.js')).chatDatabaseService;
-      const sessions = await chatDb.getSessions();
+	      const sessions = await chatDb.getSessions(authenticatedActor(request as any));
       const now = Date.now();
       const filtered = activeMinutes
         ? (sessions || []).filter((s: any) => {
@@ -889,13 +908,16 @@ async function start() {
     try {
       const { key } = request.params as { key: string };
       const body = request.body as { model?: string | null; thinkingLevel?: string | null };
-      await chatDatabaseService.updateSessionSettings(key, {
+	      await chatDatabaseService.updateSessionSettings(authenticatedActor(request as any), key, {
         model: body.model,
         thinkingLevel: body.thinkingLevel,
       });
-      reply.send({ ok: true });
-    } catch (error: any) {
-      reply.code(500).send({ error: '更新会话设置失败：' + error.message });
+	      reply.send({ ok: true });
+	    } catch (error: any) {
+	      if (error instanceof ChatSessionNotFoundError) {
+          return reply.code(404).send({ ok: false, error: 'Session not found' });
+        }
+	      reply.code(500).send({ error: '更新会话设置失败：' + error.message });
     }
   });
 
@@ -903,14 +925,13 @@ async function start() {
   fastify.delete('/api/sessions/:key', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
       const { key } = request.params as { key: string };
-      const session = await chatDatabaseService.getSessionBySessionId(key);
-      if (!session) {
-        return reply.code(404).send({ ok: false, error: 'Session not found' });
-      }
-      const deleted = await chatDatabaseService.deleteSession(key);
-      return { ok: deleted };
-    } catch (error: any) {
-      reply.code(500).send({ error: '删除会话失败：' + error.message });
+	      const deleted = await chatDatabaseService.deleteSession(authenticatedActor(request as any), key);
+	      return { ok: deleted };
+	    } catch (error: any) {
+	      if (error instanceof ChatSessionNotFoundError) {
+          return reply.code(404).send({ ok: false, error: 'Session not found' });
+        }
+	      reply.code(500).send({ error: '删除会话失败：' + error.message });
     }
   });
 
@@ -922,14 +943,13 @@ async function start() {
       if (!maxMessages || maxMessages < 1) {
         return reply.code(400).send({ ok: false, error: 'maxMessages must be a positive number' });
       }
-      const session = await chatDatabaseService.getSessionBySessionId(key);
-      if (!session) {
-        return reply.code(404).send({ ok: false, error: 'Session not found' });
-      }
-      const deleted = await chatDatabaseService.enforceMessageCap(key, maxMessages);
-      return { ok: true, deleted };
-    } catch (error: any) {
-      reply.code(500).send({ error: '限制消息数量失败：' + error.message });
+	      const deleted = await chatDatabaseService.enforceMessageCap(authenticatedActor(request as any), key, maxMessages);
+	      return { ok: true, deleted };
+	    } catch (error: any) {
+	      if (error instanceof ChatSessionNotFoundError) {
+          return reply.code(404).send({ ok: false, error: 'Session not found' });
+        }
+	      reply.code(500).send({ error: '限制消息数量失败：' + error.message });
     }
   });
 

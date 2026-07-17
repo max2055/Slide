@@ -21,10 +21,14 @@ import { requireInstanceAccess } from './require-instance-access.js';
 vi.mock('../chat-database-service.js', () => ({
   chatDatabaseService: {
     addMessage: vi.fn().mockResolvedValue(undefined),
+    createSession: vi.fn().mockResolvedValue({ session_id: 'server-generated-session' }),
+    authorizeSession: vi.fn().mockResolvedValue({ session_id: 'authorized-session' }),
     getMessages: vi.fn().mockResolvedValue([]),
     getSessionMetadata: vi.fn().mockResolvedValue(null),
   },
 }));
+
+import { chatDatabaseService } from '../chat-database-service.js';
 
 const ACTIVE_ROWS = [
   {
@@ -297,6 +301,10 @@ describe('actor schema bootstrap', () => {
         operations.push(sql.includes('ADD INDEX') ? 'alter:index' : `alter:${values.length}`);
         return [{ affectedRows: 0 }];
       }
+      if (sql.startsWith('CREATE TABLE IF NOT EXISTS chat_session_shares')) {
+        operations.push('create:chat_session_shares');
+        return [{ affectedRows: 0 }];
+      }
       throw new Error(`unexpected SQL: ${sql}`);
     });
     const connection = { execute, release: vi.fn() };
@@ -317,6 +325,7 @@ describe('actor schema bootstrap', () => {
       'alter:0',
       'check-index:idx_rt_user_session',
       'alter:index',
+      'create:chat_session_shares',
     ]);
     expect(connection.release).toHaveBeenCalledOnce();
   });
@@ -802,6 +811,11 @@ describe('websocket actor boundary', () => {
 
   beforeEach(() => {
     process.env.JWT_SECRET_KEY = 'test-ws-secret';
+    vi.clearAllMocks();
+    vi.mocked(chatDatabaseService.addMessage).mockResolvedValue(undefined);
+    vi.mocked(chatDatabaseService.createSession).mockResolvedValue({ session_id: 'server-generated-session' } as any);
+    vi.mocked(chatDatabaseService.authorizeSession).mockResolvedValue({ session_id: 'authorized-session' } as any);
+    vi.mocked(chatDatabaseService.getMessages).mockResolvedValue([]);
   });
 
   afterEach(async () => {
@@ -852,6 +866,131 @@ describe('websocket actor boundary', () => {
 
     expect(contexts.authenticateAccessToken)
       .toHaveBeenCalledWith('ws-access-token', 'test-ws-secret', expect.any(String));
+    expect(chat.mock.calls[0][3]).toBe(currentActor);
+  });
+
+  it('websocket append denial has no persistence, subscription, or agent side effect', async () => {
+    const currentActor = actor('ws-denied-append');
+    vi.mocked(chatDatabaseService.authorizeSession).mockRejectedValueOnce(new Error('Chat session not found'));
+    const adapter = new DirectAdapter({
+      tools: new ToolRegistry(),
+      llmProvider: {} as any,
+      actorContextService: {
+        authenticateAccessToken: vi.fn().mockResolvedValue(currentActor),
+        revalidateActor: vi.fn().mockResolvedValue(currentActor),
+      } as any,
+      heartbeatIntervalMs: 30_000,
+    });
+    adapters.push(adapter);
+    const chat = vi.spyOn(adapter, 'chat').mockResolvedValue({ finalContent: 'must not run' } as any);
+    process.env.AGENT_WS_PORT = String(nextPort++);
+    await adapter.start();
+
+    const ws = new WebSocket(`ws://127.0.0.1:${process.env.AGENT_WS_PORT}`);
+    sockets.push(ws);
+    await new Promise<void>((resolve, reject) => {
+      ws.once('open', resolve);
+      ws.once('error', reject);
+    });
+    ws.send(JSON.stringify({ type: 'auth', token: 'ws-access-token' }));
+    expect(await waitForMessage(ws)).toEqual({ type: 'auth_ok' });
+
+    ws.send(JSON.stringify({
+      type: 'chat.send',
+      sessionKey: 'other-session',
+      message: 'steal it',
+      userId: 999,
+    }));
+    expect(await waitForMessage(ws)).toMatchObject({ type: 'error' });
+
+    expect(chatDatabaseService.authorizeSession).toHaveBeenCalledWith(
+      currentActor,
+      'other-session',
+      'append',
+    );
+    expect(chatDatabaseService.addMessage).not.toHaveBeenCalled();
+    expect(chat).not.toHaveBeenCalled();
+    expect((adapter as any).sessionSubscribers.has('other-session')).toBe(false);
+  });
+
+  it('websocket watch denial does not add the connection to subscribers', async () => {
+    const currentActor = actor('ws-denied-watch');
+    vi.mocked(chatDatabaseService.authorizeSession).mockRejectedValueOnce(new Error('Chat session not found'));
+    const adapter = new DirectAdapter({
+      tools: new ToolRegistry(),
+      llmProvider: {} as any,
+      actorContextService: {
+        authenticateAccessToken: vi.fn().mockResolvedValue(currentActor),
+        revalidateActor: vi.fn().mockResolvedValue(currentActor),
+      } as any,
+      heartbeatIntervalMs: 30_000,
+    });
+    adapters.push(adapter);
+    process.env.AGENT_WS_PORT = String(nextPort++);
+    await adapter.start();
+
+    const ws = new WebSocket(`ws://127.0.0.1:${process.env.AGENT_WS_PORT}`);
+    sockets.push(ws);
+    await new Promise<void>((resolve, reject) => {
+      ws.once('open', resolve);
+      ws.once('error', reject);
+    });
+    ws.send(JSON.stringify({ type: 'auth', token: 'ws-access-token' }));
+    expect(await waitForMessage(ws)).toEqual({ type: 'auth_ok' });
+
+    ws.send(JSON.stringify({ type: 'chat.watch', sessionKey: 'other-session', userId: 999 }));
+    expect(await waitForMessage(ws)).toMatchObject({ type: 'error' });
+
+    expect(chatDatabaseService.authorizeSession).toHaveBeenCalledWith(
+      currentActor,
+      'other-session',
+      'watch',
+    );
+    expect((adapter as any).sessionSubscribers.has('other-session')).toBe(false);
+  });
+
+  it('websocket creates and announces a server session key before using it', async () => {
+    const currentActor = actor('ws-new-session');
+    const adapter = new DirectAdapter({
+      tools: new ToolRegistry(),
+      llmProvider: {} as any,
+      actorContextService: {
+        authenticateAccessToken: vi.fn().mockResolvedValue(currentActor),
+        revalidateActor: vi.fn().mockResolvedValue(currentActor),
+      } as any,
+      heartbeatIntervalMs: 30_000,
+    });
+    adapters.push(adapter);
+    const chat = vi.spyOn(adapter, 'chat').mockImplementation(async (_key, _message, onEvent) => {
+      onEvent({ type: 'complete', finalContent: 'ok' });
+      return { finalContent: 'ok' } as any;
+    });
+    process.env.AGENT_WS_PORT = String(nextPort++);
+    await adapter.start();
+
+    const ws = new WebSocket(`ws://127.0.0.1:${process.env.AGENT_WS_PORT}`);
+    sockets.push(ws);
+    await new Promise<void>((resolve, reject) => {
+      ws.once('open', resolve);
+      ws.once('error', reject);
+    });
+    ws.send(JSON.stringify({ type: 'auth', token: 'ws-access-token' }));
+    expect(await waitForMessage(ws)).toEqual({ type: 'auth_ok' });
+
+    ws.send(JSON.stringify({ type: 'chat.send', message: 'hello', sessionKey: '', userId: 999 }));
+    expect(await waitForMessage(ws)).toEqual({
+      type: 'session.created',
+      sessionKey: 'server-generated-session',
+    });
+    await vi.waitFor(() => expect(chat).toHaveBeenCalled());
+
+    expect(chatDatabaseService.createSession).toHaveBeenCalledWith(currentActor, { title: '新会话' });
+    expect(chatDatabaseService.addMessage).toHaveBeenCalledWith(
+      currentActor,
+      'server-generated-session',
+      expect.objectContaining({ role: 'user', content: 'hello' }),
+    );
+    expect(chat.mock.calls[0][0]).toBe('server-generated-session');
     expect(chat.mock.calls[0][3]).toBe(currentActor);
   });
 

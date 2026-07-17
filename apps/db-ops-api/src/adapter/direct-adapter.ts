@@ -343,14 +343,15 @@ export class DirectAdapter implements IAgentEngine {
 
         switch (msg.type) {
           case 'chat.send': {
-            const rawSessionKey = (msg.sessionKey as string) || `session_${Date.now()}`;
+            const messageActor = connectionActor;
+            const rawSessionKey = (msg.sessionKey as string | undefined)?.trim() || '';
             // Validate sessionKey length to prevent resource exhaustion (WR-03)
             if (rawSessionKey.length > 512) {
               ws.send(JSON.stringify({ type: 'error', error: 'Session key too long' }));
               return;
             }
             // Parse session key (agent format): agent:<agentId>:<actualKey> → actualKey
-            const sessionKey = rawSessionKey.startsWith('agent:')
+            let sessionKey = rawSessionKey.startsWith('agent:')
               ? rawSessionKey.split(':').slice(2).join(':') || rawSessionKey
               : rawSessionKey;
             const userMessage = (msg.message as string) || '';
@@ -373,19 +374,26 @@ export class DirectAdapter implements IAgentEngine {
               }
             }
 
-            // Subscribe this WS to session events (for invoke() completion broadcast)
-            if (!this.sessionSubscribers.has(sessionKey)) {
-              this.sessionSubscribers.set(sessionKey, new Set());
-            }
-            this.sessionSubscribers.get(sessionKey)!.add(ws);
-
             try {
-              // Persist user message
-              try {
-                await chatDatabaseService.addMessage(sessionKey, `msg_${Date.now()}_user`, 'user', userMessage, null, null, null, null);
-              } catch (dbErr) {
-                console.error('[DirectAdapter] Failed to persist user message:', dbErr instanceof Error ? dbErr.message : String(dbErr));
+              if (!sessionKey) {
+                const created = await chatDatabaseService.createSession(messageActor, { title: '新会话' });
+                sessionKey = created.session_id;
+                ws.send(JSON.stringify({ type: 'session.created', sessionKey }));
+              } else {
+                await chatDatabaseService.authorizeSession(messageActor, sessionKey, 'append');
               }
+
+              await chatDatabaseService.addMessage(messageActor, sessionKey, {
+                messageId: `msg_${Date.now()}_user`,
+                role: 'user',
+                content: userMessage,
+              });
+
+              // Authorization succeeds before the connection joins broadcasts.
+              if (!this.sessionSubscribers.has(sessionKey)) {
+                this.sessionSubscribers.set(sessionKey, new Set());
+              }
+              this.sessionSubscribers.get(sessionKey)!.add(ws);
 
               await this.chat(sessionKey, userMessage, async (event) => {
                 // Persist assistant's final response BEFORE sending to client,
@@ -398,13 +406,17 @@ export class DirectAdapter implements IAgentEngine {
                     const dbContent = thinking
                       ? `<think>${thinking}</think>\n\n${event.finalContent}`
                       : event.finalContent;
-                    await chatDatabaseService.addMessage(sessionKey, `msg_${Date.now()}_asst`, 'assistant', dbContent, null, null, null, null);
+                    await chatDatabaseService.addMessage(messageActor, sessionKey, {
+                      messageId: `msg_${Date.now()}_asst`,
+                      role: 'assistant',
+                      content: dbContent,
+                    });
                   } catch (dbErr) {
                     console.error('[DirectAdapter] Failed to persist assistant message:', dbErr instanceof Error ? dbErr.message : String(dbErr));
                   }
                 }
                 ws.send(JSON.stringify(event));
-              }, connectionActor);
+              }, messageActor);
             } catch (err) {
               const errorMsg = err instanceof Error ? err.message : String(err);
               ws.send(JSON.stringify({ type: 'error', error: errorMsg }));
@@ -415,7 +427,7 @@ export class DirectAdapter implements IAgentEngine {
           case 'chat.history': {
             const historySessionKey = (msg.sessionKey as string) || '';
             try {
-              const messages = await chatDatabaseService.getMessages(historySessionKey, 200);
+              const messages = await chatDatabaseService.getMessages(connectionActor, historySessionKey, 200);
               // Map DB records to frontend-compatible message format
               const mapped = messages.map((m) => ({
                 id: m.message_id,
@@ -435,10 +447,15 @@ export class DirectAdapter implements IAgentEngine {
             // Subscribe WS to session for invoke() completion broadcasts
             const watchKey = (msg.sessionKey as string) || '';
             if (watchKey) {
-              if (!this.sessionSubscribers.has(watchKey)) {
-                this.sessionSubscribers.set(watchKey, new Set());
+              try {
+                await chatDatabaseService.authorizeSession(connectionActor, watchKey, 'watch');
+                if (!this.sessionSubscribers.has(watchKey)) {
+                  this.sessionSubscribers.set(watchKey, new Set());
+                }
+                this.sessionSubscribers.get(watchKey)!.add(ws);
+              } catch {
+                ws.send(JSON.stringify({ type: 'error', error: 'Chat session not found' }));
               }
-              this.sessionSubscribers.get(watchKey)!.add(ws);
             }
             break;
           }
@@ -485,7 +502,9 @@ export class DirectAdapter implements IAgentEngine {
 
     // Read session settings (model, thinkingLevel) from DB metadata.
     // The frontend stores these via sessions.patch → chat_sessions.metadata.
-    const sessMeta = await chatDatabaseService.getSessionMetadata(sessionKey);
+    const sessMeta = _actor
+      ? await chatDatabaseService.getSessionMetadata(_actor, sessionKey)
+      : null;
     const sessModel = (sessMeta?.model as string) || undefined;
     const sessThinkingLevel = (sessMeta?.thinkingLevel as string) || undefined;
     const reasoningEffort = normalizeThinkingLevel(sessThinkingLevel);
@@ -594,7 +613,11 @@ export class DirectAdapter implements IAgentEngine {
     const userMsgId = `msg_${Date.now()}_user`;
     session.addMessage('user', message);
     try {
-      await chatDatabaseService.addMessage(sessionKey, userMsgId, 'user', message, null, null, null, null);
+      await chatDatabaseService.addMessageForMaintenance(sessionKey, {
+        messageId: userMsgId,
+        role: 'user',
+        content: message,
+      });
     } catch (dbErr) {
       console.error('[DirectAdapter] invoke() failed to persist user message to DB:', dbErr instanceof Error ? dbErr.message : String(dbErr));
     }
@@ -649,7 +672,11 @@ ${result.finalContent || ''}`
       if (finalContent) {
         session.addMessage('assistant', finalContent);
         try {
-          await chatDatabaseService.addMessage(sessionKey, `msg_${Date.now()}_asst`, 'assistant', finalContent, null, null, null, null);
+          await chatDatabaseService.addMessageForMaintenance(sessionKey, {
+            messageId: `msg_${Date.now()}_asst`,
+            role: 'assistant',
+            content: finalContent,
+          });
         } catch (dbErr) {
           console.error('[DirectAdapter] invoke() failed to persist assistant message to DB:', dbErr instanceof Error ? dbErr.message : String(dbErr));
         }
@@ -677,7 +704,11 @@ ${result.finalContent || ''}`
       console.error(`[DirectAdapter] invoke() failed for session ${sessionKey}:`, errorMessage);
       // Persist error as system message so it's visible in chat
       try {
-        await chatDatabaseService.addMessage(sessionKey, `msg_${Date.now()}_error`, 'system', `分析失败: ${errorMessage}`, null, null, null, null);
+        await chatDatabaseService.addMessageForMaintenance(sessionKey, {
+          messageId: `msg_${Date.now()}_error`,
+          role: 'system',
+          content: `分析失败: ${errorMessage}`,
+        });
       } catch { /* best-effort */ }
       // Save session even on error so partial state is not lost
       try { await this.sessionManager.save(session); } catch { /* best-effort */ }

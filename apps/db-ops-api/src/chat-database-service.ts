@@ -1,19 +1,40 @@
 /**
- * Chat 会话数据库服务
+ * Actor-scoped chat persistence and sharing boundary.
  */
 
+import { randomUUID } from 'node:crypto';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { dbConnection } from './db-connection.js';
-import { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import type { ActorContext } from './auth/actor-context.js';
+
+export type ChatAction =
+  | 'read'
+  | 'history'
+  | 'watch'
+  | 'append'
+  | 'patch'
+  | 'delete'
+  | 'cap'
+  | 'share';
+
+export type ChatSharePermission = 'read';
+
+export class ChatSessionNotFoundError extends Error {
+  constructor() {
+    super('Chat session not found');
+    this.name = 'ChatSessionNotFoundError';
+  }
+}
 
 export interface ChatSessionRecord {
   id: number;
   session_id: string;
-  user_id: number | null;
+  user_id: number;
   title: string;
   instance_id: number | null;
   message_count: number;
   last_message_at: Date | null;
-  metadata: string | null;
+  metadata: string | Record<string, unknown> | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -27,445 +48,455 @@ export interface ChatMessageRecord {
   content: string;
   related_tool: string | null;
   related_skill: string | null;
-  metadata: string | null;
+  metadata: string | Record<string, unknown> | null;
   created_at: Date;
 }
 
-class ChatDatabaseService {
-  private pool: any = null;
+export interface NewChatMessage {
+  messageId: string;
+  role: ChatMessageRecord['role'];
+  content: string;
+  relatedTool?: string | null;
+  relatedSkill?: string | null;
+  metadata?: Record<string, unknown> | null;
+  parentId?: string | null;
+}
 
-  private getPool() {
-    if (!this.pool) {
-      this.pool = dbConnection.getPool();
-    }
+interface QueryExecutor {
+  query<T = any>(sql: string, values?: unknown[]): Promise<[T, unknown?]>;
+}
+
+interface TransactionConnection extends QueryExecutor {
+  beginTransaction(): Promise<void>;
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
+  release(): void;
+}
+
+interface ChatPool extends QueryExecutor {
+  getConnection?(): Promise<TransactionConnection>;
+}
+
+const READ_ACTIONS = new Set<ChatAction>(['read', 'history', 'watch']);
+
+export class ChatDatabaseService {
+  private pool: ChatPool | null = null;
+
+  constructor(
+    private readonly poolProvider: () => ChatPool | null = () => dbConnection.getPool() as ChatPool | null,
+  ) {}
+
+  private getPool(): ChatPool {
+    if (!this.pool) this.pool = this.poolProvider();
+    if (!this.pool) throw new Error('Chat database is unavailable');
     return this.pool;
   }
 
-  /**
-   * 获取会话元数据（model、thinkingLevel 等）
-   */
-  async getSessionMetadata(sessionKey: string): Promise<Record<string, unknown> | null> {
-    const pool = this.getPool();
-    const [rows] = await pool.query<RowDataPacket[]>(
-      'SELECT metadata FROM chat_sessions WHERE session_id = ?',
-      [sessionKey],
-    );
-    if (rows.length === 0) return null;
-    return (rows[0].metadata as Record<string, unknown>) ?? null;
+  private accessPredicate(action: ChatAction, sessionAlias = 'cs'): string {
+    if (!READ_ACTIONS.has(action)) return `${sessionAlias}.user_id = ?`;
+    return `(${sessionAlias}.user_id = ? OR EXISTS (
+      SELECT 1 FROM chat_session_shares chat_share
+      WHERE chat_share.session_id = ${sessionAlias}.session_id
+        AND chat_share.recipient_user_id = ?
+        AND chat_share.permission = 'read'
+    ))`;
   }
 
-  /**
-   * 创建会话
-   */
-  async createSession(
+  private accessValues(actor: ActorContext, action: ChatAction): number[] {
+    return READ_ACTIONS.has(action) ? [actor.userId, actor.userId] : [actor.userId];
+  }
+
+  async authorizeSession(
+    actor: ActorContext,
     sessionId: string,
-    userId: number | null,
-    title: string,
-    instanceId?: number | null
+    action: ChatAction,
+    executor: QueryExecutor = this.getPool(),
+    lock = false,
+  ): Promise<ChatSessionRecord> {
+    const [rows] = await executor.query<RowDataPacket[]>(
+      `SELECT cs.* FROM chat_sessions cs
+       WHERE cs.session_id = ?
+         AND ${this.accessPredicate(action)}
+       ${lock ? 'FOR UPDATE' : ''}`,
+      [sessionId, ...this.accessValues(actor, action)],
+    );
+    if (!rows[0]) throw new ChatSessionNotFoundError();
+    return this.mapSessionRow(rows[0]);
+  }
+
+  async createSession(
+    actor: ActorContext,
+    input: { title?: string; instanceId?: number | null } = {},
   ): Promise<ChatSessionRecord> {
     const pool = this.getPool();
-    const sql = `
-      INSERT INTO chat_sessions (session_id, user_id, title, instance_id, message_count, last_message_at)
-      VALUES (?, ?, ?, ?, 0, NOW())
-    `;
-    const [result] = await pool.query<ResultSetHeader>(sql, [
-      sessionId,
-      userId,
+    const sessionId = randomUUID();
+    const title = input.title?.trim() || '新会话';
+    const instanceId = input.instanceId ?? null;
+    const [result] = await pool.query<ResultSetHeader>(
+      `INSERT INTO chat_sessions
+         (session_id, user_id, title, instance_id, message_count, last_message_at)
+       VALUES (?, ?, ?, ?, 0, NOW())`,
+      [sessionId, actor.userId, title, instanceId],
+    );
+    const now = new Date();
+    return {
+      id: result.insertId,
+      session_id: sessionId,
+      user_id: actor.userId,
       title,
-      instanceId || null,
-    ]);
-
-    return this.getSessionById(result.insertId);
+      instance_id: instanceId,
+      message_count: 0,
+      last_message_at: now,
+      metadata: null,
+      created_at: now,
+      updated_at: now,
+    };
   }
 
-  /**
-   * 获取会话列表
-   */
-  async getSessions(
-    userId: number | null,
-    limit: number = 20
-  ): Promise<ChatSessionRecord[]> {
-    const pool = this.getPool();
-    // 查询所有会话（不限制 user_id）
-    const sql = `SELECT * FROM chat_sessions ORDER BY last_message_at DESC, created_at DESC LIMIT ?`;
-    const [rows] = await pool.query<RowDataPacket[]>(sql, [limit]);
-    return rows.map(this.mapSessionRow);
+  async getSessions(actor: ActorContext, limit = 20): Promise<ChatSessionRecord[]> {
+    const [rows] = await this.getPool().query<RowDataPacket[]>(
+      `SELECT cs.* FROM chat_sessions cs
+       WHERE ${this.accessPredicate('read')}
+       ORDER BY cs.last_message_at DESC, cs.created_at DESC
+       LIMIT ?`,
+      [...this.accessValues(actor, 'read'), limit],
+    );
+    return rows.map((row) => this.mapSessionRow(row));
   }
 
-  /**
-   * 获取单个会话
-   */
-  async getSessionById(id: number): Promise<ChatSessionRecord | null> {
-    const pool = this.getPool();
-    const sql = 'SELECT * FROM chat_sessions WHERE id = ?';
-    const [rows] = await pool.query<RowDataPacket[]>(sql, [id]);
-    if (rows.length === 0) return null;
-    return this.mapSessionRow(rows[0]);
+  async getSessionsForMaintenance(limit: number): Promise<ChatSessionRecord[]> {
+    const [rows] = await this.getPool().query<RowDataPacket[]>(
+      `SELECT cs.* FROM chat_sessions cs
+       ORDER BY cs.last_message_at DESC, cs.created_at DESC
+       LIMIT ?`,
+      [limit],
+    );
+    return rows.map((row) => this.mapSessionRow(row));
   }
 
-  /**
-   * 根据 session_id 获取会话
-   */
-  async getSessionBySessionId(sessionId: string): Promise<ChatSessionRecord | null> {
-    const pool = this.getPool();
-    const sql = 'SELECT * FROM chat_sessions WHERE session_id = ?';
-    const [rows] = await pool.query<RowDataPacket[]>(sql, [sessionId]);
-    if (rows.length === 0) return null;
-    return this.mapSessionRow(rows[0]);
+  async getSession(actor: ActorContext, sessionId: string): Promise<ChatSessionRecord> {
+    return this.authorizeSession(actor, sessionId, 'read');
   }
 
-  /**
-   * 获取会话消息列表
-   */
-  async getMessages(sessionId: string, limit: number = 200): Promise<ChatMessageRecord[]> {
-    const pool = this.getPool();
-    const sql = `
-      SELECT * FROM (
-        SELECT * FROM chat_messages
-        WHERE session_id = ?
-        ORDER BY created_at DESC
-        LIMIT ?
-      ) AS recent ORDER BY created_at ASC
-    `;
-    const [rows] = await pool.query<RowDataPacket[]>(sql, [sessionId, limit]);
-    return rows.map(this.mapMessageRow);
+  async getSessionMetadata(actor: ActorContext, sessionId: string): Promise<Record<string, unknown> | null> {
+    const session = await this.authorizeSession(actor, sessionId, 'read');
+    if (!session.metadata) return null;
+    return typeof session.metadata === 'string'
+      ? JSON.parse(session.metadata) as Record<string, unknown>
+      : session.metadata;
   }
 
-  /**
-   * 获取消息及其父消息（消息链查询）
-   * 用于构建消息 threading 视图
-   */
+  async getMessages(
+    actor: ActorContext,
+    sessionId: string,
+    limit = 200,
+  ): Promise<ChatMessageRecord[]> {
+    const [rows] = await this.getPool().query<RowDataPacket[]>(
+      `SELECT cm.*, cs.id AS authorized_session_id
+       FROM chat_sessions cs
+       LEFT JOIN chat_messages cm ON cm.session_id = cs.session_id
+       WHERE cs.session_id = ?
+         AND ${this.accessPredicate('history')}
+       ORDER BY cm.created_at DESC
+       LIMIT ?`,
+      [sessionId, ...this.accessValues(actor, 'history'), limit],
+    );
+    if (!rows[0]) throw new ChatSessionNotFoundError();
+    return rows
+      .filter((row) => row.id !== null && row.message_id !== null)
+      .reverse()
+      .map((row) => this.mapMessageRow(row));
+  }
+
   async getMessageWithParents(
+    actor: ActorContext,
     messageId: string,
     sessionId: string,
-    maxDepth: number = 10
+    maxDepth = 10,
   ): Promise<ChatMessageRecord[]> {
-    const pool = this.getPool();
+    await this.authorizeSession(actor, sessionId, 'history');
     const messages: ChatMessageRecord[] = [];
     let currentParentId: string | null = messageId;
-    let depth = 0;
-
-    // 向上追溯父消息
-    while (currentParentId && depth < maxDepth) {
-      const sql = `
-        SELECT * FROM chat_messages
-        WHERE message_id = ? AND session_id = ?
-      `;
-      const [rows] = await pool.query<RowDataPacket[]>(sql, [currentParentId, sessionId]);
-      if (rows.length === 0) break;
-
+    for (let depth = 0; currentParentId && depth < maxDepth; depth += 1) {
+      const [rows] = await this.getPool().query<RowDataPacket[]>(
+        `SELECT cm.* FROM chat_messages cm
+         JOIN chat_sessions cs ON cs.session_id = cm.session_id
+         WHERE cm.message_id = ? AND cm.session_id = ?
+           AND ${this.accessPredicate('history')}`,
+        [currentParentId, sessionId, ...this.accessValues(actor, 'history')],
+      );
+      if (!rows[0]) break;
       const message = this.mapMessageRow(rows[0]);
-      messages.unshift(message); // 添加到开头
+      messages.unshift(message);
       currentParentId = message.parent_id;
-      depth++;
     }
-
     return messages;
   }
 
-  /**
-   * 获取消息的子消息（回复链）
-   */
   async getMessageChildren(
+    actor: ActorContext,
     parentId: string,
-    sessionId: string
+    sessionId: string,
   ): Promise<ChatMessageRecord[]> {
-    const pool = this.getPool();
-    const sql = `
-      SELECT * FROM chat_messages
-      WHERE parent_id = ? AND session_id = ?
-      ORDER BY created_at ASC
-    `;
-    const [rows] = await pool.query<RowDataPacket[]>(sql, [parentId, sessionId]);
-    return rows.map(this.mapMessageRow);
+    const [rows] = await this.getPool().query<RowDataPacket[]>(
+      `SELECT cm.* FROM chat_messages cm
+       JOIN chat_sessions cs ON cs.session_id = cm.session_id
+       WHERE cm.parent_id = ? AND cm.session_id = ?
+         AND ${this.accessPredicate('history')}
+       ORDER BY cm.created_at ASC`,
+      [parentId, sessionId, ...this.accessValues(actor, 'history')],
+    );
+    return rows.map((row) => this.mapMessageRow(row));
   }
 
-  /**
-   * 获取消息树（递归查询所有子孙消息）
-   */
-  async getMessageTree(
-    rootMessageId: string,
-    sessionId: string,
-    maxDepth: number = 20
-  ): Promise<ChatMessageRecord[]> {
-    const pool = this.getPool();
-    const allMessages: ChatMessageRecord[] = [];
-    const queue: Array<{ messageId: string; depth: number }> = [
-      { messageId: rootMessageId, depth: 0 }
-    ];
-
-    while (queue.length > 0) {
-      const { messageId, depth } = queue.shift()!;
-      if (depth >= maxDepth) continue;
-
-      const children = await this.getMessageChildren(messageId, sessionId);
-      for (const child of children) {
-        allMessages.push(child);
-        queue.push({ messageId: child.message_id, depth: depth + 1 });
-      }
-    }
-
-    return allMessages;
+  async addMessage(actor: ActorContext, sessionId: string, message: NewChatMessage): Promise<void> {
+    const [result] = await this.getPool().query<ResultSetHeader>(
+      `INSERT INTO chat_messages
+         (session_id, message_id, parent_id, role, content, related_tool, related_skill, metadata)
+       SELECT cs.session_id, ?, ?, ?, ?, ?, ?, ?
+       FROM chat_sessions cs
+       WHERE cs.session_id = ? AND ${this.accessPredicate('append')}`,
+      [
+        message.messageId,
+        message.parentId ?? null,
+        message.role,
+        message.content,
+        message.relatedTool ?? null,
+        message.relatedSkill ?? null,
+        message.metadata ? JSON.stringify(message.metadata) : null,
+        sessionId,
+        ...this.accessValues(actor, 'append'),
+      ],
+    );
+    if (result.affectedRows !== 1) throw new ChatSessionNotFoundError();
+    await this.updateSessionStats(this.getPool(), sessionId, actor.userId);
   }
 
-  /**
-   * 添加消息到会话
-   */
-  async addMessage(
+  async addMessageForMaintenance(sessionId: string, message: NewChatMessage): Promise<void> {
+    const [result] = await this.getPool().query<ResultSetHeader>(
+      `INSERT INTO chat_messages
+         (session_id, message_id, parent_id, role, content, related_tool, related_skill, metadata)
+       SELECT cs.session_id, ?, ?, ?, ?, ?, ?, ?
+       FROM chat_sessions cs WHERE cs.session_id = ?`,
+      [
+        message.messageId,
+        message.parentId ?? null,
+        message.role,
+        message.content,
+        message.relatedTool ?? null,
+        message.relatedSkill ?? null,
+        message.metadata ? JSON.stringify(message.metadata) : null,
+        sessionId,
+      ],
+    );
+    if (result.affectedRows !== 1) throw new ChatSessionNotFoundError();
+    await this.updateSessionStats(this.getPool(), sessionId);
+  }
+
+  private async updateSessionStats(
+    executor: QueryExecutor,
     sessionId: string,
-    messageId: string,
-    role: 'user' | 'assistant' | 'system',
-    content: string,
-    relatedTool?: string | null,
-    relatedSkill?: string | null,
-    metadata?: Record<string, unknown> | null,
-    parentId?: string | null
+    ownerId?: number,
   ): Promise<void> {
-    const pool = this.getPool();
-    const sql = `
-      INSERT INTO chat_messages (session_id, message_id, parent_id, role, content, related_tool, related_skill, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-    await pool.query(sql, [
-      sessionId,
-      messageId,
-      parentId || null,
-      role,
-      content,
-      relatedTool || null,
-      relatedSkill || null,
-      metadata ? JSON.stringify(metadata) : null,
-    ]);
-
-    // 更新会话的消息计数和最后消息时间
-    await this.updateSessionStats(pool, sessionId);
-  }
-
-  /**
-   * 更新会话统计
-   */
-  private async updateSessionStats(pool: any, sessionId: string): Promise<void> {
-    // Update existing session row
-    const [result] = await pool.query<ResultSetHeader>(
+    const ownerClause = ownerId === undefined ? '' : ' AND user_id = ?';
+    await executor.query(
       `UPDATE chat_sessions
        SET message_count = (SELECT COUNT(*) FROM chat_messages WHERE session_id = ?),
            last_message_at = (SELECT MAX(created_at) FROM chat_messages WHERE session_id = ?)
-       WHERE session_id = ?`,
-      [sessionId, sessionId, sessionId]
+       WHERE session_id = ?${ownerClause}`,
+      ownerId === undefined
+        ? [sessionId, sessionId, sessionId]
+        : [sessionId, sessionId, sessionId, ownerId],
     );
-    // Auto-create missing session row if UPDATE affected 0 rows
-    if (result.affectedRows === 0) {
-      await pool.query(
-        `INSERT IGNORE INTO chat_sessions (session_id, user_id, title, message_count, last_message_at)
-         VALUES (?, 1, ?, 0, NOW())`,
-        [sessionId, sessionId]
-      );
-      // Retry the update now that the row exists
-      await pool.query(
-        `UPDATE chat_sessions
-         SET message_count = (SELECT COUNT(*) FROM chat_messages WHERE session_id = ?),
-             last_message_at = (SELECT MAX(created_at) FROM chat_messages WHERE session_id = ?)
-         WHERE session_id = ?`,
-        [sessionId, sessionId, sessionId]
-      );
-    }
   }
 
-  /**
-   * 删除会话
-   */
-  async deleteSession(sessionId: string): Promise<boolean> {
-    const pool = this.getPool();
-    const [result] = await pool.query<ResultSetHeader>(
-      'DELETE FROM chat_sessions WHERE session_id = ?',
-      [sessionId]
-    );
-    // 同时删除相关消息
-    await pool.query('DELETE FROM chat_messages WHERE session_id = ?', [sessionId]);
-    return result.affectedRows > 0;
-  }
-
-  /**
-   * 删除过期会话（超过保留天数的）
-   */
-  async deleteOldSessions(retentionDays: number): Promise<number> {
-    try {
-      const pool = this.getPool();
-      // 先统计要删除的会话数
-      const [countRows] = await pool.query<RowDataPacket[]>(
-        'SELECT COUNT(*) as cnt FROM chat_sessions WHERE last_message_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
-        [retentionDays],
-      );
-      const sessionCount = countRows[0]?.cnt ?? 0;
-
-      // 删除过期会话的消息
-      await pool.query(
-        'DELETE FROM chat_messages WHERE session_id IN (SELECT session_id FROM chat_sessions WHERE last_message_at < DATE_SUB(NOW(), INTERVAL ? DAY))',
-        [retentionDays],
-      );
-
-      // 删除过期会话
-      const [result] = await pool.query<ResultSetHeader>(
-        'DELETE FROM chat_sessions WHERE last_message_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
-        [retentionDays],
-      );
-
-      // 清理孤立消息（session 已不存在但消息还在的）
-      await pool.query(
-        'DELETE FROM chat_messages WHERE session_id NOT IN (SELECT session_id FROM chat_sessions)',
-      );
-
-      return result.affectedRows ?? sessionCount;
-    } catch (error) {
-      console.error('[ChatDatabaseService] deleteOldSessions error:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * 获取会话的消息数量
-   */
-  async getSessionCount(sessionId: string): Promise<number> {
-    try {
-      const pool = this.getPool();
-      const [rows] = await pool.query<RowDataPacket[]>(
-        'SELECT COUNT(*) as cnt FROM chat_messages WHERE session_id = ?',
-        [sessionId],
-      );
-      return rows[0]?.cnt ?? 0;
-    } catch (error) {
-      console.error('[ChatDatabaseService] getSessionCount error:', error);
-      return 0;
-    }
-  }
-
-  /**
-   * 更新会话状态（存储在 metadata JSON 中）
-   */
-  async updateSessionStatus(sessionId: string, status: string): Promise<boolean> {
-    try {
-      const pool = this.getPool();
-      const sql = `UPDATE chat_sessions SET metadata = JSON_SET(COALESCE(metadata, '{}'), '$.status', ?) WHERE session_id = ?`;
-      const [result] = await pool.query<ResultSetHeader>(sql, [status, sessionId]);
-      return result.affectedRows > 0;
-    } catch (error) {
-      console.error('[ChatDatabaseService] updateSessionStatus error:', error);
-      return false;
-    }
-  }
-
-  /**
-   * 强制限制会话的消息数量（保留最近的消息，不拆分 tool_call/tool_result 对）
-   */
-  async enforceMessageCap(sessionId: string, maxMessages: number): Promise<number> {
-    try {
-      const pool = this.getPool();
-
-      // 获取总消息数
-      const [countRows] = await pool.query<RowDataPacket[]>(
-        'SELECT COUNT(*) as cnt FROM chat_messages WHERE session_id = ?',
-        [sessionId],
-      );
-      const totalMessages = countRows[0]?.cnt ?? 0;
-
-      if (totalMessages <= maxMessages) {
-        return 0; // 不需要截断
-      }
-
-      // 找到安全的截断点：从最新的 user 消息开始，偏移 maxMessages 个 user 消息
-      // 确保不会拆分 tool_call/tool_result 对
-      const [cutoffRows] = await pool.query<RowDataPacket[]>(
-        `SELECT created_at FROM chat_messages
-         WHERE session_id = ? AND role = 'user'
-         ORDER BY created_at DESC
-         LIMIT 1 OFFSET ?`,
-        [sessionId, Math.max(0, maxMessages - 1)],
-      );
-
-      if (cutoffRows.length === 0) {
-        // 没有足够的 user 消息作为截断点，尝试按总消息数截断
-        const [fallbackRows] = await pool.query<RowDataPacket[]>(
-          `SELECT created_at FROM chat_messages
-           WHERE session_id = ?
-           ORDER BY created_at DESC
-           LIMIT 1 OFFSET ?`,
-          [sessionId, maxMessages - 1],
-        );
-        if (fallbackRows.length === 0) return 0;
-
-        const cutoffTime = fallbackRows[0].created_at;
-        const [deleteResult] = await pool.query<ResultSetHeader>(
-          'DELETE FROM chat_messages WHERE session_id = ? AND created_at < ?',
-          [sessionId, cutoffTime],
-        );
-        return deleteResult.affectedRows ?? 0;
-      }
-
-      const cutoffTime = cutoffRows[0].created_at;
-
-      // 删除截断点之前的消息
-      const [deleteResult] = await pool.query<ResultSetHeader>(
-        'DELETE FROM chat_messages WHERE session_id = ? AND created_at < ?',
-        [sessionId, cutoffTime],
-      );
-
-      // 更新会话统计
-      await this.updateSessionStats(pool, sessionId);
-
-      return deleteResult.affectedRows ?? 0;
-    } catch (error) {
-      console.error('[ChatDatabaseService] enforceMessageCap error:', error);
-      return 0;
-    }
-  }
-
-  /**
-   * 更新会话标题
-   */
-  async updateSessionTitle(sessionId: string, title: string): Promise<boolean> {
-    const pool = this.getPool();
-    const sql = 'UPDATE chat_sessions SET title = ? WHERE session_id = ?';
-    const [result] = await pool.query<ResultSetHeader>(sql, [title, sessionId]);
-    return result.affectedRows > 0;
-  }
-
-  /**
-   * 更新会话设置（model、thinkingLevel 等元数据）。
-   * 如果会话尚不存在（新会话未发消息），自动创建占位行。
-   */
   async updateSessionSettings(
-    sessionKey: string,
+    actor: ActorContext,
+    sessionId: string,
     settings: { model?: string | null; thinkingLevel?: string | null },
   ): Promise<boolean> {
-    const pool = this.getPool();
-    const [rows] = await pool.query<RowDataPacket[]>(
-      'SELECT metadata FROM chat_sessions WHERE session_id = ?',
-      [sessionKey],
-    );
-
-    const metadata: Record<string, unknown> = {};
-    if (settings.model !== undefined) metadata.model = settings.model || null;
-    if (settings.thinkingLevel !== undefined) metadata.thinkingLevel = settings.thinkingLevel || null;
-
-    if (rows.length === 0) {
-      // Session not in DB yet — create a placeholder row (no userId until first message)
-      await pool.query(
-        'INSERT INTO chat_sessions (session_id, user_id, title, message_count, metadata) VALUES (?, NULL, ?, 0, ?)',
-        [sessionKey, '新会话', JSON.stringify(metadata)],
-      );
-      return true;
+    const assignments: string[] = [];
+    const values: unknown[] = [];
+    if (settings.model !== undefined) {
+      assignments.push("'$.model', ?");
+      values.push(settings.model || null);
     }
-
-    const current = (rows[0].metadata as Record<string, unknown>) ?? {};
-    const updated: Record<string, unknown> = { ...current, ...metadata };
-    const sql = 'UPDATE chat_sessions SET metadata = ? WHERE session_id = ?';
-    const [result] = await pool.query<ResultSetHeader>(sql, [JSON.stringify(updated), sessionKey]);
-    return result.affectedRows > 0;
+    if (settings.thinkingLevel !== undefined) {
+      assignments.push("'$.thinkingLevel', ?");
+      values.push(settings.thinkingLevel || null);
+    }
+    if (assignments.length === 0) return true;
+    const [result] = await this.getPool().query<ResultSetHeader>(
+      `UPDATE chat_sessions cs
+       SET cs.metadata = JSON_SET(COALESCE(cs.metadata, JSON_OBJECT()), ${assignments.join(', ')})
+       WHERE cs.session_id = ? AND ${this.accessPredicate('patch')}`,
+      [...values, sessionId, ...this.accessValues(actor, 'patch')],
+    );
+    if (result.affectedRows !== 1) throw new ChatSessionNotFoundError();
+    return true;
   }
 
-  /**
-   * 映射会话行
-   */
+  async updateSessionTitle(actor: ActorContext, sessionId: string, title: string): Promise<boolean> {
+    const [result] = await this.getPool().query<ResultSetHeader>(
+      `UPDATE chat_sessions cs SET cs.title = ?
+       WHERE cs.session_id = ? AND ${this.accessPredicate('patch')}`,
+      [title, sessionId, ...this.accessValues(actor, 'patch')],
+    );
+    if (result.affectedRows !== 1) throw new ChatSessionNotFoundError();
+    return true;
+  }
+
+  async updateSessionStatus(actor: ActorContext, sessionId: string, status: string): Promise<boolean> {
+    const [result] = await this.getPool().query<ResultSetHeader>(
+      `UPDATE chat_sessions cs
+       SET cs.metadata = JSON_SET(COALESCE(cs.metadata, JSON_OBJECT()), '$.status', ?)
+       WHERE cs.session_id = ? AND ${this.accessPredicate('patch')}`,
+      [status, sessionId, ...this.accessValues(actor, 'patch')],
+    );
+    if (result.affectedRows !== 1) throw new ChatSessionNotFoundError();
+    return true;
+  }
+
+  async grantSessionShare(
+    actor: ActorContext,
+    sessionId: string,
+    recipientUserId: number,
+    permission: ChatSharePermission,
+  ): Promise<void> {
+    const [result] = await this.getPool().query<ResultSetHeader>(
+      `INSERT INTO chat_session_shares
+         (session_id, granted_by, recipient_user_id, permission, created_at)
+       SELECT ?, ?, ?, ?, NOW()
+       FROM chat_sessions cs
+       WHERE cs.session_id = ? AND ${this.accessPredicate('share')}
+       ON DUPLICATE KEY UPDATE
+         granted_by = VALUES(granted_by), permission = VALUES(permission)`,
+      [sessionId, actor.userId, recipientUserId, permission, sessionId, ...this.accessValues(actor, 'share')],
+    );
+    if (result.affectedRows < 1) throw new ChatSessionNotFoundError();
+  }
+
+  async deleteSession(actor: ActorContext, sessionId: string): Promise<boolean> {
+    const pool = this.getPool();
+    if (!pool.getConnection) throw new Error('Chat transaction support is unavailable');
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      await this.authorizeSession(actor, sessionId, 'delete', connection, true);
+      await connection.query(
+        `DELETE cm FROM chat_messages cm
+         JOIN chat_sessions cs ON cs.session_id = cm.session_id
+         WHERE cs.session_id = ? AND ${this.accessPredicate('delete')}`,
+        [sessionId, ...this.accessValues(actor, 'delete')],
+      );
+      const [result] = await connection.query<ResultSetHeader>(
+        `DELETE cs FROM chat_sessions cs
+         WHERE cs.session_id = ? AND ${this.accessPredicate('delete')}`,
+        [sessionId, ...this.accessValues(actor, 'delete')],
+      );
+      if (result.affectedRows !== 1) throw new ChatSessionNotFoundError();
+      await connection.commit();
+      return true;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async getSessionCount(actor: ActorContext, sessionId: string): Promise<number> {
+    const [rows] = await this.getPool().query<RowDataPacket[]>(
+      `SELECT COUNT(cm.id) AS cnt
+       FROM chat_sessions cs
+       LEFT JOIN chat_messages cm ON cm.session_id = cs.session_id
+       WHERE cs.session_id = ? AND ${this.accessPredicate('read')}
+       GROUP BY cs.id`,
+      [sessionId, ...this.accessValues(actor, 'read')],
+    );
+    if (!rows[0]) throw new ChatSessionNotFoundError();
+    return Number(rows[0].cnt || 0);
+  }
+
+  async enforceMessageCap(
+    actor: ActorContext,
+    sessionId: string,
+    maxMessages: number,
+  ): Promise<number> {
+    return this.capMessagesInTransaction(actor, sessionId, maxMessages);
+  }
+
+  async enforceMessageCapForMaintenance(sessionId: string, maxMessages: number): Promise<number> {
+    return this.capMessagesInTransaction(null, sessionId, maxMessages);
+  }
+
+  private async capMessagesInTransaction(
+    actor: ActorContext | null,
+    sessionId: string,
+    maxMessages: number,
+  ): Promise<number> {
+    const pool = this.getPool();
+    if (!pool.getConnection) throw new Error('Chat transaction support is unavailable');
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      if (actor) {
+        await this.authorizeSession(actor, sessionId, 'cap', connection, true);
+      } else {
+        const [rows] = await connection.query<RowDataPacket[]>(
+          'SELECT id FROM chat_sessions WHERE session_id = ? FOR UPDATE',
+          [sessionId],
+        );
+        if (!rows[0]) throw new ChatSessionNotFoundError();
+      }
+
+      const [countRows] = await connection.query<RowDataPacket[]>(
+        'SELECT COUNT(*) AS cnt FROM chat_messages WHERE session_id = ?',
+        [sessionId],
+      );
+      if (Number(countRows[0]?.cnt || 0) <= maxMessages) {
+        await connection.commit();
+        return 0;
+      }
+
+      const [cutoffRows] = await connection.query<RowDataPacket[]>(
+        `SELECT created_at FROM chat_messages
+         WHERE session_id = ? ORDER BY created_at DESC
+         LIMIT 1 OFFSET ?`,
+        [sessionId, maxMessages - 1],
+      );
+      if (!cutoffRows[0]) {
+        await connection.commit();
+        return 0;
+      }
+      const [result] = await connection.query<ResultSetHeader>(
+        'DELETE FROM chat_messages WHERE session_id = ? AND created_at < ?',
+        [sessionId, cutoffRows[0].created_at],
+      );
+      await this.updateSessionStats(connection, sessionId, actor?.userId);
+      await connection.commit();
+      return result.affectedRows || 0;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async deleteOldSessions(retentionDays: number): Promise<number> {
+    const pool = this.getPool();
+    const [result] = await pool.query<ResultSetHeader>(
+      `DELETE FROM chat_sessions
+       WHERE last_message_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
+      [retentionDays],
+    );
+    await pool.query(
+      'DELETE FROM chat_messages WHERE session_id NOT IN (SELECT session_id FROM chat_sessions)',
+    );
+    return result.affectedRows || 0;
+  }
+
   private mapSessionRow(row: RowDataPacket): ChatSessionRecord {
     return {
       id: row.id,
@@ -481,9 +512,6 @@ class ChatDatabaseService {
     };
   }
 
-  /**
-   * 映射消息行
-   */
   private mapMessageRow(row: RowDataPacket): ChatMessageRecord {
     return {
       id: row.id,
@@ -500,5 +528,4 @@ class ChatDatabaseService {
   }
 }
 
-// 导出单例
 export const chatDatabaseService = new ChatDatabaseService();
