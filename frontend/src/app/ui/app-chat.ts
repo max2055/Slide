@@ -91,7 +91,9 @@ function isBtwCommand(text: string) {
 }
 
 export async function handleAbortChat(host: ChatHost) {
-  host.chatMessage = "";
+  if (!host.client || !host.chatRunId || !host.sessionKey) return;
+  host.client.cancelChat(host.chatRunId, host.sessionKey);
+  host.chatSending = true;
 }
 
 function enqueueChatMessage(

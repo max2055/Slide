@@ -247,6 +247,12 @@ export class DirectGatewayClient {
     this.ws.send(JSON.stringify(this.chatSendFrame(sessionKey, message)));
   }
 
+  cancelChat(runId: string, sessionKey: string): void {
+    if (this.ws?.readyState === WebSocket.OPEN && this.authenticated) {
+      this.ws.send(JSON.stringify({ type: 'chat.cancel', runId, sessionKey }));
+    }
+  }
+
   requestHistory(sessionKey: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.warn('[DirectGatewayClient] cannot requestHistory: not connected');
