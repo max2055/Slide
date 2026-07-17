@@ -758,6 +758,17 @@ ${result.finalContent || ''}`
       toolCalling: true,
       maxContextTokens: 200_000,
       supportsCustomSystemPrompt: true,
+      features: {
+        sessions: { state: 'supported' },
+        files: { state: 'unsupported', reason: 'DirectAdapter has no agent workspace file API' },
+        tools: { state: 'unsupported', reason: 'DirectAdapter has no tool policy editor API' },
+        skills: { state: 'unsupported', reason: 'DirectAdapter has no per-agent skill editor API' },
+        cron: { state: 'unsupported', reason: 'Cron is managed outside the DirectAdapter agent UI' },
+        modelSelection: { state: 'unsupported', reason: 'Model selection is configured in LLM settings' },
+        fallback: { state: 'unsupported', reason: 'Fallback configuration is not exposed by DirectAdapter' },
+        reload: { state: 'unsupported', reason: 'Provider reload is managed by LLM settings' },
+        edit: { state: 'unsupported', reason: 'DirectAdapter has no agent edit API' },
+      },
     };
   }
 

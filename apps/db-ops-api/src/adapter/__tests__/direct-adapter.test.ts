@@ -256,6 +256,8 @@ describe('DirectAdapter', () => {
       expect(caps.toolCalling).toBe(true);
       expect(caps.maxContextTokens).toBe(200_000);
       expect(caps.supportsCustomSystemPrompt).toBe(true);
+      expect(caps.features.files.state).toBe('unsupported');
+      expect(caps.features.sessions.state).toBe('supported');
     });
   });
 });

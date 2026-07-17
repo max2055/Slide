@@ -808,6 +808,7 @@ async function start() {
 
   // ========== Agent List API (DirectAdapter) ==========
   fastify.get('/api/agents', { preHandler: [verifyToken] }, async (_request, reply) => {
+    const engine = await getAgentEngine();
     reply.send({
       defaultId: 'slide-db-ops',
       mainKey: 'main',
@@ -815,6 +816,7 @@ async function start() {
       agents: [
         { id: 'slide-db-ops', name: 'Slide', identity: { name: 'Slide', avatarUrl: '' } },
       ],
+      capabilities: engine.capabilities().features,
     });
   });
 

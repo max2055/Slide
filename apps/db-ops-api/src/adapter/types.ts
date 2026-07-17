@@ -85,6 +85,16 @@ export interface AgentCapabilities {
   maxContextTokens: number;
   /** Whether custom system prompts are supported */
   supportsCustomSystemPrompt: boolean;
+  features: Record<AgentFeature, AgentFeatureCapability>;
+}
+
+export type AgentFeature =
+  | 'sessions' | 'files' | 'tools' | 'skills' | 'cron'
+  | 'modelSelection' | 'fallback' | 'reload' | 'edit';
+
+export interface AgentFeatureCapability {
+  state: 'supported' | 'readonly' | 'unsupported';
+  reason?: string;
 }
 
 // ── Chat result ──

@@ -9,6 +9,9 @@ import { toSanitizedMarkdownHtml } from "../markdown.ts";
  * Render analysis result that may be a Markdown string or structured JSON object.
  */
 function renderStructuredResult(result: Record<string, unknown>) {
+  if (result.schemaVersion === 1 && typeof result.displayMarkdown === 'string') {
+    return html`<div>${unsafeHTML(toSanitizedMarkdownHtml(result.displayMarkdown))}</div>`;
+  }
   const summary = result.summary;
   return html`${summary !== undefined ? html`<section><strong>摘要</strong><p>${String(summary)}</p></section>` : null}${Object.entries(result).map(([key, value]) => {
     if (key === "summary") return null;

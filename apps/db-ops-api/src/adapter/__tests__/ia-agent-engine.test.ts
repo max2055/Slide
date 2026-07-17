@@ -70,6 +70,11 @@ class MockAdapter implements IAgentEngine {
       toolCalling: true,
       maxContextTokens: 200000,
       supportsCustomSystemPrompt: true,
+      features: {
+        sessions: { state: 'supported' }, files: { state: 'unsupported' }, tools: { state: 'unsupported' },
+        skills: { state: 'unsupported' }, cron: { state: 'unsupported' }, modelSelection: { state: 'unsupported' },
+        fallback: { state: 'unsupported' }, reload: { state: 'unsupported' }, edit: { state: 'unsupported' },
+      },
     };
   }
 
@@ -154,7 +159,14 @@ describe('IAgentEngine', () => {
       async invoke(): Promise<InvokeResult> { return { content: null }; }
       listTools(): ToolSchema[] { return []; }
       capabilities(): AgentCapabilities {
-        return { streaming: false, toolCalling: false, maxContextTokens: 0, supportsCustomSystemPrompt: false };
+        return {
+          streaming: false, toolCalling: false, maxContextTokens: 0, supportsCustomSystemPrompt: false,
+          features: {
+            sessions: { state: 'unsupported' }, files: { state: 'unsupported' }, tools: { state: 'unsupported' },
+            skills: { state: 'unsupported' }, cron: { state: 'unsupported' }, modelSelection: { state: 'unsupported' },
+            fallback: { state: 'unsupported' }, reload: { state: 'unsupported' }, edit: { state: 'unsupported' },
+          },
+        };
       }
     }
 
