@@ -72,6 +72,7 @@ import { sqlAuditService } from './src/sql-audit-service.js';
 import { queryAuditLogs, auditLogManager, DatabaseAuditLogStore } from './src/audit/audit-log.js';
 import { sqlExecutor } from './src/sql-executor.js';
 import { classifySql } from './src/sql-validator.js';
+import { PersistentOperationService } from './src/operations/operation-service.js';
 import { approvalService } from './src/approval-service.js';
 import { databaseLogService } from './src/database-log-service.js';
 import * as fs from 'fs/promises';
@@ -101,6 +102,7 @@ const securityConfig = loadSecurityConfig();
 const JWT_SECRET = securityConfig.jwtSecret || 'development-only-jwt-secret-not-for-production';
 const JWT_EXPIRES_IN = '1h';
 const rbacService = new RbacService();
+const operationService = new PersistentOperationService(() => dbConnection.getPool() as any);
 
 const verifyToken = createVerifyToken(JWT_SECRET, actorContextService);
 
@@ -1429,16 +1431,41 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
 
       const user = (request as any).user;
-      const result = await sqlExecutor.executeSql(Number(id), sql, {
-        userId: String(user?.userId || ''),
-        username: user?.username || 'unknown',
-        ipAddress: request.ip,
-        database,
+      const rawIdempotency = request.headers['idempotency-key'];
+      const idempotencyKey = typeof rawIdempotency === 'string' && rawIdempotency.length <= 128
+        ? rawIdempotency
+        : user.requestId;
+      const operation = await operationService.create({
+        actorId: user.userId,
+        origin: 'sql-console',
+        resource: { type: 'database-instance', id: String(id) },
+        commandType: classification.commandType,
+        risk: 'low',
+        idempotencyKey,
+        correlationId: user.requestId,
       });
-      if (!result.success) {
-        return reply.code(400).send(result);
+      if (operation.state !== 'queued') {
+        return reply.code(409).send({ reasonCode: 'OPERATION_ALREADY_EXISTS', operationId: operation.id, state: operation.state });
       }
-      reply.send(result);
+      await operationService.transition(operation.id, 'claimed', 'READ_CLAIMED', user.userId);
+      await operationService.transition(operation.id, 'running', 'READ_STARTED', user.userId);
+      const result = await sqlExecutor.executeSql(Number(id), String(sql), {
+        userId: String(user.userId),
+        username: user.username,
+        ipAddress: request.ip,
+        database: typeof database === 'string' ? database : undefined,
+      });
+      await operationService.transition(
+        operation.id,
+        result.success ? 'succeeded' : 'failed',
+        result.success ? 'READ_SUCCEEDED' : 'READ_FAILED',
+        user.userId,
+        result.success ? { rowCount: result.rowCount ?? 0, durationMs: result.duration_ms ?? 0 } : { error: result.error ?? 'execution_failed' },
+      );
+      if (!result.success) {
+        return reply.code(400).send({ ...result, operationId: operation.id });
+      }
+      reply.send({ ...result, operationId: operation.id, correlationId: user.requestId });
     } catch (error: any) {
       reply.code(500).send({ error: 'SQL 执行失败：' + error.message });
     }
