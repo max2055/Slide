@@ -81,6 +81,7 @@ import { WorkerLease } from './src/lifecycle/worker-lease.js';
 import { JobRegistry } from './src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.js';
 import { MysqlReportOccurrenceStore, ReportScheduler } from './src/report-scheduler.js';
+import { assertCreatableDatabaseType, listAdapterCapabilities } from './src/adapters/capability-matrix.js';
 import { approvalService } from './src/approval-service.js';
 import { databaseLogService } from './src/database-log-service.js';
 import * as fs from 'fs/promises';
@@ -1115,6 +1116,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // ========== 数据库实例管理 API ==========
 
+  fastify.get('/api/adapters/capabilities', { preHandler: [verifyToken] }, async (_request, reply) => reply.send({ adapters: listAdapterCapabilities() }));
+
   // 创建实例
   fastify.post('/api/database/instances', { preHandler: [verifyToken, requirePermission('instance:create')] }, async (request, reply) => {
     try {
@@ -1214,6 +1217,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           ['host', 'port', 'username', 'password', 'database_name', 'db_type'], 'POST /api/database/instances/test-connection');
         if (check.error) return reply.code(400).send(check.error);
         const { host, port, username, password, database_name, db_type } = check.body;
+      try { assertCreatableDatabaseType(String(db_type)); } catch (error: any) { return reply.code(400).send({ error: error.message }); }
       const result = await instanceDatabaseService.testConnection({
         db_type,
         host,

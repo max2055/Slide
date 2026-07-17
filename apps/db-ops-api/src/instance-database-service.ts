@@ -3,6 +3,7 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection, encryptData, decryptData } from './db-connection';
+import { assertCreatableDatabaseType } from './adapters/capability-matrix.js';
 
 export interface DatabaseInstance {
   id: number;
@@ -167,6 +168,7 @@ class InstanceDatabaseService {
     }
 
     try {
+      assertCreatableDatabaseType(data.db_type);
       // 检查名称是否已存在
       const [existing] = await pool.execute(
         'SELECT id FROM database_instances WHERE name = ? AND environment = ?',
@@ -245,6 +247,7 @@ class InstanceDatabaseService {
     }
 
     try {
+      if (data.db_type !== undefined) assertCreatableDatabaseType(data.db_type);
       const updates: string[] = [];
       const values: any[] = [];
 
@@ -331,6 +334,7 @@ class InstanceDatabaseService {
     password: string;
     database?: string;
   }): Promise<{ success: boolean; message: string }> {
+    assertCreatableDatabaseType(config.db_type);
     try {
       if (config.db_type === 'mysql') {
         const pool = mysql.createPool({
