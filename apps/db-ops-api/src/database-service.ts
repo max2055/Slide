@@ -128,6 +128,7 @@ export interface RealtimeMetrics {
   queries_total?: number;
   commits_total?: number;
   rollbacks_total?: number;
+  [key: string]: any;
 }
 
 export interface SlowQuery {
@@ -215,7 +216,7 @@ class DatabaseService {
           queueRequests: 1,
           queueMax: 500,
           queueTimeout: 60000,
-        }) as unknown as Promise<oracledb.Pool>);
+        } as any) as unknown as Promise<oracledb.Pool>);
 
         // 获取持久连接（保持向后兼容）
         const connection = await pool.getConnection();
@@ -843,7 +844,7 @@ class DatabaseService {
         WHERE NAME IN ('parse count (hard)', 'parse count (total)', 'execute count', 'user commits')
       `);
 
-      const stats = statResult.rows[0] || {};
+      const stats: any = statResult.rows[0] || {};
       const hardParses = stats.hard_parses as number || 0;
       const totalParses = stats.total_parses as number || 0;
       const executes = stats.executes as number || 0;
@@ -1021,7 +1022,7 @@ class DatabaseService {
         WHERE NAME IN ('parse count', 'sql executed count', 'transaction commit count')
       `);
 
-      const stats = statResult.rows[0] || {};
+      const stats: any = statResult.rows[0] || {};
       const parses = stats.parses as number || 0;
       const executes = stats.executes as number || 0;
       const commits = stats.commits as number || 0;
@@ -2433,7 +2434,7 @@ class DatabaseService {
       output += '='.repeat(80) + '\n';
 
       for (const row of result.rows) {
-        const planLine = row[0] as string || row.PLAN_TABLE_OUTPUT as string;
+        const planLine = row[0] as string || (row as any).PLAN_TABLE_OUTPUT as string;
         if (planLine) {
           output += planLine + '\n';
         }
@@ -2484,7 +2485,7 @@ class DatabaseService {
       output += '='.repeat(80) + '\n';
 
       for (const row of result.rows) {
-        const planLine = row[0] as string || row.PLAN_TABLE_OUTPUT as string;
+        const planLine = row[0] as string || (row as any).PLAN_TABLE_OUTPUT as string;
         if (planLine) {
           output += planLine + '\n';
         }

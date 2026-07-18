@@ -815,7 +815,7 @@ class LLMService {
       throw new Error(`Ollama API 错误：${response.statusText}`);
     }
 
-    const result = await response.json();
+    const result: any = await response.json();
 
     return {
       success: true,

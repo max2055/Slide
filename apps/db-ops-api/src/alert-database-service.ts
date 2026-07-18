@@ -158,7 +158,7 @@ class AlertDatabaseService {
     level?: string;
     limit?: number;
     offset?: number;
-  }): Promise<any[]> {
+  }): Promise<any> {
     const pool = this.getPool();
     if (!pool) {
       return [];

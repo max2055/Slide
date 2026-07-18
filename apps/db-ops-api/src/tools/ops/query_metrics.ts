@@ -108,7 +108,7 @@ async function queryRealtime(
   }
 
   // Always include recorded_at for context
-  const filtered = filterMetrics(record, args.metric_ids);
+  const filtered = filterMetrics(record as any, args.metric_ids);
 
   return {
     success: true,

@@ -8,6 +8,7 @@
 - ✅ **v0.6 Agent 解耦与替换** — Phases 108-118 (shipped 2026-06-08)
 - ✅ **v0.7 打磨与优化** — Phases 119-123 (shipped 2026-07-01)
 - ✅ **v0.8 服务器纳管** — Phases 124-129 (shipped 2026-07-11)
+- 📋 **v0.9 生产化与可信运维闭环** — Phases 131-139 (Phase 131 audit complete; Phases 132-139 planned)
 
 ## Phases
 
@@ -1079,4 +1080,137 @@ Plans:
 | 126. 服务器告警规则 | v0.8 | 1/1 | Complete   | 2026-07-07 |
 | 127. 定时自动化巡检 | v0.8 | 1/1 | Complete   | 2026-07-07 |
 | 128. AI 服务器分析 | v0.8 | 1/1 | Complete   | 2026-07-07 |
-| 129. 观测平台统一化 — 指标·告警·报告·前端整合 | v0.9 | 3/3 | Complete | 2026-07-09 |
+| 129. 观测平台统一化 — 指标·告警·报告·前端整合 | v0.8 | 3/3 | Complete | 2026-07-09 |
+
+## 📋 v0.9 生产化与可信运维闭环 (Planned)
+
+**Goal:** 关闭 Phase 131 系统审计确认的生产阻断项，统一身份、执行、资源和工作流机制，建立可恢复的告警/调查/执行/验证闭环，并通过独立发布资格门禁给出 GO/NO-GO 结论。
+
+**Source of truth:** 当前代码和 Phase 131 运行证据。历史 Phase 的 complete/passed 标签不作为生产资格证明。
+
+**Architecture direction:**
+
+- `ActorContext` 是 REST、refresh、WS、Chat 和 Agent Tool 的唯一身份/授权上下文。
+- `Operation` 串联分析建议、策略、审批、执行、审计、取消、重试和验证。
+- `ResourceRef + Observation` 统一实例/服务器资源、指标新鲜度、告警和健康语义。
+- MySQL transactional outbox + persistent lease 提供 at-least-once 工作流；consumer 负责幂等，不引入 Kafka。
+- Slide 保持事实源、权限和执行控制面；Data Loom 只读消费版本化 `InvestigationPackage`，不直接读内部表或写控制状态。
+- 不拆微服务，不重写 Lit/Fastify/Agent Core，不把 MongoDB/Redis/Elasticsearch 的依赖包等同于已支持 adapter。
+
+### Dependency Waves
+
+| Wave | Phases | Exit dependency |
+|---:|---|---|
+| 0 | 131 系统审计 | 已完成，形成 finding 与发布门禁基线 |
+| 1 | 132 安全边界；134 Schema/生命周期 | 两个基础 Phase 可并行，均为后续硬依赖 |
+| 2 | 133 Operation/SQL；136 资源与观测真相 | 分别依赖 132、134 |
+| 3 | 135 Agent/WS 契约 | 依赖 132、133 |
+| 4 | 137 持久工作流与事件闭环 | 依赖 133、135、136 |
+| 5 | 138 能力/配置/契约 | 依赖 132、136、137 |
+| 6 | 139 发布资格验证 | 依赖 132-138 全部通过 |
+
+### Phase 131: 系统级代码审计
+
+**Status:** Complete — issues found; production ready = false (2026-07-16)
+
+**Result:** 3 Critical、13 High、7 Medium、1 Low 已确认缺陷，另有 4 个高风险设计问题、6 个测试缺口和 3 个优化建议。审计未修改业务代码。
+
+**Evidence:** `131-REVIEW.md`、`131-UAT.md`、`131-VERIFICATION.md`
+
+### Phase 132: 安全边界与统一身份上下文
+
+**Goal:** 统一 REST/refresh/WS/Chat/Agent Tool 的身份、撤销和授权语义，关闭 secret、XSS 与 SSRF 边界。
+
+**Depends on:** Phase 131 findings
+
+**Plans:** 2 planned
+
+- [ ] `132-01-PLAN.md` — ActorContext、token/WS 撤销、Chat owner/share ACL、Agent Tool Policy
+- [ ] `132-02-PLAN.md` — 生产 secret 门禁、公开 DTO、安全渲染、通知出站策略
+
+### Phase 133: Operation 状态机与 SQL 安全
+
+**Goal:** 统一审批/执行/恢复原语，直接 SQL 只允许确定的单条只读语句，并保证竞争审批最多一次副作用。
+
+**Depends on:** Phase 132
+
+**Plans:** 2 planned
+
+- [ ] `133-01-PLAN.md` — Operation schema/service、多方言 SQL 分类、只读执行边界
+- [ ] `133-02-PLAN.md` — 原子审批认领、审计血缘、恢复语义、Operation UI
+
+### Phase 134: 确定性 Schema 初始化与进程生命周期
+
+**Goal:** 让空库、升级、迁移失败、重复进程和优雅退出具有可复现行为，未取得监听器/lease 的进程不得产生副作用。
+
+**Depends on:** Phase 131 findings
+
+**Plans:** 2 planned
+
+- [ ] `134-01-PLAN.md` — migration ledger/checksum/lock、baseline/repair、真实空库 validator
+- [ ] `134-02-PLAN.md` — 生命周期编排、worker lease、重复启动、升级与恢复验收
+
+### Phase 135: Agent/WS 执行契约与结构化分析
+
+**Goal:** 建立 WS v2、真实终态、取消、附件、持久幂等和 AnalysisEnvelope，并按真实能力呈现 Agent UI。
+
+**Depends on:** Phases 132, 133
+
+**Plans:** 2 planned
+
+- [ ] `135-01-PLAN.md` — WS v2、终态联合、取消、附件、重连与持久幂等
+- [ ] `135-02-PLAN.md` — AnalysisEnvelope、结构化完成工具、兼容回填、能力驱动 UI
+
+### Phase 136: 资源、能力与可观测性真实状态模型
+
+**Goal:** 统一 ResourceRef、Observation、指标身份、采集调度、告警求值和四维健康真相。
+
+**Depends on:** Phase 134
+
+**Plans:** 3 planned
+
+- [ ] `136-01-PLAN.md` — ResourceRef、关系、Observation、能力状态和统一查询 API
+- [ ] `136-02-PLAN.md` — canonical metric ID、存量迁移、due-only 调度与 provider 状态
+- [ ] `136-03-PLAN.md` — 共享告警 compiler/evaluator、四维健康 API 与前端呈现
+
+### Phase 137: 持久工作流、事件调查与业务闭环
+
+**Goal:** 以 outbox/lease/幂等 consumer 连接告警、事件、RCA、Operation、报表、通知和验证，并发布 Data Loom 只读调查投影。
+
+**Depends on:** Phases 133, 135, 136
+
+**Plans:** 3 planned
+
+- [ ] `137-01-PLAN.md` — transactional outbox、持久 worker runtime、类型化 Cron handler
+- [ ] `137-02-PLAN.md` — 事件状态机、实例/服务器 RCA、InvestigationPackage/Data Loom 契约
+- [ ] `137-03-PLAN.md` — 定时报表、通知投递、事件 UI、恢复验证与记忆候选
+
+### Phase 138: 兼容能力、配置发布与类型化契约
+
+**Goal:** 用验证证据定义数据库/Agent 能力，以 draft/validate/publish/rollback 管理高风险配置，并统一 REST/导航类型。
+
+**Depends on:** Phases 132, 136, 137
+
+**Plans:** 2 planned
+
+- [ ] `138-01-PLAN.md` — adapter 能力矩阵、支持声明、四数据库验证、Phase 84/95/110 UAT 清账
+- [ ] `138-02-PLAN.md` — 版本化配置发布/回滚、TypeBox/OpenAPI DTO、类型化导航/UI
+
+### Phase 139: 生产发布资格验证
+
+**Goal:** 不新增业务功能，在隔离环境执行工具链、安全、空库/升级/恢复、浏览器闭环和文档一致性门禁，给出 GO/NO-GO。
+
+**Depends on:** Phases 132-138
+
+**Plans:** 3 planned
+
+- [ ] `139-01-PLAN.md` — 工具链与测试基线、qualification fixture、分层 CI
+- [ ] `139-02-PLAN.md` — 空库/升级、重复启动、failover、备份恢复与稳定性
+- [ ] `139-03-PLAN.md` — 安全对抗、关键用户故事 UAT、finding 证据矩阵与 GO/NO-GO
+
+### v0.9 Release Rule
+
+- Phase 132-138 必须各自通过 verification 后才能开始 Phase 139。
+- Phase 131 的 Critical/High、必需 CI、安全回归、空库/恢复或关键用户故事任一失败，结论必须是 NO-GO。
+- Data Loom 的外部质量评分不作为 Slide GO 门禁；契约完整性、只读权限和投影可追溯性属于门禁。
+- 只有 `139-VERIFICATION.md` 在当前 commit/环境给出 GO，v0.9 才能标记 shipped。

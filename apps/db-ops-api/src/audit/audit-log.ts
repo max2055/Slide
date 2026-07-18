@@ -221,7 +221,7 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
     const userId = entry.userId ? (Number.isNaN(parseInt(entry.userId, 10)) ? null : parseInt(entry.userId, 10)) : null;
     const instanceId = entry.resourceId ? (Number.isNaN(parseInt(entry.resourceId, 10)) ? null : parseInt(entry.resourceId, 10)) : null;
 
-    await this.pool.execute(
+    await (this.pool as any).execute(
       `INSERT INTO sql_execution_history
        (user_id, username, instance_id, instance_name, db_type, database_name,
         sql_text, status, duration_ms, row_count, error_message, ip_address, approval_request_id)
@@ -339,7 +339,7 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
 /**
  * 审计日志管理器
  */
-export class AuditLogManager implements AuditLogHandler {
+export class AuditLogManager {
   private handler: AuditLogHandler;
   private persistentStore?: AuditLogHandler;
   private events = new EventEmitter();

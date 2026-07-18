@@ -539,7 +539,7 @@ class InstanceDatabaseService {
    * @param instanceId - 实例 ID
    * @param days - 最近天数（默认 7，最大 90）
    */
-  async getHealthCheckHistoryWithChecks(instanceId: number, days: number = 7): Promise<any[]> {
+  async getHealthCheckHistoryWithChecks(instanceId: number, days: number = 7): Promise<any> {
     const pool = this.getPool();
     if (!pool) {
       return [];
@@ -573,7 +573,7 @@ class InstanceDatabaseService {
    * @param instanceId - 实例 ID
    * @returns 最近一条 health_check_history 的 checks 数组
    */
-  async getLatestHealthChecks(instanceId: number): Promise<any[] | null> {
+  async getLatestHealthChecks(instanceId: number): Promise<any> {
     const pool = this.getPool();
     if (!pool) {
       return null;

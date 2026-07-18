@@ -5,7 +5,7 @@
  * 修复时间：2026-06-30 (descriptions rewritten for clarity)
  */
 
-import type { AnyAgentTool, ToolExecutionContext, ToolResult } from "../../tools/types.js";
+import type { AnyAgentTool, ToolExecutionContext, ToolResult } from "../../../tools/types";
 
 
 export const check_health_healthTool: AnyAgentTool = {
