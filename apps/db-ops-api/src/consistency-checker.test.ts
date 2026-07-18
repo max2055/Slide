@@ -51,6 +51,7 @@ describe('ConsistencyChecker', () => {
         { id: 4, health_status: 'critical', latest_metric: new Date() },
         { id: 5, health_status: 'critical', latest_metric: new Date() },
       ], []]);
+      mockExecute.mockResolvedValueOnce([[], []]);
       const result = await checker.resourceHealthTruth();
       expect(result.overall).toBe('critical');
       expect(result.managedAvailability).toMatchObject({ numerator: 1, denominator: 5 });
@@ -60,6 +61,7 @@ describe('ConsistencyChecker', () => {
       mockExecute.mockResolvedValueOnce([[
         { id: 1, health_status: 'healthy', latest_metric: new Date(Date.now() - 11 * 60_000) },
       ], []]);
+      mockExecute.mockResolvedValueOnce([[], []]);
       const result = await checker.resourceHealthTruth();
       expect(result.dataFreshness).toMatchObject({ status: 'critical', numerator: 0, denominator: 1 });
       expect(result.overall).toBe('critical');
