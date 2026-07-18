@@ -22,6 +22,13 @@ class SqlExecutor {
   }> {
     const startTime = Date.now();
 
+    // Classify SQL BEFORE connection check — reject non-read statements even
+    // when the target instance is unreachable.
+    const classification = classifySql(sql, 'mysql'); // db_type hint; re-classified after connection
+    if (classification.commandType !== 'read' && !context?.approvedOperationId) {
+      return { success: false, error: `SQL_READ_ONLY_${classification.reasonCode}` };
+    }
+
     // 先确保连接可用（触发重连如果需要）
     const alive = await databaseService.ensureConnectionAlive(instanceId);
     if (!alive) {
@@ -33,9 +40,10 @@ class SqlExecutor {
       return { success: false, error: '实例未连接' };
     }
 
-    const classification = classifySql(sql, conn.db_type as 'mysql' | 'postgresql' | 'oracle' | 'dameng');
-    if (classification.commandType !== 'read' && !context?.approvedOperationId) {
-      return { success: false, error: `SQL_READ_ONLY_${classification.reasonCode}` };
+    // Re-classify with actual db_type for dialect-specific rules
+    const reclassification = classifySql(sql, conn.db_type as 'mysql' | 'postgresql' | 'oracle' | 'dameng');
+    if (reclassification.commandType !== 'read' && !context?.approvedOperationId) {
+      return { success: false, error: `SQL_READ_ONLY_${reclassification.reasonCode}` };
     }
 
     // 切换数据库/模式（如果指定了 database 参数）
