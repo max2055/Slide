@@ -363,7 +363,7 @@ async function start() {
     const check = strictBody(request.body as Record<string, unknown>,
       ['username', 'password'], 'POST /api/auth/login');
     if (check.error) return reply.code(400).send(check.error);
-    const { username, password } = check.body;
+    const { username, password } = check.body as { username: string; password: string };
 
     if (!username || !password) {
       return reply.code(400).send({ error: '用户名和密码不能为空' });
@@ -461,7 +461,7 @@ async function start() {
         'POST /api/users',
         { role: '角色分配请使用 POST /api/v1/rbac/users/{userId}/roles' });
       if (check.error) return reply.code(400).send(check.error);
-      const { username, password, email } = check.body;
+      const { username, password, email } = check.body as { username: string; password: string; email?: string };
       if (!username || !password) {
         return reply.code(400).send({ error: '用户名和密码不能为空' });
       }
@@ -488,13 +488,13 @@ async function start() {
         'PUT /api/users/:id',
         { role: '角色更新请使用 POST/DELETE /api/v1/rbac/users/{userId}/roles' });
       if (check.error) return reply.code(400).send(check.error);
-      const { status, email } = check.body;
+      const { status, email } = check.body as { status?: string; email?: string };
       const validStatuses = ['active', 'inactive', 'locked'];
-      if (status && !validStatuses.includes(status)) {
+      if (status && !validStatuses.includes(String(status))) {
         return reply.code(400).send({ error: '无效的状态' });
       }
       // role 更新通过 RBAC API (POST /api/v1/rbac/users/:userId/roles) 完成
-      const result = await authDatabaseService.updateUserById(Number(id), { status });
+      const result = await authDatabaseService.updateUserById(Number(id), { status: String(status) });
       if (!result.success) {
         return reply.code(400).send(result);
       }
@@ -696,7 +696,7 @@ async function start() {
       const check = strictBody(request.body as Record<string, unknown>,
           ['providerName'], 'POST /api/llm/test');
         if (check.error) return reply.code(400).send(check.error);
-        const { providerName } = check.body;
+        const { providerName } = check.body as { providerName: string };
       const provider = await llmDatabaseService.getProviderByName(providerName);
       if (!provider) return reply.code(404).send({ error: '提供商不存在' });
       const apiKey = provider.api_key_encrypted
@@ -1216,7 +1216,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['host', 'port', 'username', 'password', 'database_name', 'db_type'], 'POST /api/database/instances/test-connection');
         if (check.error) return reply.code(400).send(check.error);
-        const { host, port, username, password, database_name, db_type } = check.body;
+        const { host, port, username, password, database_name, db_type } = check.body as { host: string; port: number; username: string; password: string; database_name?: string; db_type: string };
       try { assertCreatableDatabaseType(String(db_type)); } catch (error: any) { return reply.code(400).send({ error: error.message }); }
       const result = await instanceDatabaseService.testConnection({
         db_type,
@@ -1326,8 +1326,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['host', 'port', 'credential_type', 'credential_username', 'credential_value'], 'POST /api/servers/test-connection');
         if (check.error) return reply.code(400).send(check.error);
-        const { host, port, credential_type, credential_username, credential_value } = check.body;
-      const result = await serverDatabaseService.testConnection(host, Number(port), credential_type, credential_value, credential_username);
+        const { host, port, credential_type, credential_username, credential_value } = check.body as { host: string; port: number; credential_type: string; credential_username: string; credential_value: string };
+      const result = await serverDatabaseService.testConnection(String(host), Number(port), String(credential_type), String(credential_value), String(credential_username));
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: '测试连接失败：' + error.message });
@@ -1654,21 +1654,21 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['ids', 'action', 'notes', 'execute_ids'], 'POST /api/approval/batch-review');
         if (check.error) return reply.code(400).send(check.error);
-        const { ids, action, notes, execute_ids } = check.body;
+        const { ids, action, notes, execute_ids } = check.body as { ids: number[]; action: string; notes?: string; execute_ids?: number[] };
       if (!Array.isArray(ids) || ids.length === 0 || !ids.every((i: any) => Number.isInteger(i) && i > 0)) {
         return reply.code(400).send({ error: 'ids 必须是非空的正整数数组' });
       }
-      if (!action || !['approve', 'reject'].includes(action)) {
+      if (!action || !['approve', 'reject'].includes(String(action))) {
         return reply.code(400).send({ error: 'action 必须是 approve 或 reject' });
       }
       const user = (request as any).user;
       const items = (ids as number[]).map(id => ({
         id,
-        action: action as 'approve' | 'reject',
+        action: String(action) as 'approve' | 'reject',
         execute_after_approve: execute_ids ? execute_ids.includes(id) : true,
       }));
       const results = await approvalService.batchReview(
-        { items, reviewed_by: user?.userId, notes: notes || '' },
+        { items, reviewed_by: user?.userId, notes: String(notes || '') },
         () => approvalOperationLifecycle(user.userId),
       );
 
@@ -1685,8 +1685,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
               const channels = await notificationDatabaseService.getEnabledChannels();
               for (const channel of channels) {
                 const msg = notificationService.buildApprovalMessage(channel.type, {
-                  action: action as 'approve' | 'reject',
-                  notes: notes,
+                  action: String(action) as 'approve' | 'reject',
+                  notes: String(notes || ''),
                   sqlSummary: reqDetail.sql_text.substring(0, 100),
                   instanceName,
                   submitTime: reqDetail.created_at,
@@ -1722,8 +1722,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['action', 'notes', 'execute_after_approve'], 'POST /api/approval/:id/review');
         if (check.error) return reply.code(400).send(check.error);
-        const { action, notes, execute_after_approve } = check.body;
-      if (!action || !['approve', 'reject'].includes(action)) {
+        const { action, notes, execute_after_approve } = check.body as { action: string; notes?: string; execute_after_approve?: boolean };
+      if (!action || !['approve', 'reject'].includes(String(action))) {
         return reply.code(400).send({ error: 'action 必须是 approve 或 reject' });
       }
       const user = (request as any).user;
@@ -2626,10 +2626,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(400).send({ error: `无效的报表类型：${type}，有效值：${validTypes.join(', ')}` });
         }
 
-        const validFormats = ['html', 'pdf', 'json', 'md'];
-        const safeFormat = validFormats.includes(format) ? format : 'html';
+        const validFormats = ['html', 'pdf', 'json', 'md', 'csv'] as const;
+        const safeFormat: string = validFormats.includes(format as any) ? format : 'html';
 
-        const report = await reportService.generateReport(type as 'health' | 'performance' | 'slow_query' | 'capacity', instanceId, { format: safeFormat });
+        const report = await reportService.generateReport(type as 'health' | 'performance' | 'slow_query' | 'capacity', instanceId, { format: safeFormat as 'pdf' | 'html' | 'json' | 'csv' });
         reply.send({ id: report.id, status: report.status, name: report.name });
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -4228,7 +4228,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['db_type', 'description', 'instance_id'], 'POST /api/metrics/generate-sql');
         if (check.error) return reply.code(400).send(check.error);
-        const { db_type, description, instance_id } = check.body;
+        const { db_type, description, instance_id } = check.body as { db_type?: string; description?: string; instance_id?: number };
       if (!description) {
         reply.code(400).send({ error: '请提供指标描述' });
         return;
@@ -4334,7 +4334,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['new_level'], 'POST /api/alerts/:id/escalate');
         if (check.error) return reply.code(400).send(check.error);
-        const { new_level } = check.body;
+        const { new_level } = check.body as { new_level: string };
       if (!new_level) {
         reply.code(400).send({ error: '缺少 new_level 参数' });
         return;
@@ -4410,7 +4410,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['instance_id', 'metric_name', 'duration_minutes'], 'POST /api/silence');
         if (check.error) return reply.code(400).send(check.error);
-        const { instance_id, metric_name, duration_minutes } = check.body;
+        const { instance_id, metric_name, duration_minutes } = check.body as { instance_id: number; metric_name: string; duration_minutes: number };
       const result = await alertSilenceService.silence(instance_id, metric_name, duration_minutes);
       reply.send(result);
     } catch (error: any) {
@@ -4511,7 +4511,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['user_id'], 'POST /api/alerts/events/:id/assign');
         if (check.error) return reply.code(400).send(check.error);
-        const { user_id } = check.body;
+        const { user_id } = check.body as { user_id: number };
       const result = await alertEventService.assignEvent(Number(id), user_id);
       reply.send(result);
     } catch (error: any) {
@@ -4535,7 +4535,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['note'], 'POST /api/alerts/events/:id/note');
         if (check.error) return reply.code(400).send(check.error);
-        const { note } = check.body;
+        const { note } = check.body as { note: string };
       const result = await alertEventService.addHandlerNote(Number(id), note);
       reply.send(result);
     } catch (error: any) {
@@ -4559,7 +4559,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['resolution_notes'], 'POST /api/alerts/events/:id/resolve');
         if (check.error) return reply.code(400).send(check.error);
-        const { resolution_notes } = check.body;
+        const { resolution_notes } = check.body as { resolution_notes: string };
       const result = await alertEventService.resolveEvent(Number(id), resolution_notes);
       reply.send(result);
     } catch (error: any) {

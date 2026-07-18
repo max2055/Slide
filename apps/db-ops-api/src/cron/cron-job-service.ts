@@ -222,6 +222,7 @@ export class CronJobDatabaseService {
     timezone?: string;
     description?: string;
     timeout_seconds?: number;
+    retry_count?: number;
   }): Promise<number> {
     const pool = this.getPool();
     if (!pool) throw new Error('数据库未连接');
