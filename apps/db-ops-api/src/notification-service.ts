@@ -5,8 +5,10 @@
 import { CronJob } from 'cron';
 import * as crypto from 'crypto';
 import * as https from 'node:https';
+import nodemailer from 'nodemailer';
 import { notificationDatabaseService } from './notification-database-service';
 import type { PendingAlert, NotificationChannel } from './notification-database-service';
+import { decryptData } from './db-connection';
 import { maintenanceWindowService } from './maintenance-window-service';
 import { resolveOutboundTarget, OutboundPolicyError } from './security/outbound-policy.js';
 
@@ -311,8 +313,18 @@ export class NotificationService {
       }
 
       case 'email':
-        // Email 渠道暂未实现，抛出明确的错误信息
-        throw new Error('Email notification channel not yet implemented');
+        return {
+          subject: `[${alert.level.toUpperCase()}] ${alert.title}`,
+          text: replace(
+            `告警等级: ${alert.level}\n` +
+            `实例: ${instanceName || '未知实例'} (${instanceHost || 'N/A'})\n` +
+            `类型: ${alert.alert_type}\n` +
+            `指标: ${alert.metric_name || 'N/A'} = ${alert.metric_value || 'N/A'}\n` +
+            `阈值: ${alert.threshold_value || 'N/A'}\n` +
+            `时间: {created_at}\n\n` +
+            `${alert.message}`
+          ),
+        };
 
       case 'webhook':
       default: {
@@ -356,6 +368,18 @@ export class NotificationService {
    * 发送通知
    */
   async send(channel: NotificationChannel, message: any): Promise<{ success: boolean; error?: string }> {
+    if (channel.type === 'email') {
+      if (!this.isValidEmailConfiguration(channel.config)) {
+        return { success: false, error: 'EMAIL_CONFIGURATION_INVALID' };
+      }
+      try {
+        await this.sendEmail(channel.config, message);
+        return { success: true };
+      } catch {
+        return { success: false, error: 'EMAIL_DELIVERY_FAILED' };
+      }
+    }
+
     const webhookUrl = channel.config?.webhook_url;
     if (!webhookUrl) {
       return { success: false, error: '渠道未配置 webhook_url' };
@@ -389,6 +413,42 @@ export class NotificationService {
       if (error instanceof OutboundPolicyError) return { success: false, error: error.reasonCode };
       return { success: false, error: 'OUTBOUND_REQUEST_FAILED' };
     }
+  }
+
+  private isValidEmailConfiguration(config: NotificationChannel['config']): boolean {
+    return typeof config.smtp_host === 'string' && config.smtp_host.length > 0
+      && Number.isInteger(Number(config.smtp_port)) && Number(config.smtp_port) > 0
+      && typeof config.smtp_username === 'string' && config.smtp_username.length > 0
+      && ((typeof config.password === 'string' && config.password.length > 0)
+        || (typeof config.password_encrypted === 'string' && config.password_encrypted.length > 0))
+      && typeof config.from === 'string' && config.from.length > 0
+      && typeof config.to === 'string' && config.to.length > 0;
+  }
+
+  private async sendEmail(
+    config: NotificationChannel['config'],
+    message: { subject?: string; text?: string },
+  ): Promise<void> {
+    const port = Number(config.smtp_port);
+    const transport = nodemailer.createTransport({
+      host: config.smtp_host!,
+      port,
+      secure: config.smtp_secure === true || port === 465,
+      requireTLS: port !== 465,
+      auth: { user: config.smtp_username!, pass: this.getSmtpPassword(config) },
+      tls: { minVersion: 'TLSv1.2' },
+    });
+    await transport.sendMail({
+      from: config.from!,
+      to: config.to!,
+      subject: message.subject || '数据库运维助手通知',
+      text: message.text || '',
+    });
+  }
+
+  private getSmtpPassword(config: NotificationChannel['config']): string {
+    if (config.password) return config.password;
+    return decryptData(config.password_encrypted!);
   }
 
   /** Pin requests to validated DNS results while retaining TLS hostname verification. */
@@ -590,6 +650,19 @@ export class NotificationService {
         };
       }
 
+      case 'email':
+        return {
+          subject: `[升级] [${toLevel.toUpperCase()}] ${alert.title}`,
+          text: `告警已自动升级，请及时处理。\n\n` +
+            `实例: ${instanceName} (${instanceHost})\n` +
+            `类型: ${alert.alert_type}\n` +
+            `等级: ${fromLevel} → ${toLevel}\n` +
+            `指标: ${alert.metric_name || 'N/A'} = ${alert.metric_value || 'N/A'}\n` +
+            `阈值: ${alert.threshold_value || 'N/A'}\n` +
+            `时间: ${timeStr}\n\n` +
+            `${alert.message}`,
+        };
+
       case 'webhook':
       default: {
         return {
@@ -687,6 +760,18 @@ export class NotificationService {
           },
         };
       }
+
+      case 'email':
+        return {
+          subject: title,
+          text: `结果: ${actionLabel}\n` +
+            `审批人: ${approvalData.reviewerName}\n` +
+            `实例: ${approvalData.instanceName}\n` +
+            `风险等级: ${approvalData.riskLevel}\n` +
+            `提交时间: ${approvalData.submitTime}\n` +
+            (approvalData.notes ? `备注: ${approvalData.notes}\n` : '') +
+            `\nSQL 摘要:\n${summary}`,
+        };
 
       case 'webhook':
       default: {

@@ -18,6 +18,23 @@ const channel = {
   updated_at: new Date('2026-07-19T00:00:00.000Z'),
 };
 
+const emailChannel = {
+  id: 2,
+  name: 'qualification email',
+  type: 'email' as const,
+  enabled: true,
+  config: {
+    smtp_host: 'smtp.example.com',
+    smtp_port: 587,
+    smtp_username: 'alerts@example.com',
+    password: 'app-password',
+    from: 'alerts@example.com',
+    to: 'dba@example.com',
+  },
+  created_at: new Date('2026-07-19T00:00:00.000Z'),
+  updated_at: new Date('2026-07-19T00:00:00.000Z'),
+};
+
 describe('NotificationService outbound delivery', () => {
   it('records a successful 2xx response from a verified, pinned target', async () => {
     vi.mocked(resolveOutboundTarget).mockResolvedValue({
@@ -39,5 +56,28 @@ describe('NotificationService outbound delivery', () => {
 
     await expect(service.send(channel, { type: 'report', reportId: 7 }))
       .resolves.toEqual({ success: false, error: 'OUTBOUND_REDIRECT_DENIED' });
+  });
+
+  it('delivers an email notification through the configured SMTP transport', async () => {
+    const service = new NotificationService();
+    const sendEmail = vi.spyOn(service as any, 'sendEmail').mockResolvedValue(undefined);
+
+    await expect(service.send(emailChannel, {
+      subject: '[CRITICAL] qualification alert',
+      text: 'Database CPU is above threshold.',
+    })).resolves.toEqual({ success: true });
+
+    expect(sendEmail).toHaveBeenCalledWith(emailChannel.config, {
+      subject: '[CRITICAL] qualification alert',
+      text: 'Database CPU is above threshold.',
+    });
+  });
+
+  it('returns a safe error when an email channel is missing its recipient', async () => {
+    const service = new NotificationService();
+    const incompleteChannel = { ...emailChannel, config: { ...emailChannel.config, to: '' } };
+
+    await expect(service.send(incompleteChannel, { subject: 'test', text: 'test' }))
+      .resolves.toEqual({ success: false, error: 'EMAIL_CONFIGURATION_INVALID' });
   });
 });

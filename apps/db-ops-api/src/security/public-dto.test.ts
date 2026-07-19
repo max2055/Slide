@@ -16,9 +16,14 @@ describe('public response DTOs', () => {
   });
 
   it('redacts notification credentials and webhook paths', () => {
-    const dto = publicNotificationDto({ id: 3, config: { webhook_url: 'https://hooks.example.com/private-token', secret: 'secret-value' } });
+    const dto = publicNotificationDto({ id: 3, config: {
+      webhook_url: 'https://hooks.example.com/private-token',
+      secret: 'secret-value',
+      password_encrypted: 'encrypted-smtp-password',
+    } });
     expect(dto).toMatchObject({ config: { endpoint: 'https://hooks.example.com', hasCredential: true } });
     expect(JSON.stringify(dto)).not.toContain('secret-value');
     expect(JSON.stringify(dto)).not.toContain('private-token');
+    expect(JSON.stringify(dto)).not.toContain('encrypted-smtp-password');
   });
 });

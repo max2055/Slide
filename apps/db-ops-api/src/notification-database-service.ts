@@ -2,12 +2,20 @@
  * 通知数据库服务
  */
 import mysql from 'mysql2/promise';
-import { dbConnection } from './db-connection';
+import { dbConnection, encryptData } from './db-connection';
 
 export interface NotificationChannelConfig {
   webhook_url?: string;
   secret?: string;
   severity?: string;
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_username?: string;
+  password?: string;
+  password_encrypted?: string;
+  from?: string;
+  to?: string;
+  smtp_secure?: boolean;
 }
 
 export interface NotificationChannel {
@@ -47,6 +55,17 @@ export interface PendingAlert {
 }
 
 class NotificationDatabaseService {
+  private prepareConfigForStorage(config: unknown): Record<string, unknown> {
+    const stored = { ...((config && typeof config === 'object' ? config : {}) as Record<string, unknown>) };
+    if (typeof stored.password === 'string') {
+      if (stored.password.length > 0) {
+        stored.password_encrypted = encryptData(stored.password);
+      }
+      delete stored.password;
+    }
+    return stored;
+  }
+
   /**
    * 获取数据库连接池
    */
@@ -82,7 +101,7 @@ class NotificationDatabaseService {
         [
           data.name,
           data.type,
-          JSON.stringify(data.config),
+          JSON.stringify(this.prepareConfigForStorage(data.config)),
           data.enabled !== undefined ? (data.enabled ? 1 : 0) : 1,
         ]
       ) as any;
@@ -199,8 +218,29 @@ class NotificationDatabaseService {
         values.push(data.type);
       }
       if (data.config !== undefined) {
+        const config = this.prepareConfigForStorage(data.config);
+        const suppliedConfig = data.config && typeof data.config === 'object'
+          ? data.config as Record<string, unknown>
+          : {};
+        const passwordWasSupplied = Object.prototype.hasOwnProperty.call(suppliedConfig, 'password')
+          || Object.prototype.hasOwnProperty.call(suppliedConfig, 'password_encrypted');
+        if (!passwordWasSupplied) {
+          const [rows] = await pool.execute(
+            'SELECT config FROM notification_channels WHERE id = ?',
+            [id],
+          ) as any;
+          const existingConfig = rows[0]?.config;
+          try {
+            const parsed = typeof existingConfig === 'string' ? JSON.parse(existingConfig) : existingConfig;
+            if (typeof parsed?.password_encrypted === 'string') {
+              config.password_encrypted = parsed.password_encrypted;
+            }
+          } catch {
+            // An invalid legacy config will be rejected by the normal UPDATE path rather than exposing its contents.
+          }
+        }
         updates.push('config = ?');
-        values.push(JSON.stringify(data.config));
+        values.push(JSON.stringify(config));
       }
       if (data.enabled !== undefined) {
         updates.push('enabled = ?');
