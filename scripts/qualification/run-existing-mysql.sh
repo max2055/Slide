@@ -69,7 +69,8 @@ assert_process_rejects_startup() {
   local label="$1"
   shift
   local log
-  log="$(mktemp "${TMPDIR:-/tmp}/slide-qualification-${label}.XXXXXX.log")"
+  # BSD mktemp requires the X sequence at the end of its template.
+  log="$(mktemp "${TMPDIR:-/tmp}/slide-qualification-${label}.XXXXXX")"
   set +e
   "$@" >"$log" 2>&1
   local status=$?
@@ -137,26 +138,49 @@ if [[ "$scenario" == "health-truth" ]]; then
 fi
 
 if [[ "$scenario" == "workflow-catalog" ]]; then
-  # Exercise the real process-level worker registration and dispatch path. The
-  # isolated database has no resources/channels, so these controlled jobs
-  # cannot make external calls. Ports are deliberately outside 3000/5173.
-  job_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
-  mysql_exec "$database" -e "INSERT INTO workflow_jobs (id, job_type, schema_version, payload, idempotency_key, max_attempts, available_at) VALUES ('$job_id', 'alert.evaluate', 1, '{}', 'qualification-alert.evaluate-$run_id', 1, NOW())"
-  log="$(mktemp "${TMPDIR:-/tmp}/slide-qualification-workflow.XXXXXX.log")"
+  # Exercise every registered handler through the real process-level worker.
+  # The isolated database has no resources, reports, or enabled channels: these
+  # jobs take their safe no-op/skip paths and cannot make external calls. Ports
+  # are deliberately outside 3000/5173.
+  declare -a workflow_job_ids=()
+  enqueue_workflow_job() {
+    local job_type="$1"
+    local payload="$2"
+    local job_id
+    job_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+    # Application pools run in UTC, while the operator-provided MySQL CLI
+    # session may use the host time zone. The durable worker compares against
+    # its own UTC NOW(), so qualification jobs must be due in that same zone.
+    mysql_exec "$database" -e "INSERT INTO workflow_jobs (id, job_type, schema_version, payload, idempotency_key, max_attempts, available_at) VALUES ('$job_id', '$job_type', 1, '$payload', 'qualification-$job_type-$run_id', 1, UTC_TIMESTAMP())"
+    workflow_job_ids+=("$job_id")
+  }
+  enqueue_workflow_job capacity.collect '{}'
+  enqueue_workflow_job baseline.cleanup '{}'
+  enqueue_workflow_job alert.evaluate '{}'
+  enqueue_workflow_job report.schedule '{}'
+  enqueue_workflow_job notification.dispatch '{}'
+  # Missing, non-positive references are intentionally a safe no-op in the
+  # alert delivery handler. report.notify requires positive identifiers, then
+  # records its unavailable report/channel skip outcome without network I/O.
+  enqueue_workflow_job notification.deliver '{\"alertId\":0,\"channelId\":0}'
+  enqueue_workflow_job report.notify '{\"reportId\":1,\"channelId\":1}'
+  workflow_job_ids_sql="$(printf "'%s'," "${workflow_job_ids[@]}")"
+  workflow_job_ids_sql="${workflow_job_ids_sql%,}"
+  log="$(mktemp "${TMPDIR:-/tmp}/slide-qualification-workflow.XXXXXX")"
   env NODE_ENV=development PORT=3004 AGENT_WS_PORT=28891 DB_HOST="$host" DB_PORT="$port" DB_USER="$user" DB_PASSWORD="$password" DB_NAME="$database" \
     JWT_SECRET_KEY=qualification-jwt-secret-2026-07-19-long ENCRYPTION_KEY=qualification-encryption-secret-2026-07-19 INITIAL_ADMIN_USERNAME=qualification INITIAL_ADMIN_PASSWORD=qualification \
     pnpm --filter slide-api exec tsx server.ts >"$log" 2>&1 &
   server_pid=$!
-  completed=""
-  for _ in {1..20}; do
-    completed="$(mysql_exec "$database" -N -e "SELECT COUNT(*) FROM workflow_jobs WHERE job_type = 'alert.evaluate' AND state = 'completed'")"
-    [[ "$completed" -eq 1 ]] && break
+  completed=0
+  for _ in {1..30}; do
+    completed="$(mysql_exec "$database" -N -e "SELECT COUNT(*) FROM workflow_jobs WHERE id IN ($workflow_job_ids_sql) AND state = 'completed'")"
+    [[ "$completed" -eq "${#workflow_job_ids[@]}" ]] && break
     sleep 1
   done
-  if [[ "$completed" -lt 1 ]]; then
+  if [[ "$completed" -ne "${#workflow_job_ids[@]}" ]]; then
     cat "$log" >&2
     rm -f "$log"
-    echo "workflow catalog qualification did not complete the controlled alert.evaluate job (completed=$completed)" >&2
+    echo "workflow catalog qualification did not complete all controlled jobs (completed=$completed expected=${#workflow_job_ids[@]})" >&2
     exit 1
   fi
   kill "$server_pid"
