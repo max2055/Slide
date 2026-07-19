@@ -258,20 +258,17 @@ CREATE TABLE IF NOT EXISTS `alert_rules` (
   `notification_channels` JSON DEFAULT NULL COMMENT '通知渠道',
   `db_types` JSON DEFAULT NULL COMMENT '适用的数据库类型，从关联指标继承；NULL=所有类型',
   `instance_ids` JSON DEFAULT NULL COMMENT '适用的实例ID列表，NULL=所有实例',
-  `template_id` INT UNSIGNED DEFAULT NULL COMMENT '所属模板，NULL=全局规则',
   `created_by` INT UNSIGNED DEFAULT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   INDEX `idx_enabled` (`enabled`),
   INDEX `idx_metric` (`metric_name`)
-  ,INDEX `idx_alert_rule_template_id` (`template_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 指标定义表
 CREATE TABLE IF NOT EXISTS `metric_definitions` (
   `id` VARCHAR(64) NOT NULL COMMENT '指标 ID，如 cpu_usage',
-  `target_type` ENUM('instance', 'server') NOT NULL DEFAULT 'instance' COMMENT '指标所属资源类型',
   `name` VARCHAR(100) NOT NULL COMMENT '指标名称',
   `description` TEXT DEFAULT NULL,
   `unit` VARCHAR(20) NOT NULL COMMENT '单位：%, count, ops/s, score',

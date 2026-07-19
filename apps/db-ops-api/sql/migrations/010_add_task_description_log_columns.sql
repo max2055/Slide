@@ -26,7 +26,7 @@ ALTER TABLE cron_job_logs
   ADD COLUMN tools_used JSON AFTER result,
   ADD COLUMN tool_events JSON AFTER tools_used,
   ADD COLUMN `usage` JSON AFTER tool_events,
-  ADD COLUMN stop_reason VARCHAR(50) AFTER `usage`,
+  ADD COLUMN stop_reason VARCHAR(50) AFTER usage,
   ADD COLUMN duration_ms INT AFTER stop_reason,
   ADD COLUMN error_trace TEXT AFTER duration_ms,
   ADD COLUMN partial_trace LONGTEXT AFTER error_trace;

@@ -51,6 +51,26 @@ export function splitSqlStatements(sql: string): string[] {
   return statements;
 }
 
+/**
+ * Historical migration files are checksum-immutable. MySQL 9 made `usage` a
+ * reserved word, while the already-recorded 010 migration used it unquoted in
+ * an AFTER clause. Preserve the ledger checksum and execute the one
+ * semantically equivalent compatibility spelling on newer servers.
+ */
+export function statementsForExecution(migration: SqlMigration): string[] {
+  const statements = splitSqlStatements(migration.sql);
+  if (migration.id === '010_add_task_description_log_columns.sql') {
+    return statements.map((statement) => statement.replace(/\bAFTER usage\b/, 'AFTER `usage`'));
+  }
+  if (migration.id === '017_add_cron_scripts.sql') {
+    return statements.map((statement) => statement.replace(
+      /ADD COLUMN `task_type` ENUM\('script', 'agent'\) NOT NULL DEFAULT 'agent' AFTER `enabled`\s+COMMENT 'Execution mode: script \(SQL\/shell\) or agent \(AI-driven\)',\s+ADD COLUMN `script_id` INT UNSIGNED DEFAULT NULL AFTER `task_type`\s+COMMENT 'FK referencing cron_scripts\.id for script mode',\s+ADD COLUMN `target_instance_id` INT UNSIGNED DEFAULT NULL AFTER `script_id`\s+COMMENT 'FK referencing database_instances\.id — target managed DB instance for script execution'/,
+      "ADD COLUMN `task_type` ENUM('script', 'agent') NOT NULL DEFAULT 'agent' COMMENT 'Execution mode: script (SQL/shell) or agent (AI-driven)' AFTER `enabled`,\n  ADD COLUMN `script_id` INT UNSIGNED DEFAULT NULL COMMENT 'FK referencing cron_scripts.id for script mode' AFTER `task_type`,\n  ADD COLUMN `target_instance_id` INT UNSIGNED DEFAULT NULL COMMENT 'FK referencing database_instances.id — target managed DB instance for script execution' AFTER `script_id`",
+    ));
+  }
+  return statements;
+}
+
 export class MigrationRunner {
   constructor(private readonly pool: MigrationPool, private readonly directory = defaultDirectory) {}
 
@@ -131,7 +151,7 @@ export class MigrationRunner {
 
   private async apply(connection: MigrationConnection, migration: SqlMigration): Promise<void> {
     await connection.query('INSERT INTO app_schema_migrations (migration_id, checksum, status, started_at) VALUES (?, ?, \'running\', NOW())', [migration.id, migration.checksum]);
-    const statements = splitSqlStatements(migration.sql);
+    const statements = statementsForExecution(migration);
     let statementIndex = 0;
     try {
       for (; statementIndex < statements.length; statementIndex++) await connection.query(statements[statementIndex]);

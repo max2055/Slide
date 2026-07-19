@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { MigrationError, MigrationRunner, splitSqlStatements } from '../src/migrations/runner.js';
+import { MigrationError, MigrationRunner, splitSqlStatements, statementsForExecution } from '../src/migrations/runner.js';
 
 class FakePool {
   entries = new Map<string, any>();
@@ -60,6 +60,18 @@ describe('MigrationRunner', () => {
       "INSERT INTO t VALUES ('a;b')",
       '-- ignored;\nSELECT 1',
     ]);
+  });
+
+  it('uses the MySQL 9 compatibility spelling without changing historical migration content', () => {
+    const sql = 'ALTER TABLE cron_job_logs ADD COLUMN stop_reason VARCHAR(50) AFTER usage;';
+    expect(statementsForExecution({ id: '010_add_task_description_log_columns.sql', sql, checksum: 'historic' })).toEqual([
+      'ALTER TABLE cron_job_logs ADD COLUMN stop_reason VARCHAR(50) AFTER `usage`',
+    ]);
+    expect(statementsForExecution({ id: '011_other.sql', sql, checksum: 'other' })).toEqual([
+      'ALTER TABLE cron_job_logs ADD COLUMN stop_reason VARCHAR(50) AFTER usage',
+    ]);
+    const cronSql = "ALTER TABLE `cron_jobs` ADD COLUMN `task_type` ENUM('script', 'agent') NOT NULL DEFAULT 'agent' AFTER `enabled` COMMENT 'Execution mode: script (SQL/shell) or agent (AI-driven)', ADD COLUMN `script_id` INT UNSIGNED DEFAULT NULL AFTER `task_type` COMMENT 'FK referencing cron_scripts.id for script mode', ADD COLUMN `target_instance_id` INT UNSIGNED DEFAULT NULL AFTER `script_id` COMMENT 'FK referencing database_instances.id — target managed DB instance for script execution';";
+    expect(statementsForExecution({ id: '017_add_cron_scripts.sql', sql: cronSql, checksum: 'historic' })[0]).toContain("COMMENT 'Execution mode: script (SQL/shell) or agent (AI-driven)' AFTER `enabled`");
   });
 
   it('uses a ledger and runs completed migrations only once', async () => {

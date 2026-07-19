@@ -27,12 +27,12 @@ CREATE TABLE IF NOT EXISTS `cron_scripts` (
 -- 2. ALTER cron_jobs table — add dual-mode columns
 -- =========================================================================
 ALTER TABLE `cron_jobs`
-  ADD COLUMN `task_type` ENUM('script', 'agent') NOT NULL DEFAULT 'agent'
-  COMMENT 'Execution mode: script (SQL/shell) or agent (AI-driven)' AFTER `enabled`,
-  ADD COLUMN `script_id` INT UNSIGNED DEFAULT NULL
-  COMMENT 'FK referencing cron_scripts.id for script mode' AFTER `task_type`,
-  ADD COLUMN `target_instance_id` INT UNSIGNED DEFAULT NULL
-  COMMENT 'FK referencing database_instances.id — target managed DB instance for script execution' AFTER `script_id`;
+  ADD COLUMN `task_type` ENUM('script', 'agent') NOT NULL DEFAULT 'agent' AFTER `enabled`
+  COMMENT 'Execution mode: script (SQL/shell) or agent (AI-driven)',
+  ADD COLUMN `script_id` INT UNSIGNED DEFAULT NULL AFTER `task_type`
+  COMMENT 'FK referencing cron_scripts.id for script mode',
+  ADD COLUMN `target_instance_id` INT UNSIGNED DEFAULT NULL AFTER `script_id`
+  COMMENT 'FK referencing database_instances.id — target managed DB instance for script execution';
 
 -- Add foreign keys after columns are created
 ALTER TABLE `cron_jobs`
