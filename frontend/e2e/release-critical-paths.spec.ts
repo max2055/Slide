@@ -61,6 +61,22 @@ test('resource readiness keeps an offline managed server visible and non-healthy
   }
 });
 
+test('server alert RCA can be started from the browser without an instance id', async ({ page }) => {
+  await page.goto('/alerts');
+  await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
+  await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+  await page.locator('.login-gate__connect').click();
+
+  const row = page.locator('alert-list tr').filter({ hasText: 'Qualification server RCA browser alert' });
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  const response = page.waitForResponse((candidate) =>
+    candidate.url().endsWith('/api/ai/analysis') && candidate.request().method() === 'POST',
+  );
+  await row.getByRole('button', { name: 'AI' }).click();
+  expect((await response).status()).toBe(200);
+  await expect(row.getByText('已分析')).toBeVisible({ timeout: 15_000 });
+});
+
 test('notification recovery is reachable through the protected alerts workspace', async ({ page }) => {
   await page.goto('/dashboard');
   await page.locator('.login-gate input[autocomplete="username"]').fill('admin');

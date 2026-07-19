@@ -32,6 +32,29 @@ try {
      VALUES (?, 'notification.deliver', 1, ?, 'qualification:dead-letter:139', 'dead_letter', 5, 5, 'qualification delivery failure')`,
     [deadLetterJobId, JSON.stringify({ alertId: 0, channelId: 0 })],
   );
+  const rcaServerHost = 'qualification-server-rca.invalid';
+  const rcaAlertTitle = 'Qualification server RCA browser alert';
+  await db.execute('DELETE FROM ai_analysis WHERE cache_key = ?', ['qualification:server-rca-browser']);
+  await db.execute('DELETE FROM alerts WHERE title = ?', [rcaAlertTitle]);
+  await db.execute('DELETE FROM servers WHERE host = ? AND port = 22', [rcaServerHost]);
+  const [serverInsert] = await db.execute(
+    `INSERT INTO servers (host, port, label, os_type, credential_type, credential_encrypted, status, collection_enabled)
+     VALUES (?, 22, 'Qualification server RCA', 'linux', 'password', 'qualification-only', 'online', 0)`,
+    [rcaServerHost],
+  );
+  const serverId = Number(serverInsert.insertId);
+  const [alertInsert] = await db.execute(
+    `INSERT INTO alerts (server_id, alert_type, level, title, message, status, metric_name, metric_value, threshold_value)
+     VALUES (?, 'availability', 'critical', ?, 'Qualification browser RCA fixture', 'unread', 'cpu_usage', '95', '80')`,
+    [serverId, rcaAlertTitle],
+  );
+  const alertId = Number(alertInsert.insertId);
+  await db.execute(
+    `INSERT INTO ai_analysis
+      (analysis_type, target_type, server_id, related_id, status, trigger_type, cache_key, result, completed_at, session_key)
+     VALUES ('alert_rca', 'server', ?, ?, 'completed', 'manual', ?, ?, NOW(), 'qualification-server-rca-session')`,
+    [serverId, alertId, `alert:${alertId}:server:${serverId}`, JSON.stringify({ summary: 'Qualification server RCA completed.' })],
+  );
   await db.execute(
     `CREATE TABLE IF NOT EXISTS qualification_approval_counter (
       id INT NOT NULL PRIMARY KEY,

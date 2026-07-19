@@ -20,7 +20,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | Frontend typecheck and build | PASS with warnings | `pnpm --filter slide-frontend typecheck && pnpm --filter slide-frontend build`; Vite reports dynamic-import and 2.75 MB main-chunk warnings. |
 | Agent Core typecheck and tests | PASS | `pnpm --filter agent-core typecheck && pnpm --filter agent-core test`: 7 files, 69 tests passed. |
 | Lint | PASS with warning debt | `pnpm lint` exits 0 with 250 warnings and 0 errors; this is not lint-clean release evidence. |
-| Empty install and repeated initialization | PASS | `bash scripts/qualification/run-existing-mysql.sh bootstrap-upgrade`: 46 migrations and schema invariant valid. The same qualification passed independently against the user-provided `mysql3307` MySQL 9 container on port 3307. |
+| Empty install and repeated initialization | PASS | `bash scripts/qualification/run-existing-mysql.sh bootstrap-upgrade`: 47 migrations and schema invariant valid. The same qualification passed independently against the user-provided `mysql3307` MySQL 9 container on port 3307. |
 | Worker lease/fencing | PASS | `bash scripts/qualification/run-existing-mysql.sh failover`. |
 | Backup/restore | PASS | `bash scripts/qualification/run-existing-mysql.sh backup-restore`; uses a consistent dump with GTID purging disabled for same-instance restore. |
 | Concurrent durable enqueue | PASS | `bash scripts/qualification/run-existing-mysql.sh stability`. |
@@ -42,9 +42,9 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | HI-03 | Verified | Managed E2E proves REST, refresh, and an established WS connection are revoked after disablement. |
 | HI-04 | Verified | Managed browser E2E proves structured and Markdown attack payloads remain inert. |
 | HI-05 | Verified | Managed API E2E creates an offline collection-enabled server; readiness reports it in failed references and cannot be overall healthy. |
-| HI-06 | Partial | Real MySQL server and instance metric-to-threshold-alert workflows passed. Browser coverage remains unqualified. |
+| HI-06 | Partial | Real MySQL server and instance metric-to-threshold-alert workflows passed. Managed browser coverage now starts a server-alert RCA from the Alerts workspace without an `instance_id` and reads its completed state; full browser metric collection remains unqualified. |
 | HI-07 | Partial | The server evaluator consumed canonical `cpu_usage`; the instance evaluator consumed a persisted `metrics_data` metric and created the expected alerts. Full collector-to-registry scheduling remains unqualified. |
-| HI-08 | Partial | Both server and instance alerts created and read back persisted `alert_rca` analyses with the correct resource subject and related alert. A real database-configured DeepSeek run completed both RCA analyses through `slide_complete_analysis`; browser workflow remains unqualified. |
+| HI-08 | Partial | Both server and instance alerts created and read back persisted `alert_rca` analyses with the correct resource subject and related alert. A real database-configured DeepSeek run completed both RCA analyses through `slide_complete_analysis`; managed browser coverage starts and observes completion for a server-alert RCA. |
 | HI-09 | Partial | Scheduled report is generated, persisted, downloaded, and records a failed notification; service-level 2xx behavior is tested, but an external successful delivery is unverified. |
 | HI-10 | Verified | Real DirectAdapter WS provider failure emitted `error`, not `complete`; MySQL readback confirmed the actor-bound idempotent run was `failed`, terminally persisted, and finished. |
 | HI-11 | Partial | Private endpoint, DTO redaction, dead-letter replay, policy failure, and redirect rejection are covered; real redirect-chain runtime behavior remains unverified. |

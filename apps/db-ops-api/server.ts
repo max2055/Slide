@@ -3244,12 +3244,16 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const { analysis_type, instance_id, related_id, trigger_type = 'manual' } = request.body as {
           analysis_type: 'topsql_analysis' | 'alert_rca' | 'fault_diagnosis' | 'capacity_prediction';
-          instance_id: number;
+          instance_id?: number;
           related_id?: number;
           trigger_type?: 'manual' | 'auto';
         };
 
-        if (!analysis_type || !instance_id) {
+        // RCA resolves its sole subject from the referenced alert. A server
+        // alert has no instance_id, so requiring one here made the browser
+        // server-RCA action unreachable before AlertRCAService could validate
+        // the server subject.
+        if (!analysis_type || (analysis_type !== 'alert_rca' && !instance_id)) {
           return reply.code(400).send({ error: '缺少必要参数：analysis_type, instance_id' });
         }
 
