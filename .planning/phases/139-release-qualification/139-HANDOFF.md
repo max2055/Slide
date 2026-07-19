@@ -75,7 +75,7 @@ The current verification document is authoritative and remains NO-GO.
 ## Highest-Priority Remaining Work
 
 1. HI-06/HI-07/HI-08: browser coverage for the completed instance/server
-   metric-to-alert-to-RCA workflow and a completed-model instance RCA output.
+   metric-to-alert-to-RCA workflow.
 2. HI-09/HI-11: successful outbound notification to a controlled public HTTPS
    target and redirect-chain behavior. Do not weaken SSRF controls or use a
    private endpoint as a success target.

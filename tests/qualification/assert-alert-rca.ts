@@ -5,7 +5,9 @@ import { aiAnalysisDatabaseService } from '../../apps/db-ops-api/src/ai-analysis
 import { alertEngine } from '../../apps/db-ops-api/src/alert-engine.js';
 
 const suffix = `${Date.now()}-${process.pid}`;
-process.env.ENCRYPTION_KEY ??= 'qualification-encryption-key-2026-07-19-not-production';
+// Qualification runs against an isolated database, so it must not inherit the
+// repository's intentionally invalid example key from .env.
+process.env.ENCRYPTION_KEY = 'qualification-encryption-key-2026-07-19-not-production';
 
 if (!await dbConnection.initialize()) throw new Error('qualification database connection failed');
 const pool = dbConnection.getPool();
@@ -94,7 +96,13 @@ try {
   if (!instanceRca.success || !instanceAnalysis || instanceAnalysis.instance_id !== instanceId || instanceAnalysis.related_id !== instanceAlert.id) {
     throw new Error('instance RCA was not persisted with its instance subject');
   }
-  console.log(`alert-RCA invariant valid: server=${serverId} rule=${ruleId} alert=${alert.id} analysis=${analysis.id}${liveProvider ? ' completed=live' : ''}; instance=${instanceId} rule=${instanceRuleResult.insertId} alert=${instanceAlert.id} analysis=${instanceAnalysis.id}`);
+  if (liveProvider) {
+    const completed = await aiAnalysisDatabaseService.waitForCompletion(instanceAnalysis.id, 120_000);
+    if (completed?.status !== 'completed' || !completed.result) {
+      throw new Error(`live instance RCA did not complete: ${completed?.status ?? 'missing'} ${completed?.error_message ?? ''}`);
+    }
+  }
+  console.log(`alert-RCA invariant valid: server=${serverId} rule=${ruleId} alert=${alert.id} analysis=${analysis.id}${liveProvider ? ' completed=live' : ''}; instance=${instanceId} rule=${instanceRuleResult.insertId} alert=${instanceAlert.id} analysis=${instanceAnalysis.id}${liveProvider ? ' completed=live' : ''}`);
 } finally {
   // The enclosing qualification script drops this database. Closing the pool
   // lets this assertion exit without retaining the bridge's background timer.
