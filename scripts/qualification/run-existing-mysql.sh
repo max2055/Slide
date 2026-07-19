@@ -2,8 +2,8 @@
 set -euo pipefail
 
 scenario="${1:-}"
-if [[ "$scenario" != "bootstrap-upgrade" && "$scenario" != "failover" && "$scenario" != "backup-restore" && "$scenario" != "stability" && "$scenario" != "startup-negative" && "$scenario" != "alert-rca" && "$scenario" != "agent-run-failure" && "$scenario" != "agent-run-cancel" && "$scenario" != "collection-schedule" && "$scenario" != "server-collector-failures" && "$scenario" != "health-truth" && "$scenario" != "workflow-catalog" && "$scenario" != "adapter-uat" && "$scenario" != "oracle-adapter-uat" ]]; then
-  echo "usage: $0 {bootstrap-upgrade|failover|backup-restore|stability|startup-negative|alert-rca|agent-run-failure|agent-run-cancel|collection-schedule|server-collector-failures|health-truth|workflow-catalog|adapter-uat|oracle-adapter-uat}" >&2
+if [[ "$scenario" != "bootstrap-upgrade" && "$scenario" != "failover" && "$scenario" != "backup-restore" && "$scenario" != "stability" && "$scenario" != "startup-negative" && "$scenario" != "alert-rca" && "$scenario" != "agent-run-failure" && "$scenario" != "agent-run-cancel" && "$scenario" != "collection-schedule" && "$scenario" != "server-collector-failures" && "$scenario" != "health-truth" && "$scenario" != "workflow-catalog" && "$scenario" != "adapter-uat" && "$scenario" != "oracle-adapter-uat" && "$scenario" != "email-delivery" ]]; then
+  echo "usage: $0 {bootstrap-upgrade|failover|backup-restore|stability|startup-negative|alert-rca|agent-run-failure|agent-run-cancel|collection-schedule|server-collector-failures|health-truth|workflow-catalog|adapter-uat|oracle-adapter-uat|email-delivery}" >&2
   exit 64
 fi
 
@@ -171,6 +171,15 @@ fi
 
 if [[ "$scenario" == "oracle-adapter-uat" ]]; then
   run_assertion ../../tests/qualification/assert-oracle-adapter-uat.ts "$database"
+fi
+
+if [[ "$scenario" == "email-delivery" ]]; then
+  if [[ -z "${QUALIFICATION_SMTP_TO:-}" || -z "${QUALIFICATION_SMTP_PASSWORD:-}" ]]; then
+    echo "email-delivery requires QUALIFICATION_SMTP_TO and QUALIFICATION_SMTP_PASSWORD" >&2
+    exit 64
+  fi
+  ENCRYPTION_KEY=qualification-encryption-secret-2026-07-19-not-production \
+    run_assertion ../../tests/qualification/assert-email-delivery.ts "$database"
 fi
 
 if [[ "$scenario" == "startup-negative" ]]; then
