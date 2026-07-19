@@ -35,6 +35,14 @@ const emailChannel = {
   updated_at: new Date('2026-07-19T00:00:00.000Z'),
 };
 
+const feishuChannel = {
+  ...channel,
+  id: 3,
+  name: 'qualification feishu',
+  type: 'feishu' as const,
+  config: { webhook_url: 'https://open.feishu.cn/open-apis/bot/v2/hook/example', secret: 'test-secret' },
+};
+
 describe('NotificationService outbound delivery', () => {
   it('records a successful 2xx response from a verified, pinned target', async () => {
     vi.mocked(resolveOutboundTarget).mockResolvedValue({
@@ -56,6 +64,26 @@ describe('NotificationService outbound delivery', () => {
 
     await expect(service.send(channel, { type: 'report', reportId: 7 }))
       .resolves.toEqual({ success: false, error: 'OUTBOUND_REDIRECT_DENIED' });
+  });
+
+  it('places the Feishu signing fields in the request body, not the webhook URL', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2020-09-06T08:21:13.000Z'));
+    vi.mocked(resolveOutboundTarget).mockResolvedValue({
+      url: new URL(feishuChannel.config.webhook_url), addresses: ['203.0.113.10'],
+    });
+    const service = new NotificationService();
+    const post = vi.spyOn(service as any, 'postJsonToVerifiedTarget').mockResolvedValue({ statusCode: 200, body: '{"StatusCode":0}' });
+
+    await expect(service.send(feishuChannel, { msg_type: 'text', content: { text: '数据库告警' } }))
+      .resolves.toEqual({ success: true });
+
+    expect(post).toHaveBeenCalledWith(feishuChannel.config.webhook_url, ['203.0.113.10'], {
+      timestamp: '1599380473',
+      sign: expect.any(String),
+      msg_type: 'text', content: { text: '数据库告警' },
+    });
+    vi.useRealTimers();
   });
 
   it('delivers an email notification through the configured SMTP transport', async () => {
