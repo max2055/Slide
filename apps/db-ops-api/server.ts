@@ -1827,6 +1827,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     const user = (request as any).user;
     try {
       const operation = await operationService.retryForActor(String((request.params as any).id), user.userId);
+      if (operation?.approvalId) await approvalService.setOperationId(operation.approvalId, operation.id);
       return operation ? reply.code(202).send({ operation }) : reply.code(404).send({ error: 'Operation not found' });
     } catch {
       return reply.code(409).send({ reasonCode: 'RETRY_NOT_AVAILABLE' });

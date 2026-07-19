@@ -321,6 +321,60 @@ test('concurrent approval reviews execute a write exactly once', async ({ page }
   }
 });
 
+test('approval cancellation and retry keep the request attached to the current attempt', async ({ page }) => {
+  test.setTimeout(30_000);
+  const login = await page.request.post('/api/auth/login', {
+    data: { username: 'admin', password: 'Tpam1234' },
+  });
+  expect(login.status()).toBe(200);
+  const headers = { Authorization: `Bearer ${(await login.json()).token}` };
+  const instance = await page.request.post('/api/database/instances', {
+    headers,
+    data: {
+      name: `qualification-approval-retry-${Date.now()}`,
+      environment: 'testing',
+      db_type: 'mysql',
+      host: '127.0.0.1',
+      port: 3306,
+      username: 'root',
+      password: 'Tpam1234',
+      database_name: 'db_ops_ai_qualification',
+    },
+  });
+  expect(instance.status()).toBe(200);
+  const { id: instanceId } = await instance.json();
+  try {
+    const submitted = await page.request.post('/api/approval/submit', {
+      headers: { ...headers, 'Idempotency-Key': `qualification-approval-retry-${Date.now()}` },
+      data: {
+        instance_id: instanceId,
+        sql_text: 'UPDATE qualification_approval_counter SET value = value + 1 WHERE id = 1',
+        database_name: 'db_ops_ai_qualification',
+      },
+    });
+    const body = await submitted.json();
+    expect(submitted.status(), body.error).toBe(200);
+    const approvalId = Number(body.request_id);
+    const originalOperationId = String(body.operationId);
+
+    const cancelled = await page.request.post(`/api/operations/${originalOperationId}/cancel`, { headers });
+    expect(cancelled.status()).toBe(200);
+    const retried = await page.request.post(`/api/operations/${originalOperationId}/retry`, { headers });
+    expect(retried.status()).toBe(202);
+    const retryId = String((await retried.json()).operation.id);
+    expect(retryId).not.toBe(originalOperationId);
+    const retry = await page.request.get(`/api/operations/${retryId}`, { headers });
+    expect(retry.status()).toBe(200);
+    expect(await retry.json()).toMatchObject({ id: retryId, state: 'queued', attempt: 2 });
+
+    const detail = await page.request.get(`/api/approval/${approvalId}`, { headers });
+    expect(detail.status()).toBe(200);
+    expect((await detail.json()).operation_id).toBe(retryId);
+  } finally {
+    await page.request.delete(`/api/database/instances/${instanceId}`, { headers });
+  }
+});
+
 test('AI analysis result renders malicious structured and Markdown payloads as inert content', async ({ page }) => {
   await page.goto('/dashboard');
   const result = await page.evaluate(async () => {

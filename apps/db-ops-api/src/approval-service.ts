@@ -53,6 +53,16 @@ function isHighRisk(sql: string): boolean {
 class ApprovalService {
   private getPool() { return dbConnection.getPool(); }
 
+  async setOperationId(requestId: number, operationId: string): Promise<void> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('数据库未连接');
+    const [result] = await pool.execute(
+      'UPDATE approval_requests SET operation_id = ? WHERE id = ?',
+      [operationId, requestId],
+    ) as any;
+    if (Number(result.affectedRows) !== 1) throw new Error('审批记录不存在');
+  }
+
   /**
    * 提交 SQL 审批
    */

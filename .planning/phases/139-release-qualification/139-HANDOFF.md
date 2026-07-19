@@ -51,12 +51,16 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   including the persisted `report.notify` unavailable-target skip audit. It
   covers safe no-op/unavailable-target paths only; LLM-driven cron behavior
   still requires its own runtime evidence.
+- Approval retry now reattaches the approval record to the newly created
+  attempt. Managed recovery coverage reads back a cancelled first attempt, a
+  queued second attempt, and the updated approval link; a literal UI-button
+  click path is still not qualified.
 - `adapter-uat` connected real local PostgreSQL 18 and Dameng 8 and read native
   metrics. `oracle-adapter-uat` separately connected real Oracle 19c and read
   native metrics after its listener service was restored.
 - Managed browser qualification was rerun after the dedicated qualification
   database reset fix: the security, critical-path, and Agent capability suites
-  passed 19/19 on 2026-07-19.
+  passed 20/20 on 2026-07-19.
 - Current managed E2E commands:
 
 ```sh
@@ -69,7 +73,7 @@ QUALIFICATION_ADMIN_PASSWORD=Tpam1234 PLAYWRIGHT_MANAGED_ENV=1 \
   e2e/release-critical-paths.spec.ts --workers=1
 ```
 
-The security suite passed 10/10 and the critical-path suite passed 8/8 in the
+The security suite passed 11/11 and the critical-path suite passed 8/8 in the
 most recent independent runs.
 
 ## Recent Additions
