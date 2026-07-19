@@ -56,7 +56,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | ME-04 | Partial | Managed MySQL qualification exercises a collection-enabled server whose credential decryption fails on every tick; three consecutive returned failures are counted and mark it `unreachable`. Broader collector/provider failure permutations remain unqualified. |
 | ME-05 | Mapped only | Capability UI unit coverage is indexed, not current browser capability/publish/rollback evidence. |
 | ME-06 | Mapped only | Capability matrix is present; compatibility UAT evidence is absent. |
-| ME-07 | Mapped only | Operation unit coverage is indexed, not current approval/audit/rollback workflow evidence. |
+| ME-07 | Partial | Managed browser approval flow proves an approved SQL write executes once under concurrent review, then reads back the persisted operation as `succeeded` and its immutable CREATED → approval → execution event timeline. Cancellation/retry recovery remains unqualified. |
 | LO-01 | Mapped only | Navigation cleanup test is indexed; not individually reviewed in this qualification run. |
 | DR-01 | Mapped only | Typed cron handler unit coverage is indexed; no current complete job catalog runtime audit. |
 | DR-02 | Verified | Lease takeover and fencing passed against MySQL. |

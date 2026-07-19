@@ -261,13 +261,23 @@ test('concurrent approval reviews execute a write exactly once', async ({ page }
     const submittedBody = await submitted.json();
     expect(submitted.status(), submittedBody.error).toBe(200);
     const approvalId = Number(submittedBody.request_id);
+    const operationId = String(submittedBody.operationId);
     expect(approvalId).toBeGreaterThan(0);
+    expect(operationId).toMatch(/^[0-9a-f-]{36}$/i);
     const reviews = await Promise.all([0, 1].map(() => page.request.post(`/api/approval/${approvalId}/review`, {
       headers,
       data: { action: 'approve', notes: 'qualification concurrent review', execute_after_approve: true },
     })));
     const results = await Promise.all(reviews.map((response) => response.json()));
     expect(results.filter((result: { success?: boolean }) => result.success).length).toBe(1);
+    const operationResponse = await page.request.get(`/api/operations/${operationId}`, { headers });
+    expect(operationResponse.status()).toBe(200);
+    expect((await operationResponse.json()).state).toBe('succeeded');
+    const eventsResponse = await page.request.get(`/api/operations/${operationId}/events`, { headers });
+    expect(eventsResponse.status()).toBe(200);
+    expect((await eventsResponse.json()).events.map((event: { reasonCode: string }) => event.reasonCode)).toEqual([
+      'CREATED', 'NEEDS_APPROVAL', 'APPROVAL_CLAIMED', 'APPROVAL_EXECUTION_STARTED', 'APPROVAL_EXECUTION_SUCCEEDED',
+    ]);
     const read = await page.request.post(`/api/database/instances/${id}/execute`, {
       headers: { ...headers, 'Idempotency-Key': `qualification-read-${Date.now()}` },
       data: { sql: 'SELECT value FROM qualification_approval_counter WHERE id = 1' },
