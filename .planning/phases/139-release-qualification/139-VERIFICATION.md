@@ -28,7 +28,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | Server alert/RCA runtime closure | PASS | `bash scripts/qualification/run-existing-mysql.sh alert-rca`: a real server metric created the threshold alert, then persisted a server-subject RCA record with the alert relationship. |
 | Failed Agent-run database readback | PASS | `bash scripts/qualification/run-existing-mysql.sh agent-run-failure`: deterministic provider failure over DirectAdapter WS persisted an `agent_runs` row with `state=failed`, terminal payload, and `finished_at`. |
 | Production startup negatives | PASS | `bash scripts/qualification/run-existing-mysql.sh startup-negative`: weak production secret and an interrupted migration both exited non-zero before listener or worker initialization. |
-| Managed browser security and critical paths | PASS | `QUALIFICATION_ADMIN_PASSWORD=Tpam1234 PLAYWRIGHT_MANAGED_ENV=1 pnpm --filter slide-frontend exec playwright test e2e/release-security.spec.ts e2e/release-critical-paths.spec.ts --workers=1`: 14 passed. |
+| Managed browser security and critical paths | PASS | `QUALIFICATION_ADMIN_PASSWORD=Tpam1234 PLAYWRIGHT_MANAGED_ENV=1 pnpm --filter slide-frontend exec playwright test e2e/release-security.spec.ts e2e/release-critical-paths.spec.ts --workers=1`: 15 passed. |
 
 ## Phase 131 Finding Audit
 
@@ -57,7 +57,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | ME-05 | Partial | Managed browser evidence reads real DirectAdapter feature capabilities and verifies unsupported management controls are absent from the Agent workspace. Capability publication and rollback workflows remain unqualified. |
 | ME-06 | Mapped only | Capability matrix is present; compatibility UAT evidence is absent. |
 | ME-07 | Partial | Managed browser approval flow proves an approved SQL write executes once under concurrent review, then reads back the persisted operation as `succeeded` and its immutable CREATED → approval → execution event timeline. Cancellation/retry recovery remains unqualified. |
-| LO-01 | Mapped only | Navigation cleanup test is indexed; not individually reviewed in this qualification run. |
+| LO-01 | Verified | Managed browser regression proves removed `/system` and `/appearance` routes no longer become deployment base paths; after authentication they resolve to the current `/chat` workspace. |
 | DR-01 | Partial | An isolated process-level server qualification starts the real Worker Lease, DirectAdapter, and workflow runtime; a queued `alert.evaluate` job is claimed and completed from MySQL. The remaining registered handlers and LLM-driven cron catalog remain unqualified. |
 | DR-02 | Verified | Lease takeover and fencing passed against MySQL. |
 | DR-03 | Verified | A deliberately `running` migration ledger entry prevents startup before listener/worker effects and remains `running` pending explicit repair. |

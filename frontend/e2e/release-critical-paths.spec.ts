@@ -15,6 +15,18 @@ test('qualification login authenticates through REST and enters the application'
   await expect(page.locator('.nav-item').first()).toBeVisible({ timeout: 15_000 });
 });
 
+test('removed legacy routes resolve to the current chat workspace', async ({ page }) => {
+  for (const legacyPath of ['/system', '/appearance']) {
+    await page.goto(legacyPath);
+    await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
+    await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+    await page.locator('.login-gate__connect').click();
+    await expect(page).toHaveURL(/\/chat$/);
+    await expect(page.locator('.content--chat')).toBeVisible();
+    await page.evaluate(() => localStorage.clear());
+  }
+});
+
 test('resource readiness keeps an offline managed server visible and non-healthy', async ({ page }) => {
   const login = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: 'Tpam1234' },
