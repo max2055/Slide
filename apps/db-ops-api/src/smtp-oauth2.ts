@@ -4,7 +4,7 @@ export async function exchangeMicrosoftSmtpRefreshToken(input: {
   tenant: string;
   clientId: string;
   refreshToken: string;
-}): Promise<string> {
+}): Promise<{ accessToken: string; refreshToken?: string }> {
   const body = new URLSearchParams({
     client_id: input.clientId,
     grant_type: 'refresh_token',
@@ -17,9 +17,14 @@ export async function exchangeMicrosoftSmtpRefreshToken(input: {
     body,
   });
   if (!response.ok) throw new Error('MICROSOFT_OAUTH_TOKEN_EXCHANGE_FAILED');
-  const payload = await response.json() as { access_token?: unknown };
+  const payload = await response.json() as { access_token?: unknown; refresh_token?: unknown };
   if (typeof payload.access_token !== 'string' || payload.access_token.length === 0) {
     throw new Error('MICROSOFT_OAUTH_TOKEN_INVALID');
   }
-  return payload.access_token;
+  return {
+    accessToken: payload.access_token,
+    ...(typeof payload.refresh_token === 'string' && payload.refresh_token.length > 0
+      ? { refreshToken: payload.refresh_token }
+      : {}),
+  };
 }

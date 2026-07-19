@@ -280,6 +280,24 @@ class NotificationDatabaseService {
     }
   }
 
+  /** Persists a Microsoft-issued rotated refresh token without reading or logging any channel secret. */
+  async updateOAuth2RefreshToken(id: number, refreshToken: string): Promise<{ success: boolean; error?: string }> {
+    const pool = this.getPool();
+    if (!pool) return { success: false, error: '数据库未连接' };
+
+    try {
+      const [result] = await pool.execute(
+        "UPDATE notification_channels SET config = JSON_SET(config, '$.oauth2_refresh_token_encrypted', ?), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND type = 'email'",
+        [encryptData(refreshToken), id],
+      ) as any;
+      if (result.affectedRows === 0) return { success: false, error: '通知渠道不存在' };
+      return { success: true };
+    } catch (error: any) {
+      console.error('更新 OAuth 刷新令牌失败:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
   /**
    * 删除通知渠道
    */

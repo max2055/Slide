@@ -70,7 +70,7 @@ describe('NotificationService outbound delivery', () => {
     expect(sendEmail).toHaveBeenCalledWith(emailChannel.config, {
       subject: '[CRITICAL] qualification alert',
       text: 'Database CPU is above threshold.',
-    });
+    }, emailChannel.id);
   });
 
   it('returns a safe error when an email channel is missing its recipient', async () => {
@@ -95,6 +95,6 @@ describe('NotificationService outbound delivery', () => {
 
     await expect(service.send(oauthChannel, { subject: 'test', text: 'test' }))
       .resolves.toEqual({ success: true });
-    expect(sendEmail).toHaveBeenCalledWith(oauthChannel.config, { subject: 'test', text: 'test' });
+    expect(sendEmail).toHaveBeenCalledWith(oauthChannel.config, { subject: 'test', text: 'test' }, oauthChannel.id);
   });
 });

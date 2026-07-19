@@ -374,7 +374,7 @@ export class NotificationService {
         return { success: false, error: 'EMAIL_CONFIGURATION_INVALID' };
       }
       try {
-        await this.sendEmail(channel.config, message);
+        await this.sendEmail(channel.config, message, channel.id);
         return { success: true };
       } catch {
         return { success: false, error: 'EMAIL_DELIVERY_FAILED' };
@@ -434,19 +434,24 @@ export class NotificationService {
   private async sendEmail(
     config: NotificationChannel['config'],
     message: { subject?: string; text?: string },
+    channelId?: number,
   ): Promise<void> {
     const port = Number(config.smtp_port);
-    const auth = config.smtp_auth === 'oauth2'
-      ? {
-        type: 'OAuth2' as const,
-        user: config.smtp_username!,
-        accessToken: await exchangeMicrosoftSmtpRefreshToken({
+    let auth: { user: string; pass: string } | { type: 'OAuth2'; user: string; accessToken: string };
+    if (config.smtp_auth === 'oauth2') {
+      const oauth = await exchangeMicrosoftSmtpRefreshToken({
           tenant: config.oauth2_tenant!,
           clientId: config.oauth2_client_id!,
           refreshToken: decryptData(config.oauth2_refresh_token_encrypted!),
-        }),
+      });
+      if (oauth.refreshToken && channelId !== undefined) {
+        const persisted = await notificationDatabaseService.updateOAuth2RefreshToken(channelId, oauth.refreshToken);
+        if (!persisted.success) throw new Error('OAUTH_REFRESH_TOKEN_PERSIST_FAILED');
       }
-      : { user: config.smtp_username!, pass: this.getSmtpPassword(config) };
+      auth = { type: 'OAuth2', user: config.smtp_username!, accessToken: oauth.accessToken };
+    } else {
+      auth = { user: config.smtp_username!, pass: this.getSmtpPassword(config) };
+    }
     const transport = nodemailer.createTransport({
       host: config.smtp_host!,
       port,
