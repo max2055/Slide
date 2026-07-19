@@ -61,6 +61,76 @@ test('resource readiness keeps an offline managed server visible and non-healthy
   }
 });
 
+test('browser renders live MySQL metrics for an isolated managed instance', async ({ page }) => {
+  const login = await page.request.post('/api/auth/login', {
+    data: { username: 'admin', password: 'Tpam1234' },
+  });
+  expect(login.status()).toBe(200);
+  const headers = { Authorization: `Bearer ${(await login.json()).token}` };
+  const name = `qualification-browser-metrics-${Date.now()}`;
+  const created = await page.request.post('/api/database/instances', {
+    headers,
+    data: {
+      name,
+      environment: 'testing',
+      db_type: 'mysql',
+      host: '127.0.0.1',
+      port: 3306,
+      username: 'root',
+      password: 'Tpam1234',
+      database_name: 'db_ops_ai_qualification',
+    },
+  });
+  expect(created.status()).toBe(200);
+  const { id } = await created.json();
+  expect(Number(id)).toBeGreaterThan(0);
+
+  try {
+    await page.goto('/?tab=instances-db');
+    await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
+    await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+    await page.locator('.login-gate__connect').click();
+    const row = page.locator('instances-page .instance-row').filter({ hasText: name });
+    await expect(row).toBeVisible({ timeout: 15_000 });
+    await row.getByRole('button', { name: '测试' }).click();
+    const dialog = page.locator('app-dialog');
+    await dialog.locator('input[type="password"]').fill('Tpam1234');
+    const reloaded = page.waitForResponse((candidate) =>
+      candidate.url().endsWith(`/api/database/instances/${id}/reload`) && candidate.request().method() === 'POST',
+    );
+    await dialog.getByRole('button', { name: '测试连接' }).click();
+    expect((await reloaded).status()).toBe(200);
+    await expect(dialog.getByText('实例已连接，无需重新输入密码')).toBeVisible();
+    await dialog.getByRole('button', { name: '关闭' }).click();
+
+    const metricsResponse = page.waitForResponse((candidate) =>
+      candidate.url().endsWith(`/api/database/instances/${id}/metrics`) && candidate.request().method() === 'GET',
+    );
+    await row.getByRole('button', { name: '详情' }).click();
+    const metrics = await metricsResponse;
+    expect(metrics.status()).toBe(200);
+    expect(await metrics.json()).toMatchObject({
+      connections: expect.any(Number),
+      uptime_seconds: expect.any(Number),
+    });
+
+    const detail = page.locator('instance-detail-page');
+    await expect(detail.getByText(name)).toBeVisible({ timeout: 15_000 });
+    await detail.getByRole('button', { name: '实时监控' }).click();
+    const cards = detail.locator('instance-metrics-tab .metric-card');
+    await expect(cards.first()).toBeVisible({ timeout: 15_000 });
+    await expect(cards.first().locator('.metric-value')).not.toHaveText('暂无数据');
+
+    const refreshed = page.waitForResponse((candidate) =>
+      candidate.url().endsWith(`/api/database/instances/${id}/metrics`) && candidate.request().method() === 'GET',
+    );
+    await detail.getByRole('button', { name: '刷新' }).click();
+    expect((await refreshed).status()).toBe(200);
+  } finally {
+    await page.request.delete(`/api/database/instances/${id}`, { headers });
+  }
+});
+
 test('server alert RCA can be started from the browser without an instance id', async ({ page }) => {
   await page.goto('/alerts');
   await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
