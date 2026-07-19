@@ -25,12 +25,13 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   existing MySQL 9.6 container. Backup recovery requires
   `mysqldump --single-transaction --set-gtid-purged=OFF` because GTIDs are
   enabled in that container.
-- Backend: `pnpm --filter slide-api test -- src/adapter/__tests__/direct-adapter.test.ts`
-  passed with 84 files / 952 tests; `pnpm --filter slide-api exec tsc --noEmit`
-  passed.
-- Frontend typecheck/build and Agent Core typecheck/69 tests passed earlier in
-  this checkpoint. `pnpm lint` exits zero but reports 250 warnings, so it is
-  not lint-clean evidence.
+- Full local regression passed on 2026-07-19: API typecheck and 84 files / 954
+  tests, frontend typecheck/build and 18 files / 178 tests, and Agent Core
+  typecheck / 69 tests. `pnpm lint` exits zero but reports 250 warnings, so it
+  is not lint-clean evidence.
+- `adapter-uat` connected real local PostgreSQL 18 and Dameng 8 and read native
+  metrics. `oracle-adapter-uat` separately connected real Oracle 19c and read
+  native metrics after its listener service was restored.
 - Current managed E2E commands:
 
 ```sh
@@ -68,19 +69,14 @@ The current verification document is authoritative and remains NO-GO.
 
 ## Highest-Priority Remaining Work
 
-1. HI-06/HI-07/HI-08: managed instance/server metric-to-alert-to-RCA workflow.
-   The code supports server-target analysis records, but server RCA create /
-   persistence / readback lacks managed E2E proof.
+1. HI-06/HI-07/HI-08: browser coverage for the completed instance/server
+   metric-to-alert-to-RCA workflow and a completed-model instance RCA output.
 2. HI-09/HI-11: successful outbound notification to a controlled public HTTPS
    target and redirect-chain behavior. Do not weaken SSRF controls or use a
    private endpoint as a success target.
-3. HI-10: managed database readback for failed/timed-out Agent runs. WS-level
-   error and terminal-state behavior is covered, but database evidence is not.
-4. HI-12/DR-03/HI-13: process-level startup ordering, interrupted migration
-   recovery/readiness, and production weak/missing secret startup tests.
-5. ME/DR/TG/OPT rows marked `Mapped only` or `Partial` in
+3. ME/DR/TG/OPT rows marked `Mapped only` or `Partial` in
    `139-VERIFICATION.md` need behavioral evidence before any GO decision.
-6. Run the final full release gate after changes and update the evidence matrix
+4. Run the final hosted release gate after changes and update the evidence matrix
    only with current command output.
 
 ## Useful Commands
