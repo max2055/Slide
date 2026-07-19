@@ -28,7 +28,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | Server alert/RCA runtime closure | PASS | `bash scripts/qualification/run-existing-mysql.sh alert-rca`: a real server metric created the threshold alert, then persisted a server-subject RCA record with the alert relationship. |
 | Failed Agent-run database readback | PASS | `bash scripts/qualification/run-existing-mysql.sh agent-run-failure`: deterministic provider failure over DirectAdapter WS persisted an `agent_runs` row with `state=failed`, terminal payload, and `finished_at`. |
 | Production startup negatives | PASS | `bash scripts/qualification/run-existing-mysql.sh startup-negative`: weak production secret and an interrupted migration both exited non-zero before listener or worker initialization. |
-| Managed browser security and critical paths | PASS | `QUALIFICATION_ADMIN_PASSWORD=Tpam1234 PLAYWRIGHT_MANAGED_ENV=1 pnpm --filter slide-frontend exec playwright test e2e/release-security.spec.ts e2e/release-critical-paths.spec.ts --workers=1`: 16 passed. |
+| Managed browser qualification | PASS | `QUALIFICATION_ADMIN_PASSWORD=Tpam1234 PLAYWRIGHT_MANAGED_ENV=1 pnpm --filter slide-frontend exec playwright test e2e/release-security.spec.ts e2e/release-critical-paths.spec.ts e2e/agent-capabilities.spec.ts --workers=1`: 17 passed. |
 
 ## Phase 131 Finding Audit
 
