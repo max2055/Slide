@@ -358,12 +358,32 @@ test('approval cancellation and retry keep the request attached to the current a
     const approvalId = Number(body.request_id);
     const originalOperationId = String(body.operationId);
 
-    const cancelled = await page.request.post(`/api/operations/${originalOperationId}/cancel`, { headers });
-    expect(cancelled.status()).toBe(200);
-    const retried = await page.request.post(`/api/operations/${originalOperationId}/retry`, { headers });
+    await page.goto('/dashboard');
+    await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
+    await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+    await page.locator('.login-gate__connect').click();
+    await expect(page.locator('.login-gate')).toBeHidden({ timeout: 15_000 });
+    await page.getByRole('link', { name: 'Approval' }).click();
+    const dashboard = page.locator('approval-dashboard');
+    const card = dashboard.locator('.card').filter({ hasText: sqlText });
+    await expect(card).toBeVisible({ timeout: 15_000 });
+    await card.locator('.card-header').click();
+    await expect(dashboard.getByText('审批详情')).toBeVisible();
+    const cancelResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/operations/${originalOperationId}/cancel`) && response.request().method() === 'POST',
+    );
+    await dashboard.getByRole('button', { name: '取消 Operation' }).click();
+    expect((await cancelResponse).status()).toBe(200);
+    await expect(dashboard.getByText('cancelled', { exact: true })).toBeVisible();
+    const retryResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/operations/${originalOperationId}/retry`) && response.request().method() === 'POST',
+    );
+    await dashboard.getByRole('button', { name: '创建重试尝试' }).click();
+    const retried = await retryResponse;
     expect(retried.status()).toBe(202);
     const retryId = String((await retried.json()).operation.id);
     expect(retryId).not.toBe(originalOperationId);
+    await expect(dashboard.getByText('queued', { exact: true })).toBeVisible();
     const retry = await page.request.get(`/api/operations/${retryId}`, { headers });
     expect(retry.status()).toBe(200);
     expect(await retry.json()).toMatchObject({ id: retryId, state: 'queued', attempt: 2 });

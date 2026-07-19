@@ -57,8 +57,8 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   still requires its own runtime evidence.
 - Approval retry now reattaches the approval record to the newly created
   attempt. Managed recovery coverage reads back a cancelled first attempt, a
-  queued second attempt, and the updated approval link; a literal UI-button
-  click path is still not qualified.
+  queued second attempt, and the updated approval link; it also opens the
+  pending approval in the browser and clicks the cancellation/retry controls.
 - `adapter-uat` connected real local PostgreSQL 18 and Dameng 8 and read native
   metrics. `oracle-adapter-uat` separately connected real Oracle 19c and read
   native metrics after its listener service was restored.
