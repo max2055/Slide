@@ -2,8 +2,8 @@
 set -euo pipefail
 
 scenario="${1:-}"
-if [[ "$scenario" != "bootstrap-upgrade" && "$scenario" != "failover" && "$scenario" != "backup-restore" && "$scenario" != "stability" && "$scenario" != "startup-negative" && "$scenario" != "alert-rca" && "$scenario" != "agent-run-failure" && "$scenario" != "agent-run-cancel" && "$scenario" != "collection-schedule" && "$scenario" != "server-collector-failures" && "$scenario" != "health-truth" ]]; then
-  echo "usage: $0 {bootstrap-upgrade|failover|backup-restore|stability|startup-negative|alert-rca|agent-run-failure|agent-run-cancel|collection-schedule|server-collector-failures|health-truth}" >&2
+if [[ "$scenario" != "bootstrap-upgrade" && "$scenario" != "failover" && "$scenario" != "backup-restore" && "$scenario" != "stability" && "$scenario" != "startup-negative" && "$scenario" != "alert-rca" && "$scenario" != "agent-run-failure" && "$scenario" != "agent-run-cancel" && "$scenario" != "collection-schedule" && "$scenario" != "server-collector-failures" && "$scenario" != "health-truth" && "$scenario" != "workflow-catalog" ]]; then
+  echo "usage: $0 {bootstrap-upgrade|failover|backup-restore|stability|startup-negative|alert-rca|agent-run-failure|agent-run-cancel|collection-schedule|server-collector-failures|health-truth|workflow-catalog}" >&2
   exit 64
 fi
 
@@ -19,6 +19,7 @@ run_id="$(date +%Y%m%d%H%M%S)-$RANDOM"
 database="slide_qualification_existing_${run_id//-/}"
 restore_database="${database}_restore"
 backup=""
+server_pid=""
 
 mysql_exec() {
   docker exec -e "MYSQL_PWD=$password" "$container" mysql -u"$user" "$@"
@@ -34,6 +35,10 @@ drop_database() {
 }
 
 cleanup() {
+  if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
   [[ -n "$backup" ]] && rm -f "$backup"
   drop_database "$restore_database" >/dev/null 2>&1 || true
   drop_database "$database" >/dev/null 2>&1 || true
@@ -129,6 +134,37 @@ fi
 
 if [[ "$scenario" == "health-truth" ]]; then
   run_assertion ../../tests/qualification/assert-health-truth.ts "$database"
+fi
+
+if [[ "$scenario" == "workflow-catalog" ]]; then
+  # Exercise the real process-level worker registration and dispatch path. The
+  # isolated database has no resources/channels, so these controlled jobs
+  # cannot make external calls. Ports are deliberately outside 3000/5173.
+  for job_type in capacity.collect baseline.cleanup alert.evaluate; do
+    job_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+    mysql_exec "$database" -e "INSERT INTO workflow_jobs (id, job_type, schema_version, payload, idempotency_key, max_attempts, available_at) VALUES ('$job_id', '$job_type', 1, '{}', 'qualification-$job_type-$run_id', 1, NOW())"
+  done
+  log="$(mktemp "${TMPDIR:-/tmp}/slide-qualification-workflow.XXXXXX.log")"
+  env NODE_ENV=development PORT=3004 AGENT_WS_PORT=28891 DB_HOST="$host" DB_PORT="$port" DB_USER="$user" DB_PASSWORD="$password" DB_NAME="$database" \
+    JWT_SECRET_KEY=qualification-jwt-secret-2026-07-19-long ENCRYPTION_KEY=qualification-encryption-secret-2026-07-19 INITIAL_ADMIN_USERNAME=qualification INITIAL_ADMIN_PASSWORD=qualification \
+    pnpm --filter slide-api exec tsx server.ts >"$log" 2>&1 &
+  server_pid=$!
+  completed=""
+  for _ in {1..20}; do
+    completed="$(mysql_exec "$database" -N -e "SELECT COUNT(*) FROM workflow_jobs WHERE job_type = 'alert.evaluate' AND state = 'completed'")"
+    [[ "$completed" -eq 1 ]] && break
+    sleep 1
+  done
+  if [[ "$completed" -lt 1 ]]; then
+    cat "$log" >&2
+    rm -f "$log"
+    echo "workflow catalog qualification did not complete the controlled alert.evaluate job (completed=$completed)" >&2
+    exit 1
+  fi
+  kill "$server_pid"
+  wait "$server_pid" || true
+  server_pid=""
+  rm -f "$log"
 fi
 
 if [[ "$scenario" == "startup-negative" ]]; then

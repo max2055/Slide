@@ -58,7 +58,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | ME-06 | Mapped only | Capability matrix is present; compatibility UAT evidence is absent. |
 | ME-07 | Partial | Managed browser approval flow proves an approved SQL write executes once under concurrent review, then reads back the persisted operation as `succeeded` and its immutable CREATED → approval → execution event timeline. Cancellation/retry recovery remains unqualified. |
 | LO-01 | Mapped only | Navigation cleanup test is indexed; not individually reviewed in this qualification run. |
-| DR-01 | Mapped only | Typed cron handler unit coverage is indexed; no current complete job catalog runtime audit. |
+| DR-01 | Partial | An isolated process-level server qualification starts the real Worker Lease, DirectAdapter, and workflow runtime; a queued `alert.evaluate` job is claimed and completed from MySQL. The remaining registered handlers and LLM-driven cron catalog remain unqualified. |
 | DR-02 | Verified | Lease takeover and fencing passed against MySQL. |
 | DR-03 | Verified | A deliberately `running` migration ledger entry prevents startup before listener/worker effects and remains `running` pending explicit repair. |
 | DR-04 | Verified | Real MySQL health aggregation proved connected control plane, degraded managed availability, critical data freshness, and degraded workflow combine to an overall critical state. |
