@@ -109,6 +109,44 @@ test('notification recovery is reachable through the protected alerts workspace'
   await expect(page.getByText('qualification delivery failure')).toBeHidden();
 });
 
+test('Feishu settings saves a disabled channel without exposing its credentials', async ({ page }) => {
+  await page.goto('/settings');
+  await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
+  await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+  await page.locator('.login-gate__connect').click();
+  await expect(page.locator('settings-shell')).toBeVisible({ timeout: 15_000 });
+
+  await page.getByRole('button', { name: '飞书通知' }).click();
+  const settings = page.locator('feishu-notification-settings');
+  await expect(settings.getByText('尚未配置通道')).toBeVisible();
+  const webhookMarker = `qualification-webhook-path-${Date.now()}`;
+  const webhook = `https://open.feishu.cn/open-apis/bot/v2/hook/${webhookMarker}`;
+  await settings.locator('input[type="url"]').fill(webhook);
+  await settings.locator('input[type="password"]').fill('qualification-signing-secret');
+  const saved = page.waitForResponse((response) =>
+    response.url().endsWith('/api/notification/channels') && response.request().method() === 'POST',
+  );
+  await settings.getByRole('button', { name: '保存配置' }).click();
+  const savedResponse = await saved;
+  expect(savedResponse.status()).toBe(200);
+  const channelId = Number((await savedResponse.json()).id);
+  expect(channelId).toBeGreaterThan(0);
+
+  const token = await page.evaluate(() => localStorage.getItem('token'));
+  const headers = { Authorization: `Bearer ${token}` };
+  try {
+    await expect(settings.getByText('签名密钥：已安全保存')).toBeVisible();
+    const channels = await page.request.get('/api/notification/channels', { headers });
+    expect(channels.status()).toBe(200);
+    const savedChannel = (await channels.json()).find((channel: { id: number }) => channel.id === channelId);
+    expect(savedChannel).toMatchObject({ id: channelId, enabled: false, config: { endpoint: 'https://open.feishu.cn', hasCredential: true } });
+    expect(JSON.stringify(savedChannel)).not.toContain('qualification-signing-secret');
+    expect(JSON.stringify(savedChannel)).not.toContain(webhookMarker);
+  } finally {
+    await page.request.delete(`/api/notification/channels/${channelId}`, { headers });
+  }
+});
+
 test('an incident cannot close until recovery has been verified', async ({ page }) => {
   const login = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: 'Tpam1234' },

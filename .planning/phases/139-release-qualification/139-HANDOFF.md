@@ -46,7 +46,7 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   native metrics after its listener service was restored.
 - Managed browser qualification was rerun after the dedicated qualification
   database reset fix: the security, critical-path, and Agent capability suites
-  passed 18/18 on 2026-07-19.
+  passed 19/19 on 2026-07-19.
 - Current managed E2E commands:
 
 ```sh
@@ -59,7 +59,7 @@ QUALIFICATION_ADMIN_PASSWORD=Tpam1234 PLAYWRIGHT_MANAGED_ENV=1 \
   e2e/release-critical-paths.spec.ts --workers=1
 ```
 
-The security suite passed 10/10 and the critical-path suite passed 7/7 in the
+The security suite passed 10/10 and the critical-path suite passed 8/8 in the
 most recent independent runs.
 
 ## Recent Additions
