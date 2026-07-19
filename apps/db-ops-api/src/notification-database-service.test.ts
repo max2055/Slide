@@ -61,4 +61,17 @@ describe('NotificationDatabaseService email credentials', () => {
     expect(config).toMatchObject({ oauth2_refresh_token_encrypted: 'encrypted:refresh-token' });
     expect(config).not.toHaveProperty('oauth2_refresh_token');
   });
+
+  it('atomically replaces a rotated OAuth refresh token without exposing plaintext', async () => {
+    execute.mockResolvedValue([{ affectedRows: 1 }]);
+
+    await expect(notificationDatabaseService.updateOAuth2RefreshToken(10, 'rotated-refresh-token'))
+      .resolves.toEqual({ success: true });
+
+    expect(encryptData).toHaveBeenCalledWith('rotated-refresh-token');
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining("JSON_SET(config, '$.oauth2_refresh_token_encrypted', ?)"),
+      ['encrypted:rotated-refresh-token', 10],
+    );
+  });
 });
