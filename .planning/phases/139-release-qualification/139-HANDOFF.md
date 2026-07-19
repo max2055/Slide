@@ -66,7 +66,7 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   native metrics after its listener service was restored.
 - Managed browser qualification was rerun after the dedicated qualification
   database reset fix: the security, critical-path, and Agent capability suites
-  passed 21/21 on 2026-07-19.
+  passed 22/22 on 2026-07-19.
 - Current managed E2E commands:
 
 ```sh
@@ -105,9 +105,9 @@ The current verification document is authoritative and remains NO-GO.
 ## Highest-Priority Remaining Work
 
 1. HI-06/HI-07/HI-08: browser evidence now covers native MySQL metric rendering
-   after the connection-test/reload user flow and separately covers server RCA.
-   A single browser workflow that joins freshly collected metrics to threshold
-   alert creation and that alert's RCA remains needed.
+   after the connection-test/reload user flow, scheduler persistence, and a
+   scoped threshold alert. It separately covers server RCA. A single browser
+   workflow that attaches a real RCA to that fresh alert remains needed.
 2. HI-09/HI-11: the operator explicitly approved a no-public-egress local
    qualification exception on 2026-07-19. Do not claim SMTP/Feishu delivery or
    public redirect-chain behavior as verified, and do not weaken SSRF controls,

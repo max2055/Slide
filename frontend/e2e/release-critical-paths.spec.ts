@@ -131,6 +131,81 @@ test('browser renders live MySQL metrics for an isolated managed instance', asyn
   }
 });
 
+test('fresh native MySQL metrics create a threshold alert visible in the browser', async ({ page }) => {
+  test.setTimeout(90_000);
+  const login = await page.request.post('/api/auth/login', {
+    data: { username: 'admin', password: 'Tpam1234' },
+  });
+  expect(login.status()).toBe(200);
+  const headers = { Authorization: `Bearer ${(await login.json()).token}` };
+  const suffix = Date.now();
+  const name = `qualification-metric-alert-${suffix}`;
+  const ruleName = `Qualification live metric alert ${suffix}`;
+  const created = await page.request.post('/api/database/instances', {
+    headers,
+    data: {
+      name,
+      environment: 'testing',
+      db_type: 'mysql',
+      host: '127.0.0.1',
+      port: 3306,
+      username: 'root',
+      password: 'Tpam1234',
+      database_name: 'db_ops_ai_qualification',
+    },
+  });
+  expect(created.status()).toBe(200);
+  const { id } = await created.json();
+  let ruleId: number | undefined;
+
+  try {
+    const reloaded = await page.request.post(`/api/database/instances/${id}/reload`, { headers });
+    expect(reloaded.status()).toBe(200);
+    const metrics = await page.request.get(`/api/database/instances/${id}/metrics`, { headers });
+    expect(metrics.status()).toBe(200);
+    expect(await metrics.json()).toMatchObject({ connections: expect.any(Number) });
+    await expect.poll(async () => {
+      const persisted = await page.request.get(`/api/metrics/${id}`, { headers });
+      if (!persisted.ok()) return false;
+      const body = await persisted.json();
+      return typeof body?.connections === 'number';
+    }, { timeout: 30_000 }).toBe(true);
+
+    const rule = await page.request.post('/api/alert-rules', {
+      headers,
+      data: {
+        name: ruleName,
+        metric_name: 'connections',
+        operator: '>=',
+        threshold: 0,
+        duration_seconds: 1,
+        severity: 'critical',
+        notification_channels: [],
+        db_types: ['mysql'],
+        instance_ids: [id],
+        target_type: 'instance',
+        silence_minutes: 0,
+      },
+    });
+    expect(rule.status()).toBe(200);
+    ruleId = Number((await rule.json()).id);
+    expect(ruleId).toBeGreaterThan(0);
+
+    const evaluated = await page.request.post('/api/alert-engine/evaluate', { headers });
+    expect(evaluated.status()).toBe(200);
+    expect(Number((await evaluated.json()).triggered)).toBeGreaterThan(0);
+
+    await page.goto('/alerts');
+    await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
+    await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+    await page.locator('.login-gate__connect').click();
+    await expect(page.locator('alert-list tr').filter({ hasText: ruleName })).toBeVisible({ timeout: 15_000 });
+  } finally {
+    if (ruleId) await page.request.delete(`/api/alert-rules/${ruleId}`, { headers });
+    await page.request.delete(`/api/database/instances/${id}`, { headers });
+  }
+});
+
 test('server alert RCA can be started from the browser without an instance id', async ({ page }) => {
   await page.goto('/alerts');
   await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
