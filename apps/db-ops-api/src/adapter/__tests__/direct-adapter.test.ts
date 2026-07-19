@@ -24,6 +24,7 @@ import type { AnyAgentTool } from '../../tools/types.js';
 import { chatDatabaseService } from '../../chat-database-service.js';
 import { createActorBoundToolRegistry, loadPlatformTools } from '../get-agent-engine.js';
 import { agentRunService } from '../agent-run-service.js';
+import { instanceDatabaseService } from '../../instance-database-service.js';
 
 // ── Mock LLMProvider — returns hardcoded responses ──
 
@@ -279,6 +280,7 @@ describe('DirectAdapter', () => {
       const metadata = vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
       const createSession = vi.spyOn(chatDatabaseService, 'createSession').mockResolvedValue({ session_id: 'ws-catalog-policy-session' } as any);
       const addMessage = vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue();
+      const decryptedInstanceLookup = vi.spyOn(instanceDatabaseService, 'getInstanceWithDecryptedPassword');
       const platformTools = await loadPlatformTools();
       const actorTools = createActorBoundToolRegistry(viewer);
       const protectedTool = actorTools.get('get_instance_connection');
@@ -331,10 +333,12 @@ describe('DirectAdapter', () => {
           expect.objectContaining({ type: 'tool_result', toolName: 'get_instance_connection' }),
           expect.objectContaining({ type: 'complete' }),
         ]));
+        expect(decryptedInstanceLookup).not.toHaveBeenCalled();
       } finally {
         metadata.mockRestore();
         createSession.mockRestore();
         addMessage.mockRestore();
+        decryptedInstanceLookup.mockRestore();
         if (previousPort === undefined) delete process.env.AGENT_WS_PORT;
         else process.env.AGENT_WS_PORT = previousPort;
         if (previousSecret === undefined) delete process.env.JWT_SECRET_KEY;

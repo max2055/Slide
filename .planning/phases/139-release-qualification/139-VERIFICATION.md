@@ -41,7 +41,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 
 | Finding | Current status | Evidence or remaining gap |
 |---|---|---|
-| CR-01 | Verified | Authenticated DirectAdapter WebSocket test uses the real platform catalog and a tool-calling model to request `get_instance_connection`; viewer policy is `OWNER_REQUIRED` before handler entry. |
+| CR-01 | Verified | Authenticated DirectAdapter WebSocket test uses the real platform catalog and a tool-calling model to request the approval-required, owner-only `get_instance_connection` tool. A viewer receives `OWNER_REQUIRED`; an explicit spy proves `instanceDatabaseService.getInstanceWithDecryptedPassword` is never called before or during the WebSocket request. |
 | CR-02 | Verified | Managed security E2E proves REST and WS session isolation. |
 | CR-03 | Verified | Managed security E2E rejects direct UPDATE, DDL, and multi-statement input before side effects. |
 | HI-01 | Verified | Current 49-migration empty install and repeat initialization passed both on the original qualification container and independently on user-provided `mysql3307` (port 3307). |
@@ -89,11 +89,9 @@ a release decision and must not be used for deployment approval.
 
 ## Next Required Evidence
 
-1. Managed WebSocket proof that a production-catalog dangerous tool is denied
-   with zero handler side effect.
-2. Managed provider failure/timeout, health/alert/RCA, per-metric scheduling,
+1. Managed provider failure/timeout, health/alert/RCA, per-metric scheduling,
    cancellation/attachment/idempotency, and startup ordering workflows.
-3. A clean full release workflow including frontend checks, lint disposition,
+2. A clean full release workflow including frontend checks, lint disposition,
    compatibility UAT, and evidence/artifact scan.
 
 The operator-approved no-public-egress exception excludes real SMTP/Feishu
