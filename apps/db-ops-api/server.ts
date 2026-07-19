@@ -5,8 +5,14 @@ import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 
 // 防止 cron 任务中的未处理异常导致进程退出
-process.on('uncaughtException', (err) => console.error('⚠️ 未捕获异常:', err.message));
-process.on('unhandledRejection', (reason) => console.error('⚠️ 未处理拒绝:', reason));
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ 未捕获异常:', err.message);
+  process.exitCode = 1;
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('⚠️ 未处理拒绝:', reason);
+  process.exitCode = 1;
+});
 
 import Fastify from 'fastify';
 import cors from '@fastify/cors';

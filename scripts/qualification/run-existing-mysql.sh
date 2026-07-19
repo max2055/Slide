@@ -2,8 +2,8 @@
 set -euo pipefail
 
 scenario="${1:-}"
-if [[ "$scenario" != "bootstrap-upgrade" && "$scenario" != "failover" && "$scenario" != "backup-restore" && "$scenario" != "stability" ]]; then
-  echo "usage: $0 {bootstrap-upgrade|failover|backup-restore|stability}" >&2
+if [[ "$scenario" != "bootstrap-upgrade" && "$scenario" != "failover" && "$scenario" != "backup-restore" && "$scenario" != "stability" && "$scenario" != "startup-negative" && "$scenario" != "alert-rca" && "$scenario" != "agent-run-failure" && "$scenario" != "agent-run-cancel" && "$scenario" != "collection-schedule" && "$scenario" != "server-collector-failures" && "$scenario" != "health-truth" ]]; then
+  echo "usage: $0 {bootstrap-upgrade|failover|backup-restore|stability|startup-negative|alert-rca|agent-run-failure|agent-run-cancel|collection-schedule|server-collector-failures|health-truth}" >&2
   exit 64
 fi
 
@@ -60,6 +60,30 @@ run_assertion() {
     pnpm --filter slide-api exec tsx "$assertion" "$@"
 }
 
+assert_process_rejects_startup() {
+  local label="$1"
+  shift
+  local log
+  log="$(mktemp "${TMPDIR:-/tmp}/slide-qualification-${label}.XXXXXX.log")"
+  set +e
+  "$@" >"$log" 2>&1
+  local status=$?
+  set -e
+  if [[ "$status" -eq 0 ]]; then
+    cat "$log" >&2
+    rm -f "$log"
+    echo "qualification $label unexpectedly started successfully" >&2
+    return 1
+  fi
+  if rg -q "Schema migration ledger is current|Agent Engine 已启动|Server listening" "$log"; then
+    cat "$log" >&2
+    rm -f "$log"
+    echo "qualification $label reached listener or worker initialization" >&2
+    return 1
+  fi
+  rm -f "$log"
+}
+
 run_init
 if [[ "$scenario" == "bootstrap-upgrade" ]]; then
   run_init
@@ -81,6 +105,50 @@ fi
 
 if [[ "$scenario" == "stability" ]]; then
   run_assertion ../../tests/qualification/assert-stability.ts "$database"
+fi
+
+if [[ "$scenario" == "alert-rca" ]]; then
+  run_assertion ../../tests/qualification/assert-alert-rca.ts "$database"
+fi
+
+if [[ "$scenario" == "agent-run-failure" ]]; then
+  run_assertion ../../tests/qualification/assert-agent-run-failure.ts "$database"
+fi
+
+if [[ "$scenario" == "agent-run-cancel" ]]; then
+  run_assertion ../../tests/qualification/assert-agent-run-cancel.ts "$database"
+fi
+
+if [[ "$scenario" == "collection-schedule" ]]; then
+  run_assertion ../../tests/qualification/assert-collection-schedule.ts "$database"
+fi
+
+if [[ "$scenario" == "server-collector-failures" ]]; then
+  run_assertion ../../tests/qualification/assert-server-collector-failures.ts "$database"
+fi
+
+if [[ "$scenario" == "health-truth" ]]; then
+  run_assertion ../../tests/qualification/assert-health-truth.ts "$database"
+fi
+
+if [[ "$scenario" == "startup-negative" ]]; then
+  # A production process must reject weak/missing secrets before it connects to
+  # MySQL or can bind a listener. This runs against the same operator-provided
+  # container but never starts a long-lived service.
+  assert_process_rejects_startup weak-production-secret \
+    env NODE_ENV=production PORT=3004 AGENT_WS_PORT=28891 DB_HOST="$host" DB_PORT="$port" DB_USER="$user" DB_PASSWORD="$password" DB_NAME="$database" \
+    JWT_SECRET_KEY=secret ENCRYPTION_KEY=another-secret-that-is-long-enough-2026 INITIAL_ADMIN_USERNAME=qualification INITIAL_ADMIN_PASSWORD=qualification \
+    pnpm --filter slide-api exec tsx server.ts
+
+  # Simulate an interrupted migration after a successful initialization. The
+  # server must fail closed before opening its listener or starting workers;
+  # recovery requires an explicit repair, not an implicit retry.
+  mysql_exec "$database" -e "UPDATE app_schema_migrations SET status = 'running', error = 'qualification interrupted migration' WHERE migration_id = '043_approval_execution_state_parity.sql'"
+  assert_process_rejects_startup interrupted-migration \
+    env NODE_ENV=production PORT=3004 AGENT_WS_PORT=28891 DB_HOST="$host" DB_PORT="$port" DB_USER="$user" DB_PASSWORD="$password" DB_NAME="$database" \
+    JWT_SECRET_KEY=qualification-jwt-secret-2026-07-19-long ENCRYPTION_KEY=qualification-encryption-secret-2026-07-19 INITIAL_ADMIN_USERNAME=qualification INITIAL_ADMIN_PASSWORD=qualification \
+    pnpm --filter slide-api exec tsx server.ts
+  mysql_exec "$database" -e "SELECT status, error FROM app_schema_migrations WHERE migration_id = '043_approval_execution_state_parity.sql'" | rg -q '^running[[:space:]]+qualification interrupted migration$'
 fi
 
 echo "qualification $scenario passed against existing container: database=$database"

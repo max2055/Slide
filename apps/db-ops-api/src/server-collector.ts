@@ -107,7 +107,8 @@ class ServerCollector {
 
     for (const server of servers) {
       try {
-        await this._collectOneServer(server);
+        const result = await this._collectOneServer(server);
+        if (!result.success) throw new Error(result.error || '服务器指标采集失败');
       } catch (error: any) {
         console.error(`[ServerCollector] collection failed for #${server.id} (${server.host}):`, error.message);
 
