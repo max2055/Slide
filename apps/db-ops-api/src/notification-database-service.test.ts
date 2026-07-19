@@ -62,6 +62,20 @@ describe('NotificationDatabaseService email credentials', () => {
     expect(config).not.toHaveProperty('oauth2_refresh_token');
   });
 
+  it('encrypts a webhook signing secret before storing a channel', async () => {
+    execute.mockResolvedValue([{ insertId: 11 }]);
+
+    await notificationDatabaseService.createChannel({
+      name: 'feishu', type: 'feishu',
+      config: { webhook_url: 'https://open.feishu.cn/open-apis/bot/v2/hook/example', secret: 'signing-secret' },
+    });
+
+    const config = JSON.parse(execute.mock.calls[0][1][2]);
+    expect(encryptData).toHaveBeenCalledWith('signing-secret');
+    expect(config).toMatchObject({ secret_encrypted: 'encrypted:signing-secret' });
+    expect(config).not.toHaveProperty('secret');
+  });
+
   it('atomically replaces a rotated OAuth refresh token without exposing plaintext', async () => {
     execute.mockResolvedValue([{ affectedRows: 1 }]);
 

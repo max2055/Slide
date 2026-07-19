@@ -19,10 +19,12 @@ describe('public response DTOs', () => {
     const dto = publicNotificationDto({ id: 3, config: {
       webhook_url: 'https://hooks.example.com/private-token',
       secret: 'secret-value',
+      secret_encrypted: 'encrypted-webhook-secret',
       password_encrypted: 'encrypted-smtp-password',
     } });
     expect(dto).toMatchObject({ config: { endpoint: 'https://hooks.example.com', hasCredential: true } });
     expect(JSON.stringify(dto)).not.toContain('secret-value');
+    expect(JSON.stringify(dto)).not.toContain('encrypted-webhook-secret');
     expect(JSON.stringify(dto)).not.toContain('private-token');
     expect(JSON.stringify(dto)).not.toContain('encrypted-smtp-password');
   });
