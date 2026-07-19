@@ -9,6 +9,7 @@ import nodemailer from 'nodemailer';
 import { notificationDatabaseService } from './notification-database-service';
 import type { PendingAlert, NotificationChannel } from './notification-database-service';
 import { decryptData } from './db-connection';
+import { exchangeMicrosoftSmtpRefreshToken } from './smtp-oauth2.js';
 import { maintenanceWindowService } from './maintenance-window-service';
 import { resolveOutboundTarget, OutboundPolicyError } from './security/outbound-policy.js';
 
@@ -416,11 +417,16 @@ export class NotificationService {
   }
 
   private isValidEmailConfiguration(config: NotificationChannel['config']): boolean {
+    const passwordAuth = (typeof config.password === 'string' && config.password.length > 0)
+      || (typeof config.password_encrypted === 'string' && config.password_encrypted.length > 0);
+    const oauth2Auth = config.smtp_auth === 'oauth2'
+      && typeof config.oauth2_tenant === 'string' && config.oauth2_tenant.length > 0
+      && typeof config.oauth2_client_id === 'string' && config.oauth2_client_id.length > 0
+      && typeof config.oauth2_refresh_token_encrypted === 'string' && config.oauth2_refresh_token_encrypted.length > 0;
     return typeof config.smtp_host === 'string' && config.smtp_host.length > 0
       && Number.isInteger(Number(config.smtp_port)) && Number(config.smtp_port) > 0
       && typeof config.smtp_username === 'string' && config.smtp_username.length > 0
-      && ((typeof config.password === 'string' && config.password.length > 0)
-        || (typeof config.password_encrypted === 'string' && config.password_encrypted.length > 0))
+      && (passwordAuth || oauth2Auth)
       && typeof config.from === 'string' && config.from.length > 0
       && typeof config.to === 'string' && config.to.length > 0;
   }
@@ -430,12 +436,23 @@ export class NotificationService {
     message: { subject?: string; text?: string },
   ): Promise<void> {
     const port = Number(config.smtp_port);
+    const auth = config.smtp_auth === 'oauth2'
+      ? {
+        type: 'OAuth2' as const,
+        user: config.smtp_username!,
+        accessToken: await exchangeMicrosoftSmtpRefreshToken({
+          tenant: config.oauth2_tenant!,
+          clientId: config.oauth2_client_id!,
+          refreshToken: decryptData(config.oauth2_refresh_token_encrypted!),
+        }),
+      }
+      : { user: config.smtp_username!, pass: this.getSmtpPassword(config) };
     const transport = nodemailer.createTransport({
       host: config.smtp_host!,
       port,
       secure: config.smtp_secure === true || port === 465,
       requireTLS: port !== 465,
-      auth: { user: config.smtp_username!, pass: this.getSmtpPassword(config) },
+      auth,
       tls: { minVersion: 'TLSv1.2' },
     });
     await transport.sendMail({

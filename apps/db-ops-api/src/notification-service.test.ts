@@ -80,4 +80,21 @@ describe('NotificationService outbound delivery', () => {
     await expect(service.send(incompleteChannel, { subject: 'test', text: 'test' }))
       .resolves.toEqual({ success: false, error: 'EMAIL_CONFIGURATION_INVALID' });
   });
+
+  it('accepts an OAuth2 email channel without a password credential', async () => {
+    const service = new NotificationService();
+    const sendEmail = vi.spyOn(service as any, 'sendEmail').mockResolvedValue(undefined);
+    const oauthChannel = {
+      ...emailChannel,
+      config: {
+        smtp_host: 'smtp-mail.outlook.com', smtp_port: 587, smtp_username: 'alerts@example.com',
+        smtp_auth: 'oauth2' as const, oauth2_tenant: 'consumers', oauth2_client_id: 'client-id',
+        oauth2_refresh_token_encrypted: 'encrypted-refresh-token', from: 'alerts@example.com', to: 'dba@example.com',
+      },
+    };
+
+    await expect(service.send(oauthChannel, { subject: 'test', text: 'test' }))
+      .resolves.toEqual({ success: true });
+    expect(sendEmail).toHaveBeenCalledWith(oauthChannel.config, { subject: 'test', text: 'test' });
+  });
 });

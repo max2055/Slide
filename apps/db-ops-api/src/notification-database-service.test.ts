@@ -46,4 +46,19 @@ describe('NotificationDatabaseService email credentials', () => {
     expect(config).toMatchObject({ smtp_host: 'smtp.new.example', password_encrypted: 'encrypted:old-password' });
     expect(encryptData).not.toHaveBeenCalled();
   });
+
+  it('encrypts OAuth refresh tokens before storing an email channel', async () => {
+    execute.mockResolvedValue([{ insertId: 10 }]);
+
+    await notificationDatabaseService.createChannel({
+      name: 'oauth mail',
+      type: 'email',
+      config: { smtp_auth: 'oauth2', oauth2_refresh_token: 'refresh-token' },
+    });
+
+    const config = JSON.parse(execute.mock.calls[0][1][2]);
+    expect(encryptData).toHaveBeenCalledWith('refresh-token');
+    expect(config).toMatchObject({ oauth2_refresh_token_encrypted: 'encrypted:refresh-token' });
+    expect(config).not.toHaveProperty('oauth2_refresh_token');
+  });
 });

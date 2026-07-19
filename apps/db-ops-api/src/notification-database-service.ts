@@ -11,8 +11,13 @@ export interface NotificationChannelConfig {
   smtp_host?: string;
   smtp_port?: number;
   smtp_username?: string;
+  smtp_auth?: 'password' | 'oauth2';
   password?: string;
   password_encrypted?: string;
+  oauth2_tenant?: string;
+  oauth2_client_id?: string;
+  oauth2_refresh_token?: string;
+  oauth2_refresh_token_encrypted?: string;
   from?: string;
   to?: string;
   smtp_secure?: boolean;
@@ -62,6 +67,12 @@ class NotificationDatabaseService {
         stored.password_encrypted = encryptData(stored.password);
       }
       delete stored.password;
+    }
+    if (typeof stored.oauth2_refresh_token === 'string') {
+      if (stored.oauth2_refresh_token.length > 0) {
+        stored.oauth2_refresh_token_encrypted = encryptData(stored.oauth2_refresh_token);
+      }
+      delete stored.oauth2_refresh_token;
     }
     return stored;
   }

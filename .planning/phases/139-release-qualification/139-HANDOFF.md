@@ -81,8 +81,9 @@ The current verification document is authoritative and remains NO-GO.
    private endpoint as a success target. SMTP email implementation now has an
    isolated qualification harness, but this execution environment cannot reach
    Microsoft's SMTP service: its resolver returns reserved address `198.18.3.84`
-   with no SMTP greeting. Run the harness from an egress-enabled host; for
-   Outlook.com, complete its required OAuth2/Modern Auth configuration first.
+   with no SMTP greeting. The application now supports encrypted OAuth refresh
+   tokens and XOAUTH2 SMTP; run the harness from an egress-enabled host after
+   completing Outlook.com's OAuth2/Modern Auth configuration.
 3. ME/DR/TG/OPT rows marked `Mapped only` or `Partial` in
    `139-VERIFICATION.md` need behavioral evidence before any GO decision.
 4. Run the final hosted release gate after changes and update the evidence matrix
