@@ -27,7 +27,7 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   existing MySQL 9.6 container. Backup recovery requires
   `mysqldump --single-transaction --set-gtid-purged=OFF` because GTIDs are
   enabled in that container.
-- Full local regression passed on 2026-07-19: API typecheck and 85 files / 958
+- Full local regression passed on 2026-07-19: API typecheck and 86 files / 963
   tests, frontend typecheck/build and 18 files / 178 tests, and Agent Core
   typecheck / 69 tests. `pnpm lint` exits zero but reports 250 warnings, so it
   is not lint-clean evidence.
@@ -82,7 +82,7 @@ The current verification document is authoritative and remains NO-GO.
    isolated qualification harness, but this execution environment cannot reach
    Microsoft's SMTP service: its resolver returns reserved address `198.18.3.84`
    with no SMTP greeting. The application now supports encrypted OAuth refresh
-   tokens and XOAUTH2 SMTP; run the harness from an egress-enabled host after
+   tokens, atomic rotated-token persistence, and XOAUTH2 SMTP; run the harness from an egress-enabled host after
    completing Outlook.com's OAuth2/Modern Auth configuration.
 3. ME/DR/TG/OPT rows marked `Mapped only` or `Partial` in
    `139-VERIFICATION.md` need behavioral evidence before any GO decision.
