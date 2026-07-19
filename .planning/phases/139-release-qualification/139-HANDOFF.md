@@ -20,7 +20,7 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
 ## Current Evidence
 
 - `bash scripts/qualification/run-existing-mysql.sh bootstrap-upgrade`
-  passed: 45 migrations, repeat initialization, schema and ledger invariants.
+  passed: 46 migrations, repeat initialization, schema and ledger invariants.
 - `failover`, `backup-restore`, and `stability` scenarios passed against the
   existing MySQL 9.6 container. Backup recovery requires
   `mysqldump --single-transaction --set-gtid-purged=OFF` because GTIDs are

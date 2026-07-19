@@ -150,7 +150,7 @@ class AlertRCAService {
 ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ?? '?'}（阈值: ${alert.threshold_value ?? '?'}）` : ''}
 - 发生时间：${alert.created_at instanceof Date ? alert.created_at.toISOString() : String(alert.created_at)}
 
-请使用 db_* 工具采集当前数据库指标、历史趋势、慢查询、活跃会话、锁等待和错误日志。分析根因并给出修复建议。完成后调用 slide_complete_analysis 保存结果。`,
+请基于以上已持久化的告警事实分析根因、明确证据边界并给出修复建议。当前后台分析仅提供 slide_complete_analysis 工具；不要调用其他工具。完成后必须调用该工具保存结果。`,
       }).catch((err) => {
         console.error(`[RCA] Agent 分析 ${analysisId} 失败:`, err);
         aiAnalysisDatabaseService.failAnalysis(analysisId, err.message).catch(() => {});

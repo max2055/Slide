@@ -4,6 +4,7 @@
 import type { AnyAgentTool } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
 import { aiAnalysisDatabaseService } from '../../../ai-analysis-database-service.js';
+import { AnalysisEnvelopeSchema } from '../../../analysis/analysis-envelope.js';
 
 export const completeAnalysisTool: AnyAgentTool = {
   name: 'slide_complete_analysis',
@@ -12,7 +13,10 @@ export const completeAnalysisTool: AnyAgentTool = {
     type: 'object',
     properties: {
       analysisId: { type: 'number', description: '分析记录 ID' },
-      envelope: { type: 'object', description: 'Versioned structured AnalysisEnvelope' },
+      envelope: {
+        ...AnalysisEnvelopeSchema,
+        description: 'Versioned structured AnalysisEnvelope; every required field must be present.',
+      },
     },
     required: ['analysisId', 'envelope'],
   },
