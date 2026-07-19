@@ -132,8 +132,7 @@ export async function createLLMProvider(): Promise<import('@slide/agent-core').L
   try {
     const { llmDatabaseService } = await import('../llm-database-service.js');
     const providers = await llmDatabaseService.getEnabledProviders();
-    if (providers.length > 0) {
-      const p = providers[0];
+    for (const p of providers) {
       const apiKey = await llmDatabaseService.getProviderApiKey(p.name);
       if (apiKey) {
         const model = p.default_model || undefined;

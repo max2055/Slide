@@ -1,4 +1,4 @@
-import { dbConnection } from '../../apps/db-ops-api/src/db-connection.js';
+import { dbConnection, encryptData } from '../../apps/db-ops-api/src/db-connection.js';
 import { serverAlertEvaluator } from '../../apps/db-ops-api/src/server-alert-evaluator.js';
 import { alertRCAService } from '../../apps/db-ops-api/src/alert-rca-service.js';
 import { aiAnalysisDatabaseService } from '../../apps/db-ops-api/src/ai-analysis-database-service.js';
@@ -10,6 +10,18 @@ process.env.ENCRYPTION_KEY ??= 'qualification-encryption-key-2026-07-19-not-prod
 if (!await dbConnection.initialize()) throw new Error('qualification database connection failed');
 const pool = dbConnection.getPool();
 if (!pool) throw new Error('qualification database pool unavailable');
+
+const liveProvider = process.env.QUALIFICATION_DEEPSEEK_API_KEY;
+if (liveProvider) {
+  await pool.execute(
+    `UPDATE llm_providers
+     SET display_name = 'Qualification DeepSeek', api_key_encrypted = ?, api_base_url = 'https://api.deepseek.com/v1',
+         default_model = 'deepseek-chat', enabled = 1, is_default = 1, deployment_type = 'api',
+         api_format = 'openai-completions'
+     WHERE name = 'deepseek'`,
+    [encryptData(liveProvider)],
+  );
+}
 
 const [serverResult] = await pool.execute(
   `INSERT INTO servers (host, port, label, os_type, credential_type, credential_encrypted, status, collection_enabled)
@@ -48,6 +60,12 @@ try {
   if (!analysis || analysis.analysis_type !== 'alert_rca' || analysis.server_id !== serverId || analysis.related_id !== alert.id || !analysis.session_key) {
     throw new Error('server RCA was not persisted with its server subject');
   }
+  if (liveProvider) {
+    const completed = await aiAnalysisDatabaseService.waitForCompletion(analysis.id, 120_000);
+    if (completed?.status !== 'completed' || !completed.result) {
+      throw new Error(`live server RCA did not complete: ${completed?.status ?? 'missing'} ${completed?.error_message ?? ''}`);
+    }
+  }
 
   const [instanceResult] = await pool.execute(
     `INSERT INTO database_instances (name, environment, db_type, host, port, username, password_encrypted, status)
@@ -76,7 +94,7 @@ try {
   if (!instanceRca.success || !instanceAnalysis || instanceAnalysis.instance_id !== instanceId || instanceAnalysis.related_id !== instanceAlert.id) {
     throw new Error('instance RCA was not persisted with its instance subject');
   }
-  console.log(`alert-RCA invariant valid: server=${serverId} rule=${ruleId} alert=${alert.id} analysis=${analysis.id}; instance=${instanceId} rule=${instanceRuleResult.insertId} alert=${instanceAlert.id} analysis=${instanceAnalysis.id}`);
+  console.log(`alert-RCA invariant valid: server=${serverId} rule=${ruleId} alert=${alert.id} analysis=${analysis.id}${liveProvider ? ' completed=live' : ''}; instance=${instanceId} rule=${instanceRuleResult.insertId} alert=${instanceAlert.id} analysis=${instanceAnalysis.id}`);
 } finally {
   // The enclosing qualification script drops this database. Closing the pool
   // lets this assertion exit without retaining the bridge's background timer.

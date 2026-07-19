@@ -145,6 +145,19 @@ class FailingProvider extends MockLLMProvider {
   }
 }
 
+class CapturingInvokeProvider extends MockLLMProvider {
+  seenTools: ToolSchema[] = [];
+
+  override async chat(
+    _messages: Message[],
+    tools: ToolSchema[],
+    _options?: LLMCallOptions,
+  ): Promise<LLMResponse> {
+    this.seenTools = tools;
+    return super.chat(_messages, tools, _options);
+  }
+}
+
 // ── Helper: create a DirectAdapter with a mock registry and provider ──
 
 function createMockAdapter(tools?: ToolRegistry): DirectAdapter {
@@ -552,6 +565,15 @@ describe('DirectAdapter', () => {
       );
 
       expect(result.content).toBeTruthy();
+    });
+
+    it('exposes only the analysis completion tool to background invokes', async () => {
+      const provider = new CapturingInvokeProvider();
+      const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: provider });
+
+      await adapter.invoke('test-session-analysis-completion', 'Analyze');
+
+      expect(provider.seenTools.map((tool) => tool.name)).toEqual(['slide_complete_analysis']);
     });
   });
 

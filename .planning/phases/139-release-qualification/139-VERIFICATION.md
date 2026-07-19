@@ -15,12 +15,12 @@ mapping or unit test alone does not close a Phase 131 release finding.
 
 | Gate | Result | Evidence |
 |---|---|---|
-| Backend unit suite | PASS | `pnpm --filter slide-api test`: 84 files, 952 tests passed. |
+| Backend unit suite | PASS | `pnpm --filter slide-api test`: 84 files, 954 tests passed. |
 | Backend typecheck | PASS | `pnpm --filter slide-api exec tsc --noEmit`. |
 | Frontend typecheck and build | PASS with warnings | `pnpm --filter slide-frontend typecheck && pnpm --filter slide-frontend build`; Vite reports dynamic-import and 2.75 MB main-chunk warnings. |
 | Agent Core typecheck and tests | PASS | `pnpm --filter agent-core typecheck && pnpm --filter agent-core test`: 7 files, 69 tests passed. |
 | Lint | PASS with warning debt | `pnpm lint` exits 0 with 250 warnings and 0 errors; this is not lint-clean release evidence. |
-| Empty install and repeated initialization | PASS | `bash scripts/qualification/run-existing-mysql.sh bootstrap-upgrade`: 44 migrations and schema invariant valid. The same qualification passed independently against the user-provided `mysql3307` MySQL 9 container on port 3307. |
+| Empty install and repeated initialization | PASS | `bash scripts/qualification/run-existing-mysql.sh bootstrap-upgrade`: 45 migrations and schema invariant valid. The same qualification passed independently against the user-provided `mysql3307` MySQL 9 container on port 3307. |
 | Worker lease/fencing | PASS | `bash scripts/qualification/run-existing-mysql.sh failover`. |
 | Backup/restore | PASS | `bash scripts/qualification/run-existing-mysql.sh backup-restore`; uses a consistent dump with GTID purging disabled for same-instance restore. |
 | Concurrent durable enqueue | PASS | `bash scripts/qualification/run-existing-mysql.sh stability`. |
@@ -37,7 +37,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | CR-01 | Verified | Authenticated DirectAdapter WebSocket test uses the real platform catalog and a tool-calling model to request `get_instance_connection`; viewer policy is `OWNER_REQUIRED` before handler entry. |
 | CR-02 | Verified | Managed security E2E proves REST and WS session isolation. |
 | CR-03 | Verified | Managed security E2E rejects direct UPDATE, DDL, and multi-statement input before side effects. |
-| HI-01 | Verified | Current 44-migration empty install and repeat initialization passed both on the original qualification container and independently on user-provided `mysql3307` (port 3307). |
+| HI-01 | Verified | Current 45-migration empty install and repeat initialization passed both on the original qualification container and independently on user-provided `mysql3307` (port 3307). |
 | HI-02 | Verified | Managed E2E proves two concurrent approval reviews execute one controlled update. |
 | HI-03 | Verified | Managed E2E proves REST, refresh, and an established WS connection are revoked after disablement. |
 | HI-04 | Verified | Managed browser E2E proves structured and Markdown attack payloads remain inert. |

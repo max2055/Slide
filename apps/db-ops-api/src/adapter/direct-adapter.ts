@@ -41,8 +41,29 @@ import {
 } from '../auth/actor-context.js';
 import { validateChatSendV2 } from './protocol-v2.js';
 import { agentRunService } from './agent-run-service.js';
+import { completeAnalysisTool } from '../tools/generated/slide-self-mgmt/complete_analysis.js';
 
 let _subagentManagerInitialized = false;
+
+function analysisCompletionTools(): ToolRegistry {
+  const tools = new ToolRegistry();
+  tools.register({
+    name: completeAnalysisTool.name,
+    description: completeAnalysisTool.description,
+    parameters: completeAnalysisTool.parameters as ToolSchema['parameters'],
+    readOnly: false,
+    concurrencySafe: true,
+    exclusive: false,
+    scope: completeAnalysisTool.scope,
+    execute: async (args: Record<string, unknown>) => {
+      const result = await completeAnalysisTool.handler(args);
+      return result && typeof result === 'object' && 'data' in result
+        ? (result as { data?: unknown }).data ?? result
+        : result;
+    },
+  });
+  return tools;
+}
 
 // ── Helper: maps Hook tool events to ChatEvent ──
 
@@ -683,7 +704,10 @@ export class DirectAdapter implements IAgentEngine {
     const toolCalls: Array<{ name: string; args: any; result?: string; status: string }> = [];
 
     const invokeHook: AgentHook = {
-      wantsStreaming: () => true,
+      // Background analyses have no interactive consumer. A non-streaming
+      // request applies the runner's wall-clock timeout and avoids retaining a
+      // long-lived streaming connection while waiting for persistence.
+      wantsStreaming: () => false,
       beforeIteration: async () => {},
       onStream: async (_ctx: any, delta: string) => { thinkingHolder.text += delta; },
       onStreamEnd: async () => {},
@@ -709,16 +733,17 @@ export class DirectAdapter implements IAgentEngine {
     try {
       const result = await this.runner.run({
         initialMessages: messages,
-        // Background invoke has no authenticated ActorContext; running tools here
-        // would let a scheduler or prompt select an authority implicitly.
-        tools: new ToolRegistry(),
+        // Background analysis has no ActorContext. It receives only the
+        // validation-backed completion tool, never the general platform catalog.
+        tools: analysisCompletionTools(),
         model: this.provider.getDefaultModel(),
-        maxIterations: 200,
+        maxIterations: 8,
         maxToolResultChars: 20000,
         temperature: 0.0,
         hook: invokeHook as any,
         contextWindowTokens: 200_000,
-        maxTokens: 100_000,
+        maxTokens: 4096,
+        llmTimeoutS: 60,
       });
 
       // Embed thinking as <think> tags so chat UI renders collapsible thinking section
