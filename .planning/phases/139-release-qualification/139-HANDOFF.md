@@ -27,8 +27,8 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   existing MySQL 9.6 container. Backup recovery requires
   `mysqldump --single-transaction --set-gtid-purged=OFF` because GTIDs are
   enabled in that container.
-- Full local regression passed on 2026-07-19: `pnpm test` passed API 86 files / 963
-  tests, frontend 18 files / 178 tests, and Agent Core 7 files / 69 tests; API typecheck also passed.
+- Full local regression passed on 2026-07-19: `pnpm test` passed API 87 files / 966 tests
+  (including signed Feishu webhook contracts), frontend 18 files / 178 tests, and Agent Core 7 files / 69 tests; API typecheck also passed.
   tests, frontend typecheck/build and 18 files / 178 tests, and Agent Core
   typecheck / 69 tests. `pnpm lint` exits zero but reports 250 warnings, so it
   is not lint-clean evidence.
