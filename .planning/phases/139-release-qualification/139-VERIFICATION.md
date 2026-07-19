@@ -16,6 +16,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | Gate | Result | Evidence |
 |---|---|---|
 | Backend unit suite | PASS | `pnpm --filter slide-api test`: 86 files, 963 tests passed, including Microsoft OAuth refresh-token rotation persistence. |
+| Workspace recursive unit suite | PASS | `pnpm test`: API 86 files / 963 tests, frontend 18 files / 178 tests, and Agent Core 7 files / 69 tests passed on 2026-07-19. |
 | Backend typecheck | PASS | `pnpm --filter slide-api exec tsc --noEmit`. |
 | Frontend typecheck and build | PASS with warnings | `pnpm --filter slide-frontend typecheck && pnpm --filter slide-frontend build`; Vite reports dynamic-import and 2.75 MB main-chunk warnings. |
 | Agent Core typecheck and tests | PASS | `pnpm --filter agent-core typecheck && pnpm --filter agent-core test`: 7 files, 69 tests passed. |
