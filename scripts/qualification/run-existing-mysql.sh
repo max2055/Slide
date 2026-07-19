@@ -183,6 +183,13 @@ if [[ "$scenario" == "workflow-catalog" ]]; then
     echo "workflow catalog qualification did not complete all controlled jobs (completed=$completed expected=${#workflow_job_ids[@]})" >&2
     exit 1
   fi
+  report_notify_skips="$(mysql_exec "$database" -N -e "SELECT COUNT(*) FROM report_notification_deliveries d JOIN workflow_jobs j ON j.id = d.workflow_job_id WHERE j.idempotency_key = 'qualification-report.notify-$run_id' AND d.status = 'skipped' AND d.error_code = 'REPORT_OR_CHANNEL_UNAVAILABLE'")"
+  if [[ "$report_notify_skips" -ne 1 ]]; then
+    cat "$log" >&2
+    rm -f "$log"
+    echo "workflow catalog qualification did not persist the unavailable report notification skip (count=$report_notify_skips)" >&2
+    exit 1
+  fi
   kill "$server_pid"
   wait "$server_pid" || true
   server_pid=""

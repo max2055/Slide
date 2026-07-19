@@ -47,8 +47,9 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   the durable scheduler and delivery worker reject older alerts. This closes the
   observed historical-notification retry storm without weakening outbound policy.
 - `workflow-catalog` now runs every registered durable workflow handler in an
-  isolated empty control plane and reads each terminal completion from MySQL.
-  It covers safe no-op/unavailable-target paths only; LLM-driven cron behavior
+  isolated empty control plane and reads each terminal completion from MySQL,
+  including the persisted `report.notify` unavailable-target skip audit. It
+  covers safe no-op/unavailable-target paths only; LLM-driven cron behavior
   still requires its own runtime evidence.
 - `adapter-uat` connected real local PostgreSQL 18 and Dameng 8 and read native
   metrics. `oracle-adapter-uat` separately connected real Oracle 19c and read
