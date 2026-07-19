@@ -27,11 +27,16 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   existing MySQL 9.6 container. Backup recovery requires
   `mysqldump --single-transaction --set-gtid-purged=OFF` because GTIDs are
   enabled in that container.
-- Full local regression passed on 2026-07-19: `pnpm test` passed API 87 files / 966 tests
-  (including signed Feishu webhook contracts), frontend 18 files / 178 tests, and Agent Core 7 files / 69 tests; API typecheck also passed.
-  tests, frontend typecheck/build and 18 files / 178 tests, and Agent Core
-  typecheck / 69 tests. `pnpm lint` exits zero but reports 250 warnings, so it
-  is not lint-clean evidence.
+- Full local regression passed on 2026-07-19: `pnpm test` passed API 88 files / 967 tests
+  (including signed Feishu webhook and lost-encryption-key recovery contracts),
+  frontend 18 files / 178 tests, and Agent Core 7 files / 69 tests. API and
+  frontend typechecks/build passed; `pnpm lint` exits zero but reports 250
+  warnings, so it is not lint-clean evidence.
+- Lost-key recovery was qualification-tested and then executed locally after the
+  historical encryption key was confirmed unavailable. It intentionally
+  invalidated stored secrets: operators must re-enter five database-instance
+  credentials, one server credential, two LLM-provider credentials, and the
+  credentials for any notification channels that should be re-enabled.
 - `adapter-uat` connected real local PostgreSQL 18 and Dameng 8 and read native
   metrics. `oracle-adapter-uat` separately connected real Oracle 19c and read
   native metrics after its listener service was restored.
@@ -84,7 +89,11 @@ The current verification document is authoritative and remains NO-GO.
    Microsoft's SMTP service: its resolver returns reserved address `198.18.3.84`
    with no SMTP greeting. The application now supports encrypted OAuth refresh
    tokens, atomic rotated-token persistence, and XOAUTH2 SMTP; run the harness from an egress-enabled host after
-   completing Outlook.com's OAuth2/Modern Auth configuration.
+   completing Outlook.com's OAuth2/Modern Auth configuration. The authorized
+   Feishu test is also blocked in this environment: `open.feishu.cn` resolves
+   to reserved `198.18.3.98`, which outbound policy correctly rejects before
+   dispatch. The configured Feishu channel remains disabled to avoid replaying
+   historical alerts; use an egress-enabled host for one controlled test first.
 3. ME/DR/TG/OPT rows marked `Mapped only` or `Partial` in
    `139-VERIFICATION.md` need behavioral evidence before any GO decision.
 4. Run the final hosted release gate after changes and update the evidence matrix
