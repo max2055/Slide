@@ -394,6 +394,8 @@ export const en: TranslationMap = {
   },
   login: {
     subtitle: "Gateway Dashboard",
+    username: "Username",
+    password: "Password",
     passwordPlaceholder: "optional",
   },
   chat: {

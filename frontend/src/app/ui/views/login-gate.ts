@@ -54,7 +54,7 @@ export function renderLoginGate(state: AppViewState) {
         </div>
         <div class="login-gate__form">
           <label class="field">
-            <span>${t("overview.access.username")}</span>
+            <span>${t("login.username")}</span>
             <input
               type="text"
               autocomplete="username"
@@ -73,7 +73,7 @@ export function renderLoginGate(state: AppViewState) {
             />
           </label>
           <label class="field">
-            <span>${t("overview.access.password")}</span>
+            <span>${t("login.password")}</span>
             <div class="login-gate__secret-row">
               <input
                 type=${state.loginShowGatewayPassword ? "text" : "password"}

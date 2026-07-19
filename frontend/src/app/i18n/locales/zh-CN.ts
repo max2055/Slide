@@ -406,6 +406,8 @@ export const zh_CN: TranslationMap = {
   },
   login: {
     subtitle: "数据库运维助手",
+    username: "用户名",
+    password: "密码",
     usernamePlaceholder: "用户名",
     passwordPlaceholder: "可选",
   },
