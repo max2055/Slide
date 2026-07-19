@@ -22,7 +22,7 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
 ## Current Evidence
 
 - `bash scripts/qualification/run-existing-mysql.sh bootstrap-upgrade`
-  passed: 48 migrations, repeat initialization, schema and ledger invariants.
+  passed: 49 migrations, repeat initialization, schema and ledger invariants.
 - `failover`, `backup-restore`, and `stability` scenarios passed against the
   existing MySQL 9.6 container. Backup recovery requires
   `mysqldump --single-transaction --set-gtid-purged=OFF` because GTIDs are
@@ -46,6 +46,10 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   enabled channel receives only alerts created from that boundary forward; both
   the durable scheduler and delivery worker reject older alerts. This closes the
   observed historical-notification retry storm without weakening outbound policy.
+- Migration 048 restores `health_check_history.dimensions`, a historical schema
+  omission that caused runtime health-check persistence to fail. Empty and
+  repeated bootstrap now verifies this 49-migration contract on both MySQL
+  containers.
 - `workflow-catalog` now runs every registered durable workflow handler in an
   isolated empty control plane and reads each terminal completion from MySQL,
   including the persisted `report.notify` unavailable-target skip audit. It

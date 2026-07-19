@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS `health_check_history` (
   `instance_id` INT UNSIGNED NOT NULL,
   `health_score` INT NOT NULL COMMENT '健康分数 0-100',
   `status` ENUM('healthy', 'warning', 'critical') NOT NULL,
+  `dimensions` JSON DEFAULT NULL COMMENT '健康评分维度',
   `checks` JSON NOT NULL COMMENT '详细检查项',
   `issues` JSON DEFAULT NULL COMMENT '发现的问题',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

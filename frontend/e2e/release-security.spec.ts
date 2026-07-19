@@ -344,11 +344,12 @@ test('approval cancellation and retry keep the request attached to the current a
   expect(instance.status()).toBe(200);
   const { id: instanceId } = await instance.json();
   try {
+    const sqlText = 'UPDATE qualification_approval_counter SET value = value + 1 WHERE id = 1';
     const submitted = await page.request.post('/api/approval/submit', {
       headers: { ...headers, 'Idempotency-Key': `qualification-approval-retry-${Date.now()}` },
       data: {
         instance_id: instanceId,
-        sql_text: 'UPDATE qualification_approval_counter SET value = value + 1 WHERE id = 1',
+        sql_text: sqlText,
         database_name: 'db_ops_ai_qualification',
       },
     });

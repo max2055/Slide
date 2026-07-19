@@ -9,6 +9,7 @@ const requiredColumns: Record<string, string[]> = {
   chat_session_shares: ['id', 'session_id', 'granted_by', 'recipient_user_id'],
   llm_providers: ['id', 'name', 'deployment_type', 'api_format'],
   ai_analysis: ['id', 'analysis_type', 'execution_trace', 'analysis_envelope'],
+  health_check_history: ['id', 'instance_id', 'health_score', 'status', 'dimensions', 'checks'],
 };
 
 const requiredIndexes: Array<[string, string]> = [

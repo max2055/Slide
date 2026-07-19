@@ -24,6 +24,7 @@ class FakePool {
       ...['id', 'session_id', 'granted_by', 'recipient_user_id'].map((column_name) => ({ table_name: 'chat_session_shares', column_name })),
       ...['id', 'name', 'deployment_type', 'api_format'].map((column_name) => ({ table_name: 'llm_providers', column_name })),
       ...['id', 'analysis_type', 'execution_trace', 'analysis_envelope'].map((column_name) => ({ table_name: 'ai_analysis', column_name })),
+      ...['id', 'instance_id', 'health_score', 'status', 'dimensions', 'checks'].map((column_name) => ({ table_name: 'health_check_history', column_name })),
     ]];
     if (sql.includes('information_schema.STATISTICS')) return [[
       { table_name: 'refresh_tokens', index_name: 'idx_rt_user_session' },
