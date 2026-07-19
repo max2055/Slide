@@ -73,11 +73,11 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | TG-02 | Partial | Multi-actor, SQL concurrency, XSS, and revocation E2E exist; complete adversarial matrix is incomplete. |
 | TG-03 | Verified | Current migration ledger and schema invariants run against a real empty MySQL database. |
 | TG-04 | Partial | Security and critical-path Playwright suites run in a managed environment; required user stories are not all represented. |
-| TG-05 | Mapped only | Capability matrix is indexed; no current compatibility UAT report. |
+| TG-05 | Partial | Current behavior evidence includes MySQL browser connection/reload, native realtime metrics, scheduler persistence, and alert evaluation; isolated adapter UAT also connected real local PostgreSQL 18, Dameng 8, and Oracle 19c through `databaseService` and read native realtime metrics. Cross-adapter report, alert, query, approval, and failure-recovery UAT remains incomplete. |
 | TG-06 | Partial | Qualification matrix validates 37 mappings, but many are not behavioral evidence. |
-| OPT-01 | Mapped only | Build optimization finding has not been requalified in this audit. |
-| OPT-02 | Mapped only | Navigation cleanup finding has not been requalified in this audit. |
-| OPT-03 | Mapped only | DTO redaction unit coverage is indexed; no separate current artifact/log scan. |
+| OPT-01 | Partial | Current production frontend build succeeds but reports dynamic-import and 2.75 MB main-chunk warnings. No performance-budget or bundle-optimization closure is claimed. |
+| OPT-02 | Partial | Managed browser regression proves the removed `/system` and `/appearance` paths resolve to `/chat`; a complete navigation/accessibility audit remains unqualified. |
+| OPT-03 | Partial | DTO redaction unit coverage is current, and managed browser/API evidence confirms instance and notification credential-bearing fields are not rendered or returned. A separate release artifact/log scan remains unqualified. |
 
 ## Decision
 
