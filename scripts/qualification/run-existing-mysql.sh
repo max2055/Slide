@@ -140,10 +140,8 @@ if [[ "$scenario" == "workflow-catalog" ]]; then
   # Exercise the real process-level worker registration and dispatch path. The
   # isolated database has no resources/channels, so these controlled jobs
   # cannot make external calls. Ports are deliberately outside 3000/5173.
-  for job_type in capacity.collect baseline.cleanup alert.evaluate; do
-    job_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
-    mysql_exec "$database" -e "INSERT INTO workflow_jobs (id, job_type, schema_version, payload, idempotency_key, max_attempts, available_at) VALUES ('$job_id', '$job_type', 1, '{}', 'qualification-$job_type-$run_id', 1, NOW())"
-  done
+  job_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+  mysql_exec "$database" -e "INSERT INTO workflow_jobs (id, job_type, schema_version, payload, idempotency_key, max_attempts, available_at) VALUES ('$job_id', 'alert.evaluate', 1, '{}', 'qualification-alert.evaluate-$run_id', 1, NOW())"
   log="$(mktemp "${TMPDIR:-/tmp}/slide-qualification-workflow.XXXXXX.log")"
   env NODE_ENV=development PORT=3004 AGENT_WS_PORT=28891 DB_HOST="$host" DB_PORT="$port" DB_USER="$user" DB_PASSWORD="$password" DB_NAME="$database" \
     JWT_SECRET_KEY=qualification-jwt-secret-2026-07-19-long ENCRYPTION_KEY=qualification-encryption-secret-2026-07-19 INITIAL_ADMIN_USERNAME=qualification INITIAL_ADMIN_PASSWORD=qualification \
