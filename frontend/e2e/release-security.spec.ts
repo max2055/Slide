@@ -224,6 +224,38 @@ test('direct SQL execution rejects write, DDL, and multi-statement input before 
   }
 });
 
+test('adapter capability contract rejects unsupported database types before persistence', async ({ page }) => {
+  const login = await page.request.post('/api/auth/login', {
+    data: { username: 'admin', password: 'Tpam1234' },
+  });
+  expect(login.status()).toBe(200);
+  const headers = { Authorization: `Bearer ${(await login.json()).token}` };
+  const capabilities = await page.request.get('/api/adapters/capabilities', { headers });
+  expect(capabilities.status()).toBe(200);
+  const adapters = (await capabilities.json()).adapters;
+  expect(adapters).toEqual(expect.arrayContaining([
+    expect.objectContaining({ dbType: 'mysql', creatable: true }),
+    expect.objectContaining({ dbType: 'mongodb', creatable: false, state: 'unsupported' }),
+    expect.objectContaining({ dbType: 'redis', creatable: false, state: 'unsupported' }),
+    expect.objectContaining({ dbType: 'elasticsearch', creatable: false, state: 'unsupported' }),
+  ]));
+  const rejected = await page.request.post('/api/database/instances', {
+    headers,
+    data: {
+      name: `qualification-unsupported-${Date.now()}`,
+      environment: 'testing',
+      db_type: 'mongodb',
+      host: 'example.invalid',
+      port: 27017,
+      username: 'qualification',
+      password: 'qualification-password',
+      database_name: 'qualification',
+    },
+  });
+  expect(rejected.status()).toBe(400);
+  expect((await rejected.json()).error).toBe('DATABASE_TYPE_UNSUPPORTED:mongodb');
+});
+
 test('concurrent approval reviews execute a write exactly once', async ({ page }) => {
   test.setTimeout(30_000);
   const login = await page.request.post('/api/auth/login', {
