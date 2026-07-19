@@ -32,6 +32,16 @@ describe('mysql workflow store', () => {
     expect(statements[1].sql).toContain('fencing_token = ?');
     expect(statements[1].sql).toContain('lease_expires_at > NOW()');
   });
+
+  it('reclaims an expired running job after a worker crash', async () => {
+    const statements: Array<{ sql: string; values?: unknown[] }> = [];
+    const store = new MysqlWorkflowStore(() => ({ execute: async (sql, values) => {
+      statements.push({ sql, values });
+      return [sql.startsWith('SELECT') ? [] : { affectedRows: 1 }] as any;
+    } }));
+    await store.claim('worker-b', 30);
+    expect(statements[0].sql).toContain("state IN ('queued', 'retry', 'running')");
+  });
 });
 
 describe('lease, fencing and dead letter', () => {

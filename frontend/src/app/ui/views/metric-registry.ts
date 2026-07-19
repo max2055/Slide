@@ -38,10 +38,10 @@ export class MetricRegistryViewer extends LitElement {
 
     :host { display: block; }
     .page { padding: 0; }
-    .toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-elevated); border-radius: var(--radius-md); }
+    .toolbar { display: flex; align-items: center; gap: var(--space-md); padding: var(--space-sm) var(--space-md); border-bottom: 1px solid var(--border); background: var(--bg-elevated); border-radius: var(--radius-md); }
     .toolbar .spacer { flex: 1; }
-    .filter-select { padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; background: var(--card); color: var(--text); }
-    .count { font-size: 12px; color: var(--muted); }
+    .filter-select { padding: var(--space-xs) var(--space-sm); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-sm); background: var(--card); color: var(--text); }
+    .count { font-size: var(--text-sm); color: var(--muted); }
 
     /* Table */
     .table-wrap { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); overflow: hidden; }

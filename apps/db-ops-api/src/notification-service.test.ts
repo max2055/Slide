@@ -1,0 +1,43 @@
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('./security/outbound-policy.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./security/outbound-policy.js')>();
+  return { ...actual, resolveOutboundTarget: vi.fn() };
+});
+
+import { NotificationService } from './notification-service.js';
+import { resolveOutboundTarget } from './security/outbound-policy.js';
+
+const channel = {
+  id: 1,
+  name: 'qualification webhook',
+  type: 'webhook' as const,
+  enabled: true,
+  config: { webhook_url: 'https://hooks.example.com/report' },
+  created_at: new Date('2026-07-19T00:00:00.000Z'),
+  updated_at: new Date('2026-07-19T00:00:00.000Z'),
+};
+
+describe('NotificationService outbound delivery', () => {
+  it('records a successful 2xx response from a verified, pinned target', async () => {
+    vi.mocked(resolveOutboundTarget).mockResolvedValue({
+      url: new URL(channel.config.webhook_url), addresses: ['203.0.113.10'],
+    });
+    const service = new NotificationService();
+    const post = vi.spyOn(service as any, 'postJsonToVerifiedTarget').mockResolvedValue({ statusCode: 204, body: '' });
+
+    await expect(service.send(channel, { type: 'report', reportId: 7 })).resolves.toEqual({ success: true });
+    expect(post).toHaveBeenCalledWith(channel.config.webhook_url, ['203.0.113.10'], { type: 'report', reportId: 7 });
+  });
+
+  it('does not follow redirects from a verified target', async () => {
+    vi.mocked(resolveOutboundTarget).mockResolvedValue({
+      url: new URL(channel.config.webhook_url), addresses: ['203.0.113.10'],
+    });
+    const service = new NotificationService();
+    vi.spyOn(service as any, 'postJsonToVerifiedTarget').mockResolvedValue({ statusCode: 302, body: '' });
+
+    await expect(service.send(channel, { type: 'report', reportId: 7 }))
+      .resolves.toEqual({ success: false, error: 'OUTBOUND_REDIRECT_DENIED' });
+  });
+});

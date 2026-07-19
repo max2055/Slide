@@ -1,4 +1,4 @@
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
@@ -8,6 +8,10 @@ import "./../components/alert-list.js";
 import "./../components/alert-detail-modal.js";
 import "./../components/alert-rule-editor.js";
 import "./../components/alert-analysis-viewer.js";
+import "./../components/app-card.js";
+import "./../components/app-dialog.js";
+import "./../components/app-empty-state.js";
+import "./../components/app-form-field.js";
 
 interface Alert {
   id: number;
@@ -60,6 +64,15 @@ interface AlertRule {
   end_time?: string;
   _days?: string | number[];
   duration_minutes?: number;
+}
+
+interface NotificationDeadLetter {
+  id: string;
+  type: string;
+  payload: { alertId?: number; channelId?: number };
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
 }
 
 @customElement("alerts-page")
@@ -567,7 +580,14 @@ export class AlertsPage extends LitElement {
   private readonly maxPollRetries = 20;  // 60 seconds max at 3s interval
 
   // Tab state
-  @state() private activeAlertTab: 'alerts' | 'rules' | 'escalation' | 'maintenance' | 'silence' | 'baselines' = 'alerts';
+  @state() private activeAlertTab: 'alerts' | 'rules' | 'escalation' | 'maintenance' | 'silence' | 'baselines' | 'notifications' = 'alerts';
+
+  // Durable notification recovery state
+  @state() private notificationDeadLetters: NotificationDeadLetter[] = [];
+  @state() private notificationDeadLettersLoading = false;
+  @state() private replayingNotification: NotificationDeadLetter | null = null;
+  @state() private notificationReplayReason = '';
+  @state() private notificationReplaySaving = false;
 
   // Rules tab state
   @state() private rules: AlertRule[] = [];
@@ -634,6 +654,7 @@ export class AlertsPage extends LitElement {
       { key: 'maintenance' as const, label: '维护窗口' },
       { key: 'silence' as const, label: '静默期' },
       { key: 'baselines' as const, label: '基线' },
+      { key: 'notifications' as const, label: '通知恢复' },
     ];
 
     return html`
@@ -668,6 +689,9 @@ export class AlertsPage extends LitElement {
       case 'baselines':
         if (this.baselines.length === 0) this.loadBaselines();
         break;
+      case 'notifications':
+        void this.loadNotificationDeadLetters();
+        break;
     }
   }
 
@@ -697,6 +721,8 @@ export class AlertsPage extends LitElement {
         return this._renderSilence();
       case 'baselines':
         return this._renderBaselines();
+      case 'notifications':
+        return this._renderNotificationRecovery();
       default:
         return this._renderAlertsTab();
     }
@@ -858,6 +884,76 @@ export class AlertsPage extends LitElement {
         @alert-page-change=${(e: CustomEvent) => { this.page = e.detail.page; this.loadAlerts(); }}
         @alert-list-tab-change=${(e: CustomEvent) => { this.activeListTab = e.detail.tab; this.page = 0; this.loadAlerts(); }}>
       </alert-list>
+    `;
+  }
+
+  private async loadNotificationDeadLetters() {
+    this.notificationDeadLettersLoading = true;
+    try {
+      const response = await authFetch('/api/notification/dead-letters?limit=100');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      this.notificationDeadLetters = await response.json();
+    } catch (error: any) {
+      showToast(`加载通知死信失败: ${error.message}`, 'error');
+    } finally {
+      this.notificationDeadLettersLoading = false;
+    }
+  }
+
+  private async _replayNotificationDeadLetter() {
+    const job = this.replayingNotification;
+    const reason = this.notificationReplayReason.trim();
+    if (!job || !reason) return;
+    this.notificationReplaySaving = true;
+    try {
+      const response = await authFetch(`/api/notification/jobs/${encodeURIComponent(job.id)}/replay`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error || `HTTP ${response.status}`);
+      }
+      this.replayingNotification = null;
+      this.notificationReplayReason = '';
+      showToast('通知任务已重新入队', 'success');
+      await this.loadNotificationDeadLetters();
+    } catch (error: any) {
+      showToast(`重放失败: ${error.message}`, 'error');
+    } finally {
+      this.notificationReplaySaving = false;
+    }
+  }
+
+  private _renderNotificationRecovery() {
+    return html`
+      <app-card variant="default">
+        <div slot="header">通知死信队列</div>
+        ${this.notificationDeadLettersLoading ? html`<div class="loading">加载通知投递记录...</div>` : this.notificationDeadLetters.length ? html`
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>任务</th><th>告警 / 渠道</th><th>尝试</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead>
+              <tbody>${this.notificationDeadLetters.map((job) => html`
+                <tr>
+                  <td><code>${job.id}</code></td>
+                  <td>${job.payload.alertId ?? '—'} / ${job.payload.channelId ?? '—'}</td>
+                  <td>${job.attempts}</td>
+                  <td>${job.lastError || '—'}</td>
+                  <td>${new Date(job.createdAt).toLocaleString('zh-CN')}</td>
+                  <td><button class="btn-primary" @click=${() => { this.replayingNotification = job; this.notificationReplayReason = ''; }}>重放</button></td>
+                </tr>
+              `)}</tbody>
+            </table>
+          </div>
+        ` : html`<app-empty-state title="没有待重放的通知" description="失败投递达到重试上限后会显示在这里。"></app-empty-state>`}
+      </app-card>
+      ${this.replayingNotification ? html`
+        <app-dialog .open=${true} .closeOnOverlay=${false} size="sm" title="重放通知任务" @app-dialog-close=${() => { this.replayingNotification = null; this.notificationReplayReason = ''; }}>
+          <app-form-field label="重放原因" required><textarea id="notification-replay-reason" class="note-input" .value=${this.notificationReplayReason} @input=${(event: Event) => { this.notificationReplayReason = (event.target as HTMLTextAreaElement).value; }}></textarea></app-form-field>
+          <div slot="footer"><button class="btn" @click=${() => { this.replayingNotification = null; this.notificationReplayReason = ''; }}>取消</button><button class="btn-primary" .disabled=${this.notificationReplaySaving || !this.notificationReplayReason.trim()} @click=${this._replayNotificationDeadLetter}>确认重放</button></div>
+        </app-dialog>
+      ` : nothing}
     `;
   }
 

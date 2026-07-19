@@ -20,15 +20,38 @@ export class MysqlWorkflowStore implements WorkflowStore {
       [input.id, input.type, input.schemaVersion, JSON.stringify(input.payload), input.idempotencyKey, input.maxAttempts ?? 5, input.availableAt ?? new Date()],
     );
   }
+  async replayDeadLetter(jobId: string): Promise<boolean> {
+    const [result] = await this.pool().execute<{ affectedRows: number }>(
+      `UPDATE workflow_jobs SET state = 'queued', attempts = 0, available_at = NOW(),
+       lease_owner = NULL, lease_expires_at = NULL, last_error = NULL
+       WHERE id = ? AND state = 'dead_letter'`, [jobId],
+    );
+    return Number(result.affectedRows) === 1;
+  }
+  async isDeadLetter(jobId: string): Promise<boolean> {
+    const [rows] = await this.pool().execute<Array<{ id: string }>>(
+      "SELECT id FROM workflow_jobs WHERE id = ? AND state = 'dead_letter' LIMIT 1", [jobId],
+    );
+    return rows.length === 1;
+  }
+  async listDeadLetters(limit = 50): Promise<Array<{ id: string; type: string; payload: Record<string, unknown>; attempts: number; lastError: string | null; createdAt: Date | string }>> {
+    const safeLimit = Math.min(Math.max(Number.isFinite(limit) ? Math.floor(limit) : 50, 1), 200);
+    const [rows] = await this.pool().execute<Array<any>>(
+      `SELECT id, job_type AS type, payload, attempts, last_error AS lastError, created_at AS createdAt
+       FROM workflow_jobs WHERE state = 'dead_letter' AND job_type = 'notification.deliver'
+       ORDER BY updated_at DESC LIMIT ${safeLimit}`,
+    );
+    return rows.map((row) => ({ ...row, payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload }));
+  }
   async claim(workerId: string, leaseSeconds: number): Promise<ClaimedJob | null> {
     const pool = this.pool();
     await pool.execute(
       `UPDATE workflow_jobs SET state = 'running', attempts = attempts + 1, lease_owner = ?,
        lease_expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND), fencing_token = fencing_token + 1
        WHERE id = (SELECT id FROM (SELECT id FROM workflow_jobs
-         WHERE state IN ('queued', 'retry') AND available_at <= NOW() AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
+         WHERE state IN ('queued', 'retry', 'running') AND available_at <= NOW() AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
          ORDER BY available_at, created_at LIMIT 1) candidate)
-       AND state IN ('queued', 'retry') AND (lease_expires_at IS NULL OR lease_expires_at < NOW())`,
+       AND state IN ('queued', 'retry', 'running') AND (lease_expires_at IS NULL OR lease_expires_at < NOW())`,
       [workerId, leaseSeconds],
     );
     const [rows] = await pool.execute<Array<any>>(

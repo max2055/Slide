@@ -48,12 +48,23 @@ class DbConnectionManager {
         connectionLimit: 10,
         waitForConnections: true,
         charset: 'utf8mb4',
-        timezone: '+08:00',
+        // Persist instants in UTC so Date-backed workflow availability and
+        // lease predicates remain comparable with MySQL NOW() across hosts.
+        timezone: 'Z',
         decimalNumbers: true,
+      });
+      // `timezone: 'Z'` controls mysql2 value conversion only. MySQL NOW()
+      // still follows the server session timezone unless we set it explicitly.
+      // Keep persisted schedule and lease timestamps on the same UTC timeline.
+      this.pool.on('connection', (connection) => {
+        (connection as any).query("SET time_zone = '+00:00'", (error: unknown) => {
+          if (error) console.error('Failed to set MySQL session timezone:', error);
+        });
       });
 
       // 测试连接
       const connection = await this.pool.getConnection();
+      await connection.query("SET time_zone = '+00:00'");
       await connection.ping();
       connection.release();
 

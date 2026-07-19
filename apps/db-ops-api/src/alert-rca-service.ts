@@ -18,6 +18,7 @@ const pendingAnalyses = new Set<string>();
 interface AlertDetails {
   id: number;
   instance_id: number | null;
+  server_id: number | null;
   alert_type: string;
   level: string;
   title: string;
@@ -51,14 +52,17 @@ class AlertRCAService {
       return { success: false, error: `告警级别 ${alert.level} 不触发 RCA（仅 warning/error/critical）` };
     }
 
-    // c. 验证 instance_id
-    if (!alert.instance_id) {
-      return { success: false, error: '告警无关联实例，无法分析' };
+    // c. An RCA subject is exactly one managed resource.
+    const instanceId = alert.instance_id ?? undefined;
+    const serverId = alert.server_id ?? undefined;
+    if ((instanceId ? 1 : 0) + (serverId ? 1 : 0) !== 1) {
+      return { success: false, error: '告警无有效资源主体，无法分析' };
     }
-    const instanceId = alert.instance_id;
+    const subjectType = serverId ? 'server' : 'instance';
+    const subjectId = serverId ?? instanceId!;
 
     // d. Build cache key and in-memory lock: prevent concurrent duplicate analyses
-    const cacheKey = `alert:${alertId}:${instanceId}`;
+    const cacheKey = `alert:${alertId}:${subjectType}:${subjectId}`;
     if (pendingAnalyses.has(cacheKey)) {
       return { success: false, error: '分析正在创建中，请稍后重试' };
     }
@@ -108,6 +112,7 @@ class AlertRCAService {
       const createResult = await aiAnalysisDatabaseService.createAnalysis({
         analysis_type: 'alert_rca',
         instance_id: instanceId,
+        server_id: serverId,
         related_id: alertId,
         trigger_type: trigger,
         cache_key: cacheKey,
@@ -117,7 +122,7 @@ class AlertRCAService {
         return { success: false, error: createResult.error };
       }
       const analysisId = createResult.analysisId!;
-      const sessionKey = `rca-${alertId}-${analysisId}`;
+      const sessionKey = `rca-${subjectType}-${alertId}-${analysisId}`;
 
       // f2. 回填 session_key
       await aiAnalysisDatabaseService.setSessionKey(analysisId, sessionKey);
@@ -128,8 +133,9 @@ class AlertRCAService {
       // h. 通过 Agent 执行分析（await 确保 session 先创建）
       await dispatchOrReuse({
         type: 'alert_rca',
-        cacheKey: `rca:${alertId}:${instanceId}`,
+        cacheKey: `rca:${alertId}:${subjectType}:${subjectId}`,
         instanceId,
+        serverId,
         sessionKey,
         triggerType: trigger,
         existingAnalysisId: analysisId,
@@ -139,7 +145,7 @@ class AlertRCAService {
 - 标题：${alert.title || '未知'}
 - 级别：${alert.level || 'N/A'}
 - 类型：${alert.alert_type || 'N/A'}
-- 实例ID：${instanceId}
+- 资源主体：${subjectType} #${subjectId}
 - 描述：${alert.message || '无'}
 ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ?? '?'}（阈值: ${alert.threshold_value ?? '?'}）` : ''}
 - 发生时间：${alert.created_at instanceof Date ? alert.created_at.toISOString() : String(alert.created_at)}
@@ -330,7 +336,7 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, instance_id, alert_type, level, title, message,
+        `SELECT id, instance_id, server_id, alert_type, level, title, message,
                 metric_name, metric_value, threshold_value, created_at
          FROM alerts WHERE id = ?`,
         [alertId]
@@ -341,6 +347,7 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
       return {
         id: row.id,
         instance_id: row.instance_id,
+        server_id: row.server_id,
         alert_type: row.alert_type,
         level: row.level,
         title: row.title,

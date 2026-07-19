@@ -92,7 +92,8 @@ export async function loadPlatformTools(): Promise<ToolRegistry> {
   return registry;
 }
 
-function actorBoundRegistry(actor: ActorContext): ToolRegistry {
+/** Build the per-actor registry used by the production DirectAdapter. */
+export function createActorBoundToolRegistry(actor: ActorContext): ToolRegistry {
   const registry = new ToolRegistry();
   for (const anyTool of platformTools) {
     // Delegation inherits no ActorContext in the current subagent transport.
@@ -171,7 +172,7 @@ async function createDirectAdapter(): Promise<DirectAdapter> {
 
   const adapter = new DirectAdapter({
     tools,
-    toolsForActor: actorBoundRegistry,
+    toolsForActor: createActorBoundToolRegistry,
     llmProvider: provider,
   });
 

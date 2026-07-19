@@ -5,6 +5,7 @@ import { defineConfig } from 'vite'
 import { fileURLToPath, URL } from 'node:url'
 
 const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://localhost:3000'
+const agentWsProxyTarget = process.env.VITE_AGENT_WS_PROXY_TARGET || 'http://localhost:28888'
 
 export default defineConfig({
   plugins: [],
@@ -32,7 +33,7 @@ export default defineConfig({
         changeOrigin: true
       },
       '/__slide': {
-        target: 'http://localhost:28888',
+        target: agentWsProxyTarget,
         changeOrigin: true
       }
     }

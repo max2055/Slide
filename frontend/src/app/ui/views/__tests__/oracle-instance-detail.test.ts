@@ -1,14 +1,14 @@
 /**
  * Oracle Instance Detail -- source structure test (GAP-10 / CR-03)
  *
- * Verifies that instance-detail.ts uses null-safe checks for
+ * Verifies that instance-overview-tab.ts uses null-safe checks for
  * tablespace_usage_percent: != null (not !== undefined) and ?? 0 guard.
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 
-const INSTANCE_DETAIL_PATH = path.resolve(__dirname, '../instance-detail.ts');
+const INSTANCE_DETAIL_PATH = path.resolve(__dirname, '../../components/instance-overview-tab.ts');
 const source = fs.readFileSync(INSTANCE_DETAIL_PATH, 'utf-8');
 
 describe('GAP-10 / CR-03: Null-safe tablespace_usage_percent rendering', () => {

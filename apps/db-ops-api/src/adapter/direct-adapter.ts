@@ -344,6 +344,20 @@ export class DirectAdapter implements IAgentEngine {
           return;
         }
 
+        // A connection may outlive a user disablement or role/session change.
+        // Revalidate before every command so revocation takes effect without
+        // waiting for the heartbeat interval.
+        try {
+          connectionActor = await this.actorContexts.revalidateActor(
+            connectionActor,
+            randomUUID(),
+          );
+          (ws as any)._actorContext = connectionActor;
+        } catch {
+          closeAfterAuthFailure(4001, 'Unauthorized');
+          return;
+        }
+
         switch (msg.type) {
           case 'chat.send': {
             if ((msg as any).protocolVersion === 2) {

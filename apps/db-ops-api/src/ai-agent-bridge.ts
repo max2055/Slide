@@ -26,11 +26,14 @@ const DEFAULT_TTL: Record<string, number> = {
 };
 
 export async function dispatchOrReuse(params: {
-  type: string; cacheKey: string; instanceId: number;
+  type: string; cacheKey: string; instanceId?: number; serverId?: number;
   sessionKey: string; userMessage: string; systemPrompt?: string;
   triggerType?: 'manual' | 'auto'; onCacheHit?: (result: any) => void;
   existingAnalysisId?: number;
 }): Promise<{ analysisId: number; cached: boolean; success?: boolean; status?: string }> {
+  const hasInstance = Number.isSafeInteger(params.instanceId) && Number(params.instanceId) > 0;
+  const hasServer = Number.isSafeInteger(params.serverId) && Number(params.serverId) > 0;
+  if (hasInstance === hasServer) throw new Error('ANALYSIS_SUBJECT_INVALID');
   const ttl = DEFAULT_TTL[params.type] ?? 30 * 60 * 1000;
   if (ttl !== Infinity) {
     const existing = await aiAnalysisDatabaseService.findRecentCompleted(params.cacheKey, ttl);
@@ -45,7 +48,7 @@ export async function dispatchOrReuse(params: {
     analysisId = params.existingAnalysisId;
   } else {
     const created = await aiAnalysisDatabaseService.createAnalysis({
-      analysis_type: params.type as any, instance_id: params.instanceId,
+      analysis_type: params.type as any, instance_id: params.instanceId, server_id: params.serverId,
       trigger_type: params.triggerType ?? 'manual', cache_key: params.cacheKey,
       session_key: params.sessionKey,
     } as any);

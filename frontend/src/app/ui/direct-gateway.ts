@@ -48,6 +48,9 @@ export type DirectGatewayClientOptions = {
 };
 
 const DEFAULT_PORT = 28888;
+const configuredAdapterUrl = (import.meta as ImportMeta & { env?: { VITE_AGENT_WS_URL?: string } })
+  .env?.VITE_AGENT_WS_URL?.trim();
+const defaultAdapterUrl = () => configuredAdapterUrl || `ws://${typeof location !== 'undefined' ? location.hostname : 'localhost'}:${DEFAULT_PORT}`;
 export const MAX_RECONNECT_ATTEMPTS = 10;
 const INITIAL_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
@@ -65,7 +68,7 @@ export class DirectGatewayClient {
   private pendingMessages: Array<{ sessionKey?: string; message: string; messageId: string; idempotencyKey: string }> = [];
 
   constructor(opts: DirectGatewayClientOptions) {
-    this.url = opts.url ?? `ws://${typeof location !== 'undefined' ? location.hostname : 'localhost'}:${DEFAULT_PORT}`;
+    this.url = opts.url ?? defaultAdapterUrl();
     this.onEvent = opts.onEvent;
     this.onStateChange = opts.onStateChange;
   }
@@ -599,7 +602,7 @@ export function initChatClient(host: Record<string, unknown>): void {
   }
 
   const directClient = new DirectGatewayClient({
-    url: `ws://${typeof location !== 'undefined' ? location.hostname : 'localhost'}:28888`,
+    url: defaultAdapterUrl(),
     onEvent: (event) => {
       handleDirectAdapterEvent(host, event);
     },

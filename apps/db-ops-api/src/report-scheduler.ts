@@ -1,5 +1,6 @@
 import { CronTime } from 'cron';
 import type { ReportConfig } from './report-config-database-service.js';
+import type { WorkflowJobInput } from './workflows/worker-runtime.js';
 
 export interface ReportOccurrence { configId: number; occurrenceAt: Date; }
 export interface ReportOccurrenceStore {
@@ -7,6 +8,34 @@ export interface ReportOccurrenceStore {
   claim(occurrence: ReportOccurrence): Promise<boolean>;
   complete(occurrence: ReportOccurrence, reportId: number): Promise<void>;
   fail(occurrence: ReportOccurrence, error: Error): Promise<void>;
+}
+
+/** One durable scan per minute. Reusing the slot id makes restarts idempotent. */
+export function createReportScheduleJob(availableAt = new Date()): WorkflowJobInput {
+  const slot = Math.floor(availableAt.getTime() / 60_000);
+  return {
+    id: `report-schedule-${slot}`,
+    type: 'report.schedule',
+    schemaVersion: 1,
+    payload: {},
+    idempotencyKey: `report-schedule:${slot}`,
+    maxAttempts: 5,
+    availableAt,
+  };
+}
+
+export function createReportNotificationJob(reportId: number, channelId: number): WorkflowJobInput {
+  if (!Number.isSafeInteger(reportId) || reportId <= 0 || !Number.isSafeInteger(channelId) || channelId <= 0) {
+    throw new Error('REPORT_NOTIFICATION_JOB_INVALID');
+  }
+  return {
+    id: `report-notify-${reportId}-${channelId}`,
+    type: 'report.notify',
+    schemaVersion: 1,
+    payload: { reportId, channelId },
+    idempotencyKey: `report-notify:${reportId}:${channelId}`,
+    maxAttempts: 5,
+  };
 }
 
 export function nextReportOccurrence(config: Pick<ReportConfig, 'id' | 'cron' | 'created_at'>, last: Date | null, now: Date): ReportOccurrence | null {

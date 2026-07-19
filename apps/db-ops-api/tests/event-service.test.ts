@@ -78,6 +78,24 @@ describe('alert-event-service.ts', () => {
     expect(result.success).toBe(false);
   });
 
+  it('closeEvent requires a persisted recovery verification', async () => {
+    mockPool.execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]);
+    const { alertEventService } = await import('../src/alert-event-service');
+    await expect(alertEventService.closeEvent(1, 7)).resolves.toMatchObject({ success: false });
+    expect(mockPool.execute.mock.calls[0][0]).toContain('verification_passed_at IS NOT NULL');
+  });
+
+  it('records recovery verification before closing a resolved event', async () => {
+    mockPool.execute
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    const { alertEventService } = await import('../src/alert-event-service');
+    await expect(alertEventService.verifyRecovery(1, 'metric returned to normal', 7)).resolves.toMatchObject({ success: true });
+    await expect(alertEventService.closeEvent(1, 7)).resolves.toMatchObject({ success: true });
+  });
+
   it('getEventStats returns counters', async () => {
     mockPool.execute.mockResolvedValueOnce([[{
       total: 5, open: 1, investigating: 2, handled: 0, resolved: 1, closed: 1,

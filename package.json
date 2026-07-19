@@ -10,6 +10,7 @@
     "start": "pnpm --filter slide-api start",
     "build": "pnpm --filter slide-frontend build",
     "test": "pnpm -r test",
+    "qualification:matrix": "pnpm --filter slide-api exec tsx ../../tests/qualification/coverage-matrix.ts --validate",
     "lint": "oxlint",
     "format": "oxfmt"
   },

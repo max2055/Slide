@@ -18,6 +18,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter slide-api typecheck
+      - name: Verify qualification coverage
+        run: pnpm qualification:matrix
       - name: Run tests
         run: pnpm --filter slide-api test
 
@@ -41,3 +43,40 @@ jobs:
         run: pnpm --filter slide-frontend test
       - name: Build
         run: pnpm --filter slide-frontend build
+
+  agent-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter agent-core typecheck
+      - run: pnpm --filter agent-core test
+
+  recovery-qualification:
+    runs-on: ubuntu-latest
+    needs: [backend, agent-core]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Empty database and repeat startup
+        run: bash scripts/qualification/run-environment.sh bootstrap-upgrade
+      - name: Worker failover and fencing
+        run: bash scripts/qualification/run-environment.sh failover
+      - name: Backup and restore
+        run: bash scripts/qualification/run-environment.sh backup-restore
+      - name: Concurrent workflow stability
+        run: bash scripts/qualification/run-environment.sh stability

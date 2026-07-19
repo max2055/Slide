@@ -4,6 +4,8 @@ import { customElement, state } from "lit/decorators.js";
 import "../components/app-card.js";
 import "../components/app-badge.js";
 import "../components/app-empty-state.js";
+import "../components/app-dialog.js";
+import "../components/app-form-field.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
@@ -29,8 +31,10 @@ interface ReportConfig {
   name: string;
   cron: string;
   type: string;
-  instance_id: number;
+  instance_id: number | null;
+  server_id?: number | null;
   format: string;
+  notification_channel_ids?: number[];
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -326,6 +330,7 @@ export class ReportsPage extends LitElement {
   @state() private stats = { total: 0, completed: 0, running: 0, failed: 0 };
   @state() private instances: Array<{ id: number; name: string }> = [];
   @state() private servers: any[] = [];
+  @state() private notificationChannels: Array<{ id: number; name: string }> = [];
   @state() private selectedInstanceId: number | null = null;
   @state() private selectedTargetType: 'instance' | 'server' = 'instance';
   @state() private selectedServerId: number | null = null;
@@ -362,6 +367,7 @@ export class ReportsPage extends LitElement {
     this.loadStats();
     this.loadInstances();
     this.loadConfigs();
+    this.loadNotificationChannels();
   }
 
   private async loadInstances() {
@@ -396,6 +402,17 @@ export class ReportsPage extends LitElement {
     } catch (err: any) {
       showToast('Failed to load schedule config', 'error');
       this.configsLoading = false;
+    }
+  }
+
+  private async loadNotificationChannels() {
+    try {
+      const response = await authFetch('/api/notification/channels?enabled=true');
+      if (response.ok) {
+        this.notificationChannels = await response.json();
+      }
+    } catch {
+      this.notificationChannels = [];
     }
   }
 
@@ -486,6 +503,23 @@ export class ReportsPage extends LitElement {
           </div>
         </app-card>
 
+        <app-card variant="default">
+          <div slot="header" style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-md);">
+            <span>${icons['clock']} 定时报表</span>
+            <button class="btn-primary" @click=${this._openCreateDialog}>新建计划</button>
+          </div>
+          ${this.configsLoading ? html`<div class="loading"><div class="skeleton" style="width:100%;height:36px;"></div></div>` : this.configs.length ? html`
+            <div class="table-container"><table class="table"><thead><tr><th>名称</th><th>类型</th><th>目标</th><th>计划</th><th>下次运行</th><th>状态</th><th>操作</th></tr></thead><tbody>
+              ${this.configs.map(cfg => html`<tr>
+                <td class="report-title">${cfg.name}</td><td>${this._reportTypeLabel(cfg.type)}</td>
+                <td>${cfg.server_id ? `服务器 #${cfg.server_id}` : `实例 #${cfg.instance_id}`}</td>
+                <td><code>${cfg.cron}</code></td><td>${cfg.next_run ? this._formatTime(cfg.next_run) : '—'}</td>
+                <td><app-badge variant=${cfg.enabled ? 'ok' : 'neutral'}>${cfg.enabled ? '已启用' : '已停用'}</app-badge></td>
+                <td><div class="actions"><button class="action-btn" @click=${() => this._toggleConfig(cfg)}>${cfg.enabled ? '停用' : '启用'}</button><button class="action-btn" @click=${() => this._openEditDialog(cfg)}>编辑</button><button class="action-btn" @click=${() => this._confirmDelete(cfg)}>删除</button></div></td>
+              </tr>`)}
+            </tbody></table></div>` : html`<app-empty-state title="暂无定时报表" description="新建计划后，系统会在到期时生成并保存报表。"><div slot="icon">${icons['clock']}</div></app-empty-state>`}
+        </app-card>
+
         <!-- 历史报告卡片 -->
         <app-card variant="default">
           <div slot="header">
@@ -546,6 +580,7 @@ export class ReportsPage extends LitElement {
               `
           }
         </app-card>
+        ${this._renderConfigDialogs()}
       </div>
     `;
   }
@@ -584,8 +619,9 @@ export class ReportsPage extends LitElement {
       name: '',
       cron: '',
       type: 'health',
-      instance_id: undefined,
+      instance_id: undefined, server_id: undefined,
       format: 'html',
+      notification_channel_ids: [],
       enabled: true,
     };
   }
@@ -642,8 +678,8 @@ export class ReportsPage extends LitElement {
   }
 
   private async _saveConfig() {
-    const { name, cron, type, instance_id, format, enabled } = this.configForm;
-    if (!name || !cron || !type || !instance_id) {
+    const { name, cron, type, instance_id, server_id, format, enabled, notification_channel_ids } = this.configForm;
+    if (!name || !cron || !type || (!!instance_id === !!server_id)) {
       showToast('Please fill in all required fields', 'warning');
       return;
     }
@@ -653,7 +689,7 @@ export class ReportsPage extends LitElement {
         const res = await authFetch(`/api/reports/configs/${this.editingConfig.id}`, {
           method: 'PUT',
           headers: this.headers,
-          body: JSON.stringify({ name, cron, type, instance_id, format, enabled }),
+          body: JSON.stringify({ name, cron, type, instance_id, server_id, format, enabled, notification_channel_ids }),
         });
         if (!res.ok) {
           const err = await res.json();
@@ -663,7 +699,7 @@ export class ReportsPage extends LitElement {
         const res = await authFetch('/api/reports/configs', {
           method: 'POST',
           headers: this.headers,
-          body: JSON.stringify({ name, cron, type, instance_id, format, enabled }),
+          body: JSON.stringify({ name, cron, type, instance_id, server_id, format, enabled, notification_channel_ids }),
         });
         if (!res.ok) {
           const err = await res.json();
@@ -677,6 +713,22 @@ export class ReportsPage extends LitElement {
     } finally {
       this.saving = false;
     }
+  }
+
+  private _renderConfigDialogs() {
+    const set = (key: keyof ReportConfig, value: unknown) => { this.configForm = { ...this.configForm, [key]: value }; };
+    return html`
+      ${this.showConfigDialog ? html`<app-dialog .open=${true} size="md" .closeOnOverlay=${false} title=${this.editingConfig ? '编辑定时报表' : '新建定时报表'} @app-dialog-close=${() => this.showConfigDialog = false}>
+        <app-form-field label="名称" required><input class="field-input" .value=${this.configForm.name ?? ''} @input=${(e: Event) => set('name', (e.target as HTMLInputElement).value)}></app-form-field>
+        <app-form-field label="Cron 表达式" required hint="例如：0 0 9 * * *"><input class="field-input" .value=${this.configForm.cron ?? ''} @input=${(e: Event) => set('cron', (e.target as HTMLInputElement).value)}></app-form-field>
+        <app-form-field label="报表类型" required><select class="field-input" .value=${this.configForm.type ?? 'health'} @change=${(e: Event) => set('type', (e.target as HTMLSelectElement).value)}>${this.reportTypes.map(t => html`<option value=${t.type}>${t.title}</option>`)}</select></app-form-field>
+        <app-form-field label="目标类型" required><select class="field-input" .value=${this.configForm.server_id ? 'server' : 'instance'} @change=${(e: Event) => { const server = (e.target as HTMLSelectElement).value === 'server'; this.configForm = { ...this.configForm, instance_id: server ? undefined : this.instances[0]?.id, server_id: server ? this.servers[0]?.id : undefined, type: server ? 'server_health' : 'health' }; }}><option value="instance">数据库实例</option><option value="server">服务器</option></select></app-form-field>
+        ${this.configForm.server_id ? html`<app-form-field label="服务器" required><select class="field-input" .value=${String(this.configForm.server_id)} @change=${(e: Event) => set('server_id', Number((e.target as HTMLSelectElement).value))}>${this.servers.map(s => html`<option value=${s.id}>${s.host}</option>`)}</select></app-form-field>` : html`<app-form-field label="数据库实例" required><select class="field-input" .value=${String(this.configForm.instance_id ?? '')} @change=${(e: Event) => set('instance_id', Number((e.target as HTMLSelectElement).value))}>${this.instances.map(i => html`<option value=${i.id}>${i.name}</option>`)}</select></app-form-field>`}
+        <app-form-field label="通知渠道" hint="可选，报告完成后投递"><select class="field-input" multiple @change=${(e: Event) => set('notification_channel_ids', Array.from((e.target as HTMLSelectElement).selectedOptions).map((option) => Number(option.value)))}>${this.notificationChannels.map(channel => html`<option value=${channel.id} .selected=${(this.configForm.notification_channel_ids ?? []).includes(channel.id)}>${channel.name}</option>`)}</select></app-form-field>
+        <div slot="footer"><button class="btn" @click=${() => this.showConfigDialog = false}>取消</button><button class="btn-primary" ?disabled=${this.saving} @click=${this._saveConfig}>保存</button></div>
+      </app-dialog>` : ''}
+      ${this.showDeleteConfirm ? html`<app-dialog .open=${true} size="sm" title="删除定时报表" @app-dialog-close=${() => this.showDeleteConfirm = false}><p>删除 “${this.deletingConfig?.name}” 后无法恢复。</p><div slot="footer"><button class="btn" @click=${() => this.showDeleteConfirm = false}>取消</button><button class="btn-primary" @click=${this._deleteConfig}>删除</button></div></app-dialog>` : ''}
+    `;
   }
 
   private async _generateReport(type: string) {

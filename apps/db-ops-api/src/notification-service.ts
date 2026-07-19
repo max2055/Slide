@@ -10,7 +10,7 @@ import type { PendingAlert, NotificationChannel } from './notification-database-
 import { maintenanceWindowService } from './maintenance-window-service';
 import { resolveOutboundTarget, OutboundPolicyError } from './security/outbound-policy.js';
 
-class NotificationService {
+export class NotificationService {
   private pollingJob: CronJob | null = null;
   private running = false;
   private lastRun: Date | null = null;
@@ -148,6 +148,22 @@ class NotificationService {
     } catch (error) {
       console.error('轮询循环异常:', error);
     }
+  }
+
+  /** Sends one durable workflow delivery attempt. Failures intentionally
+   * propagate to WorkerRuntime so its persistent retry/dead-letter policy owns recovery. */
+  async deliverAlertToChannel(alert: PendingAlert, channel: NotificationChannel): Promise<void> {
+    if (!channel.enabled) return;
+    const message = this.buildMessage(channel.type, alert, alert.instance_name, alert.instance_host);
+    const result = await this.sendWithRetry(channel, message);
+    if (!result.success) throw new Error(result.error || 'NOTIFICATION_DELIVERY_FAILED');
+    const recorded = await notificationDatabaseService.recordNotification({
+      alert_id: alert.id,
+      channel_id: channel.id,
+      status: 'sent',
+      sent_at: new Date(),
+    });
+    if (!recorded.success) throw new Error(recorded.error || 'NOTIFICATION_AUDIT_WRITE_FAILED');
   }
 
   /**

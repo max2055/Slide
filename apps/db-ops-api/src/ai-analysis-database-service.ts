@@ -8,7 +8,9 @@ import { type AnalysisEnvelope, validateAnalysisEnvelope } from './analysis/anal
 export interface AiAnalysisRecord {
   id: number;
   analysis_type: 'topsql_analysis' | 'alert_rca' | 'fault_diagnosis' | 'capacity_prediction' | 'sql_audit';
-  instance_id: number;
+  instance_id: number | null;
+  target_type: 'instance' | 'server';
+  server_id: number | null;
   related_id: number | null;
   status: 'pending' | 'running' | 'completed' | 'failed';
   trigger_type: 'manual' | 'auto';
@@ -44,7 +46,8 @@ class AiAnalysisDatabaseService {
    */
   async createAnalysis(data: {
     analysis_type: string;
-    instance_id: number;
+    instance_id?: number;
+    server_id?: number;
     related_id?: number;
     trigger_type?: string;
     cache_key?: string;
@@ -52,6 +55,9 @@ class AiAnalysisDatabaseService {
     session_key?: string;
     cache_ttl_minutes?: number;
   }): Promise<{ success: boolean; analysisId?: number; error?: string }> {
+    const hasInstance = Number.isSafeInteger(data.instance_id) && Number(data.instance_id) > 0;
+    const hasServer = Number.isSafeInteger(data.server_id) && Number(data.server_id) > 0;
+    if (hasInstance === hasServer) return { success: false, error: 'ANALYSIS_SUBJECT_INVALID' };
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
@@ -60,11 +66,13 @@ class AiAnalysisDatabaseService {
     try {
       const [result] = await pool.execute(
         `INSERT INTO ai_analysis
-         (analysis_type, instance_id, related_id, status, trigger_type, cache_key, ttl_minutes, session_key, cache_ttl_minutes)
-         VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+         (analysis_type, target_type, instance_id, server_id, related_id, status, trigger_type, cache_key, ttl_minutes, session_key, cache_ttl_minutes)
+         VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
         [
           data.analysis_type,
-          data.instance_id,
+          hasServer ? 'server' : 'instance',
+          hasInstance ? data.instance_id : null,
+          hasServer ? data.server_id : null,
           data.related_id || null,
           data.trigger_type || 'manual',
           data.cache_key || null,

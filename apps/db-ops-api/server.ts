@@ -80,7 +80,8 @@ import { MigrationRunner } from './src/migrations/runner.js';
 import { WorkerLease } from './src/lifecycle/worker-lease.js';
 import { JobRegistry } from './src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.js';
-import { MysqlReportOccurrenceStore, ReportScheduler } from './src/report-scheduler.js';
+import { createNotificationDispatchJob, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
+import { createReportNotificationJob, createReportScheduleJob, MysqlReportOccurrenceStore, ReportScheduler } from './src/report-scheduler.js';
 import { assertCreatableDatabaseType, listAdapterCapabilities } from './src/adapters/capability-matrix.js';
 import { approvalService } from './src/approval-service.js';
 import { databaseLogService } from './src/database-log-service.js';
@@ -113,6 +114,8 @@ const JWT_EXPIRES_IN = '1h';
 const rbacService = new RbacService();
 const operationService = new PersistentOperationService(() => dbConnection.getPool() as any);
 const workflowWorkerId = randomUUID();
+// Set only after the control-plane database and worker registry are ready.
+let notificationWorkflowStore: MysqlWorkflowStore | undefined;
 
 function approvalOperationLifecycle(actorId: number) {
   return {
@@ -1570,7 +1573,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const rawIdempotency = request.headers['idempotency-key'];
       const idempotencyKey = typeof rawIdempotency === 'string' && rawIdempotency.length <= 128
         ? rawIdempotency
-        : user.requestId;
+        : randomUUID();
       const operation = await operationService.create({
         actorId: user.userId,
         origin: 'sql-console',
@@ -1630,7 +1633,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         resource: { type: 'database-instance', id: String(targetInstanceId) },
         commandType: classification.commandType,
         risk: classification.commandType === 'ddl' ? 'high' : 'medium',
-        idempotencyKey: typeof rawIdempotency === 'string' && rawIdempotency.length <= 128 ? rawIdempotency : user.requestId,
+        idempotencyKey: typeof rawIdempotency === 'string' && rawIdempotency.length <= 128 ? rawIdempotency : randomUUID(),
         correlationId: user.requestId,
       });
       if (operation.state !== 'queued') return reply.code(409).send({ reasonCode: 'OPERATION_ALREADY_EXISTS', operationId: operation.id, state: operation.state });
@@ -2480,14 +2483,14 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const body = request.body as any;
-        const { name, cron, type, instance_id, server_id, format, enabled } = body;
+        const { name, cron, type, instance_id, server_id, format, enabled, notification_channel_ids } = body;
 
         // Validate required fields
         if (!name || !cron || !type) {
           return reply.code(400).send({ error: '缺少必要参数：name, cron, type' });
         }
-        if (!server_id && instance_id === undefined) {
-          return reply.code(400).send({ error: 'instance_id 或 server_id 必须提供其一' });
+        if ((instance_id === undefined || instance_id === null) === (server_id === undefined || server_id === null)) {
+          return reply.code(400).send({ error: 'instance_id 或 server_id 必须且只能提供一个' });
         }
 
         const validTypes = ['health', 'performance', 'slow_query', 'capacity', 'server_health'];
@@ -2500,13 +2503,25 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(400).send({ error: `无效的输出格式：${format}，有效值：${validFormats.join(', ')}` });
         }
 
+        const channelIds = notification_channel_ids === undefined ? [] : notification_channel_ids;
+        if (!Array.isArray(channelIds) || channelIds.length > 50
+          || !channelIds.every((id: unknown) => Number.isSafeInteger(id) && Number(id) > 0)) {
+          return reply.code(400).send({ error: 'notification_channel_ids 必须为最多 50 个正整数' });
+        }
+        const uniqueChannelIds = [...new Set(channelIds.map(Number))];
+        for (const channelId of uniqueChannelIds) {
+          const channel = await notificationDatabaseService.getChannelById(channelId);
+          if (!channel?.enabled) return reply.code(400).send({ error: `通知渠道不可用: ${channelId}` });
+        }
+
         const result = await reportConfigService.createConfig({
           name,
           cron,
           type,
-          instance_id: Number(instance_id),
-          server_id: server_id ? Number(server_id) : undefined,
+          instance_id: instance_id == null ? null : Number(instance_id),
+          server_id: server_id == null ? undefined : Number(server_id),
           format: format || 'html',
+          notification_channel_ids: uniqueChannelIds,
           enabled: enabled !== undefined ? enabled : true,
         });
 
@@ -2547,6 +2562,18 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           }
         }
 
+        let notificationChannelIds: number[] | undefined;
+        if (body.notification_channel_ids !== undefined) {
+          if (!Array.isArray(body.notification_channel_ids) || body.notification_channel_ids.length > 50
+            || !body.notification_channel_ids.every((channelId: unknown) => Number.isSafeInteger(channelId) && Number(channelId) > 0)) {
+            return reply.code(400).send({ error: 'notification_channel_ids 必须为最多 50 个正整数' });
+          }
+          notificationChannelIds = [...new Set(body.notification_channel_ids.map((channelId: unknown) => Number(channelId)))] as number[];
+          for (const channelId of notificationChannelIds) {
+            const channel = await notificationDatabaseService.getChannelById(channelId);
+            if (!channel?.enabled) return reply.code(400).send({ error: `通知渠道不可用: ${channelId}` });
+          }
+        }
         const updated = await reportConfigService.updateConfig(Number(id), {
           name: body.name,
           cron: body.cron,
@@ -2554,6 +2581,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           instance_id: body.instance_id !== undefined ? Number(body.instance_id) : undefined,
           server_id: body.server_id !== undefined ? Number(body.server_id) : undefined,
           format: body.format,
+          notification_channel_ids: notificationChannelIds,
           enabled: body.enabled !== undefined ? body.enabled : undefined,
         });
 
@@ -2604,6 +2632,17 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         reply.code(500).send({ error: error.message });
       }
     }
+  });
+
+  fastify.get('/api/reports/:id/notifications', {
+    preHandler: [verifyToken, requirePermission('report:view')],
+    handler: async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const reportId = Number(id);
+      if (!Number.isSafeInteger(reportId) || reportId <= 0) return reply.code(400).send({ error: '无效的报表 ID' });
+      if (!await reportDatabaseService.getReportById(reportId)) return reply.code(404).send({ error: '报表不存在' });
+      return reply.send(await reportDatabaseService.getNotificationDeliveries(reportId));
+    },
   });
 
   // 生成报表
@@ -3150,6 +3189,44 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         reply.code(500).send({ error: error.message });
       }
     }
+  });
+
+  // Dead-letter delivery replay is an explicit privileged action.  It resets
+  // the durable job only; the original idempotency key remains unchanged.
+  fastify.post('/api/notification/jobs/:id/replay', {
+    preHandler: [verifyToken, requirePermission('notification:manage')],
+    handler: async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const check = strictBody(request.body as Record<string, unknown>, ['reason'], 'POST /api/notification/jobs/:id/replay');
+      if (check.error) return reply.code(400).send(check.error);
+      const reason = String((check.body as { reason?: unknown }).reason ?? '').trim();
+      if (!reason || reason.length > 512) return reply.code(400).send({ error: '重放原因必须为 1-512 个字符' });
+      if (!notificationWorkflowStore) return reply.code(503).send({ error: '通知工作流尚未就绪' });
+      try {
+        if (!await notificationWorkflowStore.isDeadLetter(id)) {
+          return reply.code(409).send({ error: '仅可重放处于 dead_letter 状态的任务' });
+        }
+        await notificationDatabaseService.recordReplay(id, (request as any).user.userId, reason);
+        const replayed = await notificationWorkflowStore.replayDeadLetter(id);
+        if (!replayed) return reply.code(409).send({ error: '仅可重放处于 dead_letter 状态的任务' });
+        return reply.send({ success: true, job_id: id, state: 'queued' });
+      } catch (error: any) {
+        return reply.code(500).send({ error: error.message });
+      }
+    },
+  });
+
+  fastify.get('/api/notification/dead-letters', {
+    preHandler: [verifyToken, requirePermission('notification:view')],
+    handler: async (request, reply) => {
+      if (!notificationWorkflowStore) return reply.code(503).send({ error: '通知工作流尚未就绪' });
+      const { limit = '50' } = request.query as { limit?: string };
+      try {
+        return reply.send(await notificationWorkflowStore.listDeadLetters(Number(limit)));
+      } catch (error: any) {
+        return reply.code(500).send({ error: error.message });
+      }
+    },
   });
 
   // ========== AI 分析 API ==========
@@ -4561,7 +4638,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (check.error) return reply.code(400).send(check.error);
         const { resolution_notes } = check.body as { resolution_notes: string };
       const result = await alertEventService.resolveEvent(Number(id), resolution_notes);
-      reply.send(result);
+      reply.code(result.success ? 200 : 409).send(result);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
     }
@@ -4571,7 +4648,21 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const result = await alertEventService.closeEvent(Number(id));
-      reply.send(result);
+      reply.code(result.success ? 200 : 409).send(result);
+    } catch (error: any) {
+      reply.code(500).send({ error: error.message });
+    }
+  });
+
+  fastify.post('/api/alerts/events/:id/verify-recovery', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
+    try {
+      const { id } = request.params as any;
+      const check = strictBody(request.body as Record<string, unknown>, ['reason'], 'POST /api/alerts/events/:id/verify-recovery');
+      if (check.error) return reply.code(400).send(check.error);
+      const reason = String((check.body as { reason?: unknown }).reason ?? '').trim();
+      if (!reason) return reply.code(400).send({ error: '缺少恢复验证说明' });
+      const result = await alertEventService.verifyRecovery(Number(id), reason, (request as any).user.userId);
+      reply.code(result.success ? 200 : 409).send(result);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
     }
@@ -4644,11 +4735,25 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   await metricRegistry.initialize();
 
   const workflowStore = new MysqlWorkflowStore(() => dbConnection.getPool() as any);
+  notificationWorkflowStore = workflowStore;
   const workflowRegistry = new JobRegistry();
+  const notificationScheduler = new NotificationDispatchScheduler(notificationDatabaseService, notificationService, workflowStore);
+  const enqueueNotificationDispatch = async (availableAt = new Date()) => {
+    await workflowStore.enqueue(createNotificationDispatchJob(availableAt));
+  };
+  const enqueueReportSchedule = async (availableAt = new Date()) => {
+    await workflowStore.enqueue(createReportScheduleJob(availableAt));
+  };
+  const enqueueReportNotifications = async (reportId: number, channelIds: readonly number[]) => {
+    await Promise.all(channelIds.map((channelId) => workflowStore.enqueue(createReportNotificationJob(reportId, channelId))));
+  };
   workflowRegistry.register('capacity.collect', async () => { await monitorCollector.collectCapacityNow(); });
   workflowRegistry.register('baseline.cleanup', async () => { await baselineCalculator.cleanupOldBaselines(); });
   workflowRegistry.register('alert.evaluate', async () => { await alertEngine.triggerEvaluation(); });
   workflowRegistry.register('report.schedule', async () => {
+    // Commit the successor before generating reports so a restart cannot
+    // silently stop all scheduled report processing.
+    await enqueueReportSchedule(new Date(Date.now() + 60_000));
     const occurrences = new MysqlReportOccurrenceStore(() => dbConnection.getPool() as any);
     const scheduler = new ReportScheduler(reportConfigService, occurrences);
     for (const occurrence of await scheduler.claimDue()) {
@@ -4660,14 +4765,76 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           : (await reportService.generateReport(config.type as any, config.instance_id, { format: config.format as any })).id;
         if (!reportId) throw new Error('REPORT_GENERATION_FAILED');
         await occurrences.complete(occurrence, reportId);
+        await enqueueReportNotifications(reportId, config.notification_channel_ids);
       } catch (error) {
         await occurrences.fail(occurrence, error instanceof Error ? error : new Error(String(error)));
         throw error;
       }
     }
   });
-  workflowRegistry.register('notification.dispatch', async () => { await notificationService.pollLoop(); });
+  workflowRegistry.register('notification.dispatch', async () => {
+    await notificationScheduler.enqueuePending();
+    // The next durable tick is committed before this job is completed. A
+    // restart therefore resumes the current or next tick without an in-memory timer.
+    await enqueueNotificationDispatch(new Date(Date.now() + 10_000));
+  });
+  workflowRegistry.register('notification.deliver', async (payload, job) => {
+    const alertId = Number(payload.alertId);
+    const channelId = Number(payload.channelId);
+    if (!Number.isSafeInteger(alertId) || !Number.isSafeInteger(channelId)) throw new Error('NOTIFICATION_PAYLOAD_INVALID');
+    const [alert, channel] = await Promise.all([
+      notificationDatabaseService.getAlertById(alertId),
+      notificationDatabaseService.getChannelById(channelId),
+    ]);
+    if (!alert || !channel || !channel.enabled) return;
+    await notificationDatabaseService.recordDeliveryAttempt({ job_id: job.id, alert_id: alertId, channel_id: channelId, attempt_number: job.attempts, status: 'started' });
+    try {
+      await notificationService.deliverAlertToChannel(alert, channel);
+      await notificationDatabaseService.recordDeliveryAttempt({ job_id: job.id, alert_id: alertId, channel_id: channelId, attempt_number: job.attempts, status: 'sent' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await notificationDatabaseService.recordDeliveryAttempt({ job_id: job.id, alert_id: alertId, channel_id: channelId, attempt_number: job.attempts, status: 'failed', error_code: message.slice(0, 128), error_message: message });
+      throw error;
+    }
+  });
+  workflowRegistry.register('report.notify', async (payload, job) => {
+    const reportId = Number(payload.reportId);
+    const channelId = Number(payload.channelId);
+    if (!Number.isSafeInteger(reportId) || reportId <= 0 || !Number.isSafeInteger(channelId) || channelId <= 0) {
+      throw new Error('REPORT_NOTIFICATION_PAYLOAD_INVALID');
+    }
+    const [report, channel] = await Promise.all([
+      reportDatabaseService.getReportById(reportId),
+      notificationDatabaseService.getChannelById(channelId),
+    ]);
+    if (!report || !channel || !channel.enabled) {
+      await reportDatabaseService.recordNotificationDelivery({
+        jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'skipped', errorCode: 'REPORT_OR_CHANNEL_UNAVAILABLE',
+      });
+      return;
+    }
+    await reportDatabaseService.recordNotificationDelivery({
+      jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'started',
+    });
+    const result = await notificationService.send(channel, {
+      type: 'scheduled_report',
+      report: { id: report.id, name: report.name, type: report.type, format: report.format, status: report.status },
+      downloadPath: `/api/reports/${report.id}/download`,
+    });
+    if (!result.success) {
+      await reportDatabaseService.recordNotificationDelivery({
+        jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'failed',
+        errorCode: result.error?.slice(0, 128), errorMessage: result.error,
+      });
+      throw new Error(result.error || 'REPORT_NOTIFICATION_FAILED');
+    }
+    await reportDatabaseService.recordNotificationDelivery({
+      jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'sent',
+    });
+  });
   const workflowRuntime = new WorkerRuntime(workflowStore, workflowWorkerId);
+  await enqueueNotificationDispatch();
+  await enqueueReportSchedule();
   workflowTimer = setInterval(() => { void workflowRuntime.runOnce((job) => workflowRegistry.execute(job)).catch((error) => console.error('Workflow worker failed:', error)); }, 1_000);
 
   // 启动监控采集
@@ -5135,7 +5302,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 启动 HTTP API 服务器
-  const port = process.env.BACKEND_PORT || process.env.API_PORT || 3000;
+  const port = process.env.PORT || process.env.BACKEND_PORT || process.env.API_PORT || 3000;
   await fastify.listen({ port: Number(port), host: '0.0.0.0' });
   const workerLease = new WorkerLease(pool as any);
   if (await workerLease.acquire()) {

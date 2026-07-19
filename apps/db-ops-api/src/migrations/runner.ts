@@ -144,7 +144,16 @@ export class MigrationRunner {
   }
 
   private async recordSnapshotCoverage(connection: MigrationConnection, migrations: SqlMigration[]): Promise<void> {
-    for (const migration of migrations.filter((item) => item.id > snapshotId && item.id < '025_')) {
+    // The legacy snapshot has non-contiguous coverage. It lacks the cron base
+    // tables (009/010), report scripts (017), and all server/resource work
+    // from 019 onward; those migrations must execute on an empty install.
+    const coveredBySnapshot = (id: string) =>
+      id > snapshotId && (
+        (id < '009_' && !id.startsWith('007_')) ||
+        (id >= '011_' && id < '017_') ||
+        id.startsWith('018_')
+      );
+    for (const migration of migrations.filter((item) => coveredBySnapshot(item.id))) {
       await connection.query(
         `INSERT INTO app_schema_migrations (migration_id, checksum, status, finished_at, error)
          VALUES (?, ?, 'baselined', NOW(), 'covered by 000_schema_baseline.sql')`,

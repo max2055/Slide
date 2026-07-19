@@ -268,9 +268,6 @@ class NotificationDatabaseService {
          FROM alerts a
          LEFT JOIN database_instances di ON a.instance_id = di.id
          WHERE a.status = 'unread'
-           AND NOT EXISTS (
-             SELECT 1 FROM notification_records nr WHERE nr.alert_id = a.id
-           )
          ORDER BY a.created_at ASC`
       ) as any;
 
@@ -378,6 +375,43 @@ class NotificationDatabaseService {
       console.error('记录通知失败:', error);
       return { success: false, error: error.message };
     }
+  }
+
+  async hasSuccessfulDelivery(alertId: number, channelId: number): Promise<boolean> {
+    const pool = this.getPool();
+    if (!pool) return false;
+    const [rows] = await pool.execute(
+      `SELECT 1 FROM notification_records
+       WHERE alert_id = ? AND channel_id = ? AND status = 'sent' LIMIT 1`,
+      [alertId, channelId],
+    ) as any;
+    return Array.isArray(rows) && rows.length > 0;
+  }
+
+  async recordDeliveryAttempt(data: {
+    job_id: string; alert_id: number; channel_id: number; attempt_number: number;
+    status: 'started' | 'sent' | 'failed'; error_code?: string; error_message?: string;
+  }): Promise<void> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('NOTIFICATION_AUDIT_UNAVAILABLE');
+    await pool.execute(
+      `INSERT INTO notification_delivery_attempts
+       (workflow_job_id, alert_id, channel_id, attempt_number, status, error_code, error_message, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, IF(? IN ('sent', 'failed'), NOW(), NULL))
+       ON DUPLICATE KEY UPDATE status = VALUES(status), error_code = VALUES(error_code),
+       error_message = VALUES(error_message), finished_at = VALUES(finished_at)`,
+      [data.job_id, data.alert_id, data.channel_id, data.attempt_number, data.status,
+       data.error_code ?? null, data.error_message?.slice(0, 1024) ?? null, data.status],
+    );
+  }
+
+  async recordReplay(jobId: string, actorId: number, reason: string): Promise<void> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('NOTIFICATION_AUDIT_UNAVAILABLE');
+    await pool.execute(
+      'INSERT INTO notification_delivery_replays (workflow_job_id, actor_id, reason) VALUES (?, ?, ?)',
+      [jobId, actorId, reason.slice(0, 512)],
+    );
   }
 
   /**

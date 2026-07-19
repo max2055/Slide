@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MysqlReportOccurrenceStore, ReportScheduler, nextReportOccurrence } from '../src/report-scheduler.js';
+import { createReportScheduleJob, MysqlReportOccurrenceStore, ReportScheduler, nextReportOccurrence } from '../src/report-scheduler.js';
 
 describe('report schedule occurrence', () => {
   const config = { id: 3, cron: '0 * * * * *', created_at: '2026-07-18T00:00:00.000Z' };
@@ -18,5 +18,13 @@ describe('report schedule occurrence', () => {
     const store = new MysqlReportOccurrenceStore(() => ({ execute: async (sql: string) => { calls.push(sql); return [{ affectedRows: 1 } as any]; } }));
     await expect(store.claim({ configId: 3, occurrenceAt: new Date('2026-07-18T00:01:00Z') })).resolves.toBe(true);
     expect(calls[0]).toContain('INSERT IGNORE');
+  });
+
+  it('uses one durable idempotency key per minute schedule slot', () => {
+    const first = createReportScheduleJob(new Date('2026-07-19T00:00:01.000Z'));
+    const restart = createReportScheduleJob(new Date('2026-07-19T00:00:59.999Z'));
+    const next = createReportScheduleJob(new Date('2026-07-19T00:01:00.000Z'));
+    expect(restart).toMatchObject({ id: first.id, idempotencyKey: first.idempotencyKey, type: 'report.schedule' });
+    expect(next.idempotencyKey).not.toBe(first.idempotencyKey);
   });
 });
