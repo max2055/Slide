@@ -106,18 +106,11 @@ The current verification document is authoritative and remains NO-GO.
 
 1. HI-06/HI-07/HI-08: browser coverage for metric collection and the full
    metric-to-alert-to-RCA workflow.
-2. HI-09/HI-11: successful outbound notification to a controlled public HTTPS
-   target and redirect-chain behavior. Do not weaken SSRF controls or use a
-   private endpoint as a success target. SMTP email implementation now has an
-   isolated qualification harness, but this execution environment cannot reach
-   Microsoft's SMTP service: its resolver returns reserved address `198.18.3.84`
-   with no SMTP greeting. The application now supports encrypted OAuth refresh
-   tokens, atomic rotated-token persistence, and XOAUTH2 SMTP; run the harness from an egress-enabled host after
-   completing Outlook.com's OAuth2/Modern Auth configuration. The authorized
-   Feishu test is also blocked in this environment: `open.feishu.cn` resolves
-   to reserved `198.18.3.98`, which outbound policy correctly rejects before
-   dispatch. The configured Feishu channel remains disabled to avoid replaying
-   historical alerts; use an egress-enabled host for one controlled test first.
+2. HI-09/HI-11: the operator explicitly approved a no-public-egress local
+   qualification exception on 2026-07-19. Do not claim SMTP/Feishu delivery or
+   public redirect-chain behavior as verified, and do not weaken SSRF controls,
+   credential protection, redaction, or failure/audit behavior. An egress-enabled
+   environment is still required if real delivery evidence is later needed.
 3. ME/DR/TG/OPT rows marked `Mapped only` or `Partial` in
    `139-VERIFICATION.md` need behavioral evidence before any GO decision.
 4. Run the final hosted release gate after changes and update the evidence matrix
