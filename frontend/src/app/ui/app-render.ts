@@ -29,6 +29,7 @@ import "./views/servers-page.ts";
 import "./views/server-detail.ts";
 import "./views/instance-detail.ts";
 import "./views/llm-config.ts";
+import "./views/feishu-notification-settings.ts";
 import "./views/ai-settings.ts";
 import "./views/agent-sessions.ts";
 import "./views/agent-skills.ts";

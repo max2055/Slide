@@ -16,7 +16,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | Gate | Result | Evidence |
 |---|---|---|
 | Backend unit suite | PASS | `pnpm --filter slide-api test`: 88 files, 967 tests passed, including Microsoft OAuth refresh-token rotation persistence, Feishu signed-webhook payload/encrypted-secret handling, and lost-encryption-key recovery. |
-| Workspace recursive unit suite | PASS | `pnpm test`: API 88 files / 967 tests, frontend 18 files / 178 tests, and Agent Core 7 files / 69 tests passed on 2026-07-19. |
+| Workspace recursive unit suite | PASS | `pnpm test`: API 88 files / 967 tests, frontend 19 files / 181 tests, and Agent Core 7 files / 69 tests passed on 2026-07-19. |
 | Backend typecheck | PASS | `pnpm --filter slide-api exec tsc --noEmit`. |
 | Frontend typecheck and build | PASS with warnings | `pnpm --filter slide-frontend typecheck && pnpm --filter slide-frontend build`; Vite reports dynamic-import and 2.75 MB main-chunk warnings. |
 | Agent Core typecheck and tests | PASS | `pnpm --filter agent-core typecheck && pnpm --filter agent-core test`: 7 files, 69 tests passed. |
@@ -33,6 +33,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | Managed browser qualification | PASS | `QUALIFICATION_ADMIN_PASSWORD=… PLAYWRIGHT_MANAGED_ENV=1 pnpm --filter slide-frontend exec playwright test e2e/release-security.spec.ts e2e/release-critical-paths.spec.ts e2e/agent-capabilities.spec.ts --workers=1`: 18 passed on 2026-07-19. The managed launcher resets only `db_ops_ai_qualification`, applies the current 47-migration ledger, then seeds its fixtures; this prevents a stale qualification ledger from being mistaken for a migration compatibility failure. |
 | SMTP external delivery | BLOCKED | The isolated `email-delivery` qualification created an encrypted SMTP channel and attempted the authorized delivery, but the current execution environment resolves `smtp-mail.outlook.com` to reserved test address `198.18.3.84`. The TCP peer sent no SMTP greeting or STARTTLS response, so the connection never reached Microsoft and no successful external delivery can be claimed. |
 | Feishu external delivery | BLOCKED | A disabled, encrypted Feishu channel was configured with the authorized body-signing secret and tested once through the protected endpoint. The execution environment resolves `open.feishu.cn` to reserved address `198.18.3.98`; outbound policy correctly rejected it as `PRIVATE_ADDRESS`, so no HTTP request reached Feishu and no real delivery can be claimed. The channel remains disabled because enabling it would retry historical alert deliveries. |
+| Feishu settings UI | PASS | The Settings → 飞书通知 page lists the redacted channel state, accepts only a Feishu `open.feishu.cn` HTTPS bot webhook, submits a new signing secret only on explicit entry, preserves stored credentials when fields are left blank, and can invoke the existing protected one-shot test endpoint. `feishu-notification-settings.test.ts` covers redacted load, create/save payload, and host rejection. |
 
 ## Phase 131 Finding Audit
 

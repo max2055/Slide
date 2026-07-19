@@ -29,7 +29,7 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   enabled in that container.
 - Full local regression passed on 2026-07-19: `pnpm test` passed API 88 files / 967 tests
   (including signed Feishu webhook and lost-encryption-key recovery contracts),
-  frontend 18 files / 178 tests, and Agent Core 7 files / 69 tests. API and
+  frontend 19 files / 181 tests, and Agent Core 7 files / 69 tests. API and
   frontend typechecks/build passed; `pnpm lint` exits zero but reports 250
   warnings, so it is not lint-clean evidence.
 - Lost-key recovery was qualification-tested and then executed locally after the
@@ -37,6 +37,10 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   invalidated stored secrets: operators must re-enter five database-instance
   credentials, one server credential, two LLM-provider credentials, and the
   credentials for any notification channels that should be re-enabled.
+- Settings now contains an admin-only “飞书通知” page. It creates or updates a
+  Feishu channel, keeps stored webhook paths and signing secrets redacted, and
+  exposes the protected one-shot test action. It does not turn blocked external
+  delivery into success evidence.
 - `adapter-uat` connected real local PostgreSQL 18 and Dameng 8 and read native
   metrics. `oracle-adapter-uat` separately connected real Oracle 19c and read
   native metrics after its listener service was restored.
