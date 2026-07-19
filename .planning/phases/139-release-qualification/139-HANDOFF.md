@@ -22,12 +22,12 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
 ## Current Evidence
 
 - `bash scripts/qualification/run-existing-mysql.sh bootstrap-upgrade`
-  passed: 46 migrations, repeat initialization, schema and ledger invariants.
+  passed: 47 migrations, repeat initialization, schema and ledger invariants.
 - `failover`, `backup-restore`, and `stability` scenarios passed against the
   existing MySQL 9.6 container. Backup recovery requires
   `mysqldump --single-transaction --set-gtid-purged=OFF` because GTIDs are
   enabled in that container.
-- Full local regression passed on 2026-07-19: API typecheck and 84 files / 954
+- Full local regression passed on 2026-07-19: API typecheck and 85 files / 958
   tests, frontend typecheck/build and 18 files / 178 tests, and Agent Core
   typecheck / 69 tests. `pnpm lint` exits zero but reports 250 warnings, so it
   is not lint-clean evidence.
@@ -36,7 +36,7 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   native metrics after its listener service was restored.
 - Managed browser qualification was rerun after the dedicated qualification
   database reset fix: the security, critical-path, and Agent capability suites
-  passed 17/17 on 2026-07-19.
+  passed 18/18 on 2026-07-19.
 - Current managed E2E commands:
 
 ```sh
@@ -49,7 +49,7 @@ QUALIFICATION_ADMIN_PASSWORD=Tpam1234 PLAYWRIGHT_MANAGED_ENV=1 \
   e2e/release-critical-paths.spec.ts --workers=1
 ```
 
-The security suite passed 9/9 and the critical-path suite passed 5/5 in the
+The security suite passed 10/10 and the critical-path suite passed 7/7 in the
 most recent independent runs.
 
 ## Recent Additions

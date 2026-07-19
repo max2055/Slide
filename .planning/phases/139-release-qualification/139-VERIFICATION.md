@@ -15,7 +15,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 
 | Gate | Result | Evidence |
 |---|---|---|
-| Backend unit suite | PASS | `pnpm --filter slide-api test`: 84 files, 954 tests passed. |
+| Backend unit suite | PASS | `pnpm --filter slide-api test`: 85 files, 958 tests passed. |
 | Backend typecheck | PASS | `pnpm --filter slide-api exec tsc --noEmit`. |
 | Frontend typecheck and build | PASS with warnings | `pnpm --filter slide-frontend typecheck && pnpm --filter slide-frontend build`; Vite reports dynamic-import and 2.75 MB main-chunk warnings. |
 | Agent Core typecheck and tests | PASS | `pnpm --filter agent-core typecheck && pnpm --filter agent-core test`: 7 files, 69 tests passed. |
@@ -28,7 +28,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | Server alert/RCA runtime closure | PASS | `QUALIFICATION_DEEPSEEK_API_KEY=… bash scripts/qualification/run-existing-mysql.sh alert-rca`: a real server metric created the threshold alert; the database-configured DeepSeek provider called `slide_complete_analysis` and persisted a completed, structured server-subject RCA record. |
 | Failed Agent-run database readback | PASS | `bash scripts/qualification/run-existing-mysql.sh agent-run-failure`: deterministic provider failure over DirectAdapter WS persisted an `agent_runs` row with `state=failed`, terminal payload, and `finished_at`. |
 | Production startup negatives | PASS | `bash scripts/qualification/run-existing-mysql.sh startup-negative`: weak production secret and an interrupted migration both exited non-zero before listener or worker initialization; it also passed independently against `mysql3307` on port 3307. |
-| Managed browser qualification | PASS | `QUALIFICATION_ADMIN_PASSWORD=… PLAYWRIGHT_MANAGED_ENV=1 pnpm --filter slide-frontend exec playwright test e2e/release-security.spec.ts e2e/release-critical-paths.spec.ts e2e/agent-capabilities.spec.ts --workers=1`: 17 passed on 2026-07-19. The managed launcher resets only `db_ops_ai_qualification`, applies the current 46-migration ledger, then seeds its fixtures; this prevents a stale qualification ledger from being mistaken for a migration compatibility failure. |
+| Managed browser qualification | PASS | `QUALIFICATION_ADMIN_PASSWORD=… PLAYWRIGHT_MANAGED_ENV=1 pnpm --filter slide-frontend exec playwright test e2e/release-security.spec.ts e2e/release-critical-paths.spec.ts e2e/agent-capabilities.spec.ts --workers=1`: 18 passed on 2026-07-19. The managed launcher resets only `db_ops_ai_qualification`, applies the current 47-migration ledger, then seeds its fixtures; this prevents a stale qualification ledger from being mistaken for a migration compatibility failure. |
 
 ## Phase 131 Finding Audit
 
@@ -37,7 +37,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | CR-01 | Verified | Authenticated DirectAdapter WebSocket test uses the real platform catalog and a tool-calling model to request `get_instance_connection`; viewer policy is `OWNER_REQUIRED` before handler entry. |
 | CR-02 | Verified | Managed security E2E proves REST and WS session isolation. |
 | CR-03 | Verified | Managed security E2E rejects direct UPDATE, DDL, and multi-statement input before side effects. |
-| HI-01 | Verified | Current 46-migration empty install and repeat initialization passed both on the original qualification container and independently on user-provided `mysql3307` (port 3307). |
+| HI-01 | Verified | Current 47-migration empty install and repeat initialization passed both on the original qualification container and independently on user-provided `mysql3307` (port 3307). |
 | HI-02 | Verified | Managed E2E proves two concurrent approval reviews execute one controlled update. |
 | HI-03 | Verified | Managed E2E proves REST, refresh, and an established WS connection are revoked after disablement. |
 | HI-04 | Verified | Managed browser E2E proves structured and Markdown attack payloads remain inert. |
