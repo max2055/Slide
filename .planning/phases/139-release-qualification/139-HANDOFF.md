@@ -33,6 +33,8 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   frontend 19 files / 181 tests, and Agent Core 7 files / 69 tests. API and
   frontend typechecks/build passed; `pnpm lint` exits zero but reports 250
   warnings, so it is not lint-clean evidence.
+- The checked-in CI workflow passes the qualification gate coverage check. This
+  confirms configuration coverage only; no hosted CI execution artifact exists.
 - Lost-key recovery was qualification-tested and then executed locally after the
   historical encryption key was confirmed unavailable. It intentionally
   invalidated stored secrets: operators must re-enter five database-instance

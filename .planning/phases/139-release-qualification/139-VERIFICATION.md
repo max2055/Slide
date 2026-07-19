@@ -21,6 +21,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | Frontend typecheck and build | PASS with warnings | `pnpm --filter slide-frontend typecheck && pnpm --filter slide-frontend build`; Vite reports dynamic-import and 2.75 MB main-chunk warnings. |
 | Agent Core typecheck and tests | PASS | `pnpm --filter agent-core typecheck && pnpm --filter agent-core test`: 7 files, 69 tests passed. |
 | Lint | PASS with warning debt | `pnpm lint` exits 0 with 250 warnings and 0 errors; this is not lint-clean release evidence. |
+| CI workflow gate coverage | PASS | `pnpm --filter slide-api exec tsx ../../tests/qualification/coverage-matrix.ts --check-ci .github/workflows/ci.yml` validates that the checked-in CI workflow covers the qualification gate set. This is static workflow evidence, not a hosted CI execution. |
 | Empty install and repeated initialization | PASS | `bash scripts/qualification/run-existing-mysql.sh bootstrap-upgrade`: 49 migrations and schema invariant valid. The same qualification passed independently against the user-provided `mysql3307` MySQL 9 container on port 3307. |
 | Health-check persistence schema | PASS | Migration `048_health_check_dimensions_parity.sql` restores the `health_check_history.dimensions` column that `recordHealthCheck` reads and writes. It is enforced by schema invariants and passed empty/repeated initialization on both existing MySQL containers. |
 | Worker lease/fencing | PASS | `bash scripts/qualification/run-existing-mysql.sh failover`. |
@@ -69,7 +70,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | DR-02 | Verified | Lease takeover and fencing passed against MySQL. |
 | DR-03 | Verified | A deliberately `running` migration ledger entry prevents startup before listener/worker effects and remains `running` pending explicit repair. |
 | DR-04 | Verified | Real MySQL health aggregation proved connected control plane, degraded managed availability, critical data freshness, and degraded workflow combine to an overall critical state. |
-| TG-01 | Partial | Backend, frontend, and Agent Core typecheck/tests are currently clean; lint exits zero but emits 250 warnings, and a full hosted release CI run is absent. |
+| TG-01 | Partial | Backend, frontend, and Agent Core typecheck/tests are currently clean; the checked-in CI gate set passes `coverage-matrix.ts --check-ci .github/workflows/ci.yml`; lint exits zero but emits 250 warnings, and a full hosted release CI run is absent. |
 | TG-02 | Partial | Multi-actor, SQL concurrency, XSS, and revocation E2E exist; complete adversarial matrix is incomplete. |
 | TG-03 | Verified | Current migration ledger and schema invariants run against a real empty MySQL database. |
 | TG-04 | Partial | Security and critical-path Playwright suites run in a managed environment; required user stories are not all represented. |
