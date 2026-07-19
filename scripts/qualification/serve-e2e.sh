@@ -4,6 +4,8 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 
+qualification_encryption_key='qualification-encryption-key-2026-07-19-not-production'
+
 QUALIFICATION_DB_NAME=db_ops_ai_qualification \
   pnpm --filter slide-api exec node ../../scripts/qualification/reset-e2e-db.mjs
 
@@ -12,7 +14,13 @@ DB_NAME=db_ops_ai_qualification \
 
 QUALIFICATION_DB_NAME=db_ops_ai_qualification \
 QUALIFICATION_ADMIN_PASSWORD="${QUALIFICATION_ADMIN_PASSWORD:?QUALIFICATION_ADMIN_PASSWORD is required}" \
+ENCRYPTION_KEY="$qualification_encryption_key" \
   pnpm --filter slide-api exec node ../../scripts/qualification/bootstrap-admin.mjs
+
+if [[ -n "${QUALIFICATION_DEEPSEEK_API_KEY:-}" ]]; then
+  DB_NAME=db_ops_ai_qualification ENCRYPTION_KEY="$qualification_encryption_key" \
+    pnpm --filter slide-api exec tsx ../../scripts/qualification/configure-deepseek.ts
+fi
 
 api_pid=""
 vite_pid=""
@@ -23,7 +31,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 PORT=3003 AGENT_WS_PORT=28890 DB_NAME=db_ops_ai_qualification \
-ENCRYPTION_KEY=qualification-encryption-key-2026-07-19-not-production \
+ENCRYPTION_KEY="$qualification_encryption_key" \
   pnpm --filter slide-api exec tsx server.ts &
 api_pid=$!
 

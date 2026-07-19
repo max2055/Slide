@@ -132,7 +132,7 @@ test('browser renders live MySQL metrics for an isolated managed instance', asyn
 });
 
 test('fresh native MySQL metrics create a threshold alert visible in the browser', async ({ page }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
   const login = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: 'Tpam1234' },
   });
@@ -199,7 +199,36 @@ test('fresh native MySQL metrics create a threshold alert visible in the browser
     await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
     await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
     await page.locator('.login-gate__connect').click();
-    await expect(page.locator('alert-list tr').filter({ hasText: ruleName })).toBeVisible({ timeout: 15_000 });
+    const alertRow = page.locator('alert-list tr').filter({ hasText: ruleName });
+    await expect(alertRow).toBeVisible({ timeout: 15_000 });
+
+    if (process.env.QUALIFICATION_DEEPSEEK_API_KEY) {
+      const started = page.waitForResponse((candidate) =>
+        candidate.url().endsWith('/api/ai/analysis') && candidate.request().method() === 'POST',
+      );
+      await alertRow.getByRole('button', { name: 'AI' }).click();
+      const response = await started;
+      expect(response.status()).toBe(200);
+      const { id: analysisId } = await response.json();
+      expect(Number(analysisId)).toBeGreaterThan(0);
+      let terminal: { status?: string; error_message?: string } = {};
+      await expect.poll(async () => {
+        const status = await page.request.get(`/api/ai/analysis/${analysisId}/status`, { headers });
+        if (!status.ok()) return false;
+        terminal = await status.json();
+        return terminal.status === 'completed' || terminal.status === 'failed';
+      }, { timeout: 150_000, intervals: [1_000, 2_000, 5_000] }).toBe(true);
+      expect(terminal.status, terminal.error_message || 'RCA did not complete').toBe('completed');
+      const completed = await page.request.get(`/api/ai/analysis/${analysisId}`, { headers });
+      expect(completed.status()).toBe(200);
+      expect(await completed.json()).toMatchObject({
+        id: Number(analysisId),
+        analysis_type: 'alert_rca',
+        related_id: expect.any(Number),
+        status: 'completed',
+        result: expect.anything(),
+      });
+    }
   } finally {
     if (ruleId) await page.request.delete(`/api/alert-rules/${ruleId}`, { headers });
     await page.request.delete(`/api/database/instances/${id}`, { headers });

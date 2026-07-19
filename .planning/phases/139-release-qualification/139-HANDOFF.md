@@ -118,6 +118,24 @@ The current verification document is authoritative and remains NO-GO.
 4. Run the final hosted release gate after changes and update the evidence matrix
    only with current command output.
 
+## Latest RCA Continuation State
+
+- The managed launcher now accepts an optional `QUALIFICATION_DEEPSEEK_API_KEY`.
+  Only when it is set does it configure the provider in the disposable
+  `db_ops_ai_qualification` database; the normal browser suite stays
+  network-independent. The key is encrypted through the runtime helper and is
+  never written to a source file or evidence document.
+- The optional fresh-alert browser path was exercised on 2026-07-19. It reached
+  alert creation, created the matching `alert_rca` analysis, and observed its
+  terminal state, but that state was `failed` with `Agent run ended: error`.
+  This is diagnostic failure evidence, not RCA-success evidence and does not
+  change the authoritative NO-GO decision.
+- Next owner: inspect the DirectAdapter/analysis failure path to retain the
+  provider or tool error instead of only the generic terminal message, then
+  rerun the optional single test. Do not rerun it with a secret in shell history
+  or modify the primary application database. The default no-key metric-to-alert
+  browser test remains the safe regression path.
+
 ## Useful Commands
 
 ```sh
