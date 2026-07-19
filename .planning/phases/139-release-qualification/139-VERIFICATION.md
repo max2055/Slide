@@ -54,7 +54,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | ME-02 | Partial | Real DirectAdapter WS evidence proves a failed run is persisted and a same actor/session/idempotency replay returns its terminal `run.snapshot` instead of executing again. Attachment workflow remains unqualified. |
 | ME-03 | Partial | Real MySQL scheduler state proves per-metric first due, interval deferral after success, and immediate retry after failure. Collector invocation across the full registry remains unqualified. |
 | ME-04 | Partial | Managed MySQL qualification exercises a collection-enabled server whose credential decryption fails on every tick; three consecutive returned failures are counted and mark it `unreachable`. Broader collector/provider failure permutations remain unqualified. |
-| ME-05 | Mapped only | Capability UI unit coverage is indexed, not current browser capability/publish/rollback evidence. |
+| ME-05 | Partial | Managed browser evidence reads real DirectAdapter feature capabilities and verifies unsupported management controls are absent from the Agent workspace. Capability publication and rollback workflows remain unqualified. |
 | ME-06 | Mapped only | Capability matrix is present; compatibility UAT evidence is absent. |
 | ME-07 | Partial | Managed browser approval flow proves an approved SQL write executes once under concurrent review, then reads back the persisted operation as `succeeded` and its immutable CREATED → approval → execution event timeline. Cancellation/retry recovery remains unqualified. |
 | LO-01 | Mapped only | Navigation cleanup test is indexed; not individually reviewed in this qualification run. |
