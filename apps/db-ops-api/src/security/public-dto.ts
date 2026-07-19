@@ -10,10 +10,10 @@ export function publicServerDto(server: Record<string, unknown>) {
 
 export function publicNotificationDto(channel: Record<string, unknown>) {
   const rawConfig = (channel.config && typeof channel.config === 'object' ? channel.config : {}) as Record<string, unknown>;
-  const { secret, token, password, password_encrypted, oauth2_refresh_token, oauth2_refresh_token_encrypted, apiKey, webhook_url, ...config } = rawConfig;
+  const { secret, secret_encrypted, token, password, password_encrypted, oauth2_refresh_token, oauth2_refresh_token_encrypted, apiKey, webhook_url, ...config } = rawConfig;
   let endpoint: string | undefined;
   if (typeof webhook_url === 'string') {
     try { const url = new URL(webhook_url); endpoint = `${url.protocol}//${url.host}`; } catch { endpoint = undefined; }
   }
-  return { ...channel, config: { ...config, endpoint, hasCredential: Boolean(secret || token || password || password_encrypted || oauth2_refresh_token || oauth2_refresh_token_encrypted || apiKey) } };
+  return { ...channel, config: { ...config, endpoint, hasCredential: Boolean(secret || secret_encrypted || token || password || password_encrypted || oauth2_refresh_token || oauth2_refresh_token_encrypted || apiKey) } };
 }

@@ -10,6 +10,7 @@ import { notificationDatabaseService } from './notification-database-service';
 import type { PendingAlert, NotificationChannel } from './notification-database-service';
 import { decryptData } from './db-connection';
 import { exchangeMicrosoftSmtpRefreshToken } from './smtp-oauth2.js';
+import { signFeishuWebhookPayload } from './feishu-webhook.js';
 import { maintenanceWindowService } from './maintenance-window-service';
 import { resolveOutboundTarget, OutboundPolicyError } from './security/outbound-policy.js';
 
@@ -388,8 +389,12 @@ export class NotificationService {
 
     try {
       const target = await resolveOutboundTarget(webhookUrl);
-      const url = this.buildSignedUrl(webhookUrl, channel.config?.secret);
-      const response = await this.postJsonToVerifiedTarget(url, target.addresses, message);
+      const secret = this.getWebhookSecret(channel.config);
+      const url = channel.type === 'dingtalk' ? this.buildSignedUrl(webhookUrl, secret) : webhookUrl;
+      const payload = channel.type === 'feishu' && secret
+        ? signFeishuWebhookPayload(message, secret)
+        : message;
+      const response = await this.postJsonToVerifiedTarget(url, target.addresses, payload);
 
       if (response.statusCode >= 300 && response.statusCode < 400) {
         return { success: false, error: 'OUTBOUND_REDIRECT_DENIED' };
@@ -471,6 +476,13 @@ export class NotificationService {
   private getSmtpPassword(config: NotificationChannel['config']): string {
     if (config.password) return config.password;
     return decryptData(config.password_encrypted!);
+  }
+
+  private getWebhookSecret(config: NotificationChannel['config']): string | undefined {
+    if (typeof config.secret_encrypted === 'string' && config.secret_encrypted.length > 0) {
+      return decryptData(config.secret_encrypted);
+    }
+    return typeof config.secret === 'string' && config.secret.length > 0 ? config.secret : undefined;
   }
 
   /** Pin requests to validated DNS results while retaining TLS hostname verification. */

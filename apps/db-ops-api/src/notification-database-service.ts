@@ -7,6 +7,7 @@ import { dbConnection, encryptData } from './db-connection';
 export interface NotificationChannelConfig {
   webhook_url?: string;
   secret?: string;
+  secret_encrypted?: string;
   severity?: string;
   smtp_host?: string;
   smtp_port?: number;
@@ -73,6 +74,12 @@ class NotificationDatabaseService {
         stored.oauth2_refresh_token_encrypted = encryptData(stored.oauth2_refresh_token);
       }
       delete stored.oauth2_refresh_token;
+    }
+    if (typeof stored.secret === 'string') {
+      if (stored.secret.length > 0) {
+        stored.secret_encrypted = encryptData(stored.secret);
+      }
+      delete stored.secret;
     }
     return stored;
   }
@@ -235,7 +242,9 @@ class NotificationDatabaseService {
           : {};
         const passwordWasSupplied = Object.prototype.hasOwnProperty.call(suppliedConfig, 'password')
           || Object.prototype.hasOwnProperty.call(suppliedConfig, 'password_encrypted');
-        if (!passwordWasSupplied) {
+        const secretWasSupplied = Object.prototype.hasOwnProperty.call(suppliedConfig, 'secret')
+          || Object.prototype.hasOwnProperty.call(suppliedConfig, 'secret_encrypted');
+        if (!passwordWasSupplied || !secretWasSupplied) {
           const [rows] = await pool.execute(
             'SELECT config FROM notification_channels WHERE id = ?',
             [id],
@@ -244,7 +253,10 @@ class NotificationDatabaseService {
           try {
             const parsed = typeof existingConfig === 'string' ? JSON.parse(existingConfig) : existingConfig;
             if (typeof parsed?.password_encrypted === 'string') {
-              config.password_encrypted = parsed.password_encrypted;
+              if (!passwordWasSupplied) config.password_encrypted = parsed.password_encrypted;
+            }
+            if (typeof parsed?.secret_encrypted === 'string' && !secretWasSupplied) {
+              config.secret_encrypted = parsed.secret_encrypted;
             }
           } catch {
             // An invalid legacy config will be rejected by the normal UPDATE path rather than exposing its contents.
