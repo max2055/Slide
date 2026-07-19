@@ -28,7 +28,7 @@ mapping or unit test alone does not close a Phase 131 release finding.
 | Server alert/RCA runtime closure | PASS | `QUALIFICATION_DEEPSEEK_API_KEY=… bash scripts/qualification/run-existing-mysql.sh alert-rca`: a real server metric created the threshold alert; the database-configured DeepSeek provider called `slide_complete_analysis` and persisted a completed, structured server-subject RCA record. |
 | Failed Agent-run database readback | PASS | `bash scripts/qualification/run-existing-mysql.sh agent-run-failure`: deterministic provider failure over DirectAdapter WS persisted an `agent_runs` row with `state=failed`, terminal payload, and `finished_at`. |
 | Production startup negatives | PASS | `bash scripts/qualification/run-existing-mysql.sh startup-negative`: weak production secret and an interrupted migration both exited non-zero before listener or worker initialization; it also passed independently against `mysql3307` on port 3307. |
-| Managed browser qualification | PASS | `QUALIFICATION_ADMIN_PASSWORD=Tpam1234 PLAYWRIGHT_MANAGED_ENV=1 pnpm --filter slide-frontend exec playwright test e2e/release-security.spec.ts e2e/release-critical-paths.spec.ts e2e/agent-capabilities.spec.ts --workers=1`: 17 passed. |
+| Managed browser qualification | PASS | `QUALIFICATION_ADMIN_PASSWORD=… PLAYWRIGHT_MANAGED_ENV=1 pnpm --filter slide-frontend exec playwright test e2e/release-security.spec.ts e2e/release-critical-paths.spec.ts e2e/agent-capabilities.spec.ts --workers=1`: 17 passed on 2026-07-19. The managed launcher resets only `db_ops_ai_qualification`, applies the current 46-migration ledger, then seeds its fixtures; this prevents a stale qualification ledger from being mistaken for a migration compatibility failure. |
 
 ## Phase 131 Finding Audit
 

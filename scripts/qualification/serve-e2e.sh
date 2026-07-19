@@ -5,6 +5,12 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 
 QUALIFICATION_DB_NAME=db_ops_ai_qualification \
+  pnpm --filter slide-api exec node ../../scripts/qualification/reset-e2e-db.mjs
+
+DB_NAME=db_ops_ai_qualification \
+  pnpm --filter slide-api exec tsx init-db.ts
+
+QUALIFICATION_DB_NAME=db_ops_ai_qualification \
 QUALIFICATION_ADMIN_PASSWORD="${QUALIFICATION_ADMIN_PASSWORD:?QUALIFICATION_ADMIN_PASSWORD is required}" \
   pnpm --filter slide-api exec node ../../scripts/qualification/bootstrap-admin.mjs
 

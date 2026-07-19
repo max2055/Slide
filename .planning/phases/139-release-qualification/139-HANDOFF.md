@@ -15,7 +15,9 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
 - Managed Playwright qualification uses API 3003, WS 28890, and Vite 5175.
 - The qualification DB is `db_ops_ai_qualification`. The recovery script uses
   only uniquely prefixed `slide_qualification_existing_*` databases and drops
-  them in cleanup.
+  them in cleanup. The managed browser launcher resets only
+  `db_ops_ai_qualification` before every run and reinitializes it with the
+  current migration ledger; it never resets an application database.
 
 ## Current Evidence
 
@@ -32,6 +34,9 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
 - `adapter-uat` connected real local PostgreSQL 18 and Dameng 8 and read native
   metrics. `oracle-adapter-uat` separately connected real Oracle 19c and read
   native metrics after its listener service was restored.
+- Managed browser qualification was rerun after the dedicated qualification
+  database reset fix: the security, critical-path, and Agent capability suites
+  passed 17/17 on 2026-07-19.
 - Current managed E2E commands:
 
 ```sh
