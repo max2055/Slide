@@ -13,6 +13,7 @@ import { exchangeMicrosoftSmtpRefreshToken } from './smtp-oauth2.js';
 import { signFeishuWebhookPayload } from './feishu-webhook.js';
 import { maintenanceWindowService } from './maintenance-window-service';
 import { resolveOutboundTarget, OutboundPolicyError } from './security/outbound-policy.js';
+import { isAlertEligibleForChannel } from './workflows/notification-dispatch.js';
 
 export class NotificationService {
   private pollingJob: CronJob | null = null;
@@ -123,6 +124,7 @@ export class NotificationService {
         }
 
         for (const channel of matchedChannels) {
+          if (!isAlertEligibleForChannel(alert, channel)) continue;
           const message = this.buildMessage(
             channel.type,
             alert,

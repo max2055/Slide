@@ -86,7 +86,7 @@ import { MigrationRunner } from './src/migrations/runner.js';
 import { WorkerLease } from './src/lifecycle/worker-lease.js';
 import { JobRegistry } from './src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.js';
-import { createNotificationDispatchJob, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
+import { createNotificationDispatchJob, isAlertEligibleForChannel, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
 import { createReportNotificationJob, createReportScheduleJob, MysqlReportOccurrenceStore, ReportScheduler } from './src/report-scheduler.js';
 import { assertCreatableDatabaseType, listAdapterCapabilities } from './src/adapters/capability-matrix.js';
 import { approvalService } from './src/approval-service.js';
@@ -4796,7 +4796,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       notificationDatabaseService.getAlertById(alertId),
       notificationDatabaseService.getChannelById(channelId),
     ]);
-    if (!alert || !channel || !channel.enabled) return;
+    if (!alert || !channel || !channel.enabled || !isAlertEligibleForChannel(alert, channel)) return;
     await notificationDatabaseService.recordDeliveryAttempt({ job_id: job.id, alert_id: alertId, channel_id: channelId, attempt_number: job.attempts, status: 'started' });
     try {
       await notificationService.deliverAlertToChannel(alert, channel);

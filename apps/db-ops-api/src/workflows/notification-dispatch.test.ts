@@ -49,4 +49,21 @@ describe('NotificationDispatchScheduler', () => {
       idempotencyKey: 'notification:7:3',
     })]);
   });
+
+  it('does not enqueue an alert that predates a channel activation boundary', async () => {
+    const jobs: any[] = [];
+    const scheduler = new NotificationDispatchScheduler(
+      {
+        getPendingAlerts: async () => [{ id: 7, level: 'critical', created_at: new Date('2026-07-19T00:00:00.000Z') }] as any,
+        getEnabledChannels: async () => [{ id: 2, delivery_start_at: new Date('2026-07-19T00:01:00.000Z') }] as any,
+      },
+      { routeAlert: (_alert: any, channels: any[]) => channels } as any,
+      { enqueue: async (job: any) => { jobs.push(job); } },
+      () => 'job-id',
+    );
+
+    await scheduler.enqueuePending();
+
+    expect(jobs).toEqual([]);
+  });
 });

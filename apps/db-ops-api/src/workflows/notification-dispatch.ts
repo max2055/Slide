@@ -1,8 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import type { WorkflowJobInput } from './worker-runtime.js';
 
-type PendingAlert = { id: number; level: string };
-type Channel = { id: number };
+type PendingAlert = { id: number; level: string; created_at?: Date | string };
+type Channel = { id: number; delivery_start_at?: Date | string | null };
+
+/** A newly enabled channel must not replay alerts that existed before activation. */
+export function isAlertEligibleForChannel(alert: PendingAlert, channel: Channel): boolean {
+  if (!channel.delivery_start_at || !alert.created_at) return true;
+  const alertCreatedAt = new Date(alert.created_at).getTime();
+  const deliveryStartAt = new Date(channel.delivery_start_at).getTime();
+  return !Number.isNaN(alertCreatedAt) && !Number.isNaN(deliveryStartAt) && alertCreatedAt >= deliveryStartAt;
+}
 
 export interface NotificationSource {
   getPendingAlerts(): Promise<PendingAlert[]>;
@@ -47,6 +55,7 @@ export class NotificationDispatchScheduler {
     let enqueued = 0;
     for (const alert of alerts) {
       for (const channel of this.router.routeAlert(alert, channels)) {
+        if (!isAlertEligibleForChannel(alert, channel)) continue;
         if (await this.source.hasSuccessfulDelivery?.(alert.id, channel.id)) continue;
         await this.workflow.enqueue({
           id: this.newId(),

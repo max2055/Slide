@@ -706,6 +706,7 @@ CREATE TABLE IF NOT EXISTS `notification_channels` (
   `type` ENUM('email', 'dingtalk', 'wecom', 'feishu', 'webhook') NOT NULL,
   `config` JSON NOT NULL COMMENT '渠道配置，如 webhook URL、secret 等',
   `enabled` BOOLEAN NOT NULL DEFAULT TRUE,
+  `delivery_start_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '通道开始接收告警的时间',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),

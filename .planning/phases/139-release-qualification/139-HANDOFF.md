@@ -22,13 +22,14 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
 ## Current Evidence
 
 - `bash scripts/qualification/run-existing-mysql.sh bootstrap-upgrade`
-  passed: 47 migrations, repeat initialization, schema and ledger invariants.
+  passed: 48 migrations, repeat initialization, schema and ledger invariants.
 - `failover`, `backup-restore`, and `stability` scenarios passed against the
   existing MySQL 9.6 container. Backup recovery requires
   `mysqldump --single-transaction --set-gtid-purged=OFF` because GTIDs are
   enabled in that container.
-- Full local regression passed on 2026-07-19: `pnpm test` passed API 88 files / 967 tests
-  (including signed Feishu webhook and lost-encryption-key recovery contracts),
+- Full local regression passed on 2026-07-19: `pnpm test` passed API 88 files / 968 tests
+  (including signed Feishu webhook, lost-encryption-key recovery, and
+  notification-activation contracts),
   frontend 19 files / 181 tests, and Agent Core 7 files / 69 tests. API and
   frontend typechecks/build passed; `pnpm lint` exits zero but reports 250
   warnings, so it is not lint-clean evidence.
@@ -41,6 +42,10 @@ decision is **NO-GO**; see `139-VERIFICATION.md` and
   Feishu channel, keeps stored webhook paths and signing secrets redacted, and
   exposes the protected one-shot test action. It does not turn blocked external
   delivery into success evidence.
+- Migration 047 sets a per-channel delivery activation boundary. A newly
+  enabled channel receives only alerts created from that boundary forward; both
+  the durable scheduler and delivery worker reject older alerts. This closes the
+  observed historical-notification retry storm without weakening outbound policy.
 - `adapter-uat` connected real local PostgreSQL 18 and Dameng 8 and read native
   metrics. `oracle-adapter-uat` separately connected real Oracle 19c and read
   native metrics after its listener service was restored.

@@ -30,6 +30,7 @@ export interface NotificationChannel {
   type: 'email' | 'dingtalk' | 'wecom' | 'feishu' | 'webhook';
   config: NotificationChannelConfig;
   enabled: boolean;
+  delivery_start_at?: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -114,8 +115,8 @@ class NotificationDatabaseService {
 
     try {
       const [result] = await pool.execute(
-        `INSERT INTO notification_channels (name, type, config, enabled)
-         VALUES (?, ?, ?, ?)`,
+        `INSERT INTO notification_channels (name, type, config, enabled, delivery_start_at)
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         [
           data.name,
           data.type,
@@ -142,7 +143,7 @@ class NotificationDatabaseService {
 
     try {
       let sql = `
-        SELECT id, name, type, config, enabled, created_at, updated_at
+        SELECT id, name, type, config, enabled, delivery_start_at, created_at, updated_at
         FROM notification_channels
       `;
       const params: any[] = [];
@@ -161,6 +162,7 @@ class NotificationDatabaseService {
         type: row.type,
         config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config,
         enabled: Boolean(row.enabled),
+        delivery_start_at: row.delivery_start_at,
         created_at: row.created_at,
         updated_at: row.updated_at,
       }));
@@ -181,7 +183,7 @@ class NotificationDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, type, config, enabled, created_at, updated_at
+        `SELECT id, name, type, config, enabled, delivery_start_at, created_at, updated_at
          FROM notification_channels WHERE id = ?`,
         [id]
       ) as any;
@@ -197,6 +199,7 @@ class NotificationDatabaseService {
         type: row.type,
         config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config,
         enabled: Boolean(row.enabled),
+        delivery_start_at: row.delivery_start_at,
         created_at: row.created_at,
         updated_at: row.updated_at,
       };
@@ -268,6 +271,7 @@ class NotificationDatabaseService {
       if (data.enabled !== undefined) {
         updates.push('enabled = ?');
         values.push(data.enabled ? 1 : 0);
+        if (data.enabled) updates.push('delivery_start_at = CURRENT_TIMESTAMP');
       }
 
       if (updates.length === 0) {
