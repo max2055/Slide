@@ -2,8 +2,8 @@
 set -euo pipefail
 
 scenario="${1:-}"
-if [[ "$scenario" != "bootstrap-upgrade" && "$scenario" != "failover" && "$scenario" != "backup-restore" && "$scenario" != "stability" && "$scenario" != "startup-negative" && "$scenario" != "alert-rca" && "$scenario" != "agent-run-failure" && "$scenario" != "agent-run-cancel" && "$scenario" != "collection-schedule" && "$scenario" != "server-collector-failures" && "$scenario" != "health-truth" && "$scenario" != "workflow-catalog" ]]; then
-  echo "usage: $0 {bootstrap-upgrade|failover|backup-restore|stability|startup-negative|alert-rca|agent-run-failure|agent-run-cancel|collection-schedule|server-collector-failures|health-truth|workflow-catalog}" >&2
+if [[ "$scenario" != "bootstrap-upgrade" && "$scenario" != "failover" && "$scenario" != "backup-restore" && "$scenario" != "stability" && "$scenario" != "startup-negative" && "$scenario" != "alert-rca" && "$scenario" != "agent-run-failure" && "$scenario" != "agent-run-cancel" && "$scenario" != "collection-schedule" && "$scenario" != "server-collector-failures" && "$scenario" != "health-truth" && "$scenario" != "workflow-catalog" && "$scenario" != "adapter-uat" ]]; then
+  echo "usage: $0 {bootstrap-upgrade|failover|backup-restore|stability|startup-negative|alert-rca|agent-run-failure|agent-run-cancel|collection-schedule|server-collector-failures|health-truth|workflow-catalog|adapter-uat}" >&2
   exit 64
 fi
 
@@ -163,6 +163,10 @@ if [[ "$scenario" == "workflow-catalog" ]]; then
   wait "$server_pid" || true
   server_pid=""
   rm -f "$log"
+fi
+
+if [[ "$scenario" == "adapter-uat" ]]; then
+  run_assertion ../../tests/qualification/assert-adapter-uat.ts "$database"
 fi
 
 if [[ "$scenario" == "startup-negative" ]]; then
