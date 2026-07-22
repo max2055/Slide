@@ -292,7 +292,8 @@ test('Feishu settings saves a disabled channel without exposing its credentials'
 
   await page.getByRole('button', { name: '飞书通知' }).click();
   const settings = page.locator('feishu-notification-settings');
-  await expect(settings.getByText('尚未配置通道')).toBeVisible();
+  await expect(settings.getByText('Webhook 未配置')).toBeVisible();
+  await expect(settings.getByText('签名密钥未配置')).toBeVisible();
   const webhookMarker = `qualification-webhook-path-${Date.now()}`;
   const webhook = `https://open.feishu.cn/open-apis/bot/v2/hook/${webhookMarker}`;
   await settings.locator('input[type="url"]').fill(webhook);
@@ -309,7 +310,8 @@ test('Feishu settings saves a disabled channel without exposing its credentials'
   const token = await page.evaluate(() => localStorage.getItem('token'));
   const headers = { Authorization: `Bearer ${token}` };
   try {
-    await expect(settings.getByText('签名密钥：已安全保存')).toBeVisible();
+    await expect(settings.getByText('Webhook 已配置')).toBeVisible();
+    await expect(settings.getByText('签名密钥已配置')).toBeVisible();
     const channels = await page.request.get('/api/notification/channels', { headers });
     expect(channels.status()).toBe(200);
     const savedChannel = (await channels.json()).find((channel: { id: number }) => channel.id === channelId);
