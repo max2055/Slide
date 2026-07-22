@@ -72,6 +72,7 @@ import { getAgentGreeting } from './src/agent-service.js';
 import { scoringConfigService } from './src/scoring-config-service.js';
 import { brandingConfigService } from './src/branding-config-service.js';
 import { consistencyChecker } from './src/consistency-checker.js';
+import { CapacityConsistencyMonitor, createCapacityConsistencyJob } from './src/capacity-consistency-monitor.js';
 import { userPreferenceService } from './src/user-preference-service.js';
 import { collectionCapabilityTracker } from './src/collection-capabilities.js';
 import { resourceService } from './src/resources/resource-service.js';
@@ -4758,9 +4759,18 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const enqueueReportNotifications = async (reportId: number, channelIds: readonly number[]) => {
     await Promise.all(channelIds.map((channelId) => workflowStore.enqueue(createReportNotificationJob(reportId, channelId))));
   };
+  const capacityConsistencyMonitor = new CapacityConsistencyMonitor(
+    () => dbConnection.getPool() as any,
+    consistencyChecker,
+    alertDatabaseService,
+  );
   workflowRegistry.register('capacity.collect', async () => { await monitorCollector.collectCapacityNow(); });
   workflowRegistry.register('baseline.cleanup', async () => { await baselineCalculator.cleanupOldBaselines(); });
   workflowRegistry.register('alert.evaluate', async () => { await alertEngine.triggerEvaluation(); });
+  workflowRegistry.register('capacity.consistency', async () => {
+    await workflowStore.enqueue(createCapacityConsistencyJob(new Date(Date.now() + 300_000)));
+    await capacityConsistencyMonitor.runOnce();
+  });
   workflowRegistry.register('report.schedule', async () => {
     // Commit the successor before generating reports so a restart cannot
     // silently stop all scheduled report processing.
@@ -4846,6 +4856,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const workflowRuntime = new WorkerRuntime(workflowStore, workflowWorkerId);
   await enqueueNotificationDispatch();
   await enqueueReportSchedule();
+  await workflowStore.enqueue(createCapacityConsistencyJob());
   workflowTimer = setInterval(() => { void workflowRuntime.runOnce((job) => workflowRegistry.execute(job)).catch((error) => console.error('Workflow worker failed:', error)); }, 1_000);
 
   // 启动监控采集
