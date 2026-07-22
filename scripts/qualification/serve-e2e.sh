@@ -22,11 +22,20 @@ if [[ -n "${QUALIFICATION_DEEPSEEK_API_KEY:-}" ]]; then
     pnpm --filter slide-api exec tsx ../../scripts/qualification/configure-deepseek.ts
 fi
 
+llm_pid=""
+if [[ "${QUALIFICATION_CANCELLATION_E2E:-0}" == "1" ]]; then
+  node scripts/qualification/cancellable-openai-server.mjs &
+  llm_pid=$!
+  DB_NAME=db_ops_ai_qualification ENCRYPTION_KEY="$qualification_encryption_key" \
+    pnpm --filter slide-api exec tsx ../../scripts/qualification/configure-cancellable-provider.ts
+fi
+
 api_pid=""
 vite_pid=""
 cleanup() {
   test -n "$vite_pid" && kill "$vite_pid" 2>/dev/null || true
   test -n "$api_pid" && kill "$api_pid" 2>/dev/null || true
+  test -n "$llm_pid" && kill "$llm_pid" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
