@@ -23,11 +23,8 @@ import "./components/app-select-field.ts";
 import "./components/app-option-group.ts";
 import "./components/app-badge.ts";
 import "./components/app-toast-container.ts";
-import "./views/dashboard.ts";
 import "./views/instances-db.ts";
 import "./views/servers-page.ts";
-import "./views/server-detail.ts";
-import "./views/instance-detail.ts";
 import "./views/llm-config.ts";
 import "./views/feishu-notification-settings.ts";
 import "./views/ai-settings.ts";
@@ -36,10 +33,6 @@ import "./views/agent-skills.ts";
 import "./views/agent-tools.ts";
 import "./views/prompt-settings.ts";
 import "./views/scoring-settings.ts";
-import "./views/cron-jobs-settings.ts";
-import "./views/health-center.ts";
-import "./views/sql-console.ts";
-import "./views/approval-dashboard.ts";
 import "./views/alerts.ts";
 import "./views/schema-management.ts";
 import "./views/index-management.ts";
@@ -91,6 +84,20 @@ function createLazy<T>(loader: () => Promise<T>): () => T | null {
 
 const lazyAgents = createLazy(() => import("./views/agents.ts"));
 const lazySessions = createLazy(() => import("./views/sessions.ts"));
+const heavyViewLoaders: Partial<Record<AppViewState["tab"], () => Promise<unknown>>> = {
+  dashboard: () => import("./views/dashboard.ts"),
+  "server-detail": () => import("./views/server-detail.ts"),
+  "instance-detail": () => import("./views/instance-detail.ts"),
+  "cron-jobs": () => import("./views/cron-jobs-settings.ts"),
+  "sql-console": () => import("./views/sql-console.ts"),
+  approval: () => import("./views/approval-dashboard.ts"),
+};
+const heavyViewPromises = new Map<AppViewState["tab"], Promise<unknown>>();
+
+function loadHeavyView(tab: AppViewState["tab"]): void {
+  const loader = heavyViewLoaders[tab];
+  if (loader && !heavyViewPromises.has(tab)) heavyViewPromises.set(tab, loader());
+}
 function lazyRender<M>(getter: () => M | null, render: (mod: M) => unknown) {
   const mod = getter();
   return mod ? render(mod) : nothing;
@@ -185,6 +192,7 @@ function loadPermissionsFromStorage(): Set<string> | null {
 }
 
 export function renderApp(state: AppViewState) {
+  loadHeavyView(state.tab);
   const updatableState = state as AppViewState & { requestUpdate?: () => void };
   const requestHostUpdate =
     typeof updatableState.requestUpdate === "function"

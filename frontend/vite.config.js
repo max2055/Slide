@@ -9,6 +9,20 @@ const agentWsProxyTarget = process.env.VITE_AGENT_WS_PROXY_TARGET || 'http://loc
 
 export default defineConfig({
   plugins: [],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('/echarts/') || id.includes('/zrender/')) return 'charts'
+          if (id.includes('/@codemirror/') || id.includes('/codemirror/')) return 'editor'
+          if (id.includes('/marked/') || id.includes('/markdown-it') || id.includes('/@create-markdown/')) return 'markdown'
+          if (id.includes('/lit/') || id.includes('/lit-html/')) return 'lit'
+          return undefined
+        }
+      }
+    }
+  },
   resolve: {
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.json'],
     alias: {
