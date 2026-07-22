@@ -18,6 +18,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Verify generated API contracts
+        run: pnpm contracts:check
       - run: pnpm --filter slide-api typecheck
       - name: Verify qualification coverage
         run: pnpm qualification:matrix

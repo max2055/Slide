@@ -7,24 +7,7 @@ import "../components/app-empty-state.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
-
-interface DatabaseInstance {
-  id: number;
-  name: string;
-  db_type: string;
-  db_version?: string;
-  data_size_gb?: number;
-  host: string;
-  port: number;
-  database_name: string;
-  username?: string;
-  health_status: "healthy" | "warning" | "critical" | "unknown";
-  health_score: number;
-  status: string;
-  created_at: string;
-  environment?: string;
-  description?: string;
-}
+import type { DatabaseInstance } from "../../../api/generated/public-api.js";
 
 interface InstanceFormData {
   name: string;

@@ -38,6 +38,7 @@ import { llmService } from './src/llm-service.js';
 import { dbConnection } from './src/db-connection.js';
 import { loadSecurityConfig } from './src/config/security-config.js';
 import { publicInstanceDto, publicNotificationDto, publicServerDto } from './src/security/public-dto.js';
+import { AdapterCapabilitiesResponseSchema, DatabaseInstancesResponseSchema, HealthResponseSchema } from './src/contracts/public-api.js';
 import { monitorCollector } from './src/monitor-collector.js';
 import { chatDatabaseService } from './src/chat-database-service.js';
 import { handleChatSend } from './src/chat-handler.js';
@@ -256,7 +257,7 @@ async function start() {
   });
 
   // 健康检查
-  fastify.get('/api/health', async (request, reply) => {
+  fastify.get('/api/health', { schema: { response: { 200: HealthResponseSchema } } }, async (request, reply) => {
     reply.send({
       status: 'ok',
       timestamp: new Date().toISOString(),
@@ -589,7 +590,7 @@ async function start() {
   });
 
   // 数据库实例列表
-  fastify.get('/api/database/instances', { preHandler: [verifyToken] }, async (request, reply) => {
+  fastify.get('/api/database/instances', { preHandler: [verifyToken], schema: { response: { 200: DatabaseInstancesResponseSchema } } }, async (request, reply) => {
     try {
       const instances = await instanceDatabaseService.getManagedInstances();
       reply.send(instances.map((instance) => publicInstanceDto(instance as unknown as Record<string, unknown>)));
@@ -1126,7 +1127,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // ========== 数据库实例管理 API ==========
 
-  fastify.get('/api/adapters/capabilities', { preHandler: [verifyToken] }, async (_request, reply) => reply.send({ adapters: listAdapterCapabilities() }));
+  fastify.get('/api/adapters/capabilities', { preHandler: [verifyToken], schema: { response: { 200: AdapterCapabilitiesResponseSchema } } }, async (_request, reply) => reply.send({ adapters: listAdapterCapabilities() }));
 
   // 创建实例
   fastify.post('/api/database/instances', { preHandler: [verifyToken, requirePermission('instance:create')] }, async (request, reply) => {
