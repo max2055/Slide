@@ -11,6 +11,8 @@
     "build": "pnpm --filter slide-frontend build",
     "test": "pnpm -r test",
     "qualification:matrix": "pnpm --filter slide-api exec tsx ../../tests/qualification/coverage-matrix.ts --validate",
+    "release:artifact": "bash scripts/release/build-artifact.sh",
+    "release:rollback-drill": "bash scripts/release/rollback-drill.sh",
     "lint": "oxlint",
     "format": "oxfmt"
   },
