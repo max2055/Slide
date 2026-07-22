@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
+import { resolve } from 'path';
 
-const BASE_CSS_PATH = '/Users/max/Coding/40-Slide/frontend/src/app/styles/tokens.css';
-const VIEWS_DIR = '/Users/max/Coding/40-Slide/frontend/src/app/ui/views';
+const BASE_CSS_PATH = resolve(process.cwd(), 'src/app/styles/tokens.css');
+const VIEWS_DIR = resolve(process.cwd(), 'src/app/ui/views');
 
 const EXPECTED_TOKENS: Record<string, string> = {
   '--text-xs': '11px',

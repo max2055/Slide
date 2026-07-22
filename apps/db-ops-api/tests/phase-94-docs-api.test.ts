@@ -15,8 +15,9 @@
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 
-const SERVER_PATH = '/Users/max/Coding/40-Slide/apps/db-ops-api/server.ts';
+const SERVER_PATH = fileURLToPath(new URL('../server.ts', import.meta.url));
 
 describe('94-03-01: Backend API endpoints for docs serving', () => {
   const source = readFileSync(SERVER_PATH, 'utf-8');

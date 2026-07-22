@@ -1,4 +1,4 @@
-import type { ControlUiEmbedSandboxMode } from "@slide/app/src/gateway/control-ui-contract.js";
+import type { ControlUiEmbedSandboxMode } from "./control-ui-contract.ts";
 
 export type EmbedSandboxMode = ControlUiEmbedSandboxMode;
 

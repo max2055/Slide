@@ -14,9 +14,11 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 
-const GUIDE_PATH = join('/Users/max/Coding/40-Slide/docs/slide/USER-GUIDE.html');
-const SCREENSHOTS_DIR = join('/Users/max/Coding/40-Slide/docs/slide/assets/screenshots');
+const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+const GUIDE_PATH = join(ROOT, 'docs/slide/USER-GUIDE.html');
+const SCREENSHOTS_DIR = join(ROOT, 'docs/slide/assets/screenshots');
 
 const REQUIRED_MODULES = [
   '仪表盘',

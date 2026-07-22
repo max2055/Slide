@@ -11,8 +11,9 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 
-const ROOT = '/Users/max/Coding/40-Slide';
+const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 describe('94-01-01: docs/slide/ directory structure and file cleanup', () => {
   // ===== Directory existence =====
