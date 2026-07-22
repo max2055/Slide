@@ -4,7 +4,7 @@
  * Covers all 4 DB-specific providers from Plan 106-02 Task 1.
  * Cannot execute real DB queries; validates contract and structure.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { BaseMetricProvider } from '../base-provider.js';
 
 describe('MySQLProvider', () => {
@@ -34,6 +34,35 @@ describe('MySQLProvider', () => {
     const provider = new mod.MySQLProvider();
     const desc = await provider.describeSchema(1);
     expect(desc).toBe('');
+  });
+
+  it('uses an independent baseline for handler scan rate', async () => {
+    const { MySQLProvider } = await import('../mysql.provider.js');
+    const provider = new MySQLProvider();
+    let queries = 1_000;
+    let handlerReads = 50_000_000;
+    const instance = {
+      pool: {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes("Variable_name IN ('Queries'")) return [[{ Variable_name: 'Queries', Value: String(queries) }]];
+          return [[{ Variable_name: 'Handler_read_rnd_next', Value: String(handlerReads) }]];
+        }),
+      },
+    } as any;
+    const now = vi.spyOn(Date, 'now');
+
+    now.mockReturnValue(1_000);
+    await provider.collect(instance, { id: 'qps' } as any);
+    now.mockReturnValue(1_001);
+    await expect(provider.collect(instance, { id: 'handler_read_rnd_next_rate' } as any)).resolves.toBe(0);
+
+    queries += 60;
+    now.mockReturnValue(60_000);
+    await provider.collect(instance, { id: 'qps' } as any);
+    handlerReads += 120;
+    now.mockReturnValue(61_001);
+    await expect(provider.collect(instance, { id: 'handler_read_rnd_next_rate' } as any)).resolves.toBe(2);
+    now.mockRestore();
   });
 });
 

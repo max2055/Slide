@@ -7,6 +7,7 @@ import oracledb from 'oracledb';
 import dmdb from 'dmdb';
 import { calculateDimensionScores } from './scoring-service.js';
 import { scoringConfigService } from './scoring-config-service.js';
+import { withTimeout } from './promise-timeout.js';
 
 export interface DatabaseConfig {
   host: string;
@@ -36,7 +37,9 @@ export interface DatabaseConnection {
     bytesSent: number;
     slowQueries: number;
     abortedConnects: number;
+    abortedConnectsTimestamp?: number;
     handlerReadRndNext: number;
+    handlerReadRndNextTimestamp?: number;
     timestamp: number;
   };
   pgDeltaCounter?: {
@@ -241,16 +244,23 @@ class DatabaseService {
         // 达梦数据库连接 - 使用官方 dmdb 驱动
         // 强制 IPv4：Docker 容器通常只绑定 0.0.0.0，localhost 解析到 ::1 会导致 ETIMEDOUT
         const host = config.host === 'localhost' ? '127.0.0.1' : config.host;
-        const dmConnection = await dmdb.getConnection({
+        const dmConnection = await withTimeout(dmdb.getConnection({
           user: config.user,
           password: config.password,
           connectString: `${host}:${config.port}`,
           schema: config.database || undefined,
           connectTimeout: 5000,
           loginEncrypt: false,
+        }), 10_000, `Dameng connection timed out after 10000ms`, (lateConnection) => {
+          void lateConnection.close().catch(() => undefined);
         });
 
-        await dmConnection.execute('SELECT 1 FROM DUAL');
+        try {
+          await withTimeout(dmConnection.execute('SELECT 1 FROM DUAL'), 5_000, 'Dameng health probe timed out after 5000ms');
+        } catch (error) {
+          await dmConnection.close().catch(() => undefined);
+          throw error;
+        }
 
         this.connections.set(id, {
           id,
@@ -487,13 +497,15 @@ class DatabaseService {
       const handlerReadRndNext = Number(handlerResult[0]?.Value) || 0;
       // handler_read_rnd_next_rate via delta (skip first collection)
       let handlerReadRndNextRate = 0;
-      if (!isFirstCollection && conn.deltaCounter) {
-        const elapsed = (now - conn.deltaCounter.timestamp) / 1000;
+      if (conn.deltaCounter) {
+        const previousTimestamp = conn.deltaCounter.handlerReadRndNextTimestamp;
+        const elapsed = previousTimestamp === undefined ? 0 : (now - previousTimestamp) / 1000;
         if (elapsed > 0 && handlerReadRndNext >= conn.deltaCounter.handlerReadRndNext) {
           handlerReadRndNextRate = Math.round((handlerReadRndNext - conn.deltaCounter.handlerReadRndNext) / elapsed * 100) / 100;
         }
+        conn.deltaCounter.handlerReadRndNext = handlerReadRndNext;
+        conn.deltaCounter.handlerReadRndNextTimestamp = now;
       }
-      if (conn.deltaCounter) conn.deltaCounter.handlerReadRndNext = handlerReadRndNext;
 
       // key_blocks_usage
       const [keyBlockResult] = await conn.pool.query<RowDataPacket[]>(
@@ -518,14 +530,14 @@ class DatabaseService {
       const abortedConnects = Number(abortedResult[0]?.Value) || 0;
       // aborted_connects_rate via delta (skip first collection)
       let abortedConnectsRate = 0;
-      if (!isFirstCollection && conn.deltaCounter) {
-        const elapsed = (now - conn.deltaCounter.timestamp) / 1000;
+      if (conn.deltaCounter) {
+        const previousTimestamp = conn.deltaCounter.abortedConnectsTimestamp;
+        const elapsed = previousTimestamp === undefined ? 0 : (now - previousTimestamp) / 1000;
         if (elapsed > 0 && abortedConnects >= conn.deltaCounter.abortedConnects) {
           abortedConnectsRate = Math.round((abortedConnects - conn.deltaCounter.abortedConnects) / elapsed * 100) / 100;
         }
         conn.deltaCounter.abortedConnects = abortedConnects;
-      } else if (conn.deltaCounter) {
-        conn.deltaCounter.abortedConnects = abortedConnects;
+        conn.deltaCounter.abortedConnectsTimestamp = now;
       }
 
       // 复制状态
