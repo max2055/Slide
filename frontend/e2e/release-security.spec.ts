@@ -316,6 +316,29 @@ test('concurrent approval reviews execute a write exactly once', async ({ page }
     });
     expect(read.status()).toBe(200);
     expect((await read.json()).rows).toEqual([{ value: 1 }]);
+    const association = await page.request.post(`/api/database/instances/${id}/execute`, {
+      headers: { ...headers, 'Idempotency-Key': `qualification-association-${Date.now()}` },
+      data: {
+        sql: `SELECT h.approval_request_id, a.rollback_info
+              FROM sql_execution_history h
+              JOIN approval_requests a ON a.id = h.approval_request_id
+              WHERE h.approval_request_id = ${approvalId}
+                AND h.sql_text LIKE 'UPDATE qualification_approval_counter%'
+              ORDER BY h.id DESC LIMIT 1`,
+      },
+    });
+    expect(association.status()).toBe(200);
+    const associationRows = (await association.json()).rows;
+    expect(associationRows).toHaveLength(1);
+    expect(Number(associationRows[0].approval_request_id)).toBe(approvalId);
+    const rollbackInfo = typeof associationRows[0].rollback_info === 'string'
+      ? JSON.parse(associationRows[0].rollback_info)
+      : associationRows[0].rollback_info;
+    expect(rollbackInfo).toMatchObject({
+      available: false,
+      reason: 'ROLLBACK_SQL_NOT_PROVIDED',
+      executed_at: expect.any(String),
+    });
   } finally {
     await page.request.delete(`/api/database/instances/${id}`, { headers });
   }

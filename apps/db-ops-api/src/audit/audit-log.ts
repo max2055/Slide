@@ -726,6 +726,7 @@ export class AuditLogManager {
     rowCount?: number;
     errorMessage?: string;
     ipAddress?: string;
+    approvalRequestId?: number;
   }): Promise<void> {
     const entry: AuditLogEntry = {
       id: this.generateId(),
@@ -745,6 +746,7 @@ export class AuditLogManager {
         errorMessage: params.errorMessage,
       },
       clientIp: params.ipAddress,
+      approvalRequestId: params.approvalRequestId != null ? String(params.approvalRequestId) : undefined,
       timestamp: Date.now(),
       result: params.status === 'success' ? 'success' : 'failure',
     };

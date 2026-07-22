@@ -11,7 +11,8 @@ class SqlExecutor {
    * 执行 SQL 查询（仅 SELECT）
    */
   async executeSql(instanceId: number, sql: string, context?: {
-    userId?: string; username?: string; ipAddress?: string; database?: string; timeoutMs?: number; approvedOperationId?: string;
+    userId?: string; username?: string; ipAddress?: string; database?: string; timeoutMs?: number;
+    approvedOperationId?: string; approvalRequestId?: number;
   }): Promise<{
     success: boolean;
     columns?: string[];
@@ -117,6 +118,7 @@ class SqlExecutor {
             status: 'success',
             rowCount: rows.length,
             ipAddress: context.ipAddress,
+            approvalRequestId: context.approvalRequestId,
           });
         } catch { /* audit non-blocking */ }
       }
@@ -137,6 +139,7 @@ class SqlExecutor {
             status: 'error',
             errorMessage: error.message,
             ipAddress: context.ipAddress,
+            approvalRequestId: context.approvalRequestId,
           });
         } catch { /* audit non-blocking */ }
       }

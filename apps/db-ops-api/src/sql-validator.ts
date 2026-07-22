@@ -46,12 +46,19 @@ export function classifySql(sql: string, dialect: string = 'mysql'): SqlClassifi
   const parser = new Parser();
   let ast: any;
   try {
-    // node-sql-parser does not fully model Dameng. Its Oracle grammar is the
-    // closest supported grammar and failures remain fail-closed.
+    // node-sql-parser does not fully model Dameng, so try its Oracle grammar
+    // first and fall back to the shared MySQL subset below when unavailable.
     const parserDialect = dialect === 'dameng' ? 'oracle' : dialect;
     ast = parser.astify(sql, { database: parserDialect });
   } catch {
-    return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
+    if (dialect !== 'oracle' && dialect !== 'dameng') {
+      return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
+    }
+    try {
+      ast = parser.astify(sql, { database: 'mysql' });
+    } catch {
+      return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
+    }
   }
   const statements = Array.isArray(ast) ? ast : [ast];
   if (statements.length !== 1) return { commandType: 'unknown', reasonCode: 'MULTI_STATEMENT', dialect, ast };

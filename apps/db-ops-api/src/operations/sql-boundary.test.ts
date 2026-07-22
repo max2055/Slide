@@ -5,6 +5,10 @@ describe('SQL read-only boundary', () => {
   it.each([
     ['mysql', 'SELECT id FROM users', 'read', 'READ_ONLY'],
     ['postgresql', 'WITH x AS (SELECT 1) SELECT * FROM x', 'read', 'READ_ONLY'],
+    ['oracle', 'SELECT 1 FROM DUAL', 'read', 'READ_ONLY'],
+    ['dameng', 'SELECT 1 FROM DUAL', 'read', 'READ_ONLY'],
+    ['oracle', 'UPDATE users SET username = username', 'write', 'UNCLASSIFIED'],
+    ['dameng', 'DROP TABLE users', 'ddl', 'UNCLASSIFIED'],
     ['mysql', 'UPDATE users SET username = username', 'write', 'UNCLASSIFIED'],
     ['mysql', 'CREATE TABLE test (id INT)', 'ddl', 'UNCLASSIFIED'],
     ['mysql', 'BEGIN', 'transaction', 'UNCLASSIFIED'],
@@ -20,4 +24,5 @@ describe('SQL read-only boundary', () => {
     expect(classifySql('SELECT /*+ malformed', 'oracle')).toMatchObject({ commandType: 'unknown' });
     expect(classifySql('not sql', 'dameng')).toMatchObject({ commandType: 'unknown' });
   });
+
 });

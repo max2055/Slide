@@ -203,12 +203,18 @@ class ApprovalService {
         username: 'dba-approver',
         database: req.target_database || undefined,
         approvedOperationId: `approval:${requestId}`,
+        approvalRequestId: requestId,
       });
       const status = execResult.success ? 'executed' : 'execution_failed';
+      const rollbackInfo = {
+        available: false,
+        executed_at: new Date().toISOString(),
+        reason: 'ROLLBACK_SQL_NOT_PROVIDED',
+      };
       await pool.execute(
-        'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ?, execution_result = ? WHERE id = ?',
+        'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ?, execution_result = ?, rollback_info = ? WHERE id = ?',
         [status, review.reviewed_by || null, review.notes || null,
-         JSON.stringify(execResult.success ? execResult : { error: execResult.error }), requestId]
+         JSON.stringify(execResult.success ? execResult : { error: execResult.error }), JSON.stringify(rollbackInfo), requestId]
       );
       await this.writeEvent(requestId, 'approved', { execute_after_approve: true }, review.reviewed_by);
       if (execResult.success) {
