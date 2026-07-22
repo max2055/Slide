@@ -2706,6 +2706,7 @@ class DatabaseService {
       SELECT
         table_schema as db_name,
         ROUND(SUM(data_length + index_length) / 1024 / 1024 / 1024, 2) as size_gb,
+        SUM(data_length + index_length) as size_bytes,
         COUNT(*) as table_count
       FROM information_schema.tables
       WHERE table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
@@ -2727,10 +2728,10 @@ class DatabaseService {
     `);
 
     // 获取最大的表
-    const totalSize = dbSizeRows.reduce((sum: number, row: any) => sum + (row.size_gb || 0), 0);
+    const totalBytes = dbSizeRows.reduce((sum: number, row: any) => sum + Number(row.size_bytes || 0), 0);
 
     return {
-      total_size_gb: Math.round(totalSize * 100) / 100,
+      total_size_gb: Math.round(totalBytes / 1024 / 1024 / 1024 * 100) / 100,
       databases: dbSizeRows.map((row: any) => ({
         name: row.db_name,
         size_gb: Number(row.size_gb),
@@ -2904,7 +2905,8 @@ class DatabaseService {
         TABLESPACE_NAME as name,
         ROUND(SUM(BYTES) * 1.0 / 1024 / 1024 / 1024, 2) as size_gb,
         ROUND(SUM(DECODE(AUTOEXTENSIBLE, 'YES', MAXBYTES, BYTES)) * 1.0 / 1024 / 1024 / 1024, 2) as max_size_gb,
-        ROUND((SUM(BYTES) * 1.0 / SUM(DECODE(AUTOEXTENSIBLE, 'YES', MAXBYTES, BYTES))) * 100, 2) as usage_percent
+        ROUND((SUM(BYTES) * 1.0 / SUM(DECODE(AUTOEXTENSIBLE, 'YES', MAXBYTES, BYTES))) * 100, 2) as usage_percent,
+        SUM(BYTES) as size_bytes
       FROM DBA_DATA_FILES
       GROUP BY TABLESPACE_NAME
       ORDER BY size_gb DESC
@@ -2929,12 +2931,13 @@ class DatabaseService {
       size_gb: Number(row[1]),
       max_size_gb: Number(row[2]),
       usage_percent: Number(row[3]),
+      size_bytes: Number(row[4]),
     }));
 
-    const totalSize = tablespaces.reduce((sum: number, ts: any) => sum + (ts.size_gb || 0), 0);
+    const totalBytes = tablespaces.reduce((sum: number, ts: any) => sum + ts.size_bytes, 0);
 
     return {
-      total_size_gb: Math.round(totalSize * 100) / 100,
+      total_size_gb: Math.round(totalBytes / 1024 / 1024 / 1024 * 100) / 100,
       tablespaces,
       top_tables: (segResult.rows || []).map((row: any) => ({
         name: row[0],

@@ -78,6 +78,34 @@ class InstanceDatabaseService {
   }
 
   /**
+   * 获取管理列表中的全部实例，包括已停用和连接异常的实例。
+   */
+  async getManagedInstances(): Promise<DatabaseInstance[]> {
+    const pool = this.getPool();
+    if (!pool) {
+      return [];
+    }
+
+    try {
+      const [rows] = await pool.execute(
+        `SELECT id, name, environment, db_type, host, port, username,
+                password_encrypted, database_name, connection_string,
+                max_connections, connection_timeout_ms, status,
+                health_score, health_status, last_health_check_at,
+                db_version, data_size_gb,
+                tags, description, created_by, created_at, updated_at
+         FROM database_instances
+         ORDER BY name`
+      ) as any;
+
+      return rows as DatabaseInstance[];
+    } catch (error) {
+      console.error('获取管理实例列表失败:', error);
+      return [];
+    }
+  }
+
+  /**
    * 根据 ID 获取实例
    */
   async getInstanceById(id: number): Promise<DatabaseInstance | null> {
@@ -323,6 +351,18 @@ class InstanceDatabaseService {
     }
   }
 
+  async markInstanceActive(id: number): Promise<void> {
+    const pool = this.getPool();
+    if (!pool) return;
+
+    await pool.execute(
+      `UPDATE database_instances
+       SET status = 'active', health_status = 'unknown', updated_at = NOW()
+       WHERE id = ?`,
+      [id]
+    );
+  }
+
   /**
    * 测试数据库连接
    */
@@ -413,6 +453,7 @@ class InstanceDatabaseService {
           connectString: `${host}:${config.port}`,
           schema: config.database || undefined,
           connectTimeout: 5000,
+          loginEncrypt: false,
         });
 
         await connection.execute('SELECT 1 FROM DUAL');

@@ -8,6 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { metricRegistry } from '../metric-registry';
+import serverMetricProvider from '../server-metric-provider';
 
 describe('MetricRegistry Oracle support', () => {
   describe('D-01: Oracle in 8 built-in metric db_types', () => {
@@ -60,5 +61,19 @@ describe('MetricRegistry Oracle support', () => {
       expect(m!.db_types).toEqual(['oracle']);
       expect(m!.aggregation).toBe('max');
     });
+  });
+});
+
+describe('MetricRegistry server producer parity', () => {
+  it('registers every metric name persisted by the Linux server collector', () => {
+    const providerNames = serverMetricProvider.getDefinitions('linux')
+      .map((definition) => definition.name)
+      .filter((name) => name !== 'disk_detail' && name !== 'disk_usage');
+    const persistedNames = [...providerNames, 'disk_usage'];
+    const registeredNames = new Set(
+      metricRegistry.getByTargetType('server').map((definition) => definition.id),
+    );
+
+    expect(persistedNames.filter((name) => !registeredNames.has(name))).toEqual([]);
   });
 });

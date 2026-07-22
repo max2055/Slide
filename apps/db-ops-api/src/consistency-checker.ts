@@ -153,8 +153,8 @@ export class ConsistencyChecker {
     if (!pool) throw new Error('数据库未连接');
 
     const [instRows] = await pool.execute(
-      'SELECT COALESCE(SUM(data_size_gb), 0) as inst_total FROM database_instances WHERE status = ?',
-      ['active'],
+      'SELECT COALESCE(SUM(data_size_gb), 0) as inst_total FROM database_instances',
+      [],
     ) as any;
     const instTotal = Number(instRows[0]?.inst_total || 0);
 
@@ -171,12 +171,12 @@ export class ConsistencyChecker {
            SELECT instance_id, MAX(recorded_at) as max_ts
            FROM capacity_history GROUP BY instance_id
          ) latest ON ch1.instance_id = latest.instance_id AND ch1.recorded_at = latest.max_ts
-       ) ch ON di.id = ch.instance_id
-       WHERE di.status = 'active'`,
+       ) ch ON di.id = ch.instance_id`,
       [],
     ) as any;
 
-    // Only sum instances that have capacity records (to avoid mixing in stale data)
+    // Capacity is stored to 0.01 GB precision; differences beyond that are real drift.
+    const toleranceGb = 0.01;
     let capTotal = 0;
     const gaps: { id: number; name: string; inst_size: number; cap_size: number; cap_ts: string | null }[] = [];
     for (const r of perInst) {
@@ -184,16 +184,16 @@ export class ConsistencyChecker {
       const capSize = Number(r.cap_size || 0);
       if (r.cap_ts && capSize >= 0) {
         capTotal += capSize;
-        if (Math.abs(instSize - capSize) > 0.5) {
+        if (Math.abs(instSize - capSize) > toleranceGb) {
           gaps.push({ id: r.id, name: r.name, inst_size: instSize, cap_size: capSize, cap_ts: r.cap_ts });
         }
-      } else if (instSize > 0) {
+      } else {
         gaps.push({ id: r.id, name: r.name, inst_size: instSize, cap_size: -1, cap_ts: null });
       }
     }
 
     const delta = Math.abs(instTotal - capTotal);
-    if (gaps.length === 0 && delta < 1) {
+    if (gaps.length === 0 && delta <= toleranceGb) {
       return {
         id: 'capacity_sum_match',
         label: '容量数据一致性',

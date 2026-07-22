@@ -18,6 +18,13 @@ const requiredIndexes: Array<[string, string]> = [
   ['operation_events', 'idx_operation_events_operation_created'],
 ];
 
+const requiredForeignKeys: Array<[string, string]> = [
+  ['sql_execution_history', 'fk_sql_history_approval'],
+  ['approval_requests', 'fk_approval_operation'],
+  ['operations', 'fk_operation_approval'],
+  ['operation_events', 'fk_operation_events_operation'],
+];
+
 export class SchemaInvariantError extends Error {}
 
 export async function assertSchemaInvariants(pool: MigrationPool): Promise<void> {
@@ -38,7 +45,26 @@ export async function assertSchemaInvariants(pool: MigrationPool): Promise<void>
   );
   const presentIndexes = new Set(indexes.map((index) => `${index.table_name}.${index.index_name}`));
   const missingIndexes = requiredIndexes.filter(([table, index]) => !presentIndexes.has(`${table}.${index}`)).map(([table, index]) => `${table}.${index}`);
-  if (missingColumns.length || missingIndexes.length) {
-    throw new SchemaInvariantError(`Schema invariant failed: missing ${[...missingColumns, ...missingIndexes].join(', ')}`);
+  const [foreignKeys] = await pool.query<Array<{ table_name: string; constraint_name: string }>>(
+    `SELECT TABLE_NAME AS table_name, CONSTRAINT_NAME AS constraint_name
+     FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = DATABASE()`,
+  );
+  const presentForeignKeys = new Set(foreignKeys.map((key) => `${key.table_name}.${key.constraint_name}`));
+  const missingForeignKeys = requiredForeignKeys
+    .filter(([table, key]) => !presentForeignKeys.has(`${table}.${key}`))
+    .map(([table, key]) => `${table}.${key}`);
+  const [alertLevelColumns] = await pool.query<Array<{ column_type: string }>>(
+    `SELECT COLUMN_TYPE AS column_type
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'alerts' AND COLUMN_NAME = 'level'`,
+  );
+  const missingEnumValues = alertLevelColumns[0]?.column_type.includes("'p0'")
+    ? []
+    : ['alerts.level missing enum value p0'];
+  if (missingColumns.length || missingIndexes.length || missingForeignKeys.length || missingEnumValues.length) {
+    throw new SchemaInvariantError(`Schema invariant failed: ${[
+      ...[...missingColumns, ...missingIndexes, ...missingForeignKeys].map((item) => `missing ${item}`),
+      ...missingEnumValues,
+    ].join(', ')}`);
   }
 }

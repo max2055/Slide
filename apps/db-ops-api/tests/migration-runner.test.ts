@@ -15,6 +15,9 @@ class FakePool {
     if (sql.includes('GET_LOCK')) return [[{ locked: this.lockAvailable ? 1 : 0 }]];
     if (sql.includes('RELEASE_LOCK') || sql.startsWith('CREATE TABLE')) return [[{}]];
     if (sql.includes('COUNT(*) AS count') || sql.includes('information_schema.TABLES')) return [[]];
+    if (sql.includes("TABLE_NAME = 'alerts'")) {
+      return [[{ column_type: "enum('info','warning','error','critical','p0')" }]];
+    }
     if (sql.includes('information_schema.COLUMNS')) return [[
       ...['id', 'username', 'password_hash', 'session_version'].map((column_name) => ({ table_name: 'users', column_name })),
       ...['id', 'token_hash', 'user_id', 'session_version', 'revoked'].map((column_name) => ({ table_name: 'refresh_tokens', column_name })),
@@ -30,6 +33,12 @@ class FakePool {
       { table_name: 'refresh_tokens', index_name: 'idx_rt_user_session' },
       { table_name: 'operations', index_name: 'uq_operations_actor_idempotency' },
       { table_name: 'operation_events', index_name: 'idx_operation_events_operation_created' },
+    ]];
+    if (sql.includes('information_schema.REFERENTIAL_CONSTRAINTS')) return [[
+      { table_name: 'sql_execution_history', constraint_name: 'fk_sql_history_approval' },
+      { table_name: 'approval_requests', constraint_name: 'fk_approval_operation' },
+      { table_name: 'operations', constraint_name: 'fk_operation_approval' },
+      { table_name: 'operation_events', constraint_name: 'fk_operation_events_operation' },
     ]];
     if (sql.startsWith('SELECT migration_id')) return [[this.entries.get(values[0])].filter(Boolean)];
     if (sql.startsWith('INSERT INTO app_schema_migrations')) {

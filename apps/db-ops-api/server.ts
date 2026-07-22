@@ -590,7 +590,7 @@ async function start() {
   // 数据库实例列表
   fastify.get('/api/database/instances', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
-      const instances = await instanceDatabaseService.getAllInstances();
+      const instances = await instanceDatabaseService.getManagedInstances();
       reply.send(instances.map((instance) => publicInstanceDto(instance as unknown as Record<string, unknown>)));
     } catch (error: any) {
       reply.code(500).send({ error: '获取实例列表失败：' + error.message });
@@ -1210,6 +1210,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         db_type: instance.db_type,
       });
       if (added) {
+        await instanceDatabaseService.markInstanceActive(Number(id));
         reply.send({ success: true, message: '连接已建立' });
       } else {
         reply.code(500).send({ success: false, error: '连接建立失败' });
@@ -2244,7 +2245,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         params
       ) as any;
 
-      // Current total — use database_instances (single source of truth) instead of capacity_history
+      // Current total uses the same managed-instance scope shown by instance management.
       let currentTotal = 0;
       if (instance_id) {
         const [current] = await pool.execute(
@@ -2257,8 +2258,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       } else {
         const [current] = await pool.execute(
           `SELECT COALESCE(SUM(data_size_gb), 0) as current_total
-           FROM database_instances
-           WHERE status = 'active'`,
+           FROM database_instances`,
         ) as any;
         currentTotal = Number(current[0]?.current_total || 0);
       }
