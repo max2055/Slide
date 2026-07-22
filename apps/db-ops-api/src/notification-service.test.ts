@@ -5,7 +5,7 @@ vi.mock('./security/outbound-policy.js', async (importOriginal) => {
   return { ...actual, resolveOutboundTarget: vi.fn() };
 });
 
-import { NotificationService } from './notification-service.js';
+import { createPinnedLookup, NotificationService } from './notification-service.js';
 import { resolveOutboundTarget } from './security/outbound-policy.js';
 
 const channel = {
@@ -44,6 +44,14 @@ const feishuChannel = {
 };
 
 describe('NotificationService outbound delivery', () => {
+  it('returns a pinned address list when Node requests all DNS results', () => {
+    const callback = vi.fn();
+
+    createPinnedLookup('198.18.3.98')('open.feishu.cn', { all: true }, callback);
+
+    expect(callback).toHaveBeenCalledWith(null, [{ address: '198.18.3.98', family: 4 }]);
+  });
+
   it('records a successful 2xx response from a verified, pinned target', async () => {
     vi.mocked(resolveOutboundTarget).mockResolvedValue({
       url: new URL(channel.config.webhook_url), addresses: ['203.0.113.10'],

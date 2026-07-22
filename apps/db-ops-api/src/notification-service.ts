@@ -5,6 +5,7 @@
 import { CronJob } from 'cron';
 import * as crypto from 'crypto';
 import * as https from 'node:https';
+import type { LookupFunction } from 'node:net';
 import nodemailer from 'nodemailer';
 import { notificationDatabaseService } from './notification-database-service';
 import type { PendingAlert, NotificationChannel } from './notification-database-service';
@@ -14,6 +15,17 @@ import { signFeishuWebhookPayload } from './feishu-webhook.js';
 import { maintenanceWindowService } from './maintenance-window-service';
 import { resolveOutboundTarget, OutboundPolicyError } from './security/outbound-policy.js';
 import { isAlertEligibleForChannel } from './workflows/notification-dispatch.js';
+
+export function createPinnedLookup(address: string): LookupFunction {
+  const family = address.includes(':') ? 6 : 4;
+  return (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, [{ address, family }]);
+      return;
+    }
+    callback(null, address, family);
+  };
+}
 
 export class NotificationService {
   private pollingJob: CronJob | null = null;
@@ -301,15 +313,11 @@ export class NotificationService {
                 },
               },
               {
-                tag: 'content',
-                content: [
-                  [
-                    {
-                      tag: 'plain_text',
-                      content: alert.message,
-                    },
-                  ],
-                ],
+                tag: 'div',
+                text: {
+                  tag: 'plain_text',
+                  content: alert.message,
+                },
               },
             ],
           },
@@ -498,7 +506,7 @@ export class NotificationService {
         path: `${url.pathname}${url.search}`, method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
         servername: url.hostname, rejectUnauthorized: true,
-        lookup: (_hostname, _options, callback) => callback(null, address, address.includes(':') ? 6 : 4),
+        lookup: createPinnedLookup(address),
       }, (response) => {
         let body = '';
         response.setEncoding('utf8');

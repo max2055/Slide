@@ -4,7 +4,9 @@ import { authorizeOutboundUrl, OutboundPolicyError } from './outbound-policy.js'
 const lookup = async (hostname: string) => {
   const entries: Record<string, string[]> = {
     'hooks.example.com': ['203.0.113.10'],
+    'fake.example.com': ['198.18.3.98'],
     'mixed.example.com': ['203.0.113.10', '127.0.0.1'],
+    'open.feishu.cn': ['198.18.3.98'],
     'v6-local.example.com': ['fe80::1'],
   };
   if (!entries[hostname]) throw new Error('not found');
@@ -17,11 +19,31 @@ describe('outbound policy', () => {
       .resolves.toMatchObject({ hostname: 'hooks.example.com' });
   });
 
+  it('allows the exact Feishu webhook host through a Mihomo fake IP', async () => {
+    await expect(authorizeOutboundUrl('https://open.feishu.cn/open-apis/bot/v2/hook/example', {
+      allowedHosts: ['open.feishu.cn'],
+      lookup,
+    })).resolves.toMatchObject({ hostname: 'open.feishu.cn' });
+  });
+
+  it('includes the product Feishu endpoint when no host allowlist is configured', async () => {
+    const previous = process.env.OUTBOUND_ALLOWED_HOSTS;
+    delete process.env.OUTBOUND_ALLOWED_HOSTS;
+    try {
+      await expect(authorizeOutboundUrl('https://open.feishu.cn/open-apis/bot/v2/hook/example', { lookup }))
+        .resolves.toMatchObject({ hostname: 'open.feishu.cn' });
+    } finally {
+      if (previous === undefined) delete process.env.OUTBOUND_ALLOWED_HOSTS;
+      else process.env.OUTBOUND_ALLOWED_HOSTS = previous;
+    }
+  });
+
   it.each([
     ['http://hooks.example.com', 'UNSUPPORTED_SCHEME'],
     ['https://hooks.example.com:8443', 'PORT_DENIED'],
     ['https://evil.example.net', 'HOST_DENIED'],
     ['https://missing.example.com', 'DNS_FAILED'],
+    ['https://fake.example.com', 'PRIVATE_ADDRESS'],
     ['https://mixed.example.com', 'PRIVATE_ADDRESS'],
     ['https://v6-local.example.com', 'PRIVATE_ADDRESS'],
   ])('rejects %s with %s', async (url, reasonCode) => {

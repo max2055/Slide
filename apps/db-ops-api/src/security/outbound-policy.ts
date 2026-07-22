@@ -47,8 +47,17 @@ export function isPublicIp(address: string): boolean {
   return false;
 }
 
+function isFeishuMihomoFakeIp(hostname: string, address: string): boolean {
+  if (hostname !== 'open.feishu.cn' || isIP(address) !== 4) return false;
+  const [first, second] = address.split('.').map(Number);
+  return first === 198 && second === 18;
+}
+
 function configuredHosts(raw = process.env.OUTBOUND_ALLOWED_HOSTS): string[] {
-  return (raw ?? '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean);
+  return [
+    'open.feishu.cn',
+    ...(raw ?? '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean),
+  ];
 }
 
 function hostAllowed(hostname: string, allowedHosts: readonly string[]): boolean {
@@ -79,6 +88,8 @@ export async function resolveOutboundTarget(
     : await (options.lookup ?? ((host) => dns.lookup(host, { all: true, verbatim: true })))(hostname)
       .catch(() => { throw new OutboundPolicyError('DNS_FAILED'); });
   if (addresses.length === 0) throw new OutboundPolicyError('DNS_FAILED');
-  if (addresses.some(({ address }) => !isPublicIp(address))) throw new OutboundPolicyError('PRIVATE_ADDRESS');
+  if (addresses.some(({ address }) => !isPublicIp(address) && !isFeishuMihomoFakeIp(hostname, address))) {
+    throw new OutboundPolicyError('PRIVATE_ADDRESS');
+  }
   return { url, addresses: addresses.map(({ address }) => address) };
 }

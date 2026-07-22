@@ -153,14 +153,14 @@ describe('Feishu message format', () => {
     expect(divElement.text.content).toContain('performance');
   });
 
-  it('should include alert message in content element', () => {
+  it('should include the alert message in a valid card div element', () => {
     const alert = createTestAlert();
     const message = notificationService.buildMessage('feishu', alert);
 
-    const contentElement = message.card.elements[1];
-    expect(contentElement.tag).toBe('content');
-    expect(contentElement.content[0][0].tag).toBe('plain_text');
-    expect(contentElement.content[0][0].content).toBe(alert.message);
+    const messageElement = message.card.elements[1];
+    expect(messageElement.tag).toBe('div');
+    expect(messageElement.text.tag).toBe('plain_text');
+    expect(messageElement.text.content).toBe(alert.message);
   });
 });
 
