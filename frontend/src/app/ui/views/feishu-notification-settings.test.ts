@@ -36,7 +36,21 @@ describe('Feishu notification settings', () => {
     expect(subject.webhookUrl).toBe('');
     expect(subject.endpoint).toBe('https://open.feishu.cn');
     expect(subject.secret).toBe('');
-    expect(subject.shadowRoot?.textContent).toContain('已安全保存');
+    const text = subject.shadowRoot?.textContent || '';
+    expect(text).toContain('Webhook 已配置');
+    expect(text).toContain('签名密钥已配置');
+    expect(text).toContain('告警通知未启用');
+
+    const fields = subject.shadowRoot?.querySelectorAll('app-form-field') || [];
+    expect(fields[0]?.getAttribute('label')).toBe('替换飞书 Webhook');
+    expect(fields[1]?.getAttribute('label')).toBe('更新签名密钥');
+
+    const inputs = subject.shadowRoot?.querySelectorAll<HTMLInputElement>('input') || [];
+    expect(inputs[0]?.placeholder).toBe('已保存，留空不变');
+    expect(inputs[1]?.placeholder).toBe('已安全保存，留空不变');
+    expect(inputs[0]?.value).toBe('');
+    expect(inputs[1]?.value).toBe('');
+    expect(subject.shadowRoot?.innerHTML).not.toContain('/open-apis/bot/v2/hook/');
   });
 
   it('saves a new Feishu webhook with the supplied signing secret and enabled state', async () => {
@@ -59,7 +73,14 @@ describe('Feishu notification settings', () => {
         config: { webhook_url: webhookUrl, secret: 'signing-secret', severity: 'info' },
       }),
     }));
+    await subject.updateComplete;
+    expect(subject.endpoint).toBe('https://open.feishu.cn');
+    expect(subject.hasStoredCredential).toBe(true);
+    expect(subject.webhookUrl).toBe('');
     expect(subject.secret).toBe('');
+    expect(subject.shadowRoot?.textContent).toContain('Webhook 已配置');
+    expect(subject.shadowRoot?.textContent).toContain('签名密钥已配置');
+    expect(subject.shadowRoot?.textContent).toContain('告警通知已启用');
   });
 
   it('does not save a non-Feishu HTTPS webhook URL', async () => {

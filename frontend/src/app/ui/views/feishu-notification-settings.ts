@@ -3,6 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
 import { showToast } from '../components/app-toast-container.js';
 import '../components/app-card.js';
+import '../components/app-badge.js';
 import '../components/app-form-field.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 
@@ -43,8 +44,7 @@ export class FeishuNotificationSettings extends LitElement {
     .intro { margin: 0 0 var(--space-xl); color: var(--muted); font-size: var(--text-base); }
     .field-input { box-sizing: border-box; width: 100%; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-sm) var(--space-md); color: var(--text); background: var(--card); font: inherit; }
     .field-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
-    .status { display: flex; gap: var(--space-sm); align-items: center; margin-bottom: var(--space-lg); color: var(--muted); font-size: var(--text-sm); }
-    .status strong { color: var(--text); }
+    .status { display: flex; flex-wrap: wrap; gap: var(--space-sm); align-items: center; margin-bottom: var(--space-lg); }
     .switch { display: flex; gap: var(--space-sm); align-items: center; color: var(--text); font-size: var(--text-base); cursor: pointer; }
     .hint { margin: var(--space-xs) 0 0; color: var(--muted); font-size: var(--text-xs); line-height: 1.5; }
     .actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); padding-top: var(--space-md); }
@@ -150,16 +150,22 @@ export class FeishuNotificationSettings extends LitElement {
       <p class="intro">配置告警机器人。Webhook 与签名密钥只会通过受保护接口提交，保存后不会回显。</p>
       <app-card>
         ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : ''}
-        <div class="status">
-          <strong>${this.channelId ? '已配置通道' : '尚未配置通道'}</strong>
-          ${this.endpoint ? html`<span>已保存端点：${this.endpoint}</span>` : ''}
-          ${this.hasStoredCredential ? html`<span>签名密钥：已安全保存</span>` : ''}
+        <div class="status" aria-label="飞书通知配置状态">
+          <app-badge variant=${this.endpoint ? 'ok' : 'muted'}>
+            ${this.endpoint ? 'Webhook 已配置' : 'Webhook 未配置'}
+          </app-badge>
+          <app-badge variant=${this.hasStoredCredential ? 'ok' : 'muted'}>
+            ${this.hasStoredCredential ? '签名密钥已配置' : '签名密钥未配置'}
+          </app-badge>
+          <app-badge variant=${this.enabled ? 'ok' : 'warn'}>
+            ${this.enabled ? '告警通知已启用' : '告警通知未启用'}
+          </app-badge>
         </div>
-        <app-form-field label="飞书 Webhook" hint="仅接受 open.feishu.cn 的 HTTPS 自定义机器人地址。已有地址不会回显；留空表示保留已保存地址。" .error=${this.error && this.error.includes('Webhook') ? this.error : ''}>
-          <input class="field-input" type="url" autocomplete="off" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." .value=${this.webhookUrl} @input=${(event: Event) => { this.webhookUrl = (event.target as HTMLInputElement).value; }}>
+        <app-form-field label=${this.channelId ? '替换飞书 Webhook' : '飞书 Webhook'} hint="仅接受 open.feishu.cn 的 HTTPS 自定义机器人地址。留空表示保留已保存地址。" .error=${this.error && this.error.includes('Webhook') ? this.error : ''}>
+          <input class="field-input" type="url" autocomplete="off" placeholder=${this.endpoint ? '已保存，留空不变' : 'https://open.feishu.cn/open-apis/bot/v2/hook/...'} .value=${this.webhookUrl} @input=${(event: Event) => { this.webhookUrl = (event.target as HTMLInputElement).value; }}>
         </app-form-field>
-        <app-form-field label="签名密钥" hint="启用飞书机器人签名校验时填写。保存后该密钥会被加密且无法在页面中查看；留空表示保留已保存密钥。" .error=${this.error && this.error.includes('签名密钥') ? this.error : ''}>
-          <input class="field-input" type="password" autocomplete="new-password" placeholder=${this.hasStoredCredential ? '已保存（留空不变）' : '飞书机器人签名密钥'} .value=${this.secret} @input=${(event: Event) => { this.secret = (event.target as HTMLInputElement).value; }}>
+        <app-form-field label=${this.channelId ? '更新签名密钥' : '签名密钥'} hint="启用飞书机器人签名校验时填写。保存后该密钥会被加密且无法在页面中查看；留空表示保留已保存密钥。" .error=${this.error && this.error.includes('签名密钥') ? this.error : ''}>
+          <input class="field-input" type="password" autocomplete="new-password" placeholder=${this.hasStoredCredential ? '已安全保存，留空不变' : '飞书机器人签名密钥'} .value=${this.secret} @input=${(event: Event) => { this.secret = (event.target as HTMLInputElement).value; }}>
         </app-form-field>
         <label class="switch"><input type="checkbox" .checked=${this.enabled} @change=${(event: Event) => { this.enabled = (event.target as HTMLInputElement).checked; }}> 启用告警通知</label>
         <p class="hint">建议先保存为禁用状态并点击“发送测试消息”。确认群内收到后，再启用真实告警通知。</p>
