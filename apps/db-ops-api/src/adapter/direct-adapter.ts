@@ -429,7 +429,10 @@ export class DirectAdapter implements IAgentEngine {
                 return;
               }
               const controller = persistentRun ? new AbortController() : undefined;
-              if (persistentRun) this.activeRuns.set(persistentRun.run.id, { actorId: messageActor.userId, sessionId: sessionKey, controller: controller! });
+              if (persistentRun) {
+                this.activeRuns.set(persistentRun.run.id, { actorId: messageActor.userId, sessionId: sessionKey, controller: controller! });
+                ws.send(JSON.stringify({ type: 'run.started', runId: persistentRun.run.id, sessionKey }));
+              }
 
               await chatDatabaseService.addMessage(messageActor, sessionKey, {
                 messageId: `msg_${Date.now()}_user`,
@@ -772,6 +775,7 @@ ${result.finalContent || ''}`
         usage: result.usage,
         toolEvents: result.toolEvents,
         stopReason: result.stopReason,
+        error: result.error,
         iterationCount: result.messages ? Math.ceil(result.messages.length / 2) : 0,
       };
     } catch (err) {

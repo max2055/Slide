@@ -766,6 +766,7 @@ export function renderApp(state: AppViewState) {
               connected: state.connected,
               loading: state.chatLoading,
               sending: state.chatSending,
+              canAbort: Boolean(state.chatRunId),
               draft: state.chatMessage,
               attachments: state.chatAttachments,
               messages: state.chatMessages,
@@ -823,6 +824,7 @@ export function renderApp(state: AppViewState) {
               },
               onRequestUpdate: requestHostUpdate,
               onSend: () => state.handleSendChat(),
+              onAbort: () => state.handleAbortChat(),
               onNewSession: () => state.handleSendChat("/new", { restoreDraft: true }),
               onRefresh: () => {
                 if (!state.connected && state.lastError === '连接失败，请点击重试') {

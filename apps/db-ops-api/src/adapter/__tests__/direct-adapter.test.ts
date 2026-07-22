@@ -138,6 +138,7 @@ class FailingProvider extends MockLLMProvider {
       shouldExecuteTools: false,
       hasToolCalls: false,
       errorKind: 'provider_error',
+      error: 'Provider failed',
     };
   }
 
@@ -569,6 +570,20 @@ describe('DirectAdapter', () => {
       );
 
       expect(result.content).toBeTruthy();
+    });
+
+    it('retains the concrete provider error for failed background invokes', async () => {
+      const adapter = new DirectAdapter({
+        tools: new ToolRegistry(),
+        llmProvider: new FailingProvider(),
+      });
+
+      const result = await adapter.invoke('test-session-provider-failure', 'Analyze');
+
+      expect(result).toMatchObject({
+        stopReason: 'error',
+        error: 'Provider failed',
+      });
     });
 
     it('exposes only the analysis completion tool to background invokes', async () => {

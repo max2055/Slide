@@ -118,6 +118,8 @@ export interface InvokeResult {
   toolEvents?: Array<{ name: string; status: string; detail: string }>;
   /** Runner stop reason: completed, max_iterations, error, etc. */
   stopReason?: string;
+  /** Concrete provider or tool failure retained when the run is not completed */
+  error?: string | null;
   /** Number of LLM iterations executed */
   iterationCount?: number;
 }

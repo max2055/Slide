@@ -61,6 +61,7 @@ export class OpenAIProvider implements LLMProvider {
         shouldExecuteTools: false,
         hasToolCalls: false,
         errorKind: "provider_error",
+        error: message,
       };
     }
   }
@@ -244,6 +245,7 @@ export class OpenAIProvider implements LLMProvider {
         shouldExecuteTools: false,
         hasToolCalls: false,
         errorKind: "provider_error",
+        error: message,
       };
     }
   }

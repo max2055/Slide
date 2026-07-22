@@ -45,6 +45,7 @@ export interface LLMResponse {
   usage: Record<string, number>;
   rawResponse?: string;
   errorKind?: string;
+  error?: string;
   shouldExecuteTools: boolean;
   hasToolCalls: boolean;
 }

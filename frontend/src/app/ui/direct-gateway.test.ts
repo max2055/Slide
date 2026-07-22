@@ -117,6 +117,22 @@ describe('109-04: DirectGatewayClient', () => {
     }));
   });
 
+  it('preserves idempotency and attachments in the protocol v2 frame', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+    const attachments = [{ type: 'image', mimeType: 'image/png', content: 'AA==' }];
+
+    await client.request('chat.send', {
+      sessionKey: 'session-1', message: 'inspect image', idempotencyKey: '1234567890abcdef', attachments,
+    });
+
+    expect(socket.frames.at(-1)).toEqual(expect.objectContaining({
+      type: 'chat.send', idempotencyKey: '1234567890abcdef', attachments,
+    }));
+  });
+
   it('forwards session.created as a first-class adapter event', () => {
     const socket = installMockWebSocket();
     const client = new DirectGatewayClient({ onEvent, onStateChange });

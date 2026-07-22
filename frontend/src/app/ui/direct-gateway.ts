@@ -21,10 +21,14 @@ export type AdapterCompleteEvent = { type: 'complete'; finalContent?: string; th
 export type AdapterCancelledEvent = { type: 'cancelled'; runId?: string; sessionKey?: string };
 export type AdapterErrorEvent = { type: 'error'; error: string };
 export type AdapterSessionCreatedEvent = { type: 'session.created'; sessionKey: string };
+export type AdapterRunStartedEvent = { type: 'run.started'; runId: string; sessionKey: string };
+export type AdapterProtocolErrorEvent = { type: 'protocol.error'; code: string };
 
 /** ChatEvent discriminated union — mirrors apps/db-ops-api/src/adapter/types.ts */
 export type AdapterChatEvent =
   | AdapterSessionCreatedEvent
+  | AdapterRunStartedEvent
+  | AdapterProtocolErrorEvent
   | AdapterTextDeltaEvent
   | AdapterToolStartEvent
   | AdapterToolResultEvent
@@ -153,7 +157,10 @@ export class DirectGatewayClient {
         ? p.sessionKey.trim()
         : undefined;
       const message = (p?.message as string) || '';
-      this.sendChat(sessionKey, message);
+      this.sendChat(sessionKey, message, {
+        idempotencyKey: typeof p?.idempotencyKey === 'string' ? p.idempotencyKey : undefined,
+        attachments: Array.isArray(p?.attachments) ? p.attachments : undefined,
+      });
       return undefined as T;
     }
     if (method === 'chat.history') {
@@ -239,8 +246,8 @@ export class DirectGatewayClient {
     return response.json() as Promise<T>;
   }
 
-  sendChat(sessionKey: string | undefined, message: string): void {
-    const frame = this.chatSendFrame(sessionKey, message);
+  sendChat(sessionKey: string | undefined, message: string, options?: { idempotencyKey?: string; attachments?: unknown[] }): void {
+    const frame = this.chatSendFrame(sessionKey, message, options);
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.warn('[DirectGatewayClient] cannot sendChat: not connected');
       return;
@@ -309,6 +316,8 @@ export class DirectGatewayClient {
     // Forward known AdapterChatEvent shapes
     switch (type) {
       case 'session.created':
+      case 'run.started':
+      case 'protocol.error':
       case 'text_delta':
       case 'thinking_delta':
       case 'thinking_end':
@@ -326,13 +335,14 @@ export class DirectGatewayClient {
     }
   }
 
-  private chatSendFrame(sessionKey: string | undefined, message: string): Record<string, unknown> {
+  private chatSendFrame(sessionKey: string | undefined, message: string, options?: { idempotencyKey?: string; attachments?: unknown[] }): Record<string, unknown> {
     return {
       type: 'chat.send',
       protocolVersion: 2,
       messageId: crypto.randomUUID(),
-      idempotencyKey: crypto.randomUUID(),
+      idempotencyKey: options?.idempotencyKey || crypto.randomUUID(),
       ...(sessionKey ? { sessionKey } : {}),
+      ...(options?.attachments ? { attachments: options.attachments } : {}),
       message,
     };
   }
@@ -426,6 +436,13 @@ function mapAdapterChatEventToPayload(
         runId: event.runId ?? runId ?? '',
         sessionKey: event.sessionKey ?? sessionKey,
         state: 'aborted',
+      };
+    case 'protocol.error':
+      return {
+        runId: runId ?? '',
+        sessionKey,
+        state: 'error',
+        errorMessage: event.code,
       };
     case 'error':
       return {
@@ -524,6 +541,10 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
   const sessionKey = host.sessionKey as string;
 
   switch (event.type) {
+    case 'run.started':
+      host.chatRunId = event.runId;
+      host.sessionKey = event.sessionKey;
+      break;
     case 'session.created': {
       const nextSessionKey = event.sessionKey.trim();
       if (!nextSessionKey) break;
@@ -558,6 +579,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     case 'text_delta':
     case 'complete':
     case 'cancelled':
+    case 'protocol.error':
     case 'error': {
       const payload = mapAdapterChatEventToPayload(event, runId, sessionKey);
       if (payload) {

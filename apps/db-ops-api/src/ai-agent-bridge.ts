@@ -72,7 +72,7 @@ export async function dispatchOrReuse(params: {
           }
           const reason = result.stopReason === 'completed'
             ? 'Agent 未保存有效的结构化 AnalysisEnvelope'
-            : `Agent run ended: ${result.stopReason || 'unknown'}`;
+            : result.error || `Agent run ended: ${result.stopReason || 'unknown'}`;
           return aiAnalysisDatabaseService.failAnalysis(analysisId, reason);
         });
       }),

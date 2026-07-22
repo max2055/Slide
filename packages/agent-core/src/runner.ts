@@ -337,7 +337,7 @@ export class AgentRunner {
         }
         finalContent = clean;
       } else if (response.finishReason === "error") {
-        finalContent = clean || spec.errorMessage || DEFAULT_ERROR_MESSAGE;
+        finalContent = clean || response.error || spec.errorMessage || DEFAULT_ERROR_MESSAGE;
         stopReason = response.errorKind === 'timeout' ? 'timed_out' : "error";
         error = finalContent;
         appendModelErrorPlaceholder(messages);
