@@ -7,7 +7,7 @@
  * Requires: SRV-01, SRV-02, SRV-03, SRV-06
  */
 import mysql from 'mysql2/promise';
-import { dbConnection, encryptData, decryptData } from './db-connection';
+import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
 import { Client } from 'ssh2';
 
 export interface ServerRow {
@@ -478,7 +478,14 @@ class ServerDatabaseService {
     }
 
     try {
-      return this.decryptCredentials(server.credential_encrypted);
+      const credentials = this.decryptCredentials(server.credential_encrypted);
+      if (needsEncryptionMigration(server.credential_encrypted)) {
+        await this.getPool()?.execute(
+          'UPDATE servers SET credential_encrypted = ? WHERE id = ? AND credential_encrypted = ?',
+          [encryptData(JSON.stringify(credentials)), serverId, server.credential_encrypted],
+        );
+      }
+      return credentials;
     } catch (error) {
       console.error('解密凭据失败:', error);
       return null;

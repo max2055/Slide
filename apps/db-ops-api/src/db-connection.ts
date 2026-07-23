@@ -127,11 +127,13 @@ function _getEncryptionKey(callerKey?: string): string {
 
 export function encryptData(data: string, key?: string): string {
   const encryptKey = _getEncryptionKey(key);
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(encryptKey.padEnd(32, '0').slice(0, 32)), iv);
-  let encrypted = cipher.update(data, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  return iv.toString('hex') + ':' + encrypted;
+  const keyBytes = parseV2EncryptionKey(encryptKey);
+  const nonce = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', keyBytes, nonce);
+  const encrypted = Buffer.concat([cipher.update(data, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  const keyId = crypto.createHash('sha256').update(keyBytes).digest('hex').slice(0, 12);
+  return ['v2', keyId, nonce.toString('hex'), tag.toString('hex'), encrypted.toString('hex')].join(':');
 }
 
 /**
@@ -139,6 +141,18 @@ export function encryptData(data: string, key?: string): string {
  */
 export function decryptData(encrypted: string, key?: string): string {
   const decryptKey = _getEncryptionKey(key);
+  if (encrypted.startsWith('v2:')) {
+    const parts = encrypted.split(':');
+    if (parts.length !== 5) throw new Error('无效的加密数据');
+    const [, keyId, nonceHex, tagHex, ciphertextHex] = parts;
+    const keyBytes = parseV2EncryptionKey(decryptKey);
+    const expectedKeyId = crypto.createHash('sha256').update(keyBytes).digest('hex').slice(0, 12);
+    if (keyId !== expectedKeyId) throw new Error('加密密钥版本不匹配');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', keyBytes, Buffer.from(nonceHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+    return Buffer.concat([decipher.update(Buffer.from(ciphertextHex, 'hex')), decipher.final()]).toString('utf8');
+  }
+
   const parts = encrypted.split(':');
   if (parts.length !== 2) {
     throw new Error('无效的加密数据');
@@ -149,4 +163,19 @@ export function decryptData(encrypted: string, key?: string): string {
   let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
   decrypted += decipher.final('utf8');
   return decrypted;
+}
+
+export function needsEncryptionMigration(encrypted: string): boolean {
+  return !encrypted.startsWith('v2:');
+}
+
+function parseV2EncryptionKey(value: string): Buffer {
+  if (/^[0-9a-fA-F]{64}$/.test(value)) return Buffer.from(value, 'hex');
+  if (/^[A-Za-z0-9+/]{43}=$/.test(value)) {
+    const decoded = Buffer.from(value, 'base64');
+    if (decoded.length === 32) return decoded;
+  }
+  const utf8 = Buffer.from(value, 'utf8');
+  if (utf8.length === 32) return utf8;
+  throw new Error('ENCRYPTION_KEY 必须是 32 字节 UTF-8、64 位 hex 或 32 字节 base64');
 }

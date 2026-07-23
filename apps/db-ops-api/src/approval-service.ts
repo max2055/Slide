@@ -2,11 +2,12 @@
  * SQL 审批服务
  * 高危 SQL 需 DBA 审批后才能执行，LLM 辅助风险评估
  */
-import crypto from 'crypto';
 import { dbConnection } from './db-connection';
 import { llmService } from './llm-service';
 import { sqlExecutor } from './sql-executor';
 import { dispatchOrReuse } from './ai-agent-bridge.js';
+import { hashApprovedSql } from './security/approval-execution-authorizer.js';
+import { classifySql } from './sql-validator.js';
 
 interface ApprovalRequest {
   id: number;
@@ -80,11 +81,11 @@ class ApprovalService {
     auto_approved?: boolean;
   }> {
     const { instance_id, sql_text, submitted_by, target_database, operation_id } = data;
-    const sqlHash = crypto.createHash('md5').update(sql_text).digest('hex');
+    const sqlHash = hashApprovedSql(sql_text);
     const isDangerous = isHighRisk(sql_text);
 
     // SELECT 直接放行
-    if (!isDangerous && /^\s*SELECT\b|^\s*SHOW\b|^\s*DESCRIBE\b|^\s*EXPLAIN\b/i.test(sql_text)) {
+    if (!isDangerous && classifySql(sql_text).commandType === 'read') {
       return { requires_approval: false, auto_approved: true, risk_level: 'low' };
     }
 
@@ -202,8 +203,11 @@ class ApprovalService {
         userId: String(review.reviewed_by || ''),
         username: 'dba-approver',
         database: req.target_database || undefined,
-        approvedOperationId: `approval:${requestId}`,
-        approvalRequestId: requestId,
+        approvalGrant: {
+          approvalRequestId: requestId,
+          operationId: req.operation_id || '',
+          reviewerId: Number(review.reviewed_by || 0),
+        },
       });
       const status = execResult.success ? 'executed' : 'execution_failed';
       const rollbackInfo = {

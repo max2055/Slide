@@ -11,6 +11,9 @@
     "build": "pnpm --filter slide-frontend build",
     "test": "pnpm -r test",
     "qualification:matrix": "pnpm --filter slide-api exec tsx ../../tests/qualification/coverage-matrix.ts --validate",
+    "security:audit": "pnpm audit --prod --audit-level=high",
+    "security:scan": "pnpm --filter slide-api exec tsx ../../tests/qualification/security-gate.ts",
+    "security:test": "pnpm --filter slide-api exec vitest run src/security/database-target-policy.test.ts src/security/branding-policy.test.ts src/security/approval-execution-authorizer.test.ts src/security/http-security.test.ts src/security/log-redaction.test.ts src/security/fatal-process.test.ts src/db-connection-encryption.test.ts src/security/security-event-service.test.ts",
     "contracts:generate": "pnpm --filter slide-api exec tsx src/contracts/generate-public-api.ts",
     "contracts:check": "pnpm --filter slide-api exec tsx src/contracts/generate-public-api.ts --check",
     "release:artifact": "bash scripts/release/build-artifact.sh",
@@ -26,6 +29,11 @@
     "oxlint": "^0.16.0"
   },
   "pnpm": {
+    "overrides": {
+      "form-data": "4.0.6",
+      "linkify-it": "5.0.2",
+      "undici": "6.27.0"
+    },
     "onlyBuiltDependencies": [
       "bcrypt",
       "esbuild",

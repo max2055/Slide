@@ -5,6 +5,9 @@
 import { databaseService } from './database-service';
 import { auditLogManager } from './audit/audit-log';
 import { classifySql } from './sql-validator.js';
+import { dbConnection } from './db-connection.js';
+import { authorizeApprovedSqlExecution, type ApprovalExecutionGrant } from './security/approval-execution-authorizer.js';
+import { securityEventService } from './security/security-event-service.js';
 
 class SqlExecutor {
   /**
@@ -12,7 +15,7 @@ class SqlExecutor {
    */
   async executeSql(instanceId: number, sql: string, context?: {
     userId?: string; username?: string; ipAddress?: string; database?: string; timeoutMs?: number;
-    approvedOperationId?: string; approvalRequestId?: number;
+    approvalGrant?: ApprovalExecutionGrant;
   }): Promise<{
     success: boolean;
     columns?: string[];
@@ -22,12 +25,30 @@ class SqlExecutor {
     error?: string;
   }> {
     const startTime = Date.now();
+    let approvalAuthorized = false;
+
+    const verifyApproval = async (): Promise<boolean> => {
+      if (approvalAuthorized) return true;
+      const pool = dbConnection.getPool();
+      approvalAuthorized = Boolean(pool && context?.approvalGrant && await authorizeApprovedSqlExecution(
+        pool as any,
+        context.approvalGrant,
+        { instanceId, sql },
+      ));
+      return approvalAuthorized;
+    };
 
     // Classify SQL BEFORE connection check — reject non-read statements even
     // when the target instance is unreachable.
     const classification = classifySql(sql, 'mysql'); // db_type hint; re-classified after connection
-    if (classification.commandType !== 'read' && !context?.approvedOperationId) {
-      return { success: false, error: `SQL_READ_ONLY_${classification.reasonCode}` };
+    if (classification.commandType !== 'read') {
+      if (!await verifyApproval()) {
+        await securityEventService.record({
+          eventType: 'approval_execution_denied', reasonCode: classification.reasonCode,
+          actorId: context?.approvalGrant?.reviewerId, resourceType: 'database-instance', resourceId: String(instanceId),
+        }).catch(() => undefined);
+        return { success: false, error: `SQL_APPROVAL_REQUIRED_${classification.reasonCode}` };
+      }
     }
 
     // 先确保连接可用（触发重连如果需要）
@@ -43,8 +64,8 @@ class SqlExecutor {
 
     // Re-classify with actual db_type for dialect-specific rules
     const reclassification = classifySql(sql, conn.db_type as 'mysql' | 'postgresql' | 'oracle' | 'dameng');
-    if (reclassification.commandType !== 'read' && !context?.approvedOperationId) {
-      return { success: false, error: `SQL_READ_ONLY_${reclassification.reasonCode}` };
+    if (reclassification.commandType !== 'read' && !await verifyApproval()) {
+      return { success: false, error: `SQL_APPROVAL_REQUIRED_${reclassification.reasonCode}` };
     }
 
     // 切换数据库/模式（如果指定了 database 参数）
@@ -118,7 +139,7 @@ class SqlExecutor {
             status: 'success',
             rowCount: rows.length,
             ipAddress: context.ipAddress,
-            approvalRequestId: context.approvalRequestId,
+            approvalRequestId: context.approvalGrant?.approvalRequestId,
           });
         } catch { /* audit non-blocking */ }
       }
@@ -139,7 +160,7 @@ class SqlExecutor {
             status: 'error',
             errorMessage: error.message,
             ipAddress: context.ipAddress,
-            approvalRequestId: context.approvalRequestId,
+            approvalRequestId: context.approvalGrant?.approvalRequestId,
           });
         } catch { /* audit non-blocking */ }
       }

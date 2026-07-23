@@ -130,3 +130,15 @@ Deferred to future milestones.
 
 ---
 *Requirements defined: 2026-07-07*
+
+## Post-v0.9 Phase 140 Security Requirements
+
+- [x] **SEC140-01**: 数据库 create/update/test/reload 使用统一、可配置、抗 DNS rebinding 的目标 CIDR/端口策略
+- [x] **SEC140-02**: 品牌配置写入仅管理员可用，并产生结构化审计事件
+- [x] **SEC140-03**: 生产依赖不存在未处置 High/Critical 漏洞
+- [x] **SEC140-04**: 危险 SQL 执行绑定持久审批事实，伪造、错配、过期和重放均零副作用
+- [x] **SEC140-05**: 公共错误和日志不泄露 secret、连接详情或内部堆栈
+- [x] **SEC140-06**: Helmet、登录限流、显式 body limit、环境化 CORS 和 HTML CSP 有行为验证
+- [x] **SEC140-07**: 凭据采用版本化认证加密，现有 CBC 密文可无损迁移且篡改 fail-closed
+- [x] **SEC140-08**: refresh replay、SSRF、越权、审批伪造和限流产生去重的安全事件/告警
+- [x] **SEC140-09**: CI 强制 production audit、secret scan、安全负向测试和 finding evidence matrix
