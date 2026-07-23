@@ -5,6 +5,10 @@ export const HealthResponseSchema = Type.Object({
   timestamp: Type.String({ pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$' }),
 }, { $id: 'HealthResponse', additionalProperties: false });
 
+export const ErrorResponseSchema = Type.Object({
+  error: Type.String(),
+}, { $id: 'ErrorResponse', additionalProperties: false });
+
 export const DatabaseTypeSchema = Type.Union([
   Type.Literal('mysql'),
   Type.Literal('postgresql'),
@@ -75,6 +79,7 @@ export const DatabaseInstancesResponseSchema = Type.Array(DatabaseInstanceSchema
 
 export const PublicApiSchemas = {
   HealthResponse: HealthResponseSchema,
+  ErrorResponse: ErrorResponseSchema,
   DatabaseType: DatabaseTypeSchema,
   CapabilityState: CapabilityStateSchema,
   AdapterCapability: AdapterCapabilitySchema,

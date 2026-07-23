@@ -34,7 +34,7 @@ export function requirePermission(...requiredCodes: string[]) {
  * 通配符权限匹配函数
  * 检查用户权限集合是否包含指定权限码（支持通配符）
  */
-function hasPermission(userPermissions: Set<string>, requiredCode: string): boolean {
+export function hasPermission(userPermissions: Set<string>, requiredCode: string): boolean {
   // 直接匹配
   if (userPermissions.has(requiredCode)) return true;
 

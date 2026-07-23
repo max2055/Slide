@@ -3,19 +3,14 @@
  */
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
+import { createFatalProcessHandler } from './src/security/fatal-process.js';
+import { installConsoleRedaction } from './src/security/log-redaction.js';
 
-// 防止 cron 任务中的未处理异常导致进程退出
-process.on('uncaughtException', (err) => {
-  console.error('⚠️ 未捕获异常:', err.message);
-  process.exitCode = 1;
-});
-process.on('unhandledRejection', (reason) => {
-  console.error('⚠️ 未处理拒绝:', reason);
-  process.exitCode = 1;
-});
+installConsoleRedaction();
+process.on('uncaughtException', createFatalProcessHandler('FATAL_UNCAUGHT_EXCEPTION'));
+process.on('unhandledRejection', createFatalProcessHandler('FATAL_UNHANDLED_REJECTION'));
 
 import Fastify from 'fastify';
-import cors from '@fastify/cors';
 import { authDatabaseService } from './src/auth-database-service.js';
 import { createVerifyToken } from './src/auth-middleware.js';
 import {
@@ -38,7 +33,9 @@ import { llmService } from './src/llm-service.js';
 import { dbConnection } from './src/db-connection.js';
 import { loadSecurityConfig } from './src/config/security-config.js';
 import { publicInstanceDto, publicNotificationDto, publicServerDto } from './src/security/public-dto.js';
-import { AdapterCapabilitiesResponseSchema, DatabaseInstancesResponseSchema, HealthResponseSchema } from './src/contracts/public-api.js';
+import { requireBrandingWrite } from './src/security/branding-policy.js';
+import { API_BODY_LIMIT, loginRateLimitConfig, registerHttpSecurity } from './src/security/http-security.js';
+import { AdapterCapabilitiesResponseSchema, DatabaseInstancesResponseSchema, ErrorResponseSchema, HealthResponseSchema } from './src/contracts/public-api.js';
 import { monitorCollector } from './src/monitor-collector.js';
 import { chatDatabaseService } from './src/chat-database-service.js';
 import { handleChatSend } from './src/chat-handler.js';
@@ -113,6 +110,7 @@ import serverCollector from './src/server-collector.js';
 
 const fastify = Fastify({
   logger: false,
+  bodyLimit: API_BODY_LIMIT,
 });
 
 // JWT 密钥
@@ -251,10 +249,7 @@ async function start() {
   }
   };
 
-  // 注册 CORS
-  await fastify.register(cors, {
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
-  });
+  await registerHttpSecurity(fastify);
 
   // 健康检查
   fastify.get('/api/health', { schema: { response: { 200: HealthResponseSchema } } }, async (request, reply) => {
@@ -370,7 +365,7 @@ async function start() {
   });
 
   // 登录接口
-  fastify.post('/api/auth/login', async (request, reply) => {
+  fastify.post('/api/auth/login', { config: { rateLimit: loginRateLimitConfig } }, async (request, reply) => {
     const check = strictBody(request.body as Record<string, unknown>,
       ['username', 'password'], 'POST /api/auth/login');
     if (check.error) return reply.code(400).send(check.error);
@@ -590,7 +585,7 @@ async function start() {
   });
 
   // 数据库实例列表
-  fastify.get('/api/database/instances', { preHandler: [verifyToken], schema: { response: { 200: DatabaseInstancesResponseSchema } } }, async (request, reply) => {
+  fastify.get('/api/database/instances', { preHandler: [verifyToken], schema: { response: { 200: DatabaseInstancesResponseSchema, 500: ErrorResponseSchema } } }, async (request, reply) => {
     try {
       const instances = await instanceDatabaseService.getManagedInstances();
       reply.send(instances.map((instance) => publicInstanceDto(instance as unknown as Record<string, unknown>)));
@@ -1223,7 +1218,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 测试连接
-  fastify.post('/api/database/instances/test-connection', { preHandler: [verifyToken, requirePermission('instance:create')] }, async (request, reply) => {
+  fastify.post('/api/database/instances/test-connection', { preHandler: [verifyToken, requirePermission('instance:manage')] }, async (request, reply) => {
     try {
       const check = strictBody(request.body as Record<string, unknown>,
           ['host', 'port', 'username', 'password', 'database_name', 'db_type'], 'POST /api/database/instances/test-connection');
@@ -2189,12 +2184,23 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 更新品牌配置
   fastify.put('/api/branding/config', {
-    preHandler: [verifyToken],
+    preHandler: [verifyToken, requireBrandingWrite],
     handler: async (request, reply) => {
       try {
-        const body = request.body as any;
+        const check = strictBody(request.body as Record<string, unknown>,
+          ['cli_name', 'product_name', 'env_prefix', 'state_dir'], 'PUT /api/branding/config');
+        if (check.error) return reply.code(400).send(check.error);
+        const body = check.body as any;
         const result = await brandingConfigService.saveBranding(body);
         if (result.success) {
+          const user = (request as any).user;
+          await auditLogManager.logConfigChange({
+            userId: String(user.userId),
+            username: user.username,
+            configKey: 'system-branding',
+            newValue: Object.keys(body).sort(),
+            clientIp: request.ip,
+          });
           reply.send({ success: true });
         } else {
           reply.code(400).send({ error: result.error });

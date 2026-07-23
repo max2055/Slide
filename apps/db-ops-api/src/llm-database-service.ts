@@ -3,7 +3,7 @@
  * 支持完整的 Provider 配置、用量追踪、成本统计
  */
 import mysql from 'mysql2/promise';
-import { dbConnection, encryptData, decryptData } from './db-connection';
+import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
 
 // 部署方式
 export type DeploymentType = 'local' | 'cloud' | 'api';
@@ -306,7 +306,14 @@ class LLMDatabaseService {
     }
 
     try {
-      return decryptData(provider.api_key_encrypted);
+      const apiKey = decryptData(provider.api_key_encrypted);
+      if (needsEncryptionMigration(provider.api_key_encrypted)) {
+        await this.getPool()?.execute(
+          'UPDATE llm_providers SET api_key_encrypted = ? WHERE id = ? AND api_key_encrypted = ?',
+          [encryptData(apiKey), provider.id, provider.api_key_encrypted],
+        );
+      }
+      return apiKey;
     } catch (error) {
       console.error('解密 API Key 失败:', error);
       return null;

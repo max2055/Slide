@@ -21,4 +21,10 @@ describe('security startup configuration', () => {
     expect(loadSecurityConfig(secure)).toMatchObject({ production: true, initialAdminConfigured: true });
     expect(() => requireEncryptionKey('short')).toThrow(SecurityConfigurationError);
   });
+
+  it('rejects encryption keys that are long enough but do not encode exactly 32 bytes', () => {
+    expect(() => loadSecurityConfig({ ...secure, ENCRYPTION_KEY: 'x'.repeat(33) })).toThrow(SecurityConfigurationError);
+    expect(() => requireEncryptionKey('x'.repeat(33))).toThrow(SecurityConfigurationError);
+    expect(requireEncryptionKey('0123456789abcdef'.repeat(4))).toHaveLength(64);
+  });
 });

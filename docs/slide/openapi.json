@@ -946,6 +946,19 @@
           }
         ]
       },
+      "ErrorResponse": {
+        "$id": "ErrorResponse",
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
       "HealthResponse": {
         "$id": "HealthResponse",
         "additionalProperties": false,

@@ -25,6 +25,12 @@ jobs:
         run: pnpm qualification:matrix
       - name: Run tests
         run: pnpm --filter slide-api test
+      - name: Reject High or Critical production dependency vulnerabilities
+        run: pnpm security:audit
+      - name: Scan production source for committed secrets
+        run: pnpm security:scan
+      - name: Run Phase 140 security regression boundary
+        run: pnpm security:test
 
   frontend:
     runs-on: ubuntu-latest

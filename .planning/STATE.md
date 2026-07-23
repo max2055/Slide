@@ -2,21 +2,23 @@
 gsd_state_version: 1.0
 milestone: v0.9
 milestone_name: 生产化与可信运维闭环
-current_phase: 139
-current_phase_name: 生产发布资格验证
-status: shipped
-last_updated: "2026-07-23T09:00:00+08:00"
-last_activity: 2026-07-23
-last_activity_desc: Post-v0.9 roadmap closure locally requalified; hosted artifact/recovery proven; server 3 SSH credential re-entry remains operator-only
+current_phase: 140
+current_phase_name: 代码审计安全整改
+status: complete
+last_updated: "2026-07-24T00:16:00+08:00"
+last_activity: 2026-07-24
+last_activity_desc: Phase 140 completed; three security remediation batches and local qualification gates passed
 progress:
-  total_phases: 9
-  completed_phases: 9
-  total_plans: 19
-  completed_plans: 19
+  total_phases: 10
+  completed_phases: 10
+  total_plans: 22
+  completed_plans: 22
   percent: 100
 ---
 
 ## v0.9 生产化与可信运维闭环 — Shipped
+
+Phase 140 是 v0.9 GO 之后的独立安全整改 Phase，不追溯改写 Phase 139 的历史结论。三批整改均已完成并通过本地最终资格验证；安全 CI 门禁将在下一次提交/PR 上产生 hosted run 证据。
 
 Phase 131 的 NO-GO 审计基线已由 Phase 132-139 修复与资格验证闭环。`139-VERIFICATION.md` 在当前代码、51 migrations、恢复场景、安全矩阵、四数据库 adapter 矩阵和浏览器用户路径上给出权威 GO。
 

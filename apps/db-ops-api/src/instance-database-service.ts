@@ -2,8 +2,9 @@
  * 数据库实例配置服务
  */
 import mysql from 'mysql2/promise';
-import { dbConnection, encryptData, decryptData } from './db-connection';
+import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
 import { assertCreatableDatabaseType } from './adapters/capability-matrix.js';
+import { authorizeDatabaseTarget } from './security/database-target-policy.js';
 
 export interface DatabaseInstance {
   id: number;
@@ -146,7 +147,14 @@ class InstanceDatabaseService {
       return null;
     }
     try {
-      return decryptData(instance.password_encrypted);
+      const password = decryptData(instance.password_encrypted);
+      if (needsEncryptionMigration(instance.password_encrypted)) {
+        await this.getPool()?.execute(
+          'UPDATE database_instances SET password_encrypted = ? WHERE id = ? AND password_encrypted = ?',
+          [encryptData(password), id, instance.password_encrypted],
+        );
+      }
+      return password;
     } catch (error) {
       console.error('解密密码失败:', error);
       return null;
@@ -164,6 +172,12 @@ class InstanceDatabaseService {
 
     try {
       const password = decryptData(instance.password_encrypted);
+      if (needsEncryptionMigration(instance.password_encrypted)) {
+        await this.getPool()?.execute(
+          'UPDATE database_instances SET password_encrypted = ? WHERE id = ? AND password_encrypted = ?',
+          [encryptData(password), id, instance.password_encrypted],
+        );
+      }
       const { password_encrypted, ...rest } = instance;
       return { ...rest, password } as DecryptedInstance;
     } catch (error) {
@@ -196,6 +210,7 @@ class InstanceDatabaseService {
     }
 
     try {
+      await authorizeDatabaseTarget({ host: data.host, port: Number(data.port), dbType: data.db_type });
       assertCreatableDatabaseType(data.db_type);
       // 检查名称是否已存在
       const [existing] = await pool.execute(
@@ -275,6 +290,13 @@ class InstanceDatabaseService {
     }
 
     try {
+      const current = await this.getInstanceById(id);
+      if (!current) return { success: false, error: '实例不存在' };
+      await authorizeDatabaseTarget({
+        host: data.host ?? current.host,
+        port: Number(data.port ?? current.port),
+        dbType: data.db_type ?? current.db_type,
+      });
       if (data.db_type !== undefined) assertCreatableDatabaseType(data.db_type);
       const updates: string[] = [];
       const values: any[] = [];
@@ -376,9 +398,11 @@ class InstanceDatabaseService {
   }): Promise<{ success: boolean; message: string }> {
     assertCreatableDatabaseType(config.db_type);
     try {
+      const target = await authorizeDatabaseTarget({ host: config.host, port: config.port, dbType: config.db_type });
+      const pinnedHost = target.address;
       if (config.db_type === 'mysql') {
         const pool = mysql.createPool({
-          host: config.host,
+          host: pinnedHost,
           port: config.port,
           user: config.username,
           password: config.password,
@@ -401,7 +425,7 @@ class InstanceDatabaseService {
         // 动态导入 pg 以避免未使用时的依赖
         const { Client } = await import('pg');
         const client = new Client({
-          host: config.host,
+          host: pinnedHost,
           port: config.port,
           user: config.username,
           password: config.password,
@@ -423,7 +447,7 @@ class InstanceDatabaseService {
         const oracledb = oracledbMod.default;
 
         // D-13: TCPS 加密连接
-        const connectString = `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${config.host})(PORT=${config.port}))(CONNECT_DATA=(SERVICE_NAME=${config.database || 'ORCL'})))`;
+        const connectString = `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${pinnedHost})(PORT=${config.port}))(CONNECT_DATA=(SERVICE_NAME=${config.database || 'ORCL'})))`;
 
         const testPool = await oracledb.createPool({
           user: config.username,
@@ -446,7 +470,7 @@ class InstanceDatabaseService {
         // 达梦数据库使用官方 dmdb 驱动
         const dmdb = (await import('dmdb')).default;
 
-        const host = config.host === 'localhost' ? '127.0.0.1' : config.host;
+        const host = pinnedHost;
         const connection = await dmdb.getConnection({
           user: config.username,
           password: config.password,

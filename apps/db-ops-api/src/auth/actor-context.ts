@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import type { Pool, PoolConnection } from 'mysql2/promise';
 import { dbConnection } from '../db-connection.js';
+import { securityEventService } from '../security/security-event-service.js';
 
 export type InstanceAccessLevel = 'read-only' | 'read-write' | 'admin';
 
@@ -260,6 +261,14 @@ export class ActorContextService {
         );
         await connection.commit();
         committed = true;
+        await securityEventService.record({
+          eventType: 'refresh_replay',
+          reasonCode: 'REVOKED_REFRESH_TOKEN_REUSED',
+          actorId: Number(stored.user_id),
+          resourceType: 'user-session',
+          resourceId: String(stored.user_id),
+          requestId,
+        }).catch(() => undefined);
         throw new ActorAuthenticationError();
       }
 

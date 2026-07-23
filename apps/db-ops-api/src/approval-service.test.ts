@@ -106,8 +106,7 @@ describe('ApprovalService', () => {
 
       expect(sqlExecutor.executeSql).toHaveBeenCalled();
       expect(sqlExecutor.executeSql).toHaveBeenCalledWith(1, 'SELECT 1', expect.objectContaining({
-        approvedOperationId: 'approval:1',
-        approvalRequestId: 1,
+        approvalGrant: expect.objectContaining({ approvalRequestId: 1, reviewerId: 1 }),
       }));
       expect(result.success).toBe(true);
     });

@@ -8,6 +8,7 @@ import dmdb from 'dmdb';
 import { calculateDimensionScores } from './scoring-service.js';
 import { scoringConfigService } from './scoring-config-service.js';
 import { withTimeout } from './promise-timeout.js';
+import { authorizeDatabaseTarget } from './security/database-target-policy.js';
 
 export interface DatabaseConfig {
   host: string;
@@ -167,10 +168,15 @@ class DatabaseService {
     const dbType = config.db_type || 'mysql';
 
     try {
+      const target = await authorizeDatabaseTarget(
+        { host: config.host, port: config.port, dbType },
+        { allowManagedLoopback: true, allowManagedPort: true },
+      );
+      const connectionConfig = { ...config, host: target.address };
       if (dbType === 'postgresql') {
         // PostgreSQL 连接
         const pgClient = new PgClient({
-          host: config.host,
+          host: connectionConfig.host,
           port: config.port,
           user: config.user,
           password: config.password,
@@ -210,7 +216,7 @@ class DatabaseService {
         const pool = await (oracledb.createPool({
           user: config.user,
           password: config.password,
-          connectString: `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${config.host})(PORT=${config.port}))(CONNECT_DATA=(SERVICE_NAME=${config.database || 'ORCL'})))`,
+          connectString: `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${connectionConfig.host})(PORT=${config.port}))(CONNECT_DATA=(SERVICE_NAME=${config.database || 'ORCL'})))`,
           fetchAsString: [oracledb.NUMBER],
           fetchAsBuffer: [oracledb.CLOB],
           poolMax: 4,
@@ -243,7 +249,7 @@ class DatabaseService {
       } else if (dbType === 'dameng') {
         // 达梦数据库连接 - 使用官方 dmdb 驱动
         // 强制 IPv4：Docker 容器通常只绑定 0.0.0.0，localhost 解析到 ::1 会导致 ETIMEDOUT
-        const host = config.host === 'localhost' ? '127.0.0.1' : config.host;
+        const host = connectionConfig.host;
         const dmConnection = await withTimeout(dmdb.getConnection({
           user: config.user,
           password: config.password,
@@ -280,7 +286,7 @@ class DatabaseService {
       } else if (dbType === 'mysql') {
         // MySQL 连接
         const pool = mysql.createPool({
-          host: config.host,
+          host: connectionConfig.host,
           port: config.port,
           user: config.user,
           password: config.password,

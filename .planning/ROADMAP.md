@@ -9,6 +9,7 @@
 - ✅ **v0.7 打磨与优化** — Phases 119-123 (shipped 2026-07-01)
 - ✅ **v0.8 服务器纳管** — Phases 124-129 (shipped 2026-07-11)
 - ✅ **v0.9 生产化与可信运维闭环** — Phases 131-139 (shipped 2026-07-20; Phase 139 GO)
+- ✅ **Post-v0.9 安全整改** — Phase 140 (complete 2026-07-24)
 
 ## Phases
 
@@ -1239,3 +1240,17 @@ Plans:
 - [x] en/zh-CN key/placeholder 契约与服务端 locale 运行时同步
 - [x] TypeBox/OpenAPI/前端 DTO 生成与 CI 漂移检查
 - [ ] 服务器 3 SSH 凭据由运维方重新录入后完成真实采集/健康复验
+
+### Phase 140: 代码审计安全整改
+
+**Goal:** 关闭 2026-07 外部代码审计经当前代码复核后仍存在的安全缺口，并建立依赖、密钥、审批和安全事件不可静默回归的门禁。
+
+**Depends on:** Phase 139
+
+**Status:** Complete
+
+**Plans:** 3/3 complete
+
+- [x] `140-01-PLAN.md` — 数据库 SSRF、品牌越权、生产依赖 High 漏洞
+- [x] `140-02-PLAN.md` — 审批凭证、错误泄露、HTTP 安全边界
+- [x] `140-03-PLAN.md` — 密钥迁移、安全告警、CI 门禁与最终复验
