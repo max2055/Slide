@@ -8,7 +8,7 @@
 - ✅ **v0.6 Agent 解耦与替换** — Phases 108-118 (shipped 2026-06-08)
 - ✅ **v0.7 打磨与优化** — Phases 119-123 (shipped 2026-07-01)
 - ✅ **v0.8 服务器纳管** — Phases 124-129 (shipped 2026-07-11)
-- 📋 **v0.9 生产化与可信运维闭环** — Phases 131-139 (Phase 131 audit complete; Phases 132-139 planned)
+- ✅ **v0.9 生产化与可信运维闭环** — Phases 131-139 (shipped 2026-07-20; Phase 139 GO)
 
 ## Phases
 
@@ -1082,7 +1082,7 @@ Plans:
 | 128. AI 服务器分析 | v0.8 | 1/1 | Complete   | 2026-07-07 |
 | 129. 观测平台统一化 — 指标·告警·报告·前端整合 | v0.8 | 3/3 | Complete | 2026-07-09 |
 
-## 📋 v0.9 生产化与可信运维闭环 (Planned)
+## ✅ v0.9 生产化与可信运维闭环 (Shipped 2026-07-20)
 
 **Goal:** 关闭 Phase 131 系统审计确认的生产阻断项，统一身份、执行、资源和工作流机制，建立可恢复的告警/调查/执行/验证闭环，并通过独立发布资格门禁给出 GO/NO-GO 结论。
 
@@ -1123,10 +1123,12 @@ Plans:
 
 **Depends on:** Phase 131 findings
 
-**Plans:** 2 planned
+**Status:** Complete
 
-- [ ] `132-01-PLAN.md` — ActorContext、token/WS 撤销、Chat owner/share ACL、Agent Tool Policy
-- [ ] `132-02-PLAN.md` — 生产 secret 门禁、公开 DTO、安全渲染、通知出站策略
+**Plans:** 2/2 complete
+
+- [x] `132-01-PLAN.md` — ActorContext、token/WS 撤销、Chat owner/share ACL、Agent Tool Policy
+- [x] `132-02-PLAN.md` — 生产 secret 门禁、公开 DTO、安全渲染、通知出站策略
 
 ### Phase 133: Operation 状态机与 SQL 安全
 
@@ -1134,10 +1136,12 @@ Plans:
 
 **Depends on:** Phase 132
 
-**Plans:** 2 planned
+**Status:** Complete
 
-- [ ] `133-01-PLAN.md` — Operation schema/service、多方言 SQL 分类、只读执行边界
-- [ ] `133-02-PLAN.md` — 原子审批认领、审计血缘、恢复语义、Operation UI
+**Plans:** 2/2 complete
+
+- [x] `133-01-PLAN.md` — Operation schema/service、多方言 SQL 分类、只读执行边界
+- [x] `133-02-PLAN.md` — 原子审批认领、审计血缘、恢复语义、Operation UI
 
 ### Phase 134: 确定性 Schema 初始化与进程生命周期
 
@@ -1145,10 +1149,12 @@ Plans:
 
 **Depends on:** Phase 131 findings
 
-**Plans:** 2 planned
+**Status:** Complete
 
-- [ ] `134-01-PLAN.md` — migration ledger/checksum/lock、baseline/repair、真实空库 validator
-- [ ] `134-02-PLAN.md` — 生命周期编排、worker lease、重复启动、升级与恢复验收
+**Plans:** 2/2 complete
+
+- [x] `134-01-PLAN.md` — migration ledger/checksum/lock、baseline/repair、真实空库 validator
+- [x] `134-02-PLAN.md` — 生命周期编排、worker lease、重复启动、升级与恢复验收
 
 ### Phase 135: Agent/WS 执行契约与结构化分析
 
@@ -1156,10 +1162,12 @@ Plans:
 
 **Depends on:** Phases 132, 133
 
-**Plans:** 2 planned
+**Status:** Complete
 
-- [ ] `135-01-PLAN.md` — WS v2、终态联合、取消、附件、重连与持久幂等
-- [ ] `135-02-PLAN.md` — AnalysisEnvelope、结构化完成工具、兼容回填、能力驱动 UI
+**Plans:** 2/2 complete
+
+- [x] `135-01-PLAN.md` — WS v2、终态联合、取消、附件、重连与持久幂等
+- [x] `135-02-PLAN.md` — AnalysisEnvelope、结构化完成工具、兼容回填、能力驱动 UI
 
 ### Phase 136: 资源、能力与可观测性真实状态模型
 
@@ -1167,11 +1175,13 @@ Plans:
 
 **Depends on:** Phase 134
 
-**Plans:** 3 planned
+**Status:** Complete
 
-- [ ] `136-01-PLAN.md` — ResourceRef、关系、Observation、能力状态和统一查询 API
-- [ ] `136-02-PLAN.md` — canonical metric ID、存量迁移、due-only 调度与 provider 状态
-- [ ] `136-03-PLAN.md` — 共享告警 compiler/evaluator、四维健康 API 与前端呈现
+**Plans:** 3/3 complete
+
+- [x] `136-01-PLAN.md` — ResourceRef、关系、Observation、能力状态和统一查询 API
+- [x] `136-02-PLAN.md` — canonical metric ID、存量迁移、due-only 调度与 provider 状态
+- [x] `136-03-PLAN.md` — 共享告警 compiler/evaluator、四维健康 API 与前端呈现
 
 ### Phase 137: 持久工作流、事件调查与业务闭环
 
@@ -1179,11 +1189,13 @@ Plans:
 
 **Depends on:** Phases 133, 135, 136
 
-**Plans:** 3 planned
+**Status:** Complete
 
-- [ ] `137-01-PLAN.md` — transactional outbox、持久 worker runtime、类型化 Cron handler
-- [ ] `137-02-PLAN.md` — 事件状态机、实例/服务器 RCA、InvestigationPackage/Data Loom 契约
-- [ ] `137-03-PLAN.md` — 定时报表、通知投递、事件 UI、恢复验证与记忆候选
+**Plans:** 3/3 complete
+
+- [x] `137-01-PLAN.md` — transactional outbox、持久 worker runtime、类型化 Cron handler
+- [x] `137-02-PLAN.md` — 事件状态机、实例/服务器 RCA、InvestigationPackage/Data Loom 契约
+- [x] `137-03-PLAN.md` — 定时报表、通知投递、事件 UI、恢复验证与记忆候选
 
 ### Phase 138: 兼容能力、配置发布与类型化契约
 
@@ -1191,10 +1203,12 @@ Plans:
 
 **Depends on:** Phases 132, 136, 137
 
-**Plans:** 2 planned
+**Status:** Complete
 
-- [ ] `138-01-PLAN.md` — adapter 能力矩阵、支持声明、四数据库验证、Phase 84/95/110 UAT 清账
-- [ ] `138-02-PLAN.md` — 版本化配置发布/回滚、TypeBox/OpenAPI DTO、类型化导航/UI
+**Plans:** 2/2 complete
+
+- [x] `138-01-PLAN.md` — adapter 能力矩阵、支持声明、四数据库验证、Phase 84/95/110 UAT 清账
+- [x] `138-02-PLAN.md` — 版本化配置发布/回滚、TypeBox/OpenAPI DTO、类型化导航/UI
 
 ### Phase 139: 生产发布资格验证
 
@@ -1202,11 +1216,13 @@ Plans:
 
 **Depends on:** Phases 132-138
 
-**Plans:** 3 planned
+**Status:** Complete — GO
 
-- [ ] `139-01-PLAN.md` — 工具链与测试基线、qualification fixture、分层 CI
-- [ ] `139-02-PLAN.md` — 空库/升级、重复启动、failover、备份恢复与稳定性
-- [ ] `139-03-PLAN.md` — 安全对抗、关键用户故事 UAT、finding 证据矩阵与 GO/NO-GO
+**Plans:** 3/3 complete
+
+- [x] `139-01-PLAN.md` — 工具链与测试基线、qualification fixture、分层 CI
+- [x] `139-02-PLAN.md` — 空库/升级、重复启动、failover、备份恢复与稳定性
+- [x] `139-03-PLAN.md` — 安全对抗、关键用户故事 UAT、finding 证据矩阵与 GO/NO-GO
 
 ### v0.9 Release Rule
 
@@ -1214,3 +1230,12 @@ Plans:
 - Phase 131 的 Critical/High、必需 CI、安全回归、空库/恢复或关键用户故事任一失败，结论必须是 NO-GO。
 - Data Loom 的外部质量评分不作为 Slide GO 门禁；契约完整性、只读权限和投影可追溯性属于门禁。
 - 只有 `139-VERIFICATION.md` 在当前 commit/环境给出 GO，v0.9 才能标记 shipped。
+
+### Post-v0.9 Engineering Closure (2026-07-23)
+
+- [x] Hosted CI、可追溯发布产物和原子回滚演练
+- [x] 容量一致性持久回归、漂移告警与恢复自动关闭
+- [x] 前端 vendor/route chunk 拆分和浏览器回归
+- [x] en/zh-CN key/placeholder 契约与服务端 locale 运行时同步
+- [x] TypeBox/OpenAPI/前端 DTO 生成与 CI 漂移检查
+- [ ] 服务器 3 SSH 凭据由运维方重新录入后完成真实采集/健康复验
