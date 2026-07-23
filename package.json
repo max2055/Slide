@@ -3,12 +3,18 @@
   "version": "2.0.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.32.1",
   "description": "Slide — AI-Powered Database Operations Platform",
   "scripts": {
     "dev": "pnpm --filter slide-api dev & pnpm --filter slide-frontend dev",
     "start": "pnpm --filter slide-api start",
     "build": "pnpm --filter slide-frontend build",
     "test": "pnpm -r test",
+    "qualification:matrix": "pnpm --filter slide-api exec tsx ../../tests/qualification/coverage-matrix.ts --validate",
+    "contracts:generate": "pnpm --filter slide-api exec tsx src/contracts/generate-public-api.ts",
+    "contracts:check": "pnpm --filter slide-api exec tsx src/contracts/generate-public-api.ts --check",
+    "release:artifact": "bash scripts/release/build-artifact.sh",
+    "release:rollback-drill": "bash scripts/release/rollback-drill.sh",
     "lint": "oxlint",
     "format": "oxfmt"
   },

@@ -554,16 +554,19 @@ export function renderChatMobileToggle(state: AppViewState) {
 
 export function switchChatSession(state: AppViewState, nextSessionKey: string) {
   resetChatStateForSessionSwitch(state, nextSessionKey);
-  void refreshChatAvatar(state);
-  void refreshSlashCommands({
-    client: state.client,
-    agentId: parseAgentSessionKey(nextSessionKey)?.agentId,
-  });
   syncUrlWithSessionKey(
     state as unknown as Parameters<typeof syncUrlWithSessionKey>[0],
     nextSessionKey,
     true,
   );
+  if (!nextSessionKey) {
+    return;
+  }
+  void refreshChatAvatar(state);
+  void refreshSlashCommands({
+    client: state.client,
+    agentId: parseAgentSessionKey(nextSessionKey)?.agentId,
+  });
   void loadChatHistory(state as unknown as ChatState);
   // Subscribe WS to session for invoke() completion broadcasts (e.g., RCA analysis)
   try { (state.client as any)?.watchSession?.(nextSessionKey); } catch { /* best-effort */ }

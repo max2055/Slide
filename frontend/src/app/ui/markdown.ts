@@ -37,7 +37,6 @@ const allowedTags = [
   "thead",
   "tr",
   "ul",
-  "img",
 ];
 
 const allowedAttrs = [
@@ -49,7 +48,6 @@ const allowedAttrs = [
   "target",
   "title",
   "start",
-  "src",
   "alt",
   "data-code",
   "type",
@@ -58,7 +56,6 @@ const allowedAttrs = [
 const sanitizeOptions = {
   ALLOWED_TAGS: allowedTags,
   ALLOWED_ATTR: allowedAttrs,
-  ADD_DATA_URI_TAGS: ["img"],
 };
 
 let hooksInstalled = false;

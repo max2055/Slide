@@ -72,6 +72,8 @@ export type ToolHandler<T = unknown> = (
  * 工具执行上下文
  */
 export interface ToolExecutionContext {
+  /** Authenticated server-side actor. Never derived from tool arguments. */
+  actor?: import('../auth/actor-context.js').ActorContext;
   /** 当前用户 ID */
   userId?: number;
   /** 当前用户角色 */
@@ -80,6 +82,8 @@ export interface ToolExecutionContext {
   sessionId?: string;
   /** 关联的数据库实例 ID */
   instanceId?: number;
+  /** Auditable authorization outcome calculated before a handler is called. */
+  policyDecision?: PolicyDecision;
   /** 调用其他工具的方法 */
   invokeTool?: (toolName: string, args: Record<string, unknown>) => Promise<ToolResult>;
   /** 生成摘要的辅助方法 */
@@ -116,8 +120,32 @@ export interface AnyAgentTool {
   requiresApproval?: boolean;
   /** 危险等级（1-5，5 为最危险） */
   dangerLevel?: number;
+  /** Whether the operation is declaratively read-only. */
+  readOnly?: boolean;
+  /** Permissions all of which must be present on the authenticated actor. */
+  requiredPermissions?: string[];
   /** Tool scopes for auto-discovery filtering. Mirrors nanobot _scopes. Default ['core']. */
   scope?: string[];
+}
+
+export type ToolPolicyReasonCode =
+  | 'ALLOW'
+  | 'MISSING_ACTOR'
+  | 'OWNER_REQUIRED'
+  | 'MISSING_PERMISSION'
+  | 'INSTANCE_SCOPE_REQUIRED'
+  | 'INSTANCE_SCOPE_DENIED'
+  | 'APPROVAL_REQUIRED'
+  | 'INVALID_APPROVAL';
+
+export interface PolicyDecision {
+  allow: boolean;
+  reasonCode: ToolPolicyReasonCode;
+  actor: { userId: number; username: string; roles: readonly string[] } | null;
+  tool: string;
+  resource: { instanceId?: number };
+  approvalId?: string;
+  requestId?: string;
 }
 
 // ============== 工具目录类型 ==============
@@ -171,6 +199,8 @@ export interface RoleToolPolicy {
   policy: ToolPolicy;
   /** 危险操作审批要求 */
   requiresApprovalFor?: string[];
+  /** Product-level access tier used by the authorization UI and policy registry. */
+  permissionLevel?: 'read' | 'write' | 'admin' | 'audit';
 }
 
 // ============== 技能相关类型（为阶段二准备） ==============

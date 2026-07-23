@@ -3,27 +3,11 @@ import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
 import "../components/app-form-field.js";
+import "../components/app-empty-state.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
-
-interface DatabaseInstance {
-  id: number;
-  name: string;
-  db_type: string;
-  db_version?: string;
-  data_size_gb?: number;
-  host: string;
-  port: number;
-  database_name: string;
-  username?: string;
-  health_status: "healthy" | "warning" | "critical" | "unknown";
-  health_score: number;
-  status: string;
-  created_at: string;
-  environment?: string;
-  description?: string;
-}
+import type { DatabaseInstance } from "../../../api/generated/public-api.js";
 
 interface InstanceFormData {
   name: string;
@@ -131,6 +115,7 @@ export class InstancesPage extends LitElement {
     }
 
     .search-input {
+      box-sizing: border-box;
       width: 100%;
       padding: var(--space-sm) var(--space-md) var(--space-sm) 34px;
       border: 1px solid var(--border);
@@ -610,20 +595,6 @@ export class InstancesPage extends LitElement {
       return html`<div class="loading" style="color: var(--danger);">${this.error}</div>`;
     }
 
-    if (this.instances.length === 0) {
-      return html`
-        <div class="page">
-          <div class="empty">
-            <div class="empty__content">
-              <div class="empty__icon">${icons['database']}</div>
-              <div class="empty__title">暂无数据库实例</div>
-              <div class="empty__desc">点击添加按钮创建第一个实例</div>
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
     const filtered = this.filteredInstances;
 
     return html`
@@ -649,7 +620,7 @@ export class InstancesPage extends LitElement {
             <div class="search-box" style="position: relative; flex: 1; min-width: 200px; max-width: 300px;">
               <span style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); display: flex;"><span style="width: 14px; height: 14px; display: flex; opacity: 0.6;">${icons['search']}</span></span>
               <input
-                style="width: 100%; padding: var(--space-sm) var(--space-md) var(--space-sm) 34px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-base); color: var(--text); background: var(--card);"
+                class="search-input"
                 placeholder="搜索名称、主机、类型..."
                 name="search-instances"
                 autocomplete="off"
@@ -658,15 +629,13 @@ export class InstancesPage extends LitElement {
               />
             </div>
 
-            <button class="btn" style="margin-left:auto;" @click=${() => this._addInstance()}>
+            <button class="btn-primary" style="margin-left:auto;" @click=${() => this._addInstance()}>
               + 添加实例
             </button>
           </div>
 
-          ${filtered.length > 0
-            ? html`
-                <div class="table-container">
-                  <table class="table">
+          <div class="table-container">
+            <table class="table">
                     <thead>
                       <tr>
                         <th style="width:40px;text-align:center;">#</th>
@@ -681,7 +650,7 @@ export class InstancesPage extends LitElement {
                       </tr>
                     </thead>
                     <tbody>
-                      ${filtered.map((inst, idx) => html`
+                      ${filtered.length > 0 ? filtered.map((inst, idx) => html`
                         <tr class="instance-row">
                           <td style="text-align:center;font-size:var(--text-sm);color:var(--muted);">${idx + 1}</td>
                           <td><div class="instance-name">${inst.name}</div></td>
@@ -712,21 +681,20 @@ export class InstancesPage extends LitElement {
                             </div>
                           </td>
                         </tr>
-                      `)}
+                      `) : html`
+                        <tr>
+                          <td colspan="9">
+                            <app-empty-state
+                              title=${this.instances.length === 0 ? "暂无数据库实例" : "没有符合条件的实例"}
+                              description=${this.instances.length === 0 ? "点击添加实例开始纳管数据库" : "尝试调整筛选条件"}
+                              icon=${this.instances.length === 0 ? "database" : "search"}
+                            ></app-empty-state>
+                          </td>
+                        </tr>
+                      `}
                     </tbody>
                   </table>
                 </div>
-              `
-            : html`
-                <div class="empty" style="min-height: 200px;">
-                  <div class="empty__content">
-                    <div class="empty__icon">${icons['search']}</div>
-                    <div class="empty__title">没有符合条件的实例</div>
-                    <div class="empty__desc">尝试调整筛选条件</div>
-                  </div>
-                </div>
-              `
-          }
         </div>
       </div>
 
@@ -874,18 +842,22 @@ export class InstancesPage extends LitElement {
   private async _savePasswordAndReload() {
     if (!this.testingInstance) return;
     try {
-      await authFetch(`/api/database/instances/${this.testingInstance.id}`, {
+      const saved = await authFetch(`/api/database/instances/${this.testingInstance.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ password: this.testPassword }),
       });
-      await authFetch(`/api/database/instances/${this.testingInstance.id}/reload`, {
+      if (!saved.ok) throw new Error("保存凭据失败");
+      const reloaded = await authFetch(`/api/database/instances/${this.testingInstance.id}/reload`, {
         method: "POST",
       });
-    } catch (_err) {
-      // 忽略保存失败，不阻塞测试结果展示
+      if (!reloaded.ok) throw new Error("重载连接失败");
+      await this.loadInstances();
+    } catch (err: any) {
+      this.listTestStatus = "error";
+      this.listTestMessage = err.message;
     }
   }
 

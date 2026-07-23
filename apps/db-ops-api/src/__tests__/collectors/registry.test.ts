@@ -111,4 +111,12 @@ describe('Registry<T>', () => {
     registry.register(p);
     expect(registry.getProvidersByDbType('oracle')).toEqual([]);
   });
+
+  it('does not return disabled providers to collection callers', () => {
+    const registry = new Registry<TestProvider>();
+    const p = createProvider('mysql_only', ['mysql']);
+    registry.register(p);
+    registry.disable('mysql_only');
+    expect(registry.getProvidersByDbType('mysql')).toEqual([]);
+  });
 });

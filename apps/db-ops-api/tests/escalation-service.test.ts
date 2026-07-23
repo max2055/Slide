@@ -15,7 +15,7 @@ const mockPool = {
 describe('alert-escalation-service.ts', () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.mocked(mockPool.execute).mockReset();
+    mockPool.execute.mockReset();
   });
 
   it('start() creates a CronJob and sets running flag', async () => {
@@ -35,14 +35,14 @@ describe('alert-escalation-service.ts', () => {
   });
 
   it('checkEscalations returns 0 when no rules', async () => {
-    vi.mocked(mockPool.execute).mockResolvedValueOnce([[]]);
+    mockPool.execute.mockResolvedValueOnce([[]]);
     const { alertEscalationService } = await import('../src/alert-escalation-service');
     const result = await alertEscalationService.checkEscalations();
     expect(result.escalated).toBe(0);
   });
 
   it('manualEscalation returns error when alert not found', async () => {
-    vi.mocked(mockPool.execute).mockResolvedValueOnce([[]]);
+    mockPool.execute.mockResolvedValueOnce([[]]);
     const { alertEscalationService } = await import('../src/alert-escalation-service');
     const result = await alertEscalationService.manualEscalation(999, 'critical');
     expect(result.success).toBe(false);
@@ -50,12 +50,14 @@ describe('alert-escalation-service.ts', () => {
   });
 
   it('getEscalationRules returns empty when no rules in DB', async () => {
+    mockPool.execute.mockResolvedValueOnce([[]]);
     const { alertEscalationService } = await import('../src/alert-escalation-service');
     const rules = await alertEscalationService.getEscalationRules();
     expect(Array.isArray(rules)).toBe(true);
   });
 
   it('deleteEscalationRule executes DELETE SQL', async () => {
+    mockPool.execute.mockResolvedValueOnce([[{ affectedRows: 1 }], []]);
     const { alertEscalationService } = await import('../src/alert-escalation-service');
     const result = await alertEscalationService.deleteEscalationRule(1);
     expect(result.success).toBe(true);

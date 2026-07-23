@@ -337,7 +337,14 @@ export type AgentsListResult = {
   mainKey: string;
   scope: string;
   agents: GatewayAgentRow[];
+  capabilities?: AgentUiCapabilities;
 };
+
+export type AgentUiCapability = { state: 'supported' | 'readonly' | 'unsupported'; reason?: string };
+export type AgentUiCapabilities = Record<
+  'sessions' | 'files' | 'tools' | 'skills' | 'cron' | 'modelSelection' | 'fallback' | 'reload' | 'edit',
+  AgentUiCapability
+>;
 
 export type AgentIdentityResult = {
   agentId: string;

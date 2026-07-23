@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import { t } from "../../i18n/index.ts";
 import type {
   AgentIdentityResult,
+  AgentUiCapabilities,
   AgentsFilesListResult,
   AgentsListResult,
   ModelCatalogEntry,
@@ -35,6 +36,7 @@ export function renderAgentOverview(params: {
   onModelChange: (agentId: string, modelId: string | null) => void;
   onModelFallbacksChange: (agentId: string, fallbacks: string[]) => void;
   onSelectPanel: (panel: AgentsPanel) => void;
+  capabilities?: AgentUiCapabilities;
 }) {
   const {
     agent,
@@ -79,6 +81,7 @@ export function renderAgentOverview(params: {
   const skillFilter = Array.isArray(config.entry?.skills) ? config.entry?.skills : null;
   const skillCount = skillFilter?.length ?? null;
   const isDefault = Boolean(params.defaultId && agent.id === params.defaultId);
+  const modelSelectionSupported = !params.capabilities || params.capabilities.modelSelection.state !== 'unsupported';
   const disabled = !configForm || configLoading || configSaving;
 
   const removeChip = (index: number) => {
@@ -135,7 +138,7 @@ export function renderAgentOverview(params: {
           `
         : nothing}
 
-      <div class="agent-model-select" style="margin-top: 20px;">
+      ${modelSelectionSupported ? html`<div class="agent-model-select" style="margin-top: 20px;">
         <div class="label">Model Selection</div>
         <div class="agent-model-fields">
           <label class="field">
@@ -217,7 +220,7 @@ export function renderAgentOverview(params: {
             ${configSaving ? "Saving…" : "Save"}
           </button>
         </div>
-      </div>
+      </div>` : nothing}
     </section>
   `;
 }

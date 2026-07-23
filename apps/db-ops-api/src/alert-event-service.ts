@@ -31,7 +31,7 @@ class AlertEventService {
     offset?: number;
   }): Promise<{ items: any[]; total: number }> {
     const pool = this.getPool();
-    if (!pool) return [];
+    if (!pool) return { items: [], total: 0 };
 
     try {
       let sql = `
@@ -322,22 +322,31 @@ class AlertEventService {
     if (!pool) return { success: false, error: '数据库未连接' };
 
     try {
-      // closed 状态不允许再操作
-      const [rows] = await pool.execute('SELECT status FROM alert_events WHERE id = ?', [eventId]) as any;
-      if (rows[0]?.status === 'closed') {
-        return { success: false, error: '事件已关闭，无法再次操作' };
+      const [result] = await pool.execute(
+        `UPDATE alert_events SET status = 'closed'
+         WHERE id = ? AND status = 'resolved' AND verification_passed_at IS NOT NULL`,
+        [eventId],
+      ) as any;
+      if (result.affectedRows !== 1) {
+        return { success: false, error: '仅已解决且恢复验证通过的事件可以关闭' };
       }
-
-      await pool.execute(
-        'UPDATE alert_events SET status = ? WHERE id = ?',
-        ['closed', eventId]
-      );
-
-      await this._logEvent(eventId, 'status_changed', userId, { from: rows[0]?.status, to: 'closed', action: 'closed' });
+      await this._logEvent(eventId, 'status_changed', userId, { from: 'resolved', to: 'closed', action: 'closed' });
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message };
     }
+  }
+
+  async verifyRecovery(eventId: number, reason: string, userId?: number): Promise<{ success: boolean; error?: string }> {
+    const pool = this.getPool();
+    if (!pool) return { success: false, error: '数据库未连接' };
+    const [result] = await pool.execute(
+      `UPDATE alert_events SET verification_passed_at = NOW(), verification_actor_id = ?, verification_reason = ?
+       WHERE id = ? AND status = 'resolved'`, [userId ?? null, reason.slice(0, 1024), eventId],
+    ) as any;
+    if (result.affectedRows !== 1) return { success: false, error: '仅已解决的事件可以进行恢复验证' };
+    await this._logEvent(eventId, 'status_changed', userId, { action: 'verification_passed', reason });
+    return { success: true };
   }
 
   /**

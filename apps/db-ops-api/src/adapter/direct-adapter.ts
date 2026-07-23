@@ -19,7 +19,7 @@
 
 import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import jwt from 'jsonwebtoken';
+import { randomUUID } from 'node:crypto';
 import {
   AgentRunner,
   NoopHook,
@@ -34,8 +34,36 @@ import type { IAgentEngine, ChatEvent, AgentCapabilities, ChatResult, InvokeResu
 import { chatDatabaseService } from '../chat-database-service.js';
 import { SubagentManager } from '../agents/subagent-manager.js';
 import { setSubagentManager } from '../agents/subagent-spawn-tool.js';
+import {
+  actorContextService,
+  type ActorContext,
+  type ActorContextService,
+} from '../auth/actor-context.js';
+import { validateChatSendV2 } from './protocol-v2.js';
+import { agentRunService } from './agent-run-service.js';
+import { completeAnalysisTool } from '../tools/generated/slide-self-mgmt/complete_analysis.js';
 
 let _subagentManagerInitialized = false;
+
+function analysisCompletionTools(): ToolRegistry {
+  const tools = new ToolRegistry();
+  tools.register({
+    name: completeAnalysisTool.name,
+    description: completeAnalysisTool.description,
+    parameters: completeAnalysisTool.parameters as ToolSchema['parameters'],
+    readOnly: false,
+    concurrencySafe: true,
+    exclusive: false,
+    scope: completeAnalysisTool.scope,
+    execute: async (args: Record<string, unknown>) => {
+      const result = await completeAnalysisTool.handler(args);
+      return result && typeof result === 'object' && 'data' in result
+        ? (result as { data?: unknown }).data ?? result
+        : result;
+    },
+  });
+  return tools;
+}
 
 // ── Helper: maps Hook tool events to ChatEvent ──
 
@@ -108,12 +136,16 @@ function normalizeThinkingLevel(level?: string): string | undefined {
 
 export interface DirectAdapterOptions {
   tools: ToolRegistry;
+  /** Builds an actor-bound registry so LLM calls cannot supply their own identity. */
+  toolsForActor?: (actor: ActorContext) => ToolRegistry;
   llmProvider: import('@slide/agent-core').LLMProvider;
   workspace?: string;              // workspace root path (defaults to process.cwd())
   sessionManager?: SessionManager; // optional, created from workspace if not provided
   contextBuilder?: ContextBuilder; // optional, created from workspace if not provided
   skillsLoader?: SkillsLoader;     // optional, created from workspace if not provided
   memoryStore?: MemoryStore;       // optional, created from workspace if not provided
+  actorContextService?: Pick<ActorContextService, 'authenticateAccessToken' | 'revalidateActor'>;
+  heartbeatIntervalMs?: number;
 }
 
 // ── DirectAdapter ──
@@ -121,19 +153,26 @@ export interface DirectAdapterOptions {
 export class DirectAdapter implements IAgentEngine {
   private runner: AgentRunner;
   private registry: ToolRegistry;
+  private toolsForActor?: (actor: ActorContext) => ToolRegistry;
   private provider: import('@slide/agent-core').LLMProvider;
   private sessionManager: SessionManager;
   private contextBuilder: ContextBuilder;
   private skillsLoader: SkillsLoader;
   private memoryStore: MemoryStore;
+  private actorContexts: Pick<ActorContextService, 'authenticateAccessToken' | 'revalidateActor'>;
+  private heartbeatIntervalMs: number;
   private wsServer: WebSocketServer | null = null;
+  private activeRuns = new Map<string, { actorId: number; sessionId: string; controller: AbortController }>();
   /** Track WebSocket clients subscribed to each session for invoke() broadcast. */
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
 
   constructor(opts: DirectAdapterOptions) {
     this.runner = new AgentRunner(opts.llmProvider);
     this.registry = opts.tools;
+    this.toolsForActor = opts.toolsForActor;
     this.provider = opts.llmProvider;
+    this.actorContexts = opts.actorContextService || actorContextService;
+    this.heartbeatIntervalMs = opts.heartbeatIntervalMs || 30_000;
 
     const workspace = opts.workspace || process.cwd();
     this.memoryStore = opts.memoryStore || new MemoryStore(workspace);
@@ -194,17 +233,69 @@ export class DirectAdapter implements IAgentEngine {
     this.wsServer.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
       console.log('[DirectAdapter] WS client connected');
       (ws as any)._isAlive = true;
+      type ConnectionAuthState = 'unauthenticated' | 'authenticating' | 'authenticated' | 'closed';
+      let authState: ConnectionAuthState = 'unauthenticated';
+      let authGeneration = 0;
+      let connectionActor: ActorContext | undefined;
+      let revalidationInFlight = false;
+      (ws as any)._authState = authState;
+      (ws as any)._actorContext = undefined;
 
-      // Heartbeat ping every 30s, terminate if pong not received (WR-07)
+      const clearAuthentication = () => {
+        authGeneration += 1;
+        authState = 'closed';
+        connectionActor = undefined;
+        revalidationInFlight = false;
+        (ws as any)._authState = authState;
+        (ws as any)._actorContext = undefined;
+        (ws as any)._revalidationInFlight = false;
+      };
+
+      const closeAfterAuthFailure = (code: number, reason: string) => {
+        clearAuthentication();
+        if (ws.readyState === WebSocket.OPEN) ws.close(code, reason);
+      };
+
+      // Heartbeat and authorization revalidation share the existing 30s cycle.
       const heartbeatTimer = setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN) return;
         if ((ws as any)._isAlive === false) {
           console.warn('[DirectAdapter] WS heartbeat timeout, terminating connection');
+          clearAuthentication();
           ws.terminate();
           return;
         }
+
+        if (authState === 'authenticated' && connectionActor && !revalidationInFlight) {
+          const revalidationGeneration = authGeneration;
+          const actorAtStart = connectionActor;
+          revalidationInFlight = true;
+          (ws as any)._revalidationInFlight = true;
+          void this.actorContexts.revalidateActor(
+            actorAtStart,
+            randomUUID(),
+          ).then((nextActor) => {
+            if (ws.readyState === WebSocket.OPEN
+              && authState === 'authenticated'
+              && authGeneration === revalidationGeneration) {
+              connectionActor = nextActor;
+              (ws as any)._actorContext = nextActor;
+            }
+          }).catch(() => {
+            if (authState === 'authenticated' && authGeneration === revalidationGeneration) {
+              closeAfterAuthFailure(4001, 'Unauthorized');
+            }
+          }).finally(() => {
+            if (authGeneration === revalidationGeneration) {
+              revalidationInFlight = false;
+              (ws as any)._revalidationInFlight = false;
+            }
+          });
+        }
+
         (ws as any)._isAlive = false;
         ws.ping();
-      }, 30_000);
+      }, this.heartbeatIntervalMs);
 
       ws.on('pong', () => {
         (ws as any)._isAlive = true;
@@ -212,6 +303,7 @@ export class DirectAdapter implements IAgentEngine {
 
       ws.on('close', () => {
         clearInterval(heartbeatTimer);
+        clearAuthentication();
         // Unsubscribe from all session broadcasts
         for (const [, subs] of this.sessionSubscribers) {
           subs.delete(ws);
@@ -229,43 +321,85 @@ export class DirectAdapter implements IAgentEngine {
 
         // D-09/D-10: JWT auth frame -- must be first message after WS connect
         if (msg.type === 'auth') {
+          if (authState !== 'unauthenticated') {
+            closeAfterAuthFailure(4001, 'Authentication already attempted');
+            return;
+          }
           const token = msg.token as string;
           const JWT_SECRET = process.env.JWT_SECRET_KEY;
           if (!JWT_SECRET) {
             console.error('[DirectAdapter] JWT_SECRET_KEY not set, rejecting all auth');
-            ws.close(4001, 'Server misconfigured: JWT_SECRET_KEY not set');
+            closeAfterAuthFailure(4001, 'Server misconfigured: JWT_SECRET_KEY not set');
             return;
           }
+          authState = 'authenticating';
+          authGeneration += 1;
+          const authenticationGeneration = authGeneration;
+          (ws as any)._authState = authState;
           try {
-            const decoded = jwt.verify(token, JWT_SECRET);
-            (ws as any)._authUserId = (decoded as any).userId;
-            ws.send(JSON.stringify({ type: 'auth_ok' }));
+            const authenticatedActor = await this.actorContexts.authenticateAccessToken(
+              token,
+              JWT_SECRET,
+              randomUUID(),
+            );
+            if (ws.readyState === WebSocket.OPEN
+              && authState === 'authenticating'
+              && authGeneration === authenticationGeneration) {
+              connectionActor = authenticatedActor;
+              authState = 'authenticated';
+              (ws as any)._actorContext = authenticatedActor;
+              (ws as any)._authState = authState;
+              ws.send(JSON.stringify({ type: 'auth_ok' }));
+            }
           } catch {
-            ws.close(4001, 'Unauthorized');
+            if (authGeneration === authenticationGeneration) {
+              closeAfterAuthFailure(4001, 'Unauthorized');
+            }
           }
           return;
         }
 
         // D-11: Reject unauthenticated messages before auth
-        if (!(ws as any)._authUserId) {
-          ws.close(4002, 'Authenticate first');
+        if (authState !== 'authenticated' || !connectionActor) {
+          closeAfterAuthFailure(4002, 'Authenticate first');
           return;
         }
 
-        // Per-connection idempotency tracking to prevent duplicate messages (WR-04)
-        const seenIdempotencyKeys = new Set<string>();
-        const IDEMPOTENCY_CACHE_SIZE = 100;
+        // A connection may outlive a user disablement or role/session change.
+        // Revalidate before every command so revocation takes effect without
+        // waiting for the heartbeat interval.
+        try {
+          connectionActor = await this.actorContexts.revalidateActor(
+            connectionActor,
+            randomUUID(),
+          );
+          (ws as any)._actorContext = connectionActor;
+        } catch {
+          closeAfterAuthFailure(4001, 'Unauthorized');
+          return;
+        }
 
         switch (msg.type) {
           case 'chat.send': {
-            const rawSessionKey = (msg.sessionKey as string) || `session_${Date.now()}`;
+            if ((msg as any).protocolVersion === 2) {
+              const parsed = validateChatSendV2(msg);
+              if (!parsed.ok) {
+                ws.send(JSON.stringify({ type: 'protocol.error', code: 'error' in parsed ? parsed.error : 'PROTOCOL_INVALID' }));
+                return;
+              }
+            } else if ((msg as any).protocolVersion !== undefined) {
+              ws.send(JSON.stringify({ type: 'protocol.error', code: 'PROTOCOL_VERSION_UNSUPPORTED' }));
+              return;
+            }
+            const messageActor = connectionActor;
+            const rawSessionKey = (msg.sessionKey as string | undefined)?.trim() || '';
             // Validate sessionKey length to prevent resource exhaustion (WR-03)
             if (rawSessionKey.length > 512) {
               ws.send(JSON.stringify({ type: 'error', error: 'Session key too long' }));
               return;
             }
             // Parse session key (agent format): agent:<agentId>:<actualKey> → actualKey
-            const sessionKey = rawSessionKey.startsWith('agent:')
+            let sessionKey = rawSessionKey.startsWith('agent:')
               ? rawSessionKey.split(':').slice(2).join(':') || rawSessionKey
               : rawSessionKey;
             const userMessage = (msg.message as string) || '';
@@ -274,36 +408,45 @@ export class DirectAdapter implements IAgentEngine {
               return;
             }
 
-            // Deduplicate via idempotencyKey (WR-04)
             const idempotencyKey = msg.idempotencyKey as string | undefined;
-            if (idempotencyKey) {
-              if (seenIdempotencyKeys.has(idempotencyKey)) {
-                // Already processed, skip silently
+            const messageId = msg.messageId as string | undefined;
+
+            let persistentRun: { run: { id: string }; created: boolean } | undefined;
+            try {
+              if (!sessionKey) {
+                const created = await chatDatabaseService.createSession(messageActor, { title: '新会话' });
+                sessionKey = created.session_id;
+                ws.send(JSON.stringify({ type: 'session.created', sessionKey }));
+              } else {
+                await chatDatabaseService.authorizeSession(messageActor, sessionKey, 'append');
+              }
+
+              persistentRun = idempotencyKey && messageId
+                ? await agentRunService.claim(messageActor.userId, sessionKey, messageId, idempotencyKey)
+                : undefined;
+              if (persistentRun && !persistentRun.created) {
+                ws.send(JSON.stringify({ type: 'run.snapshot', run: persistentRun.run }));
                 return;
               }
-              seenIdempotencyKeys.add(idempotencyKey);
-              if (seenIdempotencyKeys.size > IDEMPOTENCY_CACHE_SIZE) {
-                const first = seenIdempotencyKeys.values().next().value;
-                if (first !== undefined) seenIdempotencyKeys.delete(first);
-              }
-            }
-
-            // Subscribe this WS to session events (for invoke() completion broadcast)
-            if (!this.sessionSubscribers.has(sessionKey)) {
-              this.sessionSubscribers.set(sessionKey, new Set());
-            }
-            this.sessionSubscribers.get(sessionKey)!.add(ws);
-
-            try {
-              // Persist user message
-              const userId = (msg as any).userId || 1;
-              try {
-                await chatDatabaseService.addMessage(sessionKey, `msg_${Date.now()}_user`, 'user', userMessage, null, null, null, null);
-              } catch (dbErr) {
-                console.error('[DirectAdapter] Failed to persist user message:', dbErr instanceof Error ? dbErr.message : String(dbErr));
+              const controller = persistentRun ? new AbortController() : undefined;
+              if (persistentRun) {
+                this.activeRuns.set(persistentRun.run.id, { actorId: messageActor.userId, sessionId: sessionKey, controller: controller! });
+                ws.send(JSON.stringify({ type: 'run.started', runId: persistentRun.run.id, sessionKey }));
               }
 
-              await this.chat(sessionKey, userMessage, async (event) => {
+              await chatDatabaseService.addMessage(messageActor, sessionKey, {
+                messageId: `msg_${Date.now()}_user`,
+                role: 'user',
+                content: userMessage,
+              });
+
+              // Authorization succeeds before the connection joins broadcasts.
+              if (!this.sessionSubscribers.has(sessionKey)) {
+                this.sessionSubscribers.set(sessionKey, new Set());
+              }
+              this.sessionSubscribers.get(sessionKey)!.add(ws);
+
+              const chatResult = await this.chat(sessionKey, userMessage, async (event) => {
                 // Persist assistant's final response BEFORE sending to client,
                 // so the history API returns the complete conversation.
                 if (event.type === 'complete' && event.finalContent) {
@@ -314,24 +457,62 @@ export class DirectAdapter implements IAgentEngine {
                     const dbContent = thinking
                       ? `<think>${thinking}</think>\n\n${event.finalContent}`
                       : event.finalContent;
-                    await chatDatabaseService.addMessage(sessionKey, `msg_${Date.now()}_asst`, 'assistant', dbContent, null, null, null, null);
+                    await chatDatabaseService.addMessage(messageActor, sessionKey, {
+                      messageId: `msg_${Date.now()}_asst`,
+                      role: 'assistant',
+                      content: dbContent,
+                    });
                   } catch (dbErr) {
                     console.error('[DirectAdapter] Failed to persist assistant message:', dbErr instanceof Error ? dbErr.message : String(dbErr));
                   }
                 }
-                ws.send(JSON.stringify(event));
-              });
+                ws.send(JSON.stringify({
+                  ...event,
+                  ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
+                }));
+              }, messageActor, controller?.signal);
+              if (persistentRun) {
+                const terminal = chatResult.stopReason === 'completed'
+                  ? 'completed'
+                  : chatResult.stopReason === 'max_iterations' ? 'partial'
+                  : chatResult.stopReason === 'cancelled' ? 'cancelled'
+                  : chatResult.stopReason === 'timed_out' ? 'timed_out'
+                  : 'failed';
+                await agentRunService.finish(persistentRun.run.id, terminal, { stopReason: chatResult.stopReason });
+                this.activeRuns.delete(persistentRun.run.id);
+              }
             } catch (err) {
               const errorMsg = err instanceof Error ? err.message : String(err);
+              // A failed chat retains its run record so replay returns the terminal snapshot.
+              if (persistentRun?.created) {
+                try {
+                  await agentRunService.finish(persistentRun.run.id, 'failed', undefined, { message: errorMsg });
+                  this.activeRuns.delete(persistentRun.run.id);
+                } catch { /* preserve the original request failure */ }
+              }
               ws.send(JSON.stringify({ type: 'error', error: errorMsg }));
             }
+            break;
+          }
+
+          case 'chat.cancel': {
+            const runId = typeof msg.runId === 'string' ? msg.runId : '';
+            const cancelSession = typeof msg.sessionKey === 'string' ? msg.sessionKey : '';
+            const active = this.activeRuns.get(runId);
+            if (!active || active.actorId !== connectionActor.userId || active.sessionId !== cancelSession) {
+              ws.send(JSON.stringify({ type: 'protocol.error', code: 'RUN_NOT_CANCELLABLE' }));
+              return;
+            }
+            if (await agentRunService.cancelForActor(runId, connectionActor.userId, cancelSession)) {
+              active.controller.abort();
+            } else ws.send(JSON.stringify({ type: 'protocol.error', code: 'RUN_NOT_CANCELLABLE' }));
             break;
           }
 
           case 'chat.history': {
             const historySessionKey = (msg.sessionKey as string) || '';
             try {
-              const messages = await chatDatabaseService.getMessages(historySessionKey, 200);
+              const messages = await chatDatabaseService.getMessages(connectionActor, historySessionKey, 200);
               // Map DB records to frontend-compatible message format
               const mapped = messages.map((m) => ({
                 id: m.message_id,
@@ -351,10 +532,15 @@ export class DirectAdapter implements IAgentEngine {
             // Subscribe WS to session for invoke() completion broadcasts
             const watchKey = (msg.sessionKey as string) || '';
             if (watchKey) {
-              if (!this.sessionSubscribers.has(watchKey)) {
-                this.sessionSubscribers.set(watchKey, new Set());
+              try {
+                await chatDatabaseService.authorizeSession(connectionActor, watchKey, 'watch');
+                if (!this.sessionSubscribers.has(watchKey)) {
+                  this.sessionSubscribers.set(watchKey, new Set());
+                }
+                this.sessionSubscribers.get(watchKey)!.add(ws);
+              } catch {
+                ws.send(JSON.stringify({ type: 'error', error: 'Chat session not found' }));
               }
-              this.sessionSubscribers.get(watchKey)!.add(ws);
             }
             break;
           }
@@ -386,6 +572,8 @@ export class DirectAdapter implements IAgentEngine {
     sessionKey: string,
     message: string,
     onEvent: (event: ChatEvent) => void,
+    _actor?: ActorContext,
+    signal?: AbortSignal,
   ): Promise<ChatResult> {
     // Get or create session via SessionManager (D-07)
     const session = this.sessionManager.getOrCreate(sessionKey);
@@ -400,7 +588,9 @@ export class DirectAdapter implements IAgentEngine {
 
     // Read session settings (model, thinkingLevel) from DB metadata.
     // The frontend stores these via sessions.patch → chat_sessions.metadata.
-    const sessMeta = await chatDatabaseService.getSessionMetadata(sessionKey);
+    const sessMeta = _actor
+      ? await chatDatabaseService.getSessionMetadata(_actor, sessionKey)
+      : null;
     const sessModel = (sessMeta?.model as string) || undefined;
     const sessThinkingLevel = (sessMeta?.thinkingLevel as string) || undefined;
     const reasoningEffort = normalizeThinkingLevel(sessThinkingLevel);
@@ -432,7 +622,7 @@ export class DirectAdapter implements IAgentEngine {
     try {
       const result = await this.runner.run({
         initialMessages: contextMessages as Message[],
-        tools: this.registry,
+        tools: _actor && this.toolsForActor ? this.toolsForActor(_actor) : new ToolRegistry(),
         model: sessModel || this.provider.getDefaultModel(),
         maxIterations: 200,
         maxToolResultChars: 20000,
@@ -443,6 +633,7 @@ export class DirectAdapter implements IAgentEngine {
         contextWindowTokens: 200_000,
         maxTokens: 4096,
         sessionKey,
+        signal,
       });
 
       // Embed reasoning as <think> tags in the session/DB content string.
@@ -469,12 +660,14 @@ export class DirectAdapter implements IAgentEngine {
 
       await this.sessionManager.save(session);
 
-      onEvent({
-        type: 'complete',
-        finalContent: cleanContent || undefined,
-        thinkingContent,
-      });
-      return { finalContent: cleanContent || null, usage: result.usage };
+      if (result.stopReason === 'completed') {
+        onEvent({ type: 'complete', finalContent: cleanContent || undefined, thinkingContent });
+      } else if (result.stopReason === 'cancelled') {
+        onEvent({ type: 'cancelled' });
+      } else {
+        onEvent({ type: 'error', error: result.error || `Agent run ended: ${result.stopReason}` });
+      }
+      return { finalContent: cleanContent || null, usage: result.usage, stopReason: result.stopReason };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       // Checkpoint remains in metadata for next turn to restore
@@ -505,20 +698,19 @@ export class DirectAdapter implements IAgentEngine {
       ];
     }
 
-    // Persist user message to both SessionManager (JSONL) and chatDatabaseService (MySQL)
-    const userMsgId = `msg_${Date.now()}_user`;
+    // invoke() is intentionally detached from a browser ActorContext. It may retain
+    // ephemeral agent state, but must never use a maintenance path to mutate a
+    // user-owned chat session.
     session.addMessage('user', message);
-    try {
-      await chatDatabaseService.addMessage(sessionKey, userMsgId, 'user', message, null, null, null, null);
-    } catch (dbErr) {
-      console.error('[DirectAdapter] invoke() failed to persist user message to DB:', dbErr instanceof Error ? dbErr.message : String(dbErr));
-    }
 
     const thinkingHolder: { text: string } = { text: '' };
     const toolCalls: Array<{ name: string; args: any; result?: string; status: string }> = [];
 
     const invokeHook: AgentHook = {
-      wantsStreaming: () => true,
+      // Background analyses have no interactive consumer. A non-streaming
+      // request applies the runner's wall-clock timeout and avoids retaining a
+      // long-lived streaming connection while waiting for persistence.
+      wantsStreaming: () => false,
       beforeIteration: async () => {},
       onStream: async (_ctx: any, delta: string) => { thinkingHolder.text += delta; },
       onStreamEnd: async () => {},
@@ -544,14 +736,17 @@ export class DirectAdapter implements IAgentEngine {
     try {
       const result = await this.runner.run({
         initialMessages: messages,
-        tools: this.registry,
+        // Background analysis has no ActorContext. It receives only the
+        // validation-backed completion tool, never the general platform catalog.
+        tools: analysisCompletionTools(),
         model: this.provider.getDefaultModel(),
-        maxIterations: 200,
+        maxIterations: 8,
         maxToolResultChars: 20000,
         temperature: 0.0,
         hook: invokeHook as any,
         contextWindowTokens: 200_000,
-        maxTokens: 100_000,
+        maxTokens: 4096,
+        llmTimeoutS: 60,
       });
 
       // Embed thinking as <think> tags so chat UI renders collapsible thinking section
@@ -563,11 +758,6 @@ ${result.finalContent || ''}`
         : (result.finalContent || '');
       if (finalContent) {
         session.addMessage('assistant', finalContent);
-        try {
-          await chatDatabaseService.addMessage(sessionKey, `msg_${Date.now()}_asst`, 'assistant', finalContent, null, null, null, null);
-        } catch (dbErr) {
-          console.error('[DirectAdapter] invoke() failed to persist assistant message to DB:', dbErr instanceof Error ? dbErr.message : String(dbErr));
-        }
       }
       await this.sessionManager.save(session);
 
@@ -585,15 +775,12 @@ ${result.finalContent || ''}`
         usage: result.usage,
         toolEvents: result.toolEvents,
         stopReason: result.stopReason,
+        error: result.error,
         iterationCount: result.messages ? Math.ceil(result.messages.length / 2) : 0,
       };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(`[DirectAdapter] invoke() failed for session ${sessionKey}:`, errorMessage);
-      // Persist error as system message so it's visible in chat
-      try {
-        await chatDatabaseService.addMessage(sessionKey, `msg_${Date.now()}_error`, 'system', `分析失败: ${errorMessage}`, null, null, null, null);
-      } catch { /* best-effort */ }
       // Save session even on error so partial state is not lost
       try { await this.sessionManager.save(session); } catch { /* best-effort */ }
       throw err;
@@ -614,6 +801,17 @@ ${result.finalContent || ''}`
       toolCalling: true,
       maxContextTokens: 200_000,
       supportsCustomSystemPrompt: true,
+      features: {
+        sessions: { state: 'supported' },
+        files: { state: 'unsupported', reason: 'DirectAdapter has no agent workspace file API' },
+        tools: { state: 'unsupported', reason: 'DirectAdapter has no tool policy editor API' },
+        skills: { state: 'unsupported', reason: 'DirectAdapter has no per-agent skill editor API' },
+        cron: { state: 'unsupported', reason: 'Cron is managed outside the DirectAdapter agent UI' },
+        modelSelection: { state: 'unsupported', reason: 'Model selection is configured in LLM settings' },
+        fallback: { state: 'unsupported', reason: 'Fallback configuration is not exposed by DirectAdapter' },
+        reload: { state: 'unsupported', reason: 'Provider reload is managed by LLM settings' },
+        edit: { state: 'unsupported', reason: 'DirectAdapter has no agent edit API' },
+      },
     };
   }
 

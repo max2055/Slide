@@ -47,7 +47,7 @@ export class OpenAIProvider implements LLMProvider {
         tools: tools.length > 0 ? tools.map(toOpenAITool) : undefined,
         temperature: options?.temperature ?? 0,
         max_tokens: options?.maxTokens,
-      });
+      }, { signal: options?.signal });
 
       return parseOpenAIResponse(response);
     } catch (err) {
@@ -61,6 +61,7 @@ export class OpenAIProvider implements LLMProvider {
         shouldExecuteTools: false,
         hasToolCalls: false,
         errorKind: "provider_error",
+        error: message,
       };
     }
   }
@@ -73,6 +74,8 @@ export class OpenAIProvider implements LLMProvider {
   ): Promise<LLMResponse> {
     const idleTimeoutS = options?.streamIdleTimeoutS;
     const ctrl = new AbortController();
+    const abortFromCaller = () => ctrl.abort();
+    options?.signal?.addEventListener('abort', abortFromCaller, { once: true });
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
     const resetIdleTimer = () => {
@@ -106,7 +109,7 @@ export class OpenAIProvider implements LLMProvider {
       const THINK_CLOSE = /<\s*\/\s*think(?:ing)?\s*>/i;
       const toolCalls: Record<number, { id: string; name: string; arguments: string }> = {};
 
-      for await (const chunk of stream) {
+      for await (const chunk of stream as unknown as AsyncIterable<any>) {
         resetIdleTimer();
         const delta = chunk.choices?.[0]?.delta;
         const hasReasoningField = !!(delta as any)?.reasoning_content;
@@ -217,6 +220,7 @@ export class OpenAIProvider implements LLMProvider {
       }));
 
       if (idleTimer) clearTimeout(idleTimer);
+      options?.signal?.removeEventListener('abort', abortFromCaller);
       return {
         content: content || null,
         reasoningContent: reasoningContent || null,
@@ -230,6 +234,7 @@ export class OpenAIProvider implements LLMProvider {
       };
     } catch (err) {
       if (idleTimer) clearTimeout(idleTimer);
+      options?.signal?.removeEventListener('abort', abortFromCaller);
       const message = err instanceof Error ? err.message : String(err);
       console.error("[OpenAIProvider] chatStream() failed:", message);
       return {
@@ -240,6 +245,7 @@ export class OpenAIProvider implements LLMProvider {
         shouldExecuteTools: false,
         hasToolCalls: false,
         errorKind: "provider_error",
+        error: message,
       };
     }
   }

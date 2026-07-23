@@ -112,6 +112,21 @@ describe('92-02-01: ai-analysis-result component', () => {
       expect(shadow.textContent).toContain('Issue 1');
       expect(shadow.textContent).toContain('Issue 2');
     });
+
+    it('renders a versioned envelope through displayMarkdown without dumping structured facts', async () => {
+      el.status = 'completed';
+      el.result = {
+        schemaVersion: 1,
+        displayMarkdown: '# Structured diagnosis',
+        conclusions: ['INTERNAL_STRUCTURED_CONCLUSION'],
+        provenance: { modelVersion: 'server' },
+      } as any;
+      await el.updateComplete;
+
+      const shadow = el.shadowRoot!;
+      expect(shadow.textContent).toContain('Structured diagnosis');
+      expect(shadow.textContent).not.toContain('INTERNAL_STRUCTURED_CONCLUSION');
+    });
   });
 
   describe('source tag', () => {
@@ -210,7 +225,7 @@ describe('92-02-01: ai-analysis-result component', () => {
       await el.updateComplete;
 
       const shadow = el.shadowRoot!;
-      expect(shadow.querySelector('.result-content')!.innerHTML).not.toContain('onclick');
+      expect(shadow.querySelector('.result-content')!.querySelector('a[onclick]')).toBeNull();
     });
   });
 

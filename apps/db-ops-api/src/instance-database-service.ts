@@ -3,6 +3,7 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection, encryptData, decryptData } from './db-connection';
+import { assertCreatableDatabaseType } from './adapters/capability-matrix.js';
 
 export interface DatabaseInstance {
   id: number;
@@ -72,6 +73,34 @@ class InstanceDatabaseService {
       return rows as DatabaseInstance[];
     } catch (error) {
       console.error('获取实例列表失败:', error);
+      return [];
+    }
+  }
+
+  /**
+   * 获取管理列表中的全部实例，包括已停用和连接异常的实例。
+   */
+  async getManagedInstances(): Promise<DatabaseInstance[]> {
+    const pool = this.getPool();
+    if (!pool) {
+      return [];
+    }
+
+    try {
+      const [rows] = await pool.execute(
+        `SELECT id, name, environment, db_type, host, port, username,
+                password_encrypted, database_name, connection_string,
+                max_connections, connection_timeout_ms, status,
+                health_score, health_status, last_health_check_at,
+                db_version, data_size_gb,
+                tags, description, created_by, created_at, updated_at
+         FROM database_instances
+         ORDER BY name`
+      ) as any;
+
+      return rows as DatabaseInstance[];
+    } catch (error) {
+      console.error('获取管理实例列表失败:', error);
       return [];
     }
   }
@@ -167,6 +196,7 @@ class InstanceDatabaseService {
     }
 
     try {
+      assertCreatableDatabaseType(data.db_type);
       // 检查名称是否已存在
       const [existing] = await pool.execute(
         'SELECT id FROM database_instances WHERE name = ? AND environment = ?',
@@ -245,6 +275,7 @@ class InstanceDatabaseService {
     }
 
     try {
+      if (data.db_type !== undefined) assertCreatableDatabaseType(data.db_type);
       const updates: string[] = [];
       const values: any[] = [];
 
@@ -320,6 +351,18 @@ class InstanceDatabaseService {
     }
   }
 
+  async markInstanceActive(id: number): Promise<void> {
+    const pool = this.getPool();
+    if (!pool) return;
+
+    await pool.execute(
+      `UPDATE database_instances
+       SET status = 'active', health_status = 'unknown', updated_at = NOW()
+       WHERE id = ?`,
+      [id]
+    );
+  }
+
   /**
    * 测试数据库连接
    */
@@ -331,6 +374,7 @@ class InstanceDatabaseService {
     password: string;
     database?: string;
   }): Promise<{ success: boolean; message: string }> {
+    assertCreatableDatabaseType(config.db_type);
     try {
       if (config.db_type === 'mysql') {
         const pool = mysql.createPool({
@@ -409,6 +453,7 @@ class InstanceDatabaseService {
           connectString: `${host}:${config.port}`,
           schema: config.database || undefined,
           connectTimeout: 5000,
+          loginEncrypt: false,
         });
 
         await connection.execute('SELECT 1 FROM DUAL');
@@ -535,7 +580,7 @@ class InstanceDatabaseService {
    * @param instanceId - 实例 ID
    * @param days - 最近天数（默认 7，最大 90）
    */
-  async getHealthCheckHistoryWithChecks(instanceId: number, days: number = 7): Promise<any[]> {
+  async getHealthCheckHistoryWithChecks(instanceId: number, days: number = 7): Promise<any> {
     const pool = this.getPool();
     if (!pool) {
       return [];
@@ -569,7 +614,7 @@ class InstanceDatabaseService {
    * @param instanceId - 实例 ID
    * @returns 最近一条 health_check_history 的 checks 数组
    */
-  async getLatestHealthChecks(instanceId: number): Promise<any[] | null> {
+  async getLatestHealthChecks(instanceId: number): Promise<any> {
     const pool = this.getPool();
     if (!pool) {
       return null;

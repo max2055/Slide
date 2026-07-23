@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS `health_check_history` (
   `instance_id` INT UNSIGNED NOT NULL,
   `health_score` INT NOT NULL COMMENT '健康分数 0-100',
   `status` ENUM('healthy', 'warning', 'critical') NOT NULL,
+  `dimensions` JSON DEFAULT NULL COMMENT '健康评分维度',
   `checks` JSON NOT NULL COMMENT '详细检查项',
   `issues` JSON DEFAULT NULL COMMENT '发现的问题',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -270,17 +271,20 @@ CREATE TABLE IF NOT EXISTS `alert_rules` (
   `notification_channels` JSON DEFAULT NULL COMMENT '通知渠道',
   `db_types` JSON DEFAULT NULL COMMENT '适用的数据库类型，从关联指标继承；NULL=所有类型',
   `instance_ids` JSON DEFAULT NULL COMMENT '适用的实例ID列表，NULL=所有实例',
+  `template_id` INT UNSIGNED DEFAULT NULL COMMENT '所属模板，NULL=全局规则',
   `created_by` INT UNSIGNED DEFAULT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   INDEX `idx_enabled` (`enabled`),
   INDEX `idx_metric` (`metric_name`)
+  ,INDEX `idx_alert_rule_template_id` (`template_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 指标定义表
 CREATE TABLE IF NOT EXISTS `metric_definitions` (
   `id` VARCHAR(64) NOT NULL COMMENT '指标 ID，如 cpu_usage',
+  `target_type` ENUM('instance', 'server') NOT NULL DEFAULT 'instance' COMMENT '指标所属资源类型',
   `name` VARCHAR(100) NOT NULL COMMENT '指标名称',
   `description` TEXT DEFAULT NULL,
   `unit` VARCHAR(20) NOT NULL COMMENT '单位：%, count, ops/s, score',
@@ -341,6 +345,7 @@ CREATE TABLE IF NOT EXISTS `alert_events` (
   `triggered_by_rule_id` INT UNSIGNED DEFAULT NULL COMMENT '触发的告警规则 ID',
   `assigned_to` INT UNSIGNED DEFAULT NULL,
   `resolved_by` INT UNSIGNED DEFAULT NULL,
+  `resolution_notes` TEXT DEFAULT NULL,
   `resolved_at` DATETIME DEFAULT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -702,6 +707,7 @@ CREATE TABLE IF NOT EXISTS `notification_channels` (
   `type` ENUM('email', 'dingtalk', 'wecom', 'feishu', 'webhook') NOT NULL,
   `config` JSON NOT NULL COMMENT '渠道配置，如 webhook URL、secret 等',
   `enabled` BOOLEAN NOT NULL DEFAULT TRUE,
+  `delivery_start_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '通道开始接收告警的时间',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -776,7 +782,7 @@ CREATE TABLE IF NOT EXISTS `skill_executions` (
 CREATE TABLE IF NOT EXISTS `reports` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `name` VARCHAR(200) NOT NULL,
-  `type` ENUM('health', 'performance', 'slow_query', 'capacity', 'audit', 'custom') NOT NULL,
+  `type` ENUM('health', 'performance', 'slow_query', 'capacity', 'audit', 'custom', 'server_health') NOT NULL,
   `format` ENUM('pdf', 'html', 'json', 'csv') NOT NULL DEFAULT 'html',
   `instance_id` INT UNSIGNED DEFAULT NULL,
   `content` LONGTEXT DEFAULT NULL,
@@ -1088,8 +1094,9 @@ CREATE TABLE IF NOT EXISTS `approval_requests` (
   `sql_hash` VARCHAR(64) NOT NULL,
   `risk_level` ENUM('low', 'medium', 'high', 'critical') NOT NULL DEFAULT 'low',
   `ai_recommendation` JSON DEFAULT NULL COMMENT 'LLM 评估 {risk_level, recommendation, reasoning}',
-  `status` ENUM('pending', 'approved', 'rejected', 'executed', 'execution_failed', 'cancelled') NOT NULL DEFAULT 'pending',
+  `status` ENUM('pending', 'executing', 'approved', 'rejected', 'executed', 'execution_failed', 'cancelled') NOT NULL DEFAULT 'pending',
   `submitted_by` INT UNSIGNED DEFAULT NULL,
+  `target_database` VARCHAR(128) DEFAULT NULL,
   `reviewed_by` INT UNSIGNED DEFAULT NULL,
   `review_notes` TEXT DEFAULT NULL,
   `execution_result` JSON DEFAULT NULL COMMENT '{columns, rowCount, duration_ms}',
@@ -1110,7 +1117,7 @@ ALTER TABLE ai_analysis ADD COLUMN cache_ttl_minutes INT DEFAULT NULL;
 CREATE TABLE IF NOT EXISTS `approval_events` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `request_id` BIGINT UNSIGNED NOT NULL,
-  `event_type` ENUM('submitted','ai_reviewed','approved','rejected','executed','execution_failed','notified') NOT NULL,
+  `event_type` ENUM('submitted','ai_reviewed','claimed','approved','rejected','executed','execution_failed','notified') NOT NULL,
   `event_data` JSON DEFAULT NULL COMMENT 'Event-specific payload (risk_level for ai_reviewed, {rows,duration} for executed)',
   `created_by` INT UNSIGNED DEFAULT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

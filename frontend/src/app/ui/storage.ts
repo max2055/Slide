@@ -168,8 +168,10 @@ export function loadSettings(): UiSettings {
   const defaults: UiSettings = {
     gatewayUrl: defaultUrl,
     username: loadUsername(),
-    sessionKey: "main",
-    lastActiveSessionKey: "main",
+    // An empty key asks the server to create an actor-owned session on first send.
+    // "main" is not a server-side bootstrap session and would otherwise 404.
+    sessionKey: "",
+    lastActiveSessionKey: "",
     theme: "claw",
     themeMode: "system",
     chatFocusMode: false,

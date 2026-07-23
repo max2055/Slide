@@ -19,6 +19,20 @@ vi.mock('../db-connection.js', () => ({
 
 import { dbConnection } from '../db-connection.js';
 
+function useTransaction(execute: ReturnType<typeof vi.fn>) {
+  const connection = {
+    beginTransaction: vi.fn(),
+    execute,
+    commit: vi.fn(),
+    rollback: vi.fn(),
+    release: vi.fn(),
+  };
+  (dbConnection.getPool as any).mockReturnValue({
+    getConnection: vi.fn().mockResolvedValue(connection),
+  });
+  return connection;
+}
+
 describe('RbacService - Roles', () => {
   let service: RbacService;
   let mockExecute: any;
@@ -78,15 +92,19 @@ describe('RbacService - Roles', () => {
   });
 
   it('should reject delete for system role', async () => {
-    mockExecute.mockResolvedValueOnce([[{ is_system: true }]]);
+    const transactionExecute = vi.fn().mockResolvedValueOnce([[{ is_system: true }]]);
+    useTransaction(transactionExecute);
     const result = await service.deleteRole(1);
     expect(result.success).toBe(false);
     expect(result.error).toBe('系统角色不可删除');
   });
 
   it('should delete a non-system role', async () => {
-    mockExecute.mockResolvedValueOnce([[{ is_system: false }]]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
+    const transactionExecute = vi.fn()
+      .mockResolvedValueOnce([[{ is_system: false }]])
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
+    useTransaction(transactionExecute);
     const result = await service.deleteRole(2);
     expect(result.success).toBe(true);
   });
@@ -171,17 +189,23 @@ describe('RbacService - Role-Permission assignments', () => {
   });
 
   it('should assign a permission to a role', async () => {
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
+    const transactionExecute = vi.fn()
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
+    useTransaction(transactionExecute);
     const result = await service.assignPermissionToRole(1, 2);
     expect(result.success).toBe(true);
-    expect(mockExecute).toHaveBeenCalledWith(
+    expect(transactionExecute).toHaveBeenCalledWith(
       'INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)',
       [1, 2]
     );
   });
 
   it('should revoke a permission from a role', async () => {
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
+    const transactionExecute = vi.fn()
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
+    useTransaction(transactionExecute);
     const result = await service.revokePermissionFromRole(1, 2);
     expect(result.success).toBe(true);
   });
@@ -214,13 +238,13 @@ describe('RbacService - User-Role assignments', () => {
   });
 
   it('should assign a role to a user', async () => {
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
+    useTransaction(vi.fn().mockResolvedValue([{ affectedRows: 1 }]));
     const result = await service.assignRoleToUser(1, 2);
     expect(result.success).toBe(true);
   });
 
   it('should revoke a role from a user', async () => {
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
+    useTransaction(vi.fn().mockResolvedValue([{ affectedRows: 1 }]));
     const result = await service.revokeRoleFromUser(1, 2);
     expect(result.success).toBe(true);
   });

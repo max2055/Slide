@@ -271,6 +271,40 @@ class ReportDatabaseService {
     }
   }
 
+  async recordNotificationDelivery(data: {
+    jobId: string;
+    reportId: number;
+    channelId: number;
+    attemptNumber: number;
+    status: 'started' | 'sent' | 'failed' | 'skipped';
+    errorCode?: string;
+    errorMessage?: string;
+  }): Promise<void> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('REPORT_DELIVERY_AUDIT_UNAVAILABLE');
+    await pool.execute(
+      `INSERT INTO report_notification_deliveries
+       (workflow_job_id, report_id, channel_id, attempt_number, status, error_code, error_message, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, IF(? IN ('sent', 'failed', 'skipped'), NOW(), NULL))
+       ON DUPLICATE KEY UPDATE status = VALUES(status), error_code = VALUES(error_code),
+       error_message = VALUES(error_message), finished_at = VALUES(finished_at)`,
+      [data.jobId, data.reportId, data.channelId, data.attemptNumber, data.status,
+        data.errorCode ?? null, data.errorMessage?.slice(0, 1024) ?? null, data.status],
+    );
+  }
+
+  async getNotificationDeliveries(reportId: number): Promise<Array<Record<string, unknown>>> {
+    const pool = this.getPool();
+    if (!pool) return [];
+    const [rows] = await pool.execute(
+      `SELECT workflow_job_id AS workflowJobId, channel_id AS channelId, attempt_number AS attemptNumber,
+              status, error_code AS errorCode, error_message AS errorMessage, created_at AS createdAt, finished_at AS finishedAt
+       FROM report_notification_deliveries WHERE report_id = ? ORDER BY created_at DESC`,
+      [reportId],
+    ) as any;
+    return rows;
+  }
+
   /**
    * 获取报表统计
    */

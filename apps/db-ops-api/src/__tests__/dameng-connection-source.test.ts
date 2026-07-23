@@ -13,6 +13,8 @@ import path from 'path';
 
 const DB_SERVICE_PATH = path.resolve(__dirname, '../database-service.ts');
 const source = fs.readFileSync(DB_SERVICE_PATH, 'utf-8');
+const INSTANCE_DB_SERVICE_PATH = path.resolve(__dirname, '../instance-database-service.ts');
+const instanceSource = fs.readFileSync(INSTANCE_DB_SERVICE_PATH, 'utf-8');
 
 describe('Dameng: dmdb import + dmConnection interface', () => {
   it('数据库服务应导入 dmdb 驱动', () => {
@@ -41,6 +43,13 @@ describe('Dameng: addConnection() 达梦连接分支', () => {
   it('达梦连接分支应设置 oracleConnection: null', () => {
     // The addConnection dameng branch must set oracleConnection to null
     expect(source).toMatch(/dmConnection[\s\S]*?oracleConnection:\s*null/);
+  });
+});
+
+describe('Dameng: testConnection() 达梦连接参数', () => {
+  it('测试连接应与正式连接一致关闭不兼容的登录加密', () => {
+    const testConnection = instanceSource.slice(instanceSource.indexOf('async testConnection'));
+    expect(testConnection).toMatch(/dmdb\.getConnection\(\{[\s\S]*?loginEncrypt:\s*false/);
   });
 });
 

@@ -4,13 +4,30 @@
  */
 import { CronJob } from 'cron';
 import * as crypto from 'crypto';
-import * as net from 'net';
-import * as dns from 'dns';
+import * as https from 'node:https';
+import type { LookupFunction } from 'node:net';
+import nodemailer from 'nodemailer';
 import { notificationDatabaseService } from './notification-database-service';
 import type { PendingAlert, NotificationChannel } from './notification-database-service';
+import { decryptData } from './db-connection';
+import { exchangeMicrosoftSmtpRefreshToken } from './smtp-oauth2.js';
+import { signFeishuWebhookPayload } from './feishu-webhook.js';
 import { maintenanceWindowService } from './maintenance-window-service';
+import { resolveOutboundTarget, OutboundPolicyError } from './security/outbound-policy.js';
+import { isAlertEligibleForChannel } from './workflows/notification-dispatch.js';
 
-class NotificationService {
+export function createPinnedLookup(address: string): LookupFunction {
+  const family = address.includes(':') ? 6 : 4;
+  return (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, [{ address, family }]);
+      return;
+    }
+    callback(null, address, family);
+  };
+}
+
+export class NotificationService {
   private pollingJob: CronJob | null = null;
   private running = false;
   private lastRun: Date | null = null;
@@ -119,6 +136,7 @@ class NotificationService {
         }
 
         for (const channel of matchedChannels) {
+          if (!isAlertEligibleForChannel(alert, channel)) continue;
           const message = this.buildMessage(
             channel.type,
             alert,
@@ -148,6 +166,22 @@ class NotificationService {
     } catch (error) {
       console.error('轮询循环异常:', error);
     }
+  }
+
+  /** Sends one durable workflow delivery attempt. Failures intentionally
+   * propagate to WorkerRuntime so its persistent retry/dead-letter policy owns recovery. */
+  async deliverAlertToChannel(alert: PendingAlert, channel: NotificationChannel): Promise<void> {
+    if (!channel.enabled) return;
+    const message = this.buildMessage(channel.type, alert, alert.instance_name, alert.instance_host);
+    const result = await this.sendWithRetry(channel, message);
+    if (!result.success) throw new Error(result.error || 'NOTIFICATION_DELIVERY_FAILED');
+    const recorded = await notificationDatabaseService.recordNotification({
+      alert_id: alert.id,
+      channel_id: channel.id,
+      status: 'sent',
+      sent_at: new Date(),
+    });
+    if (!recorded.success) throw new Error(recorded.error || 'NOTIFICATION_AUDIT_WRITE_FAILED');
   }
 
   /**
@@ -279,15 +313,11 @@ class NotificationService {
                 },
               },
               {
-                tag: 'content',
-                content: [
-                  [
-                    {
-                      tag: 'plain_text',
-                      content: alert.message,
-                    },
-                  ],
-                ],
+                tag: 'div',
+                text: {
+                  tag: 'plain_text',
+                  content: alert.message,
+                },
               },
             ],
           },
@@ -295,8 +325,18 @@ class NotificationService {
       }
 
       case 'email':
-        // Email 渠道暂未实现，抛出明确的错误信息
-        throw new Error('Email notification channel not yet implemented');
+        return {
+          subject: `[${alert.level.toUpperCase()}] ${alert.title}`,
+          text: replace(
+            `告警等级: ${alert.level}\n` +
+            `实例: ${instanceName || '未知实例'} (${instanceHost || 'N/A'})\n` +
+            `类型: ${alert.alert_type}\n` +
+            `指标: ${alert.metric_name || 'N/A'} = ${alert.metric_value || 'N/A'}\n` +
+            `阈值: ${alert.threshold_value || 'N/A'}\n` +
+            `时间: {created_at}\n\n` +
+            `${alert.message}`
+          ),
+        };
 
       case 'webhook':
       default: {
@@ -337,106 +377,45 @@ class NotificationService {
   }
 
   /**
-   * 验证 Webhook URL 防止 SSRF
-   */
-  private async validateWebhookUrl(urlStr: string): Promise<boolean> {
-    try {
-      const url = new URL(urlStr);
-      const hostname = url.hostname.toLowerCase();
-
-      // 屏蔽已知内网主机名模式
-      if (hostname === 'localhost' || hostname === '::1' ||
-          hostname.endsWith('.internal') || hostname.endsWith('.local') ||
-          hostname.endsWith('.localhost')) {
-        return false;
-      }
-
-      // 标准 IP 检测（net.isIP 识别 dotted-quad 和 IPv6 格式）
-      if (net.isIP(hostname) !== 0) {
-        if (this._isReservedIp(hostname)) return false;
-      } else {
-        // 展开数值/短格式 IP 表示（如 2130706433, 0x7f000001, 127.1）
-        const expanded = this._expandNumericIp(hostname);
-        if (expanded) {
-          if (this._isReservedIp(expanded)) return false;
-        } else {
-          // DNS 主机名 — 解析并检查是否指向内网
-          try {
-            const addresses = await dns.promises.resolve4(hostname);
-            for (const addr of addresses) {
-              if (this._isReservedIp(addr)) return false;
-            }
-          } catch {
-            /* DNS 解析失败不做拦截 */
-          }
-        }
-      }
-
-      return true;
-    } catch { return false; }
-  }
-
-  /** 将数值/短格式 IP 展开为 dotted-quad 表示法 */
-  private _expandNumericIp(hostname: string): string | null {
-    // 十进制：2130706433 -> 127.0.0.1
-    if (/^\d{1,10}$/.test(hostname)) {
-      const num = Number(hostname);
-      if (num >= 0 && num <= 0xFFFFFFFF && Number.isSafeInteger(num)) {
-        return `${(num >>> 24) & 255}.${(num >>> 16) & 255}.${(num >>> 8) & 255}.${num & 255}`;
-      }
-    }
-    // 十六进制：0x7f000001 -> 127.0.0.1
-    if (/^0x[0-9a-f]{1,8}$/i.test(hostname)) {
-      const num = parseInt(hostname, 16);
-      if (num >= 0 && num <= 0xFFFFFFFF) {
-        return `${(num >>> 24) & 255}.${(num >>> 16) & 255}.${(num >>> 8) & 255}.${num & 255}`;
-      }
-    }
-    // 短格式：127.1 -> 127.0.0.1
-    if (/^\d{1,3}\.\d{1,3}$/.test(hostname)) {
-      const [a, b] = hostname.split('.').map(Number);
-      if (a >= 0 && a <= 255 && b >= 0 && b <= 255) {
-        return `${a}.0.0.${b}`;
-      }
-    }
-    return null;
-  }
-
-  /** 检查 IP 地址是否属于私有/保留地址段 */
-  private _isReservedIp(ip: string): boolean {
-    // 去除 IPv6 映射 IPv4 前缀
-    const clean = ip.replace(/^::ffff:/, '');
-    if (clean === '::1') return true;
-    return /^(0$|0\.|127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|169\.254\.)/.test(clean);
-  }
-
-  /**
    * 发送通知
    */
   async send(channel: NotificationChannel, message: any): Promise<{ success: boolean; error?: string }> {
+    if (channel.type === 'email') {
+      if (!this.isValidEmailConfiguration(channel.config)) {
+        return { success: false, error: 'EMAIL_CONFIGURATION_INVALID' };
+      }
+      try {
+        await this.sendEmail(channel.config, message, channel.id);
+        return { success: true };
+      } catch {
+        return { success: false, error: 'EMAIL_DELIVERY_FAILED' };
+      }
+    }
+
     const webhookUrl = channel.config?.webhook_url;
     if (!webhookUrl) {
       return { success: false, error: '渠道未配置 webhook_url' };
     }
 
-    if (!(await this.validateWebhookUrl(webhookUrl))) {
-      return { success: false, error: 'Webhook URL 指向内网地址，已拦截' };
-    }
-
     try {
-      const url = this.buildSignedUrl(webhookUrl, channel.config?.secret);
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(message),
-      });
+      const target = await resolveOutboundTarget(webhookUrl);
+      const secret = this.getWebhookSecret(channel.config);
+      const url = channel.type === 'dingtalk' ? this.buildSignedUrl(webhookUrl, secret) : webhookUrl;
+      const payload = channel.type === 'feishu' && secret
+        ? signFeishuWebhookPayload(message, secret)
+        : message;
+      const response = await this.postJsonToVerifiedTarget(url, target.addresses, payload);
 
-      if (!response.ok) {
-        const text = await response.text();
-        return { success: false, error: `HTTP ${response.status}: ${text}` };
+      if (response.statusCode >= 300 && response.statusCode < 400) {
+        return { success: false, error: 'OUTBOUND_REDIRECT_DENIED' };
       }
 
-      const result = await response.json();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return { success: false, error: `OUTBOUND_HTTP_${response.statusCode}` };
+      }
+
+      let result: any = {};
+      try { result = response.body ? JSON.parse(response.body) : {}; } catch { result = {}; }
       // 检查各平台的错误码
       if (result.errcode !== undefined && result.errcode !== 0) {
         return { success: false, error: result.errmsg || `平台错误码: ${result.errcode}` };
@@ -447,8 +426,97 @@ class NotificationService {
 
       return { success: true };
     } catch (error: any) {
-      return { success: false, error: error.message };
+      if (error instanceof OutboundPolicyError) return { success: false, error: error.reasonCode };
+      return { success: false, error: 'OUTBOUND_REQUEST_FAILED' };
     }
+  }
+
+  private isValidEmailConfiguration(config: NotificationChannel['config']): boolean {
+    const passwordAuth = (typeof config.password === 'string' && config.password.length > 0)
+      || (typeof config.password_encrypted === 'string' && config.password_encrypted.length > 0);
+    const oauth2Auth = config.smtp_auth === 'oauth2'
+      && typeof config.oauth2_tenant === 'string' && config.oauth2_tenant.length > 0
+      && typeof config.oauth2_client_id === 'string' && config.oauth2_client_id.length > 0
+      && typeof config.oauth2_refresh_token_encrypted === 'string' && config.oauth2_refresh_token_encrypted.length > 0;
+    return typeof config.smtp_host === 'string' && config.smtp_host.length > 0
+      && Number.isInteger(Number(config.smtp_port)) && Number(config.smtp_port) > 0
+      && typeof config.smtp_username === 'string' && config.smtp_username.length > 0
+      && (passwordAuth || oauth2Auth)
+      && typeof config.from === 'string' && config.from.length > 0
+      && typeof config.to === 'string' && config.to.length > 0;
+  }
+
+  private async sendEmail(
+    config: NotificationChannel['config'],
+    message: { subject?: string; text?: string },
+    channelId?: number,
+  ): Promise<void> {
+    const port = Number(config.smtp_port);
+    let auth: { user: string; pass: string } | { type: 'OAuth2'; user: string; accessToken: string };
+    if (config.smtp_auth === 'oauth2') {
+      const oauth = await exchangeMicrosoftSmtpRefreshToken({
+          tenant: config.oauth2_tenant!,
+          clientId: config.oauth2_client_id!,
+          refreshToken: decryptData(config.oauth2_refresh_token_encrypted!),
+      });
+      if (oauth.refreshToken && channelId !== undefined) {
+        const persisted = await notificationDatabaseService.updateOAuth2RefreshToken(channelId, oauth.refreshToken);
+        if (!persisted.success) throw new Error('OAUTH_REFRESH_TOKEN_PERSIST_FAILED');
+      }
+      auth = { type: 'OAuth2', user: config.smtp_username!, accessToken: oauth.accessToken };
+    } else {
+      auth = { user: config.smtp_username!, pass: this.getSmtpPassword(config) };
+    }
+    const transport = nodemailer.createTransport({
+      host: config.smtp_host!,
+      port,
+      secure: config.smtp_secure === true || port === 465,
+      requireTLS: port !== 465,
+      auth,
+      tls: { minVersion: 'TLSv1.2' },
+    });
+    await transport.sendMail({
+      from: config.from!,
+      to: config.to!,
+      subject: message.subject || '数据库运维助手通知',
+      text: message.text || '',
+    });
+  }
+
+  private getSmtpPassword(config: NotificationChannel['config']): string {
+    if (config.password) return config.password;
+    return decryptData(config.password_encrypted!);
+  }
+
+  private getWebhookSecret(config: NotificationChannel['config']): string | undefined {
+    if (typeof config.secret_encrypted === 'string' && config.secret_encrypted.length > 0) {
+      return decryptData(config.secret_encrypted);
+    }
+    return typeof config.secret === 'string' && config.secret.length > 0 ? config.secret : undefined;
+  }
+
+  /** Pin requests to validated DNS results while retaining TLS hostname verification. */
+  private postJsonToVerifiedTarget(urlText: string, addresses: string[], message: unknown): Promise<{ statusCode: number; body: string }> {
+    const url = new URL(urlText);
+    const payload = JSON.stringify(message);
+    const address = addresses[0];
+    return new Promise((resolve, reject) => {
+      const request = https.request({
+        protocol: 'https:', hostname: url.hostname, port: 443,
+        path: `${url.pathname}${url.search}`, method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+        servername: url.hostname, rejectUnauthorized: true,
+        lookup: createPinnedLookup(address),
+      }, (response) => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => { body += chunk; });
+        response.on('end', () => resolve({ statusCode: response.statusCode ?? 0, body }));
+      });
+      request.setTimeout(10_000, () => request.destroy(new Error('OUTBOUND_TIMEOUT')));
+      request.once('error', reject);
+      request.end(payload);
+    });
   }
 
   /**
@@ -626,6 +694,19 @@ class NotificationService {
         };
       }
 
+      case 'email':
+        return {
+          subject: `[升级] [${toLevel.toUpperCase()}] ${alert.title}`,
+          text: `告警已自动升级，请及时处理。\n\n` +
+            `实例: ${instanceName} (${instanceHost})\n` +
+            `类型: ${alert.alert_type}\n` +
+            `等级: ${fromLevel} → ${toLevel}\n` +
+            `指标: ${alert.metric_name || 'N/A'} = ${alert.metric_value || 'N/A'}\n` +
+            `阈值: ${alert.threshold_value || 'N/A'}\n` +
+            `时间: ${timeStr}\n\n` +
+            `${alert.message}`,
+        };
+
       case 'webhook':
       default: {
         return {
@@ -723,6 +804,18 @@ class NotificationService {
           },
         };
       }
+
+      case 'email':
+        return {
+          subject: title,
+          text: `结果: ${actionLabel}\n` +
+            `审批人: ${approvalData.reviewerName}\n` +
+            `实例: ${approvalData.instanceName}\n` +
+            `风险等级: ${approvalData.riskLevel}\n` +
+            `提交时间: ${approvalData.submitTime}\n` +
+            (approvalData.notes ? `备注: ${approvalData.notes}\n` : '') +
+            `\nSQL 摘要:\n${summary}`,
+        };
 
       case 'webhook':
       default: {

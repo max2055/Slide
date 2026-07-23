@@ -7,10 +7,6 @@
  *       实例 ID 必须来自 request.params.id（URL 参数），不可来自 request.body
  */
 
-import { RbacService } from './rbac-service.js';
-
-const rbacService = new RbacService();
-
 export type AccessLevel = 'read-only' | 'read-write' | 'admin';
 
 const ACCESS_LEVEL_HIERARCHY: Record<AccessLevel, number> = {
@@ -26,13 +22,11 @@ export function requireInstanceAccess(minLevel?: AccessLevel) {
       return reply.code(401).send({ error: '请先登录' });
     }
 
-    const userId = user.userId;
-
-    // CR-03 fix: Check role-based wildcards before instance_permissions query
-    // Admin with '*' or 'instance:*' wildcard passes all instance access checks
-    const userPermissions = await rbacService.getUserPermissions(userId);
+    const userPermissions = new Set<string>(
+      Array.isArray(user.permissions) ? user.permissions : [],
+    );
     if (userPermissions.has('*') || userPermissions.has('instance:*')) {
-      return; // Wildcard: user has access to all instances
+      return;
     }
 
     // 实例 ID 必须来自 URL 参数（规范规则）
@@ -49,7 +43,7 @@ export function requireInstanceAccess(minLevel?: AccessLevel) {
       return reply.code(400).send({ error: '缺少实例 ID' });
     }
 
-    const accessLevel = await rbacService.checkInstanceAccessLevel(userId, Number(instanceId));
+    const accessLevel = user.instanceScopes?.[Number(instanceId)] as AccessLevel | undefined;
     if (!accessLevel) {
       return reply.code(403).send({ error: '无权访问该实例' });
     }

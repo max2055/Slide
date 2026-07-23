@@ -15,14 +15,22 @@ interface ApprovalRequest {
   sql_hash: string;
   risk_level: 'low' | 'medium' | 'high' | 'critical';
   ai_recommendation: any;
-  status: 'pending' | 'approved' | 'rejected' | 'executed' | 'execution_failed' | 'cancelled';
+  status: 'pending' | 'executing' | 'approved' | 'rejected' | 'executed' | 'execution_failed' | 'cancelled';
   submitted_by: number | null;
   reviewed_by: number | null;
   review_notes: string | null;
   execution_result: any;
   target_database: string | null;
+  operation_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface ApprovalLifecycle {
+  onClaimed?(request: ApprovalRequest): Promise<void>;
+  onExecutionStarted?(request: ApprovalRequest): Promise<void>;
+  onCompleted?(request: ApprovalRequest, result: { success: boolean; error?: string }, executed: boolean): Promise<void>;
+  onRejected?(requestId: number): Promise<void>;
 }
 
 const HIGH_RISK_PATTERNS = [
@@ -45,6 +53,16 @@ function isHighRisk(sql: string): boolean {
 class ApprovalService {
   private getPool() { return dbConnection.getPool(); }
 
+  async setOperationId(requestId: number, operationId: string): Promise<void> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('数据库未连接');
+    const [result] = await pool.execute(
+      'UPDATE approval_requests SET operation_id = ? WHERE id = ?',
+      [operationId, requestId],
+    ) as any;
+    if (Number(result.affectedRows) !== 1) throw new Error('审批记录不存在');
+  }
+
   /**
    * 提交 SQL 审批
    */
@@ -53,6 +71,7 @@ class ApprovalService {
     sql_text: string;
     submitted_by?: number;
     target_database?: string;
+    operation_id?: string;
   }): Promise<{
     request_id?: number;
     risk_level: string;
@@ -60,7 +79,7 @@ class ApprovalService {
     requires_approval: boolean;
     auto_approved?: boolean;
   }> {
-    const { instance_id, sql_text, submitted_by, target_database } = data;
+    const { instance_id, sql_text, submitted_by, target_database, operation_id } = data;
     const sqlHash = crypto.createHash('md5').update(sql_text).digest('hex');
     const isDangerous = isHighRisk(sql_text);
 
@@ -98,9 +117,9 @@ class ApprovalService {
     if (!pool) return { requires_approval: true, risk_level: riskLevel, ai_recommendation: aiRecommendation };
 
     const [result] = await pool.execute(
-      `INSERT INTO approval_requests (instance_id, sql_text, sql_hash, risk_level, ai_recommendation, status, submitted_by, target_database)
-       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
-      [instance_id, sql_text, sqlHash, riskLevel, aiRecommendation ? JSON.stringify(aiRecommendation) : null, submitted_by || null, target_database || null]
+      `INSERT INTO approval_requests (instance_id, sql_text, sql_hash, risk_level, ai_recommendation, status, submitted_by, target_database, operation_id)
+       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      [instance_id, sql_text, sqlHash, riskLevel, aiRecommendation ? JSON.stringify(aiRecommendation) : null, submitted_by || null, target_database || null, operation_id ?? null]
     ) as any;
 
     const requestId = (result as any).insertId;
@@ -135,41 +154,67 @@ class ApprovalService {
     reviewed_by?: number;
     notes?: string;
     execute_after_approve?: boolean;
-  }): Promise<{ success: boolean; error?: string; execution_result?: any }> {
+  }, lifecycle?: ApprovalLifecycle): Promise<{ success: boolean; error?: string; execution_result?: any }> {
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 
-    const [rows] = await pool.execute(
-      'SELECT * FROM approval_requests WHERE id = ? AND status = ?',
-      [requestId, 'pending']
-    ) as any;
-
-    if (!rows.length) return { success: false, error: '审批请求不存在或已处理' };
-
-    const req = rows[0] as ApprovalRequest;
-
     if (review.action === 'reject') {
-      await pool.execute(
-        'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ? WHERE id = ?',
-        ['rejected', review.reviewed_by || null, review.notes || null, requestId]
-      );
+      const [result] = await pool.execute(
+        'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ? WHERE id = ? AND status = ?',
+        ['rejected', review.reviewed_by || null, review.notes || null, requestId, 'pending']
+      ) as any;
+      if (result.affectedRows === 0) return { success: false, error: '审批请求不存在或已处理' };
       await this.writeEvent(requestId, 'rejected', { notes: review.notes }, review.reviewed_by);
+      await lifecycle?.onRejected?.(requestId);
       return { success: true };
+    }
+
+    // This read supplies the command text only. It does not authorize work;
+    // the following compare-and-swap is the only side-effect gate.
+    const [rows] = await pool.execute('SELECT * FROM approval_requests WHERE id = ? AND status = ?', [requestId, 'pending']) as any;
+    const req = rows[0] as ApprovalRequest;
+    if (!req) return { success: false, error: '审批请求不存在或已处理' };
+
+    // Atomically claim pending work before an external side effect. Only the
+    // request that changes one row is allowed to invoke the target driver.
+    const [claim] = await pool.execute(
+      'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ? WHERE id = ? AND status = ?',
+      ['executing', review.reviewed_by || null, review.notes || null, requestId, 'pending'],
+    ) as any;
+    if (claim.affectedRows === 0) return { success: false, error: '审批请求不存在或已被认领' };
+    await this.writeEvent(requestId, 'claimed', { execute_after_approve: review.execute_after_approve !== false }, review.reviewed_by);
+    try {
+      await lifecycle?.onClaimed?.(req);
+    } catch (error: any) {
+      const message = error instanceof Error ? error.message : 'Operation lifecycle claim failed';
+      await pool.execute(
+        'UPDATE approval_requests SET status = ?, execution_result = ? WHERE id = ? AND status = ?',
+        ['execution_failed', JSON.stringify({ error: message }), requestId, 'executing'],
+      );
+      await this.writeEvent(requestId, 'execution_failed', { error: message, stage: 'operation_claim' }, review.reviewed_by);
+      return { success: false, error: message };
     }
 
     let execResult = null;
     if (review.execute_after_approve !== false) {
-      // 先执行 SQL，再根据执行结果设置状态，避免状态不一致窗口
+      await lifecycle?.onExecutionStarted?.(req);
       execResult = await sqlExecutor.executeSql(req.instance_id, req.sql_text, {
         userId: String(review.reviewed_by || ''),
         username: 'dba-approver',
         database: req.target_database || undefined,
+        approvedOperationId: `approval:${requestId}`,
+        approvalRequestId: requestId,
       });
       const status = execResult.success ? 'executed' : 'execution_failed';
+      const rollbackInfo = {
+        available: false,
+        executed_at: new Date().toISOString(),
+        reason: 'ROLLBACK_SQL_NOT_PROVIDED',
+      };
       await pool.execute(
-        'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ?, execution_result = ? WHERE id = ?',
+        'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ?, execution_result = ?, rollback_info = ? WHERE id = ?',
         [status, review.reviewed_by || null, review.notes || null,
-         JSON.stringify(execResult.success ? execResult : { error: execResult.error }), requestId]
+         JSON.stringify(execResult.success ? execResult : { error: execResult.error }), JSON.stringify(rollbackInfo), requestId]
       );
       await this.writeEvent(requestId, 'approved', { execute_after_approve: true }, review.reviewed_by);
       if (execResult.success) {
@@ -187,6 +232,7 @@ class ApprovalService {
     }
 
     const success = execResult ? execResult.success : true;
+    await lifecycle?.onCompleted?.(req, { success, error: execResult?.error }, review.execute_after_approve !== false);
     return { success, execution_result: execResult };
   }
 
@@ -269,7 +315,7 @@ class ApprovalService {
     items: Array<{ id: number; action: 'approve' | 'reject'; execute_after_approve: boolean }>;
     reviewed_by: number;
     notes: string;
-  }): Promise<Array<{ id: number; success: boolean; error?: string; execution_result?: any }>> {
+  }, lifecycleFactory?: (item: { id: number; action: 'approve' | 'reject'; execute_after_approve: boolean }) => ApprovalLifecycle): Promise<Array<{ id: number; success: boolean; error?: string; execution_result?: any }>> {
     const results: Array<{ id: number; success: boolean; error?: string; execution_result?: any }> = [];
     for (const item of data.items) {
       try {
@@ -278,7 +324,7 @@ class ApprovalService {
           reviewed_by: data.reviewed_by,
           notes: data.notes,
           execute_after_approve: item.execute_after_approve,
-        });
+        }, lifecycleFactory?.(item));
         results.push({ id: item.id, ...result });
       } catch (e: any) {
         results.push({ id: item.id, success: false, error: e.message });

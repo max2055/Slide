@@ -13,6 +13,9 @@ import { CronJobConfig } from './types';
 import { CronExecutor } from './cron-executor';
 import { sqlExecutor } from '../sql-executor';
 import { dbConnection } from '../db-connection';
+import { randomUUID } from 'node:crypto';
+
+export interface WorkflowEnqueuer { enqueue(input: { id: string; type: string; schemaVersion: number; payload: Record<string, unknown>; idempotencyKey: string; maxAttempts?: number; availableAt?: Date }): Promise<void>; }
 
 export class CronManager {
   /** 数据库服务 */
@@ -33,6 +36,7 @@ export class CronManager {
   constructor(
     jobService: CronJobDatabaseService,
     cronExecutor: CronExecutor,
+    private readonly workflow?: WorkflowEnqueuer,
   ) {
     this.jobService = jobService;
     this.cronExecutor = cronExecutor;
@@ -128,6 +132,17 @@ export class CronManager {
     let logId: number | null = null;
 
     try {
+      if (config.handler_key) {
+        if (!this.workflow) throw new Error('WORKFLOW_RUNTIME_UNAVAILABLE');
+        const occurrence = new Date().toISOString().slice(0, 16);
+        await this.workflow.enqueue({
+          id: randomUUID(), type: config.handler_key, schemaVersion: 1,
+          payload: { cronJobId: config.id, occurrence }, idempotencyKey: `cron:${config.id}:${occurrence}`,
+          maxAttempts: Math.max(1, config.retry_count + 1),
+        });
+        await this.jobService.updateRunResult(config.id, 'success');
+        return;
+      }
       // 记录下次执行时间
       const cronJob = this.jobs.get(config.id);
       if (cronJob) {
@@ -204,7 +219,6 @@ export class CronManager {
       const timeoutMs = (config.timeout_seconds || 300) * 1000;
       result = await sqlExecutor.executeSql(config.target_instance_id, script.content, {
         timeoutMs,
-        database: config.target_database || undefined,
       });
     } else {
       // Per Pitfall 4: Execute against Slide's own MySQL DB (no target instance)

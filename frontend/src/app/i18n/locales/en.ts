@@ -136,10 +136,13 @@ export const en: TranslationMap = {
     builtIn: "Built-in",
   },
   nav: {
+    slide: "Operations",
     chat: "Chat",
+    platform: "Platform",
     control: "Control",
     agent: "Agent",
     settings: "Settings",
+    servers: "Servers",
     expand: "Expand sidebar",
     collapse: "Collapse sidebar",
     resize: "Resize sidebar",
@@ -394,7 +397,16 @@ export const en: TranslationMap = {
   },
   login: {
     subtitle: "Gateway Dashboard",
+    username: "Username",
+    password: "Password",
+    usernamePlaceholder: "Username",
     passwordPlaceholder: "optional",
+  },
+  overview: {
+    palette: {
+      placeholder: "Search commands and pages",
+      noResults: "No matching commands",
+    },
   },
   chat: {
     disconnected: "Disconnected from gateway.",
@@ -408,6 +420,9 @@ export const en: TranslationMap = {
     onboardingDisabled: "Disabled during setup",
     selectors: {
       agentFilter: "Agent",
+      session: "Session",
+      model: "Model",
+      thinkingLevel: "Thinking level",
     },
   },
   languages: {

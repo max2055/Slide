@@ -16,6 +16,7 @@
 import { chatDatabaseService } from './chat-database-service.js';
 import { getAgentEngine } from './adapter/get-agent-engine.js';
 import type { ChatEvent, ChatResult } from './adapter/types.js';
+import type { ActorContext } from './auth/actor-context.js';
 
 // ── Helpers ──
 
@@ -27,12 +28,9 @@ function generateMessageId(): string {
  * Validate chat.send parameters.
  */
 function validateChatParams(params: {
-  sessionKey: string;
+  sessionKey?: string;
   message: string;
 }): string | null {
-  if (!params.sessionKey || params.sessionKey.trim().length === 0) {
-    return 'sessionKey is required';
-  }
   if (!params.message || params.message.trim().length === 0) {
     return 'message is required';
   }
@@ -52,55 +50,62 @@ function validateChatParams(params: {
  * @returns ChatResult with final content and usage
  */
 export async function handleChatSend(
-  params: { sessionKey: string; message: string },
+  actor: ActorContext,
+  params: { sessionKey?: string; message: string },
   onEvent?: (event: ChatEvent) => void,
-): Promise<ChatResult> {
+): Promise<ChatResult & { sessionKey: string }> {
   const validationError = validateChatParams(params);
   if (validationError) {
     throw new Error(validationError);
   }
 
-  const { sessionKey, message } = params;
+  const { message } = params;
+  const requestedSessionKey = params.sessionKey?.trim();
+  const sessionKey = requestedSessionKey
+    || (await chatDatabaseService.createSession(actor, { title: '新会话' })).session_id;
+  if (requestedSessionKey) {
+    await chatDatabaseService.authorizeSession(actor, sessionKey, 'append');
+  }
   const userMessageId = generateMessageId();
   const assistantMessageId = generateMessageId();
 
   // Save user message
   await chatDatabaseService.addMessage(
+    actor,
     sessionKey,
-    userMessageId,
-    'user',
-    message,
-    null,
-    null,
-    null,
-    null,
+    {
+      messageId: userMessageId,
+      role: 'user',
+      content: message,
+    },
   );
 
   // Get agent engine and send message
-  const engine = await getAgentEngine('chat');
+  const engine = await getAgentEngine();
 
-  const result = await engine.chat(sessionKey, message, (event) => {
+  const result = await (engine.chat as any)(sessionKey, message, (event: ChatEvent) => {
     // Forward event to caller if provided
     if (onEvent) {
       onEvent(event);
     }
-  });
+  }, actor) as ChatResult;
 
   // Save assistant response
   if (result.finalContent) {
     await chatDatabaseService.addMessage(
+      actor,
       sessionKey,
-      assistantMessageId,
-      'assistant',
-      result.finalContent,
-      null,
-      null,
-      { usage: result.usage },
-      userMessageId,
+      {
+        messageId: assistantMessageId,
+        role: 'assistant',
+        content: result.finalContent,
+        metadata: { usage: result.usage },
+        parentId: userMessageId,
+      },
     );
   }
 
-  return result;
+  return { ...result, sessionKey };
 }
 
 /**
@@ -109,7 +114,7 @@ export async function handleChatSend(
  * @param params - Session key and optional limit
  * @returns Array of message records
  */
-export async function handleChatHistory(params: {
+export async function handleChatHistory(actor: ActorContext, params: {
   sessionKey: string;
   limit?: number;
 }): Promise<{ messages: unknown[] }> {
@@ -119,7 +124,7 @@ export async function handleChatHistory(params: {
     throw new Error('sessionKey is required');
   }
 
-  const messages = await chatDatabaseService.getMessages(sessionKey, limit);
+  const messages = await chatDatabaseService.getMessages(actor, sessionKey, limit);
 
   const formattedMessages = messages.map((msg) => ({
     id: msg.message_id,

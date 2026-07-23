@@ -12,10 +12,6 @@
  * - 超级管理员: requirePermission('anything:anything') 匹配 Set(['*'])
  */
 
-import { RbacService } from './rbac-service.js';
-
-const rbacService = new RbacService();
-
 export function requirePermission(...requiredCodes: string[]) {
   return async (request: any, reply: any) => {
     const user = (request as any).user;
@@ -23,8 +19,9 @@ export function requirePermission(...requiredCodes: string[]) {
       return reply.code(401).send({ error: '请先登录' });
     }
 
-    const userId = user.userId;
-    const userPermissions = await rbacService.getUserPermissions(userId);
+    const userPermissions = Array.isArray(user.permissions)
+      ? new Set<string>(user.permissions)
+      : new Set<string>();
 
     const hasAccess = requiredCodes.some(code => hasPermission(userPermissions, code));
     if (!hasAccess) {

@@ -1,32 +1,35 @@
 /**
- * slide_complete_analysis — Agent 分析完成后保存结果（Markdown 格式）
+ * slide_complete_analysis — Agent analysis completion with a validated envelope.
  */
 import type { AnyAgentTool } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
 import { aiAnalysisDatabaseService } from '../../../ai-analysis-database-service.js';
+import { AnalysisEnvelopeSchema } from '../../../analysis/analysis-envelope.js';
 
 export const completeAnalysisTool: AnyAgentTool = {
   name: 'slide_complete_analysis',
-  description: '完成 AI 分析并将结果保存到数据库。**必须在分析完成后调用**，否则分析结果不会保存。参数：analysisId（分析记录ID）、markdown（Markdown 格式的分析结果）',
+  description: '完成 AI 分析并将结构化 AnalysisEnvelope 保存到数据库。必须在分析完成后调用。',
   parameters: {
     type: 'object',
     properties: {
       analysisId: { type: 'number', description: '分析记录 ID' },
-      markdown: { type: 'string', description: '分析结果 Markdown 内容' },
+      envelope: {
+        ...AnalysisEnvelopeSchema,
+        description: 'Versioned structured AnalysisEnvelope; every required field must be present.',
+      },
     },
-    required: ['analysisId', 'markdown'],
+    required: ['analysisId', 'envelope'],
   },
   group: 'db_ops',
   handler: async (args) => {
     const typedArgs = args as unknown as {
       analysisId: number;
-      markdown: string;
+      envelope: unknown;
     };
 
     try {
-      await aiAnalysisDatabaseService.completeAnalysis(typedArgs.analysisId, {
-        result: typedArgs.markdown,
-      });
+      const saved = await aiAnalysisDatabaseService.completeAnalysisEnvelope(typedArgs.analysisId, typedArgs.envelope);
+      if (!saved.success) return { success: false, error: `保存分析结果失败: ${saved.error || 'unknown error'}` };
       return {
         success: true,
         data: { saved: true, analysisId: typedArgs.analysisId },

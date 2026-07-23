@@ -26,11 +26,14 @@ const DEFAULT_TTL: Record<string, number> = {
 };
 
 export async function dispatchOrReuse(params: {
-  type: string; cacheKey: string; instanceId: number;
+  type: string; cacheKey: string; instanceId?: number; serverId?: number;
   sessionKey: string; userMessage: string; systemPrompt?: string;
   triggerType?: 'manual' | 'auto'; onCacheHit?: (result: any) => void;
   existingAnalysisId?: number;
 }): Promise<{ analysisId: number; cached: boolean; success?: boolean; status?: string }> {
+  const hasInstance = Number.isSafeInteger(params.instanceId) && Number(params.instanceId) > 0;
+  const hasServer = Number.isSafeInteger(params.serverId) && Number(params.serverId) > 0;
+  if (hasInstance === hasServer) throw new Error('ANALYSIS_SUBJECT_INVALID');
   const ttl = DEFAULT_TTL[params.type] ?? 30 * 60 * 1000;
   if (ttl !== Infinity) {
     const existing = await aiAnalysisDatabaseService.findRecentCompleted(params.cacheKey, ttl);
@@ -45,7 +48,7 @@ export async function dispatchOrReuse(params: {
     analysisId = params.existingAnalysisId;
   } else {
     const created = await aiAnalysisDatabaseService.createAnalysis({
-      analysis_type: params.type as any, instance_id: params.instanceId,
+      analysis_type: params.type as any, instance_id: params.instanceId, server_id: params.serverId,
       trigger_type: params.triggerType ?? 'manual', cache_key: params.cacheKey,
       session_key: params.sessionKey,
     } as any);
@@ -55,25 +58,22 @@ export async function dispatchOrReuse(params: {
 
   // Dispatch via IAgentEngine.invoke() — adapter handles execution
   const basePrompt = params.systemPrompt || buildDefaultPrompt(params.type);
-  const fullMessage = `${basePrompt}\n\n分析完成后必须调用 slide_complete_analysis 保存结果，analysisId = ${analysisId}。\n\n${params.userMessage}`;
+  const fullMessage = `${basePrompt}\n\n分析完成后必须调用 slide_complete_analysis 保存结果，analysisId = ${analysisId}。该工具只接受 schemaVersion=1 的结构化 envelope，必须包含 subject、conclusions、hypotheses、evidenceRefs、confidence、recommendations、displayMarkdown 和 provenance。\n\n${params.userMessage}`;
 
-  // Invoke Agent, then always persist result regardless of slide_complete_analysis
+  // A successful model response is not a successful analysis. The tool must persist
+  // the validated envelope before this run can be considered completed.
   getAgentEngine()
     .then((engine) =>
       engine.invoke(params.sessionKey, fullMessage, basePrompt).then((result) => {
-        console.log(`[AI Bridge] Analysis agent completed: ${analysisId}, finalContent=${(result.content || '').substring(0, 80)}`);
-        // Always persist: if Agent already called slide_complete_analysis, this is a no-op overwrite
-        // If not, this saves the agent's response as the diagnosis result
-        aiAnalysisDatabaseService.completeAnalysis(analysisId, {
-          result: result.content || '',
-          executionTrace: result.toolEvents ? {
-            tools_used: [...new Set((result.toolEvents || []).map(e => e.name))],
-            tool_events: result.toolEvents,
-            stop_reason: result.stopReason || 'completed',
-            iteration_count: result.iterationCount || 0,
-          } : null,
-        }).then(() => {
-          console.log(`[AI Bridge] Persisted analysis ${analysisId} result (length=${(result.content || '').length})`);
+        aiAnalysisDatabaseService.getAnalysisById(analysisId).then((record) => {
+          if (result.stopReason === 'completed' && record?.status === 'completed') {
+            console.log(`[AI Bridge] Persisted structured analysis ${analysisId}`);
+            return;
+          }
+          const reason = result.stopReason === 'completed'
+            ? 'Agent 未保存有效的结构化 AnalysisEnvelope'
+            : result.error || `Agent run ended: ${result.stopReason || 'unknown'}`;
+          return aiAnalysisDatabaseService.failAnalysis(analysisId, reason);
         });
       }),
     )

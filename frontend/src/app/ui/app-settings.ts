@@ -20,6 +20,7 @@ import { startThemeTransition, type ThemeTransitionContext } from "./theme-trans
 import { resolveTheme, type ResolvedTheme, type ThemeMode, type ThemeName } from "./theme.ts";
 import type { AgentsListResult, AttentionItem } from "./types.ts";
 import { resetChatViewState } from "./views/chat.ts";
+import { i18n, isSupportedLocale } from "../i18n/index.ts";
 
 export { setLastActiveSessionKey } from "./app-last-active-session.ts";
 
@@ -66,6 +67,9 @@ export function applySettings(host: SettingsHost, next: UiSettings) {
   host.settings = normalized;
   saveSettings(normalized);
   setFormatSettings(normalized);
+  if (isSupportedLocale(normalized.locale) && normalized.locale !== i18n.getLocale()) {
+    void i18n.setLocale(normalized.locale);
+  }
   if (next.theme !== host.theme || next.themeMode !== host.themeMode) {
     host.theme = next.theme;
     host.themeMode = next.themeMode;
@@ -566,4 +570,3 @@ function buildAttentionItems(host: SettingsAppHost) {
 
   host.attentionItems = items;
 }
-

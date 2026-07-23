@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import { t } from "../../i18n/index.ts";
 import type {
   AgentIdentityResult,
+  AgentUiCapabilities,
   AgentsFilesListResult,
   AgentsListResult,
   ChannelsStatusSnapshot,
@@ -118,6 +119,17 @@ export type AgentsProps = {
   onSetDefault: (agentId: string) => void;
 };
 
+export function visibleAgentPanels(capabilities?: AgentUiCapabilities): AgentsPanel[] {
+  const supported = (feature: keyof AgentUiCapabilities) => !capabilities || capabilities[feature].state !== 'unsupported';
+  return [
+    'overview',
+    ...(supported('files') ? ['files' as const] : []),
+    ...(supported('tools') ? ['tools' as const] : []),
+    ...(supported('skills') ? ['skills' as const] : []),
+    ...(supported('cron') ? ['cron' as const] : []),
+  ];
+}
+
 export function renderAgents(props: AgentsProps) {
   const agents = props.agentsList?.agents ?? [];
   const defaultId = props.agentsList?.defaultId ?? null;
@@ -129,6 +141,9 @@ export function renderAgents(props: AgentsProps) {
     selectedId && props.agentSkills.agentId === selectedId
       ? (props.agentSkills.report?.skills?.length ?? null)
       : null;
+  const visiblePanels = visibleAgentPanels(props.agentsList?.capabilities);
+  const activePanel = visiblePanels.includes(props.activePanel) ? props.activePanel : 'overview';
+  const editable = !props.agentsList?.capabilities || props.agentsList.capabilities.edit.state !== 'unsupported';
 
   const channelEntryCount = props.channels.snapshot
     ? Object.keys(props.channels.snapshot.channelAccounts ?? {}).length
@@ -178,7 +193,7 @@ export function renderAgents(props: AgentsProps) {
                   >
                     Copy ID
                   </button>
-                  <button
+                  ${editable ? html`<button
                     type="button"
                     class="btn btn--sm btn--ghost"
                     ?disabled=${Boolean(defaultId && selectedAgent.id === defaultId)}
@@ -188,7 +203,7 @@ export function renderAgents(props: AgentsProps) {
                       : "Set as the default agent"}
                   >
                     ${defaultId && selectedAgent.id === defaultId ? "Default" : "Set Default"}
-                  </button>
+                  </button>` : nothing}
                 `
               : nothing}
             <button
@@ -214,11 +229,12 @@ export function renderAgents(props: AgentsProps) {
             `
           : html`
               ${renderAgentTabs(
-                props.activePanel,
+                activePanel,
                 (panel) => props.onSelectPanel(panel),
                 tabCounts,
+                visiblePanels,
               )}
-              ${props.activePanel === "overview"
+              ${activePanel === "overview"
                 ? renderAgentOverview({
                     agent: selectedAgent,
                     basePath: props.basePath,
@@ -237,9 +253,10 @@ export function renderAgents(props: AgentsProps) {
                     onModelChange: props.onModelChange,
                     onModelFallbacksChange: props.onModelFallbacksChange,
                     onSelectPanel: props.onSelectPanel,
+                    capabilities: props.agentsList?.capabilities,
                   })
                 : nothing}
-              ${props.activePanel === "files"
+              ${activePanel === "files"
                 ? renderAgentFiles({
                     agentId: selectedAgent.id,
                     agentFilesList: props.agentFiles.list,
@@ -256,7 +273,7 @@ export function renderAgents(props: AgentsProps) {
                     onFileSave: props.onFileSave,
                   })
                 : nothing}
-              ${props.activePanel === "tools"
+              ${activePanel === "tools"
                 ? renderAgentTools({
                     agentId: selectedAgent.id,
                     configForm: props.config.form,
@@ -277,7 +294,7 @@ export function renderAgents(props: AgentsProps) {
                     onConfigSave: props.onConfigSave,
                   })
                 : nothing}
-              ${props.activePanel === "skills"
+              ${activePanel === "skills"
                 ? renderAgentSkills({
                     agentId: selectedAgent.id,
                     report: props.agentSkills.report,
@@ -298,7 +315,7 @@ export function renderAgents(props: AgentsProps) {
                     onConfigSave: props.onConfigSave,
                   })
                 : nothing}
-              ${props.activePanel === "cron"
+              ${activePanel === "cron"
                 ? renderAgentCron({
                     context: buildAgentContext(
                       selectedAgent,
@@ -327,6 +344,7 @@ function renderAgentTabs(
   active: AgentsPanel,
   onSelect: (panel: AgentsPanel) => void,
   counts: Record<string, number | null>,
+  visible: AgentsPanel[],
 ) {
   const tabs: Array<{ id: AgentsPanel; label: string }> = [
     { id: "overview", label: "Overview" },
@@ -337,7 +355,7 @@ function renderAgentTabs(
   ];
   return html`
     <div class="agent-tabs">
-      ${tabs.map(
+      ${tabs.filter((tab) => visible.includes(tab.id)).map(
         (tab) => html`
           <button
             class="agent-tab ${active === tab.id ? "active" : ""}"

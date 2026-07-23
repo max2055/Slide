@@ -205,15 +205,22 @@ export class MySQLProvider extends BaseMetricProvider {
             };
             return 0;
           }
-          const elapsed = (now - instance.deltaCounter.timestamp) / 1000;
-          if (elapsed <= 0) return 0;
+          const previousTimestamp = instance.deltaCounter.handlerReadRndNextTimestamp;
+          const handlerElapsed = previousTimestamp === undefined ? 0 : (now - previousTimestamp) / 1000;
+          if (handlerElapsed <= 0) {
+            instance.deltaCounter.handlerReadRndNext = current;
+            instance.deltaCounter.handlerReadRndNextTimestamp = now;
+            return 0;
+          }
           if (current < instance.deltaCounter.handlerReadRndNext) {
             // Counter reset (server restart)
             instance.deltaCounter.handlerReadRndNext = current;
+            instance.deltaCounter.handlerReadRndNextTimestamp = now;
             return 0;
           }
-          const rate = Math.round((current - instance.deltaCounter.handlerReadRndNext) / elapsed * 100) / 100;
+          const rate = Math.round((current - instance.deltaCounter.handlerReadRndNext) / handlerElapsed * 100) / 100;
           instance.deltaCounter.handlerReadRndNext = current;
+          instance.deltaCounter.handlerReadRndNextTimestamp = now;
           return rate;
         }
 
@@ -255,14 +262,21 @@ export class MySQLProvider extends BaseMetricProvider {
             };
             return 0;
           }
-          const elapsed = (now - instance.deltaCounter.timestamp) / 1000;
-          if (elapsed <= 0) return 0;
+          const previousTimestamp = instance.deltaCounter.abortedConnectsTimestamp;
+          const elapsed = previousTimestamp === undefined ? 0 : (now - previousTimestamp) / 1000;
+          if (elapsed <= 0) {
+            instance.deltaCounter.abortedConnects = current;
+            instance.deltaCounter.abortedConnectsTimestamp = now;
+            return 0;
+          }
           if (current < instance.deltaCounter.abortedConnects) {
             instance.deltaCounter.abortedConnects = current;
+            instance.deltaCounter.abortedConnectsTimestamp = now;
             return 0;
           }
           const rate = Math.round((current - instance.deltaCounter.abortedConnects) / elapsed * 100) / 100;
           instance.deltaCounter.abortedConnects = current;
+          instance.deltaCounter.abortedConnectsTimestamp = now;
           return rate;
         }
 

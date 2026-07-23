@@ -295,7 +295,7 @@ export class ApprovalFlowManager extends EventEmitter {
           return;
         }
 
-        if (updated.status === 'approved' || updated.status === 'executed' || updated.status === 'execution_failed') {
+        if (updated.status === 'approved') {
           resolve({
             approved: true,
             requestId: updated.requestId,

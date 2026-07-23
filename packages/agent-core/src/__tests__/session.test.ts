@@ -203,7 +203,7 @@ describe("SessionManager", () => {
     expect(s1).not.toBe(s2);
   });
 
-  it("listSessions returns session keys", async () => {
+  it("listSessions returns session metadata keyed by session key", async () => {
     const s1 = manager.getOrCreate("key-1");
     s1.addMessage("user", "Hello");
     await manager.save(s1);
@@ -211,10 +211,10 @@ describe("SessionManager", () => {
     s2.addMessage("user", "World");
     await manager.save(s2);
 
-    const keys = await manager.listSessions();
-    expect(keys.length).toBe(2);
-    expect(keys).toContain("key-1");
-    expect(keys).toContain("key-2");
+    const sessions = await manager.listSessions();
+    expect(sessions).toHaveLength(2);
+    expect(sessions.map((session) => session.key)).toEqual(expect.arrayContaining(["key-1", "key-2"]));
+    expect(sessions.every((session) => session.messageCount === 1)).toBe(true);
   });
 
   it("deleteSession removes from disk and cache", async () => {

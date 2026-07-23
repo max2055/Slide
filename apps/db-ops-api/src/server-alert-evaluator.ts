@@ -9,6 +9,7 @@
 import { dbConnection } from './db-connection';
 import { serverDatabaseService } from './server-database-service';
 import { alertDatabaseService } from './alert-database-service';
+import { compileAlertRule, evaluateCompiledRule } from './alerts/compiled-rule.js';
 
 interface ServerMetricRow {
   server_id: number;
@@ -60,7 +61,7 @@ class ServerAlertEvaluator {
         return; // No server rules configured
       }
 
-      const serverRules = rules as ServerAlertRuleRaw[];
+      const serverRules = rules as unknown as ServerAlertRuleRaw[];
 
       // 2. Get all collection-enabled servers
       const servers = await serverDatabaseService.getCollectionEnabledServers();
@@ -110,8 +111,9 @@ class ServerAlertEvaluator {
               continue; // Metric not collected for this server
             }
 
-            const triggered = this._evaluateThreshold(rule, currentValue);
-            if (!triggered) continue;
+            const level = evaluateCompiledRule(compileAlertRule(rule as any, 'server'), currentValue);
+            if (!level) continue;
+            if (!await this._durationMet(serverId, rule, currentValue)) continue;
 
             // Check for existing active alert (dedup)
             const existing = await alertDatabaseService.findActiveServerAlert(
@@ -128,7 +130,6 @@ class ServerAlertEvaluator {
             }
 
             // Create alert
-            const level = this._mapSeverity(rule.severity);
             const title = `[${rule.severity.toUpperCase()}] ${rule.name} - ${server.label || server.host}`;
             const message = `服务器指标 "${rule.metric_name}" 当前值为 ${currentValue}，超过阈值 ${rule.threshold}`;
 
@@ -285,6 +286,26 @@ class ServerAlertEvaluator {
       case '=': return numericValue === numericThreshold;
       case '!=': return numericValue !== numericThreshold;
       default: return false;
+    }
+  }
+
+  private async _durationMet(serverId: number, rule: ServerAlertRuleRaw, currentValue: number): Promise<boolean> {
+    if (!rule.duration_seconds || rule.duration_seconds <= 0) return true;
+    const pool = dbConnection.getPool();
+    if (!pool) return false;
+    try {
+      const since = new Date(Date.now() - rule.duration_seconds * 1_000);
+      const [rows] = await pool.execute(
+        'SELECT metric_value FROM server_metrics WHERE server_id = ? AND metric_name = ? AND recorded_at >= ? ORDER BY recorded_at ASC',
+        [serverId, rule.metric_name, since],
+      ) as any;
+      if (!rows.length) return false;
+      const compiled = compileAlertRule(rule as any, 'server');
+      return rows.every((row: any) => evaluateCompiledRule(compiled, Number(row.metric_value)) !== null)
+        && evaluateCompiledRule(compiled, currentValue) !== null;
+    } catch (error) {
+      console.error(`[ServerAlertEvaluator] Duration check failed for rule #${rule.id}:`, error);
+      return false;
     }
   }
 

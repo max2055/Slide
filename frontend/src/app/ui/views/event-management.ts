@@ -21,6 +21,8 @@ interface AlertEvent {
   created_at: string;
   updated_at: string;
   closed_at?: string;
+  verification_passed_at?: string | null;
+  verification_reason?: string | null;
 }
 
 interface EventStats {
@@ -436,6 +438,7 @@ export class EventManagementPage extends LitElement {
   @state() private filterSeverity = "all";
   @state() private filterSearch = "";
   @state() private noteText = "";
+  @state() private recoveryVerificationReason = "";
   @state() private actionLoading = false;
   @state() private showPostmortemForm = false;
   @state() private postmortemText = "";
@@ -601,7 +604,29 @@ export class EventManagementPage extends LitElement {
       const res = await authFetch(`${API_BASE}/alerts/events/${eventId}/close`, {
         method: "POST",
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+    });
+  }
+
+  private async _verifyRecovery() {
+    const eventId = this.selectedEvent?.id;
+    const reason = this.recoveryVerificationReason.trim();
+    if (!eventId || !reason) return;
+    await this._action(async () => {
+      const res = await authFetch(`${API_BASE}/alerts/events/${eventId}/verify-recovery`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+      this.recoveryVerificationReason = "";
+      showToast("恢复验证已记录，可以关闭事件", "success");
     });
   }
 
@@ -842,6 +867,8 @@ export class EventManagementPage extends LitElement {
           <div class="detail-row"><span class="label">实例</span><span class="value">${e.instance_name || "N/A"}</span></div>
           <div class="detail-row"><span class="label">负责人</span><span class="value">${e.assignee || "未分配"}</span></div>
           <div class="detail-row"><span class="label">创建时间</span><span class="value">${this._formatTime(e.created_at)}</span></div>
+          ${e.verification_passed_at ? html`<div class="detail-row"><span class="label">恢复验证</span><span class="value">${this._formatTime(e.verification_passed_at)}</span></div>` : nothing}
+          ${e.verification_reason ? html`<div class="detail-row"><span class="label">验证说明</span><span class="value">${e.verification_reason}</span></div>` : nothing}
           ${e.root_cause ? html`<div class="detail-row"><span class="label">根因</span><span class="value">${e.root_cause}</span></div>` : nothing}
         </div>
 
@@ -889,7 +916,17 @@ export class EventManagementPage extends LitElement {
             ` : nothing}
             <button class="btn" @click=${() => { this.showPostmortemForm = !this.showPostmortemForm; }} ?disabled=${this.actionLoading}>添加复盘</button>
             ${["open", "investigating", "handled"].includes(e.status) ? html`<button class="btn btn-primary" @click=${this._resolveEvent} ?disabled=${this.actionLoading}>标记解决</button>` : nothing}
-            ${["open", "investigating", "handled", "resolved"].includes(e.status as string) ? html`<button class="btn-primary btn-danger" @click=${this._closeEvent} ?disabled=${this.actionLoading}>关闭事件</button>` : nothing}
+            ${e.status === "resolved" && !e.verification_passed_at ? html`
+              <textarea
+                class="note-input"
+                aria-label="恢复验证说明"
+                placeholder="填写恢复验证说明后关闭事件"
+                .value=${this.recoveryVerificationReason}
+                @input=${(event: Event) => { this.recoveryVerificationReason = (event.target as HTMLTextAreaElement).value; }}
+              ></textarea>
+              <button class="btn btn-primary" @click=${this._verifyRecovery} .disabled=${this.actionLoading || !this.recoveryVerificationReason.trim()}>验证恢复</button>
+            ` : nothing}
+            ${e.status === "resolved" && e.verification_passed_at ? html`<button class="btn-primary btn-danger" @click=${this._closeEvent} ?disabled=${this.actionLoading}>关闭事件</button>` : nothing}
           </div>
           <div class="action-bar" style="border-top: none; padding-top: 0; margin-top: var(--space-sm);">
             <textarea

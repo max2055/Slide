@@ -208,6 +208,8 @@ export const zh_CN: TranslationMap = {
     reports: "报表生成与历史",
     "metric-registry": "指标采集定义与阈值配置",
     events: "告警聚合事件全生命周期管理",
+    "sql-console": "交互式 SQL 查询控制台",
+    approval: "审批工作流管理",
     // Chat 菜单组
     chat: "与 AI 助手交互",
     // 导航菜单组
@@ -218,6 +220,7 @@ export const zh_CN: TranslationMap = {
     appearance: "主题与字体",
     system: "系统设置",
     users: "管理系统用户和角色",
+    rbac: "管理角色、权限与实例访问边界",
     "llm-config": "管理 AI 模型提供商和 API Key",
     "cron-jobs": "管理定时采集和分析任务",
     // 其他（保留）
@@ -406,8 +409,16 @@ export const zh_CN: TranslationMap = {
   },
   login: {
     subtitle: "数据库运维助手",
+    username: "用户名",
+    password: "密码",
     usernamePlaceholder: "用户名",
     passwordPlaceholder: "可选",
+  },
+  overview: {
+    palette: {
+      placeholder: "搜索命令和页面",
+      noResults: "没有匹配的命令",
+    },
   },
   chat: {
     disconnected: "已断开与网关的连接。",
@@ -421,6 +432,9 @@ export const zh_CN: TranslationMap = {
     onboardingDisabled: "引导期间禁用",
     selectors: {
       agentFilter: "Agent",
+      session: "会话",
+      model: "模型",
+      thinkingLevel: "思考级别",
     },
   },
   languages: {

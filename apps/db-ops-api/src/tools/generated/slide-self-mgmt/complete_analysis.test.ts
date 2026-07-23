@@ -1,5 +1,5 @@
 /**
- * Nyquist validation: 92-01-01 — slide_complete_analysis tool accepts Markdown
+ * Phase 135 — slide_complete_analysis persists a validated AnalysisEnvelope.
  *
  * Tests:
  * 1. Parameters are { analysisId: number, markdown: string } (both required)
@@ -22,28 +22,36 @@ const __dirname = resolve(__filename, '..');
 const SOURCE_FILE = resolve(__dirname, 'complete_analysis.ts');
 
 // vi.hoisted creates a function reference that survives vi.mock hoisting
-const mockCompleteAnalysis = vi.hoisted(() => vi.fn());
+const mockCompleteEnvelope = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../ai-analysis-database-service.js', () => ({
-  aiAnalysisDatabaseService: { completeAnalysis: mockCompleteAnalysis },
+  aiAnalysisDatabaseService: { completeAnalysisEnvelope: mockCompleteEnvelope },
 }));
 
 import { completeAnalysisTool } from './complete_analysis.js';
 import { toolCatalog } from '../../catalog.js';
 
-describe('92-01-01: slide_complete_analysis tool', () => {
+const envelope = {
+  schemaVersion: 1, analysisType: 'alert_rca', subject: { type: 'instance', id: 1 },
+  conclusions: ['A'], hypotheses: [], evidenceRefs: [], confidence: 0.7,
+  recommendations: [], displayMarkdown: '# Analysis',
+  provenance: { modelVersion: 'untrusted', promptVersion: 'untrusted', toolVersions: {} },
+  createdAt: '2026-07-18T00:00:00.000Z',
+};
+
+describe('slide_complete_analysis tool', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   describe('parameter schema', () => {
-    it('has only analysisId (number) and markdown (string) as required parameters', () => {
+    it('requires analysisId and an envelope object', () => {
       const props = completeAnalysisTool.parameters.properties;
       expect(props).toHaveProperty('analysisId');
       expect(props.analysisId.type).toBe('number');
-      expect(props).toHaveProperty('markdown');
-      expect(props.markdown.type).toBe('string');
-      expect(completeAnalysisTool.parameters.required).toEqual(['analysisId', 'markdown']);
+      expect(props).toHaveProperty('envelope');
+      expect(props.envelope.type).toBe('object');
+      expect(completeAnalysisTool.parameters.required).toEqual(['analysisId', 'envelope']);
     });
 
     it('has no references to old summary/findings/recommendations in parameters', () => {
@@ -55,17 +63,15 @@ describe('92-01-01: slide_complete_analysis tool', () => {
   });
 
   describe('handler behavior', () => {
-    it('calls aiAnalysisDatabaseService.completeAnalysis with correct args and returns success', async () => {
-      mockCompleteAnalysis.mockResolvedValueOnce({ success: true });
+    it('calls the validated envelope writer and returns success', async () => {
+      mockCompleteEnvelope.mockResolvedValueOnce({ success: true });
 
       const result = await completeAnalysisTool.handler({
         analysisId: 42,
-        markdown: '# Analysis Result\n\nSome markdown content.',
+        envelope,
       });
 
-      expect(mockCompleteAnalysis).toHaveBeenCalledWith(42, {
-        result: '# Analysis Result\n\nSome markdown content.',
-      });
+      expect(mockCompleteEnvelope).toHaveBeenCalledWith(42, envelope);
       expect(result).toEqual({
         success: true,
         data: { saved: true, analysisId: 42 },
@@ -74,9 +80,9 @@ describe('92-01-01: slide_complete_analysis tool', () => {
     });
 
     it('returns { success: false, error } when service throws', async () => {
-      mockCompleteAnalysis.mockRejectedValueOnce(new Error('Database write failed'));
+      mockCompleteEnvelope.mockRejectedValueOnce(new Error('Database write failed'));
 
-      const result = await completeAnalysisTool.handler({ analysisId: 7, markdown: '# Error test' });
+      const result = await completeAnalysisTool.handler({ analysisId: 7, envelope });
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('保存分析结果失败');

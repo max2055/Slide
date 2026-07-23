@@ -1,8 +1,7 @@
 /**
  * 获取数据库实例完整连接信息
  *
- * 返回单个实例的完整连接信息，包含解密后的密码。
- * Agent 可以使用此工具获取连接字符串，从而直接连接数据库进行分析。
+ * 返回单个实例的公开连接元数据。凭据只能在服务端连接层使用，绝不交给模型。
  */
 
 import type { AnyAgentTool } from '../../types.js';
@@ -11,7 +10,7 @@ import { instanceDatabaseService } from '../../../instance-database-service.js';
 
 export const getInstanceConnectionTool: AnyAgentTool = {
   name: 'get_instance_connection',
-  description: '获取指定数据库实例的完整连接信息，包含解密后的密码。用于获取连接字符串以直接连接数据库进行分析。注意：仅限管理员用户调用（dangerLevel=4），返回的密码为明文。',
+  description: '获取指定数据库实例的公开连接元数据（不含密码、令牌或连接字符串）。',
   parameters: {
     type: 'object',
     properties: {
@@ -24,6 +23,7 @@ export const getInstanceConnectionTool: AnyAgentTool = {
   },
   group: 'slide_self_mgmt',
   ownerOnly: true,
+  requiresApproval: true,
   dangerLevel: 4,
   handler: async (args) => {
     const instanceId = args.instance_id as number;
@@ -54,9 +54,7 @@ export const getInstanceConnectionTool: AnyAgentTool = {
         host: decrypted.host,
         port: decrypted.port,
         username: decrypted.username,
-        password: decrypted.password,
         database_name: decrypted.database_name,
-        connection_string: decrypted.connection_string,
         health_status: decrypted.health_status,
         environment: decrypted.environment,
       };

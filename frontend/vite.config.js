@@ -4,8 +4,25 @@
 import { defineConfig } from 'vite'
 import { fileURLToPath, URL } from 'node:url'
 
+const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://localhost:3000'
+const agentWsProxyTarget = process.env.VITE_AGENT_WS_PROXY_TARGET || 'http://localhost:28888'
+
 export default defineConfig({
   plugins: [],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('/echarts/') || id.includes('/zrender/')) return 'charts'
+          if (id.includes('/@codemirror/') || id.includes('/codemirror/')) return 'editor'
+          if (id.includes('/marked/') || id.includes('/markdown-it') || id.includes('/@create-markdown/')) return 'markdown'
+          if (id.includes('/lit/') || id.includes('/lit-html/')) return 'lit'
+          return undefined
+        }
+      }
+    }
+  },
   resolve: {
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.json'],
     alias: {
@@ -26,11 +43,11 @@ export default defineConfig({
     strictPort: true, // 端口被占用时报错，不自动尝试其他端口
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: apiProxyTarget,
         changeOrigin: true
       },
       '/__slide': {
-        target: 'http://localhost:28888',
+        target: agentWsProxyTarget,
         changeOrigin: true
       }
     }

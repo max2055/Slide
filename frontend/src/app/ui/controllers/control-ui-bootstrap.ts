@@ -2,7 +2,7 @@ import {
   CONTROL_UI_BOOTSTRAP_CONFIG_PATH,
   type ControlUiBootstrapConfig,
   type ControlUiEmbedSandboxMode,
-} from "@slide/app/src/gateway/control-ui-contract.js";
+} from "../control-ui-contract.ts";
 import { normalizeAssistantIdentity } from "../assistant-identity.ts";
 import { normalizeBasePath } from "../navigation.ts";
 

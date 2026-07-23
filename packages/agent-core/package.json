@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Production-grade TypeScript agent engine — ported from nanobot. LLM ↔ Tool execution loop with parallel tools, context management, interrupt recovery, and structured tracing.",
   "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
@@ -10,6 +14,11 @@
   "files": ["src/"],
   "dependencies": {
     "openai": "^4.28.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.4"
   },
   "keywords": ["agent", "llm", "tool-calling", "ai", "nanobot"],
   "license": "MIT"

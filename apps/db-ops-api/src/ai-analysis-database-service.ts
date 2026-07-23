@@ -3,11 +3,14 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection.js';
+import { type AnalysisEnvelope, validateAnalysisEnvelope } from './analysis/analysis-envelope.js';
 
 export interface AiAnalysisRecord {
   id: number;
   analysis_type: 'topsql_analysis' | 'alert_rca' | 'fault_diagnosis' | 'capacity_prediction' | 'sql_audit';
-  instance_id: number;
+  instance_id: number | null;
+  target_type: 'instance' | 'server';
+  server_id: number | null;
   related_id: number | null;
   status: 'pending' | 'running' | 'completed' | 'failed';
   trigger_type: 'manual' | 'auto';
@@ -43,7 +46,8 @@ class AiAnalysisDatabaseService {
    */
   async createAnalysis(data: {
     analysis_type: string;
-    instance_id: number;
+    instance_id?: number;
+    server_id?: number;
     related_id?: number;
     trigger_type?: string;
     cache_key?: string;
@@ -51,6 +55,9 @@ class AiAnalysisDatabaseService {
     session_key?: string;
     cache_ttl_minutes?: number;
   }): Promise<{ success: boolean; analysisId?: number; error?: string }> {
+    const hasInstance = Number.isSafeInteger(data.instance_id) && Number(data.instance_id) > 0;
+    const hasServer = Number.isSafeInteger(data.server_id) && Number(data.server_id) > 0;
+    if (hasInstance === hasServer) return { success: false, error: 'ANALYSIS_SUBJECT_INVALID' };
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
@@ -59,11 +66,13 @@ class AiAnalysisDatabaseService {
     try {
       const [result] = await pool.execute(
         `INSERT INTO ai_analysis
-         (analysis_type, instance_id, related_id, status, trigger_type, cache_key, ttl_minutes, session_key, cache_ttl_minutes)
-         VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+         (analysis_type, target_type, instance_id, server_id, related_id, status, trigger_type, cache_key, ttl_minutes, session_key, cache_ttl_minutes)
+         VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
         [
           data.analysis_type,
-          data.instance_id,
+          hasServer ? 'server' : 'instance',
+          hasInstance ? data.instance_id : null,
+          hasServer ? data.server_id : null,
           data.related_id || null,
           data.trigger_type || 'manual',
           data.cache_key || null,
@@ -195,6 +204,52 @@ class AiAnalysisDatabaseService {
       return { success: true };
     } catch (error: any) {
       console.error('完成分析失败:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /** Persist new Agent output only after it satisfies the versioned envelope contract. */
+  async completeAnalysisEnvelope(
+    analysisId: number,
+    envelope: unknown,
+    data: { usage?: any; duration_ms?: number; executionTrace?: any } = {},
+  ): Promise<{ success: boolean; error?: string }> {
+    const parsed = validateAnalysisEnvelope(envelope);
+    if (!parsed.ok) return { success: false, error: 'error' in parsed ? parsed.error : 'ANALYSIS_ENVELOPE_INVALID' };
+    const pool = this.getPool();
+    if (!pool) return { success: false, error: '数据库未连接' };
+
+    try {
+      const safeEnvelope: AnalysisEnvelope = {
+        ...parsed.value,
+        provenance: {
+          ...parsed.value.provenance,
+          modelVersion: process.env.ANALYSIS_MODEL_VERSION || 'configured-provider',
+          promptVersion: process.env.PROMPT_VERSION || 'managed',
+        },
+      };
+      const [result] = await pool.execute(
+        `UPDATE ai_analysis SET
+           status = 'completed', result = ?, analysis_envelope = ?, envelope_backfill_status = 'parsed',
+           execution_trace = ?, \`usage\` = ?, duration_ms = ?, completed_at = NOW()
+         WHERE id = ? AND status <> 'completed'`,
+        [
+          JSON.stringify(safeEnvelope.displayMarkdown), JSON.stringify(safeEnvelope),
+          data.executionTrace ? JSON.stringify(data.executionTrace) : null,
+          data.usage ? JSON.stringify(data.usage) : null, data.duration_ms || null, analysisId,
+        ],
+      ) as any;
+      if (result.affectedRows === 0) {
+        const [rows] = await pool.execute('SELECT analysis_envelope FROM ai_analysis WHERE id = ?', [analysisId]) as any;
+        const existing = rows?.[0]?.analysis_envelope;
+        if (existing && JSON.stringify(typeof existing === 'string' ? JSON.parse(existing) : existing) === JSON.stringify(safeEnvelope)) {
+          return { success: true };
+        }
+        return { success: false, error: '分析已完成或不存在' };
+      }
+      return { success: true };
+    } catch (error: any) {
+      console.error('保存 AnalysisEnvelope 失败:', error);
       return { success: false, error: error.message };
     }
   }
@@ -474,6 +529,10 @@ class AiAnalysisDatabaseService {
       }
     } catch {
       row.usage = null;
+    }
+
+    if (typeof row.analysis_envelope === 'string') {
+      try { row.analysis_envelope = JSON.parse(row.analysis_envelope); } catch { row.analysis_envelope = null; }
     }
 
     return row as AiAnalysisRecord;

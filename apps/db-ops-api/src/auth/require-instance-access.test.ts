@@ -1,32 +1,14 @@
 /**
  * requireInstanceAccess 中间件单元测试
  *
- * 遵循 rbac-service.test.ts 模式: 模拟 dbConnection 层而非 RbacService 类
- * 中间件导入 RbacService 时自动获取模拟的 getPool()
+ * 实例授权只来自 verifyToken 构建的 ActorContext 快照。
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-
-// Mock dbConnection — RbacService 内部使用 getPool()
-vi.mock('../db-connection.js', () => ({
-  dbConnection: {
-    getPool: vi.fn(),
-    isConnected: vi.fn(() => true),
-  },
-}));
+import { describe, it, expect, vi } from 'vitest';
 
 import { requireInstanceAccess } from './require-instance-access.js';
-import { dbConnection } from '../db-connection.js';
 
 describe('requireInstanceAccess middleware', () => {
-  let mockExecute: any;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockExecute = vi.fn();
-    (dbConnection.getPool as any).mockReturnValue({ execute: mockExecute });
-  });
-
   const makeReply = () => ({
     code: vi.fn().mockReturnThis(),
     send: vi.fn(),
@@ -42,7 +24,7 @@ describe('requireInstanceAccess middleware', () => {
   });
 
   it('should return 400 when request.params.id is missing', async () => {
-    const request = { user: { userId: 1, username: 'test' }, params: {} };
+    const request = { user: { userId: 1, permissions: [], instanceScopes: {} }, params: {} };
     const reply = makeReply();
 
     await requireInstanceAccess()(request as any, reply as any);
@@ -51,10 +33,7 @@ describe('requireInstanceAccess middleware', () => {
   });
 
   it('should return 403 when checkInstanceAccessLevel returns null', async () => {
-    // No rows -> checkInstanceAccessLevel returns null
-    mockExecute.mockResolvedValue([[]]);
-
-    const request = { user: { userId: 1, username: 'test' }, params: { id: '42' } };
+    const request = { user: { userId: 1, permissions: [], instanceScopes: {} }, params: { id: '42' } };
     const reply = makeReply();
 
     await requireInstanceAccess()(request as any, reply as any);
@@ -63,9 +42,10 @@ describe('requireInstanceAccess middleware', () => {
   });
 
   it('should pass when checkInstanceAccessLevel returns a valid level', async () => {
-    mockExecute.mockResolvedValue([[{ access_level: 'read-only' }]]);
-
-    const request = { user: { userId: 1, username: 'test' }, params: { id: '42' } };
+    const request = {
+      user: { userId: 1, permissions: [], instanceScopes: { 42: 'read-only' } },
+      params: { id: '42' },
+    };
     const reply = makeReply();
 
     await requireInstanceAccess()(request as any, reply as any);
@@ -73,12 +53,10 @@ describe('requireInstanceAccess middleware', () => {
   });
 
   it('should return 403 when user level is below minLevel (read-only < read-write)', async () => {
-    // Mock getUserPermissions to return non-wildcard set
-    mockExecute
-      .mockResolvedValueOnce([[]])                                    // getUserPermissions
-      .mockResolvedValueOnce([[{ access_level: 'read-only' }]]);      // checkInstanceAccessLevel
-
-    const request = { user: { userId: 1, username: 'test' }, params: { id: '42' } };
+    const request = {
+      user: { userId: 1, permissions: [], instanceScopes: { 42: 'read-only' } },
+      params: { id: '42' },
+    };
     const reply = makeReply();
 
     await requireInstanceAccess('read-write')(request as any, reply as any);
@@ -87,11 +65,10 @@ describe('requireInstanceAccess middleware', () => {
   });
 
   it('should pass when user level meets minLevel', async () => {
-    mockExecute
-      .mockResolvedValueOnce([[]])                                    // getUserPermissions
-      .mockResolvedValueOnce([[{ access_level: 'admin' }]]);          // checkInstanceAccessLevel
-
-    const request = { user: { userId: 1, username: 'test' }, params: { id: '42' } };
+    const request = {
+      user: { userId: 1, permissions: [], instanceScopes: { 42: 'admin' } },
+      params: { id: '42' },
+    };
     const reply = makeReply();
 
     await requireInstanceAccess('read-write')(request as any, reply as any);
@@ -99,10 +76,7 @@ describe('requireInstanceAccess middleware', () => {
   });
 
   it('should pass wildcard users without level check', async () => {
-    // getUserPermissions returns ['*'] -> wildcard, no instance query needed
-    mockExecute.mockResolvedValue([[{ code: '*' }]]);
-
-    const request = { user: { userId: 1, username: 'admin' }, params: { id: '42' } };
+    const request = { user: { userId: 1, permissions: ['*'], instanceScopes: {} }, params: { id: '42' } };
     const reply = makeReply();
 
     await requireInstanceAccess('admin')(request as any, reply as any);
@@ -110,9 +84,7 @@ describe('requireInstanceAccess middleware', () => {
   });
 
   it('should pass instance:* wildcard users without level check', async () => {
-    mockExecute.mockResolvedValue([[{ code: 'instance:*' }]]);
-
-    const request = { user: { userId: 1, username: 'admin' }, params: { id: '42' } };
+    const request = { user: { userId: 1, permissions: ['instance:*'], instanceScopes: {} }, params: { id: '42' } };
     const reply = makeReply();
 
     await requireInstanceAccess('admin')(request as any, reply as any);

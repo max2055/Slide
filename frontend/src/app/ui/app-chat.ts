@@ -91,7 +91,9 @@ function isBtwCommand(text: string) {
 }
 
 export async function handleAbortChat(host: ChatHost) {
-  host.chatMessage = "";
+  if (!host.client || !host.chatRunId || !host.sessionKey) return;
+  host.client.cancelChat(host.chatRunId, host.sessionKey);
+  host.chatSending = true;
 }
 
 function enqueueChatMessage(
@@ -359,11 +361,7 @@ async function dispatchSlashCommand(
       return;
     case "new":
     case "reset":
-      // Generate a new session key with readable prefix
-      const hasPendingMsg = !!(window as any).__pendingChatMessage;
-      const prefix = hasPendingMsg ? 'diagnosis-analysis' : 'chat';
-      const sessionKey = `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-      host.onSlashAction?.(`switch-session:${sessionKey}`);
+      host.onSlashAction?.("switch-session:");
       return;
     case "clear":
       await clearChatHistory(host);

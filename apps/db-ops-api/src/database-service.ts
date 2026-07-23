@@ -7,6 +7,7 @@ import oracledb from 'oracledb';
 import dmdb from 'dmdb';
 import { calculateDimensionScores } from './scoring-service.js';
 import { scoringConfigService } from './scoring-config-service.js';
+import { withTimeout } from './promise-timeout.js';
 
 export interface DatabaseConfig {
   host: string;
@@ -36,7 +37,9 @@ export interface DatabaseConnection {
     bytesSent: number;
     slowQueries: number;
     abortedConnects: number;
+    abortedConnectsTimestamp?: number;
     handlerReadRndNext: number;
+    handlerReadRndNextTimestamp?: number;
     timestamp: number;
   };
   pgDeltaCounter?: {
@@ -105,6 +108,8 @@ export interface RealtimeMetrics {
   dm_os_memory_usage?: number;            // 操作系统内存使用
   // MySQL 扩增指标
   table_open_cache_hit_rate?: number;
+  buffer_pool_hit_rate?: number;
+  cache_hit_ratio?: number;
   handler_read_rnd_next?: number;
   handler_read_rnd_next_rate?: number;
   key_blocks_usage?: number;
@@ -126,6 +131,7 @@ export interface RealtimeMetrics {
   queries_total?: number;
   commits_total?: number;
   rollbacks_total?: number;
+  [key: string]: any;
 }
 
 export interface SlowQuery {
@@ -182,6 +188,7 @@ class DatabaseService {
           pool: null,
           pgClient,
           oracleConnection: null,
+          oraclePool: null,
           dmConnection: null,
           connected: true,
           db_type: 'postgresql',
@@ -200,7 +207,7 @@ class DatabaseService {
         }
         // D-18: NLS_LANG 默认 AMERICAN_AMERICA.AL32UTF8 (oracledb 默认值)
 
-        const pool = await oracledb.createPool({
+        const pool = await (oracledb.createPool({
           user: config.user,
           password: config.password,
           connectString: `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${config.host})(PORT=${config.port}))(CONNECT_DATA=(SERVICE_NAME=${config.database || 'ORCL'})))`,
@@ -209,10 +216,10 @@ class DatabaseService {
           poolMax: 4,
           poolMin: 0,
           poolTimeout: 60,
-          queueRequests: true,
+          queueRequests: 1,
           queueMax: 500,
           queueTimeout: 60000,
-        });
+        } as any) as unknown as Promise<oracledb.Pool>);
 
         // 获取持久连接（保持向后兼容）
         const connection = await pool.getConnection();
@@ -237,16 +244,23 @@ class DatabaseService {
         // 达梦数据库连接 - 使用官方 dmdb 驱动
         // 强制 IPv4：Docker 容器通常只绑定 0.0.0.0，localhost 解析到 ::1 会导致 ETIMEDOUT
         const host = config.host === 'localhost' ? '127.0.0.1' : config.host;
-        const dmConnection = await dmdb.getConnection({
+        const dmConnection = await withTimeout(dmdb.getConnection({
           user: config.user,
           password: config.password,
           connectString: `${host}:${config.port}`,
           schema: config.database || undefined,
           connectTimeout: 5000,
           loginEncrypt: false,
+        }), 10_000, `Dameng connection timed out after 10000ms`, (lateConnection) => {
+          void lateConnection.close().catch(() => undefined);
         });
 
-        await dmConnection.execute('SELECT 1 FROM DUAL');
+        try {
+          await withTimeout(dmConnection.execute('SELECT 1 FROM DUAL'), 5_000, 'Dameng health probe timed out after 5000ms');
+        } catch (error) {
+          await dmConnection.close().catch(() => undefined);
+          throw error;
+        }
 
         this.connections.set(id, {
           id,
@@ -255,6 +269,7 @@ class DatabaseService {
           pool: null,
           pgClient: null,
           oracleConnection: null,
+          oraclePool: null,
           dmConnection,
           connected: true,
           db_type: 'dameng',
@@ -289,6 +304,7 @@ class DatabaseService {
           pool,
           pgClient: null,
           oracleConnection: null,
+          oraclePool: null,
           dmConnection: null,
           connected: true,
           db_type: 'mysql',
@@ -481,13 +497,15 @@ class DatabaseService {
       const handlerReadRndNext = Number(handlerResult[0]?.Value) || 0;
       // handler_read_rnd_next_rate via delta (skip first collection)
       let handlerReadRndNextRate = 0;
-      if (!isFirstCollection && conn.deltaCounter) {
-        const elapsed = (now - conn.deltaCounter.timestamp) / 1000;
+      if (conn.deltaCounter) {
+        const previousTimestamp = conn.deltaCounter.handlerReadRndNextTimestamp;
+        const elapsed = previousTimestamp === undefined ? 0 : (now - previousTimestamp) / 1000;
         if (elapsed > 0 && handlerReadRndNext >= conn.deltaCounter.handlerReadRndNext) {
           handlerReadRndNextRate = Math.round((handlerReadRndNext - conn.deltaCounter.handlerReadRndNext) / elapsed * 100) / 100;
         }
+        conn.deltaCounter.handlerReadRndNext = handlerReadRndNext;
+        conn.deltaCounter.handlerReadRndNextTimestamp = now;
       }
-      if (conn.deltaCounter) conn.deltaCounter.handlerReadRndNext = handlerReadRndNext;
 
       // key_blocks_usage
       const [keyBlockResult] = await conn.pool.query<RowDataPacket[]>(
@@ -512,14 +530,14 @@ class DatabaseService {
       const abortedConnects = Number(abortedResult[0]?.Value) || 0;
       // aborted_connects_rate via delta (skip first collection)
       let abortedConnectsRate = 0;
-      if (!isFirstCollection && conn.deltaCounter) {
-        const elapsed = (now - conn.deltaCounter.timestamp) / 1000;
+      if (conn.deltaCounter) {
+        const previousTimestamp = conn.deltaCounter.abortedConnectsTimestamp;
+        const elapsed = previousTimestamp === undefined ? 0 : (now - previousTimestamp) / 1000;
         if (elapsed > 0 && abortedConnects >= conn.deltaCounter.abortedConnects) {
           abortedConnectsRate = Math.round((abortedConnects - conn.deltaCounter.abortedConnects) / elapsed * 100) / 100;
         }
         conn.deltaCounter.abortedConnects = abortedConnects;
-      } else if (conn.deltaCounter) {
-        conn.deltaCounter.abortedConnects = abortedConnects;
+        conn.deltaCounter.abortedConnectsTimestamp = now;
       }
 
       // 复制状态
@@ -838,7 +856,7 @@ class DatabaseService {
         WHERE NAME IN ('parse count (hard)', 'parse count (total)', 'execute count', 'user commits')
       `);
 
-      const stats = statResult.rows[0] || {};
+      const stats: any = statResult.rows[0] || {};
       const hardParses = stats.hard_parses as number || 0;
       const totalParses = stats.total_parses as number || 0;
       const executes = stats.executes as number || 0;
@@ -1016,7 +1034,7 @@ class DatabaseService {
         WHERE NAME IN ('parse count', 'sql executed count', 'transaction commit count')
       `);
 
-      const stats = statResult.rows[0] || {};
+      const stats: any = statResult.rows[0] || {};
       const parses = stats.parses as number || 0;
       const executes = stats.executes as number || 0;
       const commits = stats.commits as number || 0;
@@ -2428,7 +2446,7 @@ class DatabaseService {
       output += '='.repeat(80) + '\n';
 
       for (const row of result.rows) {
-        const planLine = row[0] as string || row.PLAN_TABLE_OUTPUT as string;
+        const planLine = row[0] as string || (row as any).PLAN_TABLE_OUTPUT as string;
         if (planLine) {
           output += planLine + '\n';
         }
@@ -2479,7 +2497,7 @@ class DatabaseService {
       output += '='.repeat(80) + '\n';
 
       for (const row of result.rows) {
-        const planLine = row[0] as string || row.PLAN_TABLE_OUTPUT as string;
+        const planLine = row[0] as string || (row as any).PLAN_TABLE_OUTPUT as string;
         if (planLine) {
           output += planLine + '\n';
         }
@@ -2700,6 +2718,7 @@ class DatabaseService {
       SELECT
         table_schema as db_name,
         ROUND(SUM(data_length + index_length) / 1024 / 1024 / 1024, 2) as size_gb,
+        SUM(data_length + index_length) as size_bytes,
         COUNT(*) as table_count
       FROM information_schema.tables
       WHERE table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
@@ -2721,10 +2740,10 @@ class DatabaseService {
     `);
 
     // 获取最大的表
-    const totalSize = dbSizeRows.reduce((sum: number, row: any) => sum + (row.size_gb || 0), 0);
+    const totalBytes = dbSizeRows.reduce((sum: number, row: any) => sum + Number(row.size_bytes || 0), 0);
 
     return {
-      total_size_gb: Math.round(totalSize * 100) / 100,
+      total_size_gb: Math.round(totalBytes / 1024 / 1024 / 1024 * 100) / 100,
       databases: dbSizeRows.map((row: any) => ({
         name: row.db_name,
         size_gb: Number(row.size_gb),
@@ -2898,7 +2917,8 @@ class DatabaseService {
         TABLESPACE_NAME as name,
         ROUND(SUM(BYTES) * 1.0 / 1024 / 1024 / 1024, 2) as size_gb,
         ROUND(SUM(DECODE(AUTOEXTENSIBLE, 'YES', MAXBYTES, BYTES)) * 1.0 / 1024 / 1024 / 1024, 2) as max_size_gb,
-        ROUND((SUM(BYTES) * 1.0 / SUM(DECODE(AUTOEXTENSIBLE, 'YES', MAXBYTES, BYTES))) * 100, 2) as usage_percent
+        ROUND((SUM(BYTES) * 1.0 / SUM(DECODE(AUTOEXTENSIBLE, 'YES', MAXBYTES, BYTES))) * 100, 2) as usage_percent,
+        SUM(BYTES) as size_bytes
       FROM DBA_DATA_FILES
       GROUP BY TABLESPACE_NAME
       ORDER BY size_gb DESC
@@ -2923,12 +2943,13 @@ class DatabaseService {
       size_gb: Number(row[1]),
       max_size_gb: Number(row[2]),
       usage_percent: Number(row[3]),
+      size_bytes: Number(row[4]),
     }));
 
-    const totalSize = tablespaces.reduce((sum: number, ts: any) => sum + (ts.size_gb || 0), 0);
+    const totalBytes = tablespaces.reduce((sum: number, ts: any) => sum + ts.size_bytes, 0);
 
     return {
-      total_size_gb: Math.round(totalSize * 100) / 100,
+      total_size_gb: Math.round(totalBytes / 1024 / 1024 / 1024 * 100) / 100,
       tablespaces,
       top_tables: (segResult.rows || []).map((row: any) => ({
         name: row[0],

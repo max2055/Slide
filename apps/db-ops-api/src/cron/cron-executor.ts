@@ -119,16 +119,13 @@ export class CronExecutor {
     finalContent: string | null,
     toolEvents: ToolEvent[],
   ): Record<string, unknown> | null {
-    // Try to find `slide_complete_cron` tool call data
-    for (const ev of toolEvents) {
-      try {
-        const data = typeof ev.result === 'string' ? JSON.parse(ev.result) : ev.result;
-        if (data?.result && typeof data.result === 'object') {
-          return data.result as Record<string, unknown>;
-        }
-      } catch { /* continue */ }
+    if (!finalContent) return null;
+    try {
+      const parsed = JSON.parse(finalContent);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+    } catch {
+      return null;
     }
-    return null;
   }
 
   /**

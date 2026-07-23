@@ -49,6 +49,10 @@ interface ConsistencyResponse {
   };
 }
 
+type HealthStatus = 'healthy' | 'degraded' | 'critical' | 'unknown';
+interface HealthDimension { status: HealthStatus; numerator: number; denominator: number; failedRefs?: Array<{ type: string; id: number | string }>; observedAt?: string; reason?: string; }
+interface HealthTruth { controlPlane: HealthDimension; managedAvailability: HealthDimension; dataFreshness: HealthDimension; workflow: HealthDimension; overall: HealthStatus; }
+
 // ── Category labels ─────────────────────────────────────
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -64,6 +68,7 @@ export class HealthCenterPage extends LitElement {
   @state() private refreshing = false;
   @state() private error: string | null = null;
   @state() private data: ConsistencyResponse | null = null;
+  @state() private truth: HealthTruth | null = null;
   @state() private expandedChecks = new Set<string>();
 
   static styles = [
@@ -110,6 +115,15 @@ export class HealthCenterPage extends LitElement {
       .readiness-inline .ri-item .dot.ok { background: var(--ok, #22c55e); }
       .readiness-inline .ri-item .dot.fail { background: var(--danger, #ef4444); }
       .readiness-inline .ri-item .dot.degraded { background: var(--warn, #f59e0b); }
+      .truth-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-sm); margin-bottom: var(--space-lg); }
+      .truth-dimension { border: 1px solid var(--border); padding: var(--space-sm); background: var(--card); }
+      .truth-label { color: var(--muted); font-size: 12px; display: block; }
+      .truth-value { color: var(--text-strong); font-weight: 700; font-size: 16px; display: block; margin-top: 4px; }
+      .truth-reason { color: var(--muted); font-size: 11px; display: block; margin-top: 4px; overflow-wrap: anywhere; }
+      .truth-dimension.critical .truth-value { color: var(--danger); }
+      .truth-dimension.degraded .truth-value { color: var(--warn); }
+      .truth-dimension.unknown .truth-value { color: var(--muted); }
+      @media (max-width: 720px) { .truth-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
       /* ── Issues section (highlighted anomalies) ──── */
       .issues-section { margin-bottom: 16px; }
@@ -168,9 +182,10 @@ export class HealthCenterPage extends LitElement {
   private async _load() {
     this.loading = true; this.error = null; this.expandedChecks = new Set();
     try {
-      const res = await authFetch("/api/health/consistency");
+      const [res, readiness] = await Promise.all([authFetch("/api/health/consistency"), authFetch("/api/health/readiness")]);
       if (!res.ok) throw new Error(`加载失败 (${res.status})`);
       this.data = await res.json();
+      this.truth = readiness.ok ? await readiness.json() : null;
     } catch (e: any) { this.error = e.message; }
     finally { this.loading = false; }
   }
@@ -178,9 +193,9 @@ export class HealthCenterPage extends LitElement {
   private async _refresh() {
     this.refreshing = true;
     try {
-      const res = await authFetch("/api/health/consistency");
+      const [res, readiness] = await Promise.all([authFetch("/api/health/consistency"), authFetch("/api/health/readiness")]);
       if (!res.ok) throw new Error(`加载失败 (${res.status})`);
-      this.data = await res.json(); this.error = null;
+      this.data = await res.json(); this.truth = readiness.ok ? await readiness.json() : null; this.error = null;
       this.expandedChecks = new Set();
     } catch (e: any) { console.warn('Health check refresh failed:', e.message); }
     finally { this.refreshing = false; }
@@ -247,6 +262,27 @@ export class HealthCenterPage extends LitElement {
   private _sevClass(severity: string): string {
     const map: Record<string, string> = { critical: 'danger', major: 'warn', minor: 'warn', info: 'muted' };
     return map[severity] || 'muted';
+  }
+
+  private _truthLabel(key: keyof Omit<HealthTruth, 'overall'>): string {
+    return { controlPlane: '控制面', managedAvailability: '纳管可用性', dataFreshness: '数据新鲜度', workflow: '工作流' }[key];
+  }
+
+  private _renderTruth() {
+    if (!this.truth) return nothing;
+    const dimensions = ['controlPlane', 'managedAvailability', 'dataFreshness', 'workflow'] as const;
+    return html`<div class="truth-grid" aria-label="资源健康真相">
+      ${dimensions.map((key) => {
+        const dimension = this.truth![key];
+        const refs = dimension.failedRefs?.map((ref) => `${ref.type}:${ref.id}`).join(', ');
+        const detail = [refs, dimension.reason, dimension.observedAt ? new Date(dimension.observedAt).toLocaleString() : undefined].filter(Boolean).join(' · ');
+        return html`<div class="truth-dimension ${dimension.status}">
+          <span class="truth-label">${this._truthLabel(key)}</span>
+          <span class="truth-value">${dimension.status} · ${dimension.numerator}/${dimension.denominator}</span>
+          ${detail ? html`<span class="truth-reason">${detail}</span>` : nothing}
+        </div>`;
+      })}
+    </div>`;
   }
 
   private _recommendationNav(checkId: string): { label: string; href: string } | null {
@@ -333,6 +369,8 @@ export class HealthCenterPage extends LitElement {
           ${s.deferred > 0 ? html`<span class="hs-stat"><span class="dot muted"></span>${s.deferred} 推迟</span>` : ''}
         </div>
       </div>
+
+      ${this._renderTruth()}
 
       <!-- Readiness: compact inline, not a card -->
       <div class="readiness-inline">

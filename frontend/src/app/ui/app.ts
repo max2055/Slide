@@ -2,6 +2,7 @@ import { LitElement } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { i18n, I18nController, isSupportedLocale } from "../i18n/index.ts";
 import {
+  handleAbortChat as handleAbortChatInternal,
   handleSendChat as handleSendChatInternal,
   removeQueuedMessage as removeQueuedMessageInternal,
 } from "./app-chat.ts";
@@ -634,7 +635,9 @@ export class SlideApp extends LitElement {
   }
 
   async handleAbortChat() {
-    this.chatMessage = "";
+    await handleAbortChatInternal(
+      this as unknown as Parameters<typeof handleAbortChatInternal>[0],
+    );
   }
 
   removeQueuedMessage(id: string) {

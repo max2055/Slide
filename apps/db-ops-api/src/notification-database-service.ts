@@ -2,12 +2,26 @@
  * 通知数据库服务
  */
 import mysql from 'mysql2/promise';
-import { dbConnection } from './db-connection';
+import { dbConnection, encryptData } from './db-connection';
 
 export interface NotificationChannelConfig {
   webhook_url?: string;
   secret?: string;
+  secret_encrypted?: string;
   severity?: string;
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_username?: string;
+  smtp_auth?: 'password' | 'oauth2';
+  password?: string;
+  password_encrypted?: string;
+  oauth2_tenant?: string;
+  oauth2_client_id?: string;
+  oauth2_refresh_token?: string;
+  oauth2_refresh_token_encrypted?: string;
+  from?: string;
+  to?: string;
+  smtp_secure?: boolean;
 }
 
 export interface NotificationChannel {
@@ -16,6 +30,7 @@ export interface NotificationChannel {
   type: 'email' | 'dingtalk' | 'wecom' | 'feishu' | 'webhook';
   config: NotificationChannelConfig;
   enabled: boolean;
+  delivery_start_at?: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -47,6 +62,29 @@ export interface PendingAlert {
 }
 
 class NotificationDatabaseService {
+  private prepareConfigForStorage(config: unknown): Record<string, unknown> {
+    const stored = { ...((config && typeof config === 'object' ? config : {}) as Record<string, unknown>) };
+    if (typeof stored.password === 'string') {
+      if (stored.password.length > 0) {
+        stored.password_encrypted = encryptData(stored.password);
+      }
+      delete stored.password;
+    }
+    if (typeof stored.oauth2_refresh_token === 'string') {
+      if (stored.oauth2_refresh_token.length > 0) {
+        stored.oauth2_refresh_token_encrypted = encryptData(stored.oauth2_refresh_token);
+      }
+      delete stored.oauth2_refresh_token;
+    }
+    if (typeof stored.secret === 'string') {
+      if (stored.secret.length > 0) {
+        stored.secret_encrypted = encryptData(stored.secret);
+      }
+      delete stored.secret;
+    }
+    return stored;
+  }
+
   /**
    * 获取数据库连接池
    */
@@ -77,12 +115,12 @@ class NotificationDatabaseService {
 
     try {
       const [result] = await pool.execute(
-        `INSERT INTO notification_channels (name, type, config, enabled)
-         VALUES (?, ?, ?, ?)`,
+        `INSERT INTO notification_channels (name, type, config, enabled, delivery_start_at)
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         [
           data.name,
           data.type,
-          JSON.stringify(data.config),
+          JSON.stringify(this.prepareConfigForStorage(data.config)),
           data.enabled !== undefined ? (data.enabled ? 1 : 0) : 1,
         ]
       ) as any;
@@ -105,7 +143,7 @@ class NotificationDatabaseService {
 
     try {
       let sql = `
-        SELECT id, name, type, config, enabled, created_at, updated_at
+        SELECT id, name, type, config, enabled, delivery_start_at, created_at, updated_at
         FROM notification_channels
       `;
       const params: any[] = [];
@@ -124,6 +162,7 @@ class NotificationDatabaseService {
         type: row.type,
         config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config,
         enabled: Boolean(row.enabled),
+        delivery_start_at: row.delivery_start_at,
         created_at: row.created_at,
         updated_at: row.updated_at,
       }));
@@ -144,7 +183,7 @@ class NotificationDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, type, config, enabled, created_at, updated_at
+        `SELECT id, name, type, config, enabled, delivery_start_at, created_at, updated_at
          FROM notification_channels WHERE id = ?`,
         [id]
       ) as any;
@@ -160,6 +199,7 @@ class NotificationDatabaseService {
         type: row.type,
         config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config,
         enabled: Boolean(row.enabled),
+        delivery_start_at: row.delivery_start_at,
         created_at: row.created_at,
         updated_at: row.updated_at,
       };
@@ -199,12 +239,39 @@ class NotificationDatabaseService {
         values.push(data.type);
       }
       if (data.config !== undefined) {
+        const config = this.prepareConfigForStorage(data.config);
+        const suppliedConfig = data.config && typeof data.config === 'object'
+          ? data.config as Record<string, unknown>
+          : {};
+        const passwordWasSupplied = Object.prototype.hasOwnProperty.call(suppliedConfig, 'password')
+          || Object.prototype.hasOwnProperty.call(suppliedConfig, 'password_encrypted');
+        const secretWasSupplied = Object.prototype.hasOwnProperty.call(suppliedConfig, 'secret')
+          || Object.prototype.hasOwnProperty.call(suppliedConfig, 'secret_encrypted');
+        if (!passwordWasSupplied || !secretWasSupplied) {
+          const [rows] = await pool.execute(
+            'SELECT config FROM notification_channels WHERE id = ?',
+            [id],
+          ) as any;
+          const existingConfig = rows[0]?.config;
+          try {
+            const parsed = typeof existingConfig === 'string' ? JSON.parse(existingConfig) : existingConfig;
+            if (typeof parsed?.password_encrypted === 'string') {
+              if (!passwordWasSupplied) config.password_encrypted = parsed.password_encrypted;
+            }
+            if (typeof parsed?.secret_encrypted === 'string' && !secretWasSupplied) {
+              config.secret_encrypted = parsed.secret_encrypted;
+            }
+          } catch {
+            // An invalid legacy config will be rejected by the normal UPDATE path rather than exposing its contents.
+          }
+        }
         updates.push('config = ?');
-        values.push(JSON.stringify(data.config));
+        values.push(JSON.stringify(config));
       }
       if (data.enabled !== undefined) {
         updates.push('enabled = ?');
         values.push(data.enabled ? 1 : 0);
+        if (data.enabled) updates.push('delivery_start_at = CURRENT_TIMESTAMP');
       }
 
       if (updates.length === 0) {
@@ -225,6 +292,24 @@ class NotificationDatabaseService {
       return { success: true };
     } catch (error: any) {
       console.error('更新通知渠道失败:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /** Persists a Microsoft-issued rotated refresh token without reading or logging any channel secret. */
+  async updateOAuth2RefreshToken(id: number, refreshToken: string): Promise<{ success: boolean; error?: string }> {
+    const pool = this.getPool();
+    if (!pool) return { success: false, error: '数据库未连接' };
+
+    try {
+      const [result] = await pool.execute(
+        "UPDATE notification_channels SET config = JSON_SET(config, '$.oauth2_refresh_token_encrypted', ?), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND type = 'email'",
+        [encryptData(refreshToken), id],
+      ) as any;
+      if (result.affectedRows === 0) return { success: false, error: '通知渠道不存在' };
+      return { success: true };
+    } catch (error: any) {
+      console.error('更新 OAuth 刷新令牌失败:', error);
       return { success: false, error: error.message };
     }
   }
@@ -268,9 +353,6 @@ class NotificationDatabaseService {
          FROM alerts a
          LEFT JOIN database_instances di ON a.instance_id = di.id
          WHERE a.status = 'unread'
-           AND NOT EXISTS (
-             SELECT 1 FROM notification_records nr WHERE nr.alert_id = a.id
-           )
          ORDER BY a.created_at ASC`
       ) as any;
 
@@ -378,6 +460,43 @@ class NotificationDatabaseService {
       console.error('记录通知失败:', error);
       return { success: false, error: error.message };
     }
+  }
+
+  async hasSuccessfulDelivery(alertId: number, channelId: number): Promise<boolean> {
+    const pool = this.getPool();
+    if (!pool) return false;
+    const [rows] = await pool.execute(
+      `SELECT 1 FROM notification_records
+       WHERE alert_id = ? AND channel_id = ? AND status = 'sent' LIMIT 1`,
+      [alertId, channelId],
+    ) as any;
+    return Array.isArray(rows) && rows.length > 0;
+  }
+
+  async recordDeliveryAttempt(data: {
+    job_id: string; alert_id: number; channel_id: number; attempt_number: number;
+    status: 'started' | 'sent' | 'failed'; error_code?: string; error_message?: string;
+  }): Promise<void> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('NOTIFICATION_AUDIT_UNAVAILABLE');
+    await pool.execute(
+      `INSERT INTO notification_delivery_attempts
+       (workflow_job_id, alert_id, channel_id, attempt_number, status, error_code, error_message, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, IF(? IN ('sent', 'failed'), NOW(), NULL))
+       ON DUPLICATE KEY UPDATE status = VALUES(status), error_code = VALUES(error_code),
+       error_message = VALUES(error_message), finished_at = VALUES(finished_at)`,
+      [data.job_id, data.alert_id, data.channel_id, data.attempt_number, data.status,
+       data.error_code ?? null, data.error_message?.slice(0, 1024) ?? null, data.status],
+    );
+  }
+
+  async recordReplay(jobId: string, actorId: number, reason: string): Promise<void> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('NOTIFICATION_AUDIT_UNAVAILABLE');
+    await pool.execute(
+      'INSERT INTO notification_delivery_replays (workflow_job_id, actor_id, reason) VALUES (?, ?, ?)',
+      [jobId, actorId, reason.slice(0, 512)],
+    );
   }
 
   /**

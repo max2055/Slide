@@ -4,6 +4,7 @@
 import 'dotenv/config';
 import mysql from 'mysql2/promise';
 import * as crypto from 'crypto';
+import { requireEncryptionKey } from './config/security-config.js';
 
 // 数据库配置
 interface DbConfig {
@@ -47,12 +48,23 @@ class DbConnectionManager {
         connectionLimit: 10,
         waitForConnections: true,
         charset: 'utf8mb4',
-        timezone: '+08:00',
+        // Persist instants in UTC so Date-backed workflow availability and
+        // lease predicates remain comparable with MySQL NOW() across hosts.
+        timezone: 'Z',
         decimalNumbers: true,
+      });
+      // `timezone: 'Z'` controls mysql2 value conversion only. MySQL NOW()
+      // still follows the server session timezone unless we set it explicitly.
+      // Keep persisted schedule and lease timestamps on the same UTC timeline.
+      this.pool.on('connection', (connection) => {
+        (connection as any).query("SET time_zone = '+00:00'", (error: unknown) => {
+          if (error) console.error('Failed to set MySQL session timezone:', error);
+        });
       });
 
       // 测试连接
       const connection = await this.pool.getConnection();
+      await connection.query("SET time_zone = '+00:00'");
       await connection.ping();
       connection.release();
 
@@ -109,16 +121,8 @@ export const dbConnection = new DbConnectionManager();
 /**
  * 加密敏感数据
  */
-const ENCRYPTION_FALLBACK = 'change-this-to-a-random-32-char-key';
-let _encryptionWarned = false;
 function _getEncryptionKey(callerKey?: string): string {
-  const key = callerKey || process.env.ENCRYPTION_KEY;
-  if (key && key.length >= 32) return key;
-  if (!_encryptionWarned) {
-    console.warn('⚠ ENCRYPTION_KEY 未设置或长度不足 32 字符，使用不安全默认值。请尽快在 .env 中添加：ENCRYPTION_KEY=your-random-key-at-least-32-chars');
-    _encryptionWarned = true;
-  }
-  return ENCRYPTION_FALLBACK;
+  return requireEncryptionKey(callerKey);
 }
 
 export function encryptData(data: string, key?: string): string {

@@ -9,8 +9,9 @@ export interface ReportConfig {
   name: string;
   cron: string;
   type: string;
-  instance_id: number;
+  instance_id: number | null;
   server_id?: number | null;
+  notification_channel_ids: number[];
   format: string;
   enabled: boolean;
   created_at: string;
@@ -21,8 +22,9 @@ export interface CreateReportConfigData {
   name: string;
   cron: string;
   type: string;
-  instance_id: number;
+  instance_id: number | null;
   server_id?: number;
+  notification_channel_ids?: number[];
   format?: string;
   enabled?: boolean;
 }
@@ -31,13 +33,29 @@ export interface UpdateReportConfigData {
   name?: string;
   cron?: string;
   type?: string;
-  instance_id?: number;
+  instance_id?: number | null;
   server_id?: number;
+  notification_channel_ids?: number[];
   format?: string;
   enabled?: boolean;
 }
 
 class ReportConfigDatabaseService {
+  private channelIds(value: unknown): number[] {
+    let raw = value;
+    try {
+      if (typeof value === 'string') raw = JSON.parse(value);
+    } catch {
+      return [];
+    }
+    if (!Array.isArray(raw)) return [];
+    return [...new Set(raw.filter((id): id is number => Number.isSafeInteger(id) && id > 0))];
+  }
+  private assertSingleTarget(instanceId: number | null | undefined, serverId: number | null | undefined): void {
+    if ((instanceId == null) === (serverId == null)) {
+      throw new Error('REPORT_CONFIG_TARGET_INVALID');
+    }
+  }
   /**
    * 获取数据库连接池
    */
@@ -63,12 +81,12 @@ class ReportConfigDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, cron, type, instance_id, server_id, format, enabled, created_at, updated_at
+        `SELECT id, name, cron, type, instance_id, server_id, format, notification_channel_ids, enabled, created_at, updated_at
          FROM report_configs
          ORDER BY created_at DESC`
       ) as any;
 
-      return rows as ReportConfig[];
+      return rows.map((row: any) => ({ ...row, notification_channel_ids: this.channelIds(row.notification_channel_ids) })) as ReportConfig[];
     } catch (error) {
       console.error('查询报表配置列表失败:', error);
       return [];
@@ -86,14 +104,14 @@ class ReportConfigDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, cron, type, instance_id, server_id, format, enabled, created_at, updated_at
+        `SELECT id, name, cron, type, instance_id, server_id, format, notification_channel_ids, enabled, created_at, updated_at
          FROM report_configs
          WHERE id = ?`,
         [id]
       ) as any;
 
       if (Array.isArray(rows) && rows.length > 0) {
-        return rows[0] as ReportConfig;
+        return { ...rows[0], notification_channel_ids: this.channelIds(rows[0].notification_channel_ids) } as ReportConfig;
       }
       return null;
     } catch (error) {
@@ -112,16 +130,18 @@ class ReportConfigDatabaseService {
     }
 
     try {
+      this.assertSingleTarget(data.instance_id, data.server_id);
       const [result] = await pool.execute(
-        `INSERT INTO report_configs (name, cron, type, instance_id, server_id, format, enabled)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO report_configs (name, cron, type, instance_id, server_id, format, notification_channel_ids, enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           data.name,
           data.cron,
           data.type,
-          data.instance_id,
+          data.instance_id ?? null,
           data.server_id || null,
           data.format || 'html',
+          JSON.stringify(this.channelIds(data.notification_channel_ids)),
           data.enabled !== undefined ? data.enabled : true,
         ]
       ) as any;
@@ -143,6 +163,12 @@ class ReportConfigDatabaseService {
     }
 
     try {
+      const current = await this.getConfigById(id);
+      if (!current) return false;
+      this.assertSingleTarget(
+        data.instance_id === undefined ? current.instance_id : data.instance_id,
+        data.server_id === undefined ? current.server_id : data.server_id,
+      );
       const updates: string[] = [];
       const values: any[] = [];
 
@@ -174,6 +200,11 @@ class ReportConfigDatabaseService {
       if (data.format !== undefined) {
         updates.push('format = ?');
         values.push(data.format);
+      }
+
+      if (data.notification_channel_ids !== undefined) {
+        updates.push('notification_channel_ids = ?');
+        values.push(JSON.stringify(this.channelIds(data.notification_channel_ids)));
       }
 
       if (data.enabled !== undefined) {
@@ -232,13 +263,13 @@ class ReportConfigDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, cron, type, instance_id, server_id, format, enabled, created_at, updated_at
+        `SELECT id, name, cron, type, instance_id, server_id, format, notification_channel_ids, enabled, created_at, updated_at
          FROM report_configs
          WHERE enabled = 1
          ORDER BY created_at DESC`
       ) as any;
 
-      return rows as ReportConfig[];
+      return rows.map((row: any) => ({ ...row, notification_channel_ids: this.channelIds(row.notification_channel_ids) })) as ReportConfig[];
     } catch (error) {
       console.error('查询已启用报表配置失败:', error);
       return [];

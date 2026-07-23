@@ -10,6 +10,7 @@ type SettingsSubTab =
   | "ai-settings"
   | "prompt-settings"
   | "llm-config"
+  | "feishu-notification"
   | "scoring-settings"
   | "cron-jobs"
   | "appearance"
@@ -25,6 +26,7 @@ const SUB_TABS: { id: SettingsSubTab; label: string; icon: string; requireAdmin?
   { id: "ai-settings", label: "AI 设置", icon: "sparkles" },
   { id: "prompt-settings", label: "提示词管理", icon: "book" },
   { id: "llm-config", label: "LLM 配置", icon: "brain" },
+  { id: "feishu-notification", label: "飞书通知", icon: "message-square", requireAdmin: true },
   { id: "scoring-settings", label: "评分权重", icon: "bar-chart" },
   { id: "appearance", label: "外观", icon: "spark" },
   { id: "branding", label: "品牌", icon: "palette" },
@@ -150,6 +152,8 @@ export class SettingsShell extends LitElement {
         return html`<prompt-settings-page></prompt-settings-page>`;
       case "llm-config":
         return html`<llm-config-page></llm-config-page>`;
+      case "feishu-notification":
+        return html`<feishu-notification-settings></feishu-notification-settings>`;
       case "scoring-settings":
         return html`<scoring-settings-page></scoring-settings-page>`;
       case "appearance":

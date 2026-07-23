@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
+import { resolve } from 'path';
 
-const BASE_CSS_PATH = '/Users/max/Coding/40-Slide/frontend/src/app/styles/base.css';
-const VIEWS_DIR = '/Users/max/Coding/40-Slide/frontend/src/app/ui/views';
+const BASE_CSS_PATH = resolve(process.cwd(), 'src/app/styles/tokens.css');
+const VIEWS_DIR = resolve(process.cwd(), 'src/app/ui/views');
 
 const EXPECTED_TOKENS: Record<string, string> = {
   '--text-xs': '11px',
@@ -35,7 +36,7 @@ const MIGRATED_PAGES = [
   'index-management.ts',
 ];
 
-describe('UI-01: Design tokens defined in base.css :root block', () => {
+describe('UI-01: Design tokens defined in tokens.css :root block', () => {
   const cssContent = readFileSync(BASE_CSS_PATH, 'utf8');
 
   // Extract only the main :root block content (stops at the first unmatched })

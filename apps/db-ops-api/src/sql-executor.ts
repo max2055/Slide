@@ -4,6 +4,7 @@
  */
 import { databaseService } from './database-service';
 import { auditLogManager } from './audit/audit-log';
+import { classifySql } from './sql-validator.js';
 
 class SqlExecutor {
   /**
@@ -11,6 +12,7 @@ class SqlExecutor {
    */
   async executeSql(instanceId: number, sql: string, context?: {
     userId?: string; username?: string; ipAddress?: string; database?: string; timeoutMs?: number;
+    approvedOperationId?: string; approvalRequestId?: number;
   }): Promise<{
     success: boolean;
     columns?: string[];
@@ -21,6 +23,13 @@ class SqlExecutor {
   }> {
     const startTime = Date.now();
 
+    // Classify SQL BEFORE connection check — reject non-read statements even
+    // when the target instance is unreachable.
+    const classification = classifySql(sql, 'mysql'); // db_type hint; re-classified after connection
+    if (classification.commandType !== 'read' && !context?.approvedOperationId) {
+      return { success: false, error: `SQL_READ_ONLY_${classification.reasonCode}` };
+    }
+
     // 先确保连接可用（触发重连如果需要）
     const alive = await databaseService.ensureConnectionAlive(instanceId);
     if (!alive) {
@@ -30,6 +39,12 @@ class SqlExecutor {
     const conn = databaseService.getConnection(instanceId);
     if (!conn) {
       return { success: false, error: '实例未连接' };
+    }
+
+    // Re-classify with actual db_type for dialect-specific rules
+    const reclassification = classifySql(sql, conn.db_type as 'mysql' | 'postgresql' | 'oracle' | 'dameng');
+    if (reclassification.commandType !== 'read' && !context?.approvedOperationId) {
+      return { success: false, error: `SQL_READ_ONLY_${reclassification.reasonCode}` };
     }
 
     // 切换数据库/模式（如果指定了 database 参数）
@@ -103,6 +118,7 @@ class SqlExecutor {
             status: 'success',
             rowCount: rows.length,
             ipAddress: context.ipAddress,
+            approvalRequestId: context.approvalRequestId,
           });
         } catch { /* audit non-blocking */ }
       }
@@ -123,6 +139,7 @@ class SqlExecutor {
             status: 'error',
             errorMessage: error.message,
             ipAddress: context.ipAddress,
+            approvalRequestId: context.approvalRequestId,
           });
         } catch { /* audit non-blocking */ }
       }

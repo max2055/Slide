@@ -1,0 +1,1045 @@
+{
+  "components": {
+    "schemas": {
+      "AdapterCapabilitiesResponse": {
+        "$id": "AdapterCapabilitiesResponse",
+        "additionalProperties": false,
+        "properties": {
+          "adapters": {
+            "items": {
+              "$id": "AdapterCapability",
+              "additionalProperties": false,
+              "properties": {
+                "capabilities": {
+                  "properties": {
+                    "alerts": {
+                      "anyOf": [
+                        {
+                          "const": "declared",
+                          "type": "string"
+                        },
+                        {
+                          "const": "configured",
+                          "type": "string"
+                        },
+                        {
+                          "const": "verified",
+                          "type": "string"
+                        },
+                        {
+                          "const": "degraded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unsupported",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "connect": {
+                      "anyOf": [
+                        {
+                          "const": "declared",
+                          "type": "string"
+                        },
+                        {
+                          "const": "configured",
+                          "type": "string"
+                        },
+                        {
+                          "const": "verified",
+                          "type": "string"
+                        },
+                        {
+                          "const": "degraded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unsupported",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "explain": {
+                      "anyOf": [
+                        {
+                          "const": "declared",
+                          "type": "string"
+                        },
+                        {
+                          "const": "configured",
+                          "type": "string"
+                        },
+                        {
+                          "const": "verified",
+                          "type": "string"
+                        },
+                        {
+                          "const": "degraded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unsupported",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "health": {
+                      "anyOf": [
+                        {
+                          "const": "declared",
+                          "type": "string"
+                        },
+                        {
+                          "const": "configured",
+                          "type": "string"
+                        },
+                        {
+                          "const": "verified",
+                          "type": "string"
+                        },
+                        {
+                          "const": "degraded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unsupported",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "metrics": {
+                      "anyOf": [
+                        {
+                          "const": "declared",
+                          "type": "string"
+                        },
+                        {
+                          "const": "configured",
+                          "type": "string"
+                        },
+                        {
+                          "const": "verified",
+                          "type": "string"
+                        },
+                        {
+                          "const": "degraded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unsupported",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "query": {
+                      "anyOf": [
+                        {
+                          "const": "declared",
+                          "type": "string"
+                        },
+                        {
+                          "const": "configured",
+                          "type": "string"
+                        },
+                        {
+                          "const": "verified",
+                          "type": "string"
+                        },
+                        {
+                          "const": "degraded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unsupported",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "reports": {
+                      "anyOf": [
+                        {
+                          "const": "declared",
+                          "type": "string"
+                        },
+                        {
+                          "const": "configured",
+                          "type": "string"
+                        },
+                        {
+                          "const": "verified",
+                          "type": "string"
+                        },
+                        {
+                          "const": "degraded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unsupported",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "writeApproval": {
+                      "anyOf": [
+                        {
+                          "const": "declared",
+                          "type": "string"
+                        },
+                        {
+                          "const": "configured",
+                          "type": "string"
+                        },
+                        {
+                          "const": "verified",
+                          "type": "string"
+                        },
+                        {
+                          "const": "degraded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unsupported",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "creatable": {
+                  "type": "boolean"
+                },
+                "dbType": {
+                  "anyOf": [
+                    {
+                      "const": "mysql",
+                      "type": "string"
+                    },
+                    {
+                      "const": "postgresql",
+                      "type": "string"
+                    },
+                    {
+                      "const": "oracle",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dameng",
+                      "type": "string"
+                    },
+                    {
+                      "const": "mongodb",
+                      "type": "string"
+                    },
+                    {
+                      "const": "redis",
+                      "type": "string"
+                    },
+                    {
+                      "const": "elasticsearch",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "driver": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "state": {
+                  "anyOf": [
+                    {
+                      "const": "declared",
+                      "type": "string"
+                    },
+                    {
+                      "const": "configured",
+                      "type": "string"
+                    },
+                    {
+                      "const": "verified",
+                      "type": "string"
+                    },
+                    {
+                      "const": "degraded",
+                      "type": "string"
+                    },
+                    {
+                      "const": "unsupported",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "dbType",
+                "driver",
+                "state",
+                "creatable",
+                "capabilities"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "adapters"
+        ],
+        "type": "object"
+      },
+      "AdapterCapability": {
+        "$id": "AdapterCapability",
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "properties": {
+              "alerts": {
+                "anyOf": [
+                  {
+                    "const": "declared",
+                    "type": "string"
+                  },
+                  {
+                    "const": "configured",
+                    "type": "string"
+                  },
+                  {
+                    "const": "verified",
+                    "type": "string"
+                  },
+                  {
+                    "const": "degraded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "connect": {
+                "anyOf": [
+                  {
+                    "const": "declared",
+                    "type": "string"
+                  },
+                  {
+                    "const": "configured",
+                    "type": "string"
+                  },
+                  {
+                    "const": "verified",
+                    "type": "string"
+                  },
+                  {
+                    "const": "degraded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "explain": {
+                "anyOf": [
+                  {
+                    "const": "declared",
+                    "type": "string"
+                  },
+                  {
+                    "const": "configured",
+                    "type": "string"
+                  },
+                  {
+                    "const": "verified",
+                    "type": "string"
+                  },
+                  {
+                    "const": "degraded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "health": {
+                "anyOf": [
+                  {
+                    "const": "declared",
+                    "type": "string"
+                  },
+                  {
+                    "const": "configured",
+                    "type": "string"
+                  },
+                  {
+                    "const": "verified",
+                    "type": "string"
+                  },
+                  {
+                    "const": "degraded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "metrics": {
+                "anyOf": [
+                  {
+                    "const": "declared",
+                    "type": "string"
+                  },
+                  {
+                    "const": "configured",
+                    "type": "string"
+                  },
+                  {
+                    "const": "verified",
+                    "type": "string"
+                  },
+                  {
+                    "const": "degraded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "query": {
+                "anyOf": [
+                  {
+                    "const": "declared",
+                    "type": "string"
+                  },
+                  {
+                    "const": "configured",
+                    "type": "string"
+                  },
+                  {
+                    "const": "verified",
+                    "type": "string"
+                  },
+                  {
+                    "const": "degraded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "reports": {
+                "anyOf": [
+                  {
+                    "const": "declared",
+                    "type": "string"
+                  },
+                  {
+                    "const": "configured",
+                    "type": "string"
+                  },
+                  {
+                    "const": "verified",
+                    "type": "string"
+                  },
+                  {
+                    "const": "degraded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "writeApproval": {
+                "anyOf": [
+                  {
+                    "const": "declared",
+                    "type": "string"
+                  },
+                  {
+                    "const": "configured",
+                    "type": "string"
+                  },
+                  {
+                    "const": "verified",
+                    "type": "string"
+                  },
+                  {
+                    "const": "degraded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "creatable": {
+            "type": "boolean"
+          },
+          "dbType": {
+            "anyOf": [
+              {
+                "const": "mysql",
+                "type": "string"
+              },
+              {
+                "const": "postgresql",
+                "type": "string"
+              },
+              {
+                "const": "oracle",
+                "type": "string"
+              },
+              {
+                "const": "dameng",
+                "type": "string"
+              },
+              {
+                "const": "mongodb",
+                "type": "string"
+              },
+              {
+                "const": "redis",
+                "type": "string"
+              },
+              {
+                "const": "elasticsearch",
+                "type": "string"
+              }
+            ]
+          },
+          "driver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "const": "declared",
+                "type": "string"
+              },
+              {
+                "const": "configured",
+                "type": "string"
+              },
+              {
+                "const": "verified",
+                "type": "string"
+              },
+              {
+                "const": "degraded",
+                "type": "string"
+              },
+              {
+                "const": "unsupported",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [
+          "dbType",
+          "driver",
+          "state",
+          "creatable",
+          "capabilities"
+        ],
+        "type": "object"
+      },
+      "CapabilityState": {
+        "anyOf": [
+          {
+            "const": "declared",
+            "type": "string"
+          },
+          {
+            "const": "configured",
+            "type": "string"
+          },
+          {
+            "const": "verified",
+            "type": "string"
+          },
+          {
+            "const": "degraded",
+            "type": "string"
+          },
+          {
+            "const": "unsupported",
+            "type": "string"
+          }
+        ]
+      },
+      "DatabaseInstance": {
+        "$id": "DatabaseInstance",
+        "additionalProperties": true,
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "credentialVersion": {
+            "type": "number"
+          },
+          "data_size_gb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "database_name": {
+            "type": "string"
+          },
+          "db_type": {
+            "anyOf": [
+              {
+                "const": "mysql",
+                "type": "string"
+              },
+              {
+                "const": "postgresql",
+                "type": "string"
+              },
+              {
+                "const": "oracle",
+                "type": "string"
+              },
+              {
+                "const": "dameng",
+                "type": "string"
+              },
+              {
+                "const": "mongodb",
+                "type": "string"
+              },
+              {
+                "const": "redis",
+                "type": "string"
+              },
+              {
+                "const": "elasticsearch",
+                "type": "string"
+              }
+            ]
+          },
+          "db_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hasCredential": {
+            "type": "boolean"
+          },
+          "health_score": {
+            "type": "number"
+          },
+          "health_status": {
+            "anyOf": [
+              {
+                "const": "healthy",
+                "type": "string"
+              },
+              {
+                "const": "warning",
+                "type": "string"
+              },
+              {
+                "const": "critical",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              }
+            ]
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "port": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "db_type",
+          "host",
+          "port",
+          "database_name",
+          "health_status",
+          "health_score",
+          "status",
+          "created_at",
+          "hasCredential",
+          "credentialVersion"
+        ],
+        "type": "object"
+      },
+      "DatabaseInstancesResponse": {
+        "$id": "DatabaseInstancesResponse",
+        "items": {
+          "$id": "DatabaseInstance",
+          "additionalProperties": true,
+          "properties": {
+            "created_at": {
+              "type": "string"
+            },
+            "credentialVersion": {
+              "type": "number"
+            },
+            "data_size_gb": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "database_name": {
+              "type": "string"
+            },
+            "db_type": {
+              "anyOf": [
+                {
+                  "const": "mysql",
+                  "type": "string"
+                },
+                {
+                  "const": "postgresql",
+                  "type": "string"
+                },
+                {
+                  "const": "oracle",
+                  "type": "string"
+                },
+                {
+                  "const": "dameng",
+                  "type": "string"
+                },
+                {
+                  "const": "mongodb",
+                  "type": "string"
+                },
+                {
+                  "const": "redis",
+                  "type": "string"
+                },
+                {
+                  "const": "elasticsearch",
+                  "type": "string"
+                }
+              ]
+            },
+            "db_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "environment": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "hasCredential": {
+              "type": "boolean"
+            },
+            "health_score": {
+              "type": "number"
+            },
+            "health_status": {
+              "anyOf": [
+                {
+                  "const": "healthy",
+                  "type": "string"
+                },
+                {
+                  "const": "warning",
+                  "type": "string"
+                },
+                {
+                  "const": "critical",
+                  "type": "string"
+                },
+                {
+                  "const": "unknown",
+                  "type": "string"
+                }
+              ]
+            },
+            "host": {
+              "type": "string"
+            },
+            "id": {
+              "type": "number"
+            },
+            "name": {
+              "type": "string"
+            },
+            "port": {
+              "type": "number"
+            },
+            "status": {
+              "type": "string"
+            },
+            "username": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "db_type",
+            "host",
+            "port",
+            "database_name",
+            "health_status",
+            "health_score",
+            "status",
+            "created_at",
+            "hasCredential",
+            "credentialVersion"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "DatabaseType": {
+        "anyOf": [
+          {
+            "const": "mysql",
+            "type": "string"
+          },
+          {
+            "const": "postgresql",
+            "type": "string"
+          },
+          {
+            "const": "oracle",
+            "type": "string"
+          },
+          {
+            "const": "dameng",
+            "type": "string"
+          },
+          {
+            "const": "mongodb",
+            "type": "string"
+          },
+          {
+            "const": "redis",
+            "type": "string"
+          },
+          {
+            "const": "elasticsearch",
+            "type": "string"
+          }
+        ]
+      },
+      "HealthResponse": {
+        "$id": "HealthResponse",
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ok",
+            "type": "string"
+          },
+          "timestamp": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "timestamp"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "bearerFormat": "JWT",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "Slide Public API",
+    "version": "0.9.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/adapters/capabilities": {
+      "get": {
+        "operationId": "getAdapterCapabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdapterCapabilitiesResponse"
+                }
+              }
+            },
+            "description": "Database adapter capabilities"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/database/instances": {
+      "get": {
+        "operationId": "listDatabaseInstances",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseInstancesResponse"
+                }
+              }
+            },
+            "description": "Redacted managed database instances"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/health": {
+      "get": {
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Service health"
+          }
+        }
+      }
+    }
+  }
+}

@@ -2,16 +2,26 @@
  * Slide - Database Operations API Server
  */
 import 'dotenv/config';
+import { randomUUID } from 'node:crypto';
 
 // 防止 cron 任务中的未处理异常导致进程退出
-process.on('uncaughtException', (err) => console.error('⚠️ 未捕获异常:', err.message));
-process.on('unhandledRejection', (reason) => console.error('⚠️ 未处理拒绝:', reason));
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ 未捕获异常:', err.message);
+  process.exitCode = 1;
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('⚠️ 未处理拒绝:', reason);
+  process.exitCode = 1;
+});
 
 import Fastify from 'fastify';
-import { randomBytes, createHash } from 'crypto';
-import jwt from 'jsonwebtoken';
 import cors from '@fastify/cors';
 import { authDatabaseService } from './src/auth-database-service.js';
+import { createVerifyToken } from './src/auth-middleware.js';
+import {
+  actorContextService,
+  signAccessToken,
+} from './src/auth/actor-context.js';
 import { requirePermission } from './src/auth/require-permission.js';
 import { requireInstanceAccess } from './src/auth/require-instance-access.js';
 import { RbacService } from './src/auth/rbac-service.js';
@@ -26,8 +36,13 @@ import { metricsDatabaseService } from './src/metrics-database-service.js';
 import { databaseService } from './src/database-service.js';
 import { llmService } from './src/llm-service.js';
 import { dbConnection } from './src/db-connection.js';
+import { loadSecurityConfig } from './src/config/security-config.js';
+import { publicInstanceDto, publicNotificationDto, publicServerDto } from './src/security/public-dto.js';
+import { AdapterCapabilitiesResponseSchema, DatabaseInstancesResponseSchema, HealthResponseSchema } from './src/contracts/public-api.js';
 import { monitorCollector } from './src/monitor-collector.js';
 import { chatDatabaseService } from './src/chat-database-service.js';
+import { handleChatSend } from './src/chat-handler.js';
+import { registerChatRoutes } from './src/chat-routes.js';
 import { reportService } from './src/report-service.js';
 import { reportDatabaseService } from './src/report-database-service.js';
 import { reportConfigService } from './src/report-config-database-service.js';
@@ -58,11 +73,24 @@ import { getAgentGreeting } from './src/agent-service.js';
 import { scoringConfigService } from './src/scoring-config-service.js';
 import { brandingConfigService } from './src/branding-config-service.js';
 import { consistencyChecker } from './src/consistency-checker.js';
+import { CapacityConsistencyMonitor, createCapacityConsistencyJob } from './src/capacity-consistency-monitor.js';
 import { userPreferenceService } from './src/user-preference-service.js';
 import { collectionCapabilityTracker } from './src/collection-capabilities.js';
+import { resourceService } from './src/resources/resource-service.js';
+import { capabilityService } from './src/resources/capability-service.js';
+import { observationService } from './src/resources/observation-service.js';
 import { sqlAuditService } from './src/sql-audit-service.js';
 import { queryAuditLogs, auditLogManager, DatabaseAuditLogStore } from './src/audit/audit-log.js';
 import { sqlExecutor } from './src/sql-executor.js';
+import { classifySql } from './src/sql-validator.js';
+import { PersistentOperationService } from './src/operations/operation-service.js';
+import { MigrationRunner } from './src/migrations/runner.js';
+import { WorkerLease } from './src/lifecycle/worker-lease.js';
+import { JobRegistry } from './src/workflows/job-registry.js';
+import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.js';
+import { createNotificationDispatchJob, isAlertEligibleForChannel, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
+import { createReportNotificationJob, createReportScheduleJob, MysqlReportOccurrenceStore, ReportScheduler } from './src/report-scheduler.js';
+import { assertCreatableDatabaseType, listAdapterCapabilities } from './src/adapters/capability-matrix.js';
 import { approvalService } from './src/approval-service.js';
 import { databaseLogService } from './src/database-log-service.js';
 import * as fs from 'fs/promises';
@@ -76,7 +104,7 @@ import { getAgentEngine, createLLMProvider, loadPlatformTools } from './src/adap
 import { DirectAdapter } from './src/adapter/direct-adapter.js';
 import { AgentRunner } from '@slide/agent-core';
 import { agentManagementService } from './src/agent-management-service.js';
-import { startSessionCleanup } from './src/session-cleanup.js';
+import { startSessionCleanup, stopSessionCleanup } from './src/session-cleanup.js';
 import { loadPredefinedSkills, skillRegistry } from './src/skills/loader.js';
 import { promptManager } from './src/prompts/prompt-manager.js';
 import { serverDatabaseService } from './src/server-database-service.js';
@@ -88,47 +116,48 @@ const fastify = Fastify({
 });
 
 // JWT 密钥
-const JWT_SECRET = process.env.JWT_SECRET_KEY || randomBytes(32).toString('hex');
+const securityConfig = loadSecurityConfig();
+const JWT_SECRET = securityConfig.jwtSecret || 'development-only-jwt-secret-not-for-production';
 const JWT_EXPIRES_IN = '1h';
 const rbacService = new RbacService();
+const operationService = new PersistentOperationService(() => dbConnection.getPool() as any);
+const workflowWorkerId = randomUUID();
+// Set only after the control-plane database and worker registry are ready.
+let notificationWorkflowStore: MysqlWorkflowStore | undefined;
 
-// JWT 验证中间件
-async function verifyToken(request: any, reply: any) {
-  const authHeader = request.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return reply.code(401).send({ error: '未提供认证令牌' });
-  }
-
-  const token = authHeader.split(' ')[1];
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
-    // 验证用户状态和角色（防止 JWT 在角色/状态变更后仍然有效）
-    try {
-      const currentUser = await authDatabaseService.getUserById(decoded.userId);
-      if (!currentUser) {
-        // 用户不存在、被删除或状态已改为 inactive/locked
-        return reply.code(401).send({ error: '用户已失效，请重新登录' });
+function approvalOperationLifecycle(actorId: number) {
+  return {
+    onClaimed: async (approval: { operation_id: string | null; id: number }) => {
+      if (approval.operation_id) {
+        await operationService.transition(approval.operation_id, 'claimed', 'APPROVAL_CLAIMED', actorId, { approvalRequestId: approval.id });
       }
-      // role removed in Phase 84: users.role column dropped by migration
-      (request as any).user = decoded;
-    } catch {
-      // DB 查询失败时降级处理：使用 JWT 中的缓存角色，不影响现有请求
-      console.warn('[auth] 用户状态查询失败，使用 JWT 缓存角色');
-      (request as any).user = decoded;
-    }
-  } catch (err) {
-    return reply.code(401).send({ error: '无效的认证令牌' });
-  }
+    },
+    onExecutionStarted: async (approval: { operation_id: string | null }) => {
+      if (approval.operation_id) await operationService.transition(approval.operation_id, 'running', 'APPROVAL_EXECUTION_STARTED', actorId);
+    },
+    onCompleted: async (approval: { operation_id: string | null; id: number }, result: { success: boolean; error?: string }, executed: boolean) => {
+      if (approval.operation_id) {
+        await operationService.transition(
+          approval.operation_id,
+          result.success ? 'succeeded' : 'failed',
+          result.success ? (executed ? 'APPROVAL_EXECUTION_SUCCEEDED' : 'APPROVAL_GRANTED') : 'APPROVAL_EXECUTION_FAILED',
+          actorId,
+          result.success ? { approvalRequestId: approval.id } : { approvalRequestId: approval.id, error: result.error ?? 'execution_failed' },
+        );
+      }
+    },
+    onRejected: async (requestId: number) => {
+      const approval = await approvalService.getRequestById(requestId);
+      if (approval?.operation_id) {
+        await operationService.transition(approval.operation_id, 'cancelled', 'APPROVAL_REJECTED', actorId, { approvalRequestId: requestId });
+      }
+    },
+  };
 }
 
-async function start() {
-  // 安全检查：ENCRYPTION_KEY 必须配置
-  if (!process.env.ENCRYPTION_KEY || process.env.ENCRYPTION_KEY.length < 32) {
-    console.warn('⚠  ENCRYPTION_KEY 未设置或长度不足 32 字符');
-    console.warn('   请在 .env 中添加：ENCRYPTION_KEY=your-random-key-at-least-32-chars');
-    console.warn('   已加密的数据库密码仍可用旧默认值解密，但新加密数据不安全。');
-  }
+const verifyToken = createVerifyToken(JWT_SECRET, actorContextService);
 
+async function start() {
   // 初始化数据库连接
   console.log('🔄 正在初始化数据库连接...');
   const dbInitialized = await dbConnection.initialize();
@@ -140,33 +169,21 @@ async function start() {
 
   // 初始化 SQL 执行历史持久化存储
   const pool = dbConnection.getPool();
+  if (!pool) throw new Error('数据库连接池不可用');
+
+  // Fail fast before registering auth routes or starting the WS adapter.
+  await new MigrationRunner(pool as any).run();
+  console.log('✅ Schema migration ledger is current');
+
   if (pool) {
     const dbAuditLogStore = new DatabaseAuditLogStore(pool);
     auditLogManager.setPersistentStore(dbAuditLogStore);
     console.log('✅ SQL 执行历史持久化存储已就绪');
   }
 
-  // 自动应用必要的数据表迁移
-  if (pool) {
-    for (const migration of [
-      '014_add_user_preferences.sql',
-      '018_add_execution_trace.sql',
-      '021_add_server_alert_fields.sql',
-      '022_unified_observability.sql',
-    ]) {
-      try {
-        const fs = await import('fs');
-        const migrationPath = new URL(`./sql/migrations/${migration}`, import.meta.url).pathname;
-        const sql = fs.readFileSync(migrationPath, 'utf8');
-        // Split multi-statement SQL into individual queries
-        const statements = sql.split(';').filter((s: string) => s.trim());
-        for (const stmt of statements) {
-          try { await pool.query(stmt); } catch { /* individual stmt may already be applied */ }
-        }
-      } catch { /* migration file may not exist */ }
-    }
-  }
-
+  // No timers, connection recovery, or provider work may run before the
+  // listener is acquired. A second process must fail without worker effects.
+  const initializeControlPlane = async () => {
   // 加载预定义技能到 skillRegistry
   try {
     const skills = await loadPredefinedSkills();
@@ -232,6 +249,7 @@ async function start() {
   } catch (e: any) {
     console.warn('⚠️ 清理过期 refresh token 失败:', e.message);
   }
+  };
 
   // 注册 CORS
   await fastify.register(cors, {
@@ -239,7 +257,7 @@ async function start() {
   });
 
   // 健康检查
-  fastify.get('/api/health', async (request, reply) => {
+  fastify.get('/api/health', { schema: { response: { 200: HealthResponseSchema } } }, async (request, reply) => {
     reply.send({
       status: 'ok',
       timestamp: new Date().toISOString(),
@@ -253,6 +271,14 @@ async function start() {
       reply.send(result);
     } catch (err: any) {
       reply.code(500).send({ error: err.message });
+    }
+  });
+
+  fastify.get('/api/health/readiness', { preHandler: [verifyToken] }, async (_request, reply) => {
+    try {
+      return reply.send(await consistencyChecker.resourceHealthTruth());
+    } catch (err: any) {
+      return reply.code(500).send({ error: err.message });
     }
   });
 
@@ -348,7 +374,7 @@ async function start() {
     const check = strictBody(request.body as Record<string, unknown>,
       ['username', 'password'], 'POST /api/auth/login');
     if (check.error) return reply.code(400).send(check.error);
-    const { username, password } = check.body;
+    const { username, password } = check.body as { username: string; password: string };
 
     if (!username || !password) {
       return reply.code(400).send({ error: '用户名和密码不能为空' });
@@ -366,28 +392,21 @@ async function start() {
         return reply.code(401).send({ error: '用户名或密码错误' });
       }
 
-      // 生成 JWT 令牌
-      const token = jwt.sign(
-        {
-          userId: user.id,
-          username: user.username,
-          // role removed in Phase 84: users.role column dropped by migration
-        },
-        JWT_SECRET,
-        { expiresIn: JWT_EXPIRES_IN }
+      const actor = await actorContextService.loadActiveActor(
+        user.id,
+        undefined,
+        String(request.id),
       );
-
-      // 生成 refresh token (7天有效期)
-      const rt = await rbacService.createRefreshToken(user.id, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+      const token = signAccessToken(actor, JWT_SECRET, JWT_EXPIRES_IN);
+      const refreshToken = await actorContextService.issueRefreshToken(actor);
 
       reply.send({
         token,
-        refreshToken: rt.token,
+        refreshToken,
         expiresIn: 3600,
         user: {
-          id: user.id,
-          username: user.username,
-          // role removed in Phase 84: users.role column dropped by migration
+          id: actor.userId,
+          username: actor.username,
         },
       });
     } catch (error: any) {
@@ -402,46 +421,20 @@ async function start() {
     const { refreshToken } = request.body as { refreshToken: string };
     if (!refreshToken) return reply.code(400).send({ error: '缺少 refreshToken' });
 
-    const tokenHash = createHash('sha256').update(refreshToken).digest('hex');
-    const stored = await rbacService.validateRefreshToken(tokenHash);
-    if (!stored) return reply.code(401).send({ error: '无效的 refresh token' });
-
-    // Replay detection per D-02: if already revoked, revoke ALL tokens for this user
-    if (stored.revoked) {
-      console.warn('[security] Refresh token replay detected for user', stored.user_id);
-      await rbacService.revokeAllUserTokens(stored.user_id);
-      return reply.code(401).send({ error: 'refresh token 已被使用，请重新登录' });
-    }
-
-    // Check expiry
-    if (new Date(stored.expires_at) < new Date()) {
-      return reply.code(401).send({ error: 'refresh token 已过期，请重新登录' });
-    }
-
-    // Revoke current token (rotation)
-    await rbacService.revokeRefreshToken(stored.id);
-
-    // Fetch user for username claim in JWT
-    let username = String(stored.user_id);
     try {
-      const user = await authDatabaseService.getUserById(stored.user_id);
-      if (user) username = user.username;
-    } catch {}
-
-    // Issue new tokens
-    const newAccessToken = jwt.sign(
-      { userId: stored.user_id, username },
-      JWT_SECRET,
-      { expiresIn: '1h' }
-    );
-
-    const rt = await rbacService.createRefreshToken(stored.user_id, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
-
-    reply.send({
-      token: newAccessToken,
-      refreshToken: rt.token,
-      expiresIn: 3600,
-    });
+      const rotated = await actorContextService.rotateRefreshToken(
+        refreshToken,
+        String(request.id),
+      );
+      const newAccessToken = signAccessToken(rotated.actor, JWT_SECRET, JWT_EXPIRES_IN);
+      reply.send({
+        token: newAccessToken,
+        refreshToken: rotated.refreshToken,
+        expiresIn: 3600,
+      });
+    } catch {
+      reply.code(401).send({ error: '无效的 refresh token' });
+    }
   });
 
   // ========== 权限查询 API ==========
@@ -450,8 +443,7 @@ async function start() {
     try {
       const user = (request as any).user;
       if (!user) return reply.code(401).send({ error: '请先登录' });
-      const permissions = await rbacService.getUserPermissions(user.userId);
-      reply.send(Array.from(permissions));
+      reply.send([...user.permissions]);
     } catch (error: any) {
       console.error('获取权限失败:', error);
       reply.code(500).send({ error: '获取权限失败：' + error.message });
@@ -480,7 +472,7 @@ async function start() {
         'POST /api/users',
         { role: '角色分配请使用 POST /api/v1/rbac/users/{userId}/roles' });
       if (check.error) return reply.code(400).send(check.error);
-      const { username, password, email } = check.body;
+      const { username, password, email } = check.body as { username: string; password: string; email?: string };
       if (!username || !password) {
         return reply.code(400).send({ error: '用户名和密码不能为空' });
       }
@@ -507,13 +499,13 @@ async function start() {
         'PUT /api/users/:id',
         { role: '角色更新请使用 POST/DELETE /api/v1/rbac/users/{userId}/roles' });
       if (check.error) return reply.code(400).send(check.error);
-      const { status, email } = check.body;
+      const { status, email } = check.body as { status?: string; email?: string };
       const validStatuses = ['active', 'inactive', 'locked'];
-      if (status && !validStatuses.includes(status)) {
+      if (status && !validStatuses.includes(String(status))) {
         return reply.code(400).send({ error: '无效的状态' });
       }
       // role 更新通过 RBAC API (POST /api/v1/rbac/users/:userId/roles) 完成
-      const result = await authDatabaseService.updateUserById(Number(id), { status });
+      const result = await authDatabaseService.updateUserById(Number(id), { status: String(status) });
       if (!result.success) {
         return reply.code(400).send(result);
       }
@@ -598,10 +590,10 @@ async function start() {
   });
 
   // 数据库实例列表
-  fastify.get('/api/database/instances', { preHandler: [verifyToken] }, async (request, reply) => {
+  fastify.get('/api/database/instances', { preHandler: [verifyToken], schema: { response: { 200: DatabaseInstancesResponseSchema } } }, async (request, reply) => {
     try {
-      const instances = await instanceDatabaseService.getAllInstances();
-      reply.send(instances);
+      const instances = await instanceDatabaseService.getManagedInstances();
+      reply.send(instances.map((instance) => publicInstanceDto(instance as unknown as Record<string, unknown>)));
     } catch (error: any) {
       reply.code(500).send({ error: '获取实例列表失败：' + error.message });
     }
@@ -715,7 +707,7 @@ async function start() {
       const check = strictBody(request.body as Record<string, unknown>,
           ['providerName'], 'POST /api/llm/test');
         if (check.error) return reply.code(400).send(check.error);
-        const { providerName } = check.body;
+        const { providerName } = check.body as { providerName: string };
       const provider = await llmDatabaseService.getProviderByName(providerName);
       if (!provider) return reply.code(404).send({ error: '提供商不存在' });
       const apiKey = provider.api_key_encrypted
@@ -836,60 +828,115 @@ async function start() {
     }
   });
 
-  // 聊天历史
+  await registerChatRoutes(fastify, {
+    verifyToken,
+    service: chatDatabaseService,
+    handleChatSend,
+  });
 
-	  // 聊天发送 (DirectAdapter / IAgentEngine)
-	  fastify.post('/api/chat/send', { preHandler: [verifyToken] }, async (request, reply) => {
-	    try {
-	      const check = strictBody(request.body as Record<string, unknown>,
-	        ['message', 'sessionKey'], 'POST /api/chat/send');
-	      if (check.error) return reply.code(400).send(check.error);
-	      const { message, sessionKey } = check.body;
-	      if (!message) {
-	        return reply.code(400).send({ error: 'message is required' });
-	      }
-	      const { handleChatSend } = await import('./src/chat-handler.js');
-	      const result = await handleChatSend({
-	        sessionKey: sessionKey || `api_${Date.now()}`,
-	        message,
-	      });
-	      reply.send({ reply: result.finalContent, usage: result.usage });
-	    } catch (error: any) {
-	      reply.code(500).send({ error: 'Chat send failed: ' + error.message });
-	    }
-	  });
-
-  fastify.get('/api/chat/history', { preHandler: [verifyToken] }, async (request, reply) => {
+  fastify.get('/api/resources/:type/:id', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
-      const { sessionKey, limit: limitStr } = request.query as { sessionKey?: string; limit?: string };
-      const limit = limitStr ? parseInt(limitStr, 10) || 200 : 200;
-      const parseContent = (rawContent: string) => {
-        const thinkRe = /<think>([\s\S]*?)<\/think>/;
-        const match = thinkRe.exec(rawContent);
-        if (match) {
-          const thinking = match[1].trim();
-          const text = rawContent.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
-          return { content: [{ type: 'thinking', thinking }, { type: 'text', text }] };
-        }
-        return { content: rawContent };
-      };
-      const formatMsg = (msg: any) => ({
-        role: msg.role,
-        ...parseContent(msg.content || ''),
-        timestamp: msg.created_at ? new Date(msg.created_at).getTime() : Date.now(),
-      });
-      if (!sessionKey) {
-        return reply.code(400).send({ error: 'sessionKey parameter is required' });
-      }
-      const msgs = await chatDatabaseService.getMessages(sessionKey, limit);
-      return reply.send({ messages: msgs.map(formatMsg) });
+      const { type, id } = request.params as { type: 'instance' | 'server'; id: string };
+      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || Number(id) < 1) return reply.code(400).send({ error: 'Invalid resource reference' });
+      return reply.send({ detail: await resourceService.detail((request as any).user, { type, id: Number(id) }) });
     } catch (error: any) {
-      reply.code(500).send({ error: '获取聊天历史失败：' + error.message });
+      return reply.code(error?.message === 'RESOURCE_FORBIDDEN' || error?.message === 'RESOURCE_NOT_FOUND' ? 404 : 500).send({ error: error?.message || 'Resource lookup failed' });
+    }
+  });
+
+  fastify.get('/api/resources/:type/:id/relations', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { type, id } = request.params as { type: 'instance' | 'server'; id: string };
+      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || Number(id) < 1) {
+        return reply.code(400).send({ error: 'Invalid resource reference' });
+      }
+      const relations = await resourceService.currentRelations((request as any).user, { type, id: Number(id) });
+      return reply.send({ relations });
+    } catch (error: any) {
+      return reply.code(error?.message === 'RESOURCE_FORBIDDEN' ? 404 : 500).send({ error: error?.message || 'Resource lookup failed' });
+    }
+  });
+
+  fastify.post('/api/resources/:type/:id/relations', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { type, id } = request.params as { type: 'instance' | 'server'; id: string };
+      const body = request.body as Record<string, unknown>;
+      const target = body?.target as { type?: 'instance' | 'server'; id?: number } | undefined;
+      if ((type !== 'instance' && type !== 'server') || !target || (target.type !== 'instance' && target.type !== 'server') || !Number.isInteger(Number(id)) || !Number.isInteger(target.id)) {
+        return reply.code(400).send({ error: 'Invalid relation reference' });
+      }
+      await resourceService.createRelation((request as any).user, {
+        source: { type, id: Number(id) }, target: { type: target.type, id: target.id },
+        relationType: body.relationType as any, provenance: typeof body.provenance === 'string' ? body.provenance : '',
+        validFrom: body.validFrom ? new Date(String(body.validFrom)) : new Date(),
+        validUntil: body.validUntil ? new Date(String(body.validUntil)) : null,
+      });
+      return reply.code(201).send({ ok: true });
+    } catch (error: any) {
+      const code = error?.message === 'RESOURCE_FORBIDDEN' ? 404 : error?.message?.startsWith('RESOURCE_') ? 400 : 500;
+      return reply.code(code).send({ error: error?.message || 'Resource relation failed' });
+    }
+  });
+
+  fastify.get('/api/resources/:type/:id/capabilities/:key', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { type, id, key } = request.params as { type: 'instance' | 'server'; id: string; key: string };
+      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || !key) return reply.code(400).send({ error: 'Invalid capability reference' });
+      const capability = await capabilityService.get((request as any).user, { type, id: Number(id) }, key);
+      return reply.send({ capability });
+    } catch (error: any) {
+      return reply.code(error?.message === 'RESOURCE_FORBIDDEN' ? 404 : 500).send({ error: error?.message || 'Capability lookup failed' });
+    }
+  });
+
+  fastify.put('/api/resources/:type/:id/capabilities/:key', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { type, id, key } = request.params as { type: 'instance' | 'server'; id: string; key: string };
+      const body = request.body as Record<string, unknown>;
+      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || !key || typeof body.state !== 'string') return reply.code(400).send({ error: 'Invalid capability payload' });
+      await capabilityService.put((request as any).user, {
+        resource: { type, id: Number(id) }, key, state: body.state as any,
+        evidence: body.evidence as Record<string, unknown> | undefined, reason: typeof body.reason === 'string' ? body.reason : undefined,
+        checkedAt: body.checkedAt ? new Date(String(body.checkedAt)) : new Date(), validUntil: body.validUntil ? new Date(String(body.validUntil)) : null,
+      });
+      return reply.send({ ok: true });
+    } catch (error: any) {
+      const code = error?.message === 'RESOURCE_FORBIDDEN' ? 404 : error?.message?.startsWith('CAPABILITY_') ? 400 : 500;
+      return reply.code(code).send({ error: error?.message || 'Capability update failed' });
+    }
+  });
+
+  fastify.get('/api/resources/:type/:id/observations/:metricId', { preHandler: [verifyToken] }, async (request, reply) => {
+    try {
+      const { type, id, metricId } = request.params as { type: 'instance' | 'server'; id: string; metricId: string };
+      const { validForMs, from, to, limit } = request.query as { validForMs?: string; from?: string; to?: string; limit?: string };
+      const validity = validForMs === undefined ? 300_000 : Number(validForMs);
+      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || !metricId || !Number.isFinite(validity) || validity < 1 || validity > 86_400_000) {
+        return reply.code(400).send({ error: 'Invalid observation query' });
+      }
+      if (from !== undefined || to !== undefined || limit !== undefined) {
+        const fromAt = new Date(String(from));
+        const toAt = new Date(String(to));
+        const parsedLimit = limit === undefined ? undefined : Number(limit);
+        if (!from || !to || Number.isNaN(fromAt.getTime()) || Number.isNaN(toAt.getTime()) || (parsedLimit !== undefined && (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 1_000))) {
+          return reply.code(400).send({ error: 'Invalid observation range query' });
+        }
+        const observations = await observationService.range((request as any).user, { type, id: Number(id) }, metricId, {
+          from: fromAt, to: toAt, validForMs: validity, limit: parsedLimit,
+        });
+        return reply.send({ observations });
+      }
+      const observation = await observationService.latest((request as any).user, { type, id: Number(id) }, metricId, { validForMs: validity });
+      return reply.send({ observation });
+    } catch (error: any) {
+      const code = error?.message === 'RESOURCE_FORBIDDEN' ? 404 : error?.message === 'METRIC_ID_UNSUPPORTED' || error?.message === 'OBSERVATION_RANGE_INVALID' ? 400 : 500;
+      return reply.code(code).send({ error: error?.message || 'Observation lookup failed' });
     }
   });
 
   // ========== Agent List API (DirectAdapter) ==========
   fastify.get('/api/agents', { preHandler: [verifyToken] }, async (_request, reply) => {
+    const engine = await getAgentEngine();
     reply.send({
       defaultId: 'slide-db-ops',
       mainKey: 'main',
@@ -897,90 +944,8 @@ async function start() {
       agents: [
         { id: 'slide-db-ops', name: 'Slide', identity: { name: 'Slide', avatarUrl: '' } },
       ],
+      capabilities: engine.capabilities().features,
     });
-  });
-
-  // ========== Chat Sessions List API (DirectAdapter) ==========
-  fastify.get('/api/sessions', { preHandler: [verifyToken] }, async (request, reply) => {
-    try {
-      const { activeMinutes } = request.query as { activeMinutes?: string };
-      const chatDb = (await import('./src/chat-database-service.js')).chatDatabaseService;
-      const sessions = await chatDb.getSessions();
-      const now = Date.now();
-      const filtered = activeMinutes
-        ? (sessions || []).filter((s: any) => {
-            const lastMsg = s.last_message_at ? new Date(s.last_message_at).getTime() : 0;
-            return (now - lastMsg) < parseInt(activeMinutes, 10) * 60 * 1000;
-          })
-        : (sessions || []);
-      reply.send({
-        ok: true,
-        sessions: await Promise.all(filtered.map(async (s: any) => {
-          const metadata = s.metadata ? (typeof s.metadata === 'string' ? JSON.parse(s.metadata) : s.metadata) : null;
-          return {
-            key: s.session_id,
-            kind: 'direct',
-            label: s.title || s.session_id,
-            updatedAt: s.last_message_at ? new Date(s.last_message_at).getTime() : null,
-            message_count: s.message_count ?? 0,
-            status: metadata?.status || 'active',
-            instance_id: s.instance_id ?? null,
-          };
-        })),
-        defaults: {},
-      });
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取会话列表失败：' + error.message });
-    }
-  });
-
-  // PATCH /api/sessions/:key — 更新会话设置（model、thinkingLevel）
-  fastify.patch('/api/sessions/:key', { preHandler: [verifyToken] }, async (request, reply) => {
-    try {
-      const { key } = request.params as { key: string };
-      const body = request.body as { model?: string | null; thinkingLevel?: string | null };
-      await chatDatabaseService.updateSessionSettings(key, {
-        model: body.model,
-        thinkingLevel: body.thinkingLevel,
-      });
-      reply.send({ ok: true });
-    } catch (error: any) {
-      reply.code(500).send({ error: '更新会话设置失败：' + error.message });
-    }
-  });
-
-  // DELETE /api/sessions/:key — 删除会话及其消息
-  fastify.delete('/api/sessions/:key', { preHandler: [verifyToken] }, async (request, reply) => {
-    try {
-      const { key } = request.params as { key: string };
-      const session = await chatDatabaseService.getSessionBySessionId(key);
-      if (!session) {
-        return reply.code(404).send({ ok: false, error: 'Session not found' });
-      }
-      const deleted = await chatDatabaseService.deleteSession(key);
-      return { ok: deleted };
-    } catch (error: any) {
-      reply.code(500).send({ error: '删除会话失败：' + error.message });
-    }
-  });
-
-  // POST /api/sessions/:key/cap — 强制限制会话消息数量
-  fastify.post('/api/sessions/:key/cap', { preHandler: [verifyToken] }, async (request, reply) => {
-    try {
-      const { key } = request.params as { key: string };
-      const { maxMessages } = request.body as { maxMessages: number };
-      if (!maxMessages || maxMessages < 1) {
-        return reply.code(400).send({ ok: false, error: 'maxMessages must be a positive number' });
-      }
-      const session = await chatDatabaseService.getSessionBySessionId(key);
-      if (!session) {
-        return reply.code(404).send({ ok: false, error: 'Session not found' });
-      }
-      const deleted = await chatDatabaseService.enforceMessageCap(key, maxMessages);
-      return { ok: true, deleted };
-    } catch (error: any) {
-      reply.code(500).send({ error: '限制消息数量失败：' + error.message });
-    }
   });
 
   // ========== Agent Management API ==========
@@ -1162,6 +1127,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // ========== 数据库实例管理 API ==========
 
+  fastify.get('/api/adapters/capabilities', { preHandler: [verifyToken], schema: { response: { 200: AdapterCapabilitiesResponseSchema } } }, async (_request, reply) => reply.send({ adapters: listAdapterCapabilities() }));
+
   // 创建实例
   fastify.post('/api/database/instances', { preHandler: [verifyToken, requirePermission('instance:create')] }, async (request, reply) => {
     try {
@@ -1186,7 +1153,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (!instance) {
         return reply.code(404).send({ error: '实例不存在' });
       }
-      reply.send(instance);
+      reply.send(publicInstanceDto(instance as unknown as Record<string, unknown>));
     } catch (error: any) {
       reply.code(500).send({ error: '获取实例详情失败：' + error.message });
     }
@@ -1245,6 +1212,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         db_type: instance.db_type,
       });
       if (added) {
+        await instanceDatabaseService.markInstanceActive(Number(id));
         reply.send({ success: true, message: '连接已建立' });
       } else {
         reply.code(500).send({ success: false, error: '连接建立失败' });
@@ -1260,7 +1228,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['host', 'port', 'username', 'password', 'database_name', 'db_type'], 'POST /api/database/instances/test-connection');
         if (check.error) return reply.code(400).send(check.error);
-        const { host, port, username, password, database_name, db_type } = check.body;
+        const { host, port, username, password, database_name, db_type } = check.body as { host: string; port: number; username: string; password: string; database_name?: string; db_type: string };
+      try { assertCreatableDatabaseType(String(db_type)); } catch (error: any) { return reply.code(400).send({ error: error.message }); }
       const result = await instanceDatabaseService.testConnection({
         db_type,
         host,
@@ -1281,9 +1250,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.get('/api/servers', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
     try {
       const servers = await serverDatabaseService.getAllServers();
-      // Strip credential_encrypted from list response — never send encrypted blob to frontend
-      const safeServers = servers.map(({ credential_encrypted, ...rest }: any) => rest);
-      reply.send(safeServers);
+      reply.send(servers.map((server) => publicServerDto(server as unknown as Record<string, unknown>)));
     } catch (error: any) {
       reply.code(500).send({ error: '获取服务器列表失败：' + error.message });
     }
@@ -1306,7 +1273,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       } catch {
         // If decryption fails, skip — frontend will show empty username field
       }
-      reply.send(safeServer);
+      reply.send(publicServerDto({ ...safeServer, credential_encrypted }));
     } catch (error: any) {
       reply.code(500).send({ error: '获取服务器详情失败：' + error.message });
     }
@@ -1371,8 +1338,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['host', 'port', 'credential_type', 'credential_username', 'credential_value'], 'POST /api/servers/test-connection');
         if (check.error) return reply.code(400).send(check.error);
-        const { host, port, credential_type, credential_username, credential_value } = check.body;
-      const result = await serverDatabaseService.testConnection(host, Number(port), credential_type, credential_value, credential_username);
+        const { host, port, credential_type, credential_username, credential_value } = check.body as { host: string; port: number; credential_type: string; credential_username: string; credential_value: string };
+      const result = await serverDatabaseService.testConnection(String(host), Number(port), String(credential_type), String(credential_value), String(credential_username));
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: '测试连接失败：' + error.message });
@@ -1590,7 +1557,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // SQL 执行
-  fastify.post('/api/database/instances/:id/execute', { preHandler: [verifyToken, requirePermission('instance:query'), requireInstanceAccess('read-write')] }, async (request, reply) => {
+  fastify.post('/api/database/instances/:id/execute', { preHandler: [verifyToken, requirePermission('instance:query'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const check = strictBody(request.body as Record<string, unknown>,
@@ -1599,17 +1566,54 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { sql, database } = check.body;
       if (!sql) return reply.code(400).send({ error: '缺少参数：sql' });
 
-      const user = (request as any).user;
-      const result = await sqlExecutor.executeSql(Number(id), sql, {
-        userId: String(user?.userId || ''),
-        username: user?.username || 'unknown',
-        ipAddress: request.ip,
-        database,
-      });
-      if (!result.success) {
-        return reply.code(400).send(result);
+      const instance = await instanceDatabaseService.getInstanceById(Number(id));
+      if (!instance) return reply.code(404).send({ error: '实例不存在' });
+      const classification = classifySql(String(sql), instance.db_type);
+      if (classification.commandType !== 'read') {
+        return reply.code(409).send({
+          reasonCode: 'NEEDS_APPROVAL',
+          classification: classification.commandType,
+          detail: classification.reasonCode,
+          approvalUrl: '/api/approval/submit',
+        });
       }
-      reply.send(result);
+
+      const user = (request as any).user;
+      const rawIdempotency = request.headers['idempotency-key'];
+      const idempotencyKey = typeof rawIdempotency === 'string' && rawIdempotency.length <= 128
+        ? rawIdempotency
+        : randomUUID();
+      const operation = await operationService.create({
+        actorId: user.userId,
+        origin: 'sql-console',
+        resource: { type: 'database-instance', id: String(id) },
+        commandType: classification.commandType,
+        risk: 'low',
+        idempotencyKey,
+        correlationId: user.requestId,
+      });
+      if (operation.state !== 'queued') {
+        return reply.code(409).send({ reasonCode: 'OPERATION_ALREADY_EXISTS', operationId: operation.id, state: operation.state });
+      }
+      await operationService.transition(operation.id, 'claimed', 'READ_CLAIMED', user.userId);
+      await operationService.transition(operation.id, 'running', 'READ_STARTED', user.userId);
+      const result = await sqlExecutor.executeSql(Number(id), String(sql), {
+        userId: String(user.userId),
+        username: user.username,
+        ipAddress: request.ip,
+        database: typeof database === 'string' ? database : undefined,
+      });
+      await operationService.transition(
+        operation.id,
+        result.success ? 'succeeded' : 'failed',
+        result.success ? 'READ_SUCCEEDED' : 'READ_FAILED',
+        user.userId,
+        result.success ? { rowCount: result.rowCount ?? 0, durationMs: result.duration_ms ?? 0 } : { error: result.error ?? 'execution_failed' },
+      );
+      if (!result.success) {
+        return reply.code(400).send({ ...result, operationId: operation.id });
+      }
+      reply.send({ ...result, operationId: operation.id, correlationId: user.requestId });
     } catch (error: any) {
       reply.code(500).send({ error: 'SQL 执行失败：' + error.message });
     }
@@ -1624,13 +1628,34 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { instance_id, sql_text, database_name } = check.body;
       if (!instance_id || !sql_text) return reply.code(400).send({ error: '缺少参数' });
       const user = (request as any).user;
-      const result = await approvalService.submitForApproval({
-        instance_id: Number(instance_id),
-        sql_text,
-        submitted_by: user?.userId,
-        target_database: database_name,
+      const targetInstanceId = Number(instance_id);
+      const canAccess = user.permissions?.includes?.('*') || user.permissions?.includes?.('instance:*') || user.instanceScopes?.[targetInstanceId];
+      if (!canAccess) return reply.code(403).send({ error: '无权访问该实例' });
+      const classification = classifySql(String(sql_text));
+      if (classification.commandType === 'read') {
+        return reply.code(400).send({ reasonCode: 'READ_DOES_NOT_REQUIRE_APPROVAL', executeUrl: `/api/database/instances/${targetInstanceId}/execute` });
+      }
+      const rawIdempotency = request.headers['idempotency-key'];
+      const operation = await operationService.create({
+        actorId: user.userId,
+        origin: 'sql-approval',
+        resource: { type: 'database-instance', id: String(targetInstanceId) },
+        commandType: classification.commandType,
+        risk: classification.commandType === 'ddl' ? 'high' : 'medium',
+        idempotencyKey: typeof rawIdempotency === 'string' && rawIdempotency.length <= 128 ? rawIdempotency : randomUUID(),
+        correlationId: user.requestId,
       });
-      reply.send(result);
+      if (operation.state !== 'queued') return reply.code(409).send({ reasonCode: 'OPERATION_ALREADY_EXISTS', operationId: operation.id, state: operation.state });
+      const result = await approvalService.submitForApproval({
+        instance_id: targetInstanceId,
+        sql_text: String(sql_text),
+        submitted_by: user.userId,
+        target_database: typeof database_name === 'string' ? database_name : undefined,
+        operation_id: operation.id,
+      });
+      if (result.request_id) await operationService.setApproval(operation.id, result.request_id);
+      await operationService.transition(operation.id, 'waiting_approval', 'NEEDS_APPROVAL', user.userId, { approvalRequestId: result.request_id ?? null, commandType: classification.commandType });
+      reply.send({ ...result, operationId: operation.id, correlationId: user.requestId });
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
     }
@@ -1641,20 +1666,23 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['ids', 'action', 'notes', 'execute_ids'], 'POST /api/approval/batch-review');
         if (check.error) return reply.code(400).send(check.error);
-        const { ids, action, notes, execute_ids } = check.body;
+        const { ids, action, notes, execute_ids } = check.body as { ids: number[]; action: string; notes?: string; execute_ids?: number[] };
       if (!Array.isArray(ids) || ids.length === 0 || !ids.every((i: any) => Number.isInteger(i) && i > 0)) {
         return reply.code(400).send({ error: 'ids 必须是非空的正整数数组' });
       }
-      if (!action || !['approve', 'reject'].includes(action)) {
+      if (!action || !['approve', 'reject'].includes(String(action))) {
         return reply.code(400).send({ error: 'action 必须是 approve 或 reject' });
       }
       const user = (request as any).user;
       const items = (ids as number[]).map(id => ({
         id,
-        action: action as 'approve' | 'reject',
+        action: String(action) as 'approve' | 'reject',
         execute_after_approve: execute_ids ? execute_ids.includes(id) : true,
       }));
-      const results = await approvalService.batchReview({ items, reviewed_by: user?.userId, notes: notes || '' });
+      const results = await approvalService.batchReview(
+        { items, reviewed_by: user?.userId, notes: String(notes || '') },
+        () => approvalOperationLifecycle(user.userId),
+      );
 
       // Fire-and-forget per-item notifications
       for (const result of results) {
@@ -1669,8 +1697,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
               const channels = await notificationDatabaseService.getEnabledChannels();
               for (const channel of channels) {
                 const msg = notificationService.buildApprovalMessage(channel.type, {
-                  action: action as 'approve' | 'reject',
-                  notes: notes,
+                  action: String(action) as 'approve' | 'reject',
+                  notes: String(notes || ''),
                   sqlSummary: reqDetail.sql_text.substring(0, 100),
                   instanceName,
                   submitTime: reqDetail.created_at,
@@ -1706,17 +1734,17 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['action', 'notes', 'execute_after_approve'], 'POST /api/approval/:id/review');
         if (check.error) return reply.code(400).send(check.error);
-        const { action, notes, execute_after_approve } = check.body;
-      if (!action || !['approve', 'reject'].includes(action)) {
+        const { action, notes, execute_after_approve } = check.body as { action: string; notes?: string; execute_after_approve?: boolean };
+      if (!action || !['approve', 'reject'].includes(String(action))) {
         return reply.code(400).send({ error: 'action 必须是 approve 或 reject' });
       }
       const user = (request as any).user;
       const result = await approvalService.reviewRequest(Number(id), {
-        action,
+        action: action as 'approve' | 'reject',
         reviewed_by: user?.userId,
-        notes,
+        notes: typeof notes === 'string' ? notes : undefined,
         execute_after_approve: execute_after_approve !== false,
-      });
+      }, approvalOperationLifecycle(user.userId));
 
       // Fire-and-forget notification
       if (result.success) {
@@ -1730,8 +1758,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             const channels = await notificationDatabaseService.getEnabledChannels();
             for (const channel of channels) {
               const message = notificationService.buildApprovalMessage(channel.type, {
-                action,
-                notes,
+                action: action as 'approve' | 'reject',
+                notes: typeof notes === 'string' ? notes : '',
                 sqlSummary: reqDetail.sql_text.substring(0, 100),
                 instanceName,
                 submitTime: reqDetail.created_at,
@@ -1766,6 +1794,46 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       reply.send(list);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
+    }
+  });
+
+  fastify.get('/api/operations', { preHandler: [verifyToken] }, async (request, reply) => {
+    const user = (request as any).user;
+    const rawLimit = Number((request.query as any)?.limit ?? 50);
+    const operations = await operationService.listForActor(user.userId, Number.isSafeInteger(rawLimit) ? rawLimit : 50);
+    return reply.send({ operations });
+  });
+
+  fastify.get('/api/operations/:id', { preHandler: [verifyToken] }, async (request, reply) => {
+    const user = (request as any).user;
+    const operation = await operationService.getForActor(String((request.params as any).id), user.userId);
+    return operation ? reply.send(operation) : reply.code(404).send({ error: 'Operation not found' });
+  });
+
+  fastify.get('/api/operations/:id/events', { preHandler: [verifyToken] }, async (request, reply) => {
+    const user = (request as any).user;
+    const events = await operationService.eventsForActor(String((request.params as any).id), user.userId);
+    return events ? reply.send({ events }) : reply.code(404).send({ error: 'Operation not found' });
+  });
+
+  fastify.post('/api/operations/:id/cancel', { preHandler: [verifyToken] }, async (request, reply) => {
+    const user = (request as any).user;
+    try {
+      const operation = await operationService.cancelForActor(String((request.params as any).id), user.userId);
+      return operation ? reply.send({ operation }) : reply.code(404).send({ error: 'Operation not found' });
+    } catch (error) {
+      return reply.code(409).send({ reasonCode: 'CANCEL_NOT_AVAILABLE' });
+    }
+  });
+
+  fastify.post('/api/operations/:id/retry', { preHandler: [verifyToken] }, async (request, reply) => {
+    const user = (request as any).user;
+    try {
+      const operation = await operationService.retryForActor(String((request.params as any).id), user.userId);
+      if (operation?.approvalId) await approvalService.setOperationId(operation.approvalId, operation.id);
+      return operation ? reply.code(202).send({ operation }) : reply.code(404).send({ error: 'Operation not found' });
+    } catch {
+      return reply.code(409).send({ reasonCode: 'RETRY_NOT_AVAILABLE' });
     }
   });
 
@@ -2179,7 +2247,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         params
       ) as any;
 
-      // Current total — use database_instances (single source of truth) instead of capacity_history
+      // Current total uses the same managed-instance scope shown by instance management.
       let currentTotal = 0;
       if (instance_id) {
         const [current] = await pool.execute(
@@ -2192,8 +2260,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       } else {
         const [current] = await pool.execute(
           `SELECT COALESCE(SUM(data_size_gb), 0) as current_total
-           FROM database_instances
-           WHERE status = 'active'`,
+           FROM database_instances`,
         ) as any;
         currentTotal = Number(current[0]?.current_total || 0);
       }
@@ -2425,14 +2492,14 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const body = request.body as any;
-        const { name, cron, type, instance_id, server_id, format, enabled } = body;
+        const { name, cron, type, instance_id, server_id, format, enabled, notification_channel_ids } = body;
 
         // Validate required fields
         if (!name || !cron || !type) {
           return reply.code(400).send({ error: '缺少必要参数：name, cron, type' });
         }
-        if (!server_id && instance_id === undefined) {
-          return reply.code(400).send({ error: 'instance_id 或 server_id 必须提供其一' });
+        if ((instance_id === undefined || instance_id === null) === (server_id === undefined || server_id === null)) {
+          return reply.code(400).send({ error: 'instance_id 或 server_id 必须且只能提供一个' });
         }
 
         const validTypes = ['health', 'performance', 'slow_query', 'capacity', 'server_health'];
@@ -2445,13 +2512,25 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(400).send({ error: `无效的输出格式：${format}，有效值：${validFormats.join(', ')}` });
         }
 
+        const channelIds = notification_channel_ids === undefined ? [] : notification_channel_ids;
+        if (!Array.isArray(channelIds) || channelIds.length > 50
+          || !channelIds.every((id: unknown) => Number.isSafeInteger(id) && Number(id) > 0)) {
+          return reply.code(400).send({ error: 'notification_channel_ids 必须为最多 50 个正整数' });
+        }
+        const uniqueChannelIds = [...new Set(channelIds.map(Number))];
+        for (const channelId of uniqueChannelIds) {
+          const channel = await notificationDatabaseService.getChannelById(channelId);
+          if (!channel?.enabled) return reply.code(400).send({ error: `通知渠道不可用: ${channelId}` });
+        }
+
         const result = await reportConfigService.createConfig({
           name,
           cron,
           type,
-          instance_id: Number(instance_id),
-          server_id: server_id ? Number(server_id) : undefined,
+          instance_id: instance_id == null ? null : Number(instance_id),
+          server_id: server_id == null ? undefined : Number(server_id),
           format: format || 'html',
+          notification_channel_ids: uniqueChannelIds,
           enabled: enabled !== undefined ? enabled : true,
         });
 
@@ -2492,6 +2571,18 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           }
         }
 
+        let notificationChannelIds: number[] | undefined;
+        if (body.notification_channel_ids !== undefined) {
+          if (!Array.isArray(body.notification_channel_ids) || body.notification_channel_ids.length > 50
+            || !body.notification_channel_ids.every((channelId: unknown) => Number.isSafeInteger(channelId) && Number(channelId) > 0)) {
+            return reply.code(400).send({ error: 'notification_channel_ids 必须为最多 50 个正整数' });
+          }
+          notificationChannelIds = [...new Set(body.notification_channel_ids.map((channelId: unknown) => Number(channelId)))] as number[];
+          for (const channelId of notificationChannelIds) {
+            const channel = await notificationDatabaseService.getChannelById(channelId);
+            if (!channel?.enabled) return reply.code(400).send({ error: `通知渠道不可用: ${channelId}` });
+          }
+        }
         const updated = await reportConfigService.updateConfig(Number(id), {
           name: body.name,
           cron: body.cron,
@@ -2499,6 +2590,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           instance_id: body.instance_id !== undefined ? Number(body.instance_id) : undefined,
           server_id: body.server_id !== undefined ? Number(body.server_id) : undefined,
           format: body.format,
+          notification_channel_ids: notificationChannelIds,
           enabled: body.enabled !== undefined ? body.enabled : undefined,
         });
 
@@ -2551,6 +2643,17 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
+  fastify.get('/api/reports/:id/notifications', {
+    preHandler: [verifyToken, requirePermission('report:view')],
+    handler: async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const reportId = Number(id);
+      if (!Number.isSafeInteger(reportId) || reportId <= 0) return reply.code(400).send({ error: '无效的报表 ID' });
+      if (!await reportDatabaseService.getReportById(reportId)) return reply.code(404).send({ error: '报表不存在' });
+      return reply.send(await reportDatabaseService.getNotificationDeliveries(reportId));
+    },
+  });
+
   // 生成报表
   fastify.post('/api/reports/generate', {
     preHandler: [verifyToken, requirePermission('report:create')],
@@ -2571,10 +2674,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(400).send({ error: `无效的报表类型：${type}，有效值：${validTypes.join(', ')}` });
         }
 
-        const validFormats = ['html', 'pdf', 'json', 'md'];
-        const safeFormat = validFormats.includes(format) ? format : 'html';
+        const validFormats = ['html', 'pdf', 'json', 'md', 'csv'] as const;
+        const safeFormat: string = validFormats.includes(format as any) ? format : 'html';
 
-        const report = await reportService.generateReport(type as 'health' | 'performance' | 'slow_query' | 'capacity', instanceId, { format: safeFormat });
+        const report = await reportService.generateReport(type as 'health' | 'performance' | 'slow_query' | 'capacity', instanceId, { format: safeFormat as 'pdf' | 'html' | 'json' | 'csv' });
         reply.send({ id: report.id, status: report.status, name: report.name });
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -2945,7 +3048,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { enabled } = request.query as { enabled?: 'true' | 'false' };
         const enabledFilter = enabled === 'true' ? true : enabled === 'false' ? false : undefined;
         const channels = await notificationDatabaseService.getChannels(enabledFilter);
-        reply.send(channels);
+        reply.send(channels.map((channel) => publicNotificationDto(channel as unknown as Record<string, unknown>)));
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -3097,6 +3200,44 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
+  // Dead-letter delivery replay is an explicit privileged action.  It resets
+  // the durable job only; the original idempotency key remains unchanged.
+  fastify.post('/api/notification/jobs/:id/replay', {
+    preHandler: [verifyToken, requirePermission('notification:manage')],
+    handler: async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const check = strictBody(request.body as Record<string, unknown>, ['reason'], 'POST /api/notification/jobs/:id/replay');
+      if (check.error) return reply.code(400).send(check.error);
+      const reason = String((check.body as { reason?: unknown }).reason ?? '').trim();
+      if (!reason || reason.length > 512) return reply.code(400).send({ error: '重放原因必须为 1-512 个字符' });
+      if (!notificationWorkflowStore) return reply.code(503).send({ error: '通知工作流尚未就绪' });
+      try {
+        if (!await notificationWorkflowStore.isDeadLetter(id)) {
+          return reply.code(409).send({ error: '仅可重放处于 dead_letter 状态的任务' });
+        }
+        await notificationDatabaseService.recordReplay(id, (request as any).user.userId, reason);
+        const replayed = await notificationWorkflowStore.replayDeadLetter(id);
+        if (!replayed) return reply.code(409).send({ error: '仅可重放处于 dead_letter 状态的任务' });
+        return reply.send({ success: true, job_id: id, state: 'queued' });
+      } catch (error: any) {
+        return reply.code(500).send({ error: error.message });
+      }
+    },
+  });
+
+  fastify.get('/api/notification/dead-letters', {
+    preHandler: [verifyToken, requirePermission('notification:view')],
+    handler: async (request, reply) => {
+      if (!notificationWorkflowStore) return reply.code(503).send({ error: '通知工作流尚未就绪' });
+      const { limit = '50' } = request.query as { limit?: string };
+      try {
+        return reply.send(await notificationWorkflowStore.listDeadLetters(Number(limit)));
+      } catch (error: any) {
+        return reply.code(500).send({ error: error.message });
+      }
+    },
+  });
+
   // ========== AI 分析 API ==========
 
   // 提交 AI 分析请求
@@ -3106,12 +3247,16 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const { analysis_type, instance_id, related_id, trigger_type = 'manual' } = request.body as {
           analysis_type: 'topsql_analysis' | 'alert_rca' | 'fault_diagnosis' | 'capacity_prediction';
-          instance_id: number;
+          instance_id?: number;
           related_id?: number;
           trigger_type?: 'manual' | 'auto';
         };
 
-        if (!analysis_type || !instance_id) {
+        // RCA resolves its sole subject from the referenced alert. A server
+        // alert has no instance_id, so requiring one here made the browser
+        // server-RCA action unreachable before AlertRCAService could validate
+        // the server subject.
+        if (!analysis_type || (analysis_type !== 'alert_rca' && !instance_id)) {
           return reply.code(400).send({ error: '缺少必要参数：analysis_type, instance_id' });
         }
 
@@ -4173,7 +4318,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['db_type', 'description', 'instance_id'], 'POST /api/metrics/generate-sql');
         if (check.error) return reply.code(400).send(check.error);
-        const { db_type, description, instance_id } = check.body;
+        const { db_type, description, instance_id } = check.body as { db_type?: string; description?: string; instance_id?: number };
       if (!description) {
         reply.code(400).send({ error: '请提供指标描述' });
         return;
@@ -4279,7 +4424,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['new_level'], 'POST /api/alerts/:id/escalate');
         if (check.error) return reply.code(400).send(check.error);
-        const { new_level } = check.body;
+        const { new_level } = check.body as { new_level: string };
       if (!new_level) {
         reply.code(400).send({ error: '缺少 new_level 参数' });
         return;
@@ -4355,7 +4500,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['instance_id', 'metric_name', 'duration_minutes'], 'POST /api/silence');
         if (check.error) return reply.code(400).send(check.error);
-        const { instance_id, metric_name, duration_minutes } = check.body;
+        const { instance_id, metric_name, duration_minutes } = check.body as { instance_id: number; metric_name: string; duration_minutes: number };
       const result = await alertSilenceService.silence(instance_id, metric_name, duration_minutes);
       reply.send(result);
     } catch (error: any) {
@@ -4456,7 +4601,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['user_id'], 'POST /api/alerts/events/:id/assign');
         if (check.error) return reply.code(400).send(check.error);
-        const { user_id } = check.body;
+        const { user_id } = check.body as { user_id: number };
       const result = await alertEventService.assignEvent(Number(id), user_id);
       reply.send(result);
     } catch (error: any) {
@@ -4480,7 +4625,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['note'], 'POST /api/alerts/events/:id/note');
         if (check.error) return reply.code(400).send(check.error);
-        const { note } = check.body;
+        const { note } = check.body as { note: string };
       const result = await alertEventService.addHandlerNote(Number(id), note);
       reply.send(result);
     } catch (error: any) {
@@ -4504,9 +4649,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>,
           ['resolution_notes'], 'POST /api/alerts/events/:id/resolve');
         if (check.error) return reply.code(400).send(check.error);
-        const { resolution_notes } = check.body;
+        const { resolution_notes } = check.body as { resolution_notes: string };
       const result = await alertEventService.resolveEvent(Number(id), resolution_notes);
-      reply.send(result);
+      reply.code(result.success ? 200 : 409).send(result);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
     }
@@ -4516,7 +4661,21 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const result = await alertEventService.closeEvent(Number(id));
-      reply.send(result);
+      reply.code(result.success ? 200 : 409).send(result);
+    } catch (error: any) {
+      reply.code(500).send({ error: error.message });
+    }
+  });
+
+  fastify.post('/api/alerts/events/:id/verify-recovery', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
+    try {
+      const { id } = request.params as any;
+      const check = strictBody(request.body as Record<string, unknown>, ['reason'], 'POST /api/alerts/events/:id/verify-recovery');
+      if (check.error) return reply.code(400).send(check.error);
+      const reason = String((check.body as { reason?: unknown }).reason ?? '').trim();
+      if (!reason) return reply.code(400).send({ error: '缺少恢复验证说明' });
+      const result = await alertEventService.verifyRecovery(Number(id), reason, (request as any).user.userId);
+      reply.code(result.success ? 200 : 409).send(result);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
     }
@@ -4574,14 +4733,132 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
+  let cronManager: CronManager | undefined;
+  let engine: any;
+  let workflowTimer: ReturnType<typeof setInterval> | undefined;
+  const startWorkers = async () => {
+  await initializeControlPlane();
   // 初始化 Agent Engine 并启动 WS 传输层
   console.log('🚀 正在启动 Agent Engine...');
-  const engine = await getAgentEngine();
+  engine = await getAgentEngine();
   await engine.start();
   console.log('🔌 Agent Engine 已启动: DirectAdapter');
 
   // 从数据库加载指标定义（含 collection_sqls 和 compute_expr）
   await metricRegistry.initialize();
+
+  const workflowStore = new MysqlWorkflowStore(() => dbConnection.getPool() as any);
+  notificationWorkflowStore = workflowStore;
+  const workflowRegistry = new JobRegistry();
+  const notificationScheduler = new NotificationDispatchScheduler(notificationDatabaseService, notificationService, workflowStore);
+  const enqueueNotificationDispatch = async (availableAt = new Date()) => {
+    await workflowStore.enqueue(createNotificationDispatchJob(availableAt));
+  };
+  const enqueueReportSchedule = async (availableAt = new Date()) => {
+    await workflowStore.enqueue(createReportScheduleJob(availableAt));
+  };
+  const enqueueReportNotifications = async (reportId: number, channelIds: readonly number[]) => {
+    await Promise.all(channelIds.map((channelId) => workflowStore.enqueue(createReportNotificationJob(reportId, channelId))));
+  };
+  const capacityConsistencyMonitor = new CapacityConsistencyMonitor(
+    () => dbConnection.getPool() as any,
+    consistencyChecker,
+    alertDatabaseService,
+  );
+  workflowRegistry.register('capacity.collect', async () => { await monitorCollector.collectCapacityNow(); });
+  workflowRegistry.register('baseline.cleanup', async () => { await baselineCalculator.cleanupOldBaselines(); });
+  workflowRegistry.register('alert.evaluate', async () => { await alertEngine.triggerEvaluation(); });
+  workflowRegistry.register('capacity.consistency', async () => {
+    await workflowStore.enqueue(createCapacityConsistencyJob(new Date(Date.now() + 300_000)));
+    await capacityConsistencyMonitor.runOnce();
+  });
+  workflowRegistry.register('report.schedule', async () => {
+    // Commit the successor before generating reports so a restart cannot
+    // silently stop all scheduled report processing.
+    await enqueueReportSchedule(new Date(Date.now() + 60_000));
+    const occurrences = new MysqlReportOccurrenceStore(() => dbConnection.getPool() as any);
+    const scheduler = new ReportScheduler(reportConfigService, occurrences);
+    for (const occurrence of await scheduler.claimDue()) {
+      try {
+        const config = await reportConfigService.getConfigById(occurrence.configId);
+        if (!config) throw new Error('REPORT_CONFIG_NOT_FOUND');
+        const reportId = config.type === 'server_health'
+          ? (await serverReportService.generateAndPersist(config.server_id ? [config.server_id] : undefined)).reportId
+          : (await reportService.generateReport(config.type as any, config.instance_id, { format: config.format as any })).id;
+        if (!reportId) throw new Error('REPORT_GENERATION_FAILED');
+        await occurrences.complete(occurrence, reportId);
+        await enqueueReportNotifications(reportId, config.notification_channel_ids);
+      } catch (error) {
+        await occurrences.fail(occurrence, error instanceof Error ? error : new Error(String(error)));
+        throw error;
+      }
+    }
+  });
+  workflowRegistry.register('notification.dispatch', async () => {
+    await notificationScheduler.enqueuePending();
+    // The next durable tick is committed before this job is completed. A
+    // restart therefore resumes the current or next tick without an in-memory timer.
+    await enqueueNotificationDispatch(new Date(Date.now() + 10_000));
+  });
+  workflowRegistry.register('notification.deliver', async (payload, job) => {
+    const alertId = Number(payload.alertId);
+    const channelId = Number(payload.channelId);
+    if (!Number.isSafeInteger(alertId) || !Number.isSafeInteger(channelId)) throw new Error('NOTIFICATION_PAYLOAD_INVALID');
+    const [alert, channel] = await Promise.all([
+      notificationDatabaseService.getAlertById(alertId),
+      notificationDatabaseService.getChannelById(channelId),
+    ]);
+    if (!alert || !channel || !channel.enabled || !isAlertEligibleForChannel(alert, channel)) return;
+    await notificationDatabaseService.recordDeliveryAttempt({ job_id: job.id, alert_id: alertId, channel_id: channelId, attempt_number: job.attempts, status: 'started' });
+    try {
+      await notificationService.deliverAlertToChannel(alert, channel);
+      await notificationDatabaseService.recordDeliveryAttempt({ job_id: job.id, alert_id: alertId, channel_id: channelId, attempt_number: job.attempts, status: 'sent' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await notificationDatabaseService.recordDeliveryAttempt({ job_id: job.id, alert_id: alertId, channel_id: channelId, attempt_number: job.attempts, status: 'failed', error_code: message.slice(0, 128), error_message: message });
+      throw error;
+    }
+  });
+  workflowRegistry.register('report.notify', async (payload, job) => {
+    const reportId = Number(payload.reportId);
+    const channelId = Number(payload.channelId);
+    if (!Number.isSafeInteger(reportId) || reportId <= 0 || !Number.isSafeInteger(channelId) || channelId <= 0) {
+      throw new Error('REPORT_NOTIFICATION_PAYLOAD_INVALID');
+    }
+    const [report, channel] = await Promise.all([
+      reportDatabaseService.getReportById(reportId),
+      notificationDatabaseService.getChannelById(channelId),
+    ]);
+    if (!report || !channel || !channel.enabled) {
+      await reportDatabaseService.recordNotificationDelivery({
+        jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'skipped', errorCode: 'REPORT_OR_CHANNEL_UNAVAILABLE',
+      });
+      return;
+    }
+    await reportDatabaseService.recordNotificationDelivery({
+      jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'started',
+    });
+    const result = await notificationService.send(channel, {
+      type: 'scheduled_report',
+      report: { id: report.id, name: report.name, type: report.type, format: report.format, status: report.status },
+      downloadPath: `/api/reports/${report.id}/download`,
+    });
+    if (!result.success) {
+      await reportDatabaseService.recordNotificationDelivery({
+        jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'failed',
+        errorCode: result.error?.slice(0, 128), errorMessage: result.error,
+      });
+      throw new Error(result.error || 'REPORT_NOTIFICATION_FAILED');
+    }
+    await reportDatabaseService.recordNotificationDelivery({
+      jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'sent',
+    });
+  });
+  const workflowRuntime = new WorkerRuntime(workflowStore, workflowWorkerId);
+  await enqueueNotificationDispatch();
+  await enqueueReportSchedule();
+  await workflowStore.enqueue(createCapacityConsistencyJob());
+  workflowTimer = setInterval(() => { void workflowRuntime.runOnce((job) => workflowRegistry.execute(job)).catch((error) => console.error('Workflow worker failed:', error)); }, 1_000);
 
   // 启动监控采集
   monitorCollector.start();
@@ -4647,7 +4924,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const cronRunner = new AgentRunner(cronProvider);
   const cronTools = await loadPlatformTools();
   const cronExecutor = new CronExecutor(cronRunner, cronTools, cronProvider);
-  const cronManager = new CronManager(cronJobService, cronExecutor);
+  cronManager = new CronManager(cronJobService, cronExecutor, workflowStore);
   await cronManager.start();
 
   // 清理崩溃残留的 running 日志
@@ -4678,6 +4955,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (result.affectedRows > 0) console.log(`📊 已标记 ${result.affectedRows} 条历史指标为估算值`);
     }
   } catch (e) { /* 非阻塞 */ }
+
+  };
 
   // ========== Cron 任务管理 API ==========
 
@@ -4741,7 +5020,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           retry_count: body.retry_count,
         });
 
-        await cronManager.reload();
+        await cronManager!.reload();
         reply.code(201).send({ id, message: '创建成功' });
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -4787,7 +5066,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         }
 
         // Reload CronManager to apply changes
-        await cronManager.reload();
+        await cronManager!.reload();
 
         reply.send({ message: '更新成功' });
       } catch (error: any) {
@@ -4814,7 +5093,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         await cronJobService.toggleJob(Number(id), body.enabled);
 
         // Reload CronManager to apply changes
-        await cronManager.reload();
+        await cronManager!.reload();
 
         reply.send({ message: body.enabled ? '已启用' : '已停用' });
       } catch (error: any) {
@@ -4835,7 +5114,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         // Route through CronManager.executeJob() which handles task_type branching:
         // script jobs → executeScriptJob() (SqlExecutor), agent jobs → cronExecutor.execute()
-        await cronManager.executeJob(config);
+        await cronManager!.executeJob(config);
 
         reply.send({ message: '执行完成' });
       } catch (error: any) {
@@ -4858,7 +5137,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!deleted) {
           return reply.code(500).send({ error: '删除失败，数据库操作未生效' });
         }
-        await cronManager.reload();
+        await cronManager!.reload();
         reply.send({ message: '删除成功' });
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -5046,8 +5325,38 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 启动 HTTP API 服务器
-  const port = process.env.BACKEND_PORT || process.env.API_PORT || 3000;
+  const port = process.env.PORT || process.env.BACKEND_PORT || process.env.API_PORT || 3000;
   await fastify.listen({ port: Number(port), host: '0.0.0.0' });
+  const workerLease = new WorkerLease(pool as any);
+  if (await workerLease.acquire()) {
+    await startWorkers();
+    const heartbeat = setInterval(() => {
+      void workerLease.renew().then((renewed) => {
+        if (!renewed) console.error('Worker lease lost; workers require operator intervention');
+      }).catch((error) => console.error('Worker lease heartbeat failed:', error));
+    }, 10_000);
+    let shuttingDown = false;
+    const shutdown = async () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      clearInterval(heartbeat);
+      if (workflowTimer) clearInterval(workflowTimer);
+      monitorCollector.stop();
+      alertEngine.stopEvaluationLoop();
+      alertEscalationService.stop();
+      stopSessionCleanup();
+      promptManager.stopWatch();
+      await cronManager?.stop();
+      await engine?.dispose?.();
+      await workerLease.release();
+      await fastify.close();
+      await dbConnection.close();
+    };
+    process.once('SIGTERM', () => void shutdown());
+    process.once('SIGINT', () => void shutdown());
+  } else {
+    console.warn('Worker lease is held by another process; this replica will serve API requests only');
+  }
   console.log(`🚀 服务器已启动：http://localhost:${port}`);
 }
 

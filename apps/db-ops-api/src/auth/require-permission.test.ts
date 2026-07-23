@@ -1,32 +1,14 @@
 /**
  * requirePermission 中间件单元测试
  *
- * 遵循 rbac-service.test.ts 模式: 模拟 dbConnection 层而非 RbacService 类
- * 中间件导入 RbacService 时自动获取模拟的 getPool()
+ * 权限只来自 verifyToken 构建的 ActorContext 快照。
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-
-// Mock dbConnection — RbacService 内部使用 getPool()
-vi.mock('../db-connection.js', () => ({
-  dbConnection: {
-    getPool: vi.fn(),
-    isConnected: vi.fn(() => true),
-  },
-}));
+import { describe, it, expect, vi } from 'vitest';
 
 import { requirePermission } from './require-permission.js';
-import { dbConnection } from '../db-connection.js';
 
 describe('requirePermission middleware', () => {
-  let mockExecute: any;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockExecute = vi.fn();
-    (dbConnection.getPool as any).mockReturnValue({ execute: mockExecute });
-  });
-
   const makeReply = () => ({
     code: vi.fn().mockReturnThis(),
     send: vi.fn(),
@@ -40,10 +22,7 @@ describe('requirePermission middleware', () => {
   });
 
   it('should return 403 when user lacks the required permission', async () => {
-    // Mock no matching permissions returned
-    mockExecute.mockResolvedValue([[{ code: 'alert:view' }]]);
-
-    const request = { user: { userId: 1, username: 'test' } };
+    const request = { user: { userId: 1, username: 'test', permissions: ['alert:view'] } };
     const reply = makeReply();
 
     await requirePermission('instance:view')(request as any, reply as any);
@@ -52,9 +31,7 @@ describe('requirePermission middleware', () => {
   });
 
   it('should pass when user has direct permission match', async () => {
-    mockExecute.mockResolvedValue([[{ code: 'instance:view' }]]);
-
-    const request = { user: { userId: 1, username: 'test' } };
+    const request = { user: { userId: 1, username: 'test', permissions: ['instance:view'] } };
     const reply = makeReply();
 
     await requirePermission('instance:view')(request as any, reply as any);
@@ -62,9 +39,7 @@ describe('requirePermission middleware', () => {
   });
 
   it('should pass when user has resource wildcard that covers required code', async () => {
-    mockExecute.mockResolvedValue([[{ code: 'instance:*' }]]);
-
-    const request = { user: { userId: 1, username: 'test' } };
+    const request = { user: { userId: 1, username: 'test', permissions: ['instance:*'] } };
     const reply = makeReply();
 
     await requirePermission('instance:view')(request as any, reply as any);
@@ -72,9 +47,7 @@ describe('requirePermission middleware', () => {
   });
 
   it('should pass when multiple codes required and user has at least one', async () => {
-    mockExecute.mockResolvedValue([[{ code: 'alert:view' }]]);
-
-    const request = { user: { userId: 1, username: 'test' } };
+    const request = { user: { userId: 1, username: 'test', permissions: ['alert:view'] } };
     const reply = makeReply();
 
     await requirePermission('instance:view', 'alert:view')(request as any, reply as any);
@@ -82,9 +55,7 @@ describe('requirePermission middleware', () => {
   });
 
   it('should pass with super admin wildcard *', async () => {
-    mockExecute.mockResolvedValue([[{ code: '*' }]]);
-
-    const request = { user: { userId: 1, username: 'test' } };
+    const request = { user: { userId: 1, username: 'test', permissions: ['*'] } };
     const reply = makeReply();
 
     await requirePermission('anything:anything')(request as any, reply as any);
@@ -92,9 +63,7 @@ describe('requirePermission middleware', () => {
   });
 
   it('should pass when user has action wildcard *:action', async () => {
-    mockExecute.mockResolvedValue([[{ code: '*:view' }]]);
-
-    const request = { user: { userId: 1, username: 'test' } };
+    const request = { user: { userId: 1, username: 'test', permissions: ['*:view'] } };
     const reply = makeReply();
 
     await requirePermission('instance:view')(request as any, reply as any);

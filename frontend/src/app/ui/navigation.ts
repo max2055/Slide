@@ -83,6 +83,7 @@ const TAB_PATHS: Record<Tab, string> = {
 const PATH_TO_TAB = new Map<string, Tab>([
   ...Object.entries(TAB_PATHS).map(([tab, path]) => [path, tab as Tab] as const),
 ]);
+const REMOVED_LEGACY_PATHS = new Set(['/system', '/appearance']);
 
 /** Slide permission codes required for each tab.
  * Tabs not listed remain always visible (controlled by Gateway scopes, not Slide permissions).
@@ -184,6 +185,9 @@ export function inferBasePathFromPathname(pathname: string): string {
     normalized = normalizePath(normalized.slice(0, -"/index.html".length));
   }
   if (normalized === "/") {
+    return "";
+  }
+  if (REMOVED_LEGACY_PATHS.has(normalized)) {
     return "";
   }
   const segments = normalized.split("/").filter(Boolean);

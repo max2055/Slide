@@ -596,8 +596,8 @@ export class DashboardPage extends LitElement {
   }
 
   private _formatBytes(gb: number): string {
-    if (gb >= 1024) return `${(gb / 1024).toFixed(1)} TB`;
-    return `${gb.toFixed(1)} GB`;
+    if (gb >= 1024) return `${(gb / 1024).toFixed(2)} TB`;
+    return `${gb.toFixed(2)} GB`;
   }
 
   private _formatTime(dateStr: string): string {

@@ -54,6 +54,40 @@ class AuthDatabaseService {
     return dbConnection.isConnected();
   }
 
+  private async mutateUserAndRevokeSessions(
+    userId: number,
+    sql: string,
+    values: any[],
+  ): Promise<{ success: boolean; error?: string }> {
+    const pool = this.getPool();
+    if (!pool) return { success: false, error: '数据库未连接' };
+
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [result] = await connection.execute(sql, values) as any;
+      if (Number(result.affectedRows) === 0) {
+        await connection.rollback();
+        return { success: false, error: '用户不存在' };
+      }
+      await connection.execute(
+        'UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = ?',
+        [userId],
+      );
+      await connection.commit();
+      return { success: true };
+    } catch (error: any) {
+      try {
+        await connection.rollback();
+      } catch {
+        // The mutation still reports failure if rollback also fails.
+      }
+      return { success: false, error: error.message };
+    } finally {
+      connection.release();
+    }
+  }
+
   /**
    * 根据用户名获取用户
    */
@@ -330,18 +364,13 @@ class AuthDatabaseService {
    * 修改密码
    */
   async changePassword(userId: number, newPassword: string): Promise<{ success: boolean; error?: string }> {
-    const pool = this.getPool();
-    if (!pool) {
-      return { success: false, error: '数据库未连接' };
-    }
-
     try {
       const passwordHash = await this.hashPassword(newPassword);
-      await pool.execute(
-        'UPDATE users SET password_hash = ? WHERE id = ?',
-        [passwordHash, userId]
+      return await this.mutateUserAndRevokeSessions(
+        userId,
+        'UPDATE users SET password_hash = ?, session_version = session_version + 1 WHERE id = ?',
+        [passwordHash, userId],
       );
-      return { success: true };
     } catch (error: any) {
       console.error('修改密码失败:', error);
       return { success: false, error: error.message };
@@ -360,7 +389,19 @@ class AuthDatabaseService {
       return { success: false, error: '数据库未连接' };
     }
 
+    let connection: mysql.PoolConnection | undefined;
     try {
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
+      const [userRows] = await connection.execute(
+        'SELECT id FROM users WHERE username = ? FOR UPDATE',
+        [username],
+      ) as any;
+      if (!Array.isArray(userRows) || userRows.length === 0) {
+        await connection.rollback();
+        return { success: false, error: '用户不存在' };
+      }
+
       const fields: string[] = [];
       const values: any[] = [];
 
@@ -375,20 +416,36 @@ class AuthDatabaseService {
       }
 
       if (fields.length === 0) {
+        await connection.rollback();
         return { success: false, error: '没有要更新的字段' };
       }
 
+      fields.push('session_version = session_version + 1');
       values.push(username);
 
-      await pool.execute(
+      await connection.execute(
         `UPDATE users SET ${fields.join(', ')} WHERE username = ?`,
         values
       );
+      await connection.execute(
+        'UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = ?',
+        [userRows[0].id],
+      );
+      await connection.commit();
 
       return { success: true };
     } catch (error: any) {
+      if (connection) {
+        try {
+          await connection.rollback();
+        } catch {
+          // Preserve the original mutation failure.
+        }
+      }
       console.error('更新用户失败:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection?.release();
     }
   }
 
@@ -402,30 +459,12 @@ class AuthDatabaseService {
     }
 
     try {
-      const fields: string[] = [];
-      const values: any[] = [];
-
-      if (updates.status) {
-        fields.push('status = ?');
-        values.push(updates.status);
-      }
-
-      if (fields.length === 0) {
-        return { success: false, error: '没有要更新的字段' };
-      }
-
-      values.push(id);
-
-      const [result] = await pool.execute(
-        `UPDATE users SET ${fields.join(', ')} WHERE id = ?`,
-        values
-      ) as any;
-
-      if (result.affectedRows === 0) {
-        return { success: false, error: '用户不存在' };
-      }
-
-      return { success: true };
+      if (!updates.status) return { success: false, error: '没有要更新的字段' };
+      return await this.mutateUserAndRevokeSessions(
+        id,
+        'UPDATE users SET status = ?, session_version = session_version + 1 WHERE id = ?',
+        [updates.status, id],
+      );
     } catch (error: any) {
       console.error('更新用户失败:', error);
       return { success: false, error: error.message };

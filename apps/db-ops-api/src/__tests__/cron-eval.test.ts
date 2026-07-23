@@ -92,12 +92,13 @@ describe('cron-eval: structure and safety checks', () => {
     expect(source).toContain('deleteJob');
   });
 
-  it('cron-job-service.ts queries task_description instead of handler', () => {
+  it('cron-job-service.ts uses handler_key with task_description, not legacy handler field', () => {
     const source = readFileSync(CRON_JOB_SERVICE_PATH, 'utf-8');
-    // All SELECT queries should reference task_description, not handler
+    // All SELECT queries should reference task_description and handler_key (typed handlers)
     expect(source).toContain('task_description');
-    // Handler field should not appear in SELECT queries
-    const handlerInSelect = source.match(/SELECT[\s\S]*?handler[\s\S]*?FROM/g);
-    expect(handlerInSelect).toBeNull();
+    expect(source).toContain('handler_key');
+    // The legacy bare handler field (without _key suffix) should not appear in SELECT
+    const handlerWithoutKeyInSelect = source.match(/SELECT[\s\S]*?\bhandler\b(?!_key)[\s\S]*?FROM/g);
+    expect(handlerWithoutKeyInSelect).toBeNull();
   });
 });

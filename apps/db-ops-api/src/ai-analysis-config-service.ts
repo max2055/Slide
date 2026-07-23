@@ -26,7 +26,7 @@ export const DEFAULT_CONFIG: AiAnalysisConfig = {
 const ALLOWED_SEVERITY_LEVELS = ['critical', 'error', 'warning', 'info'];
 const HH_MM_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-class AiAnalysisConfigService {
+export class AiAnalysisConfigService {
   /**
    * 获取数据库连接池
    */

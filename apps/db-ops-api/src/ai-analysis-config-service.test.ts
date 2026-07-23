@@ -119,7 +119,7 @@ describe('92-03-01: ai-analysis-config-service', () => {
     };
 
     it('validates enabled is boolean: rejects non-boolean', async () => {
-      const result = await aiAnalysisConfigService.saveConfig({ enabled: 'yes' as any });
+      const result = await (aiAnalysisConfigService as any).saveConfig({ enabled: 'yes' as any });
       expect(result.success).toBe(false);
       expect(result.error).toContain('布尔值');
     });

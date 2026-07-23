@@ -9,7 +9,6 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from '../db-connection.js';
-import { randomBytes, createHash } from 'crypto';
 
 export class RbacService {
   private getPool(): mysql.Pool | null {
@@ -18,6 +17,102 @@ export class RbacService {
 
   private isConnected(): boolean {
     return dbConnection.isConnected();
+  }
+
+  private async requireTransaction(pool: mysql.Pool): Promise<mysql.PoolConnection> {
+    if (typeof (pool as any).getConnection !== 'function') {
+      throw new Error('数据库事务不可用');
+    }
+    return pool.getConnection();
+  }
+
+  private async getActiveRoleUserIds(
+    connection: mysql.PoolConnection,
+    roleId: number,
+  ): Promise<number[]> {
+    const [rows] = await connection.execute(
+      `SELECT DISTINCT user_id
+       FROM user_roles
+       WHERE role_id = ?
+         AND (grant_expiry IS NULL OR grant_expiry > NOW())
+       FOR UPDATE`,
+      [roleId],
+    ) as any;
+    return (rows as Array<{ user_id: number }>).map((row) => Number(row.user_id));
+  }
+
+  private async bumpAndRevokeUsers(
+    connection: mysql.PoolConnection,
+    userIds: number[],
+  ): Promise<void> {
+    if (userIds.length === 0) return;
+    const placeholders = userIds.map(() => '?').join(', ');
+    await connection.execute(
+      `UPDATE users SET session_version = session_version + 1 WHERE id IN (${placeholders})`,
+      userIds,
+    );
+    await connection.execute(
+      `UPDATE refresh_tokens SET revoked = TRUE WHERE user_id IN (${placeholders})`,
+      userIds,
+    );
+  }
+
+  private async mutateRoleAndRevokeSessions(
+    pool: mysql.Pool,
+    roleId: number,
+    mutation: (connection: mysql.PoolConnection) => Promise<boolean>,
+  ): Promise<void> {
+    const connection = await this.requireTransaction(pool);
+    try {
+      await connection.beginTransaction();
+      const userIds = await this.getActiveRoleUserIds(connection, roleId);
+      if (await mutation(connection)) {
+        await this.bumpAndRevokeUsers(connection, userIds);
+      }
+      await connection.commit();
+    } catch (error) {
+      try {
+        await connection.rollback();
+      } catch {
+        // Preserve the mutation failure.
+      }
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  private async mutateUserRoleAndRevokeSessions(
+    pool: mysql.Pool,
+    userId: number,
+    sql: string,
+    values: number[],
+  ): Promise<void> {
+    const connection = await this.requireTransaction(pool);
+    try {
+      await connection.beginTransaction();
+      const [result] = await connection.execute(sql, values) as any;
+      if (Number(result.affectedRows) > 0) {
+        await connection.execute(
+          'UPDATE users SET session_version = session_version + 1 WHERE id = ?',
+          [userId],
+        );
+        await connection.execute(
+          'UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = ?',
+          [userId],
+        );
+      }
+      await connection.commit();
+    } catch (error) {
+      try {
+        await connection.rollback();
+      } catch {
+        // Preserve the role mutation failure.
+      }
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   // =========================================================================
@@ -128,11 +223,19 @@ export class RbacService {
       }
 
       values.push(roleId);
-
-      await pool.execute(
-        `UPDATE roles SET ${fields.join(', ')} WHERE id = ?`,
-        values
-      );
+      const sql = `UPDATE roles SET ${fields.join(', ')} WHERE id = ?`;
+      if (updates.name !== undefined) {
+        await this.mutateRoleAndRevokeSessions(
+          pool,
+          roleId,
+          async (connection) => {
+            const [result] = await connection.execute(sql, values) as any;
+            return Number(result.affectedRows) > 0;
+          },
+        );
+      } else {
+        await pool.execute(sql, values);
+      }
 
       return { success: true };
     } catch (error: any) {
@@ -147,26 +250,46 @@ export class RbacService {
       return { success: false, error: '数据库未连接' };
     }
 
+    let connection: mysql.PoolConnection | undefined;
     try {
-      // Reject if is_system=true
-      const [rows] = await pool.execute(
-        'SELECT is_system FROM roles WHERE id = ?',
-        [roleId]
+      connection = await this.requireTransaction(pool);
+      await connection.beginTransaction();
+      const [rows] = await connection.execute(
+        'SELECT is_system FROM roles WHERE id = ? FOR UPDATE',
+        [roleId],
       ) as any;
 
-      if (Array.isArray(rows) && rows.length > 0) {
-        if (rows[0].is_system) {
-          return { success: false, error: '系统角色不可删除' };
-        }
-      } else {
+      if (!Array.isArray(rows) || rows.length === 0) {
+        await connection.rollback();
         return { success: false, error: '角色不存在' };
       }
+      if (rows[0].is_system) {
+        await connection.rollback();
+        return { success: false, error: '系统角色不可删除' };
+      }
 
-      await pool.execute('DELETE FROM roles WHERE id = ?', [roleId]);
+      const userIds = await this.getActiveRoleUserIds(connection, roleId);
+      const [result] = await connection.execute(
+        'DELETE FROM roles WHERE id = ?',
+        [roleId],
+      ) as any;
+      if (Number(result.affectedRows) > 0) {
+        await this.bumpAndRevokeUsers(connection, userIds);
+      }
+      await connection.commit();
       return { success: true };
     } catch (error: any) {
+      if (connection) {
+        try {
+          await connection.rollback();
+        } catch {
+          // Preserve the delete failure.
+        }
+      }
       console.error('删除角色失败:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection?.release();
     }
   }
 
@@ -300,9 +423,16 @@ export class RbacService {
     }
 
     try {
-      await pool.execute(
-        'INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)',
-        [roleId, permissionId]
+      await this.mutateRoleAndRevokeSessions(
+        pool,
+        roleId,
+        async (connection) => {
+          const [result] = await connection.execute(
+            'INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)',
+            [roleId, permissionId],
+          ) as any;
+          return Number(result.affectedRows) > 0;
+        },
       );
       return { success: true };
     } catch (error: any) {
@@ -318,9 +448,16 @@ export class RbacService {
     }
 
     try {
-      await pool.execute(
-        'DELETE FROM role_permissions WHERE role_id = ? AND permission_id = ?',
-        [roleId, permissionId]
+      await this.mutateRoleAndRevokeSessions(
+        pool,
+        roleId,
+        async (connection) => {
+          const [result] = await connection.execute(
+            'DELETE FROM role_permissions WHERE role_id = ? AND permission_id = ?',
+            [roleId, permissionId],
+          ) as any;
+          return Number(result.affectedRows) > 0;
+        },
       );
       return { success: true };
     } catch (error: any) {
@@ -383,9 +520,11 @@ export class RbacService {
     }
 
     try {
-      await pool.execute(
+      await this.mutateUserRoleAndRevokeSessions(
+        pool,
+        userId,
         'INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
-        [userId, roleId]
+        [userId, roleId],
       );
       return { success: true };
     } catch (error: any) {
@@ -401,9 +540,11 @@ export class RbacService {
     }
 
     try {
-      await pool.execute(
+      await this.mutateUserRoleAndRevokeSessions(
+        pool,
+        userId,
         'DELETE FROM user_roles WHERE user_id = ? AND role_id = ?',
-        [userId, roleId]
+        [userId, roleId],
       );
       return { success: true };
     } catch (error: any) {
@@ -605,75 +746,8 @@ export class RbacService {
   }
 
   // =========================================================================
-  // Refresh Token methods
+  // Refresh Token maintenance
   // =========================================================================
-
-  async createRefreshToken(userId: number, expiresAt: Date): Promise<{ token: string; hash: string }> {
-    const pool = this.getPool();
-    const token = randomBytes(48).toString('hex');
-    const hash = createHash('sha256').update(token).digest('hex');
-
-    if (pool) {
-      try {
-        await pool.execute(
-          'INSERT INTO refresh_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)',
-          [hash, userId, expiresAt]
-        );
-      } catch (error) {
-        console.error('创建 refresh token 失败:', error);
-      }
-    }
-
-    return { token, hash };
-  }
-
-  async validateRefreshToken(tokenHash: string): Promise<{ id: number; user_id: number; revoked: boolean; expires_at: Date } | null> {
-    const pool = this.getPool();
-    if (!pool) return null;
-
-    try {
-      const [rows] = await pool.execute(
-        'SELECT id, user_id, revoked, expires_at FROM refresh_tokens WHERE token_hash = ?',
-        [tokenHash]
-      ) as any;
-
-      if (Array.isArray(rows) && rows.length > 0) {
-        return rows[0];
-      }
-      return null;
-    } catch (error) {
-      console.error('验证 refresh token 失败:', error);
-      return null;
-    }
-  }
-
-  async revokeRefreshToken(id: number): Promise<void> {
-    const pool = this.getPool();
-    if (!pool) return;
-
-    try {
-      await pool.execute(
-        'UPDATE refresh_tokens SET revoked = TRUE WHERE id = ?',
-        [id]
-      );
-    } catch (error) {
-      console.error('撤销 refresh token 失败:', error);
-    }
-  }
-
-  async revokeAllUserTokens(userId: number): Promise<void> {
-    const pool = this.getPool();
-    if (!pool) return;
-
-    try {
-      await pool.execute(
-        'UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = ?',
-        [userId]
-      );
-    } catch (error) {
-      console.error('撤销用户所有 refresh token 失败:', error);
-    }
-  }
 
   async cleanupExpiredRefreshTokens(): Promise<number> {
     const pool = this.getPool();

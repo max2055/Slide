@@ -1,16 +1,12 @@
 #!/usr/bin/env node
 /**
  * 数据库初始化脚本
- * 执行 schema.sql 创建库表结构
+ * Apply the authoritative migration ledger to an empty database.
  */
 
 import 'dotenv/config';
 import * as mysql from 'mysql2/promise';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as url from 'url';
-
-const __dirname = url.fileURLToPath(new URL('.', import.meta.url));
+import { MigrationRunner } from './src/migrations/runner.js';
 
 // 数据库配置
 const config = {
@@ -19,6 +15,7 @@ const config = {
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
 };
+const databaseName = process.env.DB_NAME || 'db_ops_ai';
 
 async function initializeDatabase() {
   console.log('🔧 开始初始化数据库...');
@@ -33,24 +30,33 @@ async function initializeDatabase() {
       port: config.port,
       user: config.user,
       password: config.password,
-      multipleStatements: true, // 允许执行多条 SQL
     });
 
     console.log('✅ MySQL 连接成功');
+    if (!/^[A-Za-z0-9_]+$/.test(databaseName)) throw new Error('DB_NAME must contain only letters, numbers, and underscores');
+    await connection.query(`CREATE DATABASE IF NOT EXISTS \`${databaseName}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    await connection.query(`USE \`${databaseName}\``);
 
-    // 读取 schema.sql 文件
-    const schemaPath = path.join(__dirname, 'sql', 'schema.sql');
-    const schemaContent = fs.readFileSync(schemaPath, 'utf-8');
+    const runner = new MigrationRunner({
+      query: (sql, values) => connection.query(sql, values as any) as any,
+      getConnection: async () => ({
+        query: (sql, values) => connection.query(sql, values as any) as any,
+        release: () => {},
+      }),
+    });
+    const baseline = process.argv.includes('--baseline');
+    if (baseline) {
+      const actor = process.env.MIGRATION_ACTOR || '';
+      const reason = process.env.MIGRATION_REASON || '';
+      await runner.baseline(actor, reason);
+    } else {
+      await runner.run();
+    }
 
-    console.log('📄 读取 schema.sql 文件');
-
-    // 执行 schema
-    await connection.query(schemaContent);
-
-    console.log('✅ 数据库 schema 创建成功');
+    console.log('✅ 数据库 migrations 创建成功');
 
     // 验证表是否创建成功
-    const [tables] = await connection.query('SHOW TABLES FROM db_ops_ai');
+    const [tables] = await connection.query(`SHOW TABLES FROM \`${databaseName}\``);
     console.log('📋 已创建的表:');
     const tablesArray = tables as any[];
     tablesArray.forEach((table: any) => {
@@ -59,9 +65,7 @@ async function initializeDatabase() {
     });
 
     console.log('\n✅ 数据库初始化完成！');
-    console.log('\n📝 默认账户:');
-    console.log('   管理员：admin / Tpam1234');
-    console.log('   普通用户：user / user123');
+    console.log('\n📝 首个管理员须通过受控 bootstrap 流程创建。');
 
   } catch (error: any) {
     console.error('❌ 数据库初始化失败:', error.message);

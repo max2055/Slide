@@ -59,6 +59,10 @@ export interface ErrorEvent {
   error: string;
 }
 
+export interface CancelledEvent {
+  type: 'cancelled';
+}
+
 export type ChatEvent =
   | TextDeltaEvent
   | ToolStartEvent
@@ -67,6 +71,7 @@ export type ChatEvent =
   | ThinkingDeltaEvent
   | ThinkingEndEvent
   | CompleteEvent
+  | CancelledEvent
   | ErrorEvent;
 
 // ── Adapter capabilities ──
@@ -80,6 +85,16 @@ export interface AgentCapabilities {
   maxContextTokens: number;
   /** Whether custom system prompts are supported */
   supportsCustomSystemPrompt: boolean;
+  features: Record<AgentFeature, AgentFeatureCapability>;
+}
+
+export type AgentFeature =
+  | 'sessions' | 'files' | 'tools' | 'skills' | 'cron'
+  | 'modelSelection' | 'fallback' | 'reload' | 'edit';
+
+export interface AgentFeatureCapability {
+  state: 'supported' | 'readonly' | 'unsupported';
+  reason?: string;
 }
 
 // ── Chat result ──
@@ -89,6 +104,7 @@ export interface ChatResult {
   finalContent: string | null;
   /** Token usage stats (input/output tokens) */
   usage?: Record<string, number>;
+  stopReason?: string;
 }
 
 // ── Invoke result ──
@@ -102,6 +118,8 @@ export interface InvokeResult {
   toolEvents?: Array<{ name: string; status: string; detail: string }>;
   /** Runner stop reason: completed, max_iterations, error, etc. */
   stopReason?: string;
+  /** Concrete provider or tool failure retained when the run is not completed */
+  error?: string | null;
   /** Number of LLM iterations executed */
   iterationCount?: number;
 }

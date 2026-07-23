@@ -45,6 +45,7 @@ export interface LLMResponse {
   usage: Record<string, number>;
   rawResponse?: string;
   errorKind?: string;
+  error?: string;
   shouldExecuteTools: boolean;
   hasToolCalls: boolean;
 }
@@ -84,6 +85,7 @@ export interface LLMCallOptions {
   timeoutS?: number;
   /** Idle timeout in seconds for streaming requests (no token for this long → abort). */
   streamIdleTimeoutS?: number;
+  signal?: AbortSignal;
 }
 
 export interface StreamCallbacks {
@@ -179,6 +181,7 @@ export interface AgentRunSpec {
   checkpointCallback?: ((payload: Record<string, unknown>) => Promise<void>) | null;
   injectionCallback?: ((limit?: number) => Promise<Message[]>) | null;
   llmTimeoutS?: number;
+  signal?: AbortSignal;
 }
 
 export interface AgentRunResult {
@@ -200,7 +203,7 @@ export interface ToolRegistry {
   get(name: string): Tool | undefined;
   has(name: string): boolean;
   getDefinitions(): ToolSchema[];
-  execute(name: string, params: Record<string, unknown>): Promise<unknown>;
+  execute(name: string, params: Record<string, unknown>, context?: ToolExecutionContext): Promise<unknown>;
   readonly toolNames: string[];
 }
 
@@ -214,6 +217,10 @@ export interface RuntimeCheckpoint {
 
 // ── Tool interface ──
 
+export interface ToolExecutionContext {
+  signal?: AbortSignal;
+}
+
 export interface Tool {
   readonly name: string;
   readonly description: string;
@@ -223,6 +230,6 @@ export interface Tool {
   readonly exclusive: boolean;
   /** Tool scopes for auto-discovery filtering. Default ["core"]. "subagent" scope allows use in subagents. Mirrors nanobot's _scopes. */
   readonly scope?: string[];
-  execute(params: Record<string, unknown>): Promise<unknown>;
+  execute(params: Record<string, unknown>, context?: ToolExecutionContext): Promise<unknown>;
   castParams?(params: Record<string, unknown>): Record<string, unknown>;
 }

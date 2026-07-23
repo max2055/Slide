@@ -83,6 +83,10 @@ export class AgentRunner {
     this.provider = provider;
   }
 
+  getDefaultModel(): string {
+    return this.provider.getDefaultModel();
+  }
+
   // ── Main run loop ──
 
   async run(spec: AgentRunSpec): Promise<AgentRunResult> {
@@ -102,6 +106,7 @@ export class AgentRunner {
     let injectionCycles = 0;
 
     for (let iteration = 0; iteration < spec.maxIterations; iteration++) {
+      if (spec.signal?.aborted) { stopReason = 'cancelled'; error = 'Cancelled'; break; }
       // ── Context governance ──
       let messagesForModel: Message[];
       try {
@@ -156,6 +161,7 @@ export class AgentRunner {
         };
         if (!isTimeout) console.error("[AgentRunner] LLM request failed:", errMsg);
       }
+      if (spec.signal?.aborted) { stopReason = 'cancelled'; error = 'Cancelled'; break; }
       const rawUsage = usageDict(response.usage);
       context.response = response;
       context.usage = { ...rawUsage };
@@ -331,8 +337,8 @@ export class AgentRunner {
         }
         finalContent = clean;
       } else if (response.finishReason === "error") {
-        finalContent = clean || spec.errorMessage || DEFAULT_ERROR_MESSAGE;
-        stopReason = "error";
+        finalContent = clean || response.error || spec.errorMessage || DEFAULT_ERROR_MESSAGE;
+        stopReason = response.errorKind === 'timeout' ? 'timed_out' : "error";
         error = finalContent;
         appendModelErrorPlaceholder(messages);
         context.finalContent = finalContent;
@@ -450,6 +456,7 @@ export class AgentRunner {
           streamIdleTimeoutS: spec.llmTimeoutS
             ? spec.llmTimeoutS
             : parseFloat(process.env.NANOBOT_STREAM_IDLE_TIMEOUT_S || '0') || undefined,
+          signal: spec.signal,
         }
       );
     }
@@ -462,6 +469,7 @@ export class AgentRunner {
         maxTokens: spec.maxTokens,
         reasoningEffort: spec.reasoningEffort,
         timeoutS,
+        signal: spec.signal,
       }),
       timeoutS,
     );
@@ -505,7 +513,15 @@ export class AgentRunner {
     }
 
     try {
-      const result = await spec.tools.execute(toolCall.name, toolCall.arguments);
+      if (spec.signal?.aborted) {
+        const error = new Error('Tool execution cancelled');
+        return {
+          result: `Error: ${error.message}`,
+          event: { name: toolCall.name, status: 'error', detail: error.message },
+          error,
+        };
+      }
+      const result = await spec.tools.execute(toolCall.name, toolCall.arguments, { signal: spec.signal });
       const detail = result === undefined || result === null
         ? "(empty)"
         : String(result).replace(/\n/g, " ").trim().slice(0, 120);
@@ -789,7 +805,7 @@ function backfillMissingToolResults(messages: Message[]): Message[] {
   const updated = [...messages];
   let offset = 0;
   for (const m of missing) {
-    const insertAt = m.idx + 1 + offset;
+    let insertAt = m.idx + 1 + offset;
     while (insertAt < updated.length && updated[insertAt].role === "tool") {
       insertAt++;
     }

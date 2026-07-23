@@ -12,25 +12,38 @@ export interface RegistryItem<T> {
 }
 
 export class Registry<T extends { readonly name: string; readonly supportedDbTypes: string[] }> {
-  private items = new Map<string, { provider: T; enabled: boolean; consecutiveFailures: number }>();
+  private items = new Map<string, { provider: T; enabled: boolean; consecutiveFailures: number; failuresByScope: Map<string, number>; disabledScopes: Set<string> }>();
 
   register(provider: T): void {
-    this.items.set(provider.name, { provider, enabled: true, consecutiveFailures: 0 });
+    this.items.set(provider.name, { provider, enabled: true, consecutiveFailures: 0, failuresByScope: new Map(), disabledScopes: new Set() });
   }
 
   enable(name: string): void {
     const item = this.items.get(name);
     if (item) {
       item.enabled = true;
+      item.disabledScopes.clear();
     }
   }
 
-  disable(name: string): void {
+  disable(name: string, scope?: string): void {
     const item = this.items.get(name);
     if (item) {
+      if (scope) {
+        item.disabledScopes.add(scope);
+        item.failuresByScope.delete(scope);
+        item.consecutiveFailures = Math.max(0, ...item.failuresByScope.values());
+        return;
+      }
       item.enabled = false;
       item.consecutiveFailures = 0;
+      item.failuresByScope.clear();
     }
+  }
+
+  isEnabled(name: string, scope?: string): boolean {
+    const item = this.items.get(name);
+    return Boolean(item?.enabled && (!scope || !item.disabledScopes.has(scope)));
   }
 
   get(name: string): T | undefined {
@@ -47,24 +60,27 @@ export class Registry<T extends { readonly name: string; readonly supportedDbTyp
       .map(item => item.provider);
   }
 
-  recordFailure(name: string): number {
+  recordFailure(name: string, scope = 'global'): number {
     const item = this.items.get(name);
     if (item) {
-      item.consecutiveFailures++;
-      return item.consecutiveFailures;
+      const failures = (item.failuresByScope.get(scope) ?? 0) + 1;
+      item.failuresByScope.set(scope, failures);
+      item.consecutiveFailures = Math.max(item.consecutiveFailures, failures);
+      return failures;
     }
     return 0;
   }
 
-  resetFailures(name: string): void {
+  resetFailures(name: string, scope = 'global'): void {
     const item = this.items.get(name);
     if (item) {
-      item.consecutiveFailures = 0;
+      item.failuresByScope.delete(scope);
+      item.consecutiveFailures = Math.max(0, ...item.failuresByScope.values());
     }
   }
 
   getProvidersByDbType(dbType: string): T[] {
-    return this.list().filter(
+    return this.listEnabled().filter(
       (p) => Array.isArray(p.supportedDbTypes) && p.supportedDbTypes.includes(dbType)
     );
   }

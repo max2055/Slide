@@ -69,6 +69,6 @@ describe('MonitorCollector delegation', () => {
       'utf-8'
     );
     expect(source).toContain('unifiedCollector');
-    expect(source).toContain('collector.js');
+    expect(source).toContain("./collector'");
   });
 });
