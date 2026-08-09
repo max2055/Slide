@@ -64,7 +64,14 @@ describe('instance-host route contract', () => {
   });
 
   it('blocks deletion of a server with active instance links using 409', () => {
-    expect(serverDatabaseSource).toContain('instanceHostService.assertServerDeletable(id)');
+    const deleteServer = serverDatabaseSource.slice(
+      serverDatabaseSource.indexOf('async deleteServer'),
+      serverDatabaseSource.indexOf('async testConnection'),
+    );
+    expect(deleteServer).toContain('beginTransaction()');
+    expect(deleteServer).toMatch(/SELECT id FROM servers WHERE id = \? FOR UPDATE/);
+    expect(deleteServer).toMatch(/relation_type = 'runs_on'.*valid_from <= NOW\(\).*valid_until IS NULL OR valid_until > NOW\(\)/s);
+    expect(deleteServer.indexOf('FOR UPDATE')).toBeLessThan(deleteServer.indexOf('DELETE FROM servers'));
     const deletion = routeBlock('delete', '/api/servers/:id');
     expect(deletion).toContain("result.error === 'SERVER_HAS_INSTANCE_RELATIONS'");
     expect(deletion).toContain('reply.code(409)');

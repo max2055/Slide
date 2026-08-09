@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { latestObservation, ObservationService } from './observation-service.js';
-import { ResourceService } from './resource-service.js';
+import { MysqlResourceRelationStore, ResourceService, canManageResource, canReadResource } from './resource-service.js';
 import { CapabilityService } from './capability-service.js';
 import type { ActorContext } from '../auth/actor-context.js';
 
@@ -48,6 +48,45 @@ const actor = (scopes: Record<number, 'read-only' | 'read-write' | 'admin'>, per
 });
 
 describe('Resource relations', () => {
+  it('does not treat instance-wide permissions as server permissions', () => {
+    const instanceAdmin = actor({ 1: 'admin' }, ['instance:*']);
+    expect(canReadResource(instanceAdmin, { type: 'server', id: 20 })).toBe(false);
+    expect(canManageResource(instanceAdmin, { type: 'server', id: 20 })).toBe(false);
+    expect(canReadResource(actor({}, ['servers:*']), { type: 'server', id: 20 })).toBe(true);
+    expect(canManageResource(actor({}, ['servers:*']), { type: 'server', id: 20 })).toBe(true);
+  });
+
+  it('requires server management permission for generic runs_on creation', async () => {
+    const service = new ResourceService({
+      exists: async () => true,
+      insertRelation: async () => {},
+      listRelations: async () => [],
+    });
+    await expect(service.createRelation(actor({ 1: 'admin' }, ['instance:*']), {
+      source: { type: 'instance', id: 1 }, target: { type: 'server', id: 20 }, relationType: 'runs_on',
+      provenance: 'manual', validFrom: new Date('2026-08-10T00:00:00Z'),
+    })).rejects.toThrow('RESOURCE_FORBIDDEN');
+  });
+
+  it('filters current relations whose other endpoint is not readable by the actor', async () => {
+    const hiddenServer = {
+      source: { type: 'instance' as const, id: 1 }, target: { type: 'server' as const, id: 20 },
+      relationType: 'runs_on' as const, provenance: 'manual', validFrom: new Date(0), validUntil: null,
+    };
+    const visibleInstance = {
+      source: { type: 'instance' as const, id: 1 }, target: { type: 'instance' as const, id: 2 },
+      relationType: 'replicates_to' as const, provenance: 'manual', validFrom: new Date(0), validUntil: null,
+    };
+    const service = new ResourceService({
+      exists: async () => true,
+      insertRelation: async () => {},
+      listRelations: async () => [hiddenServer, visibleInstance],
+    });
+
+    await expect(service.currentRelations(actor({ 1: 'read-only', 2: 'read-only' }, ['instance:view']), { type: 'instance', id: 1 }, new Date(1)))
+      .resolves.toEqual([visibleInstance]);
+  });
+
   it('creates explicit current relations only when both resources are in actor scope', async () => {
     const saved: unknown[] = [];
     const service = new ResourceService({
@@ -106,6 +145,39 @@ describe('Resource relations', () => {
     })).rejects.toThrow('RESOURCE_RELATION_TOPOLOGY_INVALID');
     await expect(service.currentRelations(actor({ 1: 'read-only' }, ['servers:view']), { type: 'instance', id: 1 }, new Date(10)))
       .resolves.toEqual([]);
+  });
+});
+
+describe('MysqlResourceRelationStore', () => {
+  it('locks both endpoints and rejects an overlapping canonical relation in one transaction', async () => {
+    const calls: string[] = [];
+    let rolledBack = false;
+    const connection = {
+      beginTransaction: async () => { calls.push('BEGIN'); },
+      execute: async (sql: string) => {
+        calls.push(sql);
+        if (sql.includes('FROM resource_relations')) return [[{ id: 9 }]];
+        return [[{ id: 1 }]];
+      },
+      commit: async () => { calls.push('COMMIT'); },
+      rollback: async () => { rolledBack = true; },
+      release: () => {},
+    };
+    const store = new MysqlResourceRelationStore(() => ({
+      execute: connection.execute,
+      getConnection: async () => connection,
+    } as any));
+
+    await expect(store.insertRelation({
+      source: { type: 'instance', id: 1 }, target: { type: 'server', id: 20 }, relationType: 'runs_on',
+      provenance: 'manual', validFrom: new Date('2026-08-10T00:00:00Z'), validUntil: new Date('2026-08-11T00:00:00Z'),
+    })).rejects.toThrow('RESOURCE_RELATION_OVERLAP');
+    expect(calls[0]).toBe('BEGIN');
+    expect(calls.some((sql) => sql.includes('database_instances') && sql.includes('FOR UPDATE'))).toBe(true);
+    expect(calls.some((sql) => sql.includes('servers') && sql.includes('FOR UPDATE'))).toBe(true);
+    expect(calls.find((sql) => sql.includes('FROM resource_relations'))).toContain('valid_until > ?');
+    expect(rolledBack).toBe(true);
+    expect(calls.some((sql) => sql.includes('INSERT INTO resource_relations'))).toBe(false);
   });
 });
 

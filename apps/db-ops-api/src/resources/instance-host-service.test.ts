@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { ActorContext } from '../auth/actor-context.js';
 import {
   InstanceHostService,
+  MysqlInstanceHostStore,
   type InstanceHostMapping,
   type InstanceHostStore,
 } from './instance-host-service.js';
+import { readFileSync } from 'node:fs';
 
 function actor(options: {
   permissions?: string[];
@@ -125,5 +127,100 @@ describe('InstanceHostService', () => {
 
     await expect(service.listInstances(actor({ permissions: ['instance:view', 'servers:view'], scopes: { 10: 'read-only' } }), 20))
       .resolves.toEqual([expect.objectContaining({ instanceId: 10 })]);
+  });
+});
+
+describe('MysqlInstanceHostStore current relation integrity', () => {
+  it('uses the same half-open current window for list, reverse-list, count, and unlink', async () => {
+    const calls: string[] = [];
+    const store = new MysqlInstanceHostStore(() => ({
+      execute: async (sql: string) => {
+        calls.push(sql);
+        if (sql.includes('COUNT(*)')) return [[{ count: 0 }]];
+        if (sql.startsWith('UPDATE')) return [{ affectedRows: 0 }];
+        return [[]];
+      },
+    } as any));
+
+    await store.listInstanceHosts(10);
+    await store.listServerInstances(20);
+    await store.countActiveForServer(20);
+    await store.expireInstanceHost(10, 20, new Date('2026-08-10T00:00:00Z'));
+
+    for (const sql of calls) {
+      expect(sql).toContain('valid_from <=');
+      expect(sql).toMatch(/valid_until IS NULL OR .*valid_until > /);
+    }
+  });
+
+  it('locks desired servers inside replace and fails before insert when one disappeared', async () => {
+    const calls: string[] = [];
+    let rolledBack = false;
+    const connection = {
+      beginTransaction: async () => {},
+      execute: async (sql: string) => {
+        calls.push(sql);
+        if (sql.includes('FROM database_instances')) return [[{ id: 10 }]];
+        if (sql.includes('FROM servers')) return [[{ id: 20 }]];
+        if (sql.includes('FROM resource_relations')) return [[]];
+        return [{ affectedRows: 1 }];
+      },
+      commit: async () => {},
+      rollback: async () => { rolledBack = true; },
+      release: () => {},
+    };
+    const store = new MysqlInstanceHostStore(() => ({ getConnection: async () => connection } as any));
+
+    await expect(store.replaceInstanceHosts(10, [
+      { serverId: 20, role: 'primary' }, { serverId: 21, role: 'replica' },
+    ], new Date('2026-08-10T00:00:00Z'))).rejects.toThrow('SERVER_NOT_FOUND');
+    expect(calls.some((sql) => sql.includes('FROM servers') && sql.includes('FOR UPDATE'))).toBe(true);
+    expect(calls.some((sql) => sql.includes('INSERT INTO resource_relations'))).toBe(false);
+    expect(rolledBack).toBe(true);
+  });
+
+  it('converges duplicate current rows to one and never gives a future row an invalid window', async () => {
+    const updates: unknown[][] = [];
+    const deletes: unknown[][] = [];
+    const now = new Date('2026-08-10T00:00:00Z');
+    const connection = {
+      beginTransaction: async () => {},
+      execute: async (sql: string, values: unknown[] = []) => {
+        if (sql.startsWith('UPDATE resource_relations')) {
+          updates.push(values);
+          return [{ affectedRows: 1 }];
+        }
+        if (sql.startsWith('DELETE FROM resource_relations')) {
+          deletes.push(values);
+          return [{ affectedRows: 1 }];
+        }
+        if (sql.includes('FROM database_instances')) return [[{ id: 10 }]];
+        if (sql.includes('FROM servers')) return [[{ id: 20 }]];
+        if (sql.includes('FROM resource_relations')) return [[
+          { id: 1, server_id: 20, metadata: { role: 'primary', notes: null }, valid_from: new Date('2026-08-01T00:00:00Z') },
+          { id: 2, server_id: 20, metadata: { role: 'primary', notes: null }, valid_from: new Date('2026-08-02T00:00:00Z') },
+          { id: 3, server_id: 21, metadata: { role: 'replica', notes: null }, valid_from: new Date('2026-08-20T00:00:00Z') },
+        ]];
+        return [{ affectedRows: 1 }];
+      },
+      commit: async () => {}, rollback: async () => {}, release: () => {},
+    };
+    const store = new MysqlInstanceHostStore(() => ({ getConnection: async () => connection } as any));
+
+    await store.replaceInstanceHosts(10, [{ serverId: 20, role: 'primary' }], now);
+
+    expect(updates).toEqual([[now, 2]]);
+    expect(deletes).toEqual([[3]]);
+  });
+
+  it('requires server deletion to lock the server and check current runs_on rows in the same transaction', () => {
+    const source = readFileSync(new URL('../server-database-service.ts', import.meta.url), 'utf8');
+    const method = source.slice(source.indexOf('async deleteServer'), source.indexOf('async testConnection'));
+    expect(method).toContain('getConnection()');
+    expect(method).toContain('beginTransaction()');
+    expect(method).toMatch(/SELECT id FROM servers WHERE id = \? FOR UPDATE/);
+    expect(method).toContain("relation_type = 'runs_on'");
+    expect(method).toMatch(/valid_from <= .*valid_until IS NULL OR valid_until > /s);
+    expect(method.indexOf('FOR UPDATE')).toBeLessThan(method.indexOf('DELETE FROM servers'));
   });
 });

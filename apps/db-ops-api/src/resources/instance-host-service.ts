@@ -164,20 +164,35 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
     const connection = await this.pool().getConnection();
     try {
       await connection.beginTransaction();
-      await connection.execute('SELECT id FROM database_instances WHERE id = ? FOR UPDATE', [instanceId]);
+      const [instances] = await connection.execute<any[]>('SELECT id FROM database_instances WHERE id = ? FOR UPDATE', [instanceId]);
+      if (instances.length === 0) throw new Error('INSTANCE_NOT_FOUND');
+      if (mappings.length > 0) {
+        const serverIds = mappings.map((mapping) => mapping.serverId).sort((left, right) => left - right);
+        const placeholders = serverIds.map(() => '?').join(', ');
+        const [servers] = await connection.execute<any[]>(
+          `SELECT id FROM servers WHERE id IN (${placeholders}) ORDER BY id FOR UPDATE`, serverIds,
+        );
+        const existingIds = new Set(servers.map((row) => Number(row.id)));
+        if (serverIds.some((id) => !existingIds.has(id))) throw new Error('SERVER_NOT_FOUND');
+      }
       const [rows] = await connection.execute<any[]>(
-        `SELECT id, target_id AS server_id, metadata FROM resource_relations
+        `SELECT id, target_id AS server_id, metadata, valid_from, valid_until FROM resource_relations
          WHERE source_type = 'instance' AND source_id = ? AND target_type = 'server'
-           AND relation_type = 'runs_on' AND valid_until IS NULL FOR UPDATE`,
-        [instanceId],
+           AND relation_type = 'runs_on' AND (valid_until IS NULL OR valid_until > ?)
+         ORDER BY target_id, (valid_until IS NULL) DESC, valid_from, id FOR UPDATE`,
+        [instanceId, now],
       );
       const desired = new Map(mappings.map((mapping) => [mapping.serverId, mapping]));
       const unchanged = new Set<number>();
       for (const row of rows) {
         const current = normalizeRowMapping(row);
         const next = desired.get(current.serverId);
-        if (next && next.role === current.role && (next.notes ?? null) === (current.notes ?? null)) {
+        const validFrom = new Date(row.valid_from);
+        if (!unchanged.has(current.serverId) && validFrom <= now
+          && next && next.role === current.role && (next.notes ?? null) === (current.notes ?? null)) {
           unchanged.add(current.serverId);
+        } else if (validFrom >= now) {
+          await connection.execute('DELETE FROM resource_relations WHERE id = ?', [row.id]);
         } else {
           await connection.execute('UPDATE resource_relations SET valid_until = ? WHERE id = ?', [now, row.id]);
         }
@@ -204,8 +219,8 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
     const [result] = await this.pool().execute<any>(
       `UPDATE resource_relations SET valid_until = ?
        WHERE source_type = 'instance' AND source_id = ? AND target_type = 'server' AND target_id = ?
-         AND relation_type = 'runs_on' AND valid_until IS NULL`,
-      [now, instanceId, serverId],
+         AND relation_type = 'runs_on' AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)`,
+      [now, instanceId, serverId, now, now],
     );
     return Number(result.affectedRows) > 0;
   }
@@ -216,7 +231,8 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
               s.host, s.port, s.label, s.os_type, s.status, s.collection_enabled
        FROM resource_relations rr JOIN servers s ON s.id = rr.target_id
        WHERE rr.source_type = 'instance' AND rr.source_id = ? AND rr.target_type = 'server'
-         AND rr.relation_type = 'runs_on' AND rr.valid_from <= NOW() AND rr.valid_until IS NULL
+         AND rr.relation_type = 'runs_on' AND rr.valid_from <= NOW()
+         AND (rr.valid_until IS NULL OR rr.valid_until > NOW())
        ORDER BY s.host, s.port`,
       [instanceId],
     );
@@ -233,7 +249,8 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
               i.name, i.db_type, i.environment, i.status, i.health_status
        FROM resource_relations rr JOIN database_instances i ON i.id = rr.source_id
        WHERE rr.source_type = 'instance' AND rr.target_type = 'server' AND rr.target_id = ?
-         AND rr.relation_type = 'runs_on' AND rr.valid_from <= NOW() AND rr.valid_until IS NULL
+         AND rr.relation_type = 'runs_on' AND rr.valid_from <= NOW()
+         AND (rr.valid_until IS NULL OR rr.valid_until > NOW())
        ORDER BY i.name`,
       [serverId],
     );
@@ -248,7 +265,8 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
     const [rows] = await this.pool().execute<any[]>(
       `SELECT COUNT(*) AS count FROM resource_relations
        WHERE source_type = 'instance' AND target_type = 'server' AND target_id = ?
-         AND relation_type = 'runs_on' AND valid_from <= NOW() AND valid_until IS NULL`,
+         AND relation_type = 'runs_on' AND valid_from <= NOW()
+         AND (valid_until IS NULL OR valid_until > NOW())`,
       [serverId],
     );
     return Number(rows[0]?.count ?? 0);

@@ -9,7 +9,6 @@
 import mysql from 'mysql2/promise';
 import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
 import { Client } from 'ssh2';
-import { instanceHostService } from './resources/instance-host-service.js';
 
 export interface ServerRow {
   id: number;
@@ -359,16 +358,39 @@ class ServerDatabaseService {
       return { success: false, error: '数据库未连接' };
     }
 
+    const connection = await pool.getConnection();
     try {
-      await instanceHostService.assertServerDeletable(id);
-      const [result] = await pool.execute('DELETE FROM servers WHERE id = ?', [id]) as any;
-      if (result.affectedRows === 0) {
+      await connection.beginTransaction();
+      const [servers] = await connection.execute('SELECT id FROM servers WHERE id = ? FOR UPDATE', [id]) as any;
+      if (!Array.isArray(servers) || servers.length === 0) {
+        await connection.rollback();
         return { success: false, error: '服务器不存在' };
       }
+      const [relations] = await connection.execute(
+        `SELECT id FROM resource_relations
+         WHERE source_type = 'instance' AND target_type = 'server' AND target_id = ?
+           AND relation_type = 'runs_on' AND valid_from <= NOW()
+           AND (valid_until IS NULL OR valid_until > NOW())
+         LIMIT 1`,
+        [id],
+      ) as any;
+      if (Array.isArray(relations) && relations.length > 0) {
+        await connection.rollback();
+        return { success: false, error: 'SERVER_HAS_INSTANCE_RELATIONS' };
+      }
+      const [result] = await connection.execute('DELETE FROM servers WHERE id = ?', [id]) as any;
+      if (result.affectedRows === 0) {
+        await connection.rollback();
+        return { success: false, error: '服务器不存在' };
+      }
+      await connection.commit();
       return { success: true };
     } catch (error: any) {
+      await connection.rollback().catch(() => undefined);
       console.error('删除服务器失败:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection.release();
     }
   }
 
