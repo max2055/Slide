@@ -6,6 +6,7 @@ export interface ResourceRelation {
   target: ResourceRef;
   relationType: ResourceRelationType;
   provenance: string;
+  metadata?: Record<string, unknown> | null;
   validFrom: Date;
   validUntil?: Date | null;
 }
