@@ -11,8 +11,19 @@ export interface ResourceRelationStore {
 
 const relationTypes = new Set<ResourceRelationType>(['runs_on', 'hosts', 'replicates_to', 'depends_on']);
 
+function hasValidTopology(relation: ResourceRelation): boolean {
+  if (relation.relationType === 'runs_on') {
+    return relation.source.type === 'instance' && relation.target.type === 'server';
+  }
+  if (relation.relationType === 'hosts') return false;
+  if (relation.relationType === 'replicates_to') {
+    return relation.source.type === 'instance' && relation.target.type === 'instance';
+  }
+  return true;
+}
+
 function hasGlobalResourceAccess(actor: ActorContext): boolean {
-  return actor.permissions.includes('*') || actor.permissions.includes('instance:*') || actor.roles.includes('admin');
+  return actor.permissions.includes('*') || actor.permissions.includes('instance:*');
 }
 
 export function canReadResource(actor: ActorContext, ref: ResourceRef): boolean {
@@ -34,6 +45,7 @@ export class ResourceService {
 
   async createRelation(actor: ActorContext, relation: ResourceRelation): Promise<void> {
     if (!relationTypes.has(relation.relationType)) throw new Error('RESOURCE_RELATION_TYPE_INVALID');
+    if (!hasValidTopology(relation)) throw new Error('RESOURCE_RELATION_TOPOLOGY_INVALID');
     if (!Number.isInteger(relation.source.id) || relation.source.id < 1 || !Number.isInteger(relation.target.id) || relation.target.id < 1) {
       throw new Error('RESOURCE_REF_INVALID');
     }
@@ -49,7 +61,7 @@ export class ResourceService {
   async currentRelations(actor: ActorContext, ref: ResourceRef, now = new Date()): Promise<ResourceRelation[]> {
     if (!canReadResource(actor, ref)) throw new Error('RESOURCE_FORBIDDEN');
     const relations = await this.store.listRelations(ref);
-    return relations.filter((relation) => !relation.validUntil || relation.validUntil > now);
+    return relations.filter((relation) => relation.validFrom <= now && (!relation.validUntil || relation.validUntil > now));
   }
 
   async detail(actor: ActorContext, ref: ResourceRef): Promise<ResourceDetail> {
@@ -77,16 +89,17 @@ export class MysqlResourceRelationStore implements ResourceRelationStore {
   async insertRelation(relation: ResourceRelation): Promise<void> {
     await this.pool().execute(
       `INSERT INTO resource_relations
-       (source_type, source_id, target_type, target_id, relation_type, provenance, valid_from, valid_until)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (source_type, source_id, target_type, target_id, relation_type, provenance, metadata, valid_from, valid_until)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [relation.source.type, relation.source.id, relation.target.type, relation.target.id,
-        relation.relationType, relation.provenance, relation.validFrom, relation.validUntil ?? null],
+        relation.relationType, relation.provenance, relation.metadata ? JSON.stringify(relation.metadata) : null,
+        relation.validFrom, relation.validUntil ?? null],
     );
   }
 
   async listRelations(ref: ResourceRef): Promise<ResourceRelation[]> {
     const [rows] = await this.pool().execute<Array<any>>(
-      `SELECT source_type, source_id, target_type, target_id, relation_type, provenance, valid_from, valid_until
+      `SELECT source_type, source_id, target_type, target_id, relation_type, provenance, metadata, valid_from, valid_until
        FROM resource_relations
        WHERE (source_type = ? AND source_id = ?) OR (target_type = ? AND target_id = ?)
        ORDER BY valid_from DESC`,
@@ -95,6 +108,7 @@ export class MysqlResourceRelationStore implements ResourceRelationStore {
     return rows.map((row) => ({
       source: { type: row.source_type, id: Number(row.source_id) }, target: { type: row.target_type, id: Number(row.target_id) },
       relationType: row.relation_type, provenance: row.provenance,
+      metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata,
       validFrom: new Date(row.valid_from), validUntil: row.valid_until ? new Date(row.valid_until) : null,
     }));
   }

@@ -85,6 +85,28 @@ describe('Resource relations', () => {
     })).rejects.toThrow('RESOURCE_RELATION_WINDOW_INVALID');
     await expect(service.currentRelations(actor({ 1: 'read-only', 2: 'read-only' }), { type: 'instance', id: 1 }, new Date(2))).resolves.toEqual([]);
   });
+
+  it('enforces canonical relation topology and hides future relations', async () => {
+    const service = new ResourceService({
+      exists: async () => true,
+      insertRelation: async () => {},
+      listRelations: async () => [{
+        source: { type: 'instance', id: 1 }, target: { type: 'server', id: 2 }, relationType: 'runs_on',
+        provenance: 'manual', validFrom: new Date(20), validUntil: null,
+      }],
+    });
+    const manager = actor({ 1: 'admin', 2: 'admin' }, ['instance:manage', 'servers:manage']);
+    await expect(service.createRelation(manager, {
+      source: { type: 'instance', id: 1 }, target: { type: 'instance', id: 2 }, relationType: 'runs_on',
+      provenance: 'manual', validFrom: new Date(1),
+    })).rejects.toThrow('RESOURCE_RELATION_TOPOLOGY_INVALID');
+    await expect(service.createRelation(manager, {
+      source: { type: 'server', id: 2 }, target: { type: 'instance', id: 1 }, relationType: 'hosts',
+      provenance: 'manual', validFrom: new Date(1),
+    })).rejects.toThrow('RESOURCE_RELATION_TOPOLOGY_INVALID');
+    await expect(service.currentRelations(actor({ 1: 'read-only' }, ['servers:view']), { type: 'instance', id: 1 }, new Date(10)))
+      .resolves.toEqual([]);
+  });
 });
 
 describe('Resource authorization', () => {
