@@ -9,6 +9,7 @@
 import mysql from 'mysql2/promise';
 import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
 import { Client } from 'ssh2';
+import { instanceHostService } from './resources/instance-host-service.js';
 
 export interface ServerRow {
   id: number;
@@ -359,6 +360,7 @@ class ServerDatabaseService {
     }
 
     try {
+      await instanceHostService.assertServerDeletable(id);
       const [result] = await pool.execute('DELETE FROM servers WHERE id = ?', [id]) as any;
       if (result.affectedRows === 0) {
         return { success: false, error: '服务器不存在' };

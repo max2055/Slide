@@ -3,7 +3,17 @@ import { describe, expect, it } from 'vitest';
 import Fastify from 'fastify';
 import { listAdapterCapabilities } from '../adapters/capability-matrix.js';
 import { publicInstanceDto } from '../security/public-dto.js';
-import { AdapterCapabilitiesResponseSchema, DatabaseInstanceSchema, DatabaseInstancesResponseSchema, HealthResponseSchema } from './public-api.js';
+import {
+  AdapterCapabilitiesResponseSchema,
+  DatabaseInstanceSchema,
+  DatabaseInstancesResponseSchema,
+  HealthResponseSchema,
+  HostedInstancesResponseSchema,
+  InstanceHostsResponseSchema,
+  OkResponseSchema,
+  ReplaceInstanceHostsBodySchema,
+  ReplaceInstanceHostsResponseSchema,
+} from './public-api.js';
 import { buildClientTypes, buildOpenApiDocument } from './generate-public-api.js';
 
 describe('generated public API contract', () => {
@@ -25,7 +35,14 @@ describe('generated public API contract', () => {
 
   it('generates deterministic documented operations and frontend types', () => {
     const document = buildOpenApiDocument() as any;
-    expect(Object.keys(document.paths)).toEqual(['/api/adapters/capabilities', '/api/database/instances', '/api/health']);
+    expect(Object.keys(document.paths)).toEqual([
+      '/api/adapters/capabilities',
+      '/api/database/instances',
+      '/api/database/instances/{id}/hosts',
+      '/api/database/instances/{id}/hosts/{serverId}',
+      '/api/health',
+      '/api/servers/{id}/instances',
+    ]);
     expect(buildClientTypes()).toContain('export interface DatabaseInstance');
     expect(buildClientTypes()).toBe(buildClientTypes());
   });
@@ -35,6 +52,10 @@ describe('generated public API contract', () => {
     app.get('/health', { schema: { response: { 200: HealthResponseSchema } } }, async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
     app.get('/capabilities', { schema: { response: { 200: AdapterCapabilitiesResponseSchema } } }, async () => ({ adapters: listAdapterCapabilities() }));
     app.get('/instances', { schema: { response: { 200: DatabaseInstancesResponseSchema } } }, async () => []);
+    app.get('/instance-hosts', { schema: { response: { 200: InstanceHostsResponseSchema } } }, async () => ({ hosts: [] }));
+    app.put('/instance-hosts', { schema: { body: ReplaceInstanceHostsBodySchema, response: { 200: ReplaceInstanceHostsResponseSchema } } }, async () => ({ ok: true, hosts: [] }));
+    app.delete('/instance-hosts', { schema: { response: { 200: OkResponseSchema } } }, async () => ({ ok: true }));
+    app.get('/hosted-instances', { schema: { response: { 200: HostedInstancesResponseSchema } } }, async () => ({ instances: [] }));
     await expect(app.ready()).resolves.toBe(app);
     await app.close();
   });

@@ -3,6 +3,7 @@
 export type DatabaseType = 'mysql' | 'postgresql' | 'oracle' | 'dameng' | 'mongodb' | 'redis' | 'elasticsearch';
 export type CapabilityState = 'declared' | 'configured' | 'verified' | 'degraded' | 'unsupported';
 export type AdapterCapabilityName = 'connect' | 'query' | 'explain' | 'metrics' | 'health' | 'alerts' | 'reports' | 'writeApproval';
+export type InstanceHostRole = 'standalone' | 'primary' | 'replica' | 'shard' | 'arbiter' | 'unknown';
 
 export interface HealthResponse {
   status: 'ok';
@@ -44,3 +45,45 @@ export interface DatabaseInstance {
 }
 
 export type DatabaseInstancesResponse = DatabaseInstance[];
+
+export interface InstanceHostMapping {
+  serverId: number;
+  role: InstanceHostRole;
+  notes?: string | null;
+}
+
+export interface InstanceHost extends InstanceHostMapping {
+  host: string;
+  port: number;
+  label: string | null;
+  osType: string;
+  status: string;
+  collectionEnabled: boolean;
+  validFrom: string;
+}
+
+export interface HostedInstance extends InstanceHostMapping {
+  instanceId: number;
+  name: string;
+  dbType: DatabaseType;
+  environment: string;
+  status: string;
+  healthStatus: string;
+  validFrom: string;
+}
+
+export interface ReplaceInstanceHostsRequest {
+  hosts: InstanceHostMapping[];
+}
+
+export interface InstanceHostsResponse {
+  hosts: InstanceHost[];
+}
+
+export interface ReplaceInstanceHostsResponse extends InstanceHostsResponse {
+  ok: true;
+}
+
+export interface HostedInstancesResponse {
+  instances: HostedInstance[];
+}

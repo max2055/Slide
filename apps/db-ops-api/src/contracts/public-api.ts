@@ -77,6 +77,68 @@ export const DatabaseInstancesResponseSchema = Type.Array(DatabaseInstanceSchema
   $id: 'DatabaseInstancesResponse',
 });
 
+export const InstanceHostRoleSchema = Type.Union([
+  Type.Literal('standalone'),
+  Type.Literal('primary'),
+  Type.Literal('replica'),
+  Type.Literal('shard'),
+  Type.Literal('arbiter'),
+  Type.Literal('unknown'),
+], { $id: 'InstanceHostRole' });
+
+export const InstanceHostMappingSchema = Type.Object({
+  serverId: Type.Integer({ minimum: 1 }),
+  role: InstanceHostRoleSchema,
+  notes: Type.Optional(Type.Union([Type.String({ maxLength: 500 }), Type.Null()])),
+}, { $id: 'InstanceHostMapping', additionalProperties: false });
+
+export const InstanceHostSchema = Type.Object({
+  serverId: Type.Integer({ minimum: 1 }),
+  role: InstanceHostRoleSchema,
+  notes: Type.Optional(Type.Union([Type.String({ maxLength: 500 }), Type.Null()])),
+  host: Type.String(),
+  port: Type.Integer({ minimum: 1, maximum: 65535 }),
+  label: Type.Union([Type.String(), Type.Null()]),
+  osType: Type.String(),
+  status: Type.String(),
+  collectionEnabled: Type.Boolean(),
+  validFrom: Type.String(),
+}, { $id: 'InstanceHost', additionalProperties: false });
+
+export const HostedInstanceSchema = Type.Object({
+  serverId: Type.Integer({ minimum: 1 }),
+  role: InstanceHostRoleSchema,
+  notes: Type.Optional(Type.Union([Type.String({ maxLength: 500 }), Type.Null()])),
+  instanceId: Type.Integer({ minimum: 1 }),
+  name: Type.String(),
+  dbType: DatabaseTypeSchema,
+  environment: Type.String(),
+  status: Type.String(),
+  healthStatus: Type.String(),
+  validFrom: Type.String(),
+}, { $id: 'HostedInstance', additionalProperties: false });
+
+export const ReplaceInstanceHostsBodySchema = Type.Object({
+  hosts: Type.Array(InstanceHostMappingSchema, { maxItems: 32 }),
+}, { $id: 'ReplaceInstanceHostsBody', additionalProperties: false });
+
+export const InstanceHostsResponseSchema = Type.Object({
+  hosts: Type.Array(InstanceHostSchema),
+}, { $id: 'InstanceHostsResponse', additionalProperties: false });
+
+export const ReplaceInstanceHostsResponseSchema = Type.Object({
+  ok: Type.Literal(true),
+  hosts: Type.Array(InstanceHostSchema),
+}, { $id: 'ReplaceInstanceHostsResponse', additionalProperties: false });
+
+export const HostedInstancesResponseSchema = Type.Object({
+  instances: Type.Array(HostedInstanceSchema),
+}, { $id: 'HostedInstancesResponse', additionalProperties: false });
+
+export const OkResponseSchema = Type.Object({
+  ok: Type.Literal(true),
+}, { $id: 'OkResponse', additionalProperties: false });
+
 export const PublicApiSchemas = {
   HealthResponse: HealthResponseSchema,
   ErrorResponse: ErrorResponseSchema,
@@ -86,8 +148,25 @@ export const PublicApiSchemas = {
   AdapterCapabilitiesResponse: AdapterCapabilitiesResponseSchema,
   DatabaseInstance: DatabaseInstanceSchema,
   DatabaseInstancesResponse: DatabaseInstancesResponseSchema,
+  InstanceHostRole: InstanceHostRoleSchema,
+  InstanceHostMapping: InstanceHostMappingSchema,
+  InstanceHost: InstanceHostSchema,
+  HostedInstance: HostedInstanceSchema,
+  ReplaceInstanceHostsBody: ReplaceInstanceHostsBodySchema,
+  InstanceHostsResponse: InstanceHostsResponseSchema,
+  ReplaceInstanceHostsResponse: ReplaceInstanceHostsResponseSchema,
+  HostedInstancesResponse: HostedInstancesResponseSchema,
+  OkResponse: OkResponseSchema,
 } as const satisfies Record<string, TSchema>;
 
 export type HealthResponse = Static<typeof HealthResponseSchema>;
 export type AdapterCapabilitiesResponse = Static<typeof AdapterCapabilitiesResponseSchema>;
 export type DatabaseInstance = Static<typeof DatabaseInstanceSchema>;
+export type InstanceHostRole = Static<typeof InstanceHostRoleSchema>;
+export type InstanceHostMapping = Static<typeof InstanceHostMappingSchema>;
+export type InstanceHost = Static<typeof InstanceHostSchema>;
+export type HostedInstance = Static<typeof HostedInstanceSchema>;
+export type ReplaceInstanceHostsBody = Static<typeof ReplaceInstanceHostsBodySchema>;
+export type InstanceHostsResponse = Static<typeof InstanceHostsResponseSchema>;
+export type ReplaceInstanceHostsResponse = Static<typeof ReplaceInstanceHostsResponseSchema>;
+export type HostedInstancesResponse = Static<typeof HostedInstancesResponseSchema>;

@@ -977,6 +977,719 @@
           "timestamp"
         ],
         "type": "object"
+      },
+      "HostedInstance": {
+        "$id": "HostedInstance",
+        "additionalProperties": false,
+        "properties": {
+          "dbType": {
+            "anyOf": [
+              {
+                "const": "mysql",
+                "type": "string"
+              },
+              {
+                "const": "postgresql",
+                "type": "string"
+              },
+              {
+                "const": "oracle",
+                "type": "string"
+              },
+              {
+                "const": "dameng",
+                "type": "string"
+              },
+              {
+                "const": "mongodb",
+                "type": "string"
+              },
+              {
+                "const": "redis",
+                "type": "string"
+              },
+              {
+                "const": "elasticsearch",
+                "type": "string"
+              }
+            ]
+          },
+          "environment": {
+            "type": "string"
+          },
+          "healthStatus": {
+            "type": "string"
+          },
+          "instanceId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "$id": "InstanceHostRole",
+            "anyOf": [
+              {
+                "const": "standalone",
+                "type": "string"
+              },
+              {
+                "const": "primary",
+                "type": "string"
+              },
+              {
+                "const": "replica",
+                "type": "string"
+              },
+              {
+                "const": "shard",
+                "type": "string"
+              },
+              {
+                "const": "arbiter",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              }
+            ]
+          },
+          "serverId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "validFrom": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "serverId",
+          "role",
+          "instanceId",
+          "name",
+          "dbType",
+          "environment",
+          "status",
+          "healthStatus",
+          "validFrom"
+        ],
+        "type": "object"
+      },
+      "HostedInstancesResponse": {
+        "$id": "HostedInstancesResponse",
+        "additionalProperties": false,
+        "properties": {
+          "instances": {
+            "items": {
+              "$id": "HostedInstance",
+              "additionalProperties": false,
+              "properties": {
+                "dbType": {
+                  "anyOf": [
+                    {
+                      "const": "mysql",
+                      "type": "string"
+                    },
+                    {
+                      "const": "postgresql",
+                      "type": "string"
+                    },
+                    {
+                      "const": "oracle",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dameng",
+                      "type": "string"
+                    },
+                    {
+                      "const": "mongodb",
+                      "type": "string"
+                    },
+                    {
+                      "const": "redis",
+                      "type": "string"
+                    },
+                    {
+                      "const": "elasticsearch",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "environment": {
+                  "type": "string"
+                },
+                "healthStatus": {
+                  "type": "string"
+                },
+                "instanceId": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "notes": {
+                  "anyOf": [
+                    {
+                      "maxLength": 500,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "role": {
+                  "$id": "InstanceHostRole",
+                  "anyOf": [
+                    {
+                      "const": "standalone",
+                      "type": "string"
+                    },
+                    {
+                      "const": "primary",
+                      "type": "string"
+                    },
+                    {
+                      "const": "replica",
+                      "type": "string"
+                    },
+                    {
+                      "const": "shard",
+                      "type": "string"
+                    },
+                    {
+                      "const": "arbiter",
+                      "type": "string"
+                    },
+                    {
+                      "const": "unknown",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "serverId": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "validFrom": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "serverId",
+                "role",
+                "instanceId",
+                "name",
+                "dbType",
+                "environment",
+                "status",
+                "healthStatus",
+                "validFrom"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "instances"
+        ],
+        "type": "object"
+      },
+      "InstanceHost": {
+        "$id": "InstanceHost",
+        "additionalProperties": false,
+        "properties": {
+          "collectionEnabled": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "osType": {
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "role": {
+            "$id": "InstanceHostRole",
+            "anyOf": [
+              {
+                "const": "standalone",
+                "type": "string"
+              },
+              {
+                "const": "primary",
+                "type": "string"
+              },
+              {
+                "const": "replica",
+                "type": "string"
+              },
+              {
+                "const": "shard",
+                "type": "string"
+              },
+              {
+                "const": "arbiter",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              }
+            ]
+          },
+          "serverId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "validFrom": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "serverId",
+          "role",
+          "host",
+          "port",
+          "label",
+          "osType",
+          "status",
+          "collectionEnabled",
+          "validFrom"
+        ],
+        "type": "object"
+      },
+      "InstanceHostMapping": {
+        "$id": "InstanceHostMapping",
+        "additionalProperties": false,
+        "properties": {
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "$id": "InstanceHostRole",
+            "anyOf": [
+              {
+                "const": "standalone",
+                "type": "string"
+              },
+              {
+                "const": "primary",
+                "type": "string"
+              },
+              {
+                "const": "replica",
+                "type": "string"
+              },
+              {
+                "const": "shard",
+                "type": "string"
+              },
+              {
+                "const": "arbiter",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              }
+            ]
+          },
+          "serverId": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "serverId",
+          "role"
+        ],
+        "type": "object"
+      },
+      "InstanceHostRole": {
+        "$id": "InstanceHostRole",
+        "anyOf": [
+          {
+            "const": "standalone",
+            "type": "string"
+          },
+          {
+            "const": "primary",
+            "type": "string"
+          },
+          {
+            "const": "replica",
+            "type": "string"
+          },
+          {
+            "const": "shard",
+            "type": "string"
+          },
+          {
+            "const": "arbiter",
+            "type": "string"
+          },
+          {
+            "const": "unknown",
+            "type": "string"
+          }
+        ]
+      },
+      "InstanceHostsResponse": {
+        "$id": "InstanceHostsResponse",
+        "additionalProperties": false,
+        "properties": {
+          "hosts": {
+            "items": {
+              "$id": "InstanceHost",
+              "additionalProperties": false,
+              "properties": {
+                "collectionEnabled": {
+                  "type": "boolean"
+                },
+                "host": {
+                  "type": "string"
+                },
+                "label": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "notes": {
+                  "anyOf": [
+                    {
+                      "maxLength": 500,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "osType": {
+                  "type": "string"
+                },
+                "port": {
+                  "maximum": 65535,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "role": {
+                  "$id": "InstanceHostRole",
+                  "anyOf": [
+                    {
+                      "const": "standalone",
+                      "type": "string"
+                    },
+                    {
+                      "const": "primary",
+                      "type": "string"
+                    },
+                    {
+                      "const": "replica",
+                      "type": "string"
+                    },
+                    {
+                      "const": "shard",
+                      "type": "string"
+                    },
+                    {
+                      "const": "arbiter",
+                      "type": "string"
+                    },
+                    {
+                      "const": "unknown",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "serverId": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "validFrom": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "serverId",
+                "role",
+                "host",
+                "port",
+                "label",
+                "osType",
+                "status",
+                "collectionEnabled",
+                "validFrom"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "hosts"
+        ],
+        "type": "object"
+      },
+      "OkResponse": {
+        "$id": "OkResponse",
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "const": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "type": "object"
+      },
+      "ReplaceInstanceHostsBody": {
+        "$id": "ReplaceInstanceHostsBody",
+        "additionalProperties": false,
+        "properties": {
+          "hosts": {
+            "items": {
+              "$id": "InstanceHostMapping",
+              "additionalProperties": false,
+              "properties": {
+                "notes": {
+                  "anyOf": [
+                    {
+                      "maxLength": 500,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "role": {
+                  "$id": "InstanceHostRole",
+                  "anyOf": [
+                    {
+                      "const": "standalone",
+                      "type": "string"
+                    },
+                    {
+                      "const": "primary",
+                      "type": "string"
+                    },
+                    {
+                      "const": "replica",
+                      "type": "string"
+                    },
+                    {
+                      "const": "shard",
+                      "type": "string"
+                    },
+                    {
+                      "const": "arbiter",
+                      "type": "string"
+                    },
+                    {
+                      "const": "unknown",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "serverId": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "serverId",
+                "role"
+              ],
+              "type": "object"
+            },
+            "maxItems": 32,
+            "type": "array"
+          }
+        },
+        "required": [
+          "hosts"
+        ],
+        "type": "object"
+      },
+      "ReplaceInstanceHostsResponse": {
+        "$id": "ReplaceInstanceHostsResponse",
+        "additionalProperties": false,
+        "properties": {
+          "hosts": {
+            "items": {
+              "$id": "InstanceHost",
+              "additionalProperties": false,
+              "properties": {
+                "collectionEnabled": {
+                  "type": "boolean"
+                },
+                "host": {
+                  "type": "string"
+                },
+                "label": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "notes": {
+                  "anyOf": [
+                    {
+                      "maxLength": 500,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "osType": {
+                  "type": "string"
+                },
+                "port": {
+                  "maximum": 65535,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "role": {
+                  "$id": "InstanceHostRole",
+                  "anyOf": [
+                    {
+                      "const": "standalone",
+                      "type": "string"
+                    },
+                    {
+                      "const": "primary",
+                      "type": "string"
+                    },
+                    {
+                      "const": "replica",
+                      "type": "string"
+                    },
+                    {
+                      "const": "shard",
+                      "type": "string"
+                    },
+                    {
+                      "const": "arbiter",
+                      "type": "string"
+                    },
+                    {
+                      "const": "unknown",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "serverId": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "validFrom": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "serverId",
+                "role",
+                "host",
+                "port",
+                "label",
+                "osType",
+                "status",
+                "collectionEnabled",
+                "validFrom"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "ok": {
+            "const": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "hosts"
+        ],
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -1037,6 +1750,182 @@
         ]
       }
     },
+    "/api/database/instances/{id}/hosts": {
+      "get": {
+        "operationId": "listInstanceHosts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceHostsResponse"
+                }
+              }
+            },
+            "description": "Active Linux hosts related to the database instance"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid resource identifier"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Instance unavailable or unauthorized"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "replaceInstanceHosts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceInstanceHostsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplaceInstanceHostsResponse"
+                }
+              }
+            },
+            "description": "Atomically replaced and enriched active host mappings"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid mapping payload or missing target server"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Instance unavailable or unauthorized"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/database/instances/{id}/hosts/{serverId}": {
+      "delete": {
+        "operationId": "unlinkInstanceHost",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "serverId",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            },
+            "description": "Expired active host mapping"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid resource identifier"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Mapping unavailable or unauthorized"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/health": {
       "get": {
         "operationId": "getHealth",
@@ -1052,6 +1941,59 @@
             "description": "Service health"
           }
         }
+      }
+    },
+    "/api/servers/{id}/instances": {
+      "get": {
+        "operationId": "listServerInstances",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostedInstancesResponse"
+                }
+              }
+            },
+            "description": "Database instances hosted by the server and visible to the actor"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid resource identifier"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server unavailable or unauthorized"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     }
   }
