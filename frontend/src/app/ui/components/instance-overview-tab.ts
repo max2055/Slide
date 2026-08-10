@@ -4,6 +4,7 @@ import { icons } from "../../../icons.js";
 import "./app-card.js";
 import "./app-badge.js";
 import "./metric-chart.js";
+import "./instance-host-summary.js";
 
 interface InstanceDetail {
   id: number;
@@ -318,6 +319,8 @@ export class InstanceOverviewTab extends LitElement {
             <p style="margin:6px 0 0;font-size:var(--text-sm);color:var(--text);line-height:1.6;">${inst.description}</p>
           </div>` : ""}
       </app-card>
+
+      <instance-host-summary .instanceId=${inst.id}></instance-host-summary>
 
       <!-- Mini time-series charts -->
       ${this.overviewHistory && this.overviewHistory.time.length > 0 ? html`
