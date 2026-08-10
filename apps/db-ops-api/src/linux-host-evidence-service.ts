@@ -1,6 +1,6 @@
 import type { Client } from 'ssh2';
 import type { HostEvidenceRequest } from './instance-diagnostic-context-service.js';
-import { redactSensitiveText } from './security/log-redaction.js';
+import { redactLogValue, redactSensitiveText } from './security/log-redaction.js';
 import { serverDatabaseService, type DecryptedCredentials, type ServerRow } from './server-database-service.js';
 import serverMetricProvider from './server-metric-provider.js';
 import sshSessionPool, { type ExecCommandOptions, type ExecCommandResult } from './ssh-session-pool.js';
@@ -110,12 +110,20 @@ const FATAL_SSH_CODES = new Set([
 
 export function decodeGnuPath(value: string): string {
   const replacements: Record<string, string> = {
+    '20': ' ',
+    '09': '\t',
+    '0a': '\n',
+    '5c': '\\',
     '040': ' ',
     '011': '\t',
     '012': '\n',
     '134': '\\',
   };
-  return value.replace(/\\(040|011|012|134)/g, (_match, code: string) => replacements[code]);
+  return value.replace(/\\(?:x(20|09|0a|5c)|(040|011|012|134))/gi, (
+    _match,
+    hexCode: string | undefined,
+    octalCode: string | undefined,
+  ) => replacements[(hexCode ?? octalCode).toLowerCase()]);
 }
 
 interface DfBytesRow {
@@ -241,22 +249,35 @@ export function parseJournalJson(stdout: string): {
       malformedLines++;
       continue;
     }
-    let parsed: Record<string, unknown>;
+    let value: unknown;
     try {
-      parsed = JSON.parse(line) as Record<string, unknown>;
+      value = JSON.parse(line);
     } catch {
       malformedLines++;
       continue;
     }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      malformedLines++;
+      continue;
+    }
+    const parsed = value as Record<string, unknown>;
     if (typeof parsed.MESSAGE !== 'string') continue;
     const priority = typeof parsed.PRIORITY === 'string' ? parsed.PRIORITY : '';
-    entries.push({
+    const projected: SystemLogEvidence = {
       timestamp: journalTimestamp(parsed.__REALTIME_TIMESTAMP),
       severity: PRIORITY_NAMES[priority] ?? 'unknown',
-      unit: typeof parsed._SYSTEMD_UNIT === 'string' ? parsed._SYSTEMD_UNIT.slice(0, 256) : null,
-      identifier: typeof parsed.SYSLOG_IDENTIFIER === 'string' ? parsed.SYSLOG_IDENTIFIER.slice(0, 256) : null,
-      pid: typeof parsed._PID === 'string' ? parsed._PID.slice(0, 32) : null,
-      message: redactSensitiveText(parsed.MESSAGE).slice(0, MAX_LOG_LINE_BYTES),
+      unit: typeof parsed._SYSTEMD_UNIT === 'string' ? parsed._SYSTEMD_UNIT : null,
+      identifier: typeof parsed.SYSLOG_IDENTIFIER === 'string' ? parsed.SYSLOG_IDENTIFIER : null,
+      pid: typeof parsed._PID === 'string' ? parsed._PID : null,
+      message: parsed.MESSAGE,
+    };
+    const redacted = redactLogValue(projected) as SystemLogEvidence;
+    entries.push({
+      ...redacted,
+      unit: redacted.unit?.slice(0, 256) ?? null,
+      identifier: redacted.identifier?.slice(0, 256) ?? null,
+      pid: redacted.pid?.slice(0, 32) ?? null,
+      message: redacted.message.slice(0, MAX_LOG_LINE_BYTES),
     });
   }
   return {
@@ -393,6 +414,10 @@ function stableErrorCode(error: unknown): string {
   return /^[A-Z][A-Z0-9_]{2,80}$/.test(message) ? message : 'SSH_COMMAND_FAILED';
 }
 
+export function isFatalSshCommandError(error: unknown): boolean {
+  return FATAL_SSH_CODES.has(stableErrorCode(error));
+}
+
 function sectionQuality(hasData: boolean, hasGap: boolean): EvidenceQuality {
   if (!hasData) return 'unknown';
   return hasGap ? 'partial' : 'good';
@@ -503,7 +528,7 @@ export class LinuxHostEvidenceService {
         client, ['LC_ALL=C LANG=C df -Pi'],
       ))[0];
       let findmntOutput = '';
-      let filesystemGap = dfBytes.exitCode !== 0 || dfInodes.exitCode !== 0;
+      let filesystemGap = dfBytes.exitCode !== 0;
       const findmnt = (await this.dependencies.sshSessionPool.execCommands(
         client, ['LC_ALL=C LANG=C findmnt -rn -o SOURCE,TARGET,FSTYPE'],
       ))[0];
@@ -512,9 +537,19 @@ export class LinuxHostEvidenceService {
         filesystemGap = true;
         gaps.push({ section: 'filesystems', reason: 'FINDMNT_UNAVAILABLE' });
       }
-      const filesystems = filesystemGap && (dfBytes.exitCode !== 0 || dfInodes.exitCode !== 0)
+      const filesystems = dfBytes.exitCode !== 0
         ? []
-        : parseFilesystemEvidence(dfBytes.stdout, dfInodes.stdout, findmntOutput).slice(0, MAX_FILESYSTEMS);
+        : parseFilesystemEvidence(
+          dfBytes.stdout,
+          dfInodes.exitCode === 0 ? dfInodes.stdout : '',
+          findmntOutput,
+        ).slice(0, MAX_FILESYSTEMS);
+      const inodeGap = dfInodes.exitCode !== 0
+        || filesystems.some((filesystem) => filesystem.inodeUsagePercent === null);
+      if (inodeGap) {
+        filesystemGap = true;
+        gaps.push({ section: 'filesystems', reason: 'FILESYSTEM_INODE_UNAVAILABLE' });
+      }
       if (filesystems.length === MAX_FILESYSTEMS) {
         truncated = true;
         gaps.push({ section: 'filesystems', reason: 'FILESYSTEM_LIMIT' });
@@ -529,15 +564,18 @@ export class LinuxHostEvidenceService {
       const logEntries: SystemLogEvidence[] = [];
       let logEvidenceBytes = 0;
       let logGap = discoveryGap;
-      for (const command of [
+      const journalCommands = [
         ...(effectiveJournalUnits.length > 0 ? [buildJournalCommand(effectiveJournalUnits, sinceEpoch, untilEpoch, false)] : []),
         buildJournalCommand([], sinceEpoch, untilEpoch, true),
-      ]) {
+      ];
+      let unavailableJournalCommands = 0;
+      for (const command of journalCommands) {
         const result = (await this.dependencies.sshSessionPool.execCommands(
           client, [command], { maxOutputBytes: MAX_LOG_BYTES },
         ))[0];
         if (result.exitCode !== 0) {
           logGap = true;
+          unavailableJournalCommands++;
           continue;
         }
         const parsed = parseJournalJson(result.stdout);
@@ -556,7 +594,7 @@ export class LinuxHostEvidenceService {
         }
         if (parsed.truncated) truncated = true;
       }
-      if (logGap && logEntries.length === 0) {
+      if (unavailableJournalCommands === journalCommands.length) {
         const fallback = (await this.dependencies.sshSessionPool.execCommands(
           client, ['LC_ALL=C LANG=C tail -n 200 -- /var/log/messages'], { maxOutputBytes: MAX_LOG_BYTES },
         ))[0];
@@ -615,7 +653,7 @@ export class LinuxHostEvidenceService {
             quality: 'unknown',
             reason: code === 'SSH_COMMAND_TIMEOUT' ? 'PHYSICAL_FILE_TIMEOUT' : 'PHYSICAL_FILE_COLLECTION_FAILED',
           });
-          if (FATAL_SSH_CODES.has(code)) {
+          if (isFatalSshCommandError(error)) {
             connectionFatal = true;
             gaps.push({ section: 'physicalFiles', reason: code });
             break;
@@ -665,8 +703,7 @@ export class LinuxHostEvidenceService {
         gaps,
       };
     } catch (error) {
-      const code = stableErrorCode(error);
-      if (FATAL_SSH_CODES.has(code)) connectionFatal = true;
+      if (isFatalSshCommandError(error)) connectionFatal = true;
       throw error;
     } finally {
       if (connectionFatal) this.dependencies.sshSessionPool.closeConnection(client);

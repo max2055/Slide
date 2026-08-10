@@ -8,6 +8,7 @@ import "../components/app-card.js";
 import "../components/app-empty-state.js";
 import { showToast } from "../components/app-toast-container.js";
 import { authFetch } from "../../../api/index.js";
+import { aggregateServerDiskUsage } from "./server-metric-utils.js";
 
 interface ServerDetail {
   id: number;
@@ -28,6 +29,7 @@ interface MetricEntry {
   metric_name: string;
   metric_value: number;
   recorded_at: string;
+  dimensions?: Record<string, unknown> | string | null;
 }
 
 @customElement("server-detail")
@@ -349,12 +351,8 @@ export class ServerDetailPage extends LitElement {
     return entry ? entry.metric_value : null;
   }
 
-  /** Compute aggregate disk usage from per-mount disk_usage_* entries */
   private _aggregateDiskUsage(): number | null {
-    const diskEntries = this.metrics.filter(m => m.metric_name.startsWith('disk_usage_'));
-    if (diskEntries.length === 0) return null;
-    const sum = diskEntries.reduce((acc, m) => acc + m.metric_value, 0);
-    return sum / diskEntries.length;
+    return aggregateServerDiskUsage(this.metrics);
   }
 
   private _formatBytes(bytes: number): string {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   LinuxHostEvidenceService,
   buildPhysicalFileCommand,
+  decodeGnuPath,
   discoverJournalUnits,
   parseFilesystemEvidence,
   parseJournalJson,
@@ -14,12 +15,12 @@ describe('Linux host evidence parsers', () => {
   it('merges RHEL 7/8 byte, inode and findmnt output by decoded mount', () => {
     const bytes = `Filesystem 1-blocks Used Available Capacity Mounted on
 /dev/mapper/rhel-root 53660876800 21464350720 32196526080 40% /
-/dev/sdb1 107374182400 53687091200 53687091200 50% /var/lib/mysql\\040data`;
+/dev/sdb1 107374182400 53687091200 53687091200 50% /var/lib/mysql data`;
     const inodes = `Filesystem Inodes IUsed IFree IUse% Mounted on
 /dev/mapper/rhel-root 26214400 110000 26104400 1% /
-/dev/sdb1 52428800 1000 52427800 1% /var/lib/mysql\\040data`;
+/dev/sdb1 52428800 1000 52427800 1% /var/lib/mysql data`;
     const findmnt = `/dev/mapper/rhel-root / xfs
-/dev/sdb1 /var/lib/mysql\\040data ext4`;
+/dev/sdb1 /var/lib/mysql\\x20data ext4`;
 
     expect(parseFilesystemEvidence(bytes, inodes, findmnt)).toEqual([
       {
@@ -35,6 +36,15 @@ describe('Linux host evidence parsers', () => {
         inodeAvailable: 52427800, inodeUsagePercent: 1,
       },
     ]);
+  });
+
+  it('decodes util-linux hex escapes while preserving GNU octal escapes', () => {
+    expect(decodeGnuPath(String.raw`space\x20tab\x09line\x0aslash\x5c`)).toBe(
+      'space tab\tline\nslash\\',
+    );
+    expect(decodeGnuPath(String.raw`space\040tab\011line\012slash\134`)).toBe(
+      'space tab\tline\nslash\\',
+    );
   });
 
   it('keeps safe journal fields, drops non-string messages and reports malformed JSON', () => {
@@ -55,6 +65,50 @@ describe('Linux host evidence parsers', () => {
       message: 'password=[REDACTED] failed login',
     }]);
     expect(result.malformedLines).toBe(1);
+  });
+
+  it('recursively redacts every projected journal field and keeps fields bounded', () => {
+    const result = parseJournalJson(JSON.stringify({
+      MESSAGE: 'password=message-secret failed',
+      _SYSTEMD_UNIT: `password=unit-secret-${'u'.repeat(300)}`,
+      SYSLOG_IDENTIFIER: `token=identifier-secret-${'i'.repeat(300)}`,
+      _PID: `api_key=pid-secret-${'p'.repeat(100)}`,
+    }));
+
+    expect(result.entries).toHaveLength(1);
+    const entry = result.entries[0];
+    expect(JSON.stringify(entry)).not.toMatch(/message-secret|unit-secret|identifier-secret|pid-secret/);
+    expect(entry.unit).toContain('[REDACTED]');
+    expect(entry.identifier).toContain('[REDACTED]');
+    expect(entry.pid).toContain('[REDACTED]');
+    expect(entry.unit!.length).toBeLessThanOrEqual(256);
+    expect(entry.identifier!.length).toBeLessThanOrEqual(256);
+    expect(entry.pid!.length).toBeLessThanOrEqual(32);
+  });
+
+  it('redacts projected journal fields before truncating them', () => {
+    const secret = 'sk-ABCDEFGHSECRET';
+    const result = parseJournalJson(JSON.stringify({
+      MESSAGE: 'kept',
+      SYSLOG_IDENTIFIER: `${'x'.repeat(247)} ${secret}`,
+      _PID: `${'x'.repeat(23)} ${secret}`,
+    }));
+
+    const entry = result.entries[0];
+    expect(JSON.stringify(entry)).not.toContain(secret);
+    expect(entry.identifier).not.toContain('sk-ABCDE');
+    expect(entry.pid).not.toContain('sk-ABCDE');
+    expect(entry.identifier!.length).toBeLessThanOrEqual(256);
+    expect(entry.pid!.length).toBeLessThanOrEqual(32);
+  });
+
+  it('treats valid JSON non-objects as malformed entries instead of throwing', () => {
+    const result = parseJournalJson([
+      'null', '[]', '42', '"string"', JSON.stringify({ MESSAGE: 'kept' }),
+    ].join('\n'));
+
+    expect(result.entries).toEqual([expect.objectContaining({ message: 'kept' })]);
+    expect(result.malformedLines).toBe(4);
   });
 });
 
@@ -136,6 +190,44 @@ Filesystem Inodes IUsed IFree IUse% Mounted on
 });
 
 describe('LinuxHostEvidenceService lifecycle', () => {
+  const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0, signal: null, truncated: false });
+  const failed = () => ({ stdout: '', stderr: 'unavailable', exitCode: 1, signal: null, truncated: false });
+
+  function createService(execCommands: ReturnType<typeof vi.fn>) {
+    const client = {} as any;
+    const releaseConnection = vi.fn();
+    const closeConnection = vi.fn();
+    const service = new LinuxHostEvidenceService({
+      serverDatabaseService: {
+        getServerById: vi.fn().mockResolvedValue({
+          id: 9, host: 'db.internal', port: 22, credential_type: 'password',
+          host_key_fingerprint: 'SHA256:test', os_type: 'RHEL 8',
+        }),
+        getDecryptedCredentials: vi.fn().mockResolvedValue({ username: 'ops', password: 'secret' }),
+      } as any,
+      sshSessionPool: {
+        getConnection: vi.fn().mockResolvedValue(client), execCommands,
+        releaseConnection, closeConnection,
+      } as any,
+      now: () => new Date('2026-08-10T00:00:00.000Z'),
+    });
+    return { service, client, releaseConnection, closeConnection };
+  }
+
+  function successfulCommand(command: string) {
+    if (command.includes('uname -s')) return ok('Linux\n');
+    if (command.includes('systemctl list-unit-files')) return ok('mysqld.service enabled\n');
+    if (command === 'LC_ALL=C LANG=C df -P -B1') {
+      return ok('Filesystem 1-blocks Used Available Capacity Mounted on\n/dev/sda1 1000 400 600 40% /\n');
+    }
+    if (command === 'LC_ALL=C LANG=C df -Pi') {
+      return ok('Filesystem Inodes IUsed IFree IUse% Mounted on\n/dev/sda1 100 20 80 20% /\n');
+    }
+    if (command.includes('findmnt -rn')) return ok('/dev/sda1 / xfs\n');
+    if (command.includes('journalctl')) return ok();
+    return ok('1\n');
+  }
+
   it('validates uname first and releases an unsupported host without collecting evidence', async () => {
     const client = {} as any;
     const execCommands = vi.fn().mockResolvedValue([{
@@ -216,5 +308,87 @@ describe('LinuxHostEvidenceService lifecycle', () => {
     });
     expect(evidence.filesystems.items[0]).toMatchObject({ mount: '/', fsType: 'xfs' });
     expect(releaseConnection).toHaveBeenCalledWith(client);
+  });
+
+  it.each([
+    ['returns non-zero', failed()],
+    ['returns no parseable rows', ok('Filesystem Inodes IUsed IFree IUse% Mounted on\n')],
+  ])('keeps byte filesystem evidence and reports a stable inode gap when df -Pi %s', async (_case, inodeResult) => {
+    const execCommands = vi.fn(async (_client: unknown, commands: string[]) => commands.map((command) =>
+      command === 'LC_ALL=C LANG=C df -Pi' ? inodeResult : successfulCommand(command)
+    ));
+    const { service } = createService(execCommands);
+
+    const evidence = await service.collectHostEvidence(9, {
+      databaseType: 'mysql', services: ['mysqld'], paths: [],
+    });
+
+    expect(evidence.filesystems.items).toEqual([expect.objectContaining({
+      mount: '/', sizeBytes: 1000, usedBytes: 400, availableBytes: 600,
+      usagePercent: 40, inodeTotal: null, inodeUsed: null,
+      inodeAvailable: null, inodeUsagePercent: null,
+    })]);
+    expect(evidence.filesystems.quality).toBe('partial');
+    expect(evidence.gaps).toContainEqual({
+      section: 'filesystems', reason: 'FILESYSTEM_INODE_UNAVAILABLE',
+    });
+    expect(evidence.gaps).not.toContainEqual({
+      section: 'filesystems', reason: 'FILESYSTEM_EVIDENCE_UNAVAILABLE',
+    });
+  });
+
+  it.each([
+    {
+      name: 'service discovery fails',
+      resultFor: (command: string) => command.includes('systemctl list-unit-files')
+        ? failed() : successfulCommand(command),
+    },
+    {
+      name: 'journal JSON is malformed',
+      resultFor: (command: string) => command.includes('journalctl') && !command.includes('--dmesg')
+        ? ok('{malformed-json\n') : successfulCommand(command),
+    },
+    {
+      name: 'journal succeeds with zero entries',
+      resultFor: successfulCommand,
+    },
+    {
+      name: 'one journal query is unavailable',
+      resultFor: (command: string) => command.includes('journalctl') && !command.includes('--dmesg')
+        ? failed() : successfulCommand(command),
+    },
+  ])('does not read /var/log/messages when $name but journald is readable', async ({ resultFor }) => {
+    const execCommands = vi.fn(async (_client: unknown, commands: string[]) => commands.map(resultFor));
+    const { service } = createService(execCommands);
+
+    await service.collectHostEvidence(9, {
+      databaseType: 'mysql', services: ['mysqld'], paths: [],
+    });
+
+    const commands = execCommands.mock.calls.flatMap((call) => call[1] as string[]);
+    expect(commands.filter((command) => command.includes('journalctl'))).toHaveLength(2);
+    expect(commands).not.toContain('LC_ALL=C LANG=C tail -n 200 -- /var/log/messages');
+  });
+
+  it('falls back to /var/log/messages only after every journald query is unavailable', async () => {
+    const execCommands = vi.fn(async (_client: unknown, commands: string[]) => commands.map((command) => {
+      if (command.includes('journalctl')) return failed();
+      if (command === 'LC_ALL=C LANG=C tail -n 200 -- /var/log/messages') return ok('fallback line\n');
+      return successfulCommand(command);
+    }));
+    const { service } = createService(execCommands);
+
+    const evidence = await service.collectHostEvidence(9, {
+      databaseType: 'mysql', services: ['mysqld'], paths: [],
+    });
+
+    const commands = execCommands.mock.calls.flatMap((call) => call[1] as string[]);
+    const journalIndexes = commands
+      .map((command, index) => command.includes('journalctl') ? index : -1)
+      .filter((index) => index >= 0);
+    const fallbackIndex = commands.indexOf('LC_ALL=C LANG=C tail -n 200 -- /var/log/messages');
+    expect(journalIndexes).toHaveLength(2);
+    expect(fallbackIndex).toBeGreaterThan(Math.max(...journalIndexes));
+    expect(evidence.gaps).toContainEqual({ section: 'systemLogs', reason: 'JOURNAL_FALLBACK_MESSAGES' });
   });
 });

@@ -1377,6 +1377,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // ========== 服务器指标 API ==========
 
+  const latestServerMetricRecordedAt = (metrics: Array<{ recorded_at: any }>): any | null =>
+    metrics.reduce<any | null>((latest, metric) =>
+      latest === null || metric.recorded_at > latest ? metric.recorded_at : latest,
+    null);
+
   // 批量获取所有服务器最新指标摘要
   fastify.get('/api/servers/metrics/summary', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
     try {
@@ -1386,14 +1391,16 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
 
       const [rows] = await pool.execute(
-        `SELECT sm.server_id, sm.metric_name, sm.metric_value, sm.recorded_at
+        `SELECT sm.server_id, sm.metric_name, sm.dimensions, sm.metric_value, sm.recorded_at
          FROM server_metrics sm
          INNER JOIN (
            SELECT server_id, metric_name, MAX(recorded_at) AS max_time
            FROM server_metrics
            GROUP BY server_id, metric_name
-         ) latest ON sm.server_id = latest.server_id AND sm.metric_name = latest.metric_name AND sm.recorded_at = latest.max_time
-         ORDER BY sm.server_id, sm.metric_name`
+         ) latest ON sm.server_id = latest.server_id
+           AND sm.metric_name = latest.metric_name
+           AND sm.recorded_at = latest.max_time
+         ORDER BY sm.server_id, sm.metric_name, sm.id`
       ) as any;
 
       // Group by server_id
@@ -1407,7 +1414,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         }
       }
 
-      reply.send({ servers: grouped, recorded_at: rows.length > 0 ? rows[0].recorded_at : null });
+      reply.send({ servers: grouped, recorded_at: latestServerMetricRecordedAt(rows) });
     } catch (error: any) {
       reply.code(500).send({ error: '获取指标摘要失败：' + error.message });
     }
@@ -1428,22 +1435,23 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         return reply.code(404).send({ error: '服务器不存在' });
       }
 
-      // Get latest metric values (one row per metric_name)
+      // Get every dimension row from the latest collection snapshot for each metric.
       const [rows] = await pool.execute(
-        `SELECT sm.server_id, sm.metric_name, sm.metric_value, sm.recorded_at
+        `SELECT sm.server_id, sm.metric_name, sm.dimensions, sm.metric_value, sm.recorded_at
          FROM server_metrics sm
          INNER JOIN (
            SELECT metric_name, MAX(recorded_at) AS max_time
            FROM server_metrics
            WHERE server_id = ?
            GROUP BY metric_name
-         ) latest ON sm.metric_name = latest.metric_name AND sm.recorded_at = latest.max_time
+         ) latest ON sm.metric_name = latest.metric_name
+           AND sm.recorded_at = latest.max_time
          WHERE sm.server_id = ?
-         ORDER BY sm.metric_name`,
+         ORDER BY sm.metric_name, sm.id`,
         [Number(id), Number(id)]
       ) as any;
 
-      reply.send({ server_id: Number(id), metrics: rows, recorded_at: rows.length > 0 ? rows[0].recorded_at : null });
+      reply.send({ server_id: Number(id), metrics: rows, recorded_at: latestServerMetricRecordedAt(rows) });
     } catch (error: any) {
       reply.code(500).send({ error: '获取服务器指标失败：' + error.message });
     }
@@ -1455,8 +1463,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const { id } = request.params as any;
       const { range = '1h', metric } = request.query as { range?: string; metric?: string };
 
-      // Validate range parameter
-      const validRanges = ['1h', '6h', '24h', '7d', '30d'];
+      // Validate range parameter and bind only an allowlisted hour count.
+      const intervalMap: Record<string, number> = {
+        '1h': 1,
+        '6h': 6,
+        '24h': 24,
+        '7d': 168,
+        '30d': 720,
+      };
+      const validRanges = Object.keys(intervalMap);
       if (!validRanges.includes(range)) {
         return reply.code(400).send({ error: `range 必须为 ${validRanges.join('/')} 之一` });
       }
@@ -1472,12 +1487,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         return reply.code(404).send({ error: '服务器不存在' });
       }
 
-      let whereClause = 'WHERE server_id = ? AND recorded_at >= NOW() - INTERVAL ?';
-      const params: any[] = [Number(id)];
-
-      // Map range to INTERVAL value
-      const intervalMap: Record<string, string> = { '1h': '1 HOUR', '6h': '6 HOUR', '24h': '24 HOUR', '7d': '7 DAY', '30d': '30 DAY' };
-      params.push(intervalMap[range] || '1 HOUR');
+      let whereClause = 'WHERE server_id = ? AND recorded_at >= DATE_SUB(NOW(), INTERVAL ? HOUR)';
+      const params: any[] = [Number(id), intervalMap[range]];
 
       // Optional metric filter (comma-separated)
       if (metric) {
@@ -1495,10 +1506,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
 
       const [rows] = await pool.execute(
-        `SELECT id, server_id, metric_name, metric_value, recorded_at
+        `SELECT id, server_id, metric_name, dimensions, metric_value, recorded_at
          FROM server_metrics
          ${whereClause}
-         ORDER BY recorded_at ASC`,
+         ORDER BY recorded_at ASC, id ASC`,
         params
       ) as any;
 

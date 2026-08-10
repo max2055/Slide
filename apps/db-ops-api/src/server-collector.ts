@@ -14,12 +14,12 @@ import sshSessionPool from './ssh-session-pool';
 import serverMetricProvider from './server-metric-provider';
 import { serverDatabaseService, ServerRow } from './server-database-service';
 import { dbConnection } from './db-connection';
-import { parseFilesystemEvidence } from './linux-host-evidence-service.js';
+import { isFatalSshCommandError, parseFilesystemEvidence } from './linux-host-evidence-service.js';
 
 export interface FilesystemMetricRow {
   metricName: 'disk_usage' | 'filesystem_size_bytes' | 'filesystem_used_bytes'
     | 'filesystem_available_bytes' | 'filesystem_inode_usage';
-  dimensions: { mount: string; device: string; fsType: string };
+  dimensions: { mount: string; device: string; fs_type: string };
   value: number;
 }
 
@@ -32,7 +32,7 @@ export function buildFilesystemMetricRows(
     const dimensions = {
       mount: filesystem.mount,
       device: filesystem.device,
-      fsType: filesystem.fsType ?? 'unknown',
+      fs_type: filesystem.fsType ?? 'unknown',
     };
     const rows: FilesystemMetricRow[] = [
       { metricName: 'disk_usage', dimensions, value: filesystem.usagePercent },
@@ -186,6 +186,14 @@ class ServerCollector {
     );
 
     try {
+      const osResult = (await sshSessionPool.execCommands(
+        client,
+        ['LC_ALL=C LANG=C uname -s'],
+      ))[0];
+      if (osResult.exitCode !== 0 || osResult.stdout.trim() !== 'Linux') {
+        throw new Error('HOST_OS_UNSUPPORTED');
+      }
+
       // Determine which commands to execute based on OS type
       const definitions = serverMetricProvider.getDefinitions(server.os_type);
       if (definitions.length === 0) {
@@ -213,13 +221,11 @@ class ServerCollector {
           'LC_ALL=C LANG=C df -Pi',
           'LC_ALL=C LANG=C findmnt -rn -o SOURCE,TARGET,FSTYPE',
         ]);
-        if (inodeResult.exitCode === 0) {
-          filesystemRows = buildFilesystemMetricRows(
-            results[diskDetailIndex].stdout,
-            inodeResult.stdout,
-            findmntResult.exitCode === 0 ? findmntResult.stdout : '',
-          );
-        }
+        filesystemRows = buildFilesystemMetricRows(
+          results[diskDetailIndex].stdout,
+          inodeResult.exitCode === 0 ? inodeResult.stdout : '',
+          findmntResult.exitCode === 0 ? findmntResult.stdout : '',
+        );
       }
 
       // Build metric row inserts
@@ -284,9 +290,9 @@ class ServerCollector {
       console.log(`[ServerCollector] collected ${metricsCount} metrics for #${server.id} (${server.host})`);
       return { success: true, metricsCount };
     } catch (error: any) {
-      // Release the connection on error so it can be reused/reconnected
       try {
-        sshSessionPool.releaseConnection(client);
+        if (isFatalSshCommandError(error)) sshSessionPool.closeConnection(client);
+        else sshSessionPool.releaseConnection(client);
       } catch {
         // Ignore
       }
