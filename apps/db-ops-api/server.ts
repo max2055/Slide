@@ -83,6 +83,7 @@ import { capabilityService } from './src/resources/capability-service.js';
 import { observationService } from './src/resources/observation-service.js';
 import { instanceHostService } from './src/resources/instance-host-service.js';
 import { registerInstanceHostRoutes } from './src/instance-host-routes.js';
+import { instanceDiagnosticContextService } from './src/instance-diagnostic-context-service.js';
 import { sqlAuditService } from './src/sql-audit-service.js';
 import { queryAuditLogs, auditLogManager, DatabaseAuditLogStore } from './src/audit/audit-log.js';
 import { sqlExecutor } from './src/sql-executor.js';
@@ -303,6 +304,7 @@ async function start() {
     verifyToken,
     service: instanceHostService,
     serverLookup: serverDatabaseService,
+    evidenceService: instanceDiagnosticContextService,
   });
 
   // 版本信息（无需认证）

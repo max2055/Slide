@@ -33,6 +33,11 @@ export const loginRateLimitConfig = {
   },
 } as const;
 
+export const expensiveOperationRateLimitConfig = {
+  max: 10,
+  timeWindow: '1 minute',
+} as const;
+
 export async function registerHttpSecurity(fastify: FastifyInstance, env: NodeJS.ProcessEnv = process.env): Promise<void> {
   await fastify.register(cors, { origin: resolveCorsOrigins(env) });
   await fastify.register(helmet, {

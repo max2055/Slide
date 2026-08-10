@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs';
+import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance, type preHandlerHookHandler } from 'fastify';
 import { Value } from '@sinclair/typebox/value';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ActorContext } from './auth/actor-context.js';
 import * as contracts from './contracts/public-api.js';
 import { buildClientTypes, buildOpenApiDocument } from './contracts/generate-public-api.js';
+import type { InstanceDiagnosticContext } from './instance-diagnostic-context-service.js';
 import {
   type HostedInstanceDetail,
   type InstanceHostDetail,
@@ -18,6 +20,10 @@ interface InstanceHostRouteService {
   listInstances(actor: ActorContext, serverId: number): Promise<HostedInstanceDetail[]>;
 }
 
+interface EvidenceService {
+  collect(actor: ActorContext, instanceId: number): Promise<InstanceDiagnosticContext>;
+}
+
 type RegisterInstanceHostRoutes = (
   app: FastifyInstance,
   dependencies: {
@@ -26,6 +32,7 @@ type RegisterInstanceHostRoutes = (
     serverLookup: {
       getServerById(id: number): Promise<{ id: number } | null>;
     };
+    evidenceService: EvidenceService;
   },
 ) => Promise<void>;
 
@@ -56,6 +63,11 @@ function actor(
 const actors: Record<string, ActorContext> = {
   manager: actor(['instance:manage', 'servers:manage'], { 10: 'admin' }),
   reader: actor(['servers:view'], { 10: 'read-only' }),
+  evidenceReader: actor(
+    ['instance:view', 'servers:view', 'metric:view', 'alert:view', 'log:view'],
+    { 10: 'read-only' },
+  ),
+  noInstanceView: actor(['servers:view'], { 10: 'read-only' }),
   noScope: actor(['servers:view'], {}),
   noServer: actor([], { 10: 'read-only' }),
 };
@@ -131,11 +143,57 @@ function fakeService(): InstanceHostRouteService {
   };
 }
 
-async function buildApp(service: InstanceHostRouteService = fakeService()): Promise<FastifyInstance | null> {
+function evidencePack(gaps: InstanceDiagnosticContext['gaps'] = []): InstanceDiagnosticContext {
+  const collectedAt = '2026-08-10T00:00:00.000Z';
+  return {
+    schemaVersion: 1,
+    subject: { type: 'instance', id: 10 },
+    collectedAt,
+    database: {
+      instance: { id: 10, name: 'orders', db_type: 'mysql' },
+      realtimeMetrics: { qps: 12, recorded_at: collectedAt },
+      metricHistory: [],
+      alerts: [],
+      logs: [],
+      slowQueries: [],
+    },
+    storage: [{ path: '/data/orders.db', kind: 'data-file', source: 'mysql', hostInspectable: true }],
+    hosts: [{
+      server: host({ serverId: 20, role: 'primary' }),
+      evidence: {
+        schemaVersion: 1,
+        serverId: 20,
+        collectedAt,
+        expiresAt: '2026-08-10T00:05:00.000Z',
+        quality: 'partial',
+        truncated: false,
+        metrics: { source: ['procfs'], collectedAt, quality: 'good', values: { cpu: 12 } },
+        filesystems: { source: ['df'], collectedAt, quality: 'good', items: [{
+          mount: '/data', device: '/dev/mapper/data', fsType: 'xfs', sizeBytes: 1000,
+          usedBytes: 750, availableBytes: 250, usagePercent: 75,
+          inodeTotal: 100, inodeUsed: 20, inodeAvailable: 80, inodeUsagePercent: 20,
+        }] },
+        systemLogs: { source: ['journald'], collectedAt, quality: 'partial', entries: [{
+          timestamp: collectedAt, severity: 'warning', unit: 'mysqld.service', identifier: 'mysqld',
+          pid: '10', message: 'I/O warning',
+        }] },
+        physicalFiles: { source: ['stat'], collectedAt, quality: 'good', items: [{ path: '/data/orders.db', quality: 'good' }] },
+        gaps: [{ section: 'systemLogs', reason: 'SYSTEM_LOG_SOURCE_PARTIAL' }],
+      },
+    }],
+    gaps,
+  };
+}
+
+async function buildApp(
+  service: InstanceHostRouteService = fakeService(),
+  evidenceService: EvidenceService = { collect: vi.fn(async () => evidencePack()) },
+): Promise<FastifyInstance | null> {
   expect(registerInstanceHostRoutes).toBeTypeOf('function');
   if (!registerInstanceHostRoutes) return null;
 
   const app = Fastify();
+  await app.register(rateLimit, { global: false });
   const verifyToken: preHandlerHookHandler = async (request, reply) => {
     const token = request.headers.authorization?.replace(/^Bearer\s+/, '');
     const authenticated = token ? actors[token] : undefined;
@@ -148,12 +206,102 @@ async function buildApp(service: InstanceHostRouteService = fakeService()): Prom
     serverLookup: {
       getServerById: async (id) => id === 20 || id === 21 ? { id } : null,
     },
+    evidenceService,
   });
   await app.ready();
   return app;
 }
 
 describe('instance-host Fastify routes', () => {
+  it('rate-limits repeated live host evidence collection', async () => {
+    const collect = vi.fn(async () => evidencePack());
+    const app = await buildApp(fakeService(), { collect });
+    if (!app) return;
+
+    const responses = [];
+    for (let index = 0; index < 11; index++) {
+      responses.push(await app.inject({
+        method: 'GET',
+        url: '/api/database/instances/10/host-evidence',
+        headers: { authorization: 'Bearer evidenceReader' },
+      }));
+    }
+
+    expect(responses.slice(0, 10).every((response) => response.statusCode === 200)).toBe(true);
+    expect(responses[10].statusCode).toBe(429);
+    expect(collect).toHaveBeenCalledTimes(10);
+    await app.close();
+  });
+
+  it('returns bounded host evidence with the original actor and complete host section shape', async () => {
+    const collect = vi.fn(async () => ({ ...evidencePack(), internalOnly: 'must-not-cross-contract' }) as any);
+    const app = await buildApp(fakeService(), { collect });
+    if (!app) return;
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/database/instances/10/host-evidence',
+      headers: { authorization: 'Bearer evidenceReader' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(collect).toHaveBeenCalledWith(actors.evidenceReader, 10);
+    expect(response.json()).not.toHaveProperty('internalOnly');
+    expect(response.json()).toMatchObject({
+      subject: { type: 'instance', id: 10 },
+      hosts: [{
+        server: { serverId: 20, role: 'primary', validFrom: '2026-08-10T00:00:00.000Z' },
+        evidence: {
+          collectedAt: '2026-08-10T00:00:00.000Z',
+          expiresAt: '2026-08-10T00:05:00.000Z',
+          quality: 'partial',
+          filesystems: { source: ['df'], quality: 'good', items: [{ mount: '/data' }] },
+          systemLogs: { source: ['journald'], quality: 'partial', entries: [{ message: 'I/O warning' }] },
+          physicalFiles: { source: ['stat'], quality: 'good', items: [{ path: '/data/orders.db' }] },
+          gaps: [{ reason: 'SYSTEM_LOG_SOURCE_PARTIAL' }],
+        },
+      }],
+    });
+    await app.close();
+  });
+
+  it('returns degraded evidence as 200 and maps stable request failures', async () => {
+    const degraded = await buildApp(fakeService(), {
+      collect: vi.fn(async () => evidencePack([{
+        scope: 'host', section: 'hostEvidence', code: 'SSH_COMMAND_TIMEOUT',
+        resource: { type: 'server', id: 20 },
+      }])),
+    });
+    if (!degraded) return;
+    const degradedResponse = await degraded.inject({
+      method: 'GET', url: '/api/database/instances/10/host-evidence',
+      headers: { authorization: 'Bearer evidenceReader' },
+    });
+    expect(degradedResponse.statusCode).toBe(200);
+    expect(degradedResponse.json().gaps).toContainEqual(expect.objectContaining({ code: 'SSH_COMMAND_TIMEOUT' }));
+    await degraded.close();
+
+    for (const [token, url, failure, expectedStatus, expectedCode] of [
+      ['evidenceReader', '/api/database/instances/not-a-number/host-evidence', null, 400, 'RESOURCE_REF_INVALID'],
+      ['evidenceReader', '/api/database/instances/10/host-evidence', 'INSTANCE_NOT_FOUND', 404, 'INSTANCE_NOT_FOUND'],
+      ['evidenceReader', '/api/database/instances/10/host-evidence', 'RESOURCE_FORBIDDEN', 404, 'RESOURCE_FORBIDDEN'],
+      ['evidenceReader', '/api/database/instances/10/host-evidence', 'database connection details', 500, 'HOST_EVIDENCE_COLLECTION_FAILED'],
+      ['noInstanceView', '/api/database/instances/10/host-evidence', null, 403, 'RESOURCE_FORBIDDEN'],
+    ] as const) {
+      const app = await buildApp(fakeService(), {
+        collect: vi.fn(async () => {
+          if (failure) throw new Error(failure);
+          return evidencePack();
+        }),
+      });
+      if (!app) continue;
+      const response = await app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${token}` } });
+      expect(response.statusCode, `${url} as ${token}`).toBe(expectedStatus);
+      expect(response.json()).toEqual({ error: expectedCode });
+      await app.close();
+    }
+  });
+
   it('supports PUT, GET, reverse GET, and DELETE without requiring servers:view for the write response', async () => {
     const app = await buildApp();
     if (!app) return;
@@ -219,6 +367,7 @@ describe('instance-host Fastify routes', () => {
     if (!app) return;
 
     for (const request of [
+      { method: 'GET', url: '/api/database/instances/10/host-evidence' },
       { method: 'GET', url: '/api/database/instances/10/hosts' },
       { method: 'PUT', url: '/api/database/instances/10/hosts', payload: { hosts: [] } },
       { method: 'DELETE', url: '/api/database/instances/10/hosts/20' },
@@ -273,6 +422,7 @@ describe('instance-host public contract', () => {
 
     const document = buildOpenApiDocument() as any;
     const relationshipPaths = [
+      '/api/database/instances/{id}/host-evidence',
       '/api/database/instances/{id}/hosts',
       '/api/database/instances/{id}/hosts/{serverId}',
       '/api/servers/{id}/instances',
@@ -283,8 +433,11 @@ describe('instance-host public contract', () => {
         expect(operation.responses).toHaveProperty('500');
       }
     }
+    expect(document.paths['/api/database/instances/{id}/host-evidence'].get.responses).toHaveProperty('403');
     expect(buildClientTypes()).toContain('export interface InstanceHostMapping');
     expect(buildClientTypes()).toContain('export interface HostedInstance');
+    expect(buildClientTypes()).toContain('export interface InstanceHostEvidenceResponse');
+    expect(buildClientTypes()).toContain('systemLogs: EvidenceSection & { entries: JournalEvidence[] }');
   });
 
   it('keeps server deletion protection transactional', () => {

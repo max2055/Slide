@@ -158,9 +158,11 @@ class AlertDatabaseService {
     level?: string;
     limit?: number;
     offset?: number;
+    strict?: boolean;
   }): Promise<any> {
     const pool = this.getPool();
     if (!pool) {
+      if (options?.strict) throw new Error('ALERTS_UNAVAILABLE');
       return [];
     }
 
@@ -286,6 +288,7 @@ class AlertDatabaseService {
       };
     } catch (error) {
       console.error('获取告警列表失败:', error);
+      if (options?.strict) throw new Error('ALERTS_QUERY_FAILED', { cause: error });
       return { items: [], total: 0, unread: 0, critical: 0, warning: 0, resolved: 0 };
     }
   }

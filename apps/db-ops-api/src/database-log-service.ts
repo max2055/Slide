@@ -513,9 +513,13 @@ ${logContent}
     endTime?: string;
     limit?: number;
     offset?: number;
+    strict?: boolean;
   }): Promise<{ logs: DatabaseLog[]; total: number }> {
     const pool = this.getPool();
-    if (!pool) return { logs: [], total: 0 };
+    if (!pool) {
+      if (options?.strict) throw new Error('LOGS_UNAVAILABLE');
+      return { logs: [], total: 0 };
+    }
 
     try {
       let where = 'WHERE instance_id = ?';
@@ -560,6 +564,7 @@ ${logContent}
       return { logs, total };
     } catch (error) {
       console.error('[日志] 查询日志列表失败:', error);
+      if (options?.strict) throw new Error('LOGS_QUERY_FAILED', { cause: error });
       return { logs: [], total: 0 };
     }
   }

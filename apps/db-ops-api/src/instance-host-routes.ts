@@ -4,6 +4,7 @@ import type { ActorContext } from './auth/actor-context.js';
 import {
   ErrorResponseSchema,
   HostedInstancesResponseSchema,
+  InstanceHostEvidenceResponseSchema,
   InstanceHostsResponseSchema,
   OkResponseSchema,
   ReplaceInstanceHostsBodySchema,
@@ -15,6 +16,8 @@ import type {
   InstanceHostDetail,
   InstanceHostService,
 } from './resources/instance-host-service.js';
+import type { InstanceDiagnosticContextService } from './instance-diagnostic-context-service.js';
+import { expensiveOperationRateLimitConfig } from './security/http-security.js';
 
 type InstanceHostRouteService = Pick<
   InstanceHostService,
@@ -29,6 +32,7 @@ export interface InstanceHostRouteDependencies {
   verifyToken: preHandlerHookHandler;
   service: InstanceHostRouteService;
   serverLookup: ServerLookup;
+  evidenceService: Pick<InstanceDiagnosticContextService, 'collect'>;
 }
 
 const errorResponses = {
@@ -36,6 +40,11 @@ const errorResponses = {
   401: ErrorResponseSchema,
   404: ErrorResponseSchema,
   500: ErrorResponseSchema,
+};
+
+const evidenceErrorResponses = {
+  ...errorResponses,
+  403: ErrorResponseSchema,
 };
 
 function authenticatedActor(request: { user?: ActorContext }): ActorContext {
@@ -80,10 +89,48 @@ function sendInstanceHostError(reply: any, error: unknown) {
   return reply.code(failure.statusCode).send({ error: failure.error });
 }
 
+function hasInstanceViewPermission(actor: ActorContext): boolean {
+  const permissions = new Set(actor.permissions);
+  return permissions.has('*')
+    || permissions.has('instance:*')
+    || permissions.has('*:view')
+    || permissions.has('instance:view');
+}
+
+const requireInstanceView: preHandlerHookHandler = async (request, reply) => {
+  const actor = (request as { user?: ActorContext }).user;
+  if (!actor) return reply.code(401).send({ error: 'AUTHENTICATION_REQUIRED' });
+  if (!hasInstanceViewPermission(actor)) return reply.code(403).send({ error: 'RESOURCE_FORBIDDEN' });
+};
+
+function sendHostEvidenceError(reply: any, error: unknown) {
+  const reason = error instanceof Error ? error.message : '';
+  if (reason === 'RESOURCE_REF_INVALID') return reply.code(400).send({ error: reason });
+  if (reason === 'RESOURCE_FORBIDDEN' || reason === 'INSTANCE_NOT_FOUND') {
+    return reply.code(404).send({ error: reason });
+  }
+  return reply.code(500).send({ error: 'HOST_EVIDENCE_COLLECTION_FAILED' });
+}
+
 export async function registerInstanceHostRoutes(
   fastify: FastifyInstance,
   dependencies: InstanceHostRouteDependencies,
 ): Promise<void> {
+  fastify.get('/api/database/instances/:id/host-evidence', {
+    config: { rateLimit: expensiveOperationRateLimitConfig },
+    preHandler: [dependencies.verifyToken, requireInstanceView],
+    schema: { response: { 200: InstanceHostEvidenceResponseSchema, ...evidenceErrorResponses } },
+  }, async (request, reply) => {
+    try {
+      const id = parsePositiveRouteId((request.params as { id: string }).id);
+      if (id === null) return reply.code(400).send({ error: 'RESOURCE_REF_INVALID' });
+      const context = await dependencies.evidenceService.collect(authenticatedActor(request as any), id);
+      return reply.send(context);
+    } catch (error) {
+      return sendHostEvidenceError(reply, error);
+    }
+  });
+
   fastify.get('/api/database/instances/:id/hosts', {
     preHandler: [dependencies.verifyToken],
     schema: { response: { 200: InstanceHostsResponseSchema, ...errorResponses } },

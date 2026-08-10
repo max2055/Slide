@@ -946,6 +946,109 @@
           }
         ]
       },
+      "DiagnosticGap": {
+        "$id": "DiagnosticGap",
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "type": {
+                "anyOf": [
+                  {
+                    "const": "instance",
+                    "type": "string"
+                  },
+                  {
+                    "const": "server",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "const": "instance",
+                "type": "string"
+              },
+              {
+                "const": "host",
+                "type": "string"
+              },
+              {
+                "const": "storage",
+                "type": "string"
+              }
+            ]
+          },
+          "section": {
+            "anyOf": [
+              {
+                "const": "instance",
+                "type": "string"
+              },
+              {
+                "const": "realtime",
+                "type": "string"
+              },
+              {
+                "const": "history",
+                "type": "string"
+              },
+              {
+                "const": "alerts",
+                "type": "string"
+              },
+              {
+                "const": "logs",
+                "type": "string"
+              },
+              {
+                "const": "slowQueries",
+                "type": "string"
+              },
+              {
+                "const": "storage",
+                "type": "string"
+              },
+              {
+                "const": "relations",
+                "type": "string"
+              },
+              {
+                "const": "hostEvidence",
+                "type": "string"
+              },
+              {
+                "const": "evidencePack",
+                "type": "string"
+              }
+            ]
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "code"
+        ],
+        "type": "object"
+      },
       "ErrorResponse": {
         "$id": "ErrorResponse",
         "additionalProperties": false,
@@ -956,6 +1059,123 @@
         },
         "required": [
           "error"
+        ],
+        "type": "object"
+      },
+      "EvidenceQuality": {
+        "$id": "EvidenceQuality",
+        "anyOf": [
+          {
+            "const": "good",
+            "type": "string"
+          },
+          {
+            "const": "partial",
+            "type": "string"
+          },
+          {
+            "const": "unknown",
+            "type": "string"
+          },
+          {
+            "const": "unsupported",
+            "type": "string"
+          }
+        ]
+      },
+      "FilesystemEvidence": {
+        "$id": "FilesystemEvidence",
+        "additionalProperties": false,
+        "properties": {
+          "availableBytes": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "device": {
+            "type": "string"
+          },
+          "fsType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inodeAvailable": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inodeTotal": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inodeUsagePercent": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inodeUsed": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mount": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "usagePercent": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "usedBytes": {
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "mount",
+          "device",
+          "fsType",
+          "sizeBytes",
+          "usedBytes",
+          "availableBytes",
+          "usagePercent",
+          "inodeTotal",
+          "inodeUsed",
+          "inodeAvailable",
+          "inodeUsagePercent"
         ],
         "type": "object"
       },
@@ -1217,6 +1437,40 @@
         ],
         "type": "object"
       },
+      "HostEvidenceGap": {
+        "$id": "HostEvidenceGap",
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "section": {
+            "anyOf": [
+              {
+                "const": "metrics",
+                "type": "string"
+              },
+              {
+                "const": "filesystems",
+                "type": "string"
+              },
+              {
+                "const": "systemLogs",
+                "type": "string"
+              },
+              {
+                "const": "physicalFiles",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [
+          "section",
+          "reason"
+        ],
+        "type": "object"
+      },
       "InstanceHost": {
         "$id": "InstanceHost",
         "additionalProperties": false,
@@ -1306,6 +1560,977 @@
           "status",
           "collectionEnabled",
           "validFrom"
+        ],
+        "type": "object"
+      },
+      "InstanceHostEvidenceResponse": {
+        "$id": "InstanceHostEvidenceResponse",
+        "additionalProperties": false,
+        "properties": {
+          "collectedAt": {
+            "type": "string"
+          },
+          "database": {
+            "additionalProperties": false,
+            "properties": {
+              "alerts": {
+                "items": {
+                  "patternProperties": {
+                    "^(.*)$": {}
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "instance": {
+                "anyOf": [
+                  {
+                    "patternProperties": {
+                      "^(.*)$": {}
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "logs": {
+                "items": {
+                  "patternProperties": {
+                    "^(.*)$": {}
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "metricHistory": {
+                "items": {
+                  "patternProperties": {
+                    "^(.*)$": {}
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "realtimeMetrics": {
+                "anyOf": [
+                  {
+                    "patternProperties": {
+                      "^(.*)$": {}
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "slowQueries": {
+                "items": {
+                  "patternProperties": {
+                    "^(.*)$": {}
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "instance",
+              "realtimeMetrics",
+              "metricHistory",
+              "alerts",
+              "logs",
+              "slowQueries"
+            ],
+            "type": "object"
+          },
+          "gaps": {
+            "items": {
+              "$id": "DiagnosticGap",
+              "additionalProperties": false,
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "resource": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "type": {
+                      "anyOf": [
+                        {
+                          "const": "instance",
+                          "type": "string"
+                        },
+                        {
+                          "const": "server",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "scope": {
+                  "anyOf": [
+                    {
+                      "const": "instance",
+                      "type": "string"
+                    },
+                    {
+                      "const": "host",
+                      "type": "string"
+                    },
+                    {
+                      "const": "storage",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "section": {
+                  "anyOf": [
+                    {
+                      "const": "instance",
+                      "type": "string"
+                    },
+                    {
+                      "const": "realtime",
+                      "type": "string"
+                    },
+                    {
+                      "const": "history",
+                      "type": "string"
+                    },
+                    {
+                      "const": "alerts",
+                      "type": "string"
+                    },
+                    {
+                      "const": "logs",
+                      "type": "string"
+                    },
+                    {
+                      "const": "slowQueries",
+                      "type": "string"
+                    },
+                    {
+                      "const": "storage",
+                      "type": "string"
+                    },
+                    {
+                      "const": "relations",
+                      "type": "string"
+                    },
+                    {
+                      "const": "hostEvidence",
+                      "type": "string"
+                    },
+                    {
+                      "const": "evidencePack",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "source": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "scope",
+                "code"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "hosts": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "evidence": {
+                  "anyOf": [
+                    {
+                      "$id": "LinuxHostEvidence",
+                      "additionalProperties": false,
+                      "properties": {
+                        "collectedAt": {
+                          "type": "string"
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        },
+                        "filesystems": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collectedAt": {
+                              "type": "string"
+                            },
+                            "items": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "availableBytes": {
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  "device": {
+                                    "type": "string"
+                                  },
+                                  "fsType": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "inodeAvailable": {
+                                    "anyOf": [
+                                      {
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "inodeTotal": {
+                                    "anyOf": [
+                                      {
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "inodeUsagePercent": {
+                                    "anyOf": [
+                                      {
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "inodeUsed": {
+                                    "anyOf": [
+                                      {
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "mount": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  "usagePercent": {
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  "usedBytes": {
+                                    "minimum": 0,
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "mount",
+                                  "device",
+                                  "fsType",
+                                  "sizeBytes",
+                                  "usedBytes",
+                                  "availableBytes",
+                                  "usagePercent",
+                                  "inodeTotal",
+                                  "inodeUsed",
+                                  "inodeAvailable",
+                                  "inodeUsagePercent"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "quality": {
+                              "anyOf": [
+                                {
+                                  "const": "good",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "partial",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unknown",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unsupported",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "source": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "collectedAt",
+                            "quality",
+                            "items"
+                          ],
+                          "type": "object"
+                        },
+                        "gaps": {
+                          "items": {
+                            "$id": "HostEvidenceGap",
+                            "additionalProperties": false,
+                            "properties": {
+                              "reason": {
+                                "type": "string"
+                              },
+                              "section": {
+                                "anyOf": [
+                                  {
+                                    "const": "metrics",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "filesystems",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "systemLogs",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "physicalFiles",
+                                    "type": "string"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "section",
+                              "reason"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "metrics": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collectedAt": {
+                              "type": "string"
+                            },
+                            "quality": {
+                              "anyOf": [
+                                {
+                                  "const": "good",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "partial",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unknown",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unsupported",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "source": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "values": {
+                              "patternProperties": {
+                                "^(.*)$": {
+                                  "type": "number"
+                                }
+                              },
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "collectedAt",
+                            "quality",
+                            "values"
+                          ],
+                          "type": "object"
+                        },
+                        "physicalFiles": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collectedAt": {
+                              "type": "string"
+                            },
+                            "items": {
+                              "items": {
+                                "$id": "PhysicalFileEvidence",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "allocatedBytes": {
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  "filesystem": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "availableBytes": {
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      "device": {
+                                        "type": "string"
+                                      },
+                                      "fsType": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "inodeAvailable": {
+                                        "anyOf": [
+                                          {
+                                            "minimum": 0,
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "inodeTotal": {
+                                        "anyOf": [
+                                          {
+                                            "minimum": 0,
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "inodeUsagePercent": {
+                                        "anyOf": [
+                                          {
+                                            "minimum": 0,
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "inodeUsed": {
+                                        "anyOf": [
+                                          {
+                                            "minimum": 0,
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "mount": {
+                                        "type": "string"
+                                      },
+                                      "sizeBytes": {
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      "usagePercent": {
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      "usedBytes": {
+                                        "minimum": 0,
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "mount",
+                                      "device",
+                                      "fsType",
+                                      "sizeBytes",
+                                      "usedBytes",
+                                      "availableBytes",
+                                      "usagePercent",
+                                      "inodeTotal",
+                                      "inodeUsed",
+                                      "inodeAvailable",
+                                      "inodeUsagePercent"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "group": {
+                                    "type": "string"
+                                  },
+                                  "mode": {
+                                    "type": "string"
+                                  },
+                                  "modifiedAt": {
+                                    "type": "string"
+                                  },
+                                  "owner": {
+                                    "type": "string"
+                                  },
+                                  "path": {
+                                    "type": "string"
+                                  },
+                                  "quality": {
+                                    "anyOf": [
+                                      {
+                                        "const": "good",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "partial",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "unknown",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "unsupported",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "path",
+                                  "quality"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "quality": {
+                              "anyOf": [
+                                {
+                                  "const": "good",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "partial",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unknown",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unsupported",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "source": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "collectedAt",
+                            "quality",
+                            "items"
+                          ],
+                          "type": "object"
+                        },
+                        "quality": {
+                          "anyOf": [
+                            {
+                              "const": "good",
+                              "type": "string"
+                            },
+                            {
+                              "const": "partial",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unknown",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unsupported",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "schemaVersion": {
+                          "const": 1,
+                          "type": "number"
+                        },
+                        "serverId": {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "systemLogs": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collectedAt": {
+                              "type": "string"
+                            },
+                            "entries": {
+                              "items": {
+                                "$id": "JournalEvidence",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "identifier": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "message": {
+                                    "type": "string"
+                                  },
+                                  "pid": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "severity": {
+                                    "type": "string"
+                                  },
+                                  "timestamp": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "unit": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "timestamp",
+                                  "severity",
+                                  "unit",
+                                  "identifier",
+                                  "pid",
+                                  "message"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "quality": {
+                              "anyOf": [
+                                {
+                                  "const": "good",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "partial",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unknown",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unsupported",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "source": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "collectedAt",
+                            "quality",
+                            "entries"
+                          ],
+                          "type": "object"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "schemaVersion",
+                        "serverId",
+                        "collectedAt",
+                        "expiresAt",
+                        "quality",
+                        "truncated",
+                        "metrics",
+                        "filesystems",
+                        "systemLogs",
+                        "physicalFiles",
+                        "gaps"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "server": {
+                  "$id": "InstanceHost",
+                  "additionalProperties": false,
+                  "properties": {
+                    "collectionEnabled": {
+                      "type": "boolean"
+                    },
+                    "host": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "notes": {
+                      "anyOf": [
+                        {
+                          "maxLength": 500,
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "osType": {
+                      "type": "string"
+                    },
+                    "port": {
+                      "maximum": 65535,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "role": {
+                      "$id": "InstanceHostRole",
+                      "anyOf": [
+                        {
+                          "const": "standalone",
+                          "type": "string"
+                        },
+                        {
+                          "const": "primary",
+                          "type": "string"
+                        },
+                        {
+                          "const": "replica",
+                          "type": "string"
+                        },
+                        {
+                          "const": "shard",
+                          "type": "string"
+                        },
+                        {
+                          "const": "arbiter",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unknown",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "serverId": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "validFrom": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "serverId",
+                    "role",
+                    "host",
+                    "port",
+                    "label",
+                    "osType",
+                    "status",
+                    "collectionEnabled",
+                    "validFrom"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "server",
+                "evidence"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "storage": {
+            "items": {
+              "$id": "StorageDescriptor",
+              "additionalProperties": false,
+              "properties": {
+                "hostInspectable": {
+                  "type": "boolean"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "logicalBytes": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "objectName": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "tablespace": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "kind",
+                "source",
+                "hostInspectable"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "subject": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "type": {
+                "const": "instance",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "subject",
+          "collectedAt",
+          "database",
+          "storage",
+          "hosts",
+          "gaps"
         ],
         "type": "object"
       },
@@ -1498,6 +2723,665 @@
         ],
         "type": "object"
       },
+      "JournalEvidence": {
+        "$id": "JournalEvidence",
+        "additionalProperties": false,
+        "properties": {
+          "identifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "severity": {
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "timestamp",
+          "severity",
+          "unit",
+          "identifier",
+          "pid",
+          "message"
+        ],
+        "type": "object"
+      },
+      "LinuxHostEvidence": {
+        "$id": "LinuxHostEvidence",
+        "additionalProperties": false,
+        "properties": {
+          "collectedAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "filesystems": {
+            "additionalProperties": false,
+            "properties": {
+              "collectedAt": {
+                "type": "string"
+              },
+              "items": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "availableBytes": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "device": {
+                      "type": "string"
+                    },
+                    "fsType": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "inodeAvailable": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "inodeTotal": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "inodeUsagePercent": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "inodeUsed": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "mount": {
+                      "type": "string"
+                    },
+                    "sizeBytes": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "usagePercent": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "usedBytes": {
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "mount",
+                    "device",
+                    "fsType",
+                    "sizeBytes",
+                    "usedBytes",
+                    "availableBytes",
+                    "usagePercent",
+                    "inodeTotal",
+                    "inodeUsed",
+                    "inodeAvailable",
+                    "inodeUsagePercent"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "quality": {
+                "anyOf": [
+                  {
+                    "const": "good",
+                    "type": "string"
+                  },
+                  {
+                    "const": "partial",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "source": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "source",
+              "collectedAt",
+              "quality",
+              "items"
+            ],
+            "type": "object"
+          },
+          "gaps": {
+            "items": {
+              "$id": "HostEvidenceGap",
+              "additionalProperties": false,
+              "properties": {
+                "reason": {
+                  "type": "string"
+                },
+                "section": {
+                  "anyOf": [
+                    {
+                      "const": "metrics",
+                      "type": "string"
+                    },
+                    {
+                      "const": "filesystems",
+                      "type": "string"
+                    },
+                    {
+                      "const": "systemLogs",
+                      "type": "string"
+                    },
+                    {
+                      "const": "physicalFiles",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "section",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "metrics": {
+            "additionalProperties": false,
+            "properties": {
+              "collectedAt": {
+                "type": "string"
+              },
+              "quality": {
+                "anyOf": [
+                  {
+                    "const": "good",
+                    "type": "string"
+                  },
+                  {
+                    "const": "partial",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "source": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "values": {
+                "patternProperties": {
+                  "^(.*)$": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "source",
+              "collectedAt",
+              "quality",
+              "values"
+            ],
+            "type": "object"
+          },
+          "physicalFiles": {
+            "additionalProperties": false,
+            "properties": {
+              "collectedAt": {
+                "type": "string"
+              },
+              "items": {
+                "items": {
+                  "$id": "PhysicalFileEvidence",
+                  "additionalProperties": false,
+                  "properties": {
+                    "allocatedBytes": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "filesystem": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "availableBytes": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "device": {
+                          "type": "string"
+                        },
+                        "fsType": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "inodeAvailable": {
+                          "anyOf": [
+                            {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "inodeTotal": {
+                          "anyOf": [
+                            {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "inodeUsagePercent": {
+                          "anyOf": [
+                            {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "inodeUsed": {
+                          "anyOf": [
+                            {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "mount": {
+                          "type": "string"
+                        },
+                        "sizeBytes": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "usagePercent": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "usedBytes": {
+                          "minimum": 0,
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "mount",
+                        "device",
+                        "fsType",
+                        "sizeBytes",
+                        "usedBytes",
+                        "availableBytes",
+                        "usagePercent",
+                        "inodeTotal",
+                        "inodeUsed",
+                        "inodeAvailable",
+                        "inodeUsagePercent"
+                      ],
+                      "type": "object"
+                    },
+                    "group": {
+                      "type": "string"
+                    },
+                    "mode": {
+                      "type": "string"
+                    },
+                    "modifiedAt": {
+                      "type": "string"
+                    },
+                    "owner": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "quality": {
+                      "anyOf": [
+                        {
+                          "const": "good",
+                          "type": "string"
+                        },
+                        {
+                          "const": "partial",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unknown",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unsupported",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "sizeBytes": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "quality"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "quality": {
+                "anyOf": [
+                  {
+                    "const": "good",
+                    "type": "string"
+                  },
+                  {
+                    "const": "partial",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "source": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "source",
+              "collectedAt",
+              "quality",
+              "items"
+            ],
+            "type": "object"
+          },
+          "quality": {
+            "anyOf": [
+              {
+                "const": "good",
+                "type": "string"
+              },
+              {
+                "const": "partial",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              },
+              {
+                "const": "unsupported",
+                "type": "string"
+              }
+            ]
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "serverId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "systemLogs": {
+            "additionalProperties": false,
+            "properties": {
+              "collectedAt": {
+                "type": "string"
+              },
+              "entries": {
+                "items": {
+                  "$id": "JournalEvidence",
+                  "additionalProperties": false,
+                  "properties": {
+                    "identifier": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "pid": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "severity": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "unit": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "timestamp",
+                    "severity",
+                    "unit",
+                    "identifier",
+                    "pid",
+                    "message"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "quality": {
+                "anyOf": [
+                  {
+                    "const": "good",
+                    "type": "string"
+                  },
+                  {
+                    "const": "partial",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "source": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "source",
+              "collectedAt",
+              "quality",
+              "entries"
+            ],
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "serverId",
+          "collectedAt",
+          "expiresAt",
+          "quality",
+          "truncated",
+          "metrics",
+          "filesystems",
+          "systemLogs",
+          "physicalFiles",
+          "gaps"
+        ],
+        "type": "object"
+      },
       "OkResponse": {
         "$id": "OkResponse",
         "additionalProperties": false,
@@ -1509,6 +3393,161 @@
         },
         "required": [
           "ok"
+        ],
+        "type": "object"
+      },
+      "PhysicalFileEvidence": {
+        "$id": "PhysicalFileEvidence",
+        "additionalProperties": false,
+        "properties": {
+          "allocatedBytes": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "filesystem": {
+            "additionalProperties": false,
+            "properties": {
+              "availableBytes": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "device": {
+                "type": "string"
+              },
+              "fsType": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "inodeAvailable": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "inodeTotal": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "inodeUsagePercent": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "inodeUsed": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "mount": {
+                "type": "string"
+              },
+              "sizeBytes": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "usagePercent": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "usedBytes": {
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "mount",
+              "device",
+              "fsType",
+              "sizeBytes",
+              "usedBytes",
+              "availableBytes",
+              "usagePercent",
+              "inodeTotal",
+              "inodeUsed",
+              "inodeAvailable",
+              "inodeUsagePercent"
+            ],
+            "type": "object"
+          },
+          "group": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "modifiedAt": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "quality": {
+            "anyOf": [
+              {
+                "const": "good",
+                "type": "string"
+              },
+              {
+                "const": "partial",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              },
+              {
+                "const": "unsupported",
+                "type": "string"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "quality"
         ],
         "type": "object"
       },
@@ -1690,6 +3729,41 @@
           "hosts"
         ],
         "type": "object"
+      },
+      "StorageDescriptor": {
+        "$id": "StorageDescriptor",
+        "additionalProperties": false,
+        "properties": {
+          "hostInspectable": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "logicalBytes": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "objectName": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "tablespace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "kind",
+          "source",
+          "hostInspectable"
+        ],
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -1741,6 +3815,89 @@
               }
             },
             "description": "Redacted managed database instances"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/database/instances/{id}/host-evidence": {
+      "get": {
+        "operationId": "getInstanceHostEvidence",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceHostEvidenceResponse"
+                }
+              }
+            },
+            "description": "Bounded and redacted database and Linux host evidence"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid resource identifier"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Instance view permission required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Instance unavailable or unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Evidence collection failed"
           }
         },
         "security": [

@@ -4,6 +4,10 @@ export type DatabaseType = 'mysql' | 'postgresql' | 'oracle' | 'dameng' | 'mongo
 export type CapabilityState = 'declared' | 'configured' | 'verified' | 'degraded' | 'unsupported';
 export type AdapterCapabilityName = 'connect' | 'query' | 'explain' | 'metrics' | 'health' | 'alerts' | 'reports' | 'writeApproval';
 export type InstanceHostRole = 'standalone' | 'primary' | 'replica' | 'shard' | 'arbiter' | 'unknown';
+export type EvidenceQuality = 'good' | 'partial' | 'unknown' | 'unsupported';
+export type HostEvidenceSection = 'metrics' | 'filesystems' | 'systemLogs' | 'physicalFiles';
+export type DiagnosticGapScope = 'instance' | 'host' | 'storage';
+export type DiagnosticGapSection = 'instance' | 'realtime' | 'history' | 'alerts' | 'logs' | 'slowQueries' | 'storage' | 'relations' | 'hostEvidence' | 'evidencePack';
 
 export interface HealthResponse {
   status: 'ok';
@@ -86,4 +90,102 @@ export interface ReplaceInstanceHostsResponse extends InstanceHostsResponse {
 
 export interface HostedInstancesResponse {
   instances: HostedInstance[];
+}
+
+export interface EvidenceSection {
+  source: string[];
+  collectedAt: string;
+  quality: EvidenceQuality;
+  reason?: string;
+}
+
+export interface FilesystemEvidence {
+  mount: string;
+  device: string;
+  fsType: string | null;
+  sizeBytes: number;
+  usedBytes: number;
+  availableBytes: number;
+  usagePercent: number;
+  inodeTotal: number | null;
+  inodeUsed: number | null;
+  inodeAvailable: number | null;
+  inodeUsagePercent: number | null;
+}
+
+export interface JournalEvidence {
+  timestamp: string | null;
+  severity: string;
+  unit: string | null;
+  identifier: string | null;
+  pid: string | null;
+  message: string;
+}
+
+export interface PhysicalFileEvidence {
+  path: string;
+  quality: EvidenceQuality;
+  reason?: string;
+  type?: string;
+  sizeBytes?: number;
+  allocatedBytes?: number;
+  modifiedAt?: string;
+  mode?: string;
+  owner?: string;
+  group?: string;
+  filesystem?: FilesystemEvidence;
+}
+
+export interface HostEvidenceGap {
+  section: HostEvidenceSection;
+  reason: string;
+}
+
+export interface LinuxHostEvidence {
+  schemaVersion: 1;
+  serverId: number;
+  collectedAt: string;
+  expiresAt: string;
+  quality: EvidenceQuality;
+  truncated: boolean;
+  metrics: EvidenceSection & { values: Record<string, number> };
+  filesystems: EvidenceSection & { items: FilesystemEvidence[] };
+  systemLogs: EvidenceSection & { entries: JournalEvidence[] };
+  physicalFiles: EvidenceSection & { items: PhysicalFileEvidence[] };
+  gaps: HostEvidenceGap[];
+}
+
+export interface StorageDescriptor {
+  path: string;
+  kind: string;
+  source: string;
+  hostInspectable: boolean;
+  tablespace?: string;
+  objectName?: string;
+  logicalBytes?: number;
+}
+
+export interface DiagnosticGap {
+  scope: DiagnosticGapScope;
+  section?: DiagnosticGapSection;
+  code: string;
+  resource?: { type: 'instance' | 'server'; id: number };
+  source?: string;
+}
+
+export interface InstanceHostEvidenceResponse {
+  schemaVersion: 1;
+  subject: { type: 'instance'; id: number };
+  collectedAt: string;
+  database: {
+    instance: Record<string, unknown> | null;
+    realtimeMetrics: Record<string, unknown> | null;
+    metricHistory: Array<Record<string, unknown>>;
+    alerts: Array<Record<string, unknown>>;
+    logs: Array<Record<string, unknown>>;
+    slowQueries: Array<Record<string, unknown>>;
+  };
+  storage: StorageDescriptor[];
+  hosts: Array<{ server: InstanceHost; evidence: LinuxHostEvidence | null }>;
+  gaps: DiagnosticGap[];
 }
