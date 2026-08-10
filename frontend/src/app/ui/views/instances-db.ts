@@ -31,15 +31,15 @@ interface InstanceFormData {
 function hasStoredPermission(required: string): boolean {
   try {
     const raw = localStorage.getItem("permissions");
-    if (!raw) return true;
+    if (!raw) return false;
     const permissions = JSON.parse(raw) as unknown;
-    if (!Array.isArray(permissions)) return true;
+    if (!Array.isArray(permissions)) return false;
     const resource = required.split(":", 1)[0];
     return permissions.includes("*")
       || permissions.includes(required)
       || permissions.includes(`${resource}:*`);
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -547,13 +547,31 @@ export class InstancesPage extends LitElement {
   @state() private hostRelationError: string | null = null;
   @state() private pendingCreatedInstanceId: number | null = null;
   private hostRelationRequestVersion = 0;
+  private readonly handlePermissionsLoaded = () => {
+    this.requestUpdate();
+    if (this.editingInstance && this.canViewHostRelations) {
+      void this._loadInstanceHosts(this.editingInstance.id);
+    }
+  };
 
   private get canViewHostRelations(): boolean {
     return hasStoredPermission("servers:view");
   }
 
   private get canManageHostRelations(): boolean {
-    return this.canViewHostRelations && hasStoredPermission("servers:manage");
+    return hasStoredPermission("instance:manage")
+      && this.canViewHostRelations
+      && hasStoredPermission("servers:manage");
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    window.addEventListener("slide-permissions-loaded", this.handlePermissionsLoaded);
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener("slide-permissions-loaded", this.handlePermissionsLoaded);
+    super.disconnectedCallback();
   }
 
   override firstUpdated() {

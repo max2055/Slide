@@ -28,7 +28,10 @@ export class InstanceHostSummary extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    if (this.hasUpdated) this.scheduleFreshnessUpdate();
+    if (this.hasUpdated && this.evidence) {
+      this.requestUpdate();
+      this.scheduleFreshnessUpdate();
+    }
   }
 
   override disconnectedCallback(): void {

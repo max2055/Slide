@@ -51,6 +51,7 @@ describe('database instance host relation form', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     localStorage.removeItem('permissions');
     document.body.replaceChildren();
   });
@@ -153,8 +154,13 @@ describe('database instance host relation form', () => {
     expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT')).toHaveLength(0);
   });
 
-  it('keeps host relation editing available when stored permissions are absent', async () => {
-    localStorage.removeItem('permissions');
+  it.each([
+    { label: 'missing', storedPermissions: null },
+    { label: 'malformed JSON', storedPermissions: '{not-json' },
+    { label: 'a non-array value', storedPermissions: JSON.stringify({ permissions: ['*'] }) },
+  ])('fails closed for $label permissions while allowing the base edit', async ({ storedPermissions }) => {
+    if (storedPermissions === null) localStorage.removeItem('permissions');
+    else localStorage.setItem('permissions', storedPermissions);
     authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
       if (url === '/api/database/instances' && !options?.method) return response([]);
       if (url === '/api/servers') return response([]);
@@ -169,12 +175,93 @@ describe('database instance host relation form', () => {
     await settle(page);
     await page._handleSubmit(true);
 
+    expect(page.shadowRoot.querySelector('instance-host-field')).toBeNull();
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && !options?.method)).toHaveLength(0);
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41' && options?.method === 'PUT')).toHaveLength(1);
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT')).toHaveLength(0);
+  });
+
+  it('fails closed when reading stored permissions throws while allowing the base edit', async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation((key: string) => {
+      if (key === 'permissions') throw new Error('storage unavailable');
+      return null;
+    });
+    authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url === '/api/database/instances' && !options?.method) return response([]);
+      if (url === '/api/servers') return response([]);
+      if (url === '/api/database/instances/41/hosts' && !options?.method) return response({ hosts: [] });
+      if (url === '/api/database/instances/41' && options?.method === 'PUT') return response({ ok: true });
+      if (url === '/api/database/instances/41/hosts' && options?.method === 'PUT') return response({ ok: true, hosts: [] });
+      throw new Error(`unexpected request: ${options?.method ?? 'GET'} ${url}`);
+    });
+
+    const page = await mountPage();
+    page._editInstance(instance);
+    await settle(page);
+    await page._handleSubmit(true);
+
+    expect(page.shadowRoot.querySelector('instance-host-field')).toBeNull();
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41' && options?.method === 'PUT')).toHaveLength(1);
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts')).toHaveLength(0);
+  });
+
+  it('reveals host relations when permissions arrive after mount and removes the listener on disconnect', async () => {
+    localStorage.removeItem('permissions');
+    authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url === '/api/database/instances' && !options?.method) return response([]);
+      if (url === '/api/servers') return response([]);
+      if (url === '/api/database/instances/41/hosts' && !options?.method) return response({ hosts: [{ serverId: 7, role: 'primary' }] });
+      throw new Error(`unexpected request: ${options?.method ?? 'GET'} ${url}`);
+    });
+
+    const page = await mountPage();
+    page._editInstance(instance);
+    await settle(page);
+    expect(page.shadowRoot.querySelector('instance-host-field')).toBeNull();
+
+    const permissions = ['instance:manage', 'servers:view', 'servers:manage'];
+    localStorage.setItem('permissions', JSON.stringify(permissions));
+    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions } }));
+    await settle(page);
+
+    const field = page.shadowRoot.querySelector('instance-host-field') as any;
+    expect(field).toBeTruthy();
+    expect(field.disabled).toBe(false);
     expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && !options?.method)).toHaveLength(1);
-    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT')).toHaveLength(1);
+
+    const requestUpdate = vi.spyOn(page, 'requestUpdate');
+    page.remove();
+    requestUpdate.mockClear();
+    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions } }));
+    expect(requestUpdate).not.toHaveBeenCalled();
   });
 
   it('renders host relations read-only and saves only the base edit with view permission', async () => {
     localStorage.setItem('permissions', JSON.stringify(['instance:update', 'servers:view']));
+    authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url === '/api/database/instances' && !options?.method) return response([]);
+      if (url === '/api/servers') return response([]);
+      if (url === '/api/database/instances/41/hosts' && !options?.method) return response({ hosts: [{ serverId: 7, role: 'primary' }] });
+      if (url === '/api/database/instances/41' && options?.method === 'PUT') return response({ ok: true });
+      if (url === '/api/database/instances/41/hosts' && options?.method === 'PUT') return response({ ok: true, hosts: [] });
+      throw new Error(`unexpected request: ${options?.method ?? 'GET'} ${url}`);
+    });
+
+    const page = await mountPage();
+    page._editInstance(instance);
+    await settle(page);
+    const field = page.shadowRoot.querySelector('instance-host-field') as any;
+
+    await page._handleSubmit(true);
+
+    expect(field).toBeTruthy();
+    expect(field.disabled).toBe(true);
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41' && options?.method === 'PUT')).toHaveLength(1);
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT')).toHaveLength(0);
+  });
+
+  it('keeps host relations read-only without instance manage permission', async () => {
+    localStorage.setItem('permissions', JSON.stringify(['servers:view', 'servers:manage']));
     authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
       if (url === '/api/database/instances' && !options?.method) return response([]);
       if (url === '/api/servers') return response([]);
@@ -217,8 +304,8 @@ describe('database instance host relation form', () => {
   });
 
   it.each([
-    { label: 'exact permissions', permissions: ['servers:view', 'servers:manage'] },
-    { label: 'resource wildcard', permissions: ['servers:*'] },
+    { label: 'exact permissions', permissions: ['instance:manage', 'servers:view', 'servers:manage'] },
+    { label: 'resource wildcard', permissions: ['instance:*', 'servers:*'] },
     { label: 'global wildcard', permissions: ['*'] },
   ])('treats $label as full host relation permission', async ({ permissions }) => {
     localStorage.setItem('permissions', JSON.stringify(permissions));
@@ -238,6 +325,33 @@ describe('database instance host relation form', () => {
 
     expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && !options?.method)).toHaveLength(1);
     expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT')).toHaveLength(1);
+  });
+
+  it('does not write host relations when the preceding base instance update is forbidden', async () => {
+    const mutationOrder: string[] = [];
+    authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url === '/api/database/instances' && !options?.method) return response([]);
+      if (url === '/api/servers') return response([]);
+      if (url === '/api/database/instances/41/hosts' && !options?.method) return response({ hosts: [{ serverId: 7, role: 'primary' }] });
+      if (url === '/api/database/instances/41' && options?.method === 'PUT') {
+        mutationOrder.push('PUT /api/database/instances/41');
+        return response({ error: 'RESOURCE_FORBIDDEN' }, false, 403);
+      }
+      if (url === '/api/database/instances/41/hosts' && options?.method === 'PUT') {
+        mutationOrder.push('PUT /api/database/instances/41/hosts');
+        return response({ ok: true, hosts: [] });
+      }
+      throw new Error(`unexpected request: ${options?.method ?? 'GET'} ${url}`);
+    });
+
+    const page = await mountPage();
+    page._editInstance(instance);
+    await settle(page);
+
+    await page._handleSubmit(true);
+
+    expect(mutationOrder).toEqual(['PUT /api/database/instances/41']);
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT')).toHaveLength(0);
   });
 
   it('keeps the dialog locked and submits the original host mapping during an in-flight edit', async () => {

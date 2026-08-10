@@ -205,6 +205,31 @@ describe('instance-host-summary', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('rerenders expired evidence when the same element reconnects after expiry', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse('2026-08-10T00:30:00.000Z'));
+    authFetch
+      .mockResolvedValueOnce(response({ hosts: [host(1)] }))
+      .mockResolvedValueOnce(response(payload([
+        { server: host(1), evidence: evidence(1, '2026-08-10T00:30:05.000Z') },
+      ])));
+
+    const element = document.createElement('instance-host-summary') as HTMLElement & { instanceId: number; updateComplete: Promise<unknown> };
+    element.instanceId = 11;
+    document.body.append(element);
+    await flushMicrotasks(element);
+    expect(element.shadowRoot?.querySelector('[data-freshness]')?.getAttribute('data-freshness')).toBe('fresh');
+
+    element.remove();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(5_001);
+    document.body.append(element);
+    await flushMicrotasks(element);
+
+    expect(element.shadowRoot?.querySelector('[data-freshness]')?.getAttribute('data-freshness')).toBe('expired');
+    expect(authFetch).toHaveBeenCalledTimes(2);
+  });
+
   it('distinguishes a permission failure from a request failure', async () => {
     authFetch.mockResolvedValue(response({ error: 'RESOURCE_FORBIDDEN' }, false, 403));
     const forbidden = document.createElement('instance-host-summary') as HTMLElement & { instanceId: number; updateComplete: Promise<unknown> };
