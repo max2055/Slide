@@ -40,7 +40,10 @@ const evidence = (serverId: number, expiresAt: string): LinuxHostEvidence => ({
   expiresAt,
   quality: 'good',
   truncated: false,
-  metrics: { source: ['procfs'], collectedAt: '2026-08-10T00:00:00.000Z', quality: 'good', values: { load1: 0.4 } },
+  metrics: {
+    source: ['procfs'], collectedAt: '2026-08-10T00:00:00.000Z', quality: 'good',
+    values: { cpu_usage: 12.34, memory_usage: 45.55, load_1min: 0.42 },
+  },
   filesystems: {
     source: ['df'], collectedAt: '2026-08-10T00:00:00.000Z', quality: 'good',
     items: [{ mount: '/var/lib/mysql', device: '/dev/mapper/rhel-data', fsType: 'xfs', sizeBytes: 100, usedBytes: 60, availableBytes: 40, usagePercent: 60, inodeTotal: 10, inodeUsed: 2, inodeAvailable: 8, inodeUsagePercent: 20 }],
@@ -72,10 +75,18 @@ async function settle(element: HTMLElement & { updateComplete: Promise<unknown> 
   await element.updateComplete;
 }
 
+async function flushMicrotasks(element: HTMLElement & { updateComplete: Promise<unknown> }) {
+  for (let index = 0; index < 8; index += 1) {
+    await Promise.resolve();
+    await element.updateComplete;
+  }
+}
+
 describe('instance-host-summary', () => {
   beforeEach(() => authFetch.mockReset());
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     document.body.replaceChildren();
   });
@@ -100,6 +111,10 @@ describe('instance-host-summary', () => {
     expect(element.shadowRoot?.textContent).toContain('/var/lib/mysql');
     expect(element.shadowRoot?.textContent).toContain('ibdata1');
     expect(element.shadowRoot?.textContent).toContain('PARTIAL_HOST_EVIDENCE');
+    expect(element.shadowRoot?.textContent).toContain('主机指标');
+    expect(element.shadowRoot?.textContent).toContain('12.3%');
+    expect(element.shadowRoot?.textContent).toContain('45.6%');
+    expect(element.shadowRoot?.textContent).toContain('0.42');
   });
 
   it('renders an empty relation immediately without requesting evidence', async () => {
@@ -136,6 +151,58 @@ describe('instance-host-summary', () => {
 
     expect(Array.from(element.shadowRoot?.querySelectorAll('[data-freshness]') ?? []).map((node) => node.getAttribute('data-freshness')))
       .toEqual(['fresh', 'expired', 'expired', 'expired', 'missing']);
+  });
+
+  it('rerenders at the nearest evidence expiry and rearms for later evidence', async () => {
+    vi.useFakeTimers();
+    const now = Date.parse('2026-08-10T00:30:00.000Z');
+    vi.setSystemTime(now);
+    const hosts = [host(1), host(2)];
+    authFetch
+      .mockResolvedValueOnce(response({ hosts }))
+      .mockResolvedValueOnce(response(payload([
+        { server: hosts[0], evidence: evidence(1, '2026-08-10T00:30:01.000Z') },
+        { server: hosts[1], evidence: evidence(2, '2026-08-10T00:30:05.000Z') },
+      ])));
+
+    const element = document.createElement('instance-host-summary') as HTMLElement & { instanceId: number; updateComplete: Promise<unknown> };
+    element.instanceId = 11;
+    document.body.append(element);
+    await flushMicrotasks(element);
+    expect(Array.from(element.shadowRoot?.querySelectorAll('[data-freshness]') ?? []).map((node) => node.getAttribute('data-freshness')))
+      .toEqual(['fresh', 'fresh']);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushMicrotasks(element);
+
+    expect(Array.from(element.shadowRoot?.querySelectorAll('[data-freshness]') ?? []).map((node) => node.getAttribute('data-freshness')))
+      .toEqual(['expired', 'fresh']);
+
+    await vi.advanceTimersByTimeAsync(4000);
+    await flushMicrotasks(element);
+
+    expect(Array.from(element.shadowRoot?.querySelectorAll('[data-freshness]') ?? []).map((node) => node.getAttribute('data-freshness')))
+      .toEqual(['expired', 'expired']);
+  });
+
+  it('clears the evidence expiry timer when disconnected', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse('2026-08-10T00:30:00.000Z'));
+    authFetch
+      .mockResolvedValueOnce(response({ hosts: [host(1)] }))
+      .mockResolvedValueOnce(response(payload([
+        { server: host(1), evidence: evidence(1, '2026-08-10T00:30:05.000Z') },
+      ])));
+
+    const element = document.createElement('instance-host-summary') as HTMLElement & { instanceId: number; updateComplete: Promise<unknown> };
+    element.instanceId = 11;
+    document.body.append(element);
+    await flushMicrotasks(element);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    element.remove();
+
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('distinguishes a permission failure from a request failure', async () => {

@@ -47,9 +47,11 @@ describe('database instance host relation form', () => {
   beforeEach(() => {
     authFetch.mockReset();
     showToast.mockReset();
+    localStorage.setItem('permissions', JSON.stringify(['*']));
   });
 
   afterEach(() => {
+    localStorage.removeItem('permissions');
     document.body.replaceChildren();
   });
 
@@ -94,6 +96,24 @@ describe('database instance host relation form', () => {
       'PUT /api/database/instances/73/hosts',
     ]);
 
+    await page.updateComplete;
+    const root = page.shadowRoot as ShadowRoot;
+    const dialog = root.querySelector('app-dialog') as HTMLElement;
+    const baseControls = Array.from(dialog.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea'));
+    expect(baseControls.length).toBeGreaterThan(0);
+    expect(baseControls.every((control) => control.disabled)).toBe(true);
+    const relationField = root.querySelector('instance-host-field') as any;
+    expect(relationField.disabled).toBe(false);
+    const buttons = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button'));
+    expect(buttons.find((button) => button.textContent?.trim() === '测试连接')?.disabled).toBe(true);
+    expect(buttons.find((button) => button.classList.contains('btn-primary'))?.textContent?.trim()).toBe('重试关联');
+
+    relationField.dispatchEvent(new CustomEvent('instance-host-change', {
+      detail: { hosts: [{ serverId: 7, role: 'replica' }] },
+      bubbles: true,
+      composed: true,
+    }));
+
     await page._handleSubmit(false);
 
     expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances' && options?.method === 'POST')).toHaveLength(1);
@@ -104,8 +124,196 @@ describe('database instance host relation form', () => {
       'PUT /api/database/instances/73/hosts',
       'PUT /api/database/instances/73/hosts',
     ]);
-    expect(JSON.parse(puts[1][1].body)).toEqual({ hosts: [{ serverId: 7, role: 'primary' }] });
+    expect(JSON.parse(puts[1][1].body)).toEqual({ hosts: [{ serverId: 7, role: 'replica' }] });
     expect(page.pendingCreatedInstanceId).toBeNull();
+    expect(page.showAddDialog).toBe(false);
+  });
+
+  it('saves a base edit without reading or writing host relations when relation view is absent', async () => {
+    localStorage.setItem('permissions', JSON.stringify(['instance:update']));
+    authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url === '/api/database/instances' && !options?.method) return response([]);
+      if (url === '/api/database/instances/41/hosts' && !options?.method) return response({ hosts: [] });
+      if (url === '/api/servers') return response([]);
+      if (url === '/api/database/instances/41' && options?.method === 'PUT') return response({ ok: true });
+      if (url === '/api/database/instances/41/hosts' && options?.method === 'PUT') return response({ ok: true, hosts: [] });
+      throw new Error(`unexpected request: ${options?.method ?? 'GET'} ${url}`);
+    });
+
+    const page = await mountPage();
+    page._editInstance(instance);
+    await settle(page);
+    const field = page.shadowRoot.querySelector('instance-host-field');
+
+    await page._handleSubmit(true);
+
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && !options?.method)).toHaveLength(0);
+    expect(field).toBeNull();
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41' && options?.method === 'PUT')).toHaveLength(1);
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT')).toHaveLength(0);
+  });
+
+  it('keeps host relation editing available when stored permissions are absent', async () => {
+    localStorage.removeItem('permissions');
+    authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url === '/api/database/instances' && !options?.method) return response([]);
+      if (url === '/api/servers') return response([]);
+      if (url === '/api/database/instances/41/hosts' && !options?.method) return response({ hosts: [{ serverId: 7, role: 'primary' }] });
+      if (url === '/api/database/instances/41' && options?.method === 'PUT') return response({ ok: true });
+      if (url === '/api/database/instances/41/hosts' && options?.method === 'PUT') return response({ ok: true, hosts: [] });
+      throw new Error(`unexpected request: ${options?.method ?? 'GET'} ${url}`);
+    });
+
+    const page = await mountPage();
+    page._editInstance(instance);
+    await settle(page);
+    await page._handleSubmit(true);
+
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && !options?.method)).toHaveLength(1);
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT')).toHaveLength(1);
+  });
+
+  it('renders host relations read-only and saves only the base edit with view permission', async () => {
+    localStorage.setItem('permissions', JSON.stringify(['instance:update', 'servers:view']));
+    authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url === '/api/database/instances' && !options?.method) return response([]);
+      if (url === '/api/servers') return response([]);
+      if (url === '/api/database/instances/41/hosts' && !options?.method) return response({ hosts: [{ serverId: 7, role: 'primary' }] });
+      if (url === '/api/database/instances/41' && options?.method === 'PUT') return response({ ok: true });
+      if (url === '/api/database/instances/41/hosts' && options?.method === 'PUT') return response({ ok: true, hosts: [] });
+      throw new Error(`unexpected request: ${options?.method ?? 'GET'} ${url}`);
+    });
+
+    const page = await mountPage();
+    page._editInstance(instance);
+    await settle(page);
+    const field = page.shadowRoot.querySelector('instance-host-field') as any;
+
+    await page._handleSubmit(true);
+
+    expect(field).toBeTruthy();
+    expect(field.disabled).toBe(true);
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41' && options?.method === 'PUT')).toHaveLength(1);
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT')).toHaveLength(0);
+  });
+
+  it('does not block a base edit when a read-only host relation load fails', async () => {
+    localStorage.setItem('permissions', JSON.stringify(['instance:update', 'servers:view']));
+    authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url === '/api/database/instances' && !options?.method) return response([]);
+      if (url === '/api/servers') return response([]);
+      if (url === '/api/database/instances/41/hosts' && !options?.method) return response({ error: 'RESOURCE_FORBIDDEN' }, false, 403);
+      if (url === '/api/database/instances/41' && options?.method === 'PUT') return response({ ok: true });
+      throw new Error(`unexpected request: ${options?.method ?? 'GET'} ${url}`);
+    });
+
+    const page = await mountPage();
+    page._editInstance(instance);
+    await settle(page);
+    await page._handleSubmit(true);
+
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41' && options?.method === 'PUT')).toHaveLength(1);
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT')).toHaveLength(0);
+  });
+
+  it.each([
+    { label: 'exact permissions', permissions: ['servers:view', 'servers:manage'] },
+    { label: 'resource wildcard', permissions: ['servers:*'] },
+    { label: 'global wildcard', permissions: ['*'] },
+  ])('treats $label as full host relation permission', async ({ permissions }) => {
+    localStorage.setItem('permissions', JSON.stringify(permissions));
+    authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url === '/api/database/instances' && !options?.method) return response([]);
+      if (url === '/api/servers') return response([]);
+      if (url === '/api/database/instances/41/hosts' && !options?.method) return response({ hosts: [{ serverId: 7, role: 'primary' }] });
+      if (url === '/api/database/instances/41' && options?.method === 'PUT') return response({ ok: true });
+      if (url === '/api/database/instances/41/hosts' && options?.method === 'PUT') return response({ ok: true, hosts: [] });
+      throw new Error(`unexpected request: ${options?.method ?? 'GET'} ${url}`);
+    });
+
+    const page = await mountPage();
+    page._editInstance(instance);
+    await settle(page);
+    await page._handleSubmit(true);
+
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && !options?.method)).toHaveLength(1);
+    expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT')).toHaveLength(1);
+  });
+
+  it('keeps the dialog locked and submits the original host mapping during an in-flight edit', async () => {
+    let resolveBaseWrite!: (value: ReturnType<typeof response>) => void;
+    const baseWrite = new Promise<ReturnType<typeof response>>((resolve) => { resolveBaseWrite = resolve; });
+    authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url === '/api/database/instances' && !options?.method) return response([]);
+      if (url === '/api/servers') return response([]);
+      if (url === '/api/database/instances/41/hosts' && !options?.method) return response({ hosts: [{ serverId: 7, role: 'primary' }] });
+      if (url === '/api/database/instances/41' && options?.method === 'PUT') return baseWrite;
+      if (url === '/api/database/instances/41/hosts' && options?.method === 'PUT') return response({ ok: true, hosts: [] });
+      throw new Error(`unexpected request: ${options?.method ?? 'GET'} ${url}`);
+    });
+
+    const page = await mountPage();
+    page._editInstance(instance);
+    await settle(page);
+    const submit = page._handleSubmit(true);
+    await page.updateComplete;
+    const root = page.shadowRoot as ShadowRoot;
+    const dialog = root.querySelector('app-dialog') as HTMLElement & { closable: boolean; closeOnOverlay: boolean };
+    const cancel = Array.from(root.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.trim() === '取消');
+
+    page.formData = { ...page.formData, name: 'mutated-after-submit' };
+    page.instanceHosts[0].role = 'replica';
+    dialog.dispatchEvent(new CustomEvent('app-dialog-close', { bubbles: true, composed: true }));
+    await page.updateComplete;
+    const lockedState = {
+      open: page.showEditDialog,
+      closable: dialog.closable,
+      closeOnOverlay: dialog.closeOnOverlay,
+      cancelDisabled: cancel?.disabled,
+    };
+
+    resolveBaseWrite(response({ ok: true }));
+    await submit;
+
+    expect(lockedState).toEqual({ open: true, closable: false, closeOnOverlay: false, cancelDisabled: true });
+    const relationWrites = authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT');
+    expect(relationWrites).toHaveLength(1);
+    expect(JSON.parse(relationWrites[0][1].body)).toEqual({ hosts: [{ serverId: 7, role: 'primary' }] });
+  });
+
+  it.each(['cancel', 'dialog close'])('refreshes instances and warns when %s abandons a partial create', async (closeMethod) => {
+    let instanceReads = 0;
+    authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url === '/api/database/instances' && !options?.method) {
+        instanceReads += 1;
+        return response([]);
+      }
+      if (url === '/api/servers') return response([]);
+      if (url === '/api/database/instances' && options?.method === 'POST') return response({ id: 73 });
+      if (url === '/api/database/instances/73/hosts' && options?.method === 'PUT') return response({ error: 'RELATION_WRITE_FAILED' }, false);
+      throw new Error(`unexpected request: ${options?.method ?? 'GET'} ${url}`);
+    });
+
+    const page = await mountPage();
+    page._addInstance();
+    page.formData = { name: 'new-db', environment: 'production', db_type: 'mysql', host: '10.0.0.73', port: 3306, username: 'dba', password: 'secret', database_name: 'prod', description: '' };
+    await page._handleSubmit(false);
+    await page.updateComplete;
+    expect(page.pendingCreatedInstanceId).toBe(73);
+    const root = page.shadowRoot as ShadowRoot;
+
+    if (closeMethod === 'cancel') {
+      Array.from(root.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === '取消')
+        ?.click();
+    } else {
+      root.querySelector('app-dialog')?.dispatchEvent(new CustomEvent('app-dialog-close', { bubbles: true, composed: true }));
+    }
+    await settle(page);
+
+    expect(instanceReads).toBe(2);
+    expect(showToast).toHaveBeenCalledWith('实例已创建但主机关联未保存', 'warning');
     expect(page.showAddDialog).toBe(false);
   });
 

@@ -24,9 +24,21 @@ export class InstanceHostSummary extends LitElement {
   @state() private evidenceLoading = false;
   @state() private evidenceError: string | null = null;
   private requestVersion = 0;
+  private freshnessTimer: ReturnType<typeof setTimeout> | null = null;
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    if (this.hasUpdated) this.scheduleFreshnessUpdate();
+  }
+
+  override disconnectedCallback(): void {
+    this.clearFreshnessTimer();
+    super.disconnectedCallback();
+  }
 
   override updated(changed: Map<string, unknown>): void {
     if (changed.has('instanceId')) {
+      this.clearFreshnessTimer();
       const id = this.instanceId;
       if (id != null && Number.isInteger(id) && id > 0) {
         queueMicrotask(() => {
@@ -38,6 +50,30 @@ export class InstanceHostSummary extends LitElement {
         this.evidence = null;
       }
     }
+    if (changed.has('evidence')) this.scheduleFreshnessUpdate();
+  }
+
+  private clearFreshnessTimer(): void {
+    if (this.freshnessTimer !== null) {
+      clearTimeout(this.freshnessTimer);
+      this.freshnessTimer = null;
+    }
+  }
+
+  private scheduleFreshnessUpdate(): void {
+    this.clearFreshnessTimer();
+    if (!this.isConnected || !this.evidence) return;
+    const now = Date.now();
+    const expirations = this.evidence.hosts
+      .map((item) => item.evidence ? Date.parse(item.evidence.expiresAt) : Number.NaN)
+      .filter((expiresAt) => Number.isFinite(expiresAt) && expiresAt > now);
+    if (expirations.length === 0) return;
+    const delay = Math.min(Math.min(...expirations) - now, 2_147_483_647);
+    this.freshnessTimer = setTimeout(() => {
+      this.freshnessTimer = null;
+      this.requestUpdate();
+      this.scheduleFreshnessUpdate();
+    }, delay);
   }
 
   private async load(instanceId: number): Promise<void> {
@@ -117,6 +153,11 @@ export class InstanceHostSummary extends LitElement {
     return `${value.toFixed(1)} ${unit}`;
   }
 
+  private formatMetric(value: number, digits: number): string {
+    const factor = 10 ** digits;
+    return (Math.round((value + Number.EPSILON) * factor) / factor).toFixed(digits);
+  }
+
   private roleLabel(role: string): string {
     const labels: Record<string, string> = {
       standalone: '独立节点', primary: '主节点', replica: '副本', shard: '分片', arbiter: '仲裁节点', unknown: '未知角色',
@@ -125,8 +166,26 @@ export class InstanceHostSummary extends LitElement {
   }
 
   private renderEvidence(evidence: LinuxHostEvidence) {
+    const metrics = [
+      { label: 'CPU 使用率', value: evidence.metrics.values.cpu_usage, digits: 1, suffix: '%' },
+      { label: '内存使用率', value: evidence.metrics.values.memory_usage, digits: 1, suffix: '%' },
+      { label: '1 分钟负载', value: evidence.metrics.values.load_1min, digits: 2, suffix: '' },
+    ].filter((metric) => Number.isFinite(metric.value));
     return html`
       <div class="evidence-grid">
+        ${metrics.length > 0 ? html`
+          <section class="evidence-section">
+            <h4>主机指标</h4>
+            <div class="evidence-list">
+              ${metrics.map((metric) => html`
+                <div class="evidence-line">
+                  <span class="line-label">${metric.label}</span>
+                  <span class="line-value">${this.formatMetric(metric.value, metric.digits)}${metric.suffix}</span>
+                </div>
+              `)}
+            </div>
+          </section>
+        ` : nothing}
         <section class="evidence-section">
           <h4>系统日志摘要</h4>
           ${evidence.systemLogs.entries.length > 0 ? html`
