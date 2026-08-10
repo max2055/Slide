@@ -267,8 +267,8 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
               s.host, s.port, s.label, s.os_type, s.status, s.collection_enabled
        FROM resource_relations rr JOIN servers s ON s.id = rr.target_id
        WHERE rr.source_type = 'instance' AND rr.source_id = ? AND rr.target_type = 'server'
-         AND rr.relation_type = 'runs_on' AND rr.valid_from <= NOW()
-         AND (rr.valid_until IS NULL OR rr.valid_until > NOW())
+         AND rr.relation_type = 'runs_on' AND rr.valid_from <= NOW(6)
+         AND (rr.valid_until IS NULL OR rr.valid_until > NOW(6))
        ORDER BY s.host, s.port`,
       [instanceId],
     );
@@ -285,8 +285,8 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
               i.name, i.db_type, i.environment, i.status, i.health_status
        FROM resource_relations rr JOIN database_instances i ON i.id = rr.source_id
        WHERE rr.source_type = 'instance' AND rr.target_type = 'server' AND rr.target_id = ?
-         AND rr.relation_type = 'runs_on' AND rr.valid_from <= NOW()
-         AND (rr.valid_until IS NULL OR rr.valid_until > NOW())
+         AND rr.relation_type = 'runs_on' AND rr.valid_from <= NOW(6)
+         AND (rr.valid_until IS NULL OR rr.valid_until > NOW(6))
        ORDER BY i.name`,
       [serverId],
     );
@@ -301,7 +301,7 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
     const [rows] = await this.pool().execute<any[]>(
       `SELECT COUNT(*) AS count FROM resource_relations
        WHERE source_type = 'instance' AND target_type = 'server' AND target_id = ?
-         AND relation_type = 'runs_on' AND (valid_until IS NULL OR valid_until > NOW())`,
+         AND relation_type = 'runs_on' AND (valid_until IS NULL OR valid_until > NOW(6))`,
       [serverId],
     );
     return Number(rows[0]?.count ?? 0);

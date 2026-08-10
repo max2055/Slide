@@ -445,8 +445,8 @@ describe('instance-host public contract', () => {
     const method = source.slice(source.indexOf('async deleteServer'), source.indexOf('async testConnection'));
     expect(method).toContain('beginTransaction()');
     expect(method).toMatch(/SELECT id FROM servers WHERE id = \? FOR UPDATE/);
-    expect(method).toMatch(/relation_type = 'runs_on'.*valid_until IS NULL OR valid_until > NOW\(\)/s);
-    expect(method).not.toContain('valid_from <= NOW()');
+    expect(method).toMatch(/relation_type = 'runs_on'.*valid_until IS NULL OR valid_until > NOW\(6\)/s);
+    expect(method).not.toContain('valid_from <=');
     expect(method.indexOf('FOR UPDATE')).toBeLessThan(method.indexOf('DELETE FROM servers'));
 
     const serverSource = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');

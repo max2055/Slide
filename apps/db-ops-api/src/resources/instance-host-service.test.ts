@@ -155,8 +155,8 @@ describe('MysqlInstanceHostStore current relation integrity', () => {
     await store.listInstanceHosts(10);
     await store.listServerInstances(20);
     for (const sql of calls) {
-      expect(sql).toContain('valid_from <=');
-      expect(sql).toMatch(/valid_until IS NULL OR .*valid_until > /);
+      expect(sql).toContain('valid_from <= NOW(6)');
+      expect(sql).toMatch(/valid_until IS NULL OR .*valid_until > NOW\(6\)/);
     }
   });
 
@@ -170,8 +170,8 @@ describe('MysqlInstanceHostStore current relation integrity', () => {
     } as any));
 
     await expect(store.countActiveForServer(20)).resolves.toBe(1);
-    expect(capturedSql).toMatch(/valid_until IS NULL OR valid_until > NOW\(\)/);
-    expect(capturedSql).not.toContain('valid_from <= NOW()');
+    expect(capturedSql).toMatch(/valid_until IS NULL OR valid_until > NOW\(6\)/);
+    expect(capturedSql).not.toContain('valid_from <=');
   });
 
   it('expires earlier rows but deletes equal-now and future rows in one transaction', async () => {
@@ -361,8 +361,8 @@ describe('MysqlInstanceHostStore current relation integrity', () => {
     expect(method).toContain('beginTransaction()');
     expect(method).toMatch(/SELECT id FROM servers WHERE id = \? FOR UPDATE/);
     expect(method).toContain("relation_type = 'runs_on'");
-    expect(method).toMatch(/valid_until IS NULL OR valid_until > NOW\(\)/);
-    expect(method).not.toContain('valid_from <= NOW()');
+    expect(method).toMatch(/valid_until IS NULL OR valid_until > NOW\(6\)/);
+    expect(method).not.toContain('valid_from <=');
     expect(method.indexOf('FOR UPDATE')).toBeLessThan(method.indexOf('DELETE FROM servers'));
   });
 });
