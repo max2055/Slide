@@ -62,6 +62,12 @@ export function statementsForExecution(migration: SqlMigration): string[] {
   if (migration.id === '010_add_task_description_log_columns.sql') {
     return statements.map((statement) => statement.replace(/\bAFTER usage\b/, 'AFTER `usage`'));
   }
+  if (migration.id === '015_add_output_schema.sql') {
+    return statements.map((statement) => statement.replace(
+      /DEFAULT NULL AFTER (task_description|result)\s+COMMENT ('[^']*')/,
+      'DEFAULT NULL COMMENT $2 AFTER $1',
+    ));
+  }
   if (migration.id === '017_add_cron_scripts.sql') {
     return statements.map((statement) => statement.replace(
       /ADD COLUMN `task_type` ENUM\('script', 'agent'\) NOT NULL DEFAULT 'agent' AFTER `enabled`\s+COMMENT 'Execution mode: script \(SQL\/shell\) or agent \(AI-driven\)',\s+ADD COLUMN `script_id` INT UNSIGNED DEFAULT NULL AFTER `task_type`\s+COMMENT 'FK referencing cron_scripts\.id for script mode',\s+ADD COLUMN `target_instance_id` INT UNSIGNED DEFAULT NULL AFTER `script_id`\s+COMMENT 'FK referencing database_instances\.id — target managed DB instance for script execution'/,
@@ -165,12 +171,13 @@ export class MigrationRunner {
 
   private async recordSnapshotCoverage(connection: MigrationConnection, migrations: SqlMigration[]): Promise<void> {
     // The legacy snapshot has non-contiguous coverage. It lacks the cron base
-    // tables (009/010), report scripts (017), and all server/resource work
-    // from 019 onward; those migrations must execute on an empty install.
+    // tables (009/010), their output schema (015), report scripts (017), and
+    // all server/resource work from 019 onward; those migrations must execute
+    // on an empty install.
     const coveredBySnapshot = (id: string) =>
       id > snapshotId && (
         (id < '009_' && !id.startsWith('007_')) ||
-        (id >= '011_' && id < '017_') ||
+        (id >= '011_' && id < '017_' && id !== '015_add_output_schema.sql') ||
         id.startsWith('018_')
       );
     for (const migration of migrations.filter((item) => coveredBySnapshot(item.id))) {

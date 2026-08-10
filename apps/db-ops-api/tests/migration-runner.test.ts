@@ -86,6 +86,21 @@ describe('MigrationRunner', () => {
     expect(statementsForExecution({ id: '017_add_cron_scripts.sql', sql: cronSql, checksum: 'historic' })[0]).toContain("COMMENT 'Execution mode: script (SQL/shell) or agent (AI-driven)' AFTER `enabled`");
   });
 
+  it('uses valid column option order for the historical cron output schema migration', () => {
+    const sql = `ALTER TABLE cron_jobs
+  ADD COLUMN output_schema JSON DEFAULT NULL AFTER task_description
+  COMMENT 'Expected JSON schema for structured output validation';
+
+ALTER TABLE cron_job_logs
+  ADD COLUMN structured_result JSON DEFAULT NULL AFTER result
+  COMMENT 'Parsed structured JSON output matching output_schema';`;
+
+    expect(statementsForExecution({ id: '015_add_output_schema.sql', sql, checksum: 'historic' })).toEqual([
+      "ALTER TABLE cron_jobs\n  ADD COLUMN output_schema JSON DEFAULT NULL COMMENT 'Expected JSON schema for structured output validation' AFTER task_description",
+      "ALTER TABLE cron_job_logs\n  ADD COLUMN structured_result JSON DEFAULT NULL COMMENT 'Parsed structured JSON output matching output_schema' AFTER result",
+    ]);
+  });
+
   it('uses a ledger and runs completed migrations only once', async () => {
     const directory = await migrationDirectory({ '100_example.sql': 'CREATE TABLE example (id INT);' });
     const pool = new FakePool();
@@ -95,6 +110,20 @@ describe('MigrationRunner', () => {
     await runner.run();
     expect(firstRunCalls).toBe(1);
     expect(pool.calls.filter((sql) => sql.startsWith('CREATE TABLE example'))).toHaveLength(1);
+  });
+
+  it('runs cron output schema migration after the legacy snapshot', async () => {
+    const directory = await migrationDirectory({
+      '000_schema_baseline.sql': 'SELECT 0;',
+      '009_add_cron_jobs_tables.sql': 'CREATE TABLE cron_jobs (id INT);',
+      '015_add_output_schema.sql': 'ALTER TABLE cron_jobs ADD COLUMN output_schema JSON;',
+    });
+    const pool = new FakePool();
+
+    await new MigrationRunner(pool as any, directory).run();
+
+    expect(pool.calls).toContain('ALTER TABLE cron_jobs ADD COLUMN output_schema JSON');
+    expect(pool.entries.get('015_add_output_schema.sql')?.status).toBe('completed');
   });
 
   it('blocks changed checksums and unavailable migration locks', async () => {
