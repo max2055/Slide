@@ -195,9 +195,13 @@ class MetricsDatabaseService {
   /**
    * 获取实时指标（最新一条记录）
    */
-  async getRealtimeMetrics(instanceId: number): Promise<MetricsRecord | null> {
+  async getRealtimeMetrics(
+    instanceId: number,
+    options: StrictReadOptions = {},
+  ): Promise<MetricsRecord | null> {
     const pool = this.getPool();
     if (!pool) {
+      if (options.strict) throw new Error('REALTIME_METRICS_UNAVAILABLE');
       return null;
     }
 
@@ -221,6 +225,7 @@ class MetricsDatabaseService {
       return null;
     } catch (error) {
       console.error('获取实时指标失败:', error);
+      if (options.strict) throw new Error('REALTIME_METRICS_QUERY_FAILED', { cause: error });
       return null;
     }
   }

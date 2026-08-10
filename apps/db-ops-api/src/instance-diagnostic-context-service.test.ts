@@ -120,6 +120,33 @@ describe('InstanceDiagnosticContextService', () => {
     expect(collectHostEvidence).not.toHaveBeenCalled();
   });
 
+  it('does not call either host dependency when servers:view is missing', async () => {
+    const listHosts = vi.fn(dependencies().listHosts);
+    const collectHostEvidence = vi.fn(dependencies().collectHostEvidence);
+    const service = new InstanceDiagnosticContextService(dependencies({
+      listHosts,
+      collectHostEvidence,
+    }));
+    const databaseOnlyActor = {
+      ...actor,
+      permissions: Object.freeze(['instance:view', 'metric:view', 'alert:view', 'log:view']),
+    };
+
+    const result = await service.collect(databaseOnlyActor, 7);
+
+    expect(listHosts).not.toHaveBeenCalled();
+    expect(collectHostEvidence).not.toHaveBeenCalled();
+    expect(result.hosts).toEqual([]);
+    expect(result.database).toMatchObject({
+      realtimeMetrics: { qps: 120 },
+      metricHistory: [expect.objectContaining({ qps: 100 })],
+      alerts: [expect.objectContaining({ id: 31 })],
+      logs: [expect.objectContaining({ id: 41 })],
+      slowQueries: [expect.objectContaining({ id: 51 })],
+    });
+    expect(result.gaps).toContainEqual(expect.objectContaining({ code: 'HOST_EVIDENCE_FORBIDDEN' }));
+  });
+
   it('records missing relations and per-host failures without discarding database evidence', async () => {
     const noHosts = new InstanceDiagnosticContextService(dependencies({ listHosts: async () => [] }));
     await expect(noHosts.collect(actor, 7)).resolves.toMatchObject({

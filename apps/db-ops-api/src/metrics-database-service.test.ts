@@ -2,6 +2,33 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { dbConnection } from './db-connection.js';
 import { metricsDatabaseService } from './metrics-database-service.js';
 
+describe('MetricsDatabaseService.getRealtimeMetrics', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('preserves the legacy null fallback unless strict reads are requested', async () => {
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue(null);
+
+    await expect(metricsDatabaseService.getRealtimeMetrics(7)).resolves.toBeNull();
+    await expect(metricsDatabaseService.getRealtimeMetrics(7, { strict: true }))
+      .rejects.toThrow('REALTIME_METRICS_UNAVAILABLE');
+  });
+
+  it('distinguishes strict query failures from a successful query with no samples', async () => {
+    const execute = vi.fn()
+      .mockRejectedValueOnce(new Error('sensitive backend details'))
+      .mockResolvedValueOnce([[], []]);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+
+    await expect(metricsDatabaseService.getRealtimeMetrics(7, { strict: true }))
+      .rejects.toThrow('REALTIME_METRICS_QUERY_FAILED');
+    await expect(metricsDatabaseService.getRealtimeMetrics(7, { strict: true }))
+      .resolves.toBeNull();
+  });
+});
+
 describe('MetricsDatabaseService.getHistoricalMetrics', () => {
   afterEach(() => {
     vi.restoreAllMocks();

@@ -450,14 +450,18 @@ export class InstanceDiagnosticContextService {
     }
 
     let relatedHosts: InstanceHostDetail[] = [];
-    try {
-      relatedHosts = await this.dependencies.listHosts(actor, instanceId);
-      if (relatedHosts.length === 0) {
-        gaps.push({ scope: 'host', code: 'HOST_RELATION_MISSING', resource: { type: 'instance', id: instanceId } });
+    if (!hasPermission(actorPermissions, 'servers:view')) {
+      gaps.push({ scope: 'host', code: 'HOST_EVIDENCE_FORBIDDEN', resource });
+    } else {
+      try {
+        relatedHosts = await this.dependencies.listHosts(actor, instanceId);
+        if (relatedHosts.length === 0) {
+          gaps.push({ scope: 'host', code: 'HOST_RELATION_MISSING', resource });
+        }
+      } catch (error) {
+        const code = stableErrorCode(error) === 'RESOURCE_FORBIDDEN' ? 'HOST_EVIDENCE_FORBIDDEN' : 'HOST_RELATION_LOOKUP_FAILED';
+        gaps.push({ scope: 'host', code, resource });
       }
-    } catch (error) {
-      const code = stableErrorCode(error) === 'RESOURCE_FORBIDDEN' ? 'HOST_EVIDENCE_FORBIDDEN' : 'HOST_RELATION_LOOKUP_FAILED';
-      gaps.push({ scope: 'host', code, resource: { type: 'instance', id: instanceId } });
     }
 
     const databaseType = typeof instance?.db_type === 'string' ? instance.db_type : 'unknown';
@@ -534,7 +538,7 @@ export const safeInstanceMetadataProvider = new SafeInstanceMetadataProvider();
 export const instanceDiagnosticContextService = new InstanceDiagnosticContextService({
   getInstance: (instanceId) => safeInstanceMetadataProvider.getInstance(instanceId),
   getRealtimeMetrics: async (instanceId) => (
-    await metricsDatabaseService.getRealtimeMetrics(instanceId) as unknown as Record<string, unknown> | null
+    await metricsDatabaseService.getRealtimeMetrics(instanceId, { strict: true }) as unknown as Record<string, unknown> | null
   ),
   getMetricHistory: async (instanceId, start, end, limit) => {
     const records = await metricsDatabaseService.getHistoricalMetrics(
