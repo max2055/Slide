@@ -32,6 +32,13 @@ export interface ActiveAiAnalysis {
   sessionKey: string | null;
 }
 
+export interface ActiveFaultDiagnosisLookup {
+  instanceId: number;
+  triggerType: 'manual' | 'auto';
+  userId: number;
+  sessionVersion: number;
+}
+
 class AiAnalysisDatabaseService {
   /**
    * 获取数据库连接池
@@ -132,16 +139,22 @@ class AiAnalysisDatabaseService {
     }
   }
 
-  async findActiveByCacheKey(cacheKey: string): Promise<ActiveAiAnalysis | null> {
+  async findActiveFaultDiagnosis(lookup: ActiveFaultDiagnosisLookup): Promise<ActiveAiAnalysis | null> {
     const pool = this.getPool();
     if (!pool) throw new Error('ANALYSIS_ACTIVE_LOOKUP_UNAVAILABLE');
+    const cacheKeyPattern = `fault:${lookup.instanceId}:%:${lookup.triggerType}`
+      + `:user:${lookup.userId}:session:${lookup.sessionVersion}`;
     try {
       const [rows] = await pool.execute(
         `SELECT id, status, session_key AS sessionKey
          FROM ai_analysis
-         WHERE cache_key = ? AND status IN ('pending', 'running')
+         WHERE analysis_type = 'fault_diagnosis'
+           AND instance_id = ?
+           AND trigger_type = ?
+           AND cache_key LIKE ?
+           AND status IN ('pending', 'running')
          ORDER BY created_at DESC, id DESC LIMIT 1`,
-        [cacheKey],
+        [lookup.instanceId, lookup.triggerType, cacheKeyPattern],
       ) as any;
       if (!Array.isArray(rows) || rows.length === 0) return null;
       const row = rows[0];

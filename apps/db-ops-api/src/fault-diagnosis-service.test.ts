@@ -43,7 +43,12 @@ function dependencies(events: string[] = []) {
       }),
     },
     analysisStore: {
-      findActiveByCacheKey: vi.fn(async (_cacheKey: string) => {
+      findActiveFaultDiagnosis: vi.fn(async (_lookup: {
+        instanceId: number;
+        triggerType: 'manual' | 'auto';
+        userId: number;
+        sessionVersion: number;
+      }) => {
         events.push('active');
         return null;
       }),
@@ -120,6 +125,12 @@ describe('FaultDiagnosisService', () => {
     }));
     const cacheKey = deps.analysisStore.createAnalysis.mock.calls[0]![0] as { cache_key: string };
     expect(cacheKey.cache_key.length).toBeLessThan(128);
+    expect(deps.analysisStore.findActiveFaultDiagnosis).toHaveBeenCalledWith({
+      instanceId: 7,
+      triggerType: 'manual',
+      userId: 3,
+      sessionVersion: 1,
+    });
     expect(deps.analysisStore.updateStatus).toHaveBeenCalledWith(71, 'running');
     expect(deps.analysisStore.markDispatched).toHaveBeenCalledWith(71, 'diagnosis-71');
     expect(deps.dispatch).toHaveBeenCalledWith(expect.objectContaining({
@@ -165,7 +176,7 @@ describe('FaultDiagnosisService', () => {
   it('returns a stable active lookup failure after authorized collection and completed-cache lookup', async () => {
     const events: string[] = [];
     const deps = dependencies(events);
-    deps.analysisStore.findActiveByCacheKey.mockImplementation(async () => {
+    deps.analysisStore.findActiveFaultDiagnosis.mockImplementation(async () => {
       events.push('active');
       throw new Error('ANALYSIS_ACTIVE_LOOKUP_UNAVAILABLE');
     });
@@ -483,6 +494,35 @@ describe('FaultDiagnosisService', () => {
     await expect(service.diagnoseInstance(rolloverActor, 7)).resolves.toMatchObject({ success: true });
   });
 
+  it('lets a fresh service consult durable state instead of inheriting another instance pending map', async () => {
+    const freshActor = Object.freeze({ ...actor, userId: 40, requestId: 'fresh-service-state' });
+    const deps = dependencies();
+    deps.analysisStore.findActiveFaultDiagnosis
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 71, status: 'running', sessionKey: 'diagnosis-71' });
+    deps.analysisStore.waitForCompletion.mockImplementation(() => new Promise(() => {}));
+    const firstService = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+    await expect(firstService.diagnoseInstance(freshActor, 7)).resolves.toMatchObject({
+      success: true,
+      analysisId: 71,
+      status: 'queued',
+    });
+
+    const freshService = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+    await expect(freshService.diagnoseInstance(freshActor, 7)).resolves.toEqual({
+      success: false,
+      error: '诊断正在创建中，请稍后重试',
+      status: 'in_progress',
+    });
+
+    expect(deps.contextCollector.collect).toHaveBeenCalledTimes(2);
+    expect(deps.analysisStore.findByCacheKey).toHaveBeenCalledTimes(2);
+    expect(deps.analysisStore.findActiveFaultDiagnosis).toHaveBeenCalledTimes(2);
+    expect(deps.analysisStore.createAnalysis).toHaveBeenCalledTimes(1);
+    expect(deps.dispatch).toHaveBeenCalledTimes(1);
+  });
+
   it('releases the pending lock when analysis explicitly fails', async () => {
     let resolveTerminal!: (value: unknown) => void;
     const failedActor = Object.freeze({ ...actor, userId: 34, requestId: 'failed-completion' });
@@ -596,6 +636,10 @@ describe('FaultDiagnosisService', () => {
           trigger_type: 'auto',
           cache_key: expect.stringMatching(/^fault:110:.*:auto:user:0:session:0$/),
         }),
+      ]);
+      expect(deps.analysisStore.findActiveFaultDiagnosis.mock.calls.map(([lookup]) => lookup)).toEqual([
+        { instanceId: 109, triggerType: 'auto', userId: 0, sessionVersion: 0 },
+        { instanceId: 110, triggerType: 'auto', userId: 0, sessionVersion: 0 },
       ]);
       expect(deps.dispatch.mock.calls.map(([params]) => params)).toEqual([
         expect.objectContaining({ instanceId: 109, triggerType: 'auto' }),
@@ -749,12 +793,85 @@ describe('FaultDiagnosisService', () => {
       expect(deps.dispatch).toHaveBeenCalledTimes(1);
     });
 
+    it('reuses a durably active diagnosis across an hourly cache rollover in a fresh service', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-04-25T14:59:59Z'));
+      const events: string[] = [];
+      const deps = dependencies(events);
+      const stableLookup = {
+        instanceId: 609,
+        triggerType: 'auto' as const,
+        userId: 0,
+        sessionVersion: 0,
+      };
+      const createdCacheKeys: string[] = [];
+      let createCount = 0;
+      let active: {
+        id: number;
+        status: 'running';
+        sessionKey: string;
+      } | null = null;
+      deps.listActiveInstances.mockResolvedValue([{ id: 609 }]);
+      deps.checkHealth.mockResolvedValue({ status: 'critical' });
+      deps.contextCollector.collect.mockImplementation(async () => {
+        events.push('collect');
+        return diagnosticContextFor(609);
+      });
+      deps.analysisStore.findActiveFaultDiagnosis.mockImplementation(async (lookup) => {
+        events.push('active');
+        return active
+          && lookup.instanceId === stableLookup.instanceId
+          && lookup.triggerType === stableLookup.triggerType
+          && lookup.userId === stableLookup.userId
+          && lookup.sessionVersion === stableLookup.sessionVersion
+          ? active
+          : null;
+      });
+      deps.analysisStore.createAnalysis.mockImplementation(async (data: any) => {
+        events.push('create');
+        createdCacheKeys.push(data.cache_key);
+        createCount += 1;
+        return { success: true, analysisId: 6090 + createCount };
+      });
+      deps.analysisStore.markDispatched.mockImplementation(async (analysisId, sessionKey) => {
+        events.push('marker');
+        active = {
+          id: analysisId,
+          status: 'running',
+          sessionKey,
+        };
+        return true;
+      });
+      deps.analysisStore.waitForCompletion.mockImplementation(() => new Promise(() => {}));
+      const firstService = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+      await expect(firstService.diagnoseUnhealthyInstances()).resolves.toEqual([6091]);
+      vi.setSystemTime(new Date('2026-04-25T15:00:00Z'));
+
+      const freshService = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+      await expect(freshService.diagnoseUnhealthyInstances()).resolves.toEqual([]);
+
+      expect(deps.analysisStore.findByCacheKey.mock.calls.map(([cacheKey]) => cacheKey)).toEqual([
+        'fault:609:2026-04-25T14:auto:user:0:session:0',
+        'fault:609:2026-04-25T15:auto:user:0:session:0',
+      ]);
+      expect(deps.analysisStore.findActiveFaultDiagnosis).toHaveBeenCalledTimes(2);
+      expect(deps.analysisStore.findActiveFaultDiagnosis).toHaveBeenNthCalledWith(1, stableLookup);
+      expect(deps.analysisStore.findActiveFaultDiagnosis).toHaveBeenNthCalledWith(2, stableLookup);
+      expect(deps.analysisStore.createAnalysis).toHaveBeenCalledTimes(1);
+      expect(deps.dispatch).toHaveBeenCalledTimes(1);
+      expect(events).toEqual([
+        'collect', 'cache', 'active', 'create', 'running', 'dispatch', 'marker',
+        'collect', 'cache', 'active',
+      ]);
+    });
+
     it('skips a durably dispatched active diagnosis in a fresh service', async () => {
       const deps = dependencies();
       deps.listActiveInstances.mockResolvedValue([{ id: 607 }]);
       deps.checkHealth.mockResolvedValue({ status: 'critical' });
       deps.contextCollector.collect.mockResolvedValue(diagnosticContextFor(607));
-      deps.analysisStore.findActiveByCacheKey.mockResolvedValue({
+      deps.analysisStore.findActiveFaultDiagnosis.mockResolvedValue({
         id: 6071,
         status: 'running',
         sessionKey: 'diagnosis-6071',
@@ -775,7 +892,7 @@ describe('FaultDiagnosisService', () => {
       expect(outcome).toEqual({ analysisIds: [] });
       expect(deps.contextCollector.collect).toHaveBeenCalledTimes(1);
       expect(deps.analysisStore.findByCacheKey).toHaveBeenCalledTimes(1);
-      expect(deps.analysisStore.findActiveByCacheKey).toHaveBeenCalledTimes(1);
+      expect(deps.analysisStore.findActiveFaultDiagnosis).toHaveBeenCalledTimes(1);
       expect(deps.analysisStore.createAnalysis).not.toHaveBeenCalled();
       expect(deps.analysisStore.updateStatus).not.toHaveBeenCalled();
       expect(deps.dispatch).not.toHaveBeenCalled();
@@ -786,7 +903,7 @@ describe('FaultDiagnosisService', () => {
       deps.listActiveInstances.mockResolvedValue([{ id: 608 }]);
       deps.checkHealth.mockResolvedValue({ status: 'critical' });
       deps.contextCollector.collect.mockResolvedValue(diagnosticContextFor(608));
-      deps.analysisStore.findActiveByCacheKey.mockResolvedValue({
+      deps.analysisStore.findActiveFaultDiagnosis.mockResolvedValue({
         id: 6081,
         status: 'running',
         sessionKey: null,

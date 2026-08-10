@@ -18,10 +18,9 @@ type FaultDiagnosisTrigger = 'manual' | 'auto';
 type PendingDiagnosisState = 'creating' | 'dispatched' | 'failure_unconfirmed';
 type FaultDiagnosisStatus = 'queued' | 'in_progress' | 'failure_pending';
 type FaultDiagnosisResult = { success: boolean; analysisId?: number; error?: string; status?: FaultDiagnosisStatus };
-const pendingDiagnoses = new Map<string, PendingDiagnosisState>();
 
 type FaultAnalysisStore = Pick<typeof aiAnalysisDatabaseService,
-  'findActiveByCacheKey' | 'findByCacheKey' | 'createAnalysis' | 'updateStatus' | 'markDispatched'
+  'findActiveFaultDiagnosis' | 'findByCacheKey' | 'createAnalysis' | 'updateStatus' | 'markDispatched'
   | 'failAnalysis' | 'waitForCompletion'
   | 'getAnalysisList' | 'getAnalysisStats'>;
 
@@ -44,6 +43,8 @@ const defaultDependencies: FaultDiagnosisDependencies = {
 };
 
 export class FaultDiagnosisService {
+  private readonly pendingDiagnoses = new Map<string, PendingDiagnosisState>();
+
   constructor(private readonly dependencies: FaultDiagnosisDependencies = defaultDependencies) {}
 
   async diagnoseInstance(
@@ -101,9 +102,9 @@ export class FaultDiagnosisService {
     if (!Number.isSafeInteger(instanceId) || instanceId <= 0) throw new Error('RESOURCE_REF_INVALID');
     const pendingKey = this.buildPendingKey(actor, instanceId, trigger);
     const cacheKey = this.buildCacheKey(actor, instanceId, trigger);
-    const pendingState = pendingDiagnoses.get(pendingKey);
+    const pendingState = this.pendingDiagnoses.get(pendingKey);
     if (pendingState) return pendingDiagnosisResult(pendingState);
-    pendingDiagnoses.set(pendingKey, 'creating');
+    this.pendingDiagnoses.set(pendingKey, 'creating');
     let releasePendingOnReturn = true;
 
     try {
@@ -115,10 +116,15 @@ export class FaultDiagnosisService {
       const cached = await this.dependencies.analysisStore.findByCacheKey(cacheKey);
       if (cached?.result) return { success: true, analysisId: cached.id };
 
-      const active = await this.dependencies.analysisStore.findActiveByCacheKey(cacheKey);
+      const active = await this.dependencies.analysisStore.findActiveFaultDiagnosis({
+        instanceId,
+        triggerType: trigger,
+        userId: actor.userId,
+        sessionVersion: actor.sessionVersion,
+      });
       if (active) {
         const state: PendingDiagnosisState = active.sessionKey ? 'dispatched' : 'failure_unconfirmed';
-        pendingDiagnoses.set(pendingKey, state);
+        this.pendingDiagnoses.set(pendingKey, state);
         releasePendingOnReturn = false;
         this.monitorCompletion(active.id, pendingKey);
         return pendingDiagnosisResult(state);
@@ -173,7 +179,7 @@ export class FaultDiagnosisService {
         markerConfirmed = await this.dependencies.analysisStore.markDispatched(analysisId, sessionKey);
       } catch {}
       if (!markerConfirmed) {
-        pendingDiagnoses.set(pendingKey, 'failure_unconfirmed');
+        this.pendingDiagnoses.set(pendingKey, 'failure_unconfirmed');
         releasePendingOnReturn = false;
         this.monitorCompletion(analysisId, pendingKey);
         return {
@@ -183,13 +189,13 @@ export class FaultDiagnosisService {
         };
       }
 
-      pendingDiagnoses.set(pendingKey, 'dispatched');
+      this.pendingDiagnoses.set(pendingKey, 'dispatched');
       releasePendingOnReturn = false;
       this.monitorCompletion(analysisId, pendingKey);
 
       return { success: true, analysisId, status: 'queued' };
     } finally {
-      if (releasePendingOnReturn) pendingDiagnoses.delete(pendingKey);
+      if (releasePendingOnReturn) this.pendingDiagnoses.delete(pendingKey);
     }
   }
 
@@ -220,11 +226,11 @@ export class FaultDiagnosisService {
   }
 
   private async persistFailureOrMonitor(analysisId: number, pendingKey: string, error: string): Promise<void> {
-    pendingDiagnoses.set(pendingKey, 'failure_unconfirmed');
+    this.pendingDiagnoses.set(pendingKey, 'failure_unconfirmed');
     try {
       const result = await this.dependencies.analysisStore.failAnalysis(analysisId, error);
       if (result.success) {
-        pendingDiagnoses.delete(pendingKey);
+        this.pendingDiagnoses.delete(pendingKey);
         return;
       }
     } catch {}
@@ -238,7 +244,7 @@ export class FaultDiagnosisService {
       .catch(() => false)
       .then((terminal) => {
         if (terminal) {
-          pendingDiagnoses.delete(pendingKey);
+          this.pendingDiagnoses.delete(pendingKey);
           return;
         }
         const retry = setTimeout(() => this.monitorCompletion(analysisId, pendingKey), 2_000);
