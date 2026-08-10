@@ -4,13 +4,15 @@ import { dbConnection } from './db-connection.js';
 
 const MAX_PATH_BYTES = 4096;
 const MAX_DESCRIPTORS = 128;
+const POSTGRES_RELATION_SAMPLE_LIMIT = 32;
+const POSTGRES_RELATION_SENTINEL_LIMIT = POSTGRES_RELATION_SAMPLE_LIMIT + 1;
 
 const INSTANCE_TYPE_SQL = 'SELECT db_type FROM database_instances WHERE id = ? LIMIT 1';
 const MYSQL_DATADIR_SQL = 'SELECT @@GLOBAL.datadir AS path';
 const MYSQL_FILES_SQL = "SELECT FILE_NAME, TABLESPACE_NAME, FILE_TYPE FROM INFORMATION_SCHEMA.FILES WHERE FILE_NAME IS NOT NULL AND FILE_TYPE IN ('TABLESPACE', 'DATAFILE', 'UNDO LOG', 'TEMPORARY') ORDER BY TABLESPACE_NAME, FILE_NAME LIMIT 128";
 const POSTGRES_METADATA_SQL = "SELECT current_setting('data_directory') AS data_directory, current_setting('server_version_num') AS server_version_num";
 const POSTGRES_TABLESPACES_SQL = "SELECT spcname AS tablespace_name, pg_tablespace_location(oid) AS path FROM pg_tablespace WHERE pg_tablespace_location(oid) <> '' ORDER BY spcname LIMIT 128";
-const POSTGRES_RELATIONS_SQL = 'SELECT schemaname AS schema_name, relname AS object_name, pg_relation_filepath(relid) AS path, pg_total_relation_size(relid) AS logical_bytes FROM pg_stat_user_tables WHERE pg_relation_filepath(relid) IS NOT NULL ORDER BY pg_total_relation_size(relid) DESC, schemaname, relname LIMIT 32';
+const POSTGRES_RELATIONS_SQL = `SELECT schemaname AS schema_name, relname AS object_name, pg_relation_filepath(relid) AS path, pg_total_relation_size(relid) AS logical_bytes FROM pg_stat_user_tables WHERE pg_relation_filepath(relid) IS NOT NULL ORDER BY pg_total_relation_size(relid) DESC, schemaname, relname LIMIT ${POSTGRES_RELATION_SENTINEL_LIMIT}`;
 const ORACLE_DATA_FILES_SQL = 'SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM (SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM DBA_DATA_FILES ORDER BY TABLESPACE_NAME, FILE_NAME) WHERE ROWNUM <= 128';
 const ORACLE_TEMP_FILES_SQL = 'SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM (SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM DBA_TEMP_FILES ORDER BY TABLESPACE_NAME, FILE_NAME) WHERE ROWNUM <= 128';
 const ORACLE_LOG_FILES_SQL = 'SELECT MEMBER FROM (SELECT MEMBER FROM V$LOGFILE ORDER BY MEMBER) WHERE ROWNUM <= 128';
@@ -436,7 +438,11 @@ export class DatabaseStorageDiscoveryService {
 
     try {
       const result = await client.query(POSTGRES_RELATIONS_SQL) as unknown;
-      for (const row of extractRows(result)) {
+      const rows = extractRows(result);
+      if (rows.length > POSTGRES_RELATION_SAMPLE_LIMIT) {
+        accumulator.addGap('STORAGE_DISCOVERY_LIMIT_REACHED', 'postgresql.pg_stat_user_tables');
+      }
+      for (const row of rows.slice(0, POSTGRES_RELATION_SAMPLE_LIMIT)) {
         const schemaName = optionalText(rowValue(row, ['schema_name'], 0));
         const relationName = optionalText(rowValue(row, ['object_name'], 1));
         const objectName = schemaName && relationName

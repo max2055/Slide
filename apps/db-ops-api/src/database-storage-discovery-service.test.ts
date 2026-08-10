@@ -12,7 +12,7 @@ const INSTANCE_TYPE_SQL = 'SELECT db_type FROM database_instances WHERE id = ? L
 const MYSQL_FILES_SQL = "SELECT FILE_NAME, TABLESPACE_NAME, FILE_TYPE FROM INFORMATION_SCHEMA.FILES WHERE FILE_NAME IS NOT NULL AND FILE_TYPE IN ('TABLESPACE', 'DATAFILE', 'UNDO LOG', 'TEMPORARY') ORDER BY TABLESPACE_NAME, FILE_NAME LIMIT 128";
 const POSTGRES_METADATA_SQL = "SELECT current_setting('data_directory') AS data_directory, current_setting('server_version_num') AS server_version_num";
 const POSTGRES_TABLESPACES_SQL = "SELECT spcname AS tablespace_name, pg_tablespace_location(oid) AS path FROM pg_tablespace WHERE pg_tablespace_location(oid) <> '' ORDER BY spcname LIMIT 128";
-const POSTGRES_RELATIONS_SQL = 'SELECT schemaname AS schema_name, relname AS object_name, pg_relation_filepath(relid) AS path, pg_total_relation_size(relid) AS logical_bytes FROM pg_stat_user_tables WHERE pg_relation_filepath(relid) IS NOT NULL ORDER BY pg_total_relation_size(relid) DESC, schemaname, relname LIMIT 32';
+const POSTGRES_RELATIONS_SQL = 'SELECT schemaname AS schema_name, relname AS object_name, pg_relation_filepath(relid) AS path, pg_total_relation_size(relid) AS logical_bytes FROM pg_stat_user_tables WHERE pg_relation_filepath(relid) IS NOT NULL ORDER BY pg_total_relation_size(relid) DESC, schemaname, relname LIMIT 33';
 const ORACLE_DATA_FILES_SQL = 'SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM (SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM DBA_DATA_FILES ORDER BY TABLESPACE_NAME, FILE_NAME) WHERE ROWNUM <= 128';
 const ORACLE_TEMP_FILES_SQL = 'SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM (SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM DBA_TEMP_FILES ORDER BY TABLESPACE_NAME, FILE_NAME) WHERE ROWNUM <= 128';
 const ORACLE_LOG_FILES_SQL = 'SELECT MEMBER FROM (SELECT MEMBER FROM V$LOGFILE ORDER BY MEMBER) WHERE ROWNUM <= 128';
@@ -371,7 +371,7 @@ describe('DatabaseStorageDiscoveryService', () => {
     expect(result.descriptors.some(({ path }) => path.endsWith('/pg_wal'))).toBe(false);
   });
 
-  it('filters null PostgreSQL relation paths before applying the top-32 sample', async () => {
+  it('reports when PostgreSQL relations exceed the top-32 sample', async () => {
     const validRelations = Array.from({ length: 33 }, (_, index) => ({
       schema_name: 'public',
       object_name: `relation_${index}`,
@@ -393,7 +393,7 @@ describe('DatabaseStorageDiscoveryService', () => {
         const eligible = sql.includes('WHERE pg_relation_filepath(relid) IS NOT NULL')
           ? candidates.filter(({ path }) => path !== null)
           : candidates;
-        return { rows: eligible.slice(0, 32) };
+        return { rows: eligible.slice(0, sql.includes('LIMIT 33') ? 33 : 32) };
       }
       throw new Error(`unexpected SQL: ${sql}`);
     });
@@ -407,10 +407,40 @@ describe('DatabaseStorageDiscoveryService', () => {
       path: '/pg/base/1/31',
       objectName: 'public.relation_31',
     }));
+    expect(result.descriptors).not.toContainEqual(expect.objectContaining({
+      path: '/pg/base/1/32',
+      objectName: 'public.relation_32',
+    }));
     expect(result.gaps).not.toContainEqual({
       code: 'STORAGE_DISCOVERY_INVALID_PATH',
       source: 'postgresql.pg_stat_user_tables',
     });
+    expect(result.gaps).toContainEqual({
+      code: 'STORAGE_DISCOVERY_LIMIT_REACHED',
+      source: 'postgresql.pg_stat_user_tables',
+    });
+  });
+
+  it('does not report a PostgreSQL relation limit gap for exactly 32 rows', async () => {
+    const relations = Array.from({ length: 32 }, (_, index) => ({
+      schema_name: 'public',
+      object_name: `relation_${index}`,
+      path: `base/1/${index}`,
+      logical_bytes: 10_000 - index,
+    }));
+    const query = vi.fn(async (sql: string) => {
+      if (sql === POSTGRES_METADATA_SQL) {
+        return { rows: [{ data_directory: '/pg', server_version_num: 160000 }] };
+      }
+      if (sql === POSTGRES_TABLESPACES_SQL) return { rows: [] };
+      if (sql === POSTGRES_RELATIONS_SQL) return { rows: relations };
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+    const { service } = createService({ db_type: 'postgresql', pgClient: { query } });
+
+    const result = await service.discover(16);
+
+    expect(result.descriptors.filter(({ kind }) => kind === 'relation')).toHaveLength(32);
     expect(result.gaps).not.toContainEqual({
       code: 'STORAGE_DISCOVERY_LIMIT_REACHED',
       source: 'postgresql.pg_stat_user_tables',
@@ -712,7 +742,7 @@ describe('DatabaseStorageDiscoveryService', () => {
     expect(MYSQL_FILES_SQL).toContain('ORDER BY TABLESPACE_NAME, FILE_NAME LIMIT 128');
     expect(POSTGRES_TABLESPACES_SQL).toContain('LIMIT 128');
     expect(POSTGRES_RELATIONS_SQL).toContain('WHERE pg_relation_filepath(relid) IS NOT NULL');
-    expect(POSTGRES_RELATIONS_SQL).toContain('LIMIT 32');
+    expect(POSTGRES_RELATIONS_SQL).toContain('LIMIT 33');
     expect([ORACLE_DATA_FILES_SQL, ORACLE_TEMP_FILES_SQL, ORACLE_LOG_FILES_SQL, ORACLE_CONTROL_FILES_SQL]
       .every((sql) => sql.includes('ROWNUM <= 128'))).toBe(true);
     expect([ORACLE_DATA_FILES_SQL, ORACLE_TEMP_FILES_SQL, ORACLE_LOG_FILES_SQL, ORACLE_CONTROL_FILES_SQL]
