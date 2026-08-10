@@ -33,6 +33,9 @@ const diagnosticContext: InstanceDiagnosticContext = {
 
 function dependencies(events: string[] = []) {
   return {
+    listActiveInstances: vi.fn(async () => [] as Array<{ id: number }>),
+    checkHealth: vi.fn(async (_instanceId: number) => null as { status: string } | null),
+    randomUUID: vi.fn(() => 'fault-diagnosis-uuid'),
     contextCollector: {
       collect: vi.fn(async (_actor: ActorContext, _instanceId: number) => {
         events.push('collect');
@@ -64,6 +67,17 @@ function dependencies(events: string[] = []) {
       events.push('dispatch');
       return { analysisId: 71, cached: false };
     }),
+  };
+}
+
+function diagnosticContextFor(instanceId: number): InstanceDiagnosticContext {
+  return {
+    ...diagnosticContext,
+    subject: { type: 'instance', id: instanceId },
+    database: {
+      ...diagnosticContext.database,
+      instance: { ...diagnosticContext.database.instance, id: instanceId, name: `instance-${instanceId}` },
+    },
   };
 }
 
@@ -445,14 +459,129 @@ describe('FaultDiagnosisService', () => {
     expect(deps.contextCollector.collect).toHaveBeenCalledWith(secondActor, 7);
   });
 
+  describe('typed automatic diagnosis', () => {
+    it('diagnoses only unhealthy active instances with a fresh exact least-privilege actor and auto trigger', async () => {
+      const deps = dependencies();
+      deps.listActiveInstances.mockResolvedValue([{ id: 107 }, { id: 108 }, { id: 109 }, { id: 110 }]);
+      deps.checkHealth.mockImplementation(async (instanceId) => {
+        if (instanceId === 107) return { status: 'healthy' };
+        if (instanceId === 108) return null;
+        if (instanceId === 109) return { status: 'warning' };
+        return { status: 'critical' };
+      });
+      deps.randomUUID
+        .mockReturnValueOnce('uuid-for-109')
+        .mockReturnValueOnce('uuid-for-110');
+      deps.contextCollector.collect.mockImplementation(async (_actor, instanceId) => diagnosticContextFor(instanceId));
+      deps.analysisStore.createAnalysis
+        .mockResolvedValueOnce({ success: true, analysisId: 1091 })
+        .mockResolvedValueOnce({ success: true, analysisId: 1101 });
+      const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+      await expect(service.diagnoseUnhealthyInstances()).resolves.toEqual([1091, 1101]);
+
+      expect(deps.checkHealth.mock.calls.map(([instanceId]) => instanceId)).toEqual([107, 108, 109, 110]);
+      expect(deps.contextCollector.collect).toHaveBeenCalledTimes(2);
+      const firstActor = deps.contextCollector.collect.mock.calls[0]![0];
+      const secondActor = deps.contextCollector.collect.mock.calls[1]![0];
+      expect(firstActor).toEqual({
+        userId: 0,
+        username: 'slide-fault-diagnosis',
+        roles: ['system'],
+        permissions: ['instance:view', 'metric:view', 'alert:view', 'log:view', 'servers:view'],
+        sessionVersion: 0,
+        instanceScopes: { 109: 'read-only' },
+        requestId: 'fault-diagnosis:109:uuid-for-109',
+      });
+      expect(secondActor).toEqual({
+        userId: 0,
+        username: 'slide-fault-diagnosis',
+        roles: ['system'],
+        permissions: ['instance:view', 'metric:view', 'alert:view', 'log:view', 'servers:view'],
+        sessionVersion: 0,
+        instanceScopes: { 110: 'read-only' },
+        requestId: 'fault-diagnosis:110:uuid-for-110',
+      });
+      expect(firstActor).not.toBe(secondActor);
+      expect(firstActor.instanceScopes).not.toBe(secondActor.instanceScopes);
+      expect(Object.isFrozen(firstActor)).toBe(true);
+      expect(Object.isFrozen(firstActor.roles)).toBe(true);
+      expect(Object.isFrozen(firstActor.permissions)).toBe(true);
+      expect(Object.isFrozen(firstActor.instanceScopes)).toBe(true);
+      expect(Object.keys(firstActor).sort()).toEqual([
+        'instanceScopes', 'permissions', 'requestId', 'roles', 'sessionVersion', 'userId', 'username',
+      ]);
+      expect(firstActor.permissions).not.toEqual(expect.arrayContaining([
+        '*', 'instance:manage', 'instance:query', 'servers:manage', 'secret:view', 'credential:view',
+      ]));
+
+      expect(deps.analysisStore.createAnalysis.mock.calls.map(([data]) => data)).toEqual([
+        expect.objectContaining({
+          instance_id: 109,
+          trigger_type: 'auto',
+          cache_key: expect.stringMatching(/^fault:109:.*:auto:user:0:session:0$/),
+        }),
+        expect.objectContaining({
+          instance_id: 110,
+          trigger_type: 'auto',
+          cache_key: expect.stringMatching(/^fault:110:.*:auto:user:0:session:0$/),
+        }),
+      ]);
+      expect(deps.dispatch.mock.calls.map(([params]) => params)).toEqual([
+        expect.objectContaining({ instanceId: 109, triggerType: 'auto' }),
+        expect.objectContaining({ instanceId: 110, triggerType: 'auto' }),
+      ]);
+      for (const [params] of deps.dispatch.mock.calls) {
+        expect(params.userMessage).toMatch(/diagnosticContext/);
+        expect(params.userMessage).not.toMatch(/query_metrics|get_instance_summary|采集指标|调用其他工具/i);
+      }
+    });
+
+    it('isolates per-instance health and diagnosis failures and returns successful analysis ids only', async () => {
+      const deps = dependencies();
+      deps.listActiveInstances.mockResolvedValue([{ id: 207 }, { id: 208 }, { id: 209 }, { id: 210 }]);
+      deps.checkHealth.mockImplementation(async (instanceId) => {
+        if (instanceId === 207) throw new Error('HEALTH_FAILED');
+        return { status: 'critical' };
+      });
+      deps.contextCollector.collect.mockImplementation(async (_actor, instanceId) => {
+        if (instanceId === 208) throw new Error('COLLECTION_FAILED');
+        return diagnosticContextFor(instanceId);
+      });
+      deps.analysisStore.createAnalysis.mockImplementation(async (data: any) => {
+        if (data.instance_id === 209) return { success: true, analysisId: 2091 };
+        return { success: false, error: 'CREATE_FAILED' };
+      });
+      const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+      await expect(service.diagnoseUnhealthyInstances()).resolves.toEqual([2091]);
+
+      expect(deps.checkHealth.mock.calls.map(([instanceId]) => instanceId)).toEqual([207, 208, 209, 210]);
+      expect(deps.contextCollector.collect.mock.calls.map(([, instanceId]) => instanceId)).toEqual([208, 209, 210]);
+      expect(deps.dispatch).toHaveBeenCalledTimes(1);
+      expect(deps.dispatch).toHaveBeenCalledWith(expect.objectContaining({ instanceId: 209 }));
+    });
+
+    it('propagates active-instance enumeration failures without checking health', async () => {
+      const deps = dependencies();
+      deps.listActiveInstances.mockRejectedValue(new Error('ENUMERATION_FAILED'));
+      const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+      await expect(service.diagnoseUnhealthyInstances()).rejects.toThrow('ENUMERATION_FAILED');
+
+      expect(deps.checkHealth).not.toHaveBeenCalled();
+      expect(deps.contextCollector.collect).not.toHaveBeenCalled();
+    });
+  });
+
   describe('manual cache key', () => {
     it('is stable for the same actor and security session within one hour', () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-04-25T14:00:00Z'));
       const service = new FaultDiagnosisService(dependencies() as unknown as FaultDiagnosisDependencies);
-      const key1 = service['buildCacheKey'](actor, 10);
+      const key1 = service['buildCacheKey'](actor, 10, 'manual');
       vi.setSystemTime(new Date('2026-04-25T14:59:59Z'));
-      const key2 = service['buildCacheKey'](actor, 10);
+      const key2 = service['buildCacheKey'](actor, 10, 'manual');
 
       expect(key1).toBe('fault:10:2026-04-25T14:manual:user:3:session:1');
       expect(key2).toBe(key1);
@@ -462,14 +591,23 @@ describe('FaultDiagnosisService', () => {
       const service = new FaultDiagnosisService(dependencies() as unknown as FaultDiagnosisDependencies);
       const otherUser = Object.freeze({ ...actor, userId: 4 });
 
-      expect(service['buildCacheKey'](actor, 10)).not.toBe(service['buildCacheKey'](otherUser, 10));
+      expect(service['buildCacheKey'](actor, 10, 'manual')).not.toBe(service['buildCacheKey'](otherUser, 10, 'manual'));
     });
 
     it('changes when the actor security session changes', () => {
       const service = new FaultDiagnosisService(dependencies() as unknown as FaultDiagnosisDependencies);
       const nextSession = Object.freeze({ ...actor, sessionVersion: actor.sessionVersion + 1 });
 
-      expect(service['buildCacheKey'](actor, 10)).not.toBe(service['buildCacheKey'](nextSession, 10));
+      expect(service['buildCacheKey'](actor, 10, 'manual')).not.toBe(service['buildCacheKey'](nextSession, 10, 'manual'));
+    });
+
+    it('separates manual and automatic cache and pending namespaces', () => {
+      const service = new FaultDiagnosisService(dependencies() as unknown as FaultDiagnosisDependencies);
+
+      expect(service['buildCacheKey'](actor, 10, 'manual')).toContain(':manual:user:3:session:1');
+      expect(service['buildCacheKey'](actor, 10, 'auto')).toContain(':auto:user:3:session:1');
+      expect(service['buildPendingKey'](actor, 10, 'manual')).toBe('fault:10:pending:manual:user:3:session:1');
+      expect(service['buildPendingKey'](actor, 10, 'auto')).toBe('fault:10:pending:auto:user:3:session:1');
     });
   });
 });

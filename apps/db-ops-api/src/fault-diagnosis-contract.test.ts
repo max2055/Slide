@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseFaultDiagnosisInstanceId } from './fault-diagnosis-route-input.js';
 
@@ -7,6 +7,16 @@ const sourceRoot = import.meta.dirname;
 const serverSource = readFileSync(resolve(sourceRoot, '../server.ts'), 'utf8');
 const serviceSource = readFileSync(resolve(sourceRoot, 'fault-diagnosis-service.ts'), 'utf8');
 const bridgeSource = readFileSync(resolve(sourceRoot, 'ai-agent-bridge.ts'), 'utf8');
+const cronServiceSource = readFileSync(resolve(sourceRoot, 'cron/cron-job-service.ts'), 'utf8');
+const typedWorkflowMigration = resolve(sourceRoot, '../sql/migrations/062_fault_diagnosis_typed_workflow.sql');
+
+function productionTypeScriptFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) return entry.name === '__tests__' ? [] : productionTypeScriptFiles(path);
+    return entry.isFile() && entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts') ? [path] : [];
+  });
+}
 
 function routeBlock(startMarker: string, endMarker: string): string {
   const start = serverSource.indexOf(startMarker);
@@ -84,8 +94,38 @@ describe('manual fault diagnosis route contract', () => {
     expect(reanalyze).not.toMatch(/faultDiagnosisService\.diagnoseInstance\(\s*existing\.instance_id\s*,\s*['"]manual['"]/);
   });
 
-  it('does not expose an actor-free automatic diagnosis bypass', () => {
-    expect(serviceSource).not.toContain('diagnoseUnhealthyInstances');
+  it('keeps automatic diagnosis exclusively behind a typed workflow registered before the worker starts', () => {
+    const registration = "workflowRegistry.register('fault.diagnose-unhealthy', async () => { await faultDiagnosisService.diagnoseUnhealthyInstances(); });";
+    const registryConstruction = 'const workflowRegistry = new JobRegistry();';
+    const workerConstruction = 'const workflowRuntime = new WorkerRuntime';
+    const workerStart = 'workflowTimer = setInterval';
+
+    expect(serverSource).toContain(registration);
+    expect(serverSource.indexOf(registryConstruction)).toBeLessThan(serverSource.indexOf(registration));
+    expect(serverSource.indexOf(registration)).toBeLessThan(serverSource.indexOf(workerConstruction));
+    expect(serverSource.indexOf(registration)).toBeLessThan(serverSource.indexOf(workerStart));
+
+    const productionSources = [resolve(sourceRoot, '../server.ts'), ...productionTypeScriptFiles(sourceRoot)];
+    const references = productionSources.flatMap((path) => {
+      if (path === resolve(sourceRoot, 'fault-diagnosis-service.ts')) return [];
+      const matches = readFileSync(path, 'utf8').match(/\bdiagnoseUnhealthyInstances\b/g) ?? [];
+      return matches.length > 0 ? [{ file: relative(sourceRoot, path), references: matches.length }] : [];
+    });
+    expect(references).toEqual([{ file: '../server.ts', references: 1 }]);
+  });
+
+  it('migrates and recovery-seeds only the legacy fault diagnosis row to the typed handler', () => {
+    expect(existsSync(typedWorkflowMigration)).toBe(true);
+    if (!existsSync(typedWorkflowMigration)) return;
+
+    expect(readFileSync(typedWorkflowMigration, 'utf8')).toBe(
+      "UPDATE cron_jobs SET handler_key = 'fault.diagnose-unhealthy' WHERE name = '故障自动诊断';\n",
+    );
+    expect(cronServiceSource.match(/handler_key:\s*'fault\.diagnose-unhealthy'/g)).toHaveLength(1);
+    const faultDefault = cronServiceSource.match(/\{\s*name:\s*'故障自动诊断'[\s\S]*?\},/)?.[0] ?? '';
+    expect(faultDefault).toContain("handler_key: 'fault.diagnose-unhealthy'");
+    expect(cronServiceSource).toMatch(/INSERT INTO cron_jobs \(name, task_description, cron_expr, handler_key,/);
+    expect(cronServiceSource).toMatch(/\[d\.name, d\.task_description, d\.cron_expr, d\.handler_key \?\? null,/);
   });
 });
 

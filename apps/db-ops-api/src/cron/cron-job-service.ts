@@ -184,10 +184,10 @@ export class CronJobDatabaseService {
       const [rows] = await pool.execute('SELECT COUNT(*) as cnt FROM cron_jobs') as any;
       if (rows[0].cnt > 0) return;
 
-      const defaults: Array<{name: string; task_description: string; cron_expr: string; description?: string}> = [
+      const defaults: Array<{name: string; task_description: string; cron_expr: string; handler_key?: string; description?: string}> = [
         { name: 'TopSQL 自动分析', cron_expr: '*/10 * * * * *', task_description: 'Every 10 seconds, scan all active database instances for slow queries with average execution time >= 10 seconds. For each new slow query found, perform an automated AI analysis to identify optimization opportunities. Skip queries that have already been analyzed within the last 30 minutes. Call slide_complete_cron with your findings summary.', description: '自动分析慢查询并给出优化建议' },
         { name: '告警 RCA 分析', cron_expr: '*/10 * * * * *', task_description: 'Every 10 seconds, check for new alerts created within the last 30 seconds. For each alert matching configured severity levels and active time windows, perform automated root cause analysis. Call slide_complete_cron with the RCA findings.', description: '对告警进行根因分析' },
-        { name: '故障自动诊断', cron_expr: '0 * * * * *', task_description: 'Every 60 seconds, diagnose database instances that are reporting unhealthy status. For each affected instance, run comprehensive diagnostics: health check, performance analysis, connection check. Generate a diagnostic report. Call slide_complete_cron when diagnosis is complete.', description: '自动诊断不健康实例' },
+        { name: '故障自动诊断', cron_expr: '0 * * * * *', handler_key: 'fault.diagnose-unhealthy', task_description: 'Every 60 seconds, diagnose database instances that are reporting unhealthy status. For each affected instance, run comprehensive diagnostics: health check, performance analysis, connection check. Generate a diagnostic report. Call slide_complete_cron when diagnosis is complete.', description: '自动诊断不健康实例' },
         { name: '容量数据采集', cron_expr: '0 */5 * * * *', task_description: 'Every 5 minutes, collect capacity metrics from all active database instances. For each instance, query total storage size in GB, number of databases, and number of tables per database. Call slide_complete_cron with capacity summary.', description: '定期采集容量数据' },
         { name: 'Schema 快照采集', cron_expr: '30 */30 * * * *', task_description: 'Every 30 minutes, collect complete schema snapshots from all active database instances. Detect and report schema changes since the last snapshot. Call slide_complete_cron with schema change summary.', description: '定期采集Schema快照' },
         { name: '索引信息采集', cron_expr: '15,45 * * * *', task_description: 'Every 30 minutes at :15 and :45, collect index information from all active database instances. Gather index names, columns, types, and usage statistics. Call slide_complete_cron with the index inventory results.', description: '定期采集索引信息' },
@@ -202,8 +202,8 @@ export class CronJobDatabaseService {
 
       for (const d of defaults) {
         await pool.execute(
-          'INSERT INTO cron_jobs (name, task_description, cron_expr, timezone, description, timeout_seconds, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [d.name, d.task_description, d.cron_expr, 'Asia/Shanghai', d.description || null, 300, true]
+          'INSERT INTO cron_jobs (name, task_description, cron_expr, handler_key, timezone, description, timeout_seconds, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          [d.name, d.task_description, d.cron_expr, d.handler_key ?? null, 'Asia/Shanghai', d.description || null, 300, true]
         );
       }
       console.log(`[CronJobService] Seeded ${defaults.length} default cron jobs`);

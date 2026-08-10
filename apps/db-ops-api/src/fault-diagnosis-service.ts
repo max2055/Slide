@@ -1,10 +1,13 @@
 /**
- * Manual fault diagnosis orchestration.
+ * Fault diagnosis orchestration.
  * Evidence is collected under the requesting actor before any analysis row is created.
  */
+import { randomUUID } from 'node:crypto';
 import type { ActorContext } from './auth/actor-context.js';
 import { dispatchOrReuse } from './ai-agent-bridge.js';
 import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
+import { databaseService } from './database-service.js';
+import { instanceDatabaseService } from './instance-database-service.js';
 import {
   instanceDiagnosticContextService,
   type InstanceDiagnosticContext,
@@ -12,18 +15,26 @@ import {
 } from './instance-diagnostic-context-service.js';
 
 const pendingDiagnoses = new Set<string>();
+type FaultDiagnosisTrigger = 'manual' | 'auto';
+type FaultDiagnosisResult = { success: boolean; analysisId?: number; error?: string; status?: string };
 
 type FaultAnalysisStore = Pick<typeof aiAnalysisDatabaseService,
   'findByCacheKey' | 'createAnalysis' | 'updateStatus' | 'failAnalysis' | 'waitForCompletion'
   | 'getAnalysisList' | 'getAnalysisStats'>;
 
 export interface FaultDiagnosisDependencies {
+  listActiveInstances: () => Promise<readonly { id: number }[]>;
+  checkHealth: (instanceId: number) => Promise<{ status: string } | null>;
+  randomUUID: () => string;
   contextCollector: Pick<InstanceDiagnosticContextService, 'collect'>;
   analysisStore: FaultAnalysisStore;
   dispatch: typeof dispatchOrReuse;
 }
 
 const defaultDependencies: FaultDiagnosisDependencies = {
+  listActiveInstances: async () => (await instanceDatabaseService.getAllInstances()).map(({ id }) => ({ id })),
+  checkHealth: (instanceId) => databaseService.checkHealth(instanceId),
+  randomUUID,
   contextCollector: instanceDiagnosticContextService,
   analysisStore: aiAnalysisDatabaseService,
   dispatch: dispatchOrReuse,
@@ -35,10 +46,47 @@ export class FaultDiagnosisService {
   async diagnoseInstance(
     actor: ActorContext,
     instanceId: number,
-  ): Promise<{ success: boolean; analysisId?: number; error?: string; status?: string }> {
+  ): Promise<FaultDiagnosisResult> {
+    return this.diagnose(actor, instanceId, 'manual');
+  }
+
+  async diagnoseUnhealthyInstances(): Promise<number[]> {
+    const instances = await this.dependencies.listActiveInstances();
+    const analysisIds: number[] = [];
+    for (const instance of instances) {
+      try {
+        const health = await this.dependencies.checkHealth(instance.id);
+        if (!health || health.status === 'healthy') continue;
+        const actor: ActorContext = Object.freeze({
+          userId: 0,
+          username: 'slide-fault-diagnosis',
+          roles: Object.freeze(['system']),
+          permissions: Object.freeze([
+            'instance:view',
+            'metric:view',
+            'alert:view',
+            'log:view',
+            'servers:view',
+          ]),
+          sessionVersion: 0,
+          instanceScopes: Object.freeze({ [instance.id]: 'read-only' as const }),
+          requestId: `fault-diagnosis:${instance.id}:${this.dependencies.randomUUID()}`,
+        });
+        const result = await this.diagnose(actor, instance.id, 'auto');
+        if (result.success && result.analysisId !== undefined) analysisIds.push(result.analysisId);
+      } catch {}
+    }
+    return analysisIds;
+  }
+
+  private async diagnose(
+    actor: ActorContext,
+    instanceId: number,
+    trigger: FaultDiagnosisTrigger,
+  ): Promise<FaultDiagnosisResult> {
     if (!Number.isSafeInteger(instanceId) || instanceId <= 0) throw new Error('RESOURCE_REF_INVALID');
-    const pendingKey = this.buildPendingKey(actor, instanceId);
-    const cacheKey = this.buildCacheKey(actor, instanceId);
+    const pendingKey = this.buildPendingKey(actor, instanceId, trigger);
+    const cacheKey = this.buildCacheKey(actor, instanceId, trigger);
     if (pendingDiagnoses.has(pendingKey)) {
       return { success: false, error: '诊断正在创建中，请稍后重试' };
     }
@@ -57,7 +105,7 @@ export class FaultDiagnosisService {
       const createResult = await this.dependencies.analysisStore.createAnalysis({
         analysis_type: 'fault_diagnosis',
         instance_id: instanceId,
-        trigger_type: 'manual',
+        trigger_type: trigger,
         cache_key: cacheKey,
       });
       if (!createResult.success || !createResult.analysisId) {
@@ -83,7 +131,7 @@ export class FaultDiagnosisService {
           cacheKey,
           instanceId,
           sessionKey: `diagnosis-${analysisId}`,
-          triggerType: 'manual',
+          triggerType: trigger,
           existingAnalysisId: analysisId,
           diagnosticContext,
           userMessage: `请仅依据随请求提供的 diagnosticContext 分析实例 "${name}" `
@@ -123,13 +171,13 @@ export class FaultDiagnosisService {
     return this.dependencies.analysisStore.getAnalysisStats('fault_diagnosis');
   }
 
-  private buildCacheKey(actor: ActorContext, instanceId: number): string {
+  private buildCacheKey(actor: ActorContext, instanceId: number, trigger: FaultDiagnosisTrigger): string {
     const currentHour = new Date().toISOString().slice(0, 13);
-    return `fault:${instanceId}:${currentHour}:manual:user:${actor.userId}:session:${actor.sessionVersion}`;
+    return `fault:${instanceId}:${currentHour}:${trigger}:user:${actor.userId}:session:${actor.sessionVersion}`;
   }
 
-  private buildPendingKey(actor: ActorContext, instanceId: number): string {
-    return `fault:${instanceId}:pending:manual:user:${actor.userId}:session:${actor.sessionVersion}`;
+  private buildPendingKey(actor: ActorContext, instanceId: number, trigger: FaultDiagnosisTrigger): string {
+    return `fault:${instanceId}:pending:${trigger}:user:${actor.userId}:session:${actor.sessionVersion}`;
   }
 
   private async persistFailureOrMonitor(analysisId: number, pendingKey: string, error: string): Promise<void> {

@@ -4797,6 +4797,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const workflowStore = new MysqlWorkflowStore(() => dbConnection.getPool() as any);
   notificationWorkflowStore = workflowStore;
   const workflowRegistry = new JobRegistry();
+  workflowRegistry.register('fault.diagnose-unhealthy', async () => { await faultDiagnosisService.diagnoseUnhealthyInstances(); });
   const notificationScheduler = new NotificationDispatchScheduler(notificationDatabaseService, notificationService, workflowStore);
   const enqueueNotificationDispatch = async (availableAt = new Date()) => {
     await workflowStore.enqueue(createNotificationDispatchJob(availableAt));
