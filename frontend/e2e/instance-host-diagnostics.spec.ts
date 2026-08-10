@@ -237,6 +237,33 @@ async function expectNoDocumentOverflow(page: Page, label: string) {
   expect(dimensions.scrollWidth, `${label} document width ${JSON.stringify(dimensions)}`).toBeLessThanOrEqual(dimensions.innerWidth);
 }
 
+async function expectElementsWithinViewport(page: Page, selector: string, label: string) {
+  const measurements = await page.locator(selector).evaluateAll((elements) => elements
+    .filter((element) => {
+      const style = window.getComputedStyle(element);
+      return style.display !== 'none' && style.visibility !== 'hidden';
+    })
+    .map((element) => {
+      const htmlElement = element as HTMLElement;
+      const rect = htmlElement.getBoundingClientRect();
+      return {
+        text: htmlElement.textContent?.trim() ?? '',
+        left: rect.left,
+        right: rect.right,
+        clientWidth: htmlElement.clientWidth,
+        scrollWidth: htmlElement.scrollWidth,
+        viewportWidth: window.innerWidth,
+      };
+    }));
+
+  expect(measurements.length, `${label} matched elements`).toBeGreaterThan(0);
+  for (const measurement of measurements) {
+    expect(measurement.left, `${label} left edge ${JSON.stringify(measurement)}`).toBeGreaterThanOrEqual(0);
+    expect(measurement.right, `${label} right edge ${JSON.stringify(measurement)}`).toBeLessThanOrEqual(measurement.viewportWidth);
+    expect(measurement.scrollWidth, `${label} content width ${JSON.stringify(measurement)}`).toBeLessThanOrEqual(measurement.clientWidth + 1);
+  }
+}
+
 async function cleanupManagedResources(
   page: Page,
   headers: AuthContext['headers'],
@@ -439,6 +466,11 @@ for (const viewport of managedViewports) {
       await expect(hostSummary).toContainText('JOURNAL_WINDOW_PARTIAL');
       await expect(hostSummary).toContainText('HOST_EVIDENCE_PARTIAL_TEST');
       await expectNoDocumentOverflow(page, `${viewport.name} instance detail`);
+      await expectElementsWithinViewport(
+        page,
+        'instance-detail-page .header .instance-title, instance-detail-page .header button',
+        `${viewport.name} instance header`,
+      );
       const instanceScreenshot = testInfo.outputPath(`instance-host-diagnostics-${viewport.name}-instance-detail.png`);
       await page.screenshot({ path: instanceScreenshot, fullPage: true });
 
