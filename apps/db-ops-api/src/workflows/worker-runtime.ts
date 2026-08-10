@@ -45,7 +45,7 @@ export class MysqlWorkflowStore implements WorkflowStore {
   }
   async claim(workerId: string, leaseSeconds: number): Promise<ClaimedJob | null> {
     const pool = this.pool();
-    await pool.execute(
+    const [result] = await pool.execute<{ affectedRows: number }>(
       `UPDATE workflow_jobs SET state = 'running', attempts = attempts + 1, lease_owner = ?,
        lease_expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND), fencing_token = fencing_token + 1
        WHERE id = (SELECT id FROM (SELECT id FROM workflow_jobs
@@ -54,6 +54,7 @@ export class MysqlWorkflowStore implements WorkflowStore {
        AND state IN ('queued', 'retry', 'running') AND (lease_expires_at IS NULL OR lease_expires_at < NOW())`,
       [workerId, leaseSeconds],
     );
+    if (Number(result.affectedRows) !== 1) return null;
     const [rows] = await pool.execute<Array<any>>(
       `SELECT id, job_type AS type, payload, attempts, max_attempts AS maxAttempts, fencing_token AS fencingToken
        FROM workflow_jobs WHERE lease_owner = ? AND state = 'running' AND lease_expires_at > NOW()
@@ -104,6 +105,8 @@ export class WorkerRuntime {
       let heartbeatInFlight: Promise<void> | null = null;
       let leaseLost = false;
       let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+      const heartbeatIntervalMs = Math.max(1, Math.floor(this.leaseSeconds * 1_000 / 3));
+      const heartbeatTimeoutMs = Math.max(1, Math.floor(heartbeatIntervalMs / 2));
       const markLeaseLost = () => {
         if (leaseLost) return;
         leaseLost = true;
@@ -113,14 +116,21 @@ export class WorkerRuntime {
       };
       const heartbeat = () => {
         if (heartbeatStopped || heartbeatInFlight) return;
-        heartbeatInFlight = this.heartbeat(job)
+        let heartbeatTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
+        const heartbeatTimeout = new Promise<boolean>((resolve) => {
+          heartbeatTimeoutTimer = setTimeout(() => resolve(false), heartbeatTimeoutMs);
+          heartbeatTimeoutTimer.unref?.();
+        });
+        heartbeatInFlight = Promise.race([this.heartbeat(job), heartbeatTimeout])
           .then((renewed) => { if (!renewed) markLeaseLost(); })
           .catch(() => markLeaseLost())
-          .finally(() => { heartbeatInFlight = null; });
+          .finally(() => {
+            if (heartbeatTimeoutTimer) clearTimeout(heartbeatTimeoutTimer);
+            heartbeatInFlight = null;
+          });
       };
 
       try {
-        const heartbeatIntervalMs = Math.max(1, Math.floor(this.leaseSeconds * 1_000 / 3));
         heartbeatTimer = setInterval(heartbeat, heartbeatIntervalMs);
         heartbeatTimer.unref?.();
 

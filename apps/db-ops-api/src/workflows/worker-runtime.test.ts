@@ -98,6 +98,16 @@ describe('mysql workflow store', () => {
     await store.claim('worker-b', 30);
     expect(statements[0].sql).toContain("state IN ('queued', 'retry', 'running')");
   });
+
+  it('does not reselect an existing lease when the claim update affects no rows', async () => {
+    const execute = vi.fn(async (sql: string) => [sql.startsWith('SELECT') ? [{
+      id: 'still-leased', type: 'report.generate', payload: {}, attempts: 1, maxAttempts: 3, fencingToken: 7,
+    }] : { affectedRows: 0 }] as any);
+    const store = new MysqlWorkflowStore(() => ({ execute }));
+
+    await expect(store.claim('worker-a', 30)).resolves.toBeNull();
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('lease, fencing and dead letter', () => {
@@ -156,6 +166,48 @@ describe('lease, fencing and dead letter', () => {
 
     firstGate.resolve();
     await expect(first).resolves.toBe('completed');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('times out a hung heartbeat and allows the runtime to claim again', async () => {
+    vi.useFakeTimers();
+    const job: ClaimedJob = { id: 'hung-heartbeat', type: 'fault.diagnose-unhealthy', payload: {}, attempts: 1, maxAttempts: 3, fencingToken: 5 };
+    const jobs: Array<ClaimedJob | null> = [job, null];
+    const claim = vi.fn(async () => jobs.shift() ?? null);
+    let rejectHeartbeat!: (reason?: unknown) => void;
+    const pendingHeartbeat = new Promise<boolean>((_resolve, reject) => { rejectHeartbeat = reject; });
+    const heartbeat = vi.fn(() => pendingHeartbeat);
+    const complete = vi.fn(async () => true);
+    const fail = vi.fn(async () => true);
+    const store: WorkflowStore = { claim, heartbeat, complete, fail };
+    const handlerGate = deferred();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const worker = new WorkerRuntime(store, 'worker-timeout', 3);
+    let runResult: Awaited<ReturnType<WorkerRuntime['runOnce']>> | undefined;
+
+    const run = worker.runOnce(async () => handlerGate.promise);
+    void run.then((result) => { runResult = result; });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(heartbeat).toHaveBeenCalledTimes(1);
+    handlerGate.resolve();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(runResult).toBe('retry');
+    await expect(run).resolves.toBe('retry');
+    expect(complete).not.toHaveBeenCalled();
+    expect(fail).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+
+    const secondHandler = vi.fn(async () => {});
+    await expect(worker.runOnce(secondHandler)).resolves.toBe('idle');
+    expect(claim).toHaveBeenCalledTimes(2);
+    expect(secondHandler).not.toHaveBeenCalled();
+
+    rejectHeartbeat(new Error('LATE_HEARTBEAT_FAILURE'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(complete).not.toHaveBeenCalled();
+    expect(fail).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
 

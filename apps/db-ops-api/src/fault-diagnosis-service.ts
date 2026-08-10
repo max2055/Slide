@@ -16,7 +16,8 @@ import {
 
 const pendingDiagnoses = new Set<string>();
 type FaultDiagnosisTrigger = 'manual' | 'auto';
-type FaultDiagnosisResult = { success: boolean; analysisId?: number; error?: string; status?: string };
+type FaultDiagnosisStatus = 'queued' | 'in_progress';
+type FaultDiagnosisResult = { success: boolean; analysisId?: number; error?: string; status?: FaultDiagnosisStatus };
 
 type FaultAnalysisStore = Pick<typeof aiAnalysisDatabaseService,
   'findByCacheKey' | 'createAnalysis' | 'updateStatus' | 'failAnalysis' | 'waitForCompletion'
@@ -74,6 +75,7 @@ export class FaultDiagnosisService {
           requestId: `fault-diagnosis:${instance.id}:${this.dependencies.randomUUID()}`,
         });
         const result = await this.diagnose(actor, instance.id, 'auto');
+        if (result.status === 'in_progress') continue;
         if (result.success && result.analysisId !== undefined) {
           analysisIds.push(result.analysisId);
         } else {
@@ -98,7 +100,7 @@ export class FaultDiagnosisService {
     const pendingKey = this.buildPendingKey(actor, instanceId, trigger);
     const cacheKey = this.buildCacheKey(actor, instanceId, trigger);
     if (pendingDiagnoses.has(pendingKey)) {
-      return { success: false, error: '诊断正在创建中，请稍后重试' };
+      return { success: false, error: '诊断正在创建中，请稍后重试', status: 'in_progress' };
     }
     pendingDiagnoses.add(pendingKey);
     let releasePendingOnReturn = true;
