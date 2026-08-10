@@ -311,6 +311,13 @@ describe('MysqlInstanceHostStore current relation integrity', () => {
     expect(sql).toMatch(/valid_until\s+DATETIME\(6\)\s+NULL\s+COMMENT '有效截止'/i);
   });
 
+  it('restores the resource relation metadata comment in a forward migration', () => {
+    const migrationUrl = new URL('../../sql/migrations/063_instance_host_relation_metadata_comment.sql', import.meta.url);
+    expect(existsSync(migrationUrl)).toBe(true);
+    const sql = readFileSync(migrationUrl, 'utf8');
+    expect(sql).toMatch(/ALTER TABLE\s+resource_relations\s+MODIFY COLUMN metadata\s+JSON\s+NULL\s+COMMENT '关系元数据'(?:\s+AFTER provenance)?\s*;/i);
+  });
+
   it('returns enriched mappings from the replace transaction before commit', async () => {
     let committed = false;
     const now = new Date('2026-08-10T00:00:00Z');
