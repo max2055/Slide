@@ -37,11 +37,12 @@ export class FaultDiagnosisService {
     instanceId: number,
   ): Promise<{ success: boolean; analysisId?: number; error?: string; status?: string }> {
     if (!Number.isSafeInteger(instanceId) || instanceId <= 0) throw new Error('RESOURCE_REF_INVALID');
+    const pendingKey = this.buildPendingKey(actor, instanceId);
     const cacheKey = this.buildCacheKey(actor, instanceId);
-    if (pendingDiagnoses.has(cacheKey)) {
+    if (pendingDiagnoses.has(pendingKey)) {
       return { success: false, error: '诊断正在创建中，请稍后重试' };
     }
-    pendingDiagnoses.add(cacheKey);
+    pendingDiagnoses.add(pendingKey);
     let releasePendingOnReturn = true;
 
     try {
@@ -92,14 +93,11 @@ export class FaultDiagnosisService {
       }
 
       releasePendingOnReturn = false;
-      void Promise.resolve()
-        .then(() => this.dependencies.analysisStore.waitForCompletion(analysisId, 120_000))
-        .catch(() => null)
-        .finally(() => pendingDiagnoses.delete(cacheKey));
+      this.monitorCompletion(analysisId, pendingKey);
 
       return { success: true, analysisId, status: 'queued' };
     } finally {
-      if (releasePendingOnReturn) pendingDiagnoses.delete(cacheKey);
+      if (releasePendingOnReturn) pendingDiagnoses.delete(pendingKey);
     }
   }
 
@@ -123,6 +121,25 @@ export class FaultDiagnosisService {
   private buildCacheKey(actor: ActorContext, instanceId: number): string {
     const currentHour = new Date().toISOString().slice(0, 13);
     return `fault:${instanceId}:${currentHour}:manual:user:${actor.userId}:session:${actor.sessionVersion}`;
+  }
+
+  private buildPendingKey(actor: ActorContext, instanceId: number): string {
+    return `fault:${instanceId}:pending:manual:user:${actor.userId}:session:${actor.sessionVersion}`;
+  }
+
+  private monitorCompletion(analysisId: number, pendingKey: string): void {
+    void Promise.resolve()
+      .then(() => this.dependencies.analysisStore.waitForCompletion(analysisId, 120_000))
+      .then((record) => record?.status === 'completed' || record?.status === 'failed')
+      .catch(() => false)
+      .then((terminal) => {
+        if (terminal) {
+          pendingDiagnoses.delete(pendingKey);
+          return;
+        }
+        const retry = setTimeout(() => this.monitorCompletion(analysisId, pendingKey), 2_000);
+        retry.unref();
+      });
   }
 }
 

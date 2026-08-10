@@ -169,6 +169,27 @@ describe('FaultDiagnosisService', () => {
     expect(deps.dispatch).not.toHaveBeenCalled();
   });
 
+  it('waits for terminal persistence before returning a running status error', async () => {
+    let resolveFailure!: (value: { success: boolean }) => void;
+    const deps = dependencies();
+    deps.analysisStore.updateStatus.mockResolvedValue({ success: false, error: 'RUNNING_FAILED' });
+    deps.analysisStore.failAnalysis.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveFailure = resolve;
+    }));
+    const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+    let settled = false;
+
+    const diagnosis = service.diagnoseInstance(actor, 7).then((result) => {
+      settled = true;
+      return result;
+    });
+    await vi.waitFor(() => expect(deps.analysisStore.failAnalysis).toHaveBeenCalledWith(71, 'RUNNING_FAILED'));
+
+    expect(settled).toBe(false);
+    resolveFailure({ success: true });
+    await expect(diagnosis).resolves.toEqual({ success: false, error: 'RUNNING_FAILED' });
+  });
+
   it('keeps the pending lock while context collection is in flight', async () => {
     let releaseCollection!: (value: InstanceDiagnosticContext) => void;
     const deps = dependencies();
@@ -217,6 +238,106 @@ describe('FaultDiagnosisService', () => {
     expect(deps.contextCollector.collect).toHaveBeenCalledTimes(2);
     expect(deps.analysisStore.createAnalysis).toHaveBeenCalledTimes(2);
     expect(deps.dispatch).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['no record', null, 31],
+    ['a running record', { status: 'running' }, 35],
+  ])('keeps the pending lock when completion returns %s', async (_case, result, userId) => {
+    vi.useFakeTimers();
+    const uncertainActor = Object.freeze({ ...actor, userId, requestId: 'uncertain-completion' });
+    const deps = dependencies();
+    deps.analysisStore.waitForCompletion
+      .mockResolvedValueOnce(result as any)
+      .mockResolvedValueOnce({ status: 'completed' } as any);
+    const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+    await expect(service.diagnoseInstance(uncertainActor, 7)).resolves.toMatchObject({
+      success: true,
+      status: 'queued',
+    });
+    await vi.waitFor(() => expect(deps.analysisStore.waitForCompletion).toHaveBeenCalledTimes(1));
+
+    await expect(service.diagnoseInstance(uncertainActor, 7)).resolves.toEqual({
+      success: false,
+      error: '诊断正在创建中，请稍后重试',
+    });
+    expect(deps.contextCollector.collect).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(deps.analysisStore.waitForCompletion).toHaveBeenCalledTimes(2);
+    await expect(service.diagnoseInstance(uncertainActor, 7)).resolves.toMatchObject({ success: true });
+  });
+
+  it('keeps the pending lock when completion polling rejects', async () => {
+    vi.useFakeTimers();
+    const uncertainActor = Object.freeze({ ...actor, userId: 32, requestId: 'rejected-completion' });
+    const deps = dependencies();
+    deps.analysisStore.waitForCompletion
+      .mockRejectedValueOnce(new Error('STATUS_READ_UNAVAILABLE'))
+      .mockResolvedValueOnce({ status: 'completed' } as any);
+    const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+    await expect(service.diagnoseInstance(uncertainActor, 7)).resolves.toMatchObject({
+      success: true,
+      status: 'queued',
+    });
+    await vi.waitFor(() => expect(deps.analysisStore.waitForCompletion).toHaveBeenCalledTimes(1));
+
+    await expect(service.diagnoseInstance(uncertainActor, 7)).resolves.toEqual({
+      success: false,
+      error: '诊断正在创建中，请稍后重试',
+    });
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(deps.analysisStore.waitForCompletion).toHaveBeenCalledTimes(2);
+    await expect(service.diagnoseInstance(uncertainActor, 7)).resolves.toMatchObject({ success: true });
+  });
+
+  it('keeps the actor-bound pending lock across an hourly cache rollover', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-25T14:59:59Z'));
+    const rolloverActor = Object.freeze({ ...actor, userId: 33, requestId: 'hour-rollover' });
+    const deps = dependencies();
+    let resolveTerminal!: (value: unknown) => void;
+    deps.analysisStore.waitForCompletion.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveTerminal = resolve;
+    }));
+    const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+    await expect(service.diagnoseInstance(rolloverActor, 7)).resolves.toMatchObject({
+      success: true,
+      status: 'queued',
+    });
+    vi.setSystemTime(new Date('2026-04-25T15:00:00Z'));
+
+    await expect(service.diagnoseInstance(rolloverActor, 7)).resolves.toEqual({
+      success: false,
+      error: '诊断正在创建中，请稍后重试',
+    });
+    expect(deps.contextCollector.collect).toHaveBeenCalledTimes(1);
+
+    resolveTerminal({ status: 'completed' });
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(service.diagnoseInstance(rolloverActor, 7)).resolves.toMatchObject({ success: true });
+  });
+
+  it('releases the pending lock when analysis explicitly fails', async () => {
+    let resolveTerminal!: (value: unknown) => void;
+    const failedActor = Object.freeze({ ...actor, userId: 34, requestId: 'failed-completion' });
+    const deps = dependencies();
+    deps.analysisStore.waitForCompletion.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveTerminal = resolve;
+    }));
+    const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+    await expect(service.diagnoseInstance(failedActor, 7)).resolves.toMatchObject({ success: true });
+    resolveTerminal({ status: 'failed' });
+
+    await vi.waitFor(async () => {
+      await expect(service.diagnoseInstance(failedActor, 7)).resolves.toMatchObject({ success: true });
+    });
+    expect(deps.contextCollector.collect).toHaveBeenCalledTimes(2);
   });
 
   it('does not reuse a completed manual diagnosis across users', async () => {
