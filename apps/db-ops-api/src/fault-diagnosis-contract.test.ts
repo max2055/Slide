@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { parseFaultDiagnosisInstanceId } from './fault-diagnosis-route-input.js';
 
 const sourceRoot = import.meta.dirname;
 const serverSource = readFileSync(resolve(sourceRoot, '../server.ts'), 'utf8');
@@ -16,19 +17,70 @@ function routeBlock(startMarker: string, endMarker: string): string {
 }
 
 describe('manual fault diagnosis route contract', () => {
-  it('passes request.user and a numeric instance id while ignoring fault trigger_type', () => {
-    const submit = routeBlock("fastify.post('/api/ai/analysis'", '// 轮询分析状态');
+  it.each([
+    [7, 7],
+    ['7', 7],
+    [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
+    [String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER],
+  ])('accepts canonical positive instance id %j', (value, expected) => {
+    expect(parseFaultDiagnosisInstanceId(value)).toBe(expected);
+  });
 
-    expect(submit).toContain('faultDiagnosisService.diagnoseInstance((request as any).user, Number(instance_id))');
+  it.each([
+    true,
+    false,
+    [7],
+    ['7'],
+    {},
+    null,
+    undefined,
+    0,
+    -1,
+    1.5,
+    '',
+    '07',
+    ' 7',
+    '7 ',
+    '+7',
+    '1e1',
+    String(Number.MAX_SAFE_INTEGER + 1),
+  ])('rejects non-canonical instance id %j', (value) => {
+    expect(parseFaultDiagnosisInstanceId(value)).toBeNull();
+  });
+
+  it('validates submit instance_id before authorization or diagnosis while ignoring fault trigger_type', () => {
+    const submit = routeBlock("fastify.post('/api/ai/analysis'", '// 轮询分析状态');
+    const invalidGuard = "if (analysis_type === 'fault_diagnosis' && faultInstanceId === null)";
+    const accessCheck = 'hasInstanceAccess((request as any).user';
+    const serviceCall = 'faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId)';
+
+    expect(submit).toContain('parseFaultDiagnosisInstanceId(instance_id)');
+    expect(submit).toContain(invalidGuard);
+    expect(submit).toContain(serviceCall);
+    if (submit.includes(accessCheck)) {
+      expect(submit.indexOf(invalidGuard)).toBeLessThan(submit.indexOf(accessCheck));
+    }
+    expect(submit.indexOf(invalidGuard)).toBeLessThan(submit.indexOf(serviceCall));
+    expect(submit.slice(submit.indexOf(invalidGuard), submit.indexOf(serviceCall))).toContain('reply.code(400)');
     expect(submit).not.toMatch(/faultDiagnosisService\.diagnoseInstance\(\s*instance_id\s*,\s*trigger_type/);
     expect(submit).toContain('topsqlAnalysisService.analyzeSlowQuery(related_id, instance_id, trigger_type)');
     expect(submit).toContain('alertRCAService.analyzeAlert(related_id, trigger_type)');
   });
 
-  it('passes request.user and a numeric instance id for reanalysis', () => {
+  it('validates persisted instance_id before fault reanalysis', () => {
     const reanalyze = routeBlock("fastify.post('/api/ai/analysis/:id/reanalyze'", '// 获取自动分析配置');
+    const invalidGuard = "if (existing.analysis_type === 'fault_diagnosis' && faultInstanceId === null)";
+    const accessCheck = 'hasInstanceAccess((request as any).user';
+    const serviceCall = 'faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId)';
 
-    expect(reanalyze).toContain('faultDiagnosisService.diagnoseInstance((request as any).user, Number(existing.instance_id))');
+    expect(reanalyze).toContain('parseFaultDiagnosisInstanceId(existing.instance_id)');
+    expect(reanalyze).toContain(invalidGuard);
+    expect(reanalyze).toContain(serviceCall);
+    if (reanalyze.includes(accessCheck)) {
+      expect(reanalyze.indexOf(invalidGuard)).toBeLessThan(reanalyze.indexOf(accessCheck));
+    }
+    expect(reanalyze.indexOf(invalidGuard)).toBeLessThan(reanalyze.indexOf(serviceCall));
+    expect(reanalyze.slice(reanalyze.indexOf(invalidGuard), reanalyze.indexOf(serviceCall))).toContain('reply.code(400)');
     expect(reanalyze).not.toMatch(/faultDiagnosisService\.diagnoseInstance\(\s*existing\.instance_id\s*,\s*['"]manual['"]/);
   });
 

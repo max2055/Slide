@@ -60,6 +60,7 @@ import { indexDatabaseService } from './src/index-database-service.js';
 import { topsqlAnalysisService } from './src/topsql-analysis-service.js';
 import { alertRCAService } from './src/alert-rca-service.js';
 import { faultDiagnosisService } from './src/fault-diagnosis-service.js';
+import { parseFaultDiagnosisInstanceId } from './src/fault-diagnosis-route-input.js';
 import { metricRegistry } from './src/metric-registry.js';
 import { metricDatabaseService } from './src/metric-database-service.js';
 import { baselineCalculator } from './src/baseline-calculator.js';
@@ -3285,6 +3286,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           related_id?: number;
           trigger_type?: 'manual' | 'auto';
         };
+        const faultInstanceId = analysis_type === 'fault_diagnosis'
+          ? parseFaultDiagnosisInstanceId(instance_id)
+          : null;
 
         // RCA resolves its sole subject from the referenced alert. A server
         // alert has no instance_id, so requiring one here made the browser
@@ -3292,6 +3296,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         // the server subject.
         if (!analysis_type || (analysis_type !== 'alert_rca' && !instance_id)) {
           return reply.code(400).send({ error: '缺少必要参数：analysis_type, instance_id' });
+        }
+        if (analysis_type === 'fault_diagnosis' && faultInstanceId === null) {
+          return reply.code(400).send({ error: 'instance_id 必须为正整数' });
         }
 
         let analysisId: number;
@@ -3318,7 +3325,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             break;
 
           case 'fault_diagnosis':
-            const diagnosisResult = await faultDiagnosisService.diagnoseInstance((request as any).user, Number(instance_id));
+            const diagnosisResult = await faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId);
             if (!diagnosisResult.success) {
               return reply.code(500).send({ error: diagnosisResult.error });
             }
@@ -3517,6 +3524,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!existing) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
+        const faultInstanceId = existing.analysis_type === 'fault_diagnosis'
+          ? parseFaultDiagnosisInstanceId(existing.instance_id)
+          : null;
+        if (existing.analysis_type === 'fault_diagnosis' && faultInstanceId === null) {
+          return reply.code(400).send({ error: 'instance_id 必须为正整数' });
+        }
 
         if (existing.analysis_type === 'topsql_analysis' && existing.related_id) {
           const reanalyzeId = await topsqlAnalysisService.reanalyzeSlowQuery(existing.related_id, existing.instance_id);
@@ -3528,7 +3541,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           }
           reply.send({ id: rcaResult.analysisId, status: 'pending', message: '重新分析任务已提交' });
         } else if (existing.analysis_type === 'fault_diagnosis') {
-          const diagnosisResult = await faultDiagnosisService.diagnoseInstance((request as any).user, Number(existing.instance_id));
+          const diagnosisResult = await faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId);
           if (!diagnosisResult.success) {
             return reply.code(500).send({ error: diagnosisResult.error });
           }

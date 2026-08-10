@@ -136,6 +136,23 @@ describe('FaultDiagnosisService', () => {
     expect(deps.dispatch).not.toHaveBeenCalled();
   });
 
+  it('rejects a mismatched diagnostic subject before cache or persistence', async () => {
+    const deps = dependencies();
+    deps.contextCollector.collect.mockResolvedValue({
+      ...diagnosticContext,
+      subject: { type: 'instance', id: 8 },
+    });
+    const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+    await expect(service.diagnoseInstance(actor, 7)).rejects.toThrow('DIAGNOSTIC_CONTEXT_SUBJECT_MISMATCH');
+
+    expect(deps.analysisStore.findByCacheKey).not.toHaveBeenCalled();
+    expect(deps.analysisStore.createAnalysis).not.toHaveBeenCalled();
+    expect(deps.analysisStore.updateStatus).not.toHaveBeenCalled();
+    expect(deps.analysisStore.failAnalysis).not.toHaveBeenCalled();
+    expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
   it('does not update or dispatch when analysis creation fails', async () => {
     const deps = dependencies();
     deps.analysisStore.createAnalysis.mockResolvedValue({ success: false, error: 'CREATE_FAILED' });
@@ -189,6 +206,66 @@ describe('FaultDiagnosisService', () => {
     resolveFailure({ success: true });
     await expect(diagnosis).resolves.toEqual({ success: false, error: 'RUNNING_FAILED' });
   });
+
+  it.each([
+    ['running status', 'rejects', 41],
+    ['running status', 'returns unsuccessful', 42],
+    ['dispatch', 'rejects', 43],
+    ['dispatch', 'returns unsuccessful', 44],
+  ] as const)(
+    'retains the pending lock when %s failure persistence %s',
+    async (failureStage, persistenceMode, userId) => {
+      const failureActor = Object.freeze({ ...actor, userId, requestId: `terminal-${userId}` });
+      const deps = dependencies();
+      const expectedError = failureStage === 'running status' ? 'RUNNING_FAILED' : 'DISPATCH_FAILED';
+      if (failureStage === 'running status') {
+        deps.analysisStore.updateStatus.mockResolvedValue({ success: false, error: expectedError });
+      } else {
+        deps.dispatch.mockRejectedValue(new Error(expectedError));
+      }
+
+      let settlePersistence!: () => void;
+      const persistence = new Promise<{ success: boolean; error?: string }>((resolve, reject) => {
+        settlePersistence = persistenceMode === 'rejects'
+          ? () => reject(new Error('FAIL_ANALYSIS_UNAVAILABLE'))
+          : () => resolve({ success: false, error: 'FAIL_ANALYSIS_UNAVAILABLE' });
+      });
+      deps.analysisStore.failAnalysis.mockReturnValueOnce(persistence);
+
+      let resolveTerminal!: (value: unknown) => void;
+      deps.analysisStore.waitForCompletion.mockImplementationOnce(() => new Promise((resolve) => {
+        resolveTerminal = resolve;
+      }));
+      const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+      let settled = false;
+      const diagnosis = service.diagnoseInstance(failureActor, 7).then((result) => {
+        settled = true;
+        return result;
+      });
+
+      await vi.waitFor(() => expect(deps.analysisStore.failAnalysis).toHaveBeenCalledWith(71, expectedError));
+      expect(settled).toBe(false);
+      settlePersistence();
+      await expect(diagnosis).resolves.toEqual({ success: false, error: expectedError });
+      await vi.waitFor(() => expect(deps.analysisStore.waitForCompletion).toHaveBeenCalledWith(71, 120_000));
+
+      await expect(service.diagnoseInstance(failureActor, 7)).resolves.toEqual({
+        success: false,
+        error: '诊断正在创建中，请稍后重试',
+      });
+      expect(deps.contextCollector.collect).toHaveBeenCalledTimes(1);
+
+      if (failureStage === 'running status') {
+        deps.analysisStore.updateStatus.mockResolvedValue({ success: true });
+      } else {
+        deps.dispatch.mockResolvedValue({ analysisId: 71, cached: false });
+      }
+      resolveTerminal({ status: 'failed' });
+      await vi.waitFor(async () => {
+        await expect(service.diagnoseInstance(failureActor, 7)).resolves.toMatchObject({ success: true });
+      });
+    },
+  );
 
   it('keeps the pending lock while context collection is in flight', async () => {
     let releaseCollection!: (value: InstanceDiagnosticContext) => void;

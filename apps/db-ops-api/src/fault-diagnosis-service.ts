@@ -47,6 +47,9 @@ export class FaultDiagnosisService {
 
     try {
       const diagnosticContext = await this.dependencies.contextCollector.collect(actor, instanceId);
+      if (diagnosticContext.subject?.type !== 'instance' || diagnosticContext.subject.id !== instanceId) {
+        throw new Error('DIAGNOSTIC_CONTEXT_SUBJECT_MISMATCH');
+      }
 
       const cached = await this.dependencies.analysisStore.findByCacheKey(cacheKey);
       if (cached?.result) return { success: true, analysisId: cached.id };
@@ -65,7 +68,8 @@ export class FaultDiagnosisService {
       const running = await this.dependencies.analysisStore.updateStatus(analysisId, 'running');
       if (!running.success) {
         const error = running.error || 'UPDATE_ANALYSIS_STATUS_FAILED';
-        await this.dependencies.analysisStore.failAnalysis(analysisId, error).catch(() => {});
+        releasePendingOnReturn = false;
+        await this.persistFailureOrMonitor(analysisId, pendingKey, error);
         return { success: false, error };
       }
 
@@ -88,7 +92,8 @@ export class FaultDiagnosisService {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`[FaultDiagnosis] Agent 诊断 ${analysisId} 失败:`, message);
-        await this.dependencies.analysisStore.failAnalysis(analysisId, message).catch(() => {});
+        releasePendingOnReturn = false;
+        await this.persistFailureOrMonitor(analysisId, pendingKey, message);
         return { success: false, error: message };
       }
 
@@ -125,6 +130,17 @@ export class FaultDiagnosisService {
 
   private buildPendingKey(actor: ActorContext, instanceId: number): string {
     return `fault:${instanceId}:pending:manual:user:${actor.userId}:session:${actor.sessionVersion}`;
+  }
+
+  private async persistFailureOrMonitor(analysisId: number, pendingKey: string, error: string): Promise<void> {
+    try {
+      const result = await this.dependencies.analysisStore.failAnalysis(analysisId, error);
+      if (result.success) {
+        pendingDiagnoses.delete(pendingKey);
+        return;
+      }
+    } catch {}
+    this.monitorCompletion(analysisId, pendingKey);
   }
 
   private monitorCompletion(analysisId: number, pendingKey: string): void {
