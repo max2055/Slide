@@ -25,6 +25,7 @@ import { chatDatabaseService } from '../../chat-database-service.js';
 import { createActorBoundToolRegistry, loadPlatformTools } from '../get-agent-engine.js';
 import { agentRunService } from '../agent-run-service.js';
 import { instanceDatabaseService } from '../../instance-database-service.js';
+import { completeAnalysisTool } from '../../tools/generated/slide-self-mgmt/complete_analysis.js';
 
 // ── Mock LLMProvider — returns hardcoded responses ──
 
@@ -157,6 +158,57 @@ class CapturingInvokeProvider extends MockLLMProvider {
   ): Promise<LLMResponse> {
     this.seenTools = tools;
     return super.chat(_messages, tools, _options);
+  }
+}
+
+const completionEnvelope = {
+  schemaVersion: 1,
+  analysisType: 'fault_diagnosis',
+  subject: { type: 'instance', id: 7 },
+  conclusions: ['Bound conclusion'],
+  hypotheses: [],
+  evidenceRefs: [],
+  confidence: 0.8,
+  recommendations: [],
+  displayMarkdown: '# Bound analysis',
+  provenance: { modelVersion: 'test', promptVersion: 'test', toolVersions: {} },
+  createdAt: '2026-08-10T00:00:00.000Z',
+};
+
+class AnalysisCompletionProvider extends MockLLMProvider {
+  private calls = 0;
+
+  constructor(private readonly requestedAnalysisId: number) {
+    super();
+  }
+
+  override async chat(): Promise<LLMResponse> {
+    if (this.calls++ === 0) {
+      return {
+        content: null,
+        finishReason: 'tool_calls',
+        toolCalls: [{
+          id: 'analysis-completion-call',
+          name: 'slide_complete_analysis',
+          arguments: { analysisId: this.requestedAnalysisId, envelope: completionEnvelope },
+        }],
+        usage: {},
+        shouldExecuteTools: true,
+        hasToolCalls: true,
+      };
+    }
+    return {
+      content: 'Analysis completion attempted.',
+      finishReason: 'stop',
+      toolCalls: [],
+      usage: {},
+      shouldExecuteTools: false,
+      hasToolCalls: false,
+    };
+  }
+
+  override async chatStream(): Promise<LLMResponse> {
+    return this.chat();
   }
 }
 
@@ -586,13 +638,58 @@ describe('DirectAdapter', () => {
       });
     });
 
-    it('exposes only the analysis completion tool to background invokes', async () => {
+    it('exposes no tools to an unbound background invoke', async () => {
       const provider = new CapturingInvokeProvider();
       const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: provider });
 
       await adapter.invoke('test-session-analysis-completion', 'Analyze');
 
+      expect(provider.seenTools).toEqual([]);
+    });
+
+    it('exposes only a record-bound completion tool to an analysis invoke', async () => {
+      const provider = new CapturingInvokeProvider();
+      const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: provider });
+
+      await adapter.invoke('test-session-analysis-completion', 'Analyze', undefined, { analysisId: 42 });
+
       expect(provider.seenTools.map((tool) => tool.name)).toEqual(['slide_complete_analysis']);
+    });
+
+    it('rejects a model-supplied analysis id that differs from the bound record', async () => {
+      const handler = vi.spyOn(completeAnalysisTool, 'handler').mockResolvedValue({ success: true });
+      const adapter = new DirectAdapter({
+        tools: new ToolRegistry(),
+        llmProvider: new AnalysisCompletionProvider(99),
+      });
+
+      try {
+        await adapter.invoke('test-session-analysis-mismatch', 'Analyze', undefined, { analysisId: 42 });
+
+        expect(handler).not.toHaveBeenCalled();
+      } finally {
+        handler.mockRestore();
+      }
+    });
+
+    it('forces a valid completion call onto the bound analysis record', async () => {
+      const handler = vi.spyOn(completeAnalysisTool, 'handler').mockResolvedValue({
+        success: true,
+        data: { saved: true, analysisId: 42 },
+      });
+      const adapter = new DirectAdapter({
+        tools: new ToolRegistry(),
+        llmProvider: new AnalysisCompletionProvider(42),
+      });
+
+      try {
+        await adapter.invoke('test-session-analysis-bound', 'Analyze', undefined, { analysisId: 42 });
+
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(handler).toHaveBeenCalledWith(expect.objectContaining({ analysisId: 42 }));
+      } finally {
+        handler.mockRestore();
+      }
     });
   });
 

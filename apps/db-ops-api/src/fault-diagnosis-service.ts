@@ -14,7 +14,8 @@ import {
 const pendingDiagnoses = new Set<string>();
 
 type FaultAnalysisStore = Pick<typeof aiAnalysisDatabaseService,
-  'findByCacheKey' | 'createAnalysis' | 'updateStatus' | 'failAnalysis' | 'getAnalysisList' | 'getAnalysisStats'>;
+  'findByCacheKey' | 'createAnalysis' | 'updateStatus' | 'failAnalysis' | 'waitForCompletion'
+  | 'getAnalysisList' | 'getAnalysisStats'>;
 
 export interface FaultDiagnosisDependencies {
   contextCollector: Pick<InstanceDiagnosticContextService, 'collect'>;
@@ -41,6 +42,7 @@ export class FaultDiagnosisService {
       return { success: false, error: '诊断正在创建中，请稍后重试' };
     }
     pendingDiagnoses.add(cacheKey);
+    let releasePendingOnReturn = true;
 
     try {
       const diagnosticContext = await this.dependencies.contextCollector.collect(actor, instanceId);
@@ -60,31 +62,44 @@ export class FaultDiagnosisService {
       const analysisId = createResult.analysisId;
 
       const running = await this.dependencies.analysisStore.updateStatus(analysisId, 'running');
-      if (!running.success) return { success: false, error: running.error || 'UPDATE_ANALYSIS_STATUS_FAILED' };
+      if (!running.success) {
+        const error = running.error || 'UPDATE_ANALYSIS_STATUS_FAILED';
+        await this.dependencies.analysisStore.failAnalysis(analysisId, error).catch(() => {});
+        return { success: false, error };
+      }
 
       const instance = diagnosticContext.database.instance;
       const name = stringMetadata(instance, 'name') || `instance-${instanceId}`;
       const databaseType = stringMetadata(instance, 'db_type') || 'unknown';
       const environment = stringMetadata(instance, 'environment') || 'unknown';
-      this.dependencies.dispatch({
-        type: 'fault_diagnosis',
-        cacheKey,
-        instanceId,
-        sessionKey: `diagnosis-${analysisId}`,
-        triggerType: 'manual',
-        existingAnalysisId: analysisId,
-        diagnosticContext,
-        userMessage: `请仅依据随请求提供的 diagnosticContext 分析实例 "${name}" `
-          + `(${databaseType}, ${environment}) 的故障证据。缺失证据必须保持未知；完成后保存结构化诊断结果。`,
-      }).catch((error) => {
+      try {
+        await this.dependencies.dispatch({
+          type: 'fault_diagnosis',
+          cacheKey,
+          instanceId,
+          sessionKey: `diagnosis-${analysisId}`,
+          triggerType: 'manual',
+          existingAnalysisId: analysisId,
+          diagnosticContext,
+          userMessage: `请仅依据随请求提供的 diagnosticContext 分析实例 "${name}" `
+            + `(${databaseType}, ${environment}) 的故障证据。缺失证据必须保持未知；完成后保存结构化诊断结果。`,
+        });
+      } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`[FaultDiagnosis] Agent 诊断 ${analysisId} 失败:`, message);
-        this.dependencies.analysisStore.failAnalysis(analysisId, message).catch(() => {});
-      });
+        await this.dependencies.analysisStore.failAnalysis(analysisId, message).catch(() => {});
+        return { success: false, error: message };
+      }
+
+      releasePendingOnReturn = false;
+      void Promise.resolve()
+        .then(() => this.dependencies.analysisStore.waitForCompletion(analysisId, 120_000))
+        .catch(() => null)
+        .finally(() => pendingDiagnoses.delete(cacheKey));
 
       return { success: true, analysisId, status: 'queued' };
     } finally {
-      pendingDiagnoses.delete(cacheKey);
+      if (releasePendingOnReturn) pendingDiagnoses.delete(cacheKey);
     }
   }
 

@@ -56,6 +56,7 @@ function dependencies(events: string[] = []) {
         return { success: true };
       }),
       failAnalysis: vi.fn(async (_analysisId: number, _message: string) => ({ success: true })),
+      waitForCompletion: vi.fn(async (_analysisId: number, _timeoutMs?: number) => ({ status: 'completed' } as any)),
       getAnalysisList: vi.fn(async (_options?: unknown) => []),
       getAnalysisStats: vi.fn(async (_analysisType?: string) => ({})),
     },
@@ -153,6 +154,18 @@ describe('FaultDiagnosisService', () => {
 
     await expect(service.diagnoseInstance(actor, 7)).resolves.toEqual({ success: false, error: 'RUNNING_FAILED' });
 
+    expect(deps.analysisStore.failAnalysis).toHaveBeenCalledWith(71, 'RUNNING_FAILED');
+    expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('returns the running error even when terminal persistence rejects', async () => {
+    const deps = dependencies();
+    deps.analysisStore.updateStatus.mockResolvedValue({ success: false, error: 'RUNNING_FAILED' });
+    deps.analysisStore.failAnalysis.mockRejectedValue(new Error('FAIL_ANALYSIS_UNAVAILABLE'));
+    const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+    await expect(service.diagnoseInstance(actor, 7)).resolves.toEqual({ success: false, error: 'RUNNING_FAILED' });
+
     expect(deps.dispatch).not.toHaveBeenCalled();
   });
 
@@ -173,6 +186,37 @@ describe('FaultDiagnosisService', () => {
 
     releaseCollection(diagnosticContext);
     await expect(first).resolves.toMatchObject({ success: true, analysisId: 71 });
+  });
+
+  it('keeps the pending lock after queued dispatch until analysis reaches a terminal state', async () => {
+    let resolveTerminal!: (value: unknown) => void;
+    const deps = dependencies();
+    deps.analysisStore.waitForCompletion.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveTerminal = resolve;
+    }));
+    const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+    await expect(service.diagnoseInstance(actor, 7)).resolves.toMatchObject({
+      success: true,
+      analysisId: 71,
+      status: 'queued',
+    });
+    await expect(service.diagnoseInstance(actor, 7)).resolves.toEqual({
+      success: false,
+      error: '诊断正在创建中，请稍后重试',
+    });
+    expect(deps.contextCollector.collect).toHaveBeenCalledTimes(1);
+    expect(deps.analysisStore.createAnalysis).toHaveBeenCalledTimes(1);
+    expect(deps.dispatch).toHaveBeenCalledTimes(1);
+    expect(deps.analysisStore.waitForCompletion).toHaveBeenCalledWith(71, 120_000);
+
+    resolveTerminal({ status: 'completed' });
+    await vi.waitFor(async () => {
+      await expect(service.diagnoseInstance(actor, 7)).resolves.toMatchObject({ success: true, status: 'queued' });
+    });
+    expect(deps.contextCollector.collect).toHaveBeenCalledTimes(2);
+    expect(deps.analysisStore.createAnalysis).toHaveBeenCalledTimes(2);
+    expect(deps.dispatch).toHaveBeenCalledTimes(2);
   });
 
   it('does not reuse a completed manual diagnosis across users', async () => {

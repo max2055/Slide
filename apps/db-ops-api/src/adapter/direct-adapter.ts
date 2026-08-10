@@ -30,7 +30,7 @@ import {
   MemoryStore,
 } from '@slide/agent-core';
 import type { AgentHook, AgentHookContext, Message, ToolSchema, RuntimeCheckpoint } from '@slide/agent-core';
-import type { IAgentEngine, ChatEvent, AgentCapabilities, ChatResult, InvokeResult } from './types.js';
+import type { IAgentEngine, ChatEvent, AgentCapabilities, ChatResult, InvokeResult, InvokeOptions } from './types.js';
 import { chatDatabaseService } from '../chat-database-service.js';
 import { SubagentManager } from '../agents/subagent-manager.js';
 import { setSubagentManager } from '../agents/subagent-spawn-tool.js';
@@ -45,8 +45,9 @@ import { completeAnalysisTool } from '../tools/generated/slide-self-mgmt/complet
 
 let _subagentManagerInitialized = false;
 
-function analysisCompletionTools(): ToolRegistry {
+function analysisCompletionTools(analysisId?: number): ToolRegistry {
   const tools = new ToolRegistry();
+  if (!Number.isSafeInteger(analysisId) || Number(analysisId) <= 0) return tools;
   tools.register({
     name: completeAnalysisTool.name,
     description: completeAnalysisTool.description,
@@ -56,7 +57,10 @@ function analysisCompletionTools(): ToolRegistry {
     exclusive: false,
     scope: completeAnalysisTool.scope,
     execute: async (args: Record<string, unknown>) => {
-      const result = await completeAnalysisTool.handler(args);
+      if (Number(args.analysisId) !== analysisId) {
+        return { success: false, errorCode: 'ANALYSIS_BINDING_MISMATCH', error: 'Analysis target denied' };
+      }
+      const result = await completeAnalysisTool.handler({ ...args, analysisId });
       return result && typeof result === 'object' && 'data' in result
         ? (result as { data?: unknown }).data ?? result
         : result;
@@ -682,6 +686,7 @@ export class DirectAdapter implements IAgentEngine {
     sessionKey: string,
     message: string,
     systemPrompt?: string,
+    options?: InvokeOptions,
   ): Promise<InvokeResult> {
     // Get or create session so invoke() runs are persisted and visible in chat history (CR-07)
     const session = this.sessionManager.getOrCreate(sessionKey);
@@ -736,9 +741,9 @@ export class DirectAdapter implements IAgentEngine {
     try {
       const result = await this.runner.run({
         initialMessages: messages,
-        // Background analysis has no ActorContext. It receives only the
-        // validation-backed completion tool, never the general platform catalog.
-        tools: analysisCompletionTools(),
+        // A generic background invoke receives no tools. Analysis runs receive
+        // one completion tool bound to the operator-created analysis record.
+        tools: analysisCompletionTools(options?.analysisId),
         model: this.provider.getDefaultModel(),
         maxIterations: 8,
         maxToolResultChars: 20000,
