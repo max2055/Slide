@@ -231,13 +231,34 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
   }
 
   async expireInstanceHost(instanceId: number, serverId: number, now = new Date()): Promise<boolean> {
-    const [result] = await this.pool().execute<any>(
-      `UPDATE resource_relations SET valid_until = ?
-       WHERE source_type = 'instance' AND source_id = ? AND target_type = 'server' AND target_id = ?
-         AND relation_type = 'runs_on' AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)`,
-      [now, instanceId, serverId, now, now],
-    );
-    return Number(result.affectedRows) > 0;
+    const connection = await this.pool().getConnection();
+    try {
+      await connection.beginTransaction();
+      const [instances] = await connection.execute<any[]>('SELECT id FROM database_instances WHERE id = ? FOR UPDATE', [instanceId]);
+      if (instances.length === 0) throw new Error('INSTANCE_NOT_FOUND');
+      const [rows] = await connection.execute<any[]>(
+        `SELECT id, valid_from FROM resource_relations
+         WHERE source_type = 'instance' AND source_id = ? AND target_type = 'server' AND target_id = ?
+           AND relation_type = 'runs_on' AND (valid_until IS NULL OR valid_until > ?)
+         ORDER BY id FOR UPDATE`,
+        [instanceId, serverId, now],
+      );
+      let affectedRows = 0;
+      for (const row of rows) {
+        const validFrom = new Date(row.valid_from);
+        const [result] = validFrom >= now
+          ? await connection.execute<any>('DELETE FROM resource_relations WHERE id = ?', [row.id])
+          : await connection.execute<any>('UPDATE resource_relations SET valid_until = ? WHERE id = ?', [now, row.id]);
+        affectedRows += Number(result.affectedRows ?? 0);
+      }
+      await connection.commit();
+      return affectedRows > 0;
+    } catch (error) {
+      await connection.rollback().catch(() => undefined);
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   async listInstanceHosts(instanceId: number): Promise<InstanceHostDetail[]> {
@@ -280,8 +301,7 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
     const [rows] = await this.pool().execute<any[]>(
       `SELECT COUNT(*) AS count FROM resource_relations
        WHERE source_type = 'instance' AND target_type = 'server' AND target_id = ?
-         AND relation_type = 'runs_on' AND valid_from <= NOW()
-         AND (valid_until IS NULL OR valid_until > NOW())`,
+         AND relation_type = 'runs_on' AND (valid_until IS NULL OR valid_until > NOW())`,
       [serverId],
     );
     return Number(rows[0]?.count ?? 0);

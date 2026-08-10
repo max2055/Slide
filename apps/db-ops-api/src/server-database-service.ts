@@ -369,8 +369,7 @@ class ServerDatabaseService {
       const [relations] = await connection.execute(
         `SELECT id FROM resource_relations
          WHERE source_type = 'instance' AND target_type = 'server' AND target_id = ?
-           AND relation_type = 'runs_on' AND valid_from <= NOW()
-           AND (valid_until IS NULL OR valid_until > NOW())
+           AND relation_type = 'runs_on' AND (valid_until IS NULL OR valid_until > NOW())
          LIMIT 1`,
         [id],
       ) as any;

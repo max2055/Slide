@@ -6,7 +6,7 @@ import {
   type InstanceHostMapping,
   type InstanceHostStore,
 } from './instance-host-service.js';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 function actor(options: {
   permissions?: string[];
@@ -143,26 +143,72 @@ describe('InstanceHostService', () => {
 });
 
 describe('MysqlInstanceHostStore current relation integrity', () => {
-  it('uses the same half-open current window for list, reverse-list, count, and unlink', async () => {
+  it('uses the same half-open current window for list and reverse-list', async () => {
     const calls: string[] = [];
     const store = new MysqlInstanceHostStore(() => ({
       execute: async (sql: string) => {
         calls.push(sql);
-        if (sql.includes('COUNT(*)')) return [[{ count: 0 }]];
-        if (sql.startsWith('UPDATE')) return [{ affectedRows: 0 }];
         return [[]];
       },
     } as any));
 
     await store.listInstanceHosts(10);
     await store.listServerInstances(20);
-    await store.countActiveForServer(20);
-    await store.expireInstanceHost(10, 20, new Date('2026-08-10T00:00:00Z'));
-
     for (const sql of calls) {
       expect(sql).toContain('valid_from <=');
       expect(sql).toMatch(/valid_until IS NULL OR .*valid_until > /);
     }
+  });
+
+  it('counts every unended relation so future mappings also block server deletion', async () => {
+    let capturedSql = '';
+    const store = new MysqlInstanceHostStore(() => ({
+      execute: async (sql: string) => {
+        capturedSql = sql;
+        return [[{ count: 1 }]];
+      },
+    } as any));
+
+    await expect(store.countActiveForServer(20)).resolves.toBe(1);
+    expect(capturedSql).toMatch(/valid_until IS NULL OR valid_until > NOW\(\)/);
+    expect(capturedSql).not.toContain('valid_from <= NOW()');
+  });
+
+  it('expires earlier rows but deletes equal-now and future rows in one transaction', async () => {
+    const now = new Date('2026-08-10T00:00:00.500Z');
+    const updates: unknown[][] = [];
+    const deletes: unknown[][] = [];
+    let committed = false;
+    let released = false;
+    const connection = {
+      beginTransaction: async () => {},
+      execute: async (sql: string, values: unknown[] = []) => {
+        if (sql.startsWith('UPDATE resource_relations')) {
+          updates.push(values);
+          return [{ affectedRows: 1 }];
+        }
+        if (sql.startsWith('DELETE FROM resource_relations')) {
+          deletes.push(values);
+          return [{ affectedRows: 1 }];
+        }
+        if (sql.includes('FROM database_instances')) return [[{ id: 10 }]];
+        if (sql.includes('FROM resource_relations')) return [[
+          { id: 1, valid_from: new Date('2026-08-10T00:00:00.000Z') },
+          { id: 2, valid_from: now },
+          { id: 3, valid_from: new Date('2026-08-10T00:00:01.000Z') },
+        ]];
+        return [{ affectedRows: 1 }];
+      },
+      commit: async () => { committed = true; }, rollback: async () => {},
+      release: () => { released = true; },
+    };
+    const store = new MysqlInstanceHostStore(() => ({ getConnection: async () => connection } as any));
+
+    await expect(store.expireInstanceHost(10, 20, now)).resolves.toBe(true);
+    expect(updates).toEqual([[now, 1]]);
+    expect(deletes).toEqual([[2], [3]]);
+    expect(committed).toBe(true);
+    expect(released).toBe(true);
   });
 
   it('locks desired servers inside replace and fails before insert when one disappeared', async () => {
@@ -226,6 +272,45 @@ describe('MysqlInstanceHostStore current relation integrity', () => {
     expect(deletes).toEqual([[3]]);
   });
 
+  it('deletes an equal-now changed row before inserting its replacement', async () => {
+    const now = new Date('2026-08-10T00:00:00.500Z');
+    const writes: Array<{ sql: string; values: unknown[] }> = [];
+    const connection = {
+      beginTransaction: async () => {},
+      execute: async (sql: string, values: unknown[] = []) => {
+        if (sql.startsWith('DELETE FROM resource_relations') || sql.includes('INSERT INTO resource_relations')) {
+          writes.push({ sql, values });
+          return [{ affectedRows: 1 }];
+        }
+        if (sql.includes('FROM database_instances')) return [[{ id: 10 }]];
+        if (sql.includes('FROM servers')) return [[{ id: 20 }]];
+        if (sql.includes('JOIN servers s')) return [[]];
+        if (sql.includes('FROM resource_relations')) return [[{
+          id: 7, server_id: 20, metadata: { role: 'replica', notes: null }, valid_from: now,
+        }]];
+        return [{ affectedRows: 1 }];
+      },
+      commit: async () => {}, rollback: async () => {}, release: () => {},
+    };
+    const store = new MysqlInstanceHostStore(() => ({ getConnection: async () => connection } as any));
+
+    await store.replaceInstanceHosts(10, [{ serverId: 20, role: 'primary' }], now);
+
+    expect(writes).toHaveLength(2);
+    expect(writes[0]).toMatchObject({ values: [7] });
+    expect(writes[0].sql).toContain('DELETE FROM resource_relations');
+    expect(writes[1].sql).toContain('INSERT INTO resource_relations');
+    expect(writes[1].values.at(-1)).toEqual(now);
+  });
+
+  it('migrates relation windows to microsecond precision for same-second replacements', () => {
+    const migrationUrl = new URL('../../sql/migrations/061_instance_host_relation_time_precision.sql', import.meta.url);
+    expect(existsSync(migrationUrl)).toBe(true);
+    const sql = readFileSync(migrationUrl, 'utf8');
+    expect(sql).toMatch(/valid_from\s+DATETIME\(6\)\s+NOT NULL\s+DEFAULT CURRENT_TIMESTAMP\(6\)/i);
+    expect(sql).toMatch(/valid_until\s+DATETIME\(6\)\s+NULL/i);
+  });
+
   it('returns enriched mappings from the replace transaction before commit', async () => {
     let committed = false;
     const now = new Date('2026-08-10T00:00:00Z');
@@ -262,14 +347,15 @@ describe('MysqlInstanceHostStore current relation integrity', () => {
     expect(committed).toBe(true);
   });
 
-  it('requires server deletion to lock the server and check current runs_on rows in the same transaction', () => {
+  it('requires server deletion to lock the server and check all unended runs_on rows in the same transaction', () => {
     const source = readFileSync(new URL('../server-database-service.ts', import.meta.url), 'utf8');
     const method = source.slice(source.indexOf('async deleteServer'), source.indexOf('async testConnection'));
     expect(method).toContain('getConnection()');
     expect(method).toContain('beginTransaction()');
     expect(method).toMatch(/SELECT id FROM servers WHERE id = \? FOR UPDATE/);
     expect(method).toContain("relation_type = 'runs_on'");
-    expect(method).toMatch(/valid_from <= .*valid_until IS NULL OR valid_until > /s);
+    expect(method).toMatch(/valid_until IS NULL OR valid_until > NOW\(\)/);
+    expect(method).not.toContain('valid_from <= NOW()');
     expect(method.indexOf('FOR UPDATE')).toBeLessThan(method.indexOf('DELETE FROM servers'));
   });
 });
