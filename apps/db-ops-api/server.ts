@@ -3318,7 +3318,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             break;
 
           case 'fault_diagnosis':
-            const diagnosisResult = await faultDiagnosisService.diagnoseInstance(instance_id, trigger_type);
+            const diagnosisResult = await faultDiagnosisService.diagnoseInstance((request as any).user, Number(instance_id));
             if (!diagnosisResult.success) {
               return reply.code(500).send({ error: diagnosisResult.error });
             }
@@ -3528,7 +3528,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           }
           reply.send({ id: rcaResult.analysisId, status: 'pending', message: '重新分析任务已提交' });
         } else if (existing.analysis_type === 'fault_diagnosis') {
-          const diagnosisResult = await faultDiagnosisService.diagnoseInstance(existing.instance_id, 'manual');
+          const diagnosisResult = await faultDiagnosisService.diagnoseInstance((request as any).user, Number(existing.instance_id));
           if (!diagnosisResult.success) {
             return reply.code(500).send({ error: diagnosisResult.error });
           }
