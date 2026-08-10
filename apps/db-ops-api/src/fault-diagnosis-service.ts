@@ -32,7 +32,7 @@ export interface FaultDiagnosisDependencies {
 }
 
 const defaultDependencies: FaultDiagnosisDependencies = {
-  listActiveInstances: async () => (await instanceDatabaseService.getAllInstances()).map(({ id }) => ({ id })),
+  listActiveInstances: async () => (await instanceDatabaseService.listActiveInstanceIds()).map((id) => ({ id })),
   checkHealth: (instanceId) => databaseService.checkHealth(instanceId),
   randomUUID,
   contextCollector: instanceDiagnosticContextService,

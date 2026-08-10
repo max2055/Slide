@@ -78,6 +78,25 @@ class InstanceDatabaseService {
     }
   }
 
+  async listActiveInstanceIds(): Promise<number[]> {
+    const pool = this.getPool();
+    if (!pool) return [];
+    try {
+      const [rows] = await pool.execute(
+        `SELECT id
+         FROM database_instances
+         WHERE status = 'active'
+         ORDER BY id`,
+      ) as any;
+      return (Array.isArray(rows) ? rows : [])
+        .map((row: any) => Number(row.id))
+        .filter((id: number) => Number.isSafeInteger(id) && id > 0);
+    } catch (error) {
+      console.error('获取活跃实例 ID 列表失败:', error);
+      return [];
+    }
+  }
+
   /**
    * 获取管理列表中的全部实例，包括已停用和连接异常的实例。
    */
