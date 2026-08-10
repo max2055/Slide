@@ -90,8 +90,10 @@ describe('FaultDiagnosisService', () => {
       analysis_type: 'fault_diagnosis',
       instance_id: 7,
       trigger_type: 'manual',
-      cache_key: expect.stringMatching(/^fault:7:.*:manual$/),
+      cache_key: expect.stringMatching(/^fault:7:.*:manual:user:3:session:1$/),
     }));
+    const cacheKey = deps.analysisStore.createAnalysis.mock.calls[0]![0] as { cache_key: string };
+    expect(cacheKey.cache_key.length).toBeLessThan(128);
     expect(deps.analysisStore.updateStatus).toHaveBeenCalledWith(71, 'running');
     expect(deps.dispatch).toHaveBeenCalledWith(expect.objectContaining({
       type: 'fault_diagnosis',
@@ -173,17 +175,59 @@ describe('FaultDiagnosisService', () => {
     await expect(first).resolves.toMatchObject({ success: true, analysisId: 71 });
   });
 
+  it('does not reuse a completed manual diagnosis across users', async () => {
+    const deps = dependencies();
+    let completedKey: string | null = null;
+    deps.analysisStore.findByCacheKey.mockImplementation(async (cacheKey) => (
+      cacheKey === completedKey ? { id: 44, result: { conclusions: ['privileged evidence'] } } as any : null
+    ));
+    const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+    await expect(service.diagnoseInstance(actor, 7)).resolves.toMatchObject({
+      success: true,
+      analysisId: 71,
+      status: 'queued',
+    });
+    completedKey = deps.analysisStore.findByCacheKey.mock.calls[0]![0];
+    const secondActor = Object.freeze({ ...actor, userId: 4, requestId: 'second-actor' });
+
+    await expect(service.diagnoseInstance(secondActor, 7)).resolves.toMatchObject({
+      success: true,
+      analysisId: 71,
+      status: 'queued',
+    });
+
+    const secondKey = deps.analysisStore.findByCacheKey.mock.calls[1]![0];
+    expect(secondKey).not.toBe(completedKey);
+    expect(deps.analysisStore.createAnalysis).toHaveBeenCalledTimes(2);
+    expect(deps.contextCollector.collect).toHaveBeenCalledWith(secondActor, 7);
+  });
+
   describe('manual cache key', () => {
-    it('uses hour-level granularity and a fixed manual identity', () => {
+    it('is stable for the same actor and security session within one hour', () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-04-25T14:00:00Z'));
       const service = new FaultDiagnosisService(dependencies() as unknown as FaultDiagnosisDependencies);
-      const key1 = service['buildCacheKey'](10);
+      const key1 = service['buildCacheKey'](actor, 10);
       vi.setSystemTime(new Date('2026-04-25T14:59:59Z'));
-      const key2 = service['buildCacheKey'](10);
+      const key2 = service['buildCacheKey'](actor, 10);
 
-      expect(key1).toBe('fault:10:2026-04-25T14:manual');
+      expect(key1).toBe('fault:10:2026-04-25T14:manual:user:3:session:1');
       expect(key2).toBe(key1);
+    });
+
+    it('changes when the user changes', () => {
+      const service = new FaultDiagnosisService(dependencies() as unknown as FaultDiagnosisDependencies);
+      const otherUser = Object.freeze({ ...actor, userId: 4 });
+
+      expect(service['buildCacheKey'](actor, 10)).not.toBe(service['buildCacheKey'](otherUser, 10));
+    });
+
+    it('changes when the actor security session changes', () => {
+      const service = new FaultDiagnosisService(dependencies() as unknown as FaultDiagnosisDependencies);
+      const nextSession = Object.freeze({ ...actor, sessionVersion: actor.sessionVersion + 1 });
+
+      expect(service['buildCacheKey'](actor, 10)).not.toBe(service['buildCacheKey'](nextSession, 10));
     });
   });
 });

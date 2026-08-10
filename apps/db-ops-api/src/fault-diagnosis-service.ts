@@ -36,7 +36,7 @@ export class FaultDiagnosisService {
     instanceId: number,
   ): Promise<{ success: boolean; analysisId?: number; error?: string; status?: string }> {
     if (!Number.isSafeInteger(instanceId) || instanceId <= 0) throw new Error('RESOURCE_REF_INVALID');
-    const cacheKey = this.buildCacheKey(instanceId);
+    const cacheKey = this.buildCacheKey(actor, instanceId);
     if (pendingDiagnoses.has(cacheKey)) {
       return { success: false, error: '诊断正在创建中，请稍后重试' };
     }
@@ -105,9 +105,9 @@ export class FaultDiagnosisService {
     return this.dependencies.analysisStore.getAnalysisStats('fault_diagnosis');
   }
 
-  private buildCacheKey(instanceId: number): string {
+  private buildCacheKey(actor: ActorContext, instanceId: number): string {
     const currentHour = new Date().toISOString().slice(0, 13);
-    return `fault:${instanceId}:${currentHour}:manual`;
+    return `fault:${instanceId}:${currentHour}:manual:user:${actor.userId}:session:${actor.sessionVersion}`;
   }
 }
 
