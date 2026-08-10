@@ -55,11 +55,16 @@ describe('database instance host relation form', () => {
 
   it('retries only the host PUT after a created instance relation save fails', async () => {
     let relationWrites = 0;
+    const mutationOrder: string[] = [];
     authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
       if (url === '/api/database/instances' && !options?.method) return response([]);
       if (url === '/api/servers') return response([{ id: 7, host: 'db-host', port: 22, label: 'DB host', os_type: 'RHEL 8', status: 'online', collection_enabled: true }]);
-      if (url === '/api/database/instances' && options?.method === 'POST') return response({ id: 73, message: '创建成功' });
+      if (url === '/api/database/instances' && options?.method === 'POST') {
+        mutationOrder.push('POST /api/database/instances');
+        return response({ id: 73, message: '创建成功' });
+      }
       if (url === '/api/database/instances/73/hosts' && options?.method === 'PUT') {
+        mutationOrder.push('PUT /api/database/instances/73/hosts');
         relationWrites += 1;
         return relationWrites === 1
           ? response({ error: 'RELATION_WRITE_FAILED' }, false)
@@ -84,12 +89,21 @@ describe('database instance host relation form', () => {
     expect(page.showAddDialog).toBe(true);
     expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances' && options?.method === 'POST')).toHaveLength(1);
     expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/73/hosts' && options?.method === 'PUT')).toHaveLength(1);
+    expect(mutationOrder).toEqual([
+      'POST /api/database/instances',
+      'PUT /api/database/instances/73/hosts',
+    ]);
 
     await page._handleSubmit(false);
 
     expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances' && options?.method === 'POST')).toHaveLength(1);
     const puts = authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/73/hosts' && options?.method === 'PUT');
     expect(puts).toHaveLength(2);
+    expect(mutationOrder).toEqual([
+      'POST /api/database/instances',
+      'PUT /api/database/instances/73/hosts',
+      'PUT /api/database/instances/73/hosts',
+    ]);
     expect(JSON.parse(puts[1][1].body)).toEqual({ hosts: [{ serverId: 7, role: 'primary' }] });
     expect(page.pendingCreatedInstanceId).toBeNull();
     expect(page.showAddDialog).toBe(false);
@@ -118,11 +132,20 @@ describe('database instance host relation form', () => {
     const root = page.shadowRoot as ShadowRoot;
     const field = root.querySelector('instance-host-field') as any;
     expect(field.value).toBeNull();
+    const formFields = Array.from(root.querySelectorAll('app-form-field')) as Array<HTMLElement & { label: string }>;
+    const renderedValue = (label: string) => formFields
+      .find((formField) => formField.label === label)
+      ?.querySelector<HTMLInputElement>('input')?.value;
+    expect(renderedValue('实例名称')).toBe('prod-db');
+    expect(renderedValue('主机地址')).toBe('10.0.0.41');
+    expect(renderedValue('用户名')).toBe('dba');
+    expect(renderedValue('数据库名')).toBe('prod');
     const save = Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('保存修改'));
     expect(save?.disabled).toBe(true);
 
     await page._handleSubmit(true);
     expect(authFetch.mock.calls.some(([url, options]) => url === '/api/database/instances/41' && options?.method === 'PUT')).toBe(false);
+    expect(authFetch.mock.calls.some(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT')).toBe(false);
     expect(page.instanceHosts).toBeNull();
 
     (field.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('[data-action="reload"]')?.click();

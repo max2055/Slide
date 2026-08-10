@@ -74,6 +74,44 @@ describe('instance-host-field', () => {
     expect(details.at(-1)).toEqual({ hosts: [{ serverId: 7, role: 'primary' }] });
   });
 
+  it('preserves both selected hosts when their roles are edited independently', async () => {
+    const element = document.createElement('instance-host-field') as HostFieldElement;
+    element.value = [];
+    const details: Array<{ hosts: Array<{ serverId: number; role: string }> }> = [];
+    element.addEventListener('instance-host-change', (event) => {
+      details.push((event as CustomEvent).detail);
+    });
+    document.body.append(element);
+    await settle(element);
+
+    element.shadowRoot?.querySelector<HTMLInputElement>('input[value="7"]')?.click();
+    await element.updateComplete;
+    element.shadowRoot?.querySelector<HTMLInputElement>('input[value="8"]')?.click();
+    await element.updateComplete;
+
+    expect(Array.from(element.shadowRoot?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? [])
+      .filter((checkbox) => checkbox.checked)).toHaveLength(2);
+    expect(element.shadowRoot?.querySelectorAll('select[data-server-id]')).toHaveLength(2);
+
+    const primaryRole = element.shadowRoot?.querySelector<HTMLSelectElement>('select[data-server-id="7"]');
+    expect(primaryRole).toBeTruthy();
+    primaryRole!.value = 'primary';
+    primaryRole!.dispatchEvent(new Event('change', { bubbles: true }));
+    await element.updateComplete;
+
+    const replicaRole = element.shadowRoot?.querySelector<HTMLSelectElement>('select[data-server-id="8"]');
+    expect(replicaRole).toBeTruthy();
+    replicaRole!.value = 'replica';
+    replicaRole!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(details.at(-1)).toEqual({
+      hosts: [
+        { serverId: 7, role: 'primary' },
+        { serverId: 8, role: 'replica' },
+      ],
+    });
+  });
+
   it('keeps an unknown relation distinct from an empty relation and exposes reload', async () => {
     const element = document.createElement('instance-host-field') as HostFieldElement;
     element.value = null;
