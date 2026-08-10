@@ -30,6 +30,31 @@ describe('active instance id selector', () => {
     expect(sql).not.toMatch(/\*|username|password|password_encrypted|connection_string|host/i);
   });
 
+  it('returns an empty list when no active instances exist', async () => {
+    const execute = vi.fn(async () => [[]]);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+
+    await expect(instanceDatabaseService.listActiveInstanceIds()).resolves.toEqual([]);
+  });
+
+  it('rejects with a stable error when the database pool is unavailable', async () => {
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue(null);
+
+    await expect(instanceDatabaseService.listActiveInstanceIds())
+      .rejects.toThrow('INSTANCE_ENUMERATION_UNAVAILABLE');
+  });
+
+  it('rejects with a stable error and preserves the SQL failure as cause', async () => {
+    const sqlFailure = new Error('query failed');
+    const execute = vi.fn(async () => { throw sqlFailure; });
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+
+    await expect(instanceDatabaseService.listActiveInstanceIds()).rejects.toMatchObject({
+      message: 'INSTANCE_ENUMERATION_UNAVAILABLE',
+      cause: sqlFailure,
+    });
+  });
+
   it('is the only instance enumeration used by the production fault diagnosis default', () => {
     const source = readFileSync(resolve(import.meta.dirname, 'fault-diagnosis-service.ts'), 'utf8');
 

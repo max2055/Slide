@@ -80,7 +80,7 @@ class InstanceDatabaseService {
 
   async listActiveInstanceIds(): Promise<number[]> {
     const pool = this.getPool();
-    if (!pool) return [];
+    if (!pool) throw new Error('INSTANCE_ENUMERATION_UNAVAILABLE');
     try {
       const [rows] = await pool.execute(
         `SELECT id
@@ -92,8 +92,7 @@ class InstanceDatabaseService {
         .map((row: any) => Number(row.id))
         .filter((id: number) => Number.isSafeInteger(id) && id > 0);
     } catch (error) {
-      console.error('获取活跃实例 ID 列表失败:', error);
-      return [];
+      throw new Error('INSTANCE_ENUMERATION_UNAVAILABLE', { cause: error });
     }
   }
 

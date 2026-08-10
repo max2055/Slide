@@ -537,7 +537,7 @@ describe('FaultDiagnosisService', () => {
       }
     });
 
-    it('isolates per-instance health and diagnosis failures and returns successful analysis ids only', async () => {
+    it('processes later instances after health, diagnosis, and unsuccessful results then rejects with failed ids', async () => {
       const deps = dependencies();
       deps.listActiveInstances.mockResolvedValue([{ id: 207 }, { id: 208 }, { id: 209 }, { id: 210 }]);
       deps.checkHealth.mockImplementation(async (instanceId) => {
@@ -549,17 +549,28 @@ describe('FaultDiagnosisService', () => {
         return diagnosticContextFor(instanceId);
       });
       deps.analysisStore.createAnalysis.mockImplementation(async (data: any) => {
-        if (data.instance_id === 209) return { success: true, analysisId: 2091 };
-        return { success: false, error: 'CREATE_FAILED' };
+        if (data.instance_id === 209) return { success: false, error: 'CREATE_FAILED' };
+        return { success: true, analysisId: 2101 };
       });
       const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
 
-      await expect(service.diagnoseUnhealthyInstances()).resolves.toEqual([2091]);
+      await expect(service.diagnoseUnhealthyInstances())
+        .rejects.toThrow('FAULT_DIAGNOSIS_BATCH_FAILED:207,208,209');
 
       expect(deps.checkHealth.mock.calls.map(([instanceId]) => instanceId)).toEqual([207, 208, 209, 210]);
       expect(deps.contextCollector.collect.mock.calls.map(([, instanceId]) => instanceId)).toEqual([208, 209, 210]);
       expect(deps.dispatch).toHaveBeenCalledTimes(1);
-      expect(deps.dispatch).toHaveBeenCalledWith(expect.objectContaining({ instanceId: 209 }));
+      expect(deps.dispatch).toHaveBeenCalledWith(expect.objectContaining({ instanceId: 210 }));
+    });
+
+    it('returns an empty result without health checks when no active instances exist', async () => {
+      const deps = dependencies();
+      const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+      await expect(service.diagnoseUnhealthyInstances()).resolves.toEqual([]);
+
+      expect(deps.checkHealth).not.toHaveBeenCalled();
+      expect(deps.contextCollector.collect).not.toHaveBeenCalled();
     });
 
     it('propagates active-instance enumeration failures without checking health', async () => {

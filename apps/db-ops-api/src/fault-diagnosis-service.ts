@@ -53,6 +53,7 @@ export class FaultDiagnosisService {
   async diagnoseUnhealthyInstances(): Promise<number[]> {
     const instances = await this.dependencies.listActiveInstances();
     const analysisIds: number[] = [];
+    const failedInstanceIds: number[] = [];
     for (const instance of instances) {
       try {
         const health = await this.dependencies.checkHealth(instance.id);
@@ -73,8 +74,17 @@ export class FaultDiagnosisService {
           requestId: `fault-diagnosis:${instance.id}:${this.dependencies.randomUUID()}`,
         });
         const result = await this.diagnose(actor, instance.id, 'auto');
-        if (result.success && result.analysisId !== undefined) analysisIds.push(result.analysisId);
-      } catch {}
+        if (result.success && result.analysisId !== undefined) {
+          analysisIds.push(result.analysisId);
+        } else {
+          failedInstanceIds.push(instance.id);
+        }
+      } catch {
+        failedInstanceIds.push(instance.id);
+      }
+    }
+    if (failedInstanceIds.length > 0) {
+      throw new Error(`FAULT_DIAGNOSIS_BATCH_FAILED:${failedInstanceIds.join(',')}`);
     }
     return analysisIds;
   }
