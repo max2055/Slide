@@ -315,7 +315,7 @@ describe('MysqlInstanceHostStore current relation integrity', () => {
     const migrationUrl = new URL('../../sql/migrations/063_instance_host_relation_metadata_comment.sql', import.meta.url);
     expect(existsSync(migrationUrl)).toBe(true);
     const sql = readFileSync(migrationUrl, 'utf8');
-    expect(sql).toMatch(/ALTER TABLE\s+resource_relations\s+MODIFY COLUMN metadata\s+JSON\s+NULL\s+COMMENT '关系元数据'(?:\s+AFTER provenance)?\s*;/i);
+    expect(sql).toMatch(/ALTER TABLE\s+resource_relations\s+MODIFY COLUMN metadata\s+JSON\s+NULL\s+COMMENT '关系元数据'\s+AFTER provenance\s*;/i);
   });
 
   it('returns enriched mappings from the replace transaction before commit', async () => {
