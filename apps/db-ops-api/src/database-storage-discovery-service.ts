@@ -1,19 +1,20 @@
 import { posix } from 'node:path';
 import { databaseService, type DatabaseConnection } from './database-service.js';
+import { instanceDatabaseService } from './instance-database-service.js';
 
 const MAX_PATH_BYTES = 4096;
 const MAX_DESCRIPTORS = 128;
 
 const MYSQL_DATADIR_SQL = 'SELECT @@GLOBAL.datadir AS path';
-const MYSQL_FILES_SQL = "SELECT FILE_NAME, TABLESPACE_NAME, FILE_TYPE FROM INFORMATION_SCHEMA.FILES WHERE FILE_NAME IS NOT NULL AND FILE_TYPE IN ('DATAFILE', 'UNDO LOG') LIMIT 128";
+const MYSQL_FILES_SQL = "SELECT FILE_NAME, TABLESPACE_NAME, FILE_TYPE FROM INFORMATION_SCHEMA.FILES WHERE FILE_NAME IS NOT NULL AND FILE_TYPE IN ('TABLESPACE', 'DATAFILE', 'UNDO LOG', 'TEMPORARY') ORDER BY TABLESPACE_NAME, FILE_NAME LIMIT 128";
 const POSTGRES_METADATA_SQL = "SELECT current_setting('data_directory') AS data_directory, current_setting('server_version_num') AS server_version_num";
 const POSTGRES_TABLESPACES_SQL = "SELECT spcname AS tablespace_name, pg_tablespace_location(oid) AS path FROM pg_tablespace WHERE pg_tablespace_location(oid) <> '' ORDER BY spcname LIMIT 128";
-const POSTGRES_RELATIONS_SQL = 'SELECT schemaname AS schema_name, relname AS object_name, pg_relation_filepath(relid) AS path, pg_total_relation_size(relid) AS logical_bytes FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC, schemaname, relname LIMIT 32';
-const ORACLE_DATA_FILES_SQL = 'SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM DBA_DATA_FILES WHERE ROWNUM <= 128';
-const ORACLE_TEMP_FILES_SQL = 'SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM DBA_TEMP_FILES WHERE ROWNUM <= 128';
-const ORACLE_LOG_FILES_SQL = 'SELECT MEMBER FROM V$LOGFILE WHERE ROWNUM <= 128';
-const ORACLE_CONTROL_FILES_SQL = 'SELECT NAME FROM V$CONTROLFILE WHERE ROWNUM <= 128';
-const DAMENG_DATA_FILES_SQL = 'SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM DBA_DATA_FILES WHERE ROWNUM <= 128';
+const POSTGRES_RELATIONS_SQL = 'SELECT schemaname AS schema_name, relname AS object_name, pg_relation_filepath(relid) AS path, pg_total_relation_size(relid) AS logical_bytes FROM pg_stat_user_tables WHERE pg_relation_filepath(relid) IS NOT NULL ORDER BY pg_total_relation_size(relid) DESC, schemaname, relname LIMIT 32';
+const ORACLE_DATA_FILES_SQL = 'SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM (SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM DBA_DATA_FILES ORDER BY TABLESPACE_NAME, FILE_NAME) WHERE ROWNUM <= 128';
+const ORACLE_TEMP_FILES_SQL = 'SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM (SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM DBA_TEMP_FILES ORDER BY TABLESPACE_NAME, FILE_NAME) WHERE ROWNUM <= 128';
+const ORACLE_LOG_FILES_SQL = 'SELECT MEMBER FROM (SELECT MEMBER FROM V$LOGFILE ORDER BY MEMBER) WHERE ROWNUM <= 128';
+const ORACLE_CONTROL_FILES_SQL = 'SELECT NAME FROM (SELECT NAME FROM V$CONTROLFILE ORDER BY NAME) WHERE ROWNUM <= 128';
+const DAMENG_DATA_FILES_SQL = 'SELECT FILE_NAME, TABLESPACE_NAME, BYTES FROM DBA_DATA_FILES ORDER BY FILE_ID FETCH FIRST 128 ROWS ONLY';
 
 export type StorageDescriptorKind =
   | 'data-directory'
@@ -58,8 +59,20 @@ export interface DatabaseStorageConnectionProvider {
   getConnection(instanceId: number): DatabaseConnection | null;
 }
 
+export interface DatabaseStorageMetadataProvider {
+  getDatabaseType(instanceId: number): Promise<string | null>;
+}
+
+const publicInstanceMetadataProvider: DatabaseStorageMetadataProvider = {
+  async getDatabaseType(instanceId: number): Promise<string | null> {
+    const metadata = await instanceDatabaseService.getPublicConnectionMetadata(instanceId);
+    return typeof metadata?.db_type === 'string' ? metadata.db_type : null;
+  },
+};
+
 export type StorageDiscoveryErrorCode =
   | 'STORAGE_DISCOVERY_INVALID_INSTANCE_ID'
+  | 'STORAGE_DISCOVERY_METADATA_UNAVAILABLE'
   | 'STORAGE_DISCOVERY_CONNECTION_UNAVAILABLE';
 
 export class DatabaseStorageDiscoveryError extends Error {
@@ -238,11 +251,31 @@ function withOptionalFields(
 }
 
 export class DatabaseStorageDiscoveryService {
-  constructor(private readonly provider: DatabaseStorageConnectionProvider = databaseService) {}
+  constructor(
+    private readonly provider: DatabaseStorageConnectionProvider = databaseService,
+    private readonly metadataProvider: DatabaseStorageMetadataProvider = publicInstanceMetadataProvider,
+  ) {}
 
   async discover(instanceId: number): Promise<StorageDiscoveryResult> {
     if (!Number.isSafeInteger(instanceId) || instanceId <= 0) {
       throw new DatabaseStorageDiscoveryError('STORAGE_DISCOVERY_INVALID_INSTANCE_ID');
+    }
+
+    let rawDatabaseType: string | null;
+    try {
+      rawDatabaseType = await this.metadataProvider.getDatabaseType(instanceId);
+    } catch {
+      throw new DatabaseStorageDiscoveryError('STORAGE_DISCOVERY_METADATA_UNAVAILABLE');
+    }
+    if (typeof rawDatabaseType !== 'string' || rawDatabaseType.trim().length === 0) {
+      throw new DatabaseStorageDiscoveryError('STORAGE_DISCOVERY_METADATA_UNAVAILABLE');
+    }
+
+    const databaseType = rawDatabaseType.trim().toLowerCase();
+    const accumulator = new DiscoveryAccumulator();
+    if (!['mysql', 'postgresql', 'oracle', 'dameng'].includes(databaseType)) {
+      accumulator.addGap('STORAGE_DISCOVERY_UNSUPPORTED', databaseType);
+      return accumulator.result();
     }
 
     let alive: boolean;
@@ -261,9 +294,6 @@ export class DatabaseStorageDiscoveryService {
     }
     if (!connection) throw new DatabaseStorageDiscoveryError('STORAGE_DISCOVERY_CONNECTION_UNAVAILABLE');
 
-    const databaseType = String(connection.db_type || connection.config?.db_type || 'unknown').toLowerCase();
-    const accumulator = new DiscoveryAccumulator();
-
     switch (databaseType) {
       case 'mysql':
         await this.discoverMySql(connection, accumulator);
@@ -277,8 +307,6 @@ export class DatabaseStorageDiscoveryService {
       case 'dameng':
         await this.discoverDameng(connection, accumulator);
         break;
-      default:
-        accumulator.addGap('STORAGE_DISCOVERY_UNSUPPORTED', databaseType);
     }
 
     return accumulator.result();
@@ -309,15 +337,21 @@ export class DatabaseStorageDiscoveryService {
 
     try {
       const result = await pool.query(MYSQL_FILES_SQL) as unknown;
-      for (const row of mysqlRows(result)) {
+      const rows = mysqlRows(result);
+      if (rows.length >= MAX_DESCRIPTORS) {
+        accumulator.addGap('STORAGE_DISCOVERY_LIMIT_REACHED', 'mysql.information_schema.files');
+      }
+      for (const row of rows) {
         const fileType = optionalText(rowValue(row, ['FILE_TYPE'], 2))?.toUpperCase();
-        if (fileType !== 'DATAFILE' && fileType !== 'UNDO LOG') continue;
+        if (!fileType || !['TABLESPACE', 'DATAFILE', 'UNDO LOG', 'TEMPORARY'].includes(fileType)) continue;
 
         const tablespace = optionalText(rowValue(row, ['TABLESPACE_NAME'], 1));
         accumulator.addDescriptor(
           rowValue(row, ['FILE_NAME'], 0),
           withOptionalFields({
-            kind: fileType === 'UNDO LOG' ? 'undo-log' : 'data-file',
+            kind: fileType === 'UNDO LOG'
+              ? 'undo-log'
+              : fileType === 'TEMPORARY' ? 'temp-file' : 'data-file',
             source: 'mysql.information_schema.files',
           }, { tablespace }),
           dataDirectory ? { basePath: dataDirectory } : {},
@@ -368,7 +402,11 @@ export class DatabaseStorageDiscoveryService {
 
     try {
       const result = await client.query(POSTGRES_TABLESPACES_SQL) as unknown;
-      for (const row of extractRows(result)) {
+      const rows = extractRows(result);
+      if (rows.length >= MAX_DESCRIPTORS) {
+        accumulator.addGap('STORAGE_DISCOVERY_LIMIT_REACHED', 'postgresql.pg_tablespace');
+      }
+      for (const row of rows) {
         const rawPath = rowValue(row, ['path'], 1);
         if (rawPath === '') continue;
         const tablespace = optionalText(rowValue(row, ['tablespace_name'], 0));
@@ -486,7 +524,11 @@ export class DatabaseStorageDiscoveryService {
   ): Promise<void> {
     try {
       const result = await client.execute(sql);
-      for (const row of extractRows(result)) consumeRow(row);
+      const rows = extractRows(result);
+      if (rows.length >= MAX_DESCRIPTORS) {
+        accumulator.addGap('STORAGE_DISCOVERY_LIMIT_REACHED', source);
+      }
+      for (const row of rows) consumeRow(row);
     } catch {
       accumulator.addGap('STORAGE_DISCOVERY_QUERY_FAILED', source);
     }
@@ -501,7 +543,11 @@ export class DatabaseStorageDiscoveryService {
 
     try {
       const result = await client.execute(DAMENG_DATA_FILES_SQL);
-      for (const row of extractRows(result)) {
+      const rows = extractRows(result);
+      if (rows.length >= MAX_DESCRIPTORS) {
+        accumulator.addGap('STORAGE_DISCOVERY_LIMIT_REACHED', 'dameng.dba_data_files');
+      }
+      for (const row of rows) {
         const tablespace = optionalText(rowValue(row, ['TABLESPACE_NAME'], 1));
         const bytes = logicalBytes(rowValue(row, ['BYTES'], 2), 'dameng.dba_data_files', accumulator);
         accumulator.addDescriptor(
