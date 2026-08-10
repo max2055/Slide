@@ -40,11 +40,6 @@ import {
   DatabaseInstancesResponseSchema,
   ErrorResponseSchema,
   HealthResponseSchema,
-  HostedInstancesResponseSchema,
-  InstanceHostsResponseSchema,
-  OkResponseSchema,
-  ReplaceInstanceHostsBodySchema,
-  ReplaceInstanceHostsResponseSchema,
 } from './src/contracts/public-api.js';
 import { monitorCollector } from './src/monitor-collector.js';
 import { chatDatabaseService } from './src/chat-database-service.js';
@@ -86,7 +81,8 @@ import { collectionCapabilityTracker } from './src/collection-capabilities.js';
 import { resourceService } from './src/resources/resource-service.js';
 import { capabilityService } from './src/resources/capability-service.js';
 import { observationService } from './src/resources/observation-service.js';
-import { instanceHostService, type InstanceHostMapping } from './src/resources/instance-host-service.js';
+import { instanceHostService } from './src/resources/instance-host-service.js';
+import { registerInstanceHostRoutes } from './src/instance-host-routes.js';
 import { sqlAuditService } from './src/sql-audit-service.js';
 import { queryAuditLogs, auditLogManager, DatabaseAuditLogStore } from './src/audit/audit-log.js';
 import { sqlExecutor } from './src/sql-executor.js';
@@ -165,36 +161,6 @@ function approvalOperationLifecycle(actorId: number) {
 }
 
 const verifyToken = createVerifyToken(JWT_SECRET, actorContextService);
-
-function parsePositiveRouteId(value: unknown): number | null {
-  const candidate = typeof value === 'number'
-    ? value
-    : typeof value === 'string' && /^[1-9]\d*$/.test(value) ? Number(value) : Number.NaN;
-  return Number.isSafeInteger(candidate) && candidate > 0 ? candidate : null;
-}
-
-function serializeTemporalRelation<T extends { validFrom: Date }>(relation: T): Omit<T, 'validFrom'> & { validFrom: string } {
-  return { ...relation, validFrom: relation.validFrom.toISOString() };
-}
-
-function instanceHostHttpError(error: unknown): { statusCode: 400 | 404 | 500; error: string } {
-  const reason = error instanceof Error ? error.message : '';
-  switch (reason) {
-    case 'RESOURCE_FORBIDDEN':
-    case 'INSTANCE_NOT_FOUND':
-      return { statusCode: 404, error: reason };
-    case 'RESOURCE_REF_INVALID':
-    case 'INSTANCE_HOST_PAYLOAD_INVALID':
-    case 'INSTANCE_HOST_LIMIT':
-    case 'INSTANCE_HOST_DUPLICATE':
-    case 'INSTANCE_HOST_ROLE_INVALID':
-    case 'INSTANCE_HOST_NOTES_INVALID':
-    case 'SERVER_NOT_FOUND':
-      return { statusCode: 400, error: reason };
-    default:
-      return { statusCode: 500, error: 'INSTANCE_HOST_OPERATION_FAILED' };
-  }
-}
 
 async function start() {
   // 初始化数据库连接
@@ -333,6 +299,11 @@ async function start() {
 
   // 注册 RBAC 管理 API
   await fastify.register(rbacApiRoutes);
+  await registerInstanceHostRoutes(fastify, {
+    verifyToken,
+    service: instanceHostService,
+    serverLookup: serverDatabaseService,
+  });
 
   // 版本信息（无需认证）
   fastify.get('/api/version', async (_request, reply) => {
@@ -1195,80 +1166,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  fastify.get('/api/database/instances/:id/hosts', {
-    preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')],
-    schema: {
-      response: {
-        200: InstanceHostsResponseSchema,
-        400: ErrorResponseSchema,
-        404: ErrorResponseSchema,
-        500: ErrorResponseSchema,
-      },
-    },
-  }, async (request, reply) => {
-    try {
-      const { id: rawId } = request.params as { id: string };
-      const id = parsePositiveRouteId(rawId);
-      if (id === null) return reply.code(400).send({ error: 'RESOURCE_REF_INVALID' });
-      const hosts = await instanceHostService.listHosts((request as any).user, id);
-      return reply.send({ hosts: hosts.map(serializeTemporalRelation) });
-    } catch (error) {
-      const failure = instanceHostHttpError(error);
-      return reply.code(failure.statusCode).send({ error: failure.error });
-    }
-  });
-
-  fastify.put('/api/database/instances/:id/hosts', {
-    preHandler: [verifyToken, requirePermission('instance:manage'), requireInstanceAccess('read-write')],
-    schema: {
-      body: ReplaceInstanceHostsBodySchema,
-      response: {
-        200: ReplaceInstanceHostsResponseSchema,
-        400: ErrorResponseSchema,
-        404: ErrorResponseSchema,
-        500: ErrorResponseSchema,
-      },
-    },
-  }, async (request, reply) => {
-    try {
-      const { id: rawId } = request.params as { id: string };
-      const id = parsePositiveRouteId(rawId);
-      if (id === null) return reply.code(400).send({ error: 'RESOURCE_REF_INVALID' });
-      const { hosts: mappings } = request.body as { hosts: InstanceHostMapping[] };
-      await instanceHostService.replaceHosts((request as any).user, id, mappings);
-      const hosts = await instanceHostService.listHosts((request as any).user, id);
-      return reply.send({ ok: true, hosts: hosts.map(serializeTemporalRelation) });
-    } catch (error) {
-      const failure = instanceHostHttpError(error);
-      return reply.code(failure.statusCode).send({ error: failure.error });
-    }
-  });
-
-  fastify.delete('/api/database/instances/:id/hosts/:serverId', {
-    preHandler: [verifyToken, requirePermission('instance:manage'), requireInstanceAccess('read-write')],
-    schema: {
-      response: {
-        200: OkResponseSchema,
-        400: ErrorResponseSchema,
-        404: ErrorResponseSchema,
-        500: ErrorResponseSchema,
-      },
-    },
-  }, async (request, reply) => {
-    try {
-      const { id: rawId, serverId: rawServerId } = request.params as { id: string; serverId: string };
-      const id = parsePositiveRouteId(rawId);
-      const serverId = parsePositiveRouteId(rawServerId);
-      if (id === null || serverId === null) return reply.code(400).send({ error: 'RESOURCE_REF_INVALID' });
-      const removed = await instanceHostService.unlinkHost((request as any).user, id, serverId);
-      if (!removed) return reply.code(404).send({ error: 'INSTANCE_HOST_RELATION_NOT_FOUND' });
-      return reply.send({ ok: true });
-    } catch (error) {
-      const failure = instanceHostHttpError(error);
-      return reply.code(failure.statusCode).send({ error: failure.error });
-    }
-  });
-
   // 更新实例
   fastify.put('/api/database/instances/:id', { preHandler: [verifyToken, requirePermission('instance:update'), requireInstanceAccess('read-write')] }, async (request, reply) => {
     try {
@@ -1386,32 +1283,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       reply.send(publicServerDto({ ...safeServer, credential_encrypted }));
     } catch (error: any) {
       reply.code(500).send({ error: '获取服务器详情失败：' + error.message });
-    }
-  });
-
-  fastify.get('/api/servers/:id/instances', {
-    preHandler: [verifyToken, requirePermission('instance:view')],
-    schema: {
-      response: {
-        200: HostedInstancesResponseSchema,
-        400: ErrorResponseSchema,
-        404: ErrorResponseSchema,
-        500: ErrorResponseSchema,
-      },
-    },
-  }, async (request, reply) => {
-    try {
-      const { id: rawId } = request.params as { id: string };
-      const id = parsePositiveRouteId(rawId);
-      if (id === null) return reply.code(400).send({ error: 'RESOURCE_REF_INVALID' });
-      const instances = await instanceHostService.listInstances((request as any).user, id);
-      if (!await serverDatabaseService.getServerById(id)) {
-        return reply.code(404).send({ error: 'SERVER_NOT_FOUND' });
-      }
-      return reply.send({ instances: instances.map(serializeTemporalRelation) });
-    } catch (error) {
-      const failure = instanceHostHttpError(error);
-      return reply.code(failure.statusCode).send({ error: failure.error });
     }
   });
 

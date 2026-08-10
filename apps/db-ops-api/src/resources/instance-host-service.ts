@@ -33,7 +33,7 @@ export interface HostedInstanceDetail extends InstanceHostMapping {
 export interface InstanceHostStore {
   instanceExists(id: number): Promise<boolean>;
   serversExist(ids: number[]): Promise<number[]>;
-  replaceInstanceHosts(instanceId: number, mappings: InstanceHostMapping[], now?: Date): Promise<void>;
+  replaceInstanceHosts(instanceId: number, mappings: InstanceHostMapping[], now?: Date): Promise<InstanceHostDetail[]>;
   expireInstanceHost(instanceId: number, serverId: number, now?: Date): Promise<boolean>;
   listInstanceHosts(instanceId: number): Promise<InstanceHostDetail[]>;
   listServerInstances(serverId: number): Promise<HostedInstanceDetail[]>;
@@ -77,7 +77,7 @@ export class InstanceHostService {
     return this.store.listInstanceHosts(instanceId);
   }
 
-  async replaceHosts(actor: ActorContext, instanceId: number, rawMappings: InstanceHostMapping[]): Promise<void> {
+  async replaceHosts(actor: ActorContext, instanceId: number, rawMappings: InstanceHostMapping[]): Promise<InstanceHostDetail[]> {
     this.assertId(instanceId);
     if (!canManageResource(actor, { type: 'instance', id: instanceId }) || !hasPermission(actor, 'servers:manage')) {
       throw new Error('RESOURCE_FORBIDDEN');
@@ -86,7 +86,7 @@ export class InstanceHostService {
     if (!await this.store.instanceExists(instanceId)) throw new Error('INSTANCE_NOT_FOUND');
     const existingIds = new Set(await this.store.serversExist(mappings.map((mapping) => mapping.serverId)));
     if (mappings.some((mapping) => !existingIds.has(mapping.serverId))) throw new Error('SERVER_NOT_FOUND');
-    await this.store.replaceInstanceHosts(instanceId, mappings);
+    return this.store.replaceInstanceHosts(instanceId, mappings);
   }
 
   async unlinkHost(actor: ActorContext, instanceId: number, serverId: number): Promise<boolean> {
@@ -160,7 +160,7 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
     return rows.map((row) => Number(row.id));
   }
 
-  async replaceInstanceHosts(instanceId: number, mappings: InstanceHostMapping[], now = new Date()): Promise<void> {
+  async replaceInstanceHosts(instanceId: number, mappings: InstanceHostMapping[], now = new Date()): Promise<InstanceHostDetail[]> {
     const connection = await this.pool().getConnection();
     try {
       await connection.beginTransaction();
@@ -206,7 +206,22 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
           [instanceId, mapping.serverId, JSON.stringify({ role: mapping.role, notes: mapping.notes ?? null }), now],
         );
       }
+      const [enrichedRows] = await connection.execute<any[]>(
+        `SELECT rr.target_id AS server_id, rr.metadata, rr.valid_from,
+                s.host, s.port, s.label, s.os_type, s.status, s.collection_enabled
+         FROM resource_relations rr JOIN servers s ON s.id = rr.target_id
+         WHERE rr.source_type = 'instance' AND rr.source_id = ? AND rr.target_type = 'server'
+           AND rr.relation_type = 'runs_on' AND rr.valid_from <= ?
+           AND (rr.valid_until IS NULL OR rr.valid_until > ?)
+         ORDER BY s.host, s.port`,
+        [instanceId, now, now],
+      );
       await connection.commit();
+      return enrichedRows.map((row) => ({
+        ...normalizeRowMapping(row), host: row.host, port: Number(row.port), label: row.label,
+        osType: row.os_type, status: row.status, collectionEnabled: Boolean(row.collection_enabled),
+        validFrom: new Date(row.valid_from),
+      }));
     } catch (error) {
       await connection.rollback().catch(() => undefined);
       throw error;

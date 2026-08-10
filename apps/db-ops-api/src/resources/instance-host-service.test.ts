@@ -32,6 +32,7 @@ class MemoryStore implements InstanceHostStore {
   async serversExist(ids: number[]) { return ids.filter((id) => this.servers.has(id)); }
   async replaceInstanceHosts(instanceId: number, mappings: InstanceHostMapping[]) {
     this.mappings.set(instanceId, mappings.map((mapping) => ({ ...mapping })));
+    return this.listInstanceHosts(instanceId);
   }
   async expireInstanceHost(instanceId: number, serverId: number) {
     const current = this.mappings.get(instanceId) ?? [];
@@ -106,6 +107,17 @@ describe('InstanceHostService', () => {
       .rejects.toThrow('RESOURCE_FORBIDDEN');
     await expect(service.replaceHosts(actor({ permissions: ['instance:view', 'servers:view'], scopes: { 10: 'read-only' } }), 10, []))
       .rejects.toThrow('RESOURCE_FORBIDDEN');
+  });
+
+  it('returns enriched mappings to a manager without requiring servers:view after the write', async () => {
+    const service = new InstanceHostService(new MemoryStore());
+
+    await expect(service.replaceHosts(actor({
+      permissions: ['instance:manage', 'servers:manage'],
+      scopes: { 10: 'admin' },
+    }), 10, [{ serverId: 20, role: 'primary' }])).resolves.toMatchObject([
+      { serverId: 20, role: 'primary', host: 'host-20' },
+    ]);
   });
 
   it('expires mappings and blocks deletion while a server hosts instances', async () => {
@@ -196,6 +208,7 @@ describe('MysqlInstanceHostStore current relation integrity', () => {
         }
         if (sql.includes('FROM database_instances')) return [[{ id: 10 }]];
         if (sql.includes('FROM servers')) return [[{ id: 20 }]];
+        if (sql.includes('JOIN servers s')) return [[]];
         if (sql.includes('FROM resource_relations')) return [[
           { id: 1, server_id: 20, metadata: { role: 'primary', notes: null }, valid_from: new Date('2026-08-01T00:00:00Z') },
           { id: 2, server_id: 20, metadata: { role: 'primary', notes: null }, valid_from: new Date('2026-08-02T00:00:00Z') },
@@ -211,6 +224,42 @@ describe('MysqlInstanceHostStore current relation integrity', () => {
 
     expect(updates).toEqual([[now, 2]]);
     expect(deletes).toEqual([[3]]);
+  });
+
+  it('returns enriched mappings from the replace transaction before commit', async () => {
+    let committed = false;
+    const now = new Date('2026-08-10T00:00:00Z');
+    const connection = {
+      beginTransaction: async () => {},
+      execute: async (sql: string) => {
+        if (sql.includes('FROM database_instances')) return [[{ id: 10 }]];
+        if (sql.includes('FROM servers')) return [[{ id: 20 }]];
+        if (sql.includes('FROM resource_relations') && sql.includes('FOR UPDATE')) return [[]];
+        if (sql.includes('JOIN servers s')) {
+          expect(committed).toBe(false);
+          return [[{
+            server_id: 20,
+            metadata: { role: 'primary', notes: null },
+            valid_from: now,
+            host: 'db-host.internal',
+            port: 22,
+            label: 'db-host',
+            os_type: 'rhel8',
+            status: 'online',
+            collection_enabled: 1,
+          }]];
+        }
+        return [{ affectedRows: 1 }];
+      },
+      commit: async () => { committed = true; },
+      rollback: async () => {},
+      release: () => {},
+    };
+    const store = new MysqlInstanceHostStore(() => ({ getConnection: async () => connection } as any));
+
+    await expect(store.replaceInstanceHosts(10, [{ serverId: 20, role: 'primary' }], now))
+      .resolves.toMatchObject([{ serverId: 20, host: 'db-host.internal' }]);
+    expect(committed).toBe(true);
   });
 
   it('requires server deletion to lock the server and check current runs_on rows in the same transaction', () => {

@@ -40,7 +40,9 @@ export function buildOpenApiDocument() {
           responses: {
             '200': { description: 'Active Linux hosts related to the database instance', content: { 'application/json': { schema: refSchema(PublicApiSchemas.InstanceHostsResponse) } } },
             '400': { description: 'Invalid resource identifier', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '401': { description: 'Authentication required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
             '404': { description: 'Instance unavailable or unauthorized', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '500': { description: 'Relationship operation failed', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
           },
         },
         put: {
@@ -49,7 +51,9 @@ export function buildOpenApiDocument() {
           responses: {
             '200': { description: 'Atomically replaced and enriched active host mappings', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ReplaceInstanceHostsResponse) } } },
             '400': { description: 'Invalid mapping payload or missing target server', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '401': { description: 'Authentication required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
             '404': { description: 'Instance unavailable or unauthorized', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '500': { description: 'Relationship operation failed', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
           },
         },
       },
@@ -59,7 +63,9 @@ export function buildOpenApiDocument() {
           responses: {
             '200': { description: 'Expired active host mapping', content: { 'application/json': { schema: refSchema(PublicApiSchemas.OkResponse) } } },
             '400': { description: 'Invalid resource identifier', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '401': { description: 'Authentication required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
             '404': { description: 'Mapping unavailable or unauthorized', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '500': { description: 'Relationship operation failed', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
           },
         },
       },
@@ -69,7 +75,9 @@ export function buildOpenApiDocument() {
           responses: {
             '200': { description: 'Database instances hosted by the server and visible to the actor', content: { 'application/json': { schema: refSchema(PublicApiSchemas.HostedInstancesResponse) } } },
             '400': { description: 'Invalid resource identifier', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '401': { description: 'Authentication required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
             '404': { description: 'Server unavailable or unauthorized', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '500': { description: 'Relationship operation failed', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
           },
         },
       },

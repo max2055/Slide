@@ -1785,6 +1785,16 @@
             },
             "description": "Invalid resource identifier"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -1794,6 +1804,16 @@
               }
             },
             "description": "Instance unavailable or unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Relationship operation failed"
           }
         },
         "security": [
@@ -1846,6 +1866,16 @@
             },
             "description": "Invalid mapping payload or missing target server"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -1855,6 +1885,16 @@
               }
             },
             "description": "Instance unavailable or unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Relationship operation failed"
           }
         },
         "security": [
@@ -1908,6 +1948,16 @@
             },
             "description": "Invalid resource identifier"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -1917,6 +1967,16 @@
               }
             },
             "description": "Mapping unavailable or unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Relationship operation failed"
           }
         },
         "security": [
@@ -1978,6 +2038,16 @@
             },
             "description": "Invalid resource identifier"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -1987,6 +2057,16 @@
               }
             },
             "description": "Server unavailable or unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Relationship operation failed"
           }
         },
         "security": [
