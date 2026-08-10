@@ -303,12 +303,12 @@ describe('MysqlInstanceHostStore current relation integrity', () => {
     expect(writes[1].values.at(-1)).toEqual(now);
   });
 
-  it('migrates relation windows to microsecond precision for same-second replacements', () => {
+  it('migrates relation windows to microsecond precision without dropping schema comments', () => {
     const migrationUrl = new URL('../../sql/migrations/061_instance_host_relation_time_precision.sql', import.meta.url);
     expect(existsSync(migrationUrl)).toBe(true);
     const sql = readFileSync(migrationUrl, 'utf8');
-    expect(sql).toMatch(/valid_from\s+DATETIME\(6\)\s+NOT NULL\s+DEFAULT CURRENT_TIMESTAMP\(6\)/i);
-    expect(sql).toMatch(/valid_until\s+DATETIME\(6\)\s+NULL/i);
+    expect(sql).toMatch(/valid_from\s+DATETIME\(6\)\s+NOT NULL\s+DEFAULT CURRENT_TIMESTAMP\(6\)\s+COMMENT '有效来源'/i);
+    expect(sql).toMatch(/valid_until\s+DATETIME\(6\)\s+NULL\s+COMMENT '有效截止'/i);
   });
 
   it('returns enriched mappings from the replace transaction before commit', async () => {
