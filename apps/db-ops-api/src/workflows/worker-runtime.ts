@@ -89,17 +89,68 @@ export class MysqlWorkflowStore implements WorkflowStore {
   private pool(): SqlPool { const pool = this.poolProvider(); if (!pool) throw new Error('WORKFLOW_STORE_UNAVAILABLE'); return pool; }
 }
 export class WorkerRuntime {
+  private runInFlight = false;
   constructor(private readonly store: WorkflowStore, readonly workerId: string, private readonly leaseSeconds = 30) {}
   async claim(): Promise<ClaimedJob | null> { return this.store.claim(this.workerId, this.leaseSeconds); }
   async heartbeat(job: ClaimedJob): Promise<boolean> { return this.store.heartbeat(job.id, this.workerId, job.fencingToken, this.leaseSeconds); }
   async runOnce(handler: (job: ClaimedJob) => Promise<void>, now = Date.now()): Promise<'idle' | WorkflowState> {
-    const job = await this.claim();
-    if (!job) return 'idle';
-    try { await handler(job); return await this.store.complete(job.id, this.workerId, job.fencingToken) ? 'completed' : 'retry'; }
-    catch (error) {
-      const retryAt = job.attempts >= job.maxAttempts ? null : new Date(now + Math.min(60_000, 1_000 * 2 ** Math.max(0, job.attempts - 1)));
-      await this.store.fail(job, this.workerId, error instanceof Error ? error : new Error(String(error)), retryAt);
-      return retryAt ? 'retry' : 'dead_letter';
+    if (this.runInFlight) return 'running';
+    this.runInFlight = true;
+    try {
+      const job = await this.claim();
+      if (!job) return 'idle';
+
+      let heartbeatStopped = false;
+      let heartbeatInFlight: Promise<void> | null = null;
+      let leaseLost = false;
+      let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+      const markLeaseLost = () => {
+        if (leaseLost) return;
+        leaseLost = true;
+        heartbeatStopped = true;
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        console.error(`[WorkerRuntime] WORKFLOW_LEASE_LOST:${job.id}`);
+      };
+      const heartbeat = () => {
+        if (heartbeatStopped || heartbeatInFlight) return;
+        heartbeatInFlight = this.heartbeat(job)
+          .then((renewed) => { if (!renewed) markLeaseLost(); })
+          .catch(() => markLeaseLost())
+          .finally(() => { heartbeatInFlight = null; });
+      };
+
+      try {
+        const heartbeatIntervalMs = Math.max(1, Math.floor(this.leaseSeconds * 1_000 / 3));
+        heartbeatTimer = setInterval(heartbeat, heartbeatIntervalMs);
+        heartbeatTimer.unref?.();
+
+        let handlerFailed = false;
+        let handlerError: unknown;
+        try {
+          await handler(job);
+        } catch (error) {
+          handlerFailed = true;
+          handlerError = error;
+        }
+
+        heartbeatStopped = true;
+        clearInterval(heartbeatTimer);
+        const pendingHeartbeat = heartbeatInFlight;
+        if (pendingHeartbeat) await pendingHeartbeat;
+        if (leaseLost) return 'retry';
+
+        if (!handlerFailed) {
+          return await this.store.complete(job.id, this.workerId, job.fencingToken) ? 'completed' : 'retry';
+        }
+        const retryAt = job.attempts >= job.maxAttempts ? null : new Date(now + Math.min(60_000, 1_000 * 2 ** Math.max(0, job.attempts - 1)));
+        await this.store.fail(job, this.workerId, handlerError instanceof Error ? handlerError : new Error(String(handlerError)), retryAt);
+        return retryAt ? 'retry' : 'dead_letter';
+      } finally {
+        heartbeatStopped = true;
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+      }
+    } finally {
+      this.runInFlight = false;
     }
   }
 }

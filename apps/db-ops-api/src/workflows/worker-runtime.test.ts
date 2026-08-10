@@ -1,7 +1,63 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OutboxService } from './outbox-service.js';
 import { MysqlWorkflowStore, WorkerRuntime, type ClaimedJob, type WorkflowStore } from './worker-runtime.js';
 import { JobRegistry } from './job-registry.js';
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
+
+class SharedLeaseStore implements WorkflowStore {
+  readonly heartbeatCalls: Array<{ workerId: string; fencingToken: number }> = [];
+  private owner: string | null = null;
+  private leaseExpiresAt = 0;
+  private fencingToken = 0;
+  private attempts = 0;
+  private completed = false;
+
+  async claim(workerId: string, leaseSeconds: number): Promise<ClaimedJob | null> {
+    if (this.completed || (this.owner !== null && this.leaseExpiresAt > Date.now())) return null;
+    this.owner = workerId;
+    this.leaseExpiresAt = Date.now() + leaseSeconds * 1_000;
+    this.fencingToken++;
+    this.attempts++;
+    return {
+      id: 'shared-job',
+      type: 'fault.diagnose-unhealthy',
+      payload: {},
+      attempts: this.attempts,
+      maxAttempts: 3,
+      fencingToken: this.fencingToken,
+    };
+  }
+
+  async heartbeat(_jobId: string, workerId: string, fencingToken: number, leaseSeconds: number): Promise<boolean> {
+    this.heartbeatCalls.push({ workerId, fencingToken });
+    if (this.owner !== workerId || this.fencingToken !== fencingToken || this.leaseExpiresAt <= Date.now()) return false;
+    this.leaseExpiresAt = Date.now() + leaseSeconds * 1_000;
+    return true;
+  }
+
+  async complete(_jobId: string, workerId: string, fencingToken: number): Promise<boolean> {
+    if (this.owner !== workerId || this.fencingToken !== fencingToken || this.leaseExpiresAt <= Date.now()) return false;
+    this.completed = true;
+    this.owner = null;
+    return true;
+  }
+
+  async fail(job: ClaimedJob, workerId: string, _error: Error, _retryAt: Date | null): Promise<boolean> {
+    if (this.owner !== workerId || this.fencingToken !== job.fencingToken || this.leaseExpiresAt <= Date.now()) return false;
+    this.owner = null;
+    return true;
+  }
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe('outbox transaction and dedupe', () => {
   it('rolls back an event with its business transaction and commits only once', async () => {
@@ -51,5 +107,88 @@ describe('lease, fencing and dead letter', () => {
     const worker = new WorkerRuntime(store, 'second-worker');
     await expect(worker.runOnce(async () => { throw new Error('poison'); })).resolves.toBe('dead_letter');
     expect(await worker.heartbeat({ ...job, fencingToken: 1 })).toBe(false);
+  });
+
+  it('does not claim or execute again while the same runtime has a run in flight', async () => {
+    const job: ClaimedJob = { id: 'overlap', type: 'fault.diagnose-unhealthy', payload: {}, attempts: 1, maxAttempts: 3, fencingToken: 1 };
+    const claim = vi.fn(async () => job);
+    const complete = vi.fn(async () => true);
+    const store: WorkflowStore = {
+      claim,
+      heartbeat: vi.fn(async () => true),
+      complete,
+      fail: vi.fn(async () => true),
+    };
+    const gate = deferred();
+    const handler = vi.fn(async () => gate.promise);
+    const worker = new WorkerRuntime(store, 'worker-overlap');
+
+    const first = worker.runOnce(handler);
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    const overlapping = worker.runOnce(handler);
+    gate.resolve();
+
+    await expect(overlapping).resolves.toBe('running');
+    await expect(first).resolves.toBe('completed');
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it('heartbeats a long handler and prevents a second worker from reclaiming after the original lease duration', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-10T00:00:00.000Z'));
+    const store = new SharedLeaseStore();
+    const firstGate = deferred();
+    const firstHandler = vi.fn(async () => firstGate.promise);
+    const secondHandler = vi.fn(async () => {});
+    const firstWorker = new WorkerRuntime(store, 'worker-a', 3);
+    const secondWorker = new WorkerRuntime(store, 'worker-b', 3);
+
+    const first = firstWorker.runOnce(firstHandler);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(firstHandler).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(4_000);
+
+    await expect(secondWorker.runOnce(secondHandler)).resolves.toBe('idle');
+    expect(secondHandler).not.toHaveBeenCalled();
+    expect(store.heartbeatCalls.length).toBeGreaterThanOrEqual(3);
+
+    firstGate.resolve();
+    await expect(first).resolves.toBe('completed');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    ['returns false', false, false],
+    ['rejects', true, true],
+  ] as const)('does not write a terminal state when heartbeat %s', async (_label, heartbeatRejects, handlerRejects) => {
+    vi.useFakeTimers();
+    const job: ClaimedJob = { id: 'lost-lease', type: 'fault.diagnose-unhealthy', payload: {}, attempts: 1, maxAttempts: 3, fencingToken: 4 };
+    const heartbeat = vi.fn(async () => {
+      if (heartbeatRejects) throw new Error('HEARTBEAT_UNAVAILABLE');
+      return false;
+    });
+    const complete = vi.fn(async () => true);
+    const fail = vi.fn(async () => true);
+    const store: WorkflowStore = { claim: vi.fn(async () => job), heartbeat, complete, fail };
+    const gate = deferred();
+    const handler = vi.fn(async () => {
+      await gate.promise;
+      if (handlerRejects) throw new Error('HANDLER_FAILED');
+    });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const worker = new WorkerRuntime(store, 'worker-lost', 3);
+
+    const run = worker.runOnce(handler);
+    await vi.advanceTimersByTimeAsync(1_000);
+    gate.resolve();
+
+    await expect(run).resolves.toBe('retry');
+    expect(heartbeat).toHaveBeenCalledWith('lost-lease', 'worker-lost', 4, 3);
+    expect(complete).not.toHaveBeenCalled();
+    expect(fail).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith('[WorkerRuntime] WORKFLOW_LEASE_LOST:lost-lease');
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
