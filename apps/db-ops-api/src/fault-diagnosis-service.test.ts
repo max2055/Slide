@@ -43,6 +43,10 @@ function dependencies(events: string[] = []) {
       }),
     },
     analysisStore: {
+      findActiveByCacheKey: vi.fn(async (_cacheKey: string) => {
+        events.push('active');
+        return null;
+      }),
       findByCacheKey: vi.fn(async (_cacheKey: string) => {
         events.push('cache');
         return null;
@@ -58,7 +62,14 @@ function dependencies(events: string[] = []) {
         events.push('running');
         return { success: true };
       }),
-      failAnalysis: vi.fn(async (_analysisId: number, _message: string) => ({ success: true })),
+      markDispatched: vi.fn(async (_analysisId: number, _sessionKey: string) => {
+        events.push('marker');
+        return true;
+      }),
+      failAnalysis: vi.fn(async (
+        _analysisId: number,
+        _message: string,
+      ): Promise<{ success: boolean; error?: string }> => ({ success: true })),
       waitForCompletion: vi.fn(async (_analysisId: number, _timeoutMs?: number) => ({ status: 'completed' } as any)),
       getAnalysisList: vi.fn(async (_options?: unknown) => []),
       getAnalysisStats: vi.fn(async (_analysisType?: string) => ({})),
@@ -100,7 +111,7 @@ describe('FaultDiagnosisService', () => {
     expect(result).toEqual({ success: true, analysisId: 71, status: 'queued' });
     expect(deps.contextCollector.collect.mock.calls[0]![0]).toBe(actor);
     expect(deps.contextCollector.collect).toHaveBeenCalledWith(actor, 7);
-    expect(events).toEqual(['collect', 'cache', 'create', 'running', 'dispatch']);
+    expect(events).toEqual(['collect', 'cache', 'active', 'create', 'running', 'dispatch', 'marker']);
     expect(deps.analysisStore.createAnalysis).toHaveBeenCalledWith(expect.objectContaining({
       analysis_type: 'fault_diagnosis',
       instance_id: 7,
@@ -110,6 +121,7 @@ describe('FaultDiagnosisService', () => {
     const cacheKey = deps.analysisStore.createAnalysis.mock.calls[0]![0] as { cache_key: string };
     expect(cacheKey.cache_key.length).toBeLessThan(128);
     expect(deps.analysisStore.updateStatus).toHaveBeenCalledWith(71, 'running');
+    expect(deps.analysisStore.markDispatched).toHaveBeenCalledWith(71, 'diagnosis-71');
     expect(deps.dispatch).toHaveBeenCalledWith(expect.objectContaining({
       type: 'fault_diagnosis',
       instanceId: 7,
@@ -148,6 +160,58 @@ describe('FaultDiagnosisService', () => {
     expect(deps.analysisStore.createAnalysis).not.toHaveBeenCalled();
     expect(deps.analysisStore.updateStatus).not.toHaveBeenCalled();
     expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('returns a stable active lookup failure after authorized collection and completed-cache lookup', async () => {
+    const events: string[] = [];
+    const deps = dependencies(events);
+    deps.analysisStore.findActiveByCacheKey.mockImplementation(async () => {
+      events.push('active');
+      throw new Error('ANALYSIS_ACTIVE_LOOKUP_UNAVAILABLE');
+    });
+    const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+    await expect(service.diagnoseInstance(actor, 7)).rejects.toThrow('ANALYSIS_ACTIVE_LOOKUP_UNAVAILABLE');
+
+    expect(events).toEqual(['collect', 'cache', 'active']);
+    expect(deps.analysisStore.createAnalysis).not.toHaveBeenCalled();
+    expect(deps.analysisStore.updateStatus).not.toHaveBeenCalled();
+    expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['returns false', false, 51],
+    ['rejects', true, 52],
+  ] as const)('keeps a successful dispatch conservative when its marker %s', async (_case, markerRejects, userId) => {
+    const markerActor = Object.freeze({ ...actor, userId, requestId: `marker-${userId}` });
+    const deps = dependencies();
+    if (markerRejects) {
+      deps.analysisStore.markDispatched.mockRejectedValue(new Error('MARKER_WRITE_FAILED'));
+    } else {
+      deps.analysisStore.markDispatched.mockResolvedValue(false);
+    }
+    let resolveTerminal!: (value: unknown) => void;
+    deps.analysisStore.waitForCompletion.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveTerminal = resolve;
+    }));
+    const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+    await expect(service.diagnoseInstance(markerActor, 7)).resolves.toEqual({
+      success: false,
+      error: 'FAULT_DIAGNOSIS_DISPATCH_MARKER_UNCONFIRMED',
+      status: 'failure_pending',
+    });
+    await vi.waitFor(() => expect(deps.analysisStore.waitForCompletion).toHaveBeenCalledWith(71, 120_000));
+    await expect(service.diagnoseInstance(markerActor, 7)).resolves.toEqual({
+      success: false,
+      error: '诊断正在创建中，请稍后重试',
+      status: 'failure_pending',
+    });
+
+    expect(deps.dispatch).toHaveBeenCalledTimes(1);
+    expect(deps.analysisStore.markDispatched).toHaveBeenCalledWith(71, 'diagnosis-71');
+    expect(deps.analysisStore.failAnalysis).not.toHaveBeenCalled();
+    resolveTerminal({ status: 'completed' });
   });
 
   it('rejects a mismatched diagnostic subject before cache or persistence', async () => {
@@ -266,7 +330,7 @@ describe('FaultDiagnosisService', () => {
       await expect(service.diagnoseInstance(failureActor, 7)).resolves.toEqual({
         success: false,
         error: '诊断正在创建中，请稍后重试',
-        status: 'in_progress',
+        status: 'failure_pending',
       });
       expect(deps.contextCollector.collect).toHaveBeenCalledTimes(1);
 
@@ -569,6 +633,51 @@ describe('FaultDiagnosisService', () => {
       expect(deps.dispatch).toHaveBeenCalledWith(expect.objectContaining({ instanceId: 210 }));
     });
 
+    it.each([
+      ['running status', 'rejects', 507],
+      ['running status', 'returns unsuccessful', 508],
+      ['dispatch', 'rejects', 509],
+      ['dispatch', 'returns unsuccessful', 510],
+    ] as const)(
+      'does not skip %s failures when failure persistence %s',
+      async (failureStage, persistenceMode, instanceId) => {
+        const deps = dependencies();
+        deps.listActiveInstances.mockResolvedValue([{ id: instanceId }]);
+        deps.checkHealth.mockResolvedValue({ status: 'critical' });
+        deps.contextCollector.collect.mockResolvedValue(diagnosticContextFor(instanceId));
+        if (failureStage === 'running status') {
+          deps.analysisStore.updateStatus.mockResolvedValue({ success: false, error: 'RUNNING_FAILED' });
+        } else {
+          deps.dispatch.mockRejectedValue(new Error('DISPATCH_FAILED'));
+        }
+        if (persistenceMode === 'rejects') {
+          deps.analysisStore.failAnalysis.mockRejectedValue(new Error('FAIL_ANALYSIS_UNAVAILABLE'));
+        } else {
+          deps.analysisStore.failAnalysis.mockResolvedValue({ success: false, error: 'FAIL_ANALYSIS_UNAVAILABLE' });
+        }
+        let resolveTerminal!: (value: unknown) => void;
+        deps.analysisStore.waitForCompletion.mockImplementationOnce(() => new Promise((resolve) => {
+          resolveTerminal = resolve;
+        }));
+        const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+        await expect(service.diagnoseUnhealthyInstances())
+          .rejects.toThrow(`FAULT_DIAGNOSIS_BATCH_FAILED:${instanceId}`);
+        await vi.waitFor(() => expect(deps.analysisStore.waitForCompletion).toHaveBeenCalledWith(71, 120_000));
+
+        const retryOutcome = await service.diagnoseUnhealthyInstances().then(
+          (analysisIds) => ({ analysisIds }),
+          (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }),
+        );
+        resolveTerminal({ status: 'failed' });
+
+        expect(retryOutcome).toEqual({ error: `FAULT_DIAGNOSIS_BATCH_FAILED:${instanceId}` });
+        expect(deps.contextCollector.collect).toHaveBeenCalledTimes(1);
+        expect(deps.analysisStore.createAnalysis).toHaveBeenCalledTimes(1);
+        expect(deps.dispatch).toHaveBeenCalledTimes(failureStage === 'dispatch' ? 1 : 0);
+      },
+    );
+
     it('skips a pending success when retrying a partially failed batch', async () => {
       const deps = dependencies();
       deps.listActiveInstances.mockResolvedValue([{ id: 307 }, { id: 308 }]);
@@ -638,6 +747,67 @@ describe('FaultDiagnosisService', () => {
       expect(deps.contextCollector.collect).toHaveBeenCalledTimes(1);
       expect(deps.analysisStore.createAnalysis).toHaveBeenCalledTimes(1);
       expect(deps.dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips a durably dispatched active diagnosis in a fresh service', async () => {
+      const deps = dependencies();
+      deps.listActiveInstances.mockResolvedValue([{ id: 607 }]);
+      deps.checkHealth.mockResolvedValue({ status: 'critical' });
+      deps.contextCollector.collect.mockResolvedValue(diagnosticContextFor(607));
+      deps.analysisStore.findActiveByCacheKey.mockResolvedValue({
+        id: 6071,
+        status: 'running',
+        sessionKey: 'diagnosis-6071',
+      });
+      let resolveTerminal!: (value: unknown) => void;
+      deps.analysisStore.waitForCompletion.mockImplementation(() => new Promise((resolve) => {
+        resolveTerminal = resolve;
+      }));
+      const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+      const outcome = await service.diagnoseUnhealthyInstances().then(
+        (analysisIds) => ({ analysisIds }),
+        (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }),
+      );
+      await vi.waitFor(() => expect(resolveTerminal).toBeTypeOf('function'));
+      resolveTerminal({ status: 'completed' });
+
+      expect(outcome).toEqual({ analysisIds: [] });
+      expect(deps.contextCollector.collect).toHaveBeenCalledTimes(1);
+      expect(deps.analysisStore.findByCacheKey).toHaveBeenCalledTimes(1);
+      expect(deps.analysisStore.findActiveByCacheKey).toHaveBeenCalledTimes(1);
+      expect(deps.analysisStore.createAnalysis).not.toHaveBeenCalled();
+      expect(deps.analysisStore.updateStatus).not.toHaveBeenCalled();
+      expect(deps.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('rejects an active diagnosis without a durable dispatch marker in a fresh service', async () => {
+      const deps = dependencies();
+      deps.listActiveInstances.mockResolvedValue([{ id: 608 }]);
+      deps.checkHealth.mockResolvedValue({ status: 'critical' });
+      deps.contextCollector.collect.mockResolvedValue(diagnosticContextFor(608));
+      deps.analysisStore.findActiveByCacheKey.mockResolvedValue({
+        id: 6081,
+        status: 'running',
+        sessionKey: null,
+      });
+      let resolveTerminal!: (value: unknown) => void;
+      deps.analysisStore.waitForCompletion.mockImplementation(() => new Promise((resolve) => {
+        resolveTerminal = resolve;
+      }));
+      const service = new FaultDiagnosisService(deps as unknown as FaultDiagnosisDependencies);
+
+      const outcome = await service.diagnoseUnhealthyInstances().then(
+        (analysisIds) => ({ analysisIds }),
+        (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }),
+      );
+      await vi.waitFor(() => expect(resolveTerminal).toBeTypeOf('function'));
+      resolveTerminal({ status: 'failed' });
+
+      expect(outcome).toEqual({ error: 'FAULT_DIAGNOSIS_BATCH_FAILED:608' });
+      expect(deps.analysisStore.createAnalysis).not.toHaveBeenCalled();
+      expect(deps.analysisStore.updateStatus).not.toHaveBeenCalled();
+      expect(deps.dispatch).not.toHaveBeenCalled();
     });
 
     it('returns an empty result without health checks when no active instances exist', async () => {

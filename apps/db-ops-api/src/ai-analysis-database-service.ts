@@ -26,6 +26,12 @@ export interface AiAnalysisRecord {
   updated_at: Date;
 }
 
+export interface ActiveAiAnalysis {
+  id: number;
+  status: 'pending' | 'running';
+  sessionKey: string | null;
+}
+
 class AiAnalysisDatabaseService {
   /**
    * 获取数据库连接池
@@ -124,6 +130,41 @@ class AiAnalysisDatabaseService {
     } catch (error) {
       console.error('更新 session_key 失败:', error);
     }
+  }
+
+  async findActiveByCacheKey(cacheKey: string): Promise<ActiveAiAnalysis | null> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('ANALYSIS_ACTIVE_LOOKUP_UNAVAILABLE');
+    try {
+      const [rows] = await pool.execute(
+        `SELECT id, status, session_key AS sessionKey
+         FROM ai_analysis
+         WHERE cache_key = ? AND status IN ('pending', 'running')
+         ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [cacheKey],
+      ) as any;
+      if (!Array.isArray(rows) || rows.length === 0) return null;
+      const row = rows[0];
+      return {
+        id: Number(row.id),
+        status: row.status,
+        sessionKey: typeof row.sessionKey === 'string' && row.sessionKey.length > 0 ? row.sessionKey : null,
+      };
+    } catch (error) {
+      console.error('查询活跃分析失败:', error);
+      throw new Error('ANALYSIS_ACTIVE_LOOKUP_UNAVAILABLE');
+    }
+  }
+
+  async markDispatched(analysisId: number, sessionKey: string): Promise<boolean> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('ANALYSIS_STORE_UNAVAILABLE');
+    const [result] = await pool.execute(
+      `UPDATE ai_analysis SET session_key = ?
+       WHERE id = ? AND status IN ('pending', 'running') AND session_key IS NULL`,
+      [sessionKey, analysisId],
+    ) as any;
+    return Number(result.affectedRows) === 1;
   }
 
   /**

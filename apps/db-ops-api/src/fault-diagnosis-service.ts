@@ -14,13 +14,15 @@ import {
   type InstanceDiagnosticContextService,
 } from './instance-diagnostic-context-service.js';
 
-const pendingDiagnoses = new Set<string>();
 type FaultDiagnosisTrigger = 'manual' | 'auto';
-type FaultDiagnosisStatus = 'queued' | 'in_progress';
+type PendingDiagnosisState = 'creating' | 'dispatched' | 'failure_unconfirmed';
+type FaultDiagnosisStatus = 'queued' | 'in_progress' | 'failure_pending';
 type FaultDiagnosisResult = { success: boolean; analysisId?: number; error?: string; status?: FaultDiagnosisStatus };
+const pendingDiagnoses = new Map<string, PendingDiagnosisState>();
 
 type FaultAnalysisStore = Pick<typeof aiAnalysisDatabaseService,
-  'findByCacheKey' | 'createAnalysis' | 'updateStatus' | 'failAnalysis' | 'waitForCompletion'
+  'findActiveByCacheKey' | 'findByCacheKey' | 'createAnalysis' | 'updateStatus' | 'markDispatched'
+  | 'failAnalysis' | 'waitForCompletion'
   | 'getAnalysisList' | 'getAnalysisStats'>;
 
 export interface FaultDiagnosisDependencies {
@@ -99,10 +101,9 @@ export class FaultDiagnosisService {
     if (!Number.isSafeInteger(instanceId) || instanceId <= 0) throw new Error('RESOURCE_REF_INVALID');
     const pendingKey = this.buildPendingKey(actor, instanceId, trigger);
     const cacheKey = this.buildCacheKey(actor, instanceId, trigger);
-    if (pendingDiagnoses.has(pendingKey)) {
-      return { success: false, error: '诊断正在创建中，请稍后重试', status: 'in_progress' };
-    }
-    pendingDiagnoses.add(pendingKey);
+    const pendingState = pendingDiagnoses.get(pendingKey);
+    if (pendingState) return pendingDiagnosisResult(pendingState);
+    pendingDiagnoses.set(pendingKey, 'creating');
     let releasePendingOnReturn = true;
 
     try {
@@ -113,6 +114,15 @@ export class FaultDiagnosisService {
 
       const cached = await this.dependencies.analysisStore.findByCacheKey(cacheKey);
       if (cached?.result) return { success: true, analysisId: cached.id };
+
+      const active = await this.dependencies.analysisStore.findActiveByCacheKey(cacheKey);
+      if (active) {
+        const state: PendingDiagnosisState = active.sessionKey ? 'dispatched' : 'failure_unconfirmed';
+        pendingDiagnoses.set(pendingKey, state);
+        releasePendingOnReturn = false;
+        this.monitorCompletion(active.id, pendingKey);
+        return pendingDiagnosisResult(state);
+      }
 
       const createResult = await this.dependencies.analysisStore.createAnalysis({
         analysis_type: 'fault_diagnosis',
@@ -137,12 +147,13 @@ export class FaultDiagnosisService {
       const name = stringMetadata(instance, 'name') || `instance-${instanceId}`;
       const databaseType = stringMetadata(instance, 'db_type') || 'unknown';
       const environment = stringMetadata(instance, 'environment') || 'unknown';
+      const sessionKey = `diagnosis-${analysisId}`;
       try {
         await this.dependencies.dispatch({
           type: 'fault_diagnosis',
           cacheKey,
           instanceId,
-          sessionKey: `diagnosis-${analysisId}`,
+          sessionKey,
           triggerType: trigger,
           existingAnalysisId: analysisId,
           diagnosticContext,
@@ -157,6 +168,22 @@ export class FaultDiagnosisService {
         return { success: false, error: message };
       }
 
+      let markerConfirmed = false;
+      try {
+        markerConfirmed = await this.dependencies.analysisStore.markDispatched(analysisId, sessionKey);
+      } catch {}
+      if (!markerConfirmed) {
+        pendingDiagnoses.set(pendingKey, 'failure_unconfirmed');
+        releasePendingOnReturn = false;
+        this.monitorCompletion(analysisId, pendingKey);
+        return {
+          success: false,
+          error: 'FAULT_DIAGNOSIS_DISPATCH_MARKER_UNCONFIRMED',
+          status: 'failure_pending',
+        };
+      }
+
+      pendingDiagnoses.set(pendingKey, 'dispatched');
       releasePendingOnReturn = false;
       this.monitorCompletion(analysisId, pendingKey);
 
@@ -193,6 +220,7 @@ export class FaultDiagnosisService {
   }
 
   private async persistFailureOrMonitor(analysisId: number, pendingKey: string, error: string): Promise<void> {
+    pendingDiagnoses.set(pendingKey, 'failure_unconfirmed');
     try {
       const result = await this.dependencies.analysisStore.failAnalysis(analysisId, error);
       if (result.success) {
@@ -217,6 +245,14 @@ export class FaultDiagnosisService {
         retry.unref();
       });
   }
+}
+
+function pendingDiagnosisResult(state: PendingDiagnosisState): FaultDiagnosisResult {
+  return {
+    success: false,
+    error: '诊断正在创建中，请稍后重试',
+    status: state === 'failure_unconfirmed' ? 'failure_pending' : 'in_progress',
+  };
 }
 
 function stringMetadata(instance: InstanceDiagnosticContext['database']['instance'], key: string): string | null {
