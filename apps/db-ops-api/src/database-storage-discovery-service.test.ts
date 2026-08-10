@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { dbConnection } from './db-connection.js';
 import {
   DatabaseStorageDiscoveryService,
   databaseStorageDiscoveryService,
@@ -7,6 +8,7 @@ import {
 } from './database-storage-discovery-service.js';
 
 const MYSQL_DATADIR_SQL = 'SELECT @@GLOBAL.datadir AS path';
+const INSTANCE_TYPE_SQL = 'SELECT db_type FROM database_instances WHERE id = ? LIMIT 1';
 const MYSQL_FILES_SQL = "SELECT FILE_NAME, TABLESPACE_NAME, FILE_TYPE FROM INFORMATION_SCHEMA.FILES WHERE FILE_NAME IS NOT NULL AND FILE_TYPE IN ('TABLESPACE', 'DATAFILE', 'UNDO LOG', 'TEMPORARY') ORDER BY TABLESPACE_NAME, FILE_NAME LIMIT 128";
 const POSTGRES_METADATA_SQL = "SELECT current_setting('data_directory') AS data_directory, current_setting('server_version_num') AS server_version_num";
 const POSTGRES_TABLESPACES_SQL = "SELECT spcname AS tablespace_name, pg_tablespace_location(oid) AS path FROM pg_tablespace WHERE pg_tablespace_location(oid) <> '' ORDER BY spcname LIMIT 128";
@@ -59,8 +61,69 @@ function repeatRows(row: unknown[], count = 128): unknown[][] {
 }
 
 describe('DatabaseStorageDiscoveryService', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it('exports a production-ready default instance', () => {
     expect(databaseStorageDiscoveryService).toBeInstanceOf(DatabaseStorageDiscoveryService);
+  });
+
+  it('uses the production metadata provider to short-circuit unsupported instances', async () => {
+    const execute = vi.fn(async (_sql: string, _params: unknown[]) => [[{ db_type: 'mongodb' }], []]);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as never);
+    const ensureConnectionAlive = vi.fn(async () => false);
+    const getConnection = vi.fn(() => null);
+    const service = new DatabaseStorageDiscoveryService({ ensureConnectionAlive, getConnection });
+
+    await expect(service.discover(31)).resolves.toEqual({
+      descriptors: [],
+      gaps: [{ code: 'STORAGE_DISCOVERY_UNSUPPORTED', source: 'mongodb' }],
+    });
+    expect(execute).toHaveBeenCalledWith(INSTANCE_TYPE_SQL, [31]);
+    const [sql] = execute.mock.calls[0];
+    expect(sql).not.toMatch(/password|connection_string|username|host/i);
+    expect(ensureConnectionAlive).not.toHaveBeenCalled();
+    expect(getConnection).not.toHaveBeenCalled();
+  });
+
+  it('uses the production metadata provider before opening a supported connection', async () => {
+    const execute = vi.fn(async (_sql: string, _params: unknown[]) => [[{ db_type: 'mysql' }], []]);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as never);
+    const query = vi.fn()
+      .mockResolvedValueOnce([[{ path: '/mysql' }], []])
+      .mockResolvedValueOnce([[], []]);
+    const ensureConnectionAlive = vi.fn(async () => true);
+    const getConnection = vi.fn(() => ({ db_type: 'mysql', pool: { query } } as never));
+    const service = new DatabaseStorageDiscoveryService({ ensureConnectionAlive, getConnection });
+
+    const result = await service.discover(32);
+
+    expect(execute).toHaveBeenCalledWith(INSTANCE_TYPE_SQL, [32]);
+    expect(ensureConnectionAlive).toHaveBeenCalledWith(32);
+    expect(getConnection).toHaveBeenCalledWith(32);
+    expect(result.descriptors).toContainEqual(expect.objectContaining({ path: '/mysql' }));
+  });
+
+  it('returns a stable error when production instance metadata is unavailable', async () => {
+    const getPool = vi.spyOn(dbConnection, 'getPool');
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const states = [
+      null,
+      { execute: vi.fn(async () => { throw new Error('metadata query failed'); }) },
+      { execute: vi.fn(async () => [[], []]) },
+    ];
+
+    for (const pool of states) {
+      getPool.mockReturnValueOnce(pool as never);
+      const ensureConnectionAlive = vi.fn(async () => true);
+      const getConnection = vi.fn(() => null);
+      const service = new DatabaseStorageDiscoveryService({ ensureConnectionAlive, getConnection });
+
+      await expect(service.discover(33)).rejects.toMatchObject({
+        code: 'STORAGE_DISCOVERY_METADATA_UNAVAILABLE',
+      });
+      expect(ensureConnectionAlive).not.toHaveBeenCalled();
+      expect(getConnection).not.toHaveBeenCalled();
+    }
   });
 
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(

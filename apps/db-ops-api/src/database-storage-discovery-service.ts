@@ -1,10 +1,11 @@
 import { posix } from 'node:path';
 import { databaseService, type DatabaseConnection } from './database-service.js';
-import { instanceDatabaseService } from './instance-database-service.js';
+import { dbConnection } from './db-connection.js';
 
 const MAX_PATH_BYTES = 4096;
 const MAX_DESCRIPTORS = 128;
 
+const INSTANCE_TYPE_SQL = 'SELECT db_type FROM database_instances WHERE id = ? LIMIT 1';
 const MYSQL_DATADIR_SQL = 'SELECT @@GLOBAL.datadir AS path';
 const MYSQL_FILES_SQL = "SELECT FILE_NAME, TABLESPACE_NAME, FILE_TYPE FROM INFORMATION_SCHEMA.FILES WHERE FILE_NAME IS NOT NULL AND FILE_TYPE IN ('TABLESPACE', 'DATAFILE', 'UNDO LOG', 'TEMPORARY') ORDER BY TABLESPACE_NAME, FILE_NAME LIMIT 128";
 const POSTGRES_METADATA_SQL = "SELECT current_setting('data_directory') AS data_directory, current_setting('server_version_num') AS server_version_num";
@@ -63,12 +64,23 @@ export interface DatabaseStorageMetadataProvider {
   getDatabaseType(instanceId: number): Promise<string | null>;
 }
 
-const publicInstanceMetadataProvider: DatabaseStorageMetadataProvider = {
+export class DatabaseStorageInstanceTypeProvider implements DatabaseStorageMetadataProvider {
   async getDatabaseType(instanceId: number): Promise<string | null> {
-    const metadata = await instanceDatabaseService.getPublicConnectionMetadata(instanceId);
-    return typeof metadata?.db_type === 'string' ? metadata.db_type : null;
-  },
-};
+    if (!Number.isSafeInteger(instanceId) || instanceId <= 0) return null;
+    const pool = dbConnection.getPool();
+    if (!pool) return null;
+
+    try {
+      const [rows] = await pool.execute(INSTANCE_TYPE_SQL, [instanceId]) as unknown as [unknown, unknown];
+      if (!Array.isArray(rows) || rows.length === 0 || !isRecord(rows[0])) return null;
+      return typeof rows[0].db_type === 'string' ? rows[0].db_type : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+export const databaseStorageInstanceTypeProvider = new DatabaseStorageInstanceTypeProvider();
 
 export type StorageDiscoveryErrorCode =
   | 'STORAGE_DISCOVERY_INVALID_INSTANCE_ID'
@@ -253,7 +265,7 @@ function withOptionalFields(
 export class DatabaseStorageDiscoveryService {
   constructor(
     private readonly provider: DatabaseStorageConnectionProvider = databaseService,
-    private readonly metadataProvider: DatabaseStorageMetadataProvider = publicInstanceMetadataProvider,
+    private readonly metadataProvider: DatabaseStorageMetadataProvider = databaseStorageInstanceTypeProvider,
   ) {}
 
   async discover(instanceId: number): Promise<StorageDiscoveryResult> {
