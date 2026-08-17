@@ -181,6 +181,7 @@ export const zh_CN: TranslationMap = {
     "prompt-settings": "提示词管理",
     "scoring-settings": "评分权重配置",
     "cron-jobs": "定时任务",
+    "health-center": "系统健康与一致性",
     rbac: "权限管理",
     // 其他（保留）
     channels: "频道",
@@ -223,6 +224,7 @@ export const zh_CN: TranslationMap = {
     rbac: "管理角色、权限与实例访问边界",
     "llm-config": "管理 AI 模型提供商和 API Key",
     "cron-jobs": "管理定时采集和分析任务",
+    "health-center": "系统数据一致性、资源健康与通知闭环",
     // 其他（保留）
     channels: "频道和设置。",
     "llm-usage": "LLM 用量统计和成本。",

@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   MemoryAuditLogStore,
+  DatabaseAuditLogStore,
   AuditLogManager,
   memoryAuditLogStore,
   auditLogManager,
@@ -193,6 +194,40 @@ describe('MemoryAuditLogStore', () => {
   });
 });
 
+describe('DatabaseAuditLogStore', () => {
+  it('persists and queries non-SQL audit entries through audit_log_entries', async () => {
+    const execute = vi.fn().mockResolvedValue([{ affectedRows: 1 }]);
+    const query = vi.fn()
+      .mockResolvedValueOnce([[{ total: 1 }]])
+      .mockResolvedValueOnce([[
+        {
+          id: 'audit_1', event_type: 'config_change', level: 'info', user_id: '7', username: 'alice',
+          user_role: 'admin', action: 'update_config', resource_type: 'config', resource_id: 'agent_sandbox_enabled',
+          details_json: '{"oldValue":false,"newValue":true}', approval_request_id: null, client_ip: '127.0.0.1',
+          user_agent: null, result: 'success', error_message: null, timestamp_ms: 1_787_000_000_000,
+        },
+      ]]);
+    const store = new DatabaseAuditLogStore({ execute, query } as any);
+
+    await store.write({
+      id: 'audit_1', eventType: 'config_change', level: 'info', userId: '7', username: 'alice',
+      userRole: 'admin', action: 'update_config', resourceType: 'config', resourceId: 'agent_sandbox_enabled',
+      details: { oldValue: false, newValue: true }, clientIp: '127.0.0.1', result: 'success', timestamp: 1_787_000_000_000,
+    });
+    const result = await store.query({ eventType: 'config_change' });
+
+    expect(execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO audit_log_entries'), expect.any(Array));
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('FROM audit_log_entries WHERE event_type = ?'), ['config_change']);
+    expect(result).toEqual({
+      total: 1,
+      entries: [expect.objectContaining({
+        eventType: 'config_change', resourceId: 'agent_sandbox_enabled',
+        details: { oldValue: false, newValue: true }, result: 'success',
+      })],
+    });
+  });
+});
+
 describe('AuditLogManager', () => {
   let manager: AuditLogManager;
   let store: MemoryAuditLogStore;
@@ -361,6 +396,43 @@ describe('AuditLogManager', () => {
         oldValue: 'Old System',
         newValue: 'New System',
       });
+    });
+
+    it('persists configuration changes in the authoritative query store', async () => {
+      const persistentStore = new MemoryAuditLogStore();
+      manager = new AuditLogManager(store, persistentStore);
+
+      await manager.logConfigChange({
+        userId: '7',
+        configKey: 'agent_sandbox_enabled',
+        oldValue: false,
+        newValue: true,
+      });
+
+      const result = await manager.query({ eventType: 'config_change' });
+      expect(result.entries).toHaveLength(1);
+      expect(result.entries[0]).toMatchObject({
+        resourceId: 'agent_sandbox_enabled',
+        result: 'success',
+      });
+    });
+
+    it('persists failed configuration mutations without exposing internal errors', async () => {
+      const persistentStore = new MemoryAuditLogStore();
+      manager = new AuditLogManager(store, persistentStore);
+
+      await manager.logConfigChange({
+        userId: '7',
+        configKey: 'agent_sandbox_enabled',
+        oldValue: false,
+        newValue: true,
+        result: 'failure',
+        errorMessage: 'SANDBOX_CONFIG_UPDATE_FAILED',
+      });
+
+      const result = await manager.query({ eventType: 'config_change', result: 'failure' });
+      expect(result.entries).toHaveLength(1);
+      expect(result.entries[0].errorMessage).toBe('SANDBOX_CONFIG_UPDATE_FAILED');
     });
   });
 

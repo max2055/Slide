@@ -39,8 +39,9 @@ const DEFAULT_PORTS: Record<string, readonly number[]> = {
 
 const NON_PRODUCTION_CIDRS = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
 const ALWAYS_DENIED_CIDRS = [
-  '0.0.0.0/8', '169.254.0.0/16', '224.0.0.0/4', '240.0.0.0/4',
-  '::/128', 'fe80::/10', 'ff00::/8',
+  '0.0.0.0/8', '100.100.100.200/32', '168.63.129.16/32', '169.254.0.0/16',
+  '192.0.0.192/32', '224.0.0.0/4', '240.0.0.0/4',
+  '::/128', 'fe80::/10', 'ff00::/8', 'fd00:ec2::254/128',
 ];
 const LOOPBACK_CIDRS = ['127.0.0.0/8', '::1/128'];
 
@@ -64,10 +65,14 @@ function addCidr(list: BlockList, cidr: string): void {
   list.addSubnet(address, prefix, version === 4 ? 'ipv4' : 'ipv6');
 }
 
-function allowedPorts(dbType: string, raw = process.env.DB_ALLOWED_PORTS): readonly number[] {
-  if (!raw?.trim()) return DEFAULT_PORTS[dbType] ?? [];
+function allowedPorts(dbType: string, production: boolean, raw = process.env.DB_ALLOWED_PORTS): readonly number[] {
+  if (!raw?.trim()) {
+    if (production) throw denyTarget('DB_TARGET_POLICY_NOT_CONFIGURED');
+    return DEFAULT_PORTS[dbType] ?? [];
+  }
   const configured = raw.split(',').map(Number).filter((port) => Number.isInteger(port) && port > 0 && port <= 65535);
-  return configured.length > 0 ? configured : DEFAULT_PORTS[dbType] ?? [];
+  if (configured.length === 0) throw denyTarget('DB_TARGET_POLICY_NOT_CONFIGURED');
+  return configured;
 }
 
 export async function authorizeDatabaseTarget(
@@ -89,8 +94,9 @@ export async function authorizeDatabaseTarget(
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     throw denyTarget('DB_TARGET_INVALID_PORT');
   }
-  const ports = options.allowedPorts ?? allowedPorts(input.dbType);
   const production = options.production ?? process.env.NODE_ENV === 'production';
+  const ports = options.allowedPorts ?? allowedPorts(input.dbType, production);
+  if (production && ports.length === 0) throw denyTarget('DB_TARGET_POLICY_NOT_CONFIGURED');
   if (!ports.includes(port) && !(options.allowManagedPort && !production)) {
     throw denyTarget('DB_TARGET_PORT_DENIED');
   }
@@ -109,6 +115,7 @@ export async function authorizeDatabaseTarget(
   if (addresses.length === 0) throw denyTarget('DB_TARGET_DNS_FAILED');
 
   const authorized = addresses.filter(({ address }) => {
+    if (/^::ffff:/i.test(address)) return false;
     const version = isIP(address);
     const family = version === 4 ? 'ipv4' : version === 6 ? 'ipv6' : undefined;
     if (!family) return false;

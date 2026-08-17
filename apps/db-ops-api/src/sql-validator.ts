@@ -12,7 +12,7 @@ export interface ValidationResult {
 }
 
 export type SqlCommandType = 'read' | 'write' | 'ddl' | 'transaction' | 'session' | 'procedure' | 'unknown';
-export type SqlReasonCode = 'READ_ONLY' | 'MULTI_STATEMENT' | 'LOCKING_READ' | 'SELECT_INTO' | 'DANGEROUS_FUNCTION' | 'UNSUPPORTED_DIALECT' | 'UNCLASSIFIED';
+export type SqlReasonCode = 'READ_ONLY' | 'MULTI_STATEMENT' | 'LOCKING_READ' | 'SELECT_INTO' | 'DANGEROUS_FUNCTION' | 'SQL_TOO_LARGE' | 'UNSUPPORTED_DIALECT' | 'UNCLASSIFIED';
 
 export interface SqlClassification {
   commandType: SqlCommandType;
@@ -36,13 +36,14 @@ function hasDangerousSelectShape(node: any, sql: string): SqlReasonCode | null {
   if (/\bfor\s+(update|share)\b/.test(normalized)) return 'LOCKING_READ';
   if (/\bselect\b[\s\S]*\binto\b/.test(normalized)) return 'SELECT_INTO';
   if (/(?:^|[^a-z0-9_])(load_file|benchmark|get_lock|release_lock|sleep)\s*\(/.test(normalized)) return 'DANGEROUS_FUNCTION';
-  const functionViolation = checkDangerousFunctions(node);
+  const functionViolation = checkUnsafeFunctions(node);
   return functionViolation ? 'DANGEROUS_FUNCTION' : null;
 }
 
 /** AST-first classifier. Parser failure is deliberately unknown rather than a heuristic allow. */
 export function classifySql(sql: string, dialect: string = 'mysql'): SqlClassification {
   if (!DIALECTS.has(dialect) || !sql.trim()) return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
+  if (Buffer.byteLength(sql, 'utf8') > 64 * 1024) return { commandType: 'unknown', reasonCode: 'SQL_TOO_LARGE', dialect };
   const parser = new Parser();
   let ast: any;
   try {
@@ -65,6 +66,11 @@ export function classifySql(sql: string, dialect: string = 'mysql'): SqlClassifi
   const rawType = String(statements[0]?.type ?? '').toLowerCase();
   const firstKeyword = sql.trim().replace(/^(?:--[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*/g, '').split(/\s+/)[0]?.toLowerCase();
   const type = TYPE_MAP[rawType] ?? TYPE_MAP[firstKeyword] ?? 'unknown';
+  // User-submitted read paths deliberately accept SELECT only. SHOW,
+  // DESCRIBE and EXPLAIN have separate application-owned implementations.
+  if (type === 'read' && rawType !== 'select') {
+    return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect, ast };
+  }
   if (type === 'read') {
     const dangerous = hasDangerousSelectShape(statements[0], sql);
     if (dangerous) return { commandType: 'unknown', reasonCode: dangerous, dialect, ast };
@@ -88,17 +94,65 @@ export function validateSqlIsSelectOnly(sql: string): ValidationResult {
     : { valid: false, error: `仅允许单条只读 SQL（${classification.reasonCode}）` };
 }
 
-const DANGEROUS_FUNCTIONS = new Set(['load_file', 'benchmark', 'get_lock', 'release_lock', 'sleep']);
+// SQL functions can perform writes, alter server state, open network
+// connections, acquire locks or deliberately consume resources while still
+// appearing inside a SELECT. Keep this list intentionally conservative:
+// extension and user-defined functions are denied until reviewed explicitly.
+const SAFE_READ_FUNCTIONS = new Set([
+  // Aggregates and window functions
+  'avg', 'bit_and', 'bit_or', 'bool_and', 'bool_or', 'count', 'cume_dist',
+  'dense_rank', 'first_value', 'group_concat', 'json_agg', 'json_arrayagg',
+  'json_objectagg', 'lag', 'last_value', 'lead', 'max', 'min', 'nth_value',
+  'ntile', 'percent_rank', 'rank', 'row_number', 'stddev', 'stddev_pop',
+  'stddev_samp', 'string_agg', 'sum', 'variance', 'var_pop', 'var_samp',
+  // Null, comparison and conditional helpers
+  'coalesce', 'decode', 'greatest', 'if', 'ifnull', 'least', 'nullif', 'nvl',
+  'nvl2',
+  // String helpers
+  'ascii', 'btrim', 'char', 'char_length', 'character_length', 'concat',
+  'concat_ws', 'format', 'initcap', 'instr', 'left', 'length', 'lower',
+  'lpad', 'ltrim', 'octet_length', 'position', 'regexp_instr', 'regexp_like',
+  'regexp_replace', 'regexp_substr', 'repeat', 'replace', 'reverse', 'right',
+  'rpad', 'rtrim', 'split_part', 'strpos', 'substr', 'substring', 'to_char',
+  'translate', 'trim', 'upper',
+  // Numeric helpers
+  'abs', 'acos', 'asin', 'atan', 'atan2', 'ceil', 'ceiling', 'cos', 'cot',
+  'degrees', 'exp', 'floor', 'ln', 'log', 'log10', 'mod', 'pi', 'power',
+  'radians', 'round', 'sign', 'sin', 'sqrt', 'tan', 'trunc', 'truncate',
+  // Date/time conversion and extraction
+  'add_months', 'age', 'convert_tz', 'date', 'date_add', 'date_format',
+  'date_part', 'date_sub', 'datediff', 'day', 'dayofmonth', 'dayofweek',
+  'dayofyear', 'extract', 'from_unixtime', 'hour', 'last_day', 'make_date',
+  'minute', 'month', 'months_between', 'next_day', 'now', 'second',
+  'str_to_date', 'sysdate', 'timestampdiff', 'to_date', 'to_timestamp',
+  'unix_timestamp', 'week', 'year',
+  // Read-only JSON and type conversion helpers
+  'cast', 'convert', 'json_array', 'json_array_length', 'json_extract',
+  'json_object', 'json_query', 'json_type', 'json_unquote', 'json_value',
+  'to_number',
+  // Constants represented as functions by node-sql-parser
+  'current_date', 'current_time', 'current_timestamp', 'localtime',
+  'localtimestamp',
+]);
 
-function checkDangerousFunctions(node: any): string | null {
+function getFunctionName(node: any): string | null {
+  if (typeof node?.name === 'string') return node.name.toLowerCase();
+  const parts = node?.name?.name;
+  if (!Array.isArray(parts) || parts.length === 0) return null;
+  const value = parts[parts.length - 1]?.value;
+  return typeof value === 'string' ? value.toLowerCase() : null;
+}
+
+function checkUnsafeFunctions(node: any): string | null {
   if (!node || typeof node !== 'object') return null;
-  const functionName = typeof node.name === 'string' ? node.name : node.name?.name;
-  if (node.type === 'function' && typeof functionName === 'string' && DANGEROUS_FUNCTIONS.has(functionName.toLowerCase())) {
-    return `禁止使用的 SQL 函数: ${functionName}`;
+  if (node.type === 'function' || node.type === 'aggr_func') {
+    const functionName = getFunctionName(node);
+    if (!functionName || !SAFE_READ_FUNCTIONS.has(functionName)) {
+      return `未批准的 SQL 函数: ${functionName || 'unknown'}`;
+    }
   }
-  // Recurse into all keys of the node to find nested function calls
   for (const key of Object.keys(node)) {
-    const result = checkDangerousFunctions(node[key]);
+    const result = checkUnsafeFunctions(node[key]);
     if (result) return result;
   }
   return null;

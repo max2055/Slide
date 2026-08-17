@@ -22,7 +22,7 @@ import { executeToolWithPolicy } from '../../tools/policy.js';
 import type { ActorContext } from '../../auth/actor-context.js';
 import type { AnyAgentTool } from '../../tools/types.js';
 import { chatDatabaseService } from '../../chat-database-service.js';
-import { createActorBoundToolRegistry, loadPlatformTools } from '../get-agent-engine.js';
+import { createActorBoundToolRegistry, createCronToolRegistry, loadPlatformTools } from '../get-agent-engine.js';
 import { agentRunService } from '../agent-run-service.js';
 import { instanceDatabaseService } from '../../instance-database-service.js';
 import { completeAnalysisTool } from '../../tools/generated/slide-self-mgmt/complete_analysis.js';
@@ -337,11 +337,7 @@ describe('DirectAdapter', () => {
       const platformTools = await loadPlatformTools();
       const actorTools = createActorBoundToolRegistry(viewer);
       const protectedTool = actorTools.get('get_instance_connection');
-      expect(protectedTool).toBeDefined();
-      await expect(protectedTool!.execute({ instance_id: 999_999 })).resolves.toMatchObject({
-        policyDecision: { allow: false, reasonCode: 'OWNER_REQUIRED' },
-        success: false,
-      });
+      expect(protectedTool).toBeUndefined();
       const adapter = new DirectAdapter({
         tools: platformTools,
         toolsForActor: () => actorTools,
@@ -574,12 +570,7 @@ describe('DirectAdapter', () => {
       expect(platformTools.has('get_instance_connection')).toBe(true);
       const actorTools = createActorBoundToolRegistry(viewer);
       const protectedTool = actorTools.get('get_instance_connection');
-      expect(protectedTool).toBeDefined();
-      await expect(protectedTool!.execute({ instance_id: 999_999 })).resolves.toMatchObject({
-        policyDecision: { allow: false, reasonCode: 'OWNER_REQUIRED' },
-        success: false,
-        errorCode: 'OWNER_REQUIRED',
-      });
+      expect(protectedTool).toBeUndefined();
       const adapter = new DirectAdapter({
         tools: platformTools,
         toolsForActor: () => actorTools,
@@ -690,6 +681,27 @@ describe('DirectAdapter', () => {
       } finally {
         handler.mockRestore();
       }
+    });
+  });
+
+  describe('background tool registries', () => {
+    it('keeps the raw platform registry non-executable without an ActorContext', async () => {
+      const registry = await loadPlatformTools();
+      const result = await registry.execute('list_database_instances', {});
+      expect(result).toContain('ACTOR_CONTEXT_REQUIRED');
+      expect(registry.toolNames).not.toContain('slide_complete_analysis');
+      expect(registry.toolNames).toContain('spawn_subagent');
+    });
+
+    it('gives Cron only read tools and its internal completion tool', async () => {
+      const registry = await createCronToolRegistry();
+      expect(registry.toolNames).toContain('slide_complete_cron');
+      expect(registry.toolNames).toContain('list_database_instances');
+      expect(registry.toolNames).not.toContain('slide_add_database');
+      expect(registry.toolNames).not.toContain('slide_update_db_config');
+      expect(registry.toolNames).not.toContain('get_instance_connection');
+      expect(registry.toolNames).not.toContain('spawn_subagent');
+      expect(registry.toolNames).not.toContain('execute_code');
     });
   });
 

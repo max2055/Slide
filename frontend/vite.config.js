@@ -49,6 +49,11 @@ export default defineConfig({
       '/__slide': {
         target: agentWsProxyTarget,
         changeOrigin: true
+      },
+      '/agent-ws': {
+        target: agentWsProxyTarget,
+        changeOrigin: true,
+        ws: true
       }
     }
   }

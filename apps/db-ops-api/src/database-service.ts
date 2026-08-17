@@ -9,6 +9,9 @@ import { calculateDimensionScores } from './scoring-service.js';
 import { scoringConfigService } from './scoring-config-service.js';
 import { withTimeout } from './promise-timeout.js';
 import { authorizeDatabaseTarget } from './security/database-target-policy.js';
+import { classifySql } from './sql-validator.js';
+
+const EXPLAIN_TIMEOUT_MS = 15_000;
 
 export interface DatabaseConfig {
   host: string;
@@ -156,6 +159,28 @@ export interface HealthCheckResult {
 
 class DatabaseService {
   private connections: Map<number, DatabaseConnection> = new Map();
+  private readonly explainQueues = new Map<number, Promise<void>>();
+
+  private validateExplainSql(sql: string, dbType: string): string | null {
+    const classification = classifySql(sql, dbType);
+    if (classification.commandType !== 'read') return null;
+    return sql.trim().replace(/;+\s*$/, '');
+  }
+
+  private async serializeExplain<T>(instanceId: number, action: () => Promise<T>): Promise<T> {
+    const previous = this.explainQueues.get(instanceId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const queued = previous.catch(() => undefined).then(() => gate);
+    this.explainQueues.set(instanceId, queued);
+    await previous.catch(() => undefined);
+    try {
+      return await action();
+    } finally {
+      release();
+      if (this.explainQueues.get(instanceId) === queued) this.explainQueues.delete(instanceId);
+    }
+  }
 
   /**
    * 添加数据库连接
@@ -256,6 +281,8 @@ class DatabaseService {
           connectString: `${host}:${config.port}`,
           schema: config.database || undefined,
           connectTimeout: 5000,
+          sessionTimeout: 15,
+          socketTimeout: 30_000,
           loginEncrypt: false,
         }), 10_000, `Dameng connection timed out after 10000ms`, (lateConnection) => {
           void lateConnection.close().catch(() => undefined);
@@ -2312,14 +2339,16 @@ class DatabaseService {
    */
   async getExplainPlan(id: number, sql: string): Promise<string | null> {
     return this._withAutoReconnect(id, async (conn) => {
+      const safeSql = this.validateExplainSql(sql, conn.db_type);
+      if (!safeSql) return null;
       if (conn.db_type === 'mysql' && conn.pool) {
-        return this.getMySQLExplainPlan(conn, sql);
+        return this.getMySQLExplainPlan(conn, safeSql);
       } else if (conn.db_type === 'postgresql' && conn.pgClient) {
-        return this.getPostgreSQLExplainPlan(conn, sql);
+        return this.getPostgreSQLExplainPlan(conn, safeSql);
       } else if (conn.db_type === 'oracle' && conn.oraclePool) {
-        return this.getOracleExplainPlan(conn, sql);
+        return this.getOracleExplainPlan(conn, safeSql);
       } else if (conn.db_type === 'dameng' && conn.dmConnection) {
-        return this.getDamengExplainPlan(conn, sql);
+        return this.getDamengExplainPlan(conn, safeSql);
       }
       return null;
     }, 'getExplainPlan');
@@ -2333,28 +2362,44 @@ class DatabaseService {
     if (!conn || !conn.connected) return null;
 
     const dbType = conn.db_type;
+    const safeSql = this.validateExplainSql(sql, dbType);
+    if (!safeSql) return null;
 
     if (dbType === 'mysql' && conn.pool) {
+      const connection = await conn.pool.getConnection();
       try {
-        const [result] = await conn.pool.query<RowDataPacket[]>(`EXPLAIN FORMAT=JSON ${sql}`);
+        await connection.query(`SET SESSION max_execution_time = ${EXPLAIN_TIMEOUT_MS}`);
+        const [result] = await connection.query<RowDataPacket[]>(`EXPLAIN FORMAT=JSON ${safeSql}`);
         // MySQL returns [{ "EXPLAIN": "{...json...}" }] — parse the nested JSON string
         const raw = (result as any[])[0]?.EXPLAIN;
         return { plan: typeof raw === 'string' ? JSON.parse(raw) : raw, db_type: 'mysql' };
       } catch (error: any) {
         console.error(`获取 MySQL EXPLAIN JSON 失败：${conn.id}`, error);
         return { plan: { error: error.message }, db_type: 'mysql' };
+      } finally {
+        await connection.query('SET SESSION max_execution_time = 0').catch(() => undefined);
+        connection.release();
       }
     } else if (dbType === 'postgresql' && conn.pgClient) {
-      try {
-        const result = await conn.pgClient.query(`EXPLAIN (FORMAT JSON) ${sql}`);
-        return { plan: result.rows[0]?.['QUERY PLAN'] || [], db_type: 'postgresql' };
-      } catch (error: any) {
-        console.error(`获取 PG EXPLAIN JSON 失败：${conn.id}`, error);
-        return { plan: { error: error.message }, db_type: 'postgresql' };
-      }
+      return this.serializeExplain(conn.id, async () => {
+        let transactionStarted = false;
+        try {
+          await conn.pgClient!.query('BEGIN READ ONLY');
+          transactionStarted = true;
+          await conn.pgClient!.query(`SET LOCAL statement_timeout = ${EXPLAIN_TIMEOUT_MS}`);
+          const result = await conn.pgClient!.query(`EXPLAIN (FORMAT JSON) ${safeSql}`);
+          await conn.pgClient!.query('COMMIT');
+          transactionStarted = false;
+          return { plan: result.rows[0]?.['QUERY PLAN'] || [], db_type: 'postgresql' };
+        } catch (error: any) {
+          if (transactionStarted) await conn.pgClient!.query('ROLLBACK').catch(() => undefined);
+          console.error(`获取 PG EXPLAIN JSON 失败：${conn.id}`, error);
+          return { plan: { error: error.message }, db_type: 'postgresql' };
+        }
+      });
     } else if (dbType === 'dameng' && conn.dmConnection) {
       try {
-        const textPlan = await this.getDamengExplainPlan(conn, sql);
+        const textPlan = await this.getDamengExplainPlan(conn, safeSql);
         return { plan: { query_plan: { operation: 'EXPLAIN', text: String(textPlan) } }, db_type: 'dameng' };
       } catch (error: any) {
         return { plan: { error: error.message }, db_type: 'dameng' };
@@ -2370,8 +2415,10 @@ class DatabaseService {
   private async getMySQLExplainPlan(conn: DatabaseConnection, sql: string): Promise<string | null> {
     if (!conn.pool) return null;
 
+    const connection = await conn.pool.getConnection();
     try {
-      const [result] = await conn.pool.query<RowDataPacket[]>(`EXPLAIN ${sql}`);
+      await connection.query(`SET SESSION max_execution_time = ${EXPLAIN_TIMEOUT_MS}`);
+      const [result] = await connection.query<RowDataPacket[]>(`EXPLAIN ${sql}`);
 
       // 格式化为文本格式
       let output = 'MySQL 执行计划:\n';
@@ -2394,6 +2441,9 @@ class DatabaseService {
     } catch (error) {
       console.error(`获取 MySQL 执行计划失败：${conn.id}`, error);
       return `获取执行计划失败：${error instanceof Error ? error.message : '未知错误'}`;
+    } finally {
+      await connection.query('SET SESSION max_execution_time = 0').catch(() => undefined);
+      connection.release();
     }
   }
 
@@ -2403,23 +2453,31 @@ class DatabaseService {
   private async getPostgreSQLExplainPlan(conn: DatabaseConnection, sql: string): Promise<string | null> {
     if (!conn.pgClient) return null;
 
-    try {
-      // 使用 EXPLAIN ANALYZE 获取实际执行计划
-      const result = await conn.pgClient.query(`EXPLAIN ANALYZE ${sql}`);
+    return this.serializeExplain(conn.id, async () => {
+      let transactionStarted = false;
+      try {
+        await conn.pgClient!.query('BEGIN READ ONLY');
+        transactionStarted = true;
+        await conn.pgClient!.query(`SET LOCAL statement_timeout = ${EXPLAIN_TIMEOUT_MS}`);
+        const result = await conn.pgClient!.query(`EXPLAIN ${sql}`);
 
-      // PostgreSQL 返回的是文本格式的执行计划
-      let output = 'PostgreSQL 执行计划:\n';
-      output += '='.repeat(80) + '\n';
+        // PostgreSQL 返回的是文本格式的执行计划
+        let output = 'PostgreSQL 执行计划:\n';
+        output += '='.repeat(80) + '\n';
 
-      for (const row of result.rows) {
-        output += row['QUERY PLAN'] || row.query_plan || JSON.stringify(row) + '\n';
+        for (const row of result.rows) {
+          output += row['QUERY PLAN'] || row.query_plan || JSON.stringify(row) + '\n';
+        }
+
+        await conn.pgClient!.query('COMMIT');
+        transactionStarted = false;
+        return output;
+      } catch (error) {
+        if (transactionStarted) await conn.pgClient!.query('ROLLBACK').catch(() => undefined);
+        console.error(`获取 PostgreSQL 执行计划失败：${conn.id}`, error);
+        return `获取执行计划失败：${error instanceof Error ? error.message : '未知错误'}`;
       }
-
-      return output;
-    } catch (error) {
-      console.error(`获取 PostgreSQL 执行计划失败：${conn.id}`, error);
-      return `获取执行计划失败：${error instanceof Error ? error.message : '未知错误'}`;
-    }
+    });
   }
 
   /**
@@ -2427,45 +2485,44 @@ class DatabaseService {
    */
   private async getOracleExplainPlan(conn: DatabaseConnection, sql: string): Promise<string | null> {
     if (!conn.oracleConnection) return null;
-
-    try {
-      const planId = `PLAN_${Date.now()}`;
-
-      // 尝试使用 PLAN_TABLE 方式 (Pitfall 2: PLAN_TABLE 可能不存在)
+    return this.serializeExplain(conn.id, async () => {
+      const connection = conn.oraclePool ? await conn.oraclePool.getConnection() : conn.oracleConnection!;
+      const previousCallTimeout = connection.callTimeout;
       try {
-        await conn.oracleConnection.execute(`DELETE FROM PLAN_TABLE WHERE STATEMENT_ID = :id`, [planId]);
-        await conn.oracleConnection.execute(`EXPLAIN PLAN SET STATEMENT_ID = :id FOR ${sql}`, [planId]);
-      } catch (planTableError) {
-        const msg = (planTableError as Error).message || '';
-        if (msg.includes('ORA-00942') || msg.includes('PLAN_TABLE') || msg.includes('table or view does not exist')) {
-          return `执行计划无法生成：PLAN_TABLE 不存在。\n请 DBA 运行 @$ORACLE_HOME/rdbms/admin/utlxplan.sql 创建 PLAN_TABLE。\n\n或者使用 DBMS_XPLAN.DISPLAY_CURSOR 查看最近执行计划：\nSELECT * FROM TABLE(DBMS_XPLAN.DISPLAY_CURSOR());`;
+        connection.callTimeout = EXPLAIN_TIMEOUT_MS;
+        const planId = `P${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+
+        try {
+          await connection.execute(`DELETE FROM PLAN_TABLE WHERE STATEMENT_ID = :id`, [planId]);
+          await connection.execute(`EXPLAIN PLAN SET STATEMENT_ID = :id FOR ${sql}`, [planId]);
+        } catch (planTableError) {
+          const msg = (planTableError as Error).message || '';
+          if (msg.includes('ORA-00942') || msg.includes('PLAN_TABLE') || msg.includes('table or view does not exist')) {
+            return `执行计划无法生成：PLAN_TABLE 不存在。\n请 DBA 运行 @$ORACLE_HOME/rdbms/admin/utlxplan.sql 创建 PLAN_TABLE。\n\n或者使用 DBMS_XPLAN.DISPLAY_CURSOR 查看最近执行计划：\nSELECT * FROM TABLE(DBMS_XPLAN.DISPLAY_CURSOR());`;
+          }
+          throw planTableError;
         }
-        throw planTableError;
-      }
 
-      // 使用 DBMS_XPLAN 获取格式化的执行计划
-      const result = await conn.oracleConnection.execute(`
-        SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY(null, :id, 'ALL'))
-      `, [planId]);
+        const result = await connection.execute(`
+          SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY(null, :id, 'ALL'))
+        `, [planId]);
 
-      let output = 'Oracle 执行计划:\n';
-      output += '='.repeat(80) + '\n';
-
-      for (const row of result.rows) {
-        const planLine = row[0] as string || (row as any).PLAN_TABLE_OUTPUT as string;
-        if (planLine) {
-          output += planLine + '\n';
+        let output = 'Oracle 执行计划:\n';
+        output += '='.repeat(80) + '\n';
+        for (const row of result.rows) {
+          const planLine = row[0] as string || (row as any).PLAN_TABLE_OUTPUT as string;
+          if (planLine) output += planLine + '\n';
         }
+        return output;
+      } catch (error) {
+        console.error(`获取 Oracle 执行计划失败：${conn.id}`, error);
+        return `获取执行计划失败：${error instanceof Error ? error.message : '未知错误'}`;
+      } finally {
+        await connection.rollback().catch(() => undefined);
+        connection.callTimeout = previousCallTimeout;
+        if (conn.oraclePool) await connection.close().catch(() => undefined);
       }
-
-      // 清理执行计划
-      await conn.oracleConnection.execute(`DELETE FROM PLAN_TABLE WHERE STATEMENT_ID = :id`, [planId]);
-
-      return output;
-    } catch (error) {
-      console.error(`获取 Oracle 执行计划失败：${conn.id}`, error);
-      return `获取执行计划失败：${error instanceof Error ? error.message : '未知错误'}`;
-    }
+    });
   }
 
   /**
@@ -2474,49 +2531,53 @@ class DatabaseService {
   private async getDamengExplainPlan(conn: DatabaseConnection, sql: string): Promise<string | null> {
     if (!conn.dmConnection) return null;
 
-    try {
-      // 验证 SQL 为 SELECT 或 WITH 查询（防止 SQL 注入）
-      const normalized = sql.trim().toUpperCase();
-      if (!/^SELECT\s/.test(normalized) && !/^WITH\s/.test(normalized)) {
-        return '执行计划仅支持 SELECT / WITH 查询';
-      }
-      // 防御性检查：拒绝包含分号或 DML/DDL 关键字的 SQL
-      if (/[;]/.test(sql) || /\b(DROP\s|DELETE\s|INSERT\s|UPDATE\s|ALTER\s|CREATE\s|TRUNCATE\s)/i.test(sql)) {
-        return '执行计划仅支持 SELECT / WITH 查询';
-      }
-
-      // 达梦数据库使用类似 Oracle 的方式
-      const planId = `PLAN_${Date.now()}`;
-
-      // 清空之前的执行计划
-      await conn.dmConnection.execute(`DELETE FROM PLAN_TABLE WHERE STATEMENT_ID = :id`, [planId]);
-
-      // 解释 SQL 语句
-      await conn.dmConnection.execute(`EXPLAIN PLAN SET STATEMENT_ID = :id FOR ${sql}`, [planId]);
-
-      // 获取格式化的执行计划
-      const result = await conn.dmConnection.execute(`
-        SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY(null, :id, 'ALL'))
-      `, [planId]);
-
-      let output = '达梦数据库执行计划:\n';
-      output += '='.repeat(80) + '\n';
-
-      for (const row of result.rows) {
-        const planLine = row[0] as string || (row as any).PLAN_TABLE_OUTPUT as string;
-        if (planLine) {
-          output += planLine + '\n';
+    return this.serializeExplain(conn.id, async () => {
+      try {
+        // 验证 SQL 为 SELECT 或 WITH 查询（防止 SQL 注入）
+        const normalized = sql.trim().toUpperCase();
+        if (!/^SELECT\s/.test(normalized) && !/^WITH\s/.test(normalized)) {
+          return '执行计划仅支持 SELECT / WITH 查询';
         }
+        // 防御性检查：拒绝包含分号或 DML/DDL 关键字的 SQL
+        if (/[;]/.test(sql) || /\b(DROP\s|DELETE\s|INSERT\s|UPDATE\s|ALTER\s|CREATE\s|TRUNCATE\s)/i.test(sql)) {
+          return '执行计划仅支持 SELECT / WITH 查询';
+        }
+
+        // 达梦数据库使用类似 Oracle 的方式
+        const planId = `PLAN_${Date.now()}`;
+
+        // 清空之前的执行计划
+        await conn.dmConnection.execute(`DELETE FROM PLAN_TABLE WHERE STATEMENT_ID = :id`, [planId]);
+
+        // 解释 SQL 语句
+        await conn.dmConnection.execute(`EXPLAIN PLAN SET STATEMENT_ID = :id FOR ${sql}`, [planId]);
+
+        // 获取格式化的执行计划
+        const result = await conn.dmConnection.execute(`
+          SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY(null, :id, 'ALL'))
+        `, [planId]);
+
+        let output = '达梦数据库执行计划:\n';
+        output += '='.repeat(80) + '\n';
+
+        for (const row of result.rows) {
+          const planLine = row[0] as string || (row as any).PLAN_TABLE_OUTPUT as string;
+          if (planLine) {
+            output += planLine + '\n';
+          }
+        }
+
+        // 清理执行计划
+        await conn.dmConnection.execute(`DELETE FROM PLAN_TABLE WHERE STATEMENT_ID = :id`, [planId]);
+
+        return output;
+      } catch (error) {
+        console.error(`获取达梦执行计划失败：${conn.id}`, error);
+        return `获取执行计划失败：${error instanceof Error ? error.message : '未知错误'}`;
+      } finally {
+        await conn.dmConnection!.rollback().catch(() => undefined);
       }
-
-      // 清理执行计划
-      await conn.dmConnection.execute(`DELETE FROM PLAN_TABLE WHERE STATEMENT_ID = :id`, [planId]);
-
-      return output;
-    } catch (error) {
-      console.error(`获取达梦执行计划失败：${conn.id}`, error);
-      return `获取执行计划失败：${error instanceof Error ? error.message : '未知错误'}`;
-    }
+    });
   }
 
   /**

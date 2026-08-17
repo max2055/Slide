@@ -9,7 +9,8 @@
  */
 
 import { Client, ClientChannel, ConnectConfig } from 'ssh2';
-import crypto from 'crypto';
+import { authorizeServerTarget } from './security/server-target-policy.js';
+import { createSshHostVerifier, normalizeSshHostKeyFingerprint } from './security/ssh-host-key.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,7 @@ interface SshSession {
   port: number;
   lastUsed: number;
   inUse: boolean;
+  hostKeyFingerprint: string;
 }
 
 interface PoolStats {
@@ -83,8 +85,10 @@ class SshSessionPool {
     credentialValue: string,
     hostKeyFingerprint?: string | null
   ): Promise<Client> {
+    const target = await authorizeServerTarget({ host, port });
+    const normalizedFingerprint = normalizeSshHostKeyFingerprint(hostKeyFingerprint);
     // Look for an existing idle connection to this host
-    const existing = this._findIdle(host, port);
+    const existing = this._findIdle(target.hostname, target.port, normalizedFingerprint);
     if (existing) {
       existing.inUse = true;
       existing.lastUsed = Date.now();
@@ -93,7 +97,7 @@ class SshSessionPool {
 
     // Check per-server session limit
     const serverSessions = this.sessions.filter(
-      (s) => s.host === host && s.port === port
+      (s) => s.host === target.hostname && s.port === target.port
     );
     if (serverSessions.length >= this.config.maxSessionsPerServer) {
       // Try to close the oldest idle session to make room
@@ -110,14 +114,22 @@ class SshSessionPool {
     }
 
     // Create new connection
-    const client = await this._connect(host, port, username, credentialType, credentialValue, hostKeyFingerprint);
+    const client = await this._connect(
+      target.address,
+      target.port,
+      username,
+      credentialType,
+      credentialValue,
+      normalizedFingerprint,
+    );
 
     const session: SshSession = {
       client,
-      host,
-      port,
+      host: target.hostname,
+      port: target.port,
       lastUsed: Date.now(),
       inUse: true,
+      hostKeyFingerprint: normalizedFingerprint,
     };
 
     this.sessions.push(session);
@@ -191,9 +203,9 @@ class SshSessionPool {
 
   // ── Private helpers ──────────────────────────────────────────────────────────
 
-  private _findIdle(host: string, port: number): SshSession | undefined {
+  private _findIdle(host: string, port: number, hostKeyFingerprint: string): SshSession | undefined {
     return this.sessions.find(
-      (s) => s.host === host && s.port === port && !s.inUse
+      (s) => s.host === host && s.port === port && s.hostKeyFingerprint === hostKeyFingerprint && !s.inUse
     );
   }
 
@@ -207,42 +219,24 @@ class SshSessionPool {
   }
 
   private _connect(
-    host: string,
+    address: string,
     port: number,
     username: string,
     credentialType: string,
     credentialValue: string,
-    hostKeyFingerprint?: string | null
+    hostKeyFingerprint: string,
   ): Promise<Client> {
     return new Promise((resolve, reject) => {
       const client = new Client();
 
       const connectConfig: ConnectConfig = {
-        host,
+        host: address,
         port,
         username,
         readyTimeout: this.config.readyTimeoutMs,
         keepaliveInterval: this.config.keepaliveIntervalMs,
         keepaliveCountMax: this.config.keepaliveCountMax,
-        hostVerifier: (key: Buffer, callback: (verified: boolean) => void) => {
-          if (!hostKeyFingerprint) {
-            // No stored fingerprint — accept any key (first connection).
-            callback(true);
-            return;
-          }
-          // Hash received host key with SHA256 and compare against stored fingerprint
-          const hash = crypto.createHash('sha256').update(key).digest('base64');
-          const received = `SHA256:${hash}`;
-          if (received === hostKeyFingerprint) {
-            callback(true);
-          } else {
-            console.error(
-              `[SshSessionPool] Host key mismatch for ${host}:${port}. ` +
-              `Stored: ${hostKeyFingerprint}, received: ${received}`
-            );
-            callback(false);
-          }
-        },
+        hostVerifier: createSshHostVerifier(hostKeyFingerprint),
       };
 
       // Build credential payload based on credential type

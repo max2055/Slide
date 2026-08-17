@@ -42,6 +42,11 @@ import {
 import { validateChatSendV2 } from './protocol-v2.js';
 import { agentRunService } from './agent-run-service.js';
 import { completeAnalysisTool } from '../tools/generated/slide-self-mgmt/complete_analysis.js';
+import {
+  ActorConcurrencyLimiter,
+  FixedWindowRateLimiter,
+  loadAgentRuntimeLimits,
+} from '../security/agent-runtime-limits.js';
 
 let _subagentManagerInitialized = false;
 
@@ -165,6 +170,8 @@ export class DirectAdapter implements IAgentEngine {
   private memoryStore: MemoryStore;
   private actorContexts: Pick<ActorContextService, 'authenticateAccessToken' | 'revalidateActor'>;
   private heartbeatIntervalMs: number;
+  private readonly runtimeLimits = loadAgentRuntimeLimits();
+  private readonly runLimiter = new ActorConcurrencyLimiter(this.runtimeLimits.maxConcurrentRunsPerActor);
   private wsServer: WebSocketServer | null = null;
   private activeRuns = new Map<string, { actorId: number; sessionId: string; controller: AbortController }>();
   /** Track WebSocket clients subscribed to each session for invoke() broadcast. */
@@ -193,7 +200,7 @@ export class DirectAdapter implements IAgentEngine {
   async start(): Promise<void> {
     // Initialize SubagentManager so spawn_subagent tool can actually execute subagents
     if (!_subagentManagerInitialized) {
-      const subagentManager = new SubagentManager(this.runner, this.registry);
+      const subagentManager = new SubagentManager(this.runner, undefined, this.toolsForActor);
       setSubagentManager(subagentManager);
       _subagentManagerInitialized = true;
       console.log(`[DirectAdapter] SubagentManager initialized with ${this.registry.toolNames.length} parent tools`);
@@ -207,7 +214,7 @@ export class DirectAdapter implements IAgentEngine {
 
     const port = parseInt(process.env.AGENT_WS_PORT || '28888', 10);
 
-    this.wsServer = new WebSocketServer({ port });
+    this.wsServer = new WebSocketServer({ port, maxPayload: this.runtimeLimits.wsMaxPayloadBytes });
 
     // Serve basic HTTP endpoints (the frontend fetches /__slide/control-ui-config.json
     // which is proxied to this port). Without this, the WS-only server returns 426.
@@ -242,6 +249,13 @@ export class DirectAdapter implements IAgentEngine {
       let authGeneration = 0;
       let connectionActor: ActorContext | undefined;
       let revalidationInFlight = false;
+      const frameLimiter = new FixedWindowRateLimiter(
+        this.runtimeLimits.wsFramesPerWindow,
+        this.runtimeLimits.wsRateWindowMs,
+      );
+      const authTimer = setTimeout(() => {
+        if (authState === 'unauthenticated') closeAfterAuthFailure(4001, 'Authentication timeout');
+      }, this.runtimeLimits.authTimeoutMs);
       (ws as any)._authState = authState;
       (ws as any)._actorContext = undefined;
 
@@ -306,6 +320,7 @@ export class DirectAdapter implements IAgentEngine {
       });
 
       ws.on('close', () => {
+        clearTimeout(authTimer);
         clearInterval(heartbeatTimer);
         clearAuthentication();
         // Unsubscribe from all session broadcasts
@@ -315,6 +330,10 @@ export class DirectAdapter implements IAgentEngine {
       });
 
       ws.on('message', async (raw: Buffer) => {
+        if (!frameLimiter.allow()) {
+          ws.close(4008, 'Rate limit exceeded');
+          return;
+        }
         let msg: { type?: string; sessionKey?: string; message?: string; [key: string]: unknown };
         try {
           msg = JSON.parse(raw.toString());
@@ -353,6 +372,7 @@ export class DirectAdapter implements IAgentEngine {
               authState = 'authenticated';
               (ws as any)._actorContext = authenticatedActor;
               (ws as any)._authState = authState;
+              clearTimeout(authTimer);
               ws.send(JSON.stringify({ type: 'auth_ok' }));
             }
           } catch {
@@ -411,9 +431,20 @@ export class DirectAdapter implements IAgentEngine {
               ws.send(JSON.stringify({ type: 'error', error: 'Message is required' }));
               return;
             }
+            if (userMessage.length > this.runtimeLimits.maxMessageChars) {
+              ws.send(JSON.stringify({ type: 'protocol.error', code: 'MESSAGE_TOO_LARGE' }));
+              return;
+            }
+
+            if (!this.runLimiter.acquire(messageActor.userId)) {
+              ws.send(JSON.stringify({ type: 'protocol.error', code: 'RUN_CONCURRENCY_LIMIT' }));
+              return;
+            }
 
             const idempotencyKey = msg.idempotencyKey as string | undefined;
             const messageId = msg.messageId as string | undefined;
+            const controller = new AbortController();
+            const runTimeout = setTimeout(() => controller.abort(), this.runtimeLimits.runTimeoutMs);
 
             let persistentRun: { run: { id: string }; created: boolean } | undefined;
             try {
@@ -432,9 +463,8 @@ export class DirectAdapter implements IAgentEngine {
                 ws.send(JSON.stringify({ type: 'run.snapshot', run: persistentRun.run }));
                 return;
               }
-              const controller = persistentRun ? new AbortController() : undefined;
               if (persistentRun) {
-                this.activeRuns.set(persistentRun.run.id, { actorId: messageActor.userId, sessionId: sessionKey, controller: controller! });
+                this.activeRuns.set(persistentRun.run.id, { actorId: messageActor.userId, sessionId: sessionKey, controller });
                 ws.send(JSON.stringify({ type: 'run.started', runId: persistentRun.run.id, sessionKey }));
               }
 
@@ -474,7 +504,7 @@ export class DirectAdapter implements IAgentEngine {
                   ...event,
                   ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
                 }));
-              }, messageActor, controller?.signal);
+              }, messageActor, controller.signal);
               if (persistentRun) {
                 const terminal = chatResult.stopReason === 'completed'
                   ? 'completed'
@@ -495,6 +525,9 @@ export class DirectAdapter implements IAgentEngine {
                 } catch { /* preserve the original request failure */ }
               }
               ws.send(JSON.stringify({ type: 'error', error: errorMsg }));
+            } finally {
+              clearTimeout(runTimeout);
+              this.runLimiter.release(messageActor.userId);
             }
             break;
           }
@@ -628,8 +661,8 @@ export class DirectAdapter implements IAgentEngine {
         initialMessages: contextMessages as Message[],
         tools: _actor && this.toolsForActor ? this.toolsForActor(_actor) : new ToolRegistry(),
         model: sessModel || this.provider.getDefaultModel(),
-        maxIterations: 200,
-        maxToolResultChars: 20000,
+        maxIterations: this.runtimeLimits.maxIterations,
+        maxToolResultChars: this.runtimeLimits.maxToolResultChars,
         temperature: 0.0,
         reasoningEffort,
         hook,

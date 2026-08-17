@@ -9,6 +9,7 @@ async function app() {
   fastify.post('/login', { config: { rateLimit: loginRateLimitConfig } }, async () => ({ ok: true }));
   fastify.post('/echo', async () => ({ ok: true }));
   fastify.get('/failure', async (_request, reply) => reply.code(500).send({ error: 'password=secret', stack: 'internal' }));
+  fastify.get('/sandbox-failure', async (_request, reply) => reply.code(503).send({ reasonCode: 'SANDBOX_NOT_READY', detail: 'hidden' }));
   await fastify.ready();
   return fastify;
 }
@@ -36,6 +37,15 @@ describe('HTTP security boundary', () => {
     const response = await fastify.inject({ method: 'GET', url: '/failure' });
     expect(response.json()).toEqual({ error: 'INTERNAL_ERROR' });
     expect(response.body).not.toContain('secret');
+    await fastify.close();
+  });
+
+  it('preserves only allowlisted fail-closed sandbox reason codes', async () => {
+    const fastify = await app();
+    const response = await fastify.inject({ method: 'GET', url: '/sandbox-failure' });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ reasonCode: 'SANDBOX_NOT_READY' });
+    expect(response.body).not.toContain('hidden');
     await fastify.close();
   });
 

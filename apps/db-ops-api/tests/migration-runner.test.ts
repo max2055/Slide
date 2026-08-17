@@ -18,6 +18,9 @@ class FakePool {
     if (sql.includes("TABLE_NAME = 'alerts'")) {
       return [[{ column_type: "enum('info','warning','error','critical','p0')" }]];
     }
+    if (sql.includes("config_key = 'agent_sandbox_enabled'")) {
+      return [[{ config_value: 'false', value_type: 'boolean' }]];
+    }
     if (sql.includes('information_schema.COLUMNS')) return [[
       ...['id', 'username', 'password_hash', 'session_version'].map((column_name) => ({ table_name: 'users', column_name })),
       ...['id', 'token_hash', 'user_id', 'session_version', 'revoked'].map((column_name) => ({ table_name: 'refresh_tokens', column_name })),
@@ -28,17 +31,32 @@ class FakePool {
       ...['id', 'name', 'deployment_type', 'api_format'].map((column_name) => ({ table_name: 'llm_providers', column_name })),
       ...['id', 'analysis_type', 'execution_trace', 'analysis_envelope'].map((column_name) => ({ table_name: 'ai_analysis', column_name })),
       ...['id', 'instance_id', 'health_score', 'status', 'dimensions', 'checks'].map((column_name) => ({ table_name: 'health_check_history', column_name })),
+      ...['id', 'tool_name', 'requester_id', 'binding_hash', 'status', 'expires_at'].map((column_name) => ({ table_name: 'agent_tool_approvals', column_name })),
+      ...['id', 'phase', 'actor_id', 'agent_id', 'request_id', 'tool_name', 'reason_code'].map((column_name) => ({ table_name: 'agent_tool_audit', column_name })),
+      ...['ref_id', 'owner_id', 'tool_name', 'secret_encrypted', 'status', 'expires_at'].map((column_name) => ({ table_name: 'agent_credential_references', column_name })),
+      ...['agent_id', 'tool_allowlist', 'skill_allowlist', 'allowed_effects', 'resource_scope', 'version', 'updated_by'].map((column_name) => ({ table_name: 'agent_security_policies', column_name })),
+      ...['id', 'agent_id', 'version', 'policy_json', 'change_note', 'changed_by'].map((column_name) => ({ table_name: 'agent_security_policy_history', column_name })),
     ]];
     if (sql.includes('information_schema.STATISTICS')) return [[
       { table_name: 'refresh_tokens', index_name: 'idx_rt_user_session' },
       { table_name: 'operations', index_name: 'uq_operations_actor_idempotency' },
       { table_name: 'operation_events', index_name: 'idx_operation_events_operation_created' },
+      { table_name: 'agent_tool_approvals', index_name: 'idx_agent_tool_approval_pending' },
+      { table_name: 'agent_tool_audit', index_name: 'idx_agent_tool_audit_request' },
+      { table_name: 'agent_tool_audit', index_name: 'idx_agent_tool_audit_agent_created' },
+      { table_name: 'agent_credential_references', index_name: 'idx_agent_credential_active' },
+      { table_name: 'agent_security_policy_history', index_name: 'uq_agent_security_policy_history_version' },
     ]];
     if (sql.includes('information_schema.REFERENTIAL_CONSTRAINTS')) return [[
       { table_name: 'sql_execution_history', constraint_name: 'fk_sql_history_approval' },
       { table_name: 'approval_requests', constraint_name: 'fk_approval_operation' },
       { table_name: 'operations', constraint_name: 'fk_operation_approval' },
       { table_name: 'operation_events', constraint_name: 'fk_operation_events_operation' },
+      { table_name: 'agent_tool_approvals', constraint_name: 'fk_agent_tool_approval_requester' },
+      { table_name: 'agent_tool_audit', constraint_name: 'fk_agent_tool_audit_actor' },
+      { table_name: 'agent_credential_references', constraint_name: 'fk_agent_credential_owner' },
+      { table_name: 'agent_security_policies', constraint_name: 'fk_agent_security_policy_updated_by' },
+      { table_name: 'agent_security_policy_history', constraint_name: 'fk_agent_security_policy_history_actor' },
     ]];
     if (sql.startsWith('SELECT migration_id')) return [[this.entries.get(values[0])].filter(Boolean)];
     if (sql.startsWith('INSERT INTO app_schema_migrations')) {

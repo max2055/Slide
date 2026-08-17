@@ -7,6 +7,7 @@
 import type { AnyAgentTool, ToolResult } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
 import { instanceDatabaseService } from '../../../instance-database-service.js';
+import { credentialReferenceService } from '../../../security/credential-reference-service.js';
 
 /**
  * 添加数据库参数
@@ -22,8 +23,8 @@ interface AddDatabaseArgs {
   port: number;
   /** 用户名 */
   username: string;
-  /** 密码 */
-  password: string;
+  /** 服务端短期凭据引用 */
+  credential_ref: string;
   /** 数据库名称（可选） */
   database_name?: string;
   /** 环境 */
@@ -59,9 +60,9 @@ export const addDatabaseTool: AnyAgentTool = {
         type: 'string',
         description: '数据库用户名',
       },
-      password: {
+      credential_ref: {
         type: 'string',
-        description: '数据库密码',
+        description: '通过凭据 API 创建的短期单次引用',
       },
       database_name: {
         type: 'string',
@@ -77,12 +78,15 @@ export const addDatabaseTool: AnyAgentTool = {
         description: '实例描述',
       },
     },
-    required: ['db_type', 'host', 'port', 'username', 'password'],
+    required: ['db_type', 'host', 'port', 'username', 'credential_ref'],
   },
   group: 'db_ops',
   requiresApproval: false,
-  handler: async (args) => {
+  handler: async (args, context) => {
     const typedArgs = args as unknown as AddDatabaseArgs;
+    if (Object.prototype.hasOwnProperty.call(args, 'password')) {
+      return { success: false, error: '禁止向 Agent Tool 传递明文凭据', errorCode: 'PLAINTEXT_CREDENTIAL_DENIED' };
+    }
 
     // 参数验证
     const validationError = validateAddDatabaseArgs(typedArgs);
@@ -108,8 +112,20 @@ export const addDatabaseTool: AnyAgentTool = {
         };
       }
 
+      if (!context?.actor) {
+        return { success: false, error: '缺少认证执行上下文', errorCode: 'MISSING_ACTOR' };
+      }
+      const password = await credentialReferenceService.consume(
+        typedArgs.credential_ref,
+        context.actor.userId,
+        addDatabaseTool.name,
+      );
+      if (!password) {
+        return { success: false, error: '凭据引用无效、已过期或已消费', errorCode: 'INVALID_CREDENTIAL_REF' };
+      }
+
       // 3. 测试连接
-      const connectionTest = await testDatabaseConnection(typedArgs);
+      const connectionTest = await testDatabaseConnection(typedArgs, password);
       if (!connectionTest.success) {
         return {
           success: false,
@@ -126,7 +142,7 @@ export const addDatabaseTool: AnyAgentTool = {
         host: typedArgs.host,
         port: typedArgs.port,
         username: typedArgs.username,
-        password: typedArgs.password,
+        password,
         database_name: typedArgs.database_name,
         description: typedArgs.description,
       });
@@ -199,8 +215,8 @@ function validateAddDatabaseArgs(args: AddDatabaseArgs): string | null {
     return '缺少必要参数：username';
   }
 
-  if (!args.password) {
-    return '缺少必要参数：password';
+  if (!args.credential_ref) {
+    return '缺少必要参数：credential_ref';
   }
 
   // 端口范围验证
@@ -244,13 +260,14 @@ async function checkInstanceExists(name: string): Promise<boolean> {
  */
 async function testDatabaseConnection(
   args: AddDatabaseArgs,
+  password: string,
 ): Promise<{ success: boolean; error?: string }> {
   const result = await instanceDatabaseService.testConnection({
     db_type: args.db_type,
     host: args.host,
     port: args.port,
     username: args.username,
-    password: args.password,
+    password,
     database: args.database_name,
   });
   return { success: result.success, error: result.success ? undefined : result.message };

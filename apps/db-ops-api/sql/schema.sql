@@ -815,6 +815,31 @@ CREATE TABLE IF NOT EXISTS `system_config` (
   INDEX `idx_config_key` (`config_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `audit_log_entries` (
+  `id` VARCHAR(64) NOT NULL COMMENT '审计条目 ID',
+  `event_type` VARCHAR(64) NOT NULL COMMENT '审计事件类型',
+  `level` ENUM('info', 'warning', 'error', 'critical') NOT NULL COMMENT '审计级别',
+  `user_id` VARCHAR(64) DEFAULT NULL COMMENT '操作用户 ID',
+  `username` VARCHAR(255) DEFAULT NULL COMMENT '操作用户名',
+  `user_role` VARCHAR(32) DEFAULT NULL COMMENT '操作用户角色',
+  `action` VARCHAR(128) NOT NULL COMMENT '操作名称',
+  `resource_type` VARCHAR(64) DEFAULT NULL COMMENT '资源类型',
+  `resource_id` VARCHAR(255) DEFAULT NULL COMMENT '资源 ID',
+  `details_json` JSON DEFAULT NULL COMMENT '脱敏操作详情',
+  `approval_request_id` VARCHAR(64) DEFAULT NULL COMMENT '审批请求 ID',
+  `client_ip` VARCHAR(64) DEFAULT NULL COMMENT '客户端 IP',
+  `user_agent` VARCHAR(512) DEFAULT NULL COMMENT '客户端 User-Agent',
+  `result` ENUM('success', 'failure', 'pending') NOT NULL COMMENT '操作结果',
+  `error_message` VARCHAR(1000) DEFAULT NULL COMMENT '规范化错误信息',
+  `timestamp_ms` BIGINT UNSIGNED NOT NULL COMMENT '事件时间戳（毫秒）',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '持久化时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_audit_log_event_time` (`event_type`, `timestamp_ms`),
+  KEY `idx_audit_log_user_time` (`user_id`, `timestamp_ms`),
+  KEY `idx_audit_log_resource_time` (`resource_type`, `resource_id`, `timestamp_ms`),
+  KEY `idx_audit_log_result_time` (`result`, `timestamp_ms`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='通用持久审计日志表';
+
 -- ============================================
 -- 初始化数据
 -- ============================================
@@ -879,6 +904,7 @@ INSERT INTO `system_config` (`config_key`, `config_value`, `value_type`, `descri
 ('notification.dingtalk_enabled', 'false', 'boolean', '钉钉通知是否启用'),
 ('notification.wecom_enabled', 'false', 'boolean', '企业微信通知是否启用'),
 ('notification.feishu_enabled', 'false', 'boolean', '飞书通知是否启用'),
+('agent_sandbox_enabled', 'false', 'boolean', 'Enable Agent-generated Shell, Python, and Node execution through Sandbox Controller'),
 ('ai_analysis.default_ttl_minutes', '1440', 'number', 'AI 分析结果默认缓存时长（分钟），默认 24 小时');
 
 -- ============================================
@@ -1233,6 +1259,7 @@ INSERT IGNORE INTO `permissions` (`code`, `name`, `description`, `resource`, `ac
 ('chat:delete', '删除聊天',   '删除聊天记录', 'chat', 'delete'),
 ('config:view',   '查看配置',   '查看系统配置', 'config', 'view'),
 ('config:manage', '管理配置',   '修改系统配置', 'config', 'manage'),
+('ai:execute',    '执行 Agent 代码', '在隔离 Sandbox 中执行经过审批的 Agent Shell、Python 或 Node 代码', 'ai', 'execute'),
 ('audit:view',   '查看审计',   '查看审计日志', 'audit', 'view'),
 ('audit:export', '导出审计',   '导出审计日志', 'audit', 'export'),
 ('collector:view',   '查看采集任务',   '查看采集任务状态', 'collector', 'view'),

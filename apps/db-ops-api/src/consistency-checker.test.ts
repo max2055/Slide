@@ -1,6 +1,6 @@
 /**
  * Unit tests for ConsistencyChecker — verifies checkSafe wrapping,
- * deferred check, and response shape for key check methods.
+ * notification closure, overview caching, and response shape for key check methods.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -103,15 +103,71 @@ describe('ConsistencyChecker', () => {
     });
   });
 
-  // ── _checkNotificationDeferred ────────────────────────
+  // ── _checkNotificationClosure ─────────────────────────
 
-  describe('_checkNotificationDeferred', () => {
-    it('returns deferred with no DB queries', async () => {
-      const result = await checker._checkNotificationDeferred();
+  describe('_checkNotificationClosure', () => {
+    it('passes when persisted notification delivery has no open closure issue', async () => {
+      mockExecute.mockResolvedValue([[{
+        enabled_channels: 1,
+        invalid_channels: 0,
+        stuck_jobs: 0,
+        dead_letter_jobs: 0,
+        stale_attempts: 0,
+        unpersisted_sent: 0,
+      }], []]);
+
+      const result = await checker._checkNotificationClosure();
       expect(result.id).toBe('notification_closure');
-      expect(result.status).toBe('deferred');
+      expect(result.status).toBe('pass');
       expect(result.category).toBe('notification');
       expect(result.severity).toBe('info');
+      expect(result.summary).toContain('闭环正常');
+    });
+
+    it('fails when delivery jobs or persisted results are not closed', async () => {
+      mockExecute.mockResolvedValue([[{
+        enabled_channels: 1,
+        invalid_channels: 0,
+        stuck_jobs: 2,
+        dead_letter_jobs: 1,
+        stale_attempts: 1,
+        unpersisted_sent: 1,
+      }], []]);
+
+      const result = await checker._checkNotificationClosure();
+      expect(result.status).toBe('fail');
+      expect(result.severity).toBe('critical');
+      expect(result.details).toMatchObject({ stuck_jobs: 2, dead_letter_jobs: 1, stale_attempts: 1, unpersisted_sent: 1 });
+      expect(result.recommendation).toContain('死信');
+    });
+  });
+
+  describe('healthOverview', () => {
+    it('coalesces and caches consistency and resource-health queries', async () => {
+      const consistency = { timestamp: '2026-08-06T00:00:00.000Z', summary: { pass: 1, warn: 0, fail: 0, deferred: 0, total: 1 }, checks: [], readiness: {} } as any;
+      const truth = { overall: 'healthy' } as any;
+      const runAllChecks = vi.spyOn(checker, 'runAllChecks').mockResolvedValue(consistency);
+      const resourceHealthTruth = vi.spyOn(checker, 'resourceHealthTruth').mockResolvedValue(truth);
+
+      const [first, second] = await Promise.all([checker.healthOverview(), checker.healthOverview()]);
+      const cached = await checker.healthOverview();
+
+      expect(first).toEqual({ ...consistency, truth });
+      expect(second).toBe(first);
+      expect(cached).toBe(first);
+      expect(runAllChecks).toHaveBeenCalledTimes(1);
+      expect(resourceHealthTruth).toHaveBeenCalledTimes(1);
+    });
+
+    it('bypasses the cache on forced refresh', async () => {
+      vi.spyOn(checker, 'runAllChecks').mockResolvedValue({ timestamp: '', summary: {}, checks: [], readiness: {} } as any);
+      vi.spyOn(checker, 'resourceHealthTruth').mockResolvedValue({ overall: 'healthy' } as any);
+
+      await checker.healthOverview();
+      await checker.healthOverview(true);
+
+      expect(checker.runAllChecks).toHaveBeenCalledTimes(2);
+      expect(checker.resourceHealthTruth).toHaveBeenCalledTimes(2);
     });
   });
 

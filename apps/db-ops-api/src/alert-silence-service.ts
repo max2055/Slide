@@ -61,7 +61,7 @@ class AlertSilenceService {
   /**
    * 获取当前生效的静默记录
    */
-  async getActiveSilences(instanceId?: number): Promise<any[]> {
+  async getActiveSilences(instanceId?: number, allowedInstanceIds: readonly number[] | null = null): Promise<any[]> {
     const pool = this.getPool();
     if (!pool) return [];
 
@@ -74,6 +74,16 @@ class AlertSilenceService {
         sql = `SELECT id, instance_id, metric_name, silenced_until, created_by_alert_id, created_at
                FROM silence_periods WHERE instance_id = ? AND silenced_until > NOW() ORDER BY silenced_until ASC`;
         params.push(instanceId);
+      } else if (allowedInstanceIds !== null) {
+        if (allowedInstanceIds.length === 0) {
+          sql = `SELECT id, instance_id, metric_name, silenced_until, created_by_alert_id, created_at
+                 FROM silence_periods WHERE 1 = 0`;
+        } else {
+          sql = `SELECT id, instance_id, metric_name, silenced_until, created_by_alert_id, created_at
+                 FROM silence_periods WHERE instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')})
+                   AND silenced_until > NOW() ORDER BY silenced_until ASC`;
+          params.push(...allowedInstanceIds);
+        }
       }
 
       const [rows] = await pool.execute(sql, params) as any;
@@ -82,6 +92,16 @@ class AlertSilenceService {
       console.error('获取静默记录失败:', error);
       return [];
     }
+  }
+
+  async getSilenceInstanceId(silenceId: number): Promise<number | null> {
+    const pool = this.getPool();
+    if (!pool || !Number.isSafeInteger(silenceId) || silenceId <= 0) return null;
+    const [rows] = await pool.execute(
+      'SELECT instance_id FROM silence_periods WHERE id = ? LIMIT 1',
+      [silenceId],
+    ) as any;
+    return Array.isArray(rows) && rows.length > 0 ? Number(rows[0].instance_id) : null;
   }
 
   /**

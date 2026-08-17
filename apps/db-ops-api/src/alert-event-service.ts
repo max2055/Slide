@@ -20,11 +20,21 @@ class AlertEventService {
     return dbConnection.getPool();
   }
 
+  private instanceScope(column: string, allowedInstanceIds?: readonly number[] | null): { sql: string; params: number[] } {
+    if (allowedInstanceIds === undefined || allowedInstanceIds === null) return { sql: '', params: [] };
+    if (allowedInstanceIds.length === 0) return { sql: ' AND 1 = 0', params: [] };
+    return {
+      sql: ` AND ${column} IN (${allowedInstanceIds.map(() => '?').join(', ')})`,
+      params: [...allowedInstanceIds],
+    };
+  }
+
   /**
    * 获取事件列表，支持过滤和分页
    */
   async getEvents(options?: {
     instance_id?: number;
+    allowed_instance_ids?: readonly number[] | null;
     status?: string;
     severity?: string;
     limit?: number;
@@ -48,6 +58,9 @@ class AlertEventService {
         sql += ' AND e.instance_id = ?';
         params.push(options.instance_id);
       }
+      const listScope = this.instanceScope('e.instance_id', options?.allowed_instance_ids);
+      sql += listScope.sql;
+      params.push(...listScope.params);
       if (options?.status) {
         const statuses = options.status.split(',').map(s => s.trim()).filter(Boolean);
         if (statuses.length === 1) {
@@ -82,6 +95,9 @@ class AlertEventService {
       let countSql = 'SELECT COUNT(DISTINCT e.id) AS total FROM alert_events e WHERE 1=1';
       const countParams: any[] = [];
       if (options?.instance_id !== undefined) { countSql += ' AND e.instance_id = ?'; countParams.push(options.instance_id); }
+      const countScope = this.instanceScope('e.instance_id', options?.allowed_instance_ids);
+      countSql += countScope.sql;
+      countParams.push(...countScope.params);
       if (options?.status) {
         const statuses = options.status.split(',').map(s => s.trim()).filter(Boolean);
         if (statuses.length === 1) {
@@ -415,7 +431,7 @@ class AlertEventService {
    * MTTR 统计（仅统计已解决/已关闭的事件）
    * MTTR = 从 created_at 到 resolved_at/closed_at 的时间（分钟）
    */
-  async getMTTRStats(): Promise<{
+  async getMTTRStats(allowedInstanceIds: readonly number[] | null = null): Promise<{
     avg_mttr_minutes: number;
     median_mttr_minutes: number;
     p95_mttr_minutes: number;
@@ -428,13 +444,15 @@ class AlertEventService {
 
     try {
       // 获取所有已解决/已关闭事件的 MTTR 值
+      const scope = this.instanceScope('instance_id', allowedInstanceIds);
       const [rows] = await pool.execute(
         `SELECT TIMESTAMPDIFF(MINUTE, created_at, COALESCE(resolved_at, updated_at)) AS mttr_minutes
          FROM alert_events
          WHERE status IN ('resolved', 'closed')
            AND resolved_at IS NOT NULL
+           ${scope.sql}
          ORDER BY mttr_minutes`
-      ) as any;
+      , scope.params) as any;
 
       if (!Array.isArray(rows) || rows.length === 0) {
         return { avg_mttr_minutes: 0, median_mttr_minutes: 0, p95_mttr_minutes: 0, total_resolved: 0 };
@@ -591,6 +609,7 @@ class AlertEventService {
     date_to?: string;
     limit?: number;
     offset?: number;
+    allowed_instance_ids?: readonly number[] | null;
   }): Promise<any[]> {
     const pool = this.getPool();
     if (!pool) return [];
@@ -615,6 +634,9 @@ class AlertEventService {
         sql += ' AND e.instance_id = ?';
         params.push(query.instance_id);
       }
+      const searchScope = this.instanceScope('e.instance_id', query.allowed_instance_ids);
+      sql += searchScope.sql;
+      params.push(...searchScope.params);
       if (query.status) {
         const statuses = query.status.split(',').map(s => s.trim()).filter(Boolean);
         if (statuses.length === 1) {
@@ -656,7 +678,7 @@ class AlertEventService {
   /**
    * 事件统计
    */
-  async getEventStats(): Promise<{
+  async getEventStats(allowedInstanceIds: readonly number[] | null = null): Promise<{
     total: number; open: number; investigating: number;
     handled: number; resolved: number; closed: number;
   }> {
@@ -666,6 +688,7 @@ class AlertEventService {
     }
 
     try {
+      const scope = this.instanceScope('instance_id', allowedInstanceIds);
       const [rows] = await pool.execute(
         `SELECT
           COUNT(*) AS total,
@@ -674,7 +697,9 @@ class AlertEventService {
           SUM(CASE WHEN status = 'handled' THEN 1 ELSE 0 END) AS handled,
           SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) AS resolved,
           SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closed
-         FROM alert_events`
+         FROM alert_events
+         WHERE 1 = 1 ${scope.sql}`,
+        scope.params,
       ) as any;
 
       return rows[0] || { total: 0, open: 0, investigating: 0, handled: 0, resolved: 0, closed: 0 };

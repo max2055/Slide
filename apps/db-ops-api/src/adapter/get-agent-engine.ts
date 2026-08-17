@@ -11,7 +11,17 @@ import type { IAgentEngine } from './types.js';
 import { DirectAdapter } from './direct-adapter.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import type { AnyAgentTool } from '../tools/types.js';
-import { executeToolWithPolicy } from '../tools/policy.js';
+import { canActorDiscoverTool, executeToolWithPolicy } from '../tools/policy.js';
+import {
+  assertToolSecurityCatalogCoverage,
+  getToolSecurityDefinition,
+  isActorFacingTool,
+  isDeclarativelyReadOnlyTool,
+} from '../tools/security-catalog.js';
+import { skillRegistry } from '../skills/loader.js';
+import { filterRuntimeSkills } from '../skills/runtime-policy.js';
+import { TrustedSkillsLoader } from '../skills/trusted-skills-loader.js';
+import { DEFAULT_AGENT_ID, agentSecurityPolicyService } from '../security/agent-security-policy-service.js';
 
 let directEngine: IAgentEngine | null = null;
 
@@ -49,30 +59,29 @@ export async function loadPlatformTools(): Promise<ToolRegistry> {
     await import('../cron/cron-completion-tool.js');
 
     const { toolCatalog, registerPredefinedToolGroups } = await import('../tools/catalog.js');
+    const { executeCodeTool } = await import('../tools/code-execution-tool.js');
+    toolCatalog.register(executeCodeTool);
     registerPredefinedToolGroups();
 
     // Collect all AnyAgentTool-formatted tools: catalog + subagent tools
     const { getSubagentTools } = await import('../agents/subagent-spawn-tool.js');
     const allTools = [...toolCatalog.getAll(), ...getSubagentTools()];
+    assertToolSecurityCatalogCoverage(allTools);
     platformTools = allTools;
     let registeredCount = 0;
 
     for (const anyTool of allTools) {
+      if (!isActorFacingTool(anyTool.name)) continue;
       const agentTool: Tool = {
         name: anyTool.name,
         description: anyTool.description,
         parameters: anyTool.parameters as Tool['parameters'],
-        readOnly: true,
+        readOnly: isDeclarativelyReadOnlyTool(anyTool.name),
         concurrencySafe: !anyTool.ownerOnly,
         exclusive: false,
         scope: anyTool.scope, // Pass through scope for subagent filtering
-        execute: async (params: Record<string, unknown>) => {
-          const result = await anyTool.handler(params);
-          // Extract meaningful data from ToolResult wrapper
-          if (result && typeof result === 'object' && 'data' in result) {
-            return (result as { data?: unknown }).data ?? result;
-          }
-          return result;
+        execute: async () => {
+          throw new Error('ACTOR_CONTEXT_REQUIRED');
         },
       };
       registry.register(agentTool);
@@ -92,23 +101,71 @@ export async function loadPlatformTools(): Promise<ToolRegistry> {
   return registry;
 }
 
-/** Build the per-actor registry used by the production DirectAdapter. */
-export function createActorBoundToolRegistry(actor: ActorContext): ToolRegistry {
+const cronActor: ActorContext = Object.freeze({
+  userId: 0,
+  username: 'slide-cron',
+  roles: Object.freeze(['system']),
+  permissions: Object.freeze(['instance:*', 'instance:view', 'servers:view', 'alert:view', 'metric:view']),
+  sessionVersion: 0,
+  instanceScopes: Object.freeze({}),
+  requestId: 'cron-runtime',
+});
+
+const noPersistentSystemAudit = { record: async () => undefined };
+
+/** Build the non-interactive Cron Agent registry from an explicit read-only posture. */
+export async function createCronToolRegistry(): Promise<ToolRegistry> {
+  await loadPlatformTools();
   const registry = new ToolRegistry();
   for (const anyTool of platformTools) {
-    // Delegation inherits no ActorContext in the current subagent transport.
-    // Do not expose a route that could re-enter the unbound parent registry.
-    if (anyTool.name === 'spawn_subagent' || anyTool.name === 'access_subagent') continue;
+    const security = getToolSecurityDefinition(anyTool.name);
+    const isCompletion = anyTool.name === 'slide_complete_cron';
+    if (!isCompletion && !(security?.audience === 'actor' && security.effect === 'read')) continue;
     registry.register({
       name: anyTool.name,
       description: anyTool.description,
       parameters: anyTool.parameters as Tool['parameters'],
-      readOnly: Boolean(anyTool.readOnly),
+      readOnly: !isCompletion,
       concurrencySafe: !anyTool.ownerOnly,
       exclusive: false,
       scope: anyTool.scope,
       execute: async (params: Record<string, unknown>) => {
-        const { decision, result } = await executeToolWithPolicy(actor, anyTool, params);
+        if (isCompletion) return anyTool.handler(params, { actor: cronActor, userId: cronActor.userId });
+        const { decision, result } = await executeToolWithPolicy(
+          cronActor,
+          anyTool,
+          params,
+          undefined,
+          undefined,
+          noPersistentSystemAudit,
+        );
+        if (!decision.allow) return { ...result, policyDecision: decision };
+        return result && typeof result === 'object' && 'data' in result
+          ? (result as { data?: unknown }).data ?? result
+          : result;
+      },
+    });
+  }
+  return registry;
+}
+
+/** Build the per-actor registry used by the production DirectAdapter. */
+export function createActorBoundToolRegistry(actor: ActorContext, agentId = DEFAULT_AGENT_ID): ToolRegistry {
+  const registry = new ToolRegistry();
+  for (const anyTool of platformTools) {
+    const security = getToolSecurityDefinition(anyTool.name);
+    if (!security || !isActorFacingTool(anyTool.name) || !canActorDiscoverTool(actor, anyTool)
+      || !agentSecurityPolicyService.evaluateTool(agentId, anyTool.name, security.effect).allowed) continue;
+    registry.register({
+      name: anyTool.name,
+      description: anyTool.description,
+      parameters: anyTool.parameters as Tool['parameters'],
+      readOnly: isDeclarativelyReadOnlyTool(anyTool.name),
+      concurrencySafe: !anyTool.ownerOnly,
+      exclusive: false,
+      scope: anyTool.scope,
+      execute: async (params: Record<string, unknown>) => {
+        const { decision, result } = await executeToolWithPolicy(actor, anyTool, params, undefined, undefined, undefined, agentId);
         if (!decision.allow) return { ...result, policyDecision: decision };
         const value = result && typeof result === 'object' && 'data' in result
           ? (result as { data?: unknown }).data ?? result
@@ -120,6 +177,11 @@ export function createActorBoundToolRegistry(actor: ActorContext): ToolRegistry 
     });
   }
   return registry;
+}
+
+export async function getPlatformTool(toolName: string): Promise<AnyAgentTool | undefined> {
+  await loadPlatformTools();
+  return platformTools.find((tool) => tool.name === toolName);
 }
 
 // ── Adapter instance factories ──
@@ -168,11 +230,16 @@ async function createDirectAdapter(): Promise<DirectAdapter> {
 
   const provider = await createLLMProvider();
   const tools = await loadPlatformTools();
+  const skillsLoader = new TrustedSkillsLoader(() =>
+    filterRuntimeSkills(DEFAULT_AGENT_ID, skillRegistry.getAll()),
+  );
 
   const adapter = new DirectAdapter({
     tools,
     toolsForActor: createActorBoundToolRegistry,
     llmProvider: provider,
+    skillsLoader,
+    workspace: process.env.AGENT_WORKSPACE || process.cwd(),
   });
 
   console.log('[getAgentEngine] DirectAdapter created');

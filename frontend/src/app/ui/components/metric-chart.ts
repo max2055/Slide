@@ -13,6 +13,7 @@
 import { LitElement, css, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import * as echarts from "echarts";
+import type { EChartsOption, EChartsType } from "echarts";
 
 export interface MetricSeries {
   name: string;
@@ -87,7 +88,7 @@ export class MetricChart extends LitElement {
   @property({ type: Boolean }) compact = false;
 
   private _chartContainer: HTMLDivElement | null = null;
-  private _chart: echarts.ECharts | null = null;
+  private _chart: EChartsType | null = null;
   private _resizeObserver: ResizeObserver | null = null;
   private _rafId: number | null = null;
 
@@ -232,7 +233,7 @@ export class MetricChart extends LitElement {
         return base;
       });
 
-      const option: echarts.EChartsOption = {
+      const option: EChartsOption = {
         tooltip: {
           trigger: "axis",
           backgroundColor: "rgba(0, 0, 0, 0.8)",

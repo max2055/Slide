@@ -26,17 +26,24 @@ export class CronJobDatabaseService {
   /**
    * 获取所有任务配置（按名称排序）
    */
-  async getJobs(): Promise<CronJobConfig[]> {
+  async getJobs(allowedInstanceIds: readonly number[] | null = null): Promise<CronJobConfig[]> {
     const pool = this.getPool();
     if (!pool) return [];
 
     try {
+      const scopeSql = allowedInstanceIds === null
+        ? ''
+        : allowedInstanceIds.length > 0
+          ? `WHERE target_instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')})`
+          : 'WHERE 1 = 0';
       const [rows] = await pool.execute(
         `SELECT id, name, task_description, cron_expr, enabled, task_type, handler_key, script_id, target_instance_id, timezone, description,
                 last_run_at, next_run_at, last_result, timeout_seconds, retry_count,
                 created_at, updated_at
          FROM cron_jobs
-         ORDER BY name`
+         ${scopeSql}
+         ORDER BY name`,
+        allowedInstanceIds === null ? [] : [...allowedInstanceIds],
       ) as any;
       return (rows as any[]).map((r: any) => ({ ...r, enabled: Boolean(r.enabled) })) as CronJobConfig[];
     } catch (error) {

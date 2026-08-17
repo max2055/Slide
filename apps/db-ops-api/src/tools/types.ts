@@ -130,11 +130,20 @@ export interface AnyAgentTool {
 
 export type ToolPolicyReasonCode =
   | 'ALLOW'
+  | 'SECURITY_METADATA_MISSING'
+  | 'INTERNAL_TOOL_DENIED'
   | 'MISSING_ACTOR'
   | 'OWNER_REQUIRED'
   | 'MISSING_PERMISSION'
+  | 'AUDIT_UNAVAILABLE'
+  | 'AGENT_TOOL_DENIED'
+  | 'AGENT_EFFECT_DENIED'
+  | 'AGENT_RESOURCE_DENIED'
+  | 'RESOURCE_INVALID'
+  | 'RESOURCE_NOT_FOUND'
   | 'INSTANCE_SCOPE_REQUIRED'
   | 'INSTANCE_SCOPE_DENIED'
+  | 'INSTANCE_SCOPE_LEVEL_DENIED'
   | 'APPROVAL_REQUIRED'
   | 'INVALID_APPROVAL';
 
@@ -143,9 +152,17 @@ export interface PolicyDecision {
   reasonCode: ToolPolicyReasonCode;
   actor: { userId: number; username: string; roles: readonly string[] } | null;
   tool: string;
-  resource: { instanceId?: number };
+  resource: ToolPolicyResource;
   approvalId?: string;
   requestId?: string;
+}
+
+export interface ToolPolicyResource {
+  type: 'none' | 'instance' | 'server' | 'database-target' | 'cron' | 'analysis';
+  instanceId?: number;
+  serverId?: number;
+  databaseTarget?: { host: string; port: number };
+  error?: 'RESOURCE_INVALID' | 'RESOURCE_NOT_FOUND';
 }
 
 // ============== 工具目录类型 ==============

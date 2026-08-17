@@ -4,7 +4,6 @@ node_modules
 *.log
 dist
 dist-runtime/
-pnpm-lock.yaml
 package-lock.json
 bun.lock
 bun.lockb
@@ -14,7 +13,12 @@ coverage
 .tsbuildinfo
 .tmp/
 .artifacts/
+.runtime/
+.codex-docx-review/
+.codex-ppt-update.*/
 .claude/
 **/.slide/
 **/.playwright/
+frontend/test-results/
+tmp/
 nanobot-reference/

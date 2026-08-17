@@ -24,6 +24,7 @@ interface ServerRow {
   collection_enabled: boolean;
   created_at: string;
   updated_at: string;
+  host_key_fingerprint: string;
 }
 
 interface ServerFormData {
@@ -34,6 +35,7 @@ interface ServerFormData {
   credential_type: "password" | "key";
   credential_username: string;
   credential_value: string;
+  host_key_fingerprint: string;
 }
 
 
@@ -326,6 +328,7 @@ export class ServersPage extends LitElement {
     credential_type: "password",
     credential_username: "",
     credential_value: "",
+    host_key_fingerprint: "",
   };
   @state() private _testConnectionMessage = "";
   @state() private _testConnectionSuccess: boolean | null = null;
@@ -369,6 +372,7 @@ export class ServersPage extends LitElement {
       credential_type: "password",
       credential_username: "",
       credential_value: "",
+      host_key_fingerprint: "",
     };
     this._testConnectionMessage = "";
     this._testConnectionSuccess = null;
@@ -396,6 +400,7 @@ export class ServersPage extends LitElement {
       credential_type: server.credential_type,
       credential_username: credentialUsername,
       credential_value: "",
+      host_key_fingerprint: server.host_key_fingerprint || "",
     };
     this._testConnectionMessage = "";
     this._testConnectionSuccess = null;
@@ -417,8 +422,8 @@ export class ServersPage extends LitElement {
   private async _handleSubmit() {
     if (this._isSubmitting) return;
 
-    if (!this._form.host || !this._form.credential_username) {
-      showToast("请填写主机地址和SSH用户名", "warning");
+    if (!this._form.host || !this._form.credential_username || !this._form.host_key_fingerprint) {
+      showToast("请填写主机地址、SSH用户名和主机密钥指纹", "warning");
       return;
     }
     if (!this._editingId && !this._form.credential_value) {
@@ -487,8 +492,8 @@ export class ServersPage extends LitElement {
   }
 
   private async _handleTestConnection() {
-    if (!this._form.host || !this._form.credential_username) {
-      showToast("请先填写主机地址和SSH用户名", "warning");
+    if (!this._form.host || !this._form.credential_username || !this._form.host_key_fingerprint) {
+      showToast("请先填写主机地址、SSH用户名和主机密钥指纹", "warning");
       return;
     }
 
@@ -506,6 +511,7 @@ export class ServersPage extends LitElement {
           credential_type: this._form.credential_type,
           credential_username: this._form.credential_username,
           credential_value: this._form.credential_value,
+          host_key_fingerprint: this._form.host_key_fingerprint,
         }),
       });
       const result = await res.json();
@@ -784,9 +790,15 @@ export class ServersPage extends LitElement {
               placeholder="root" />
           </app-form-field>
 
+          <app-form-field label="SSH主机密钥指纹" required>
+            <input class="form-input" type="text" .value=${this._form.host_key_fingerprint}
+              @input=${(e: any) => this._updateForm("host_key_fingerprint", e.target.value)}
+              placeholder="SHA256:..." />
+          </app-form-field>
+
           <app-form-field
             label=${this._form.credential_type === "password" ? "密码" : "SSH私钥"}
-            required=${!this._editingId}>
+            .required=${!this._editingId}>
             ${this._form.credential_type === "password"
               ? html`<input class="form-input" type="password" autocomplete="new-password"
                   .value=${this._form.credential_value}

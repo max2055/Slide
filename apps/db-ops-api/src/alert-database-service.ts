@@ -153,6 +153,7 @@ class AlertDatabaseService {
    */
   async getAlerts(options?: {
     instance_id?: number;
+    allowed_instance_ids?: readonly number[] | null;
     server_id?: number;
     status?: string;
     level?: string;
@@ -184,6 +185,14 @@ class AlertDatabaseService {
       if (options?.instance_id !== undefined) {
         sql += ' AND a.instance_id = ?';
         params.push(options.instance_id);
+      }
+      if (options?.allowed_instance_ids !== undefined && options.allowed_instance_ids !== null) {
+        if (options.allowed_instance_ids.length === 0) {
+          sql += ' AND a.instance_id IS NULL';
+        } else {
+          sql += ` AND (a.instance_id IS NULL OR a.instance_id IN (${options.allowed_instance_ids.map(() => '?').join(', ')}))`;
+          params.push(...options.allowed_instance_ids);
+        }
       }
       if (options?.server_id !== undefined) {
         sql += ' AND a.server_id = ?';
@@ -224,6 +233,14 @@ class AlertDatabaseService {
         const whereParts: string[] = [];
         const countParams: any[] = [];
         if (options?.instance_id !== undefined) { whereParts.push('instance_id = ?'); countParams.push(options.instance_id); }
+        if (options?.allowed_instance_ids !== undefined && options.allowed_instance_ids !== null) {
+          if (options.allowed_instance_ids.length === 0) {
+            whereParts.push('instance_id IS NULL');
+          } else {
+            whereParts.push(`(instance_id IS NULL OR instance_id IN (${options.allowed_instance_ids.map(() => '?').join(', ')}))`);
+            countParams.push(...options.allowed_instance_ids);
+          }
+        }
         if (options?.server_id !== undefined) { whereParts.push('server_id = ?'); countParams.push(options.server_id); }
         if (options?.status) {
           const statuses = options.status.split(',').map(s => s.trim()).filter(Boolean);
@@ -248,6 +265,14 @@ class AlertDatabaseService {
         const resolvedCountParams: any[] = [];
         const resolvedWhereParts: string[] = [];
         if (options?.instance_id !== undefined) { resolvedWhereParts.push('instance_id = ?'); resolvedCountParams.push(options.instance_id); }
+        if (options?.allowed_instance_ids !== undefined && options.allowed_instance_ids !== null) {
+          if (options.allowed_instance_ids.length === 0) {
+            resolvedWhereParts.push('instance_id IS NULL');
+          } else {
+            resolvedWhereParts.push(`(instance_id IS NULL OR instance_id IN (${options.allowed_instance_ids.map(() => '?').join(', ')}))`);
+            resolvedCountParams.push(...options.allowed_instance_ids);
+          }
+        }
         if (options?.server_id !== undefined) { resolvedWhereParts.push('server_id = ?'); resolvedCountParams.push(options.server_id); }
         const resolvedWhere = resolvedWhereParts.length ? 'WHERE ' + resolvedWhereParts.join(' AND ') : '';
         const [[{ total: rv }]] = await pool.query(
@@ -291,6 +316,18 @@ class AlertDatabaseService {
       if (options?.strict) throw new Error('ALERTS_QUERY_FAILED', { cause: error });
       return { items: [], total: 0, unread: 0, critical: 0, warning: 0, resolved: 0 };
     }
+  }
+
+  async getAlertAccessTarget(alertId: number): Promise<{ instance_id: number | null; server_id: number | null } | null> {
+    const pool = this.getPool();
+    if (!pool || !Number.isSafeInteger(alertId) || alertId <= 0) return null;
+    const [rows] = await pool.execute(
+      'SELECT instance_id, server_id FROM alerts WHERE id = ? LIMIT 1',
+      [alertId],
+    ) as any;
+    return Array.isArray(rows) && rows.length > 0
+      ? { instance_id: rows[0].instance_id == null ? null : Number(rows[0].instance_id), server_id: rows[0].server_id == null ? null : Number(rows[0].server_id) }
+      : null;
   }
 
   /**

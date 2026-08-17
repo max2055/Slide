@@ -5,7 +5,7 @@ import { normalizeLowercaseStringOrEmpty } from "./string-coerce.ts";
 export const TAB_GROUPS = [
   {
     label: "slide",
-    tabs: ["chat", "dashboard", "servers", "instances-db", "sql-console", "approval", "alerts", "metric-registry", "reports", "events", "cron-jobs"],
+    tabs: ["chat", "dashboard", "servers", "instances-db", "sql-console", "approval", "alerts", "metric-registry", "reports", "events", "cron-jobs", "health-center"],
   },
   {
     label: "settings",
@@ -24,6 +24,7 @@ export type Tab =
   | "chat"
   | "config"
   | "cron-jobs"
+  | "health-center"
   | "dashboard"
   | "docs"
   | "instances-db"
@@ -59,6 +60,7 @@ const TAB_PATHS: Record<Tab, string> = {
   chat: "/chat",
   config: "/config",
   "cron-jobs": "/cron-jobs",
+  "health-center": "/health",
   dashboard: "/dashboard",
   docs: "/docs",
   "instances-db": "/instances-db",
@@ -93,7 +95,7 @@ const REMOVED_LEGACY_PATHS = new Set(['/system', '/appearance']);
 export const DEFAULT_TAB_OPTIONS: Tab[] = [
   "chat", "dashboard", "instances-db", "servers", "sql-console",
   "alerts", "metric-registry", "reports",
-  "events", "approval", "cron-jobs", "sessions",
+  "events", "approval", "cron-jobs", "health-center", "sessions",
   "schema", "indexes", "settings", "ai-settings",
   "llm-config", "scoring-settings",
   "agent-sessions", "agent-skills", "agent-tools",
@@ -119,6 +121,7 @@ export const TAB_REQUIRED_PERMISSIONS: Partial<Record<Tab, string>> = {
   'schema': 'schema:view',
   'approval': 'approval:view',
   'cron-jobs': 'cron:view',
+  'health-center': 'config:view',
   'scoring-settings': 'scoring:view',
 };
 
@@ -218,6 +221,8 @@ export function iconForTab(tab: Tab): IconName {
       return "message-square";
     case "cron-jobs":
       return "loader";
+    case "health-center":
+      return "activity";
     case "dashboard":
       return "bar-chart";
     case "docs":

@@ -9,7 +9,33 @@ import { dbConnection } from './db-connection.js';
 import { authorizeApprovedSqlExecution, type ApprovalExecutionGrant } from './security/approval-execution-authorizer.js';
 import { securityEventService } from './security/security-event-service.js';
 
+const DEFAULT_SQL_TIMEOUT_MS = 15_000;
+const MAX_SQL_TIMEOUT_MS = 30_000;
+const MAX_SQL_ROWS = 1_000;
+
 class SqlExecutor {
+  private readonly executionQueues = new Map<number, Promise<void>>();
+
+  private normalizeTimeout(timeoutMs?: number): number {
+    if (!Number.isFinite(timeoutMs)) return DEFAULT_SQL_TIMEOUT_MS;
+    return Math.max(100, Math.min(Math.trunc(timeoutMs!), MAX_SQL_TIMEOUT_MS));
+  }
+
+  private async serializeForInstance<T>(instanceId: number, action: () => Promise<T>): Promise<T> {
+    const previous = this.executionQueues.get(instanceId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const queued = previous.catch(() => undefined).then(() => gate);
+    this.executionQueues.set(instanceId, queued);
+    await previous.catch(() => undefined);
+    try {
+      return await action();
+    } finally {
+      release();
+      if (this.executionQueues.get(instanceId) === queued) this.executionQueues.delete(instanceId);
+    }
+  }
+
   /**
    * 执行 SQL 查询（仅 SELECT）
    */
@@ -21,6 +47,7 @@ class SqlExecutor {
     columns?: string[];
     rows?: any[];
     rowCount?: number;
+    truncated?: boolean;
     duration_ms?: number;
     error?: string;
   }> {
@@ -42,6 +69,17 @@ class SqlExecutor {
     // when the target instance is unreachable.
     const classification = classifySql(sql, 'mysql'); // db_type hint; re-classified after connection
     if (classification.commandType !== 'read') {
+      if (
+        classification.reasonCode === 'MULTI_STATEMENT' ||
+        ['transaction', 'session', 'procedure'].includes(classification.commandType)
+      ) {
+        return {
+          success: false,
+          error: `SQL_STATEMENT_NOT_ALLOWED_${classification.reasonCode === 'UNCLASSIFIED'
+            ? classification.commandType
+            : classification.reasonCode}`,
+        };
+      }
       if (!await verifyApproval()) {
         await securityEventService.record({
           eventType: 'approval_execution_denied', reasonCode: classification.reasonCode,
@@ -64,48 +102,106 @@ class SqlExecutor {
 
     // Re-classify with actual db_type for dialect-specific rules
     const reclassification = classifySql(sql, conn.db_type as 'mysql' | 'postgresql' | 'oracle' | 'dameng');
-    if (reclassification.commandType !== 'read' && !await verifyApproval()) {
-      return { success: false, error: `SQL_APPROVAL_REQUIRED_${reclassification.reasonCode}` };
-    }
-
-    // 切换数据库/模式（如果指定了 database 参数）
-    if (context?.database) {
-      if (conn.db_type === 'mysql' && conn.pool) {
-        const escapedDb = context.database.replace(/`/g, '``');
-        await conn.pool.query('USE `' + escapedDb + '`');
-      } else if (conn.db_type === 'postgresql' && conn.pgClient) {
-        await conn.pgClient.query('SET search_path TO ' + conn.pgClient.escapeIdentifier(context.database));
-      } else {
-        console.warn(`[SqlExecutor] Database switching not supported for db_type: ${conn.db_type}`);
+    if (reclassification.commandType !== 'read') {
+      if (!['write', 'ddl'].includes(reclassification.commandType)) {
+        return {
+          success: false,
+          error: `SQL_STATEMENT_NOT_ALLOWED_${reclassification.reasonCode === 'UNCLASSIFIED'
+            ? reclassification.commandType
+            : reclassification.reasonCode}`,
+        };
+      }
+      if (!await verifyApproval()) {
+        return { success: false, error: `SQL_APPROVAL_REQUIRED_${reclassification.reasonCode}` };
       }
     }
 
     try {
       let result: any;
+      const isReadOnly = reclassification.commandType === 'read';
+      const timeoutMs = this.normalizeTimeout(context?.timeoutMs);
 
       if (conn.db_type === 'mysql' && conn.pool) {
-        // Set timeout guard on the same connection before executing
-        if (context?.timeoutMs) {
-          await conn.pool.query(`SET SESSION max_execution_time = ${context.timeoutMs}`);
-        }
-        const [rows, fields] = await conn.pool.query(sql);
-        result = { rows, fields };
+        result = await this.serializeForInstance(instanceId, async () => {
+          const connection = await conn.pool!.getConnection();
+          let transactionStarted = false;
+          try {
+            await connection.query(`SET SESSION max_execution_time = ${timeoutMs}`);
+            if (isReadOnly) await connection.query(`SET SESSION sql_select_limit = ${MAX_SQL_ROWS + 1}`);
+            if (context?.database) {
+              const escapedDb = context.database.replace(/`/g, '``');
+              await connection.query('USE `' + escapedDb + '`');
+            }
+            if (isReadOnly) {
+              await connection.query('START TRANSACTION READ ONLY');
+              transactionStarted = true;
+            }
+            const [rows, fields] = await connection.query(sql);
+            if (transactionStarted) {
+              await connection.query('COMMIT');
+              transactionStarted = false;
+            }
+            return { rows, fields };
+          } catch (error) {
+            if (transactionStarted) await connection.query('ROLLBACK').catch(() => undefined);
+            throw error;
+          } finally {
+            await connection.query('SET SESSION max_execution_time = 0').catch(() => undefined);
+            if (isReadOnly) await connection.query('SET SESSION sql_select_limit = DEFAULT').catch(() => undefined);
+            connection.release();
+          }
+        });
       } else if (conn.db_type === 'postgresql' && conn.pgClient) {
-        const pgResult = await conn.pgClient.query(sql);
-        result = { rows: pgResult.rows, fields: pgResult.fields };
+        result = await this.serializeForInstance(instanceId, async () => {
+          let transactionStarted = false;
+          try {
+            await conn.pgClient!.query(isReadOnly ? 'BEGIN READ ONLY' : 'BEGIN');
+            transactionStarted = true;
+            await conn.pgClient!.query(`SET LOCAL statement_timeout = ${timeoutMs}`);
+            if (context?.database) {
+              await conn.pgClient!.query('SET LOCAL search_path TO ' + conn.pgClient!.escapeIdentifier(context.database));
+            }
+            const cleanSql = sql.trim().replace(/;+\s*$/, '');
+            const boundedSql = isReadOnly
+              ? `SELECT * FROM (${cleanSql}) AS slide_read_limit LIMIT ${MAX_SQL_ROWS + 1}`
+              : cleanSql;
+            const pgResult = await conn.pgClient!.query(boundedSql);
+            await conn.pgClient!.query('COMMIT');
+            transactionStarted = false;
+            return { rows: pgResult.rows, fields: pgResult.fields };
+          } catch (error) {
+            if (transactionStarted) await conn.pgClient!.query('ROLLBACK').catch(() => undefined);
+            throw error;
+          }
+        });
       } else if (conn.db_type === 'oracle' && conn.oracleConnection) {
-        const oracleResult = await conn.oracleConnection.execute(sql);
-        const fields = oracleResult.metaData?.map((m: any) => ({ name: m.name })) || [];
-        const rows = Array.isArray(oracleResult.rows) && oracleResult.rows.length > 0 && !Array.isArray(oracleResult.rows[0])
-          ? oracleResult.rows
-          : (oracleResult.rows || []).map((row: any) => {
-              const obj: any = {};
-              fields.forEach((f: any, i: number) => { obj[f.name] = row[i]; });
-              return obj;
-            });
-        result = { rows, fields };
+        result = await this.serializeForInstance(instanceId, async () => {
+          const oracleConnection = conn.oraclePool ? await conn.oraclePool.getConnection() : conn.oracleConnection!;
+          const previousCallTimeout = oracleConnection.callTimeout;
+          try {
+            oracleConnection.callTimeout = timeoutMs;
+            if (isReadOnly) await oracleConnection.execute('SET TRANSACTION READ ONLY');
+            const oracleResult = await oracleConnection.execute(sql, [], { maxRows: isReadOnly ? MAX_SQL_ROWS + 1 : 0 });
+            if (isReadOnly) await oracleConnection.rollback();
+            const fields = oracleResult.metaData?.map((m: any) => ({ name: m.name })) || [];
+            const rows = Array.isArray(oracleResult.rows) && oracleResult.rows.length > 0 && !Array.isArray(oracleResult.rows[0])
+              ? oracleResult.rows
+              : (oracleResult.rows || []).map((row: any) => {
+                  const obj: any = {};
+                  fields.forEach((f: any, i: number) => { obj[f.name] = row[i]; });
+                  return obj;
+                });
+            return { rows, fields };
+          } catch (error) {
+            if (isReadOnly) await oracleConnection.rollback().catch(() => undefined);
+            throw error;
+          } finally {
+            oracleConnection.callTimeout = previousCallTimeout;
+            if (conn.oraclePool) await oracleConnection.close().catch(() => undefined);
+          }
+        });
       } else if (conn.db_type === 'dameng' && conn.dmConnection) {
-        const dmResult = await conn.dmConnection.execute(sql);
+        const dmResult = await conn.dmConnection.execute(sql, [], { maxRows: isReadOnly ? MAX_SQL_ROWS + 1 : 0 });
         const fields = dmResult.metaData?.map((m: any) => ({ name: m.name })) || [];
         const rows = Array.isArray(dmResult.rows) && dmResult.rows.length > 0 && !Array.isArray(dmResult.rows[0])
           ? dmResult.rows
@@ -120,7 +216,9 @@ class SqlExecutor {
       }
 
       const duration_ms = Date.now() - startTime;
-      const rows = Array.isArray(result.rows) ? result.rows : [];
+      const allRows = Array.isArray(result.rows) ? result.rows : [];
+      const truncated = isReadOnly && allRows.length > MAX_SQL_ROWS;
+      const rows = truncated ? allRows.slice(0, MAX_SQL_ROWS) : allRows;
       const columns = Array.isArray(result.fields)
         ? result.fields.map((f: any) => f.name)
         : Object.keys(rows[0] || {});
@@ -144,7 +242,7 @@ class SqlExecutor {
         } catch { /* audit non-blocking */ }
       }
 
-      return { success: true, columns, rows, rowCount: rows.length, duration_ms };
+      return { success: true, columns, rows, rowCount: rows.length, truncated, duration_ms };
     } catch (error: any) {
       const duration_ms = Date.now() - startTime;
       if (context?.userId) {

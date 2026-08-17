@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="660" viewBox="0 0 1200 660" role="img" aria-labelledby="title desc">
+  <title id="title">Slide 平台架构总览</title>
+  <desc id="desc">用户通过控制台访问 API 或 DirectAdapter，平台连接 MySQL 控制面、受管数据库、服务器和 LLM 提供商。</desc>
+  <defs>
+    <style>
+      .t{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;fill:#132238}.h{font-size:22px;font-weight:700}.s{font-size:15px;fill:#52657d}.l{font-size:16px;font-weight:600}.m{font-size:14px;fill:#38506e}.k{font-size:13px;fill:#697b91}.w{fill:#fff}.wl{fill:#dceeff}.box{stroke-width:1.5}.line{fill:none;stroke:#6b87a8;stroke-width:2}.dash{fill:none;stroke:#8aa1ba;stroke-width:1.5;stroke-dasharray:7 6}.pill{font-size:12px;font-weight:600;fill:#1f4f7d}
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#6b87a8"/></marker>
+  </defs>
+  <rect width="1200" height="660" fill="#f7fafc"/>
+  <rect x="32" y="26" width="1136" height="56" rx="8" fill="#0f5f9d"/>
+  <text x="58" y="61" class="t h w">Slide 数据库运维平台</text>
+  <text x="1142" y="61" class="s wl" text-anchor="end">控制面架构 · DirectAdapter</text>
+
+  <rect x="32" y="112" width="184" height="460" rx="8" fill="#e8f2fb" stroke="#b8d1e7" class="box"/>
+  <text x="56" y="150" class="t h">使用者</text>
+  <rect x="56" y="176" width="136" height="76" rx="6" fill="#fff" stroke="#82acd1" class="box"/>
+  <text x="124" y="208" class="t l" text-anchor="middle">DBA / SRE</text><text x="124" y="232" class="s" text-anchor="middle">管理员与开发者</text>
+  <rect x="56" y="278" width="136" height="76" rx="6" fill="#fff" stroke="#82acd1" class="box"/>
+  <text x="124" y="310" class="t l" text-anchor="middle">浏览器</text><text x="124" y="334" class="s" text-anchor="middle">控制台 / Chat</text>
+  <text x="56" y="406" class="k">职责</text><text x="56" y="434" class="m">观察健康与容量</text><text x="56" y="460" class="m">处置事件与审批</text><text x="56" y="486" class="m">与 Agent 协同分析</text>
+
+  <rect x="260" y="112" width="548" height="460" rx="8" fill="#fff" stroke="#b8d1e7" class="box"/>
+  <text x="288" y="150" class="t h">Slide 控制面</text>
+  <rect x="288" y="176" width="228" height="142" rx="7" fill="#e9f5ff" stroke="#4d94c7" class="box"/>
+  <text x="312" y="212" class="t l">前端控制台</text><text x="312" y="238" class="s">Lit + Vite :5173</text><text x="312" y="268" class="m">仪表盘 · 实例 · SQL · 告警</text><text x="312" y="292" class="m">事件 · 审批 · 报表 · 设置</text>
+  <rect x="548" y="176" width="232" height="142" rx="7" fill="#eaf9f5" stroke="#45a38c" class="box"/>
+  <text x="572" y="212" class="t l">Fastify API</text><text x="572" y="238" class="s">REST :3000</text><text x="572" y="268" class="m">JWT · RBAC · 目标策略</text><text x="572" y="292" class="m">审批 · 审计 · 工作流</text>
+  <rect x="288" y="358" width="228" height="148" rx="7" fill="#fff5e7" stroke="#d7973e" class="box"/>
+  <text x="312" y="394" class="t l">DirectAdapter</text><text x="312" y="420" class="s">WebSocket :28888</text><text x="312" y="450" class="m">JWT 认证 · 流式消息</text><text x="312" y="474" class="m">会话 · Agent 运行记录</text>
+  <rect x="548" y="358" width="232" height="148" rx="7" fill="#f0edfb" stroke="#8172c5" class="box"/>
+  <text x="572" y="394" class="t l">后台 Worker</text><text x="572" y="420" class="s">Worker lease 协调</text><text x="572" y="450" class="m">指标采集 · 告警评估</text><text x="572" y="474" class="m">Cron · 通知 · 会话清理</text>
+
+  <rect x="852" y="112" width="316" height="460" rx="8" fill="#edf4f8" stroke="#b8d1e7" class="box"/>
+  <text x="880" y="150" class="t h">受控资源与外部能力</text>
+  <rect x="880" y="176" width="260" height="80" rx="7" fill="#fff" stroke="#7fa0be" class="box"/><text x="904" y="208" class="t l">MySQL 控制面</text><text x="904" y="234" class="s">用户 · 权限 · 指标 · 告警 · 审计</text>
+  <rect x="880" y="280" width="260" height="80" rx="7" fill="#fff" stroke="#7fa0be" class="box"/><text x="904" y="312" class="t l">受管数据库与服务器</text><text x="904" y="338" class="s">MySQL · PostgreSQL · Oracle · 达梦</text>
+  <rect x="880" y="384" width="260" height="80" rx="7" fill="#fff" stroke="#7fa0be" class="box"/><text x="904" y="416" class="t l">LLM 与通知渠道</text><text x="904" y="442" class="s">Anthropic · OpenAI · Ollama · Webhook</text>
+  <text x="880" y="510" class="k">平台工具必须通过 RBAC、资源范围</text><text x="880" y="532" class="k">和目标地址策略后才能访问资源。</text>
+
+  <path d="M192 316 H288" class="line" marker-end="url(#arrow)"/><text x="232" y="300" class="pill" text-anchor="middle">HTTPS</text>
+  <path d="M516 246 H548" class="line" marker-end="url(#arrow)"/><text x="532" y="230" class="pill" text-anchor="middle">REST</text>
+  <path d="M402 318 V358" class="line" marker-end="url(#arrow)"/><text x="416" y="342" class="pill">Chat</text>
+  <path d="M516 432 H548" class="dash" marker-end="url(#arrow)"/><text x="532" y="416" class="pill" text-anchor="middle">任务</text>
+  <path d="M780 246 H880" class="line" marker-end="url(#arrow)"/><path d="M780 432 H880" class="line" marker-end="url(#arrow)"/>
+  <path d="M516 432 C680 432 680 322 880 322" class="dash" marker-end="url(#arrow)"/>
+  <rect x="292" y="602" width="616" height="30" rx="15" fill="#dbe9f4"/><text x="600" y="622" class="m" text-anchor="middle">统一原则：身份认证 → 权限校验 → 平台工具策略 → 审批与审计</text>
+</svg>

@@ -4,6 +4,7 @@ import "../components/app-card.js";
 import "../components/app-badge.js";
 import "../components/app-empty-state.js";
 import * as echarts from "echarts";
+import type { EChartsType } from "echarts";
 import { icons } from "../../../icons.js";
 import "../../../components/stat-card.js";
 import { authFetch } from "../../../api/index.js";
@@ -327,9 +328,9 @@ export class DashboardPage extends LitElement {
   @state() private trendLoading = false;
 
   // ECharts instances for lifecycle management
-  private _pieChart: echarts.ECharts | null = null;
+  private _pieChart: EChartsType | null = null;
   private _pieRO: ResizeObserver | null = null;
-  private _trendChart: echarts.ECharts | null = null;
+  private _trendChart: EChartsType | null = null;
   private _trendRO: ResizeObserver | null = null;
 
   override firstUpdated() {

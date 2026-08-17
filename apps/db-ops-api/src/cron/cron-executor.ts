@@ -16,6 +16,7 @@ import type {
   LLMProvider,
   AgentRunResult,
 } from '@slide/agent-core';
+import { loadAgentRuntimeLimits } from '../security/agent-runtime-limits.js';
 
 // ── CronHook — 收集 ToolEvent 的自定义 Hook ──
 
@@ -30,6 +31,7 @@ export class CronHook extends NoopHook {
 // ── CronExecutor — Agent 驱动的 cron 执行器 ──
 
 export class CronExecutor {
+  private readonly runtimeLimits = loadAgentRuntimeLimits();
   constructor(
     private runner: AgentRunner,
     private registry: ToolRegistry,
@@ -61,8 +63,8 @@ export class CronExecutor {
         ] as Message[],
         tools: this.registry,
         model: this.provider.getDefaultModel(),
-        maxIterations: 200,
-        maxToolResultChars: 20000,
+        maxIterations: Math.min(this.runtimeLimits.maxIterations, 40),
+        maxToolResultChars: this.runtimeLimits.maxToolResultChars,
         temperature: 0.0,
         reasoningEffort: 'medium',
         hook,

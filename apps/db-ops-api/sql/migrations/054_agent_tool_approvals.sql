@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS agent_tool_approvals (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  tool_name VARCHAR(128) NOT NULL,
+  requester_id INT UNSIGNED NOT NULL,
+  binding_hash CHAR(64) NOT NULL,
+  args_redacted JSON NOT NULL,
+  resource_json JSON NOT NULL,
+  policy_snapshot JSON NOT NULL,
+  status ENUM('pending','approved','rejected','consumed','expired') NOT NULL DEFAULT 'pending',
+  reviewer_id INT UNSIGNED NULL,
+  review_note VARCHAR(1000) NULL,
+  reviewed_at DATETIME NULL,
+  expires_at DATETIME NOT NULL,
+  consumed_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_agent_tool_approval_pending (status, expires_at),
+  KEY idx_agent_tool_approval_requester (requester_id, created_at),
+  KEY idx_agent_tool_approval_binding (binding_hash),
+  CONSTRAINT fk_agent_tool_approval_requester FOREIGN KEY (requester_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_agent_tool_approval_reviewer FOREIGN KEY (reviewer_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

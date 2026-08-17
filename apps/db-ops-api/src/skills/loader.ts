@@ -4,13 +4,14 @@
  * 复用上游技能加载模式：
  * - 从目录扫描 SKILL.md 文件
  * - 解析 frontmatter 和验证
- * - 加载关联的 tools.ts 文件
+ * - Skill 代码不得在 API 进程内加载或执行
  * - 注册技能到运行时
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import type { SkillEntry, ParsedSkillFrontmatter, SkillCommandSpec } from './types.js';
 import { parseSkillFrontmatter, normalizeFrontmatter, buildSkillEntry, extractSlideSkillMetadata } from './frontmatter.js';
 
@@ -22,14 +23,12 @@ import { parseSkillFrontmatter, normalizeFrontmatter, buildSkillEntry, extractSl
 const SKILL_FILENAME = 'SKILL.md';
 
 /**
- * 工具文件名称
- */
-const TOOLS_FILENAME = 'tools.ts';
-
-/**
  * 技能目录最大深度
  */
 const MAX_DEPTH = 3;
+const MAX_SKILL_BYTES = 256 * 1024;
+
+type SkillSource = 'bundled' | 'operator' | 'temporary';
 
 // ============== 技能加载 ==============
 
@@ -48,13 +47,20 @@ export async function loadSkillsFromDirectory(
     maxDepth?: number;
     /** 技能过滤器 */
     skillFilter?: string[];
+    /** Trust source assigned by the operator-owned root configuration. */
+    source?: SkillSource;
+    /** Required for operator skills; keyed by frontmatter skill name. */
+    expectedDigests?: Readonly<Record<string, string>>;
   },
 ): Promise<SkillEntry[]> {
   const skills: SkillEntry[] = [];
   const recursive = options?.recursive ?? true;
   const maxDepth = options?.maxDepth ?? MAX_DEPTH;
+  const source = options?.source ?? 'temporary';
+  let trustedRoot: string;
 
   try {
+    trustedRoot = await fs.promises.realpath(rootDir);
     await scanDirectory(rootDir, 0);
   } catch (error) {
     console.error('[SkillLoader] 加载技能失败:', error);
@@ -83,7 +89,11 @@ export async function loadSkillsFromDirectory(
 
       // 检查是否是 SKILL.md 文件
       if (entry.isFile() && entry.name === SKILL_FILENAME) {
-        const skillEntry = await loadSkillFromFile(fullPath);
+        const skillEntry = await loadSkillFromFile(fullPath, {
+          trustedRoot,
+          source,
+          expectedDigests: options?.expectedDigests,
+        });
         if (skillEntry) {
           // 应用技能过滤器
           if (!options?.skillFilter || options.skillFilter.includes(skillEntry.skill.name)) {
@@ -106,10 +116,27 @@ export async function loadSkillsFromDirectory(
 /**
  * 从文件加载技能
  */
-export async function loadSkillFromFile(filePath: string): Promise<SkillEntry | null> {
+export async function loadSkillFromFile(
+  filePath: string,
+  securityOptions?: {
+    trustedRoot?: string;
+    source?: SkillSource;
+    expectedDigests?: Readonly<Record<string, string>>;
+  },
+): Promise<SkillEntry | null> {
   try {
+    const stat = await fs.promises.lstat(filePath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SKILL_BYTES) return null;
+    const realPath = await fs.promises.realpath(filePath);
+    const trustedRoot = securityOptions?.trustedRoot
+      ? await fs.promises.realpath(securityOptions.trustedRoot)
+      : path.dirname(realPath);
+    const relative = path.relative(trustedRoot, realPath);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
+
     // 读取文件内容
-    const content = await fs.promises.readFile(filePath, 'utf-8');
+    const content = await fs.promises.readFile(realPath, 'utf-8');
+    const digest = createHash('sha256').update(content, 'utf8').digest('hex');
 
     // 解析 frontmatter
     const { frontmatter, body, valid, error } = parseSkillFrontmatter(content);
@@ -121,11 +148,18 @@ export async function loadSkillFromFile(filePath: string): Promise<SkillEntry | 
 
     // 规范化 frontmatter
     const normalizedFrontmatter = normalizeFrontmatter(frontmatter);
+    const name = normalizedFrontmatter.name?.toString() || 'unknown';
+    const source = securityOptions?.source ?? 'temporary';
+    const expectedDigest = securityOptions?.expectedDigests?.[name];
+    const trusted = source === 'bundled' || (source === 'operator' && expectedDigest === digest);
+    if (source === 'operator' && !trusted) {
+      console.warn(`[SkillLoader] Skill digest mismatch or missing: ${name}`);
+      return null;
+    }
 
     // 构建技能条目
-    const skillDir = path.dirname(filePath);
     const skill = {
-      name: normalizedFrontmatter.name?.toString() || 'unknown',
+      name,
       description: normalizedFrontmatter.description?.toString() || 'No description',
       filePath,
       source: body,
@@ -137,51 +171,12 @@ export async function loadSkillFromFile(filePath: string): Promise<SkillEntry | 
       metadata: extractSlideSkillMetadata(normalizedFrontmatter),
       invocation: extractInvocationPolicy(normalizedFrontmatter),
       exposure: extractExposure(normalizedFrontmatter),
+      security: { source, digest, trusted, root: trustedRoot },
     };
-
-    // 尝试加载关联的工具文件
-    const toolsPath = path.join(skillDir, TOOLS_FILENAME);
-    const tools = await loadToolsFromFile(toolsPath);
-    if (tools && tools.length > 0) {
-      (entry as any).tools = tools;
-    }
 
     return entry;
   } catch (error: unknown) {
     console.error(`[SkillLoader] 加载技能失败 (${filePath}):`, error);
-    return null;
-  }
-}
-
-/**
- * 从文件加载工具（tools.ts）
- */
-export async function loadToolsFromFile(toolsPath: string): Promise<Array<{ name: string }> | null> {
-  try {
-    if (!fs.existsSync(toolsPath)) {
-      return null;
-    }
-
-    // 动态导入工具模块
-    const module = await import(toolsPath);
-
-    const tools: Array<{ name: string }> = [];
-
-    // 查找 generatedTools 导出
-    if (Array.isArray(module.generatedTools)) {
-      tools.push(...module.generatedTools);
-    }
-
-    // 查找以 Tool 结尾的导出
-    for (const [key, value] of Object.entries(module) as Array<[string, unknown]>) {
-      if (key.endsWith('Tool') && typeof value === 'object' && value !== null && 'name' in value) {
-        tools.push(value as { name: string });
-      }
-    }
-
-    return tools;
-  } catch (error: unknown) {
-    console.warn(`[SkillLoader] 加载工具文件失败 (${toolsPath}):`, error);
     return null;
   }
 }
@@ -402,12 +397,9 @@ export const skillRegistry = new SkillRegistry();
  */
 export const PREDEFINED_SKILL_DIRS = [
   // 应用内技能目录
-  './src/skills',
+  path.resolve(path.dirname(fileURLToPath(import.meta.url))),
   // 外部技能目录（基于源码文件位置解析，而非 CWD）
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../db-ops-skills'),
-  // 用户技能目录
-  '~/.slide/skills',
-  '~/.slide/skills/user',
 ];
 
 /**
@@ -417,18 +409,27 @@ export async function loadPredefinedSkills(): Promise<SkillEntry[]> {
   const allSkills: SkillEntry[] = [];
 
   for (const dir of PREDEFINED_SKILL_DIRS) {
-    // 展开波浪号
-    const expandedDir = dir.startsWith('~')
-      ? path.join(process.env.HOME || '', dir.slice(1))
-      : dir;
-
     // 检查目录是否存在
-    if (!fs.existsSync(expandedDir)) {
+    if (!fs.existsSync(dir)) {
       continue;
     }
 
-    const skills = await loadSkillsFromDirectory(expandedDir);
+    const skills = await loadSkillsFromDirectory(dir, { source: 'bundled' });
     allSkills.push(...skills);
+  }
+
+  const operatorDirs = (process.env.AGENT_SKILL_DIRS || '').split(',').map((dir) => dir.trim()).filter(Boolean);
+  if (operatorDirs.length > 0) {
+    let expectedDigests: Record<string, string> = {};
+    try {
+      expectedDigests = JSON.parse(process.env.AGENT_SKILL_DIGESTS || '{}') as Record<string, string>;
+    } catch {
+      console.warn('[SkillLoader] AGENT_SKILL_DIGESTS is not valid JSON; operator skills disabled');
+    }
+    for (const dir of operatorDirs) {
+      const skills = await loadSkillsFromDirectory(path.resolve(dir), { source: 'operator', expectedDigests });
+      allSkills.push(...skills);
+    }
   }
 
   return allSkills;

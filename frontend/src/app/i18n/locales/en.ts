@@ -186,6 +186,7 @@ export const en: TranslationMap = {
     "prompt-settings": "Prompt Management",
     "scoring-settings": "Scoring Weights",
     "cron-jobs": "Cron Jobs",
+    "health-center": "System Health & Consistency",
   },
   subtitles: {
     agents: "Workspaces, tools, identities.",
@@ -222,6 +223,7 @@ export const en: TranslationMap = {
     logs: "Live gateway logs.",
     dreams: "Memory dreaming, consolidation, and reflection.",
     "cron-jobs": "Manage scheduled collection and analysis tasks.",
+    "health-center": "System consistency, managed resource health, and notification closure.",
   },
   "cron-jobs": {
     table: {

@@ -1,0 +1,132 @@
+name: slide
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${SLIDE_HTTP_BIND:-127.0.0.1}:${SLIDE_HTTP_PORT:-8080}:8080"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+      - /var/cache/nginx:rw,noexec,nosuid,nodev,size=16m
+      - /var/run:rw,noexec,nosuid,nodev,size=1m
+    networks: [edge]
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/db-ops-api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      sandbox-controller:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      AGENT_WS_PORT: "28888"
+      AGENT_WORKSPACE: /var/lib/slide-agent
+      PROMPT_HOT_RELOAD: "false"
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USER: slide
+      DB_PASSWORD: ${SLIDE_DB_PASSWORD:?SLIDE_DB_PASSWORD is required}
+      DB_NAME: slide
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
+      AGENT_APPROVAL_HMAC_KEY: ${AGENT_APPROVAL_HMAC_KEY:?AGENT_APPROVAL_HMAC_KEY is required}
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:?INITIAL_ADMIN_USERNAME is required}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?INITIAL_ADMIN_PASSWORD is required}
+      CORS_ORIGINS: ${SLIDE_PUBLIC_ORIGIN:?SLIDE_PUBLIC_ORIGIN is required}
+      DB_ALLOWED_CIDRS: ${DB_ALLOWED_CIDRS:?DB_ALLOWED_CIDRS is required}
+      DB_ALLOWED_PORTS: ${DB_ALLOWED_PORTS:?DB_ALLOWED_PORTS is required}
+      SERVER_ALLOWED_CIDRS: ${SERVER_ALLOWED_CIDRS:?SERVER_ALLOWED_CIDRS is required}
+      SERVER_ALLOWED_PORTS: ${SERVER_ALLOWED_PORTS:?SERVER_ALLOWED_PORTS is required}
+      SANDBOX_CONTROLLER_URL: http://sandbox-controller:3010
+      SANDBOX_CONTROLLER_SECRET: ${SANDBOX_CONTROLLER_SECRET:?SANDBOX_CONTROLLER_SECRET is required}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    expose: ["3000", "28888"]
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    volumes:
+      - agent-state:/var/lib/slide-agent
+    networks: [edge, control, data]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  sandbox-controller:
+    build:
+      context: .
+      dockerfile: apps/sandbox-controller/Dockerfile
+    restart: unless-stopped
+    environment:
+      SANDBOX_CONTROLLER_PORT: "3010"
+      SANDBOX_CONTROLLER_SECRET: ${SANDBOX_CONTROLLER_SECRET:?SANDBOX_CONTROLLER_SECRET is required}
+      SANDBOX_IMAGES: ${SANDBOX_IMAGES:?SANDBOX_IMAGES must contain digest-pinned images}
+      SANDBOX_WORKSPACE_ROOT: ${SANDBOX_WORKSPACE_ROOT:?SANDBOX_WORKSPACE_ROOT is required}
+      SANDBOX_MAX_CONCURRENT_JOBS: ${SANDBOX_MAX_CONCURRENT_JOBS:-4}
+      DOCKER_HOST: unix:///run/docker.sock
+    user: "${ROOTLESS_DOCKER_UID:?ROOTLESS_DOCKER_UID is required}:${ROOTLESS_DOCKER_GID:?ROOTLESS_DOCKER_GID is required}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
+    volumes:
+      - ${ROOTLESS_DOCKER_SOCKET:?ROOTLESS_DOCKER_SOCKET is required}:/run/docker.sock:ro
+      - ${SANDBOX_WORKSPACE_ROOT:?SANDBOX_WORKSPACE_ROOT is required}:${SANDBOX_WORKSPACE_ROOT:?SANDBOX_WORKSPACE_ROOT is required}:rw
+    expose: ["3010"]
+    networks: [control]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3010/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  mysql:
+    image: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${SLIDE_DB_ROOT_PASSWORD:?SLIDE_DB_ROOT_PASSWORD is required}
+      MYSQL_DATABASE: slide
+      MYSQL_USER: slide
+      MYSQL_PASSWORD: ${SLIDE_DB_PASSWORD:?SLIDE_DB_PASSWORD is required}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    security_opt: [no-new-privileges:true]
+    networks: [data]
+    healthcheck:
+      test: [CMD-SHELL, "MYSQL_PWD=$$MYSQL_PASSWORD mysqladmin ping -h 127.0.0.1 -u slide --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+networks:
+  edge: {}
+  control:
+    internal: true
+  data:
+    internal: true
+
+volumes:
+  agent-state: {}
+  mysql-data: {}

@@ -255,6 +255,13 @@ export type SkillEntry = {
   invocation?: SkillInvocationPolicy;
   /** 暴露配置 */
   exposure?: SkillExposure;
+  /** Operator-verifiable provenance for prompt-injected instructions. */
+  security?: {
+    source: 'bundled' | 'operator' | 'temporary';
+    digest: string;
+    trusted: boolean;
+    root: string;
+  };
 };
 
 /**

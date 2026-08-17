@@ -6,7 +6,14 @@
 
 import { describe, it, expect, vi } from 'vitest';
 
-import { requireInstanceAccess } from './require-instance-access.js';
+import {
+  filterByInstanceAccess,
+  getAccessibleInstanceIds,
+  hasInstanceAccess,
+  hasUnrestrictedInstanceAccess,
+  requireInstanceAccess,
+  requireUnrestrictedInstanceAccess,
+} from './require-instance-access.js';
 
 describe('requireInstanceAccess middleware', () => {
   const makeReply = () => ({
@@ -89,5 +96,42 @@ describe('requireInstanceAccess middleware', () => {
 
     await requireInstanceAccess('admin')(request as any, reply as any);
     expect(reply.code).not.toHaveBeenCalled();
+  });
+
+  it('provides the same fail-closed check for instance IDs resolved from bodies or records', () => {
+    const user = { permissions: ['instance:view'], instanceScopes: { 7: 'read-only', 8: 'read-write' } } as const;
+    expect(hasInstanceAccess(user, 7, 'read-only')).toBe(true);
+    expect(hasInstanceAccess(user, 7, 'read-write')).toBe(false);
+    expect(hasInstanceAccess(user, 8, 'read-write')).toBe(true);
+    expect(hasInstanceAccess(user, 9, 'read-only')).toBe(false);
+    expect(hasInstanceAccess({ permissions: ['instance:*'], instanceScopes: {} }, 9, 'admin')).toBe(true);
+  });
+
+  it('filters instance-owned rows without leaking inaccessible instance metadata', () => {
+    const user = { permissions: ['instance:view'], instanceScopes: { 7: 'read-only' } } as const;
+    const rows = [{ id: 1, instance_id: 7 }, { id: 2, instance_id: 8 }, { id: 3, instance_id: null }];
+    expect(filterByInstanceAccess(user, rows, (row) => row.instance_id)).toEqual([
+      { id: 1, instance_id: 7 },
+      { id: 3, instance_id: null },
+    ]);
+  });
+
+  it('distinguishes unrestricted actors from actors with an explicit instance set', () => {
+    expect(hasUnrestrictedInstanceAccess({ permissions: ['*'] })).toBe(true);
+    expect(hasUnrestrictedInstanceAccess({ permissions: ['instance:*'] })).toBe(true);
+    expect(hasUnrestrictedInstanceAccess({ permissions: ['instance:view'], instanceScopes: { 8: 'read-only' } })).toBe(false);
+    expect(getAccessibleInstanceIds({ permissions: ['instance:view'], instanceScopes: { 8: 'read-only', 3: 'admin' } })).toEqual([3, 8]);
+    expect(getAccessibleInstanceIds({ permissions: ['instance:view'], instanceScopes: {} })).toEqual([]);
+    expect(getAccessibleInstanceIds({ permissions: ['instance:*'], instanceScopes: {} })).toBeNull();
+  });
+
+  it('blocks global instance operations for scoped actors', async () => {
+    const reply = makeReply();
+    await requireUnrestrictedInstanceAccess()({ user: { permissions: ['collector:manage'], instanceScopes: { 7: 'admin' } } }, reply as any);
+    expect(reply.code).toHaveBeenCalledWith(403);
+
+    const unrestrictedReply = makeReply();
+    await requireUnrestrictedInstanceAccess()({ user: { permissions: ['instance:*'], instanceScopes: {} } }, unrestrictedReply as any);
+    expect(unrestrictedReply.code).not.toHaveBeenCalled();
   });
 });

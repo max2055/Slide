@@ -62,6 +62,12 @@ try {
     ) ENGINE=InnoDB`,
   );
   await db.execute(
+    `ALTER TABLE qualification_approval_counter
+       COMMENT = 'Qualification approval execution counter',
+       MODIFY COLUMN id INT NOT NULL COMMENT 'Counter ID',
+       MODIFY COLUMN value INT NOT NULL COMMENT 'Counter value'`,
+  );
+  await db.execute(
     'INSERT INTO qualification_approval_counter (id, value) VALUES (1, 0) ON DUPLICATE KEY UPDATE value = 0',
   );
   const hash = await bcrypt.hash(password, 12);

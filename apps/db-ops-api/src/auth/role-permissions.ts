@@ -157,9 +157,14 @@ export type DangerLevel = 1 | 2 | 3 | 4;
 export const DANGER_OPERATIONS: Record<string, DangerLevel> = {
   // 配置修改
   slide_update_config: 2,
+  slide_update_db_config: 3,
   slide_update_llm_config: 2,
+  slide_check_status: 2,
 
   // 实例管理
+  slide_add_database: 3,
+  slide_test_connection: 2,
+  get_instance_connection: 4,
   slide_delete_instance: 3,
   slide_update_db_credentials: 3,
 
