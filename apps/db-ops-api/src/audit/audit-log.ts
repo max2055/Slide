@@ -218,6 +218,33 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
   }
 
   async write(entry: AuditLogEntry): Promise<void> {
+    if (entry.eventType !== 'sql_execution') {
+      await (this.pool as any).execute(
+        `INSERT INTO audit_log_entries
+         (id, event_type, level, user_id, username, user_role, action, resource_type, resource_id,
+          details_json, approval_request_id, client_ip, user_agent, result, error_message, timestamp_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          entry.id,
+          entry.eventType,
+          entry.level,
+          entry.userId ?? null,
+          entry.username ?? null,
+          entry.userRole ?? null,
+          entry.action,
+          entry.resourceType ?? null,
+          entry.resourceId ?? null,
+          entry.details === undefined ? null : JSON.stringify(entry.details),
+          entry.approvalRequestId ?? null,
+          entry.clientIp ?? null,
+          entry.userAgent ?? null,
+          entry.result,
+          entry.errorMessage ?? null,
+          entry.timestamp,
+        ],
+      );
+      return;
+    }
     const userId = entry.userId ? (Number.isNaN(parseInt(entry.userId, 10)) ? null : parseInt(entry.userId, 10)) : null;
     const instanceId = entry.resourceId ? (Number.isNaN(parseInt(entry.resourceId, 10)) ? null : parseInt(entry.resourceId, 10)) : null;
 
@@ -245,6 +272,7 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
   }
 
   async query(filter: AuditLogQuery): Promise<{ entries: AuditLogEntry[]; total: number }> {
+    if (filter.eventType !== 'sql_execution') return await this.queryAuditEntries(filter);
     const conditions: string[] = [];
     const params: any[] = [];
 
@@ -331,6 +359,53 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
   async export(params: AuditLogQuery): Promise<string> {
     const result = await this.query({ ...params, limit: 10000, offset: 0 });
     return JSON.stringify(result.entries, null, 2);
+  }
+
+  private async queryAuditEntries(filter: AuditLogQuery): Promise<{ entries: AuditLogEntry[]; total: number }> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    const add = (sql: string, value: unknown) => { conditions.push(sql); params.push(value); };
+    if (filter.eventType) add('event_type = ?', filter.eventType);
+    if (filter.userId) add('user_id = ?', filter.userId);
+    if (filter.userRole) add('user_role = ?', filter.userRole);
+    if (filter.action) add('action = ?', filter.action);
+    if (filter.resourceType) add('resource_type = ?', filter.resourceType);
+    if (filter.resourceId) add('resource_id = ?', filter.resourceId);
+    if (filter.result) add('result = ?', filter.result);
+    if (filter.startTime) add('timestamp_ms >= ?', filter.startTime);
+    if (filter.endTime) add('timestamp_ms <= ?', filter.endTime);
+    if (filter.search) add('(action LIKE ? OR resource_id LIKE ? OR details_json LIKE ?)', `%${filter.search}%`);
+    if (filter.search) params.push(`%${filter.search}%`, `%${filter.search}%`);
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200);
+    const offset = Math.max(filter.offset ?? 0, 0);
+    const [countRows] = await (this.pool as any).query(
+      `SELECT COUNT(*) AS total FROM audit_log_entries ${where}`,
+      params,
+    );
+    const [rows] = await (this.pool as any).query(
+      `SELECT * FROM audit_log_entries ${where} ORDER BY timestamp_ms DESC, id DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset],
+    );
+    const entries = (rows as any[]).map((row): AuditLogEntry => ({
+      id: String(row.id),
+      eventType: row.event_type as AuditEventType,
+      level: row.level as AuditLevel,
+      userId: row.user_id ?? undefined,
+      username: row.username ?? undefined,
+      userRole: row.user_role ?? undefined,
+      action: row.action,
+      resourceType: row.resource_type ?? undefined,
+      resourceId: row.resource_id ?? undefined,
+      details: typeof row.details_json === 'string' ? JSON.parse(row.details_json) : row.details_json ?? undefined,
+      approvalRequestId: row.approval_request_id ?? undefined,
+      clientIp: row.client_ip ?? undefined,
+      userAgent: row.user_agent ?? undefined,
+      result: row.result,
+      errorMessage: row.error_message ?? undefined,
+      timestamp: Number(row.timestamp_ms),
+    }));
+    return { entries, total: Number(countRows[0]?.total ?? 0) };
   }
 }
 
@@ -519,11 +594,13 @@ export class AuditLogManager {
     oldValue?: unknown;
     newValue: unknown;
     clientIp?: string;
+    result?: 'success' | 'failure';
+    errorMessage?: string;
   }): Promise<void> {
     const entry: AuditLogEntry = {
       id: this.generateId(),
       eventType: 'config_change',
-      level: 'info',
+      level: params.result === 'failure' ? 'error' : 'info',
       userId: params.userId,
       username: params.username,
       userRole: params.userRole,
@@ -534,12 +611,14 @@ export class AuditLogManager {
         oldValue: params.oldValue,
         newValue: params.newValue,
       },
-      result: 'success',
+      result: params.result ?? 'success',
+      errorMessage: params.errorMessage,
       clientIp: params.clientIp,
       timestamp: Date.now(),
     };
 
     await this.handler.write(entry);
+    if (this.persistentStore) await this.persistentStore.write(entry);
     this.events.emit('log:config_change', entry);
   }
 

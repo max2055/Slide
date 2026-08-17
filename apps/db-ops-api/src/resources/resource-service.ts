@@ -11,22 +11,35 @@ export interface ResourceRelationStore {
 
 const relationTypes = new Set<ResourceRelationType>(['runs_on', 'hosts', 'replicates_to', 'depends_on']);
 
-function hasGlobalResourceAccess(actor: ActorContext): boolean {
-  return actor.permissions.includes('*') || actor.permissions.includes('instance:*') || actor.roles.includes('admin');
+function hasValidTopology(relation: ResourceRelation): boolean {
+  if (relation.relationType === 'runs_on') {
+    return relation.source.type === 'instance' && relation.target.type === 'server';
+  }
+  if (relation.relationType === 'hosts') return false;
+  if (relation.relationType === 'replicates_to') {
+    return relation.source.type === 'instance' && relation.target.type === 'instance';
+  }
+  return true;
+}
+
+function hasPermission(actor: ActorContext, permission: string): boolean {
+  const [resource] = permission.split(':');
+  return actor.permissions.includes('*')
+    || actor.permissions.includes(permission)
+    || actor.permissions.includes(`${resource}:*`);
 }
 
 export function canReadResource(actor: ActorContext, ref: ResourceRef): boolean {
   return ref.type === 'instance'
-    ? hasGlobalResourceAccess(actor) || Boolean(actor.instanceScopes[ref.id])
-    : hasGlobalResourceAccess(actor) || actor.permissions.includes('servers:view');
+    ? actor.permissions.includes('*') || actor.permissions.includes('instance:*') || Boolean(actor.instanceScopes[ref.id])
+    : hasPermission(actor, 'servers:view');
 }
 
 export function canManageResource(actor: ActorContext, ref: ResourceRef): boolean {
-  if (hasGlobalResourceAccess(actor)) return true;
-  return ref.type === 'instance'
-    && actor.permissions.includes('instance:manage')
-    && (actor.instanceScopes[ref.id] === 'read-write' || actor.instanceScopes[ref.id] === 'admin')
-    || ref.type === 'server' && actor.permissions.includes('servers:manage');
+  if (ref.type === 'server') return hasPermission(actor, 'servers:manage');
+  if (actor.permissions.includes('*') || actor.permissions.includes('instance:*')) return true;
+  return hasPermission(actor, 'instance:manage')
+    && (actor.instanceScopes[ref.id] === 'read-write' || actor.instanceScopes[ref.id] === 'admin');
 }
 
 export class ResourceService {
@@ -34,6 +47,7 @@ export class ResourceService {
 
   async createRelation(actor: ActorContext, relation: ResourceRelation): Promise<void> {
     if (!relationTypes.has(relation.relationType)) throw new Error('RESOURCE_RELATION_TYPE_INVALID');
+    if (!hasValidTopology(relation)) throw new Error('RESOURCE_RELATION_TOPOLOGY_INVALID');
     if (!Number.isInteger(relation.source.id) || relation.source.id < 1 || !Number.isInteger(relation.target.id) || relation.target.id < 1) {
       throw new Error('RESOURCE_REF_INVALID');
     }
@@ -49,7 +63,13 @@ export class ResourceService {
   async currentRelations(actor: ActorContext, ref: ResourceRef, now = new Date()): Promise<ResourceRelation[]> {
     if (!canReadResource(actor, ref)) throw new Error('RESOURCE_FORBIDDEN');
     const relations = await this.store.listRelations(ref);
-    return relations.filter((relation) => !relation.validUntil || relation.validUntil > now);
+    return relations.filter((relation) => {
+      const other = relation.source.type === ref.type && relation.source.id === ref.id
+        ? relation.target
+        : relation.source;
+      return relation.validFrom <= now && (!relation.validUntil || relation.validUntil > now)
+        && canReadResource(actor, other);
+    });
   }
 
   async detail(actor: ActorContext, ref: ResourceRef): Promise<ResourceDetail> {
@@ -60,8 +80,19 @@ export class ResourceService {
   }
 }
 
-interface SqlPool {
+interface SqlExecutor {
   execute<T = unknown>(sql: string, values?: unknown[]): Promise<[T, unknown?]>;
+}
+
+interface SqlPool extends SqlExecutor {
+  getConnection(): Promise<TransactionExecutor>;
+}
+
+interface TransactionExecutor extends SqlExecutor {
+  beginTransaction(): Promise<void>;
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
+  release(): void;
 }
 
 export class MysqlResourceRelationStore implements ResourceRelationStore {
@@ -75,18 +106,55 @@ export class MysqlResourceRelationStore implements ResourceRelationStore {
   }
 
   async insertRelation(relation: ResourceRelation): Promise<void> {
-    await this.pool().execute(
-      `INSERT INTO resource_relations
-       (source_type, source_id, target_type, target_id, relation_type, provenance, valid_from, valid_until)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [relation.source.type, relation.source.id, relation.target.type, relation.target.id,
-        relation.relationType, relation.provenance, relation.validFrom, relation.validUntil ?? null],
-    );
+    const connection = await this.pool().getConnection();
+    try {
+      await connection.beginTransaction();
+      for (const type of ['instance', 'server'] as const) {
+        const ids = [relation.source, relation.target]
+          .filter((ref) => ref.type === type)
+          .map((ref) => ref.id)
+          .sort((left, right) => left - right);
+        if (ids.length === 0) continue;
+        const table = type === 'instance' ? 'database_instances' : 'servers';
+        const placeholders = ids.map(() => '?').join(', ');
+        const [rows] = await connection.execute<Array<{ id: number }>>(
+          `SELECT id FROM ${table} WHERE id IN (${placeholders}) ORDER BY id FOR UPDATE`, ids,
+        );
+        if (rows.length !== new Set(ids).size) throw new Error('RESOURCE_NOT_FOUND');
+      }
+      const upperBound = relation.validUntil ? 'AND valid_from < ?' : '';
+      const overlapValues = [
+        relation.source.type, relation.source.id, relation.target.type, relation.target.id, relation.relationType,
+        ...(relation.validUntil ? [relation.validUntil] : []), relation.validFrom,
+      ];
+      const [overlaps] = await connection.execute<Array<{ id: number }>>(
+        `SELECT id FROM resource_relations
+         WHERE source_type = ? AND source_id = ? AND target_type = ? AND target_id = ? AND relation_type = ?
+           ${upperBound} AND (valid_until IS NULL OR valid_until > ?)
+         LIMIT 1 FOR UPDATE`,
+        overlapValues,
+      );
+      if (overlaps.length > 0) throw new Error('RESOURCE_RELATION_OVERLAP');
+      await connection.execute(
+        `INSERT INTO resource_relations
+         (source_type, source_id, target_type, target_id, relation_type, provenance, metadata, valid_from, valid_until)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [relation.source.type, relation.source.id, relation.target.type, relation.target.id,
+          relation.relationType, relation.provenance, relation.metadata ? JSON.stringify(relation.metadata) : null,
+          relation.validFrom, relation.validUntil ?? null],
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback().catch(() => undefined);
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   async listRelations(ref: ResourceRef): Promise<ResourceRelation[]> {
     const [rows] = await this.pool().execute<Array<any>>(
-      `SELECT source_type, source_id, target_type, target_id, relation_type, provenance, valid_from, valid_until
+      `SELECT source_type, source_id, target_type, target_id, relation_type, provenance, metadata, valid_from, valid_until
        FROM resource_relations
        WHERE (source_type = ? AND source_id = ?) OR (target_type = ? AND target_id = ?)
        ORDER BY valid_from DESC`,
@@ -95,6 +163,7 @@ export class MysqlResourceRelationStore implements ResourceRelationStore {
     return rows.map((row) => ({
       source: { type: row.source_type, id: Number(row.source_id) }, target: { type: row.target_type, id: Number(row.target_id) },
       relationType: row.relation_type, provenance: row.provenance,
+      metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata,
       validFrom: new Date(row.valid_from), validUntil: row.valid_until ? new Date(row.valid_until) : null,
     }));
   }

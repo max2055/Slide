@@ -7,6 +7,7 @@
 import type { AnyAgentTool } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
 import { instanceDatabaseService } from '../../../instance-database-service.js';
+import { credentialReferenceService } from '../../../security/credential-reference-service.js';
 
 /**
  * 更新配置参数
@@ -24,8 +25,8 @@ interface UpdateDbConfigArgs {
   port?: number;
   /** 新用户名 */
   username?: string;
-  /** 新密码 */
-  password?: string;
+  /** 新密码的服务端短期凭据引用 */
+  credential_ref?: string;
   /** 新环境 */
   environment?: 'development' | 'staging' | 'production';
   /** 新描述 */
@@ -62,9 +63,9 @@ export const updateDbConfigTool: AnyAgentTool = {
         type: 'string',
         description: '新用户名',
       },
-      password: {
+      credential_ref: {
         type: 'string',
-        description: '新密码',
+        description: '新密码的短期单次凭据引用',
       },
       environment: {
         type: 'string',
@@ -81,8 +82,11 @@ export const updateDbConfigTool: AnyAgentTool = {
   group: 'db_ops',
   requiresApproval: true,
   dangerLevel: 3,
-  handler: async (args) => {
+  handler: async (args, context) => {
     const typedArgs = args as unknown as UpdateDbConfigArgs;
+    if (Object.prototype.hasOwnProperty.call(args, 'password')) {
+      return { success: false, error: '禁止向 Agent Tool 传递明文凭据', errorCode: 'PLAINTEXT_CREDENTIAL_DENIED' };
+    }
 
     // 参数验证
     if (!typedArgs.instance_id && !typedArgs.instance_name) {
@@ -94,7 +98,7 @@ export const updateDbConfigTool: AnyAgentTool = {
     }
 
     // 检查是否有实际要更新的字段
-    const updatableFields = ['name', 'host', 'port', 'username', 'password', 'environment', 'description'];
+    const updatableFields = ['name', 'host', 'port', 'username', 'credential_ref', 'environment', 'description'];
     const hasUpdateField = updatableFields.some(field => typedArgs[field as keyof UpdateDbConfigArgs] !== undefined);
 
     if (!hasUpdateField) {
@@ -117,13 +121,28 @@ export const updateDbConfigTool: AnyAgentTool = {
         };
       }
 
+      let password: string | undefined;
+      if (typedArgs.credential_ref) {
+        if (!context?.actor) {
+          return { success: false, error: '缺少认证执行上下文', errorCode: 'MISSING_ACTOR' };
+        }
+        password = await credentialReferenceService.consume(
+          typedArgs.credential_ref,
+          context.actor.userId,
+          updateDbConfigTool.name,
+        ) ?? undefined;
+        if (!password) {
+          return { success: false, error: '凭据引用无效、已过期或已消费', errorCode: 'INVALID_CREDENTIAL_REF' };
+        }
+      }
+
       // 2. 构建更新数据
       const updateData: Record<string, unknown> = {};
       if (typedArgs.name) updateData.name = typedArgs.name;
       if (typedArgs.host) updateData.host = typedArgs.host;
       if (typedArgs.port) updateData.port = typedArgs.port;
       if (typedArgs.username) updateData.username = typedArgs.username;
-      if (typedArgs.password) updateData.password = typedArgs.password;
+      if (password) updateData.password = password;
       if (typedArgs.environment) updateData.environment = typedArgs.environment;
       if (typedArgs.description) updateData.description = typedArgs.description;
 
@@ -142,7 +161,7 @@ export const updateDbConfigTool: AnyAgentTool = {
       let connectionTested = false;
       let connectionSuccess = false;
 
-      if (typedArgs.host || typedArgs.port || typedArgs.username || typedArgs.password) {
+      if (typedArgs.host || typedArgs.port || typedArgs.username || password) {
         connectionTested = true;
         // 获取更新后的实例信息进行连接测试
         const decrypted = await instanceDatabaseService.getInstanceWithDecryptedPassword(instanceId);
@@ -152,7 +171,7 @@ export const updateDbConfigTool: AnyAgentTool = {
             host: typedArgs.host || decrypted.host,
             port: typedArgs.port || decrypted.port,
             username: typedArgs.username || decrypted.username,
-            password: typedArgs.password || decrypted.password,
+            password: password || decrypted.password,
             database: decrypted.database_name || undefined,
           });
           connectionSuccess = testResult.success;
@@ -174,7 +193,6 @@ export const updateDbConfigTool: AnyAgentTool = {
         details: {
           instanceId,
           updatedFields,
-          updateData,
           connectionTested,
           connectionSuccess,
         },

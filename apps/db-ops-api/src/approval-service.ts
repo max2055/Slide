@@ -243,12 +243,17 @@ class ApprovalService {
   /**
    * 获取待审批列表
    */
-  async getPendingRequests(): Promise<ApprovalRequest[]> {
+  async getPendingRequests(allowedInstanceIds: readonly number[] | null = null): Promise<ApprovalRequest[]> {
     const pool = this.getPool();
     if (!pool) return [];
+    const scopeSql = allowedInstanceIds === null
+      ? ''
+      : allowedInstanceIds.length > 0
+        ? ` AND instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')})`
+        : ' AND 1 = 0';
     const [rows] = await pool.execute(
-      'SELECT * FROM approval_requests WHERE status = ? ORDER BY created_at DESC',
-      ['pending']
+      `SELECT * FROM approval_requests WHERE status = ?${scopeSql} ORDER BY created_at DESC`,
+      ['pending', ...(allowedInstanceIds ?? [])]
     ) as any;
     return rows;
   }
@@ -256,13 +261,18 @@ class ApprovalService {
   /**
    * 获取已处理的审批历史
    */
-  async getProcessedRequests(limit = 50): Promise<ApprovalRequest[]> {
+  async getProcessedRequests(limit = 50, allowedInstanceIds: readonly number[] | null = null): Promise<ApprovalRequest[]> {
     const pool = this.getPool();
     if (!pool) return [];
     const safeLimit = Math.min(Math.max(1, limit), 200);
+    const scopeSql = allowedInstanceIds === null
+      ? ''
+      : allowedInstanceIds.length > 0
+        ? ` AND instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')})`
+        : ' AND 1 = 0';
     const [rows] = await pool.query(
-      'SELECT * FROM approval_requests WHERE status IN (\'approved\',\'rejected\',\'executed\',\'execution_failed\') ORDER BY updated_at DESC LIMIT ?',
-      [safeLimit]
+      `SELECT * FROM approval_requests WHERE status IN ('approved','rejected','executed','execution_failed')${scopeSql} ORDER BY updated_at DESC LIMIT ?`,
+      [...(allowedInstanceIds ?? []), safeLimit]
     ) as any;
     return rows;
   }

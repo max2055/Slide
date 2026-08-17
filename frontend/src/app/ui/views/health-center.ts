@@ -1,6 +1,6 @@
 /**
  * Health Center Page — displays system consistency health checks
- * from GET /api/health/consistency.
+ * from GET /api/health/overview.
  *
  * Design principle: surface the ONE thing that needs attention.
  * Normal checks are secondary; anomalies get the spotlight.
@@ -9,6 +9,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.js";
 import { authFetch } from "../../../api/index.js";
+import { icons } from "../../../icons.js";
 import "../components/app-card.js";
 import "../components/app-badge.js";
 import "../components/app-empty-state.js";
@@ -36,7 +37,7 @@ interface ReadinessItem {
   actionHref?: string;
 }
 
-interface ConsistencyResponse {
+interface HealthOverview {
   timestamp: string;
   summary: { pass: number; warn: number; fail: number; deferred: number; total: number; };
   checks: ConsistencyCheck[];
@@ -47,6 +48,7 @@ interface ConsistencyResponse {
     cron_running: boolean;
     agent_engine: boolean;
   };
+  truth: HealthTruth;
 }
 
 type HealthStatus = 'healthy' | 'degraded' | 'critical' | 'unknown';
@@ -67,14 +69,15 @@ export class HealthCenterPage extends LitElement {
   @state() private loading = true;
   @state() private refreshing = false;
   @state() private error: string | null = null;
-  @state() private data: ConsistencyResponse | null = null;
+  @state() private data: HealthOverview | null = null;
   @state() private truth: HealthTruth | null = null;
   @state() private expandedChecks = new Set<string>();
+  @state() private showNormalChecks = false;
 
   static styles = [
     sharedBtnStyles,
     css`
-      :host { display: block; max-width: 800px; }
+      :host { display: block; max-width: 800px; min-width: 0; }
 
       /* ── Page header ─────────────────────────────── */
       .page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; }
@@ -116,14 +119,18 @@ export class HealthCenterPage extends LitElement {
       .readiness-inline .ri-item .dot.fail { background: var(--danger, #ef4444); }
       .readiness-inline .ri-item .dot.degraded { background: var(--warn, #f59e0b); }
       .truth-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-sm); margin-bottom: var(--space-lg); }
+      .truth-header { display: flex; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-sm); color: var(--text-strong); font-size: var(--text-sm); font-weight: 600; }
       .truth-dimension { border: 1px solid var(--border); padding: var(--space-sm); background: var(--card); }
       .truth-label { color: var(--muted); font-size: 12px; display: block; }
       .truth-value { color: var(--text-strong); font-weight: 700; font-size: 16px; display: block; margin-top: 4px; }
       .truth-reason { color: var(--muted); font-size: 11px; display: block; margin-top: 4px; overflow-wrap: anywhere; }
+      .truth-refs { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-top: var(--space-xs); }
+      .resource-link { display: inline-flex; align-items: center; gap: var(--space-xs); padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 12px; }
+      .resource-link svg { width: 12px; height: 12px; }
+      .resource-link:hover { text-decoration: underline; }
       .truth-dimension.critical .truth-value { color: var(--danger); }
       .truth-dimension.degraded .truth-value { color: var(--warn); }
       .truth-dimension.unknown .truth-value { color: var(--muted); }
-      @media (max-width: 720px) { .truth-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
       /* ── Issues section (highlighted anomalies) ──── */
       .issues-section { margin-bottom: 16px; }
@@ -147,7 +154,10 @@ export class HealthCenterPage extends LitElement {
       .check-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
       .check-section-header h2 { font-size: 15px; font-weight: 600; color: var(--text-strong); margin: 0; }
       .check-section-header .filter-hint { font-size: 12px; color: var(--muted); }
+      .normal-toggle { display: inline-flex; align-items: center; gap: var(--space-xs); }
+      .normal-toggle svg { width: 14px; height: 14px; }
       .check-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+      .check-table-scroll { max-width: 100%; overflow-x: auto; }
       .check-table thead th { padding: 10px 12px; font-size: 12px; font-weight: 600; color: var(--muted); text-align: left; background: var(--bg-elevated, var(--bg-app)); border-bottom: 1px solid var(--border); }
       .check-table tbody td { padding: 10px 12px; vertical-align: middle; background: var(--card); }
       .check-table tbody tr { border-bottom: 1px solid var(--border); }
@@ -180,12 +190,12 @@ export class HealthCenterPage extends LitElement {
   override connectedCallback() { super.connectedCallback(); this._load(); }
 
   private async _load() {
-    this.loading = true; this.error = null; this.expandedChecks = new Set();
+    this.loading = true; this.error = null; this.expandedChecks = new Set(); this.showNormalChecks = false;
     try {
-      const [res, readiness] = await Promise.all([authFetch("/api/health/consistency"), authFetch("/api/health/readiness")]);
+      const res = await authFetch("/api/health/overview");
       if (!res.ok) throw new Error(`加载失败 (${res.status})`);
       this.data = await res.json();
-      this.truth = readiness.ok ? await readiness.json() : null;
+      this.truth = this.data?.truth ?? null;
     } catch (e: any) { this.error = e.message; }
     finally { this.loading = false; }
   }
@@ -193,9 +203,9 @@ export class HealthCenterPage extends LitElement {
   private async _refresh() {
     this.refreshing = true;
     try {
-      const [res, readiness] = await Promise.all([authFetch("/api/health/consistency"), authFetch("/api/health/readiness")]);
+      const res = await authFetch("/api/health/overview?refresh=true");
       if (!res.ok) throw new Error(`加载失败 (${res.status})`);
-      this.data = await res.json(); this.truth = readiness.ok ? await readiness.json() : null; this.error = null;
+      this.data = await res.json(); this.truth = this.data?.truth ?? null; this.error = null;
       this.expandedChecks = new Set();
     } catch (e: any) { console.warn('Health check refresh failed:', e.message); }
     finally { this.refreshing = false; }
@@ -268,21 +278,47 @@ export class HealthCenterPage extends LitElement {
     return { controlPlane: '控制面', managedAvailability: '纳管可用性', dataFreshness: '数据新鲜度', workflow: '工作流' }[key];
   }
 
+  private _healthStatusLabel(status: HealthStatus): string {
+    return { healthy: '健康', degraded: '降级', critical: '严重', unknown: '未知' }[status];
+  }
+
+  private _healthStatusVariant(status: HealthStatus): 'ok' | 'warn' | 'danger' | 'muted' {
+    return { healthy: 'ok', degraded: 'warn', critical: 'danger', unknown: 'muted' }[status] as 'ok' | 'warn' | 'danger' | 'muted';
+  }
+
   private _renderTruth() {
     if (!this.truth) return nothing;
     const dimensions = ['controlPlane', 'managedAvailability', 'dataFreshness', 'workflow'] as const;
-    return html`<div class="truth-grid" aria-label="资源健康真相">
+    return html`<div class="truth-header">
+      <span>资源总体健康</span>
+      <app-badge variant=${this._healthStatusVariant(this.truth.overall)}>${this._healthStatusLabel(this.truth.overall)}</app-badge>
+    </div><div class="truth-grid" aria-label="资源健康真相">
       ${dimensions.map((key) => {
         const dimension = this.truth![key];
-        const refs = dimension.failedRefs?.map((ref) => `${ref.type}:${ref.id}`).join(', ');
-        const detail = [refs, dimension.reason, dimension.observedAt ? new Date(dimension.observedAt).toLocaleString() : undefined].filter(Boolean).join(' · ');
+        const refs = dimension.failedRefs ?? [];
+        const detail = [dimension.reason, dimension.observedAt ? new Date(dimension.observedAt).toLocaleString() : undefined].filter(Boolean).join(' · ');
         return html`<div class="truth-dimension ${dimension.status}">
           <span class="truth-label">${this._truthLabel(key)}</span>
-          <span class="truth-value">${dimension.status} · ${dimension.numerator}/${dimension.denominator}</span>
+          <span class="truth-value">${this._healthStatusLabel(dimension.status)} · ${dimension.numerator}/${dimension.denominator}</span>
+          ${refs.length ? html`<span class="truth-refs">${refs.map((ref) => this._renderResourceRef(ref))}</span>` : nothing}
           ${detail ? html`<span class="truth-reason">${detail}</span>` : nothing}
         </div>`;
       })}
     </div>`;
+  }
+
+  private _renderResourceRef(ref: { type: string; id: number | string }) {
+    if (ref.type !== 'instance' && ref.type !== 'server') return html`<span class="truth-reason">${ref.type}:${ref.id}</span>`;
+    const label = ref.type === 'instance' ? `实例 #${ref.id}` : `服务器 #${ref.id}`;
+    return html`<button class="resource-link" @click=${() => this._navigateToResource(ref)}>${label}${icons['external-link']}</button>`;
+  }
+
+  private _navigateToResource(ref: { type: string; id: number | string }) {
+    const id = Number(ref.id);
+    const detail = ref.type === 'instance'
+      ? { tab: 'instance-detail', id }
+      : { tab: 'server-detail', serverId: id };
+    window.dispatchEvent(new CustomEvent('slide-navigate', { detail }));
   }
 
   private _recommendationNav(checkId: string): { label: string; href: string } | null {
@@ -346,11 +382,11 @@ export class HealthCenterPage extends LitElement {
       <!-- Page header -->
       <div class="page-header">
         <div>
-          <h1>闭环健康</h1>
+          <h1>系统健康与一致性</h1>
           <p>系统数据一致性与运行状态检查 · ${new Date(d.timestamp).toLocaleString()}</p>
         </div>
-        <button class="refresh-btn" @click=${this._refresh} ?disabled=${this.refreshing}>
-          <span class=${this.refreshing ? 'spinning' : ''}>${this.refreshing ? '⟳' : '↻'}</span>
+        <button class="btn refresh-btn" @click=${this._refresh} ?disabled=${this.refreshing}>
+          <span class=${this.refreshing ? 'spinning' : ''}>${icons['refresh-cw']}</span>
           ${this.refreshing ? '检查中…' : '刷新'}
         </button>
       </div>
@@ -358,7 +394,7 @@ export class HealthCenterPage extends LitElement {
       <!-- Unified health bar: score + stats in one row -->
       <div class="health-bar">
         <div class="hs-left">
-          <span class="hs-label">健康度</span>
+          <span class="hs-label">一致性通过率</span>
           <span class="hs-pct ${this._healthClass(healthPct)}">${healthPct}%</span>
         </div>
         <div class="hs-track"><div class="hs-fill" style="${this._healthFill(healthPct)}"></div></div>
@@ -399,7 +435,7 @@ export class HealthCenterPage extends LitElement {
             return html`
               <div class="issue-card ${check.status === 'fail' ? 'fail' : ''}">
                 <div class="ic-header">
-                  <span class="ic-icon">${check.status === 'fail' ? '🔴' : '🟠'}</span>
+                  <span class="ic-icon">${check.status === 'fail' ? icons['circle-alert'] : icons['triangle-alert']}</span>
                   <span class="ic-label">${check.label}</span>
                   <span class="ic-cat">${CATEGORY_LABELS[check.category] || check.category}</span>
                 </div>
@@ -407,7 +443,7 @@ export class HealthCenterPage extends LitElement {
                 ${isCapacity ? html`
                   <div class="ic-detail">${this._renderCapacityDetailTable(check.details)}</div>
                 ` : ''}
-                ${check.recommendation ? html`<div class="ic-detail">💡 ${check.recommendation}</div>` : ''}
+                ${check.recommendation ? html`<div class="ic-detail">${check.recommendation}</div>` : ''}
                 ${nav ? html`
                   <div class="ic-actions">
                     <button class="ic-link" @click=${() => this._navigateTo(nav.href)}>${nav.label} →</button>
@@ -419,12 +455,15 @@ export class HealthCenterPage extends LitElement {
         </div>
       ` : ''}
 
-      <!-- All checks table -->
+      <!-- Normal checks stay collapsed so anomalies remain the primary focus. -->
       <div class="check-section-header">
-        <h2>全部检查项</h2>
-        <span class="filter-hint">共 ${d.checks.length} 项</span>
+        <h2>正常检查项</h2>
+        <button class="btn btn-ghost normal-toggle" @click=${() => { this.showNormalChecks = !this.showNormalChecks; }}>
+          ${this.showNormalChecks ? icons['chevron-up'] : icons['chevron-down']}
+          ${this.showNormalChecks ? '收起正常检查' : `显示正常检查（${normalChecks.length}）`}
+        </button>
       </div>
-      <table class="check-table">
+      ${this.showNormalChecks ? html`<div class="check-table-scroll"><table class="check-table">
         <thead>
           <tr>
             <th class="col-num">#</th>
@@ -436,7 +475,7 @@ export class HealthCenterPage extends LitElement {
           </tr>
         </thead>
         <tbody>
-          ${d.checks.map((check, i) => {
+          ${normalChecks.map((check, i) => {
             const isCapacity = check.id === 'capacity_sum_match' && Array.isArray(check.details);
             const isExpanded = this.expandedChecks.has(check.id);
             return html`
@@ -446,7 +485,7 @@ export class HealthCenterPage extends LitElement {
                 <td class="col-label">${check.label}</td>
                 <td class="col-summary">
                   ${check.summary}
-                  ${isCapacity && !issueChecks.includes(check) ? html`
+                  ${isCapacity ? html`
                     <br><button class="expand-btn" @click=${() => this._toggleExpand(check.id)}>
                       ${isExpanded ? '收起 ▲' : '展开详情 ▼'}
                     </button>
@@ -459,7 +498,7 @@ export class HealthCenterPage extends LitElement {
                   <app-badge variant=${this._sevClass(check.severity)}>${this._sevLabel(check.severity)}</app-badge>
                 </td>
               </tr>
-              ${isCapacity && isExpanded && !issueChecks.includes(check) ? html`
+              ${isCapacity && isExpanded ? html`
                 <tr class="detail-row">
                   <td colspan="6">
                     <div class="detail-box">${this._renderCapacityDetailTable(check.details)}</div>
@@ -469,7 +508,7 @@ export class HealthCenterPage extends LitElement {
             `;
           })}
         </tbody>
-      </table>
+      </table></div>` : nothing}
     `;
   }
 }

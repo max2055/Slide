@@ -69,6 +69,10 @@ export interface SlowQueryRecord {
   updated_at: Date;
 }
 
+interface StrictReadOptions {
+  strict?: boolean;
+}
+
 class MetricsDatabaseService {
   /**
    * 获取数据库连接池
@@ -191,9 +195,13 @@ class MetricsDatabaseService {
   /**
    * 获取实时指标（最新一条记录）
    */
-  async getRealtimeMetrics(instanceId: number): Promise<MetricsRecord | null> {
+  async getRealtimeMetrics(
+    instanceId: number,
+    options: StrictReadOptions = {},
+  ): Promise<MetricsRecord | null> {
     const pool = this.getPool();
     if (!pool) {
+      if (options.strict) throw new Error('REALTIME_METRICS_UNAVAILABLE');
       return null;
     }
 
@@ -217,6 +225,7 @@ class MetricsDatabaseService {
       return null;
     } catch (error) {
       console.error('获取实时指标失败:', error);
+      if (options.strict) throw new Error('REALTIME_METRICS_QUERY_FAILED', { cause: error });
       return null;
     }
   }
@@ -228,54 +237,67 @@ class MetricsDatabaseService {
     instanceId: number,
     startTime: Date,
     endTime: Date,
-    interval?: string
+    interval?: string,
+    limit: number = 1000,
+    options: StrictReadOptions = {},
   ): Promise<MetricsRecord[]> {
     const pool = this.getPool();
     if (!pool) {
+      if (options.strict) throw new Error('METRIC_HISTORY_UNAVAILABLE');
       return [];
     }
 
     try {
+      const boundedLimit = Number.isSafeInteger(limit) && limit > 0 && limit <= 1000 ? limit : 1000;
       let sql = `
-        SELECT id, instance_id, cpu_usage, memory_usage, disk_usage,
-               connections, qps, tps, active_transactions, slow_queries,
-               buffer_pool_hit_rate, threads_running, threads_connected,
-               bytes_received, bytes_sent, queries_total, commits_total,
-               rollbacks_total, metrics_data, recorded_at
-        FROM metrics_history
-        WHERE instance_id = ? AND recorded_at BETWEEN ? AND ?
+        SELECT recent.*
+        FROM (
+          SELECT id, instance_id, cpu_usage, memory_usage, disk_usage,
+                 connections, qps, tps, active_transactions, slow_queries,
+                 buffer_pool_hit_rate, threads_running, threads_connected,
+                 bytes_received, bytes_sent, queries_total, commits_total,
+                 rollbacks_total, metrics_data, recorded_at
+          FROM metrics_history
+          WHERE instance_id = ? AND recorded_at BETWEEN ? AND ?
+          ORDER BY recorded_at DESC
+          LIMIT ?
+        ) AS recent
         ORDER BY recorded_at ASC
-        LIMIT 1000
       `;
 
-      const params: any[] = [instanceId, startTime, endTime];
+      const params: any[] = [instanceId, startTime, endTime, boundedLimit];
 
       // 如果指定了间隔，使用聚合
       if (interval) {
         sql = `
-          SELECT
-            MAX(id) as id,
-            instance_id,
-            AVG(cpu_usage) as cpu_usage,
-            AVG(memory_usage) as memory_usage,
-            AVG(disk_usage) as disk_usage,
-            AVG(connections) as connections,
-            AVG(qps) as qps,
-            AVG(tps) as tps,
-            AVG(active_transactions) as active_transactions,
-            AVG(slow_queries) as slow_queries,
-            AVG(buffer_pool_hit_rate) as buffer_pool_hit_rate,
-            AVG(threads_running) as threads_running,
-            AVG(threads_connected) as threads_connected,
-            SUM(bytes_received) as bytes_received,
-            SUM(bytes_sent) as bytes_sent,
-            SUM(queries_total) as queries_total,
-            SUM(commits_total) as commits_total,
-            SUM(rollbacks_total) as rollbacks_total,
-            DATE_FORMAT(recorded_at, '%Y-%m-%d %H:%i:00') as recorded_at
-          FROM metrics_history
-          WHERE instance_id = ? AND recorded_at BETWEEN ? AND ?
-          GROUP BY instance_id, DATE_FORMAT(recorded_at, '%Y-%m-%d %H:%i:00')
+          SELECT recent.*
+          FROM (
+            SELECT
+              MAX(id) as id,
+              instance_id,
+              AVG(cpu_usage) as cpu_usage,
+              AVG(memory_usage) as memory_usage,
+              AVG(disk_usage) as disk_usage,
+              AVG(connections) as connections,
+              AVG(qps) as qps,
+              AVG(tps) as tps,
+              AVG(active_transactions) as active_transactions,
+              AVG(slow_queries) as slow_queries,
+              AVG(buffer_pool_hit_rate) as buffer_pool_hit_rate,
+              AVG(threads_running) as threads_running,
+              AVG(threads_connected) as threads_connected,
+              SUM(bytes_received) as bytes_received,
+              SUM(bytes_sent) as bytes_sent,
+              SUM(queries_total) as queries_total,
+              SUM(commits_total) as commits_total,
+              SUM(rollbacks_total) as rollbacks_total,
+              DATE_FORMAT(recorded_at, '%Y-%m-%d %H:%i:00') as recorded_at
+            FROM metrics_history
+            WHERE instance_id = ? AND recorded_at BETWEEN ? AND ?
+            GROUP BY instance_id, DATE_FORMAT(recorded_at, '%Y-%m-%d %H:%i:00')
+            ORDER BY recorded_at DESC
+            LIMIT ?
+          ) AS recent
           ORDER BY recorded_at ASC
         `;
       }
@@ -284,6 +306,7 @@ class MetricsDatabaseService {
       return rows as MetricsRecord[];
     } catch (error) {
       console.error('获取历史指标失败:', error);
+      if (options.strict) throw new Error('METRIC_HISTORY_QUERY_FAILED', { cause: error });
       return [];
     }
   }
@@ -549,9 +572,14 @@ class MetricsDatabaseService {
   /**
    * 获取慢查询列表
    */
-  async getSlowQueries(instanceId: number, limit: number = 20): Promise<SlowQueryRecord[]> {
+  async getSlowQueries(
+    instanceId: number,
+    limit: number = 20,
+    options: StrictReadOptions = {},
+  ): Promise<SlowQueryRecord[]> {
     const pool = this.getPool();
     if (!pool) {
+      if (options.strict) throw new Error('SLOW_QUERIES_UNAVAILABLE');
       return [];
     }
 
@@ -571,6 +599,7 @@ class MetricsDatabaseService {
       return rows as SlowQueryRecord[];
     } catch (error) {
       console.error('获取慢查询失败:', error);
+      if (options.strict) throw new Error('SLOW_QUERIES_QUERY_FAILED', { cause: error });
       return [];
     }
   }

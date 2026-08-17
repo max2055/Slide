@@ -17,12 +17,14 @@ type SettingsSubTab =
   | "branding"
   | "users"
   | "rbac"
-  | "health-center"
   | "agent-sessions"
   | "agent-skills"
-  | "agent-tools";
+  | "agent-tools"
+  | "agent-security-policy"
+  | "agent-tool-audit"
+  | "agent-sandbox";
 
-const SUB_TABS: { id: SettingsSubTab; label: string; icon: string; requireAdmin?: boolean }[] = [
+const SUB_TABS: { id: SettingsSubTab; label: string; icon: string; requireAdmin?: boolean; requiredPermission?: string }[] = [
   { id: "ai-settings", label: "AI 设置", icon: "sparkles" },
   { id: "prompt-settings", label: "提示词管理", icon: "book" },
   { id: "llm-config", label: "LLM 配置", icon: "brain" },
@@ -32,10 +34,12 @@ const SUB_TABS: { id: SettingsSubTab; label: string; icon: string; requireAdmin?
   { id: "branding", label: "品牌", icon: "palette" },
   { id: "users", label: "用户管理", icon: "scroll-text", requireAdmin: true },
   { id: "rbac", label: "权限管理", icon: "shield", requireAdmin: true },
-  { id: "health-center", label: "闭环健康", icon: "activity" },
   { id: "agent-sessions", label: "Agent 会话", icon: "message-square" },
   { id: "agent-skills", label: "Agent Skills", icon: "book" },
   { id: "agent-tools", label: "Agent Tools", icon: "wrench" },
+  { id: "agent-security-policy", label: "Agent 安全策略", icon: "shield", requiredPermission: "ai:view" },
+  { id: "agent-tool-audit", label: "Tool 审计", icon: "eye", requiredPermission: "audit:view" },
+  { id: "agent-sandbox", label: "Agent Sandbox", icon: "terminal", requiredPermission: "audit:view" },
 ];
 
 @customElement("settings-shell")
@@ -122,8 +126,8 @@ export class SettingsShell extends LitElement {
   `;
 
   render() {
-    const isAdmin = this._hasAdminAccess();
-    const visibleTabs = SUB_TABS.filter(t => !t.requireAdmin || isAdmin);
+    const visibleTabs = SUB_TABS.filter(t => (!t.requireAdmin || this._hasPermission("admin:*"))
+      && (!t.requiredPermission || this._hasPermission(t.requiredPermission)));
 
     return html`
       <nav class="settings-subnav">
@@ -164,26 +168,33 @@ export class SettingsShell extends LitElement {
         return html`<users-management></users-management>`;
       case "rbac":
         return html`<rbac-admin-page></rbac-admin-page>`;
-      case "health-center":
-        return html`<health-center-page></health-center-page>`;
       case "agent-sessions":
         return html`<agent-sessions-page></agent-sessions-page>`;
       case "agent-skills":
         return html`<agent-skills-page></agent-skills-page>`;
       case "agent-tools":
         return html`<agent-tools-page></agent-tools-page>`;
+      case "agent-security-policy":
+        return html`<agent-security-policy-page></agent-security-policy-page>`;
+      case "agent-tool-audit":
+        return html`<agent-tool-audit-page></agent-tool-audit-page>`;
+      case "agent-sandbox":
+        return html`<agent-sandbox-status-page></agent-sandbox-status-page>`;
       default:
         return html``;
     }
   }
 
-  private _hasAdminAccess(): boolean {
+  private _hasPermission(required: string): boolean {
     try {
       const raw = localStorage.getItem("permissions");
       if (!raw) return true; // Not loaded yet — default to showing tabs (pages have their own auth)
       const perms = JSON.parse(raw);
       if (!Array.isArray(perms)) return true;
-      return perms.includes("admin:*") || perms.includes("*");
+      if (perms.includes(required) || perms.includes("*")) return true;
+      const separator = required.indexOf(":");
+      return separator > 0 && (perms.includes(`${required.slice(0, separator)}:*`)
+        || perms.includes(`*:${required.slice(separator + 1)}`));
     } catch { return true; } // Parse error — show tabs, individual pages handle auth
   }
 }

@@ -457,7 +457,7 @@ export class SlideApp extends LitElement {
     // Check URL params for tab navigation
     const urlParams = new URLSearchParams(window.location.search);
     const tabParam = urlParams.get("tab");
-    if (tabParam && ["dashboard", "instances-db", "instance-detail", "alerts", "reports", "metric-registry", "events", "llm-config"].includes(tabParam)) {
+    if (tabParam && ["dashboard", "instances-db", "instance-detail", "alerts", "reports", "metric-registry", "events", "llm-config", "health-center"].includes(tabParam)) {
       this.setTab(tabParam as Tab);
     }
 
@@ -514,7 +514,7 @@ export class SlideApp extends LitElement {
     window.addEventListener("popstate", () => {
       const urlParams = new URLSearchParams(window.location.search);
       const tabParam = urlParams.get("tab");
-      if (tabParam && ["dashboard", "instances-db", "instance-detail", "alerts", "reports", "metric-registry", "events", "llm-config", "docs"].includes(tabParam)) {
+      if (tabParam && ["dashboard", "instances-db", "instance-detail", "alerts", "reports", "metric-registry", "events", "llm-config", "docs", "health-center"].includes(tabParam)) {
         this.setTab(tabParam as Tab);
       }
     });

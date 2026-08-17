@@ -1,12 +1,12 @@
 /**
  * Docs viewer page — in-app documentation browser
- * Fetches doc list and content from backend API, renders via markdown-it + DOMPurify
+ * Fetches doc list and HTML content from backend API, sanitizes before rendering.
  */
 import { LitElement, html, css } from "lit";
 import { customElement, state, query } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { authFetch } from "../../../api/index.js";
-import { toSanitizedMarkdownHtml } from "../markdown.ts";
+import { toSanitizedDocumentHtml } from "../markdown.ts";
 
 interface DocEntry {
   file: string;
@@ -58,7 +58,64 @@ export class DocsViewerPage extends LitElement {
     .docs-content code { font-family: var(--font-mono); font-size: 13px; }
     .docs-content p code { background: var(--bg-code); padding: 2px 6px; border-radius: 3px; }
     .docs-content img { max-width: 100%; }
+    .docs-content .doc-attachment {
+      margin: 20px 0 28px; padding: 12px; border: 1px solid var(--border);
+      background: var(--bg-secondary, var(--bg)); border-radius: var(--radius-sm);
+    }
+    .docs-content .doc-attachment img {
+      display: block; width: 100%; max-width: 1180px; margin: 0 auto;
+      border: 1px solid var(--border); background: var(--bg);
+    }
+    .docs-content .doc-attachment__caption {
+      margin: 10px 4px 0; color: var(--muted); font-size: 13px;
+    }
     .docs-content blockquote { border-left: 3px solid var(--border); margin: 16px 0; padding: 4px 16px; color: var(--muted); }
+    .docs-content a { color: var(--accent); text-decoration: none; }
+    .docs-content a:hover { text-decoration: underline; }
+    .docs-content .doc-toc {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px; margin: 16px 0 24px; padding: 0; list-style: none;
+    }
+    .docs-content .doc-toc li {
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--bg-secondary); padding: 10px 12px;
+    }
+    .docs-content .doc-diagram {
+      border: 1px solid var(--border); border-radius: var(--radius-md);
+      background: var(--bg-secondary); padding: 16px; margin: 16px 0 24px;
+      overflow-x: auto;
+    }
+    .docs-content .doc-flow {
+      display: flex; align-items: stretch; gap: 10px; min-width: 720px;
+    }
+    .docs-content .doc-lane {
+      flex: 1; min-width: 130px; border: 1px solid var(--border);
+      border-radius: var(--radius-sm); background: var(--bg);
+      padding: 12px; text-align: center;
+    }
+    .docs-content .doc-lane strong {
+      display: block; color: var(--text-strong); margin-bottom: 6px;
+    }
+    .docs-content .doc-lane span {
+      display: block; color: var(--muted); font-size: 12px; line-height: 1.5;
+    }
+    .docs-content .doc-arrow {
+      display: flex; align-items: center; color: var(--muted); font-weight: 700;
+    }
+    .docs-content .doc-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px; margin: 12px 0;
+    }
+    .docs-content .doc-node {
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--bg); padding: 12px;
+    }
+    .docs-content .doc-node strong {
+      display: block; margin-bottom: 6px; color: var(--text-strong);
+    }
+    .docs-content .doc-node span {
+      display: block; color: var(--muted); font-size: 12px; line-height: 1.5;
+    }
     .docs-loading { display: flex; align-items: center; justify-content: center; height: 200px; color: var(--muted); }
     .docs-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--muted); font-size: 14px; }
   `;
@@ -68,6 +125,7 @@ export class DocsViewerPage extends LitElement {
   @state() private content: string = "";
   @state() private loading: boolean = false;
   @state() private error: string | null = null;
+  private pendingHash: string | null = null;
   @query(".docs-content") private contentEl!: HTMLElement;
 
   connectedCallback() {
@@ -88,8 +146,9 @@ export class DocsViewerPage extends LitElement {
     }
   }
 
-  private async selectDoc(file: string) {
+  private async selectDoc(file: string, hash: string | null = null) {
     this.activeDoc = file;
+    this.pendingHash = hash;
     this.loading = true;
     this.error = null;
     try {
@@ -108,7 +167,8 @@ export class DocsViewerPage extends LitElement {
   protected updated(changed: Map<PropertyKey, unknown>) {
     if (changed.has("content") && this.content) {
       this.addHeadingIds();
-      this.scrollToHash();
+      this.scrollToHash(this.pendingHash);
+      this.pendingHash = null;
     }
   }
 
@@ -124,14 +184,16 @@ export class DocsViewerPage extends LitElement {
   }
 
   /** Scroll to the element matching the current URL hash */
-  private scrollToHash() {
-    const hash = window.location.hash;
-    if (!hash || !this.contentEl) return;
-    // Decode the hash, strip leading #
-    const targetId = decodeURIComponent(hash.slice(1));
+  private scrollToHash(hash: string | null = null) {
+    const rawHash = hash ?? window.location.hash.slice(1);
+    if (!rawHash || !this.contentEl) return;
+    const targetId = decodeURIComponent(rawHash);
+    this.scrollToTarget(targetId);
+  }
+
+  private scrollToTarget(targetId: string) {
     const target = this.contentEl.querySelector(`#${CSS.escape(targetId)}`);
     if (target) {
-      // Small delay to ensure DOM is fully rendered
       requestAnimationFrame(() => {
         target.scrollIntoView({ behavior: "smooth", block: "start" });
       });
@@ -144,14 +206,27 @@ export class DocsViewerPage extends LitElement {
     const anchor = target.closest("a");
     if (!anchor) return;
     const href = anchor.getAttribute("href");
-    if (!href || !href.startsWith("#")) return;
-    // In-page anchor — scroll to target instead of navigating URL
-    e.preventDefault();
-    const targetId = decodeURIComponent(href.slice(1));
-    const el = this.contentEl?.querySelector(`#${CSS.escape(targetId)}`);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!href) return;
+    if (href.startsWith("#")) {
+      e.preventDefault();
+      this.scrollToTarget(decodeURIComponent(href.slice(1)));
+      return;
     }
+
+    let url: URL;
+    try {
+      url = new URL(href, window.location.href);
+    } catch {
+      return;
+    }
+
+    const file = decodeURIComponent(url.pathname.split("/").pop() || "");
+    if (!file.endsWith(".html") || !this.docs.some((doc) => doc.file === file)) {
+      return;
+    }
+
+    e.preventDefault();
+    this.selectDoc(file, url.hash ? url.hash.slice(1) : null);
   }
 
   render() {
@@ -175,7 +250,7 @@ export class DocsViewerPage extends LitElement {
           : this.loading
             ? html`<div class="docs-loading">加载中...</div>`
             : this.content
-              ? html`${unsafeHTML(toSanitizedMarkdownHtml(this.content))}`
+              ? html`${unsafeHTML(toSanitizedDocumentHtml(this.content))}`
               : html`<div class="docs-empty">请从左侧选择文档</div>`
         }
       </div>

@@ -10,9 +10,8 @@ import { skillRegistry } from './skills/loader.js';
 import { getAgentEngine } from './adapter/get-agent-engine.js';
 import type { SkillEntry } from './skills/types.js';
 import type { ToolSchema } from '@slide/agent-core';
-
-// In-memory set of disabled skill names
-const disabledSkills = new Set<string>();
+import { isSkillEnabled, setSkillEnabled } from './skills/runtime-policy.js';
+import { getToolSecurityDefinition, type ToolSecurityDefinition } from './tools/security-catalog.js';
 
 export interface SkillInfo {
   name: string;
@@ -20,12 +19,16 @@ export interface SkillInfo {
   filePath: string;
   enabled: boolean;
   frontmatter: Record<string, unknown>;
+  source: string;
+  digest: string;
+  trusted: boolean;
 }
 
 export interface ToolInfo {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  security: ToolSecurityDefinition | null;
 }
 
 export class AgentManagementService {
@@ -38,8 +41,11 @@ export class AgentManagementService {
       name: entry.skill.name,
       description: entry.skill.description || '',
       filePath: entry.skill.filePath || '',
-      enabled: !disabledSkills.has(entry.skill.name),
+      enabled: isSkillEnabled(entry.skill.name),
       frontmatter: (entry.frontmatter as Record<string, unknown>) || {},
+      source: entry.security?.source ?? 'temporary',
+      digest: entry.security?.digest ?? '',
+      trusted: entry.security?.trusted === true,
     }));
   }
 
@@ -49,11 +55,7 @@ export class AgentManagementService {
    */
   toggleSkill(name: string, enabled: boolean): boolean {
     if (!skillRegistry.has(name)) return false;
-    if (enabled) {
-      disabledSkills.delete(name);
-    } else {
-      disabledSkills.add(name);
-    }
+    setSkillEnabled(name, enabled);
     return true;
   }
 
@@ -61,7 +63,7 @@ export class AgentManagementService {
    * Check if a skill is currently enabled
    */
   isSkillEnabled(name: string): boolean {
-    return !disabledSkills.has(name);
+    return isSkillEnabled(name);
   }
 
   /**
@@ -74,6 +76,7 @@ export class AgentManagementService {
       name: t.name,
       description: t.description || '',
       parameters: (t.parameters as Record<string, unknown>) || {},
+      security: getToolSecurityDefinition(t.name) ?? null,
     }));
   }
 }

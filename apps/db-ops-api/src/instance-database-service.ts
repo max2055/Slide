@@ -78,6 +78,24 @@ class InstanceDatabaseService {
     }
   }
 
+  async listActiveInstanceIds(): Promise<number[]> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('INSTANCE_ENUMERATION_UNAVAILABLE');
+    try {
+      const [rows] = await pool.execute(
+        `SELECT id
+         FROM database_instances
+         WHERE status = 'active'
+         ORDER BY id`,
+      ) as any;
+      return (Array.isArray(rows) ? rows : [])
+        .map((row: any) => Number(row.id))
+        .filter((id: number) => Number.isSafeInteger(id) && id > 0);
+    } catch (error) {
+      throw new Error('INSTANCE_ENUMERATION_UNAVAILABLE', { cause: error });
+    }
+  }
+
   /**
    * 获取管理列表中的全部实例，包括已停用和连接异常的实例。
    */
@@ -134,6 +152,40 @@ class InstanceDatabaseService {
       return null;
     } catch (error) {
       console.error('获取实例失败:', error);
+      return null;
+    }
+  }
+
+  /** Resolve a canonical instance id without loading credential-bearing columns. */
+  async findInstanceIdByName(name: string): Promise<number | null> {
+    const pool = this.getPool();
+    if (!pool || !name.trim()) return null;
+    try {
+      const [rows] = await pool.execute(
+        'SELECT id FROM database_instances WHERE name = ? LIMIT 1',
+        [name.trim()],
+      ) as any;
+      return Array.isArray(rows) && rows.length > 0 ? Number(rows[0].id) : null;
+    } catch (error) {
+      console.error('解析实例名称失败:', error);
+      return null;
+    }
+  }
+
+  /** Load connection metadata without selecting encrypted secrets or connection strings. */
+  async getPublicConnectionMetadata(id: number): Promise<Record<string, unknown> | null> {
+    const pool = this.getPool();
+    if (!pool || !Number.isSafeInteger(id) || id <= 0) return null;
+    try {
+      const [rows] = await pool.execute(
+        `SELECT id, name, db_type, host, port, username, database_name,
+                health_status, environment
+         FROM database_instances WHERE id = ? LIMIT 1`,
+        [id],
+      ) as any;
+      return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+    } catch (error) {
+      console.error('获取实例公开连接元数据失败:', error);
       return null;
     }
   }

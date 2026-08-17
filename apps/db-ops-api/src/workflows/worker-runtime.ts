@@ -45,7 +45,7 @@ export class MysqlWorkflowStore implements WorkflowStore {
   }
   async claim(workerId: string, leaseSeconds: number): Promise<ClaimedJob | null> {
     const pool = this.pool();
-    await pool.execute(
+    const [result] = await pool.execute<{ affectedRows: number }>(
       `UPDATE workflow_jobs SET state = 'running', attempts = attempts + 1, lease_owner = ?,
        lease_expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND), fencing_token = fencing_token + 1
        WHERE id = (SELECT id FROM (SELECT id FROM workflow_jobs
@@ -54,6 +54,7 @@ export class MysqlWorkflowStore implements WorkflowStore {
        AND state IN ('queued', 'retry', 'running') AND (lease_expires_at IS NULL OR lease_expires_at < NOW())`,
       [workerId, leaseSeconds],
     );
+    if (Number(result.affectedRows) !== 1) return null;
     const [rows] = await pool.execute<Array<any>>(
       `SELECT id, job_type AS type, payload, attempts, max_attempts AS maxAttempts, fencing_token AS fencingToken
        FROM workflow_jobs WHERE lease_owner = ? AND state = 'running' AND lease_expires_at > NOW()
@@ -89,17 +90,77 @@ export class MysqlWorkflowStore implements WorkflowStore {
   private pool(): SqlPool { const pool = this.poolProvider(); if (!pool) throw new Error('WORKFLOW_STORE_UNAVAILABLE'); return pool; }
 }
 export class WorkerRuntime {
+  private runInFlight = false;
   constructor(private readonly store: WorkflowStore, readonly workerId: string, private readonly leaseSeconds = 30) {}
   async claim(): Promise<ClaimedJob | null> { return this.store.claim(this.workerId, this.leaseSeconds); }
   async heartbeat(job: ClaimedJob): Promise<boolean> { return this.store.heartbeat(job.id, this.workerId, job.fencingToken, this.leaseSeconds); }
   async runOnce(handler: (job: ClaimedJob) => Promise<void>, now = Date.now()): Promise<'idle' | WorkflowState> {
-    const job = await this.claim();
-    if (!job) return 'idle';
-    try { await handler(job); return await this.store.complete(job.id, this.workerId, job.fencingToken) ? 'completed' : 'retry'; }
-    catch (error) {
-      const retryAt = job.attempts >= job.maxAttempts ? null : new Date(now + Math.min(60_000, 1_000 * 2 ** Math.max(0, job.attempts - 1)));
-      await this.store.fail(job, this.workerId, error instanceof Error ? error : new Error(String(error)), retryAt);
-      return retryAt ? 'retry' : 'dead_letter';
+    if (this.runInFlight) return 'running';
+    this.runInFlight = true;
+    try {
+      const job = await this.claim();
+      if (!job) return 'idle';
+
+      let heartbeatStopped = false;
+      let heartbeatInFlight: Promise<void> | null = null;
+      let leaseLost = false;
+      let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+      const heartbeatIntervalMs = Math.max(1, Math.floor(this.leaseSeconds * 1_000 / 3));
+      const heartbeatTimeoutMs = Math.max(1, Math.floor(heartbeatIntervalMs / 2));
+      const markLeaseLost = () => {
+        if (leaseLost) return;
+        leaseLost = true;
+        heartbeatStopped = true;
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        console.error(`[WorkerRuntime] WORKFLOW_LEASE_LOST:${job.id}`);
+      };
+      const heartbeat = () => {
+        if (heartbeatStopped || heartbeatInFlight) return;
+        let heartbeatTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
+        const heartbeatTimeout = new Promise<boolean>((resolve) => {
+          heartbeatTimeoutTimer = setTimeout(() => resolve(false), heartbeatTimeoutMs);
+          heartbeatTimeoutTimer.unref?.();
+        });
+        heartbeatInFlight = Promise.race([this.heartbeat(job), heartbeatTimeout])
+          .then((renewed) => { if (!renewed) markLeaseLost(); })
+          .catch(() => markLeaseLost())
+          .finally(() => {
+            if (heartbeatTimeoutTimer) clearTimeout(heartbeatTimeoutTimer);
+            heartbeatInFlight = null;
+          });
+      };
+
+      try {
+        heartbeatTimer = setInterval(heartbeat, heartbeatIntervalMs);
+        heartbeatTimer.unref?.();
+
+        let handlerFailed = false;
+        let handlerError: unknown;
+        try {
+          await handler(job);
+        } catch (error) {
+          handlerFailed = true;
+          handlerError = error;
+        }
+
+        heartbeatStopped = true;
+        clearInterval(heartbeatTimer);
+        const pendingHeartbeat = heartbeatInFlight;
+        if (pendingHeartbeat) await pendingHeartbeat;
+        if (leaseLost) return 'retry';
+
+        if (!handlerFailed) {
+          return await this.store.complete(job.id, this.workerId, job.fencingToken) ? 'completed' : 'retry';
+        }
+        const retryAt = job.attempts >= job.maxAttempts ? null : new Date(now + Math.min(60_000, 1_000 * 2 ** Math.max(0, job.attempts - 1)));
+        await this.store.fail(job, this.workerId, handlerError instanceof Error ? handlerError : new Error(String(handlerError)), retryAt);
+        return retryAt ? 'retry' : 'dead_letter';
+      } finally {
+        heartbeatStopped = true;
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+      }
+    } finally {
+      this.runInFlight = false;
     }
   }
 }

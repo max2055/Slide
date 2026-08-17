@@ -40,6 +40,13 @@ describe('database target policy', () => {
     )).rejects.toMatchObject({ reasonCode: 'DB_TARGET_POLICY_NOT_CONFIGURED' });
   });
 
+  it('fails closed in production when no port policy is configured', async () => {
+    await expect(authorizeDatabaseTarget(
+      { host: '10.20.30.40', port: 3306, dbType: 'mysql' },
+      { allowedCidrs: '10.20.0.0/16', allowedPorts: [], production: true },
+    )).rejects.toMatchObject({ reasonCode: 'DB_TARGET_POLICY_NOT_CONFIGURED' });
+  });
+
   it('allows a persisted loopback target only for non-production managed reconnects', async () => {
     await expect(authorizeDatabaseTarget(
       { host: 'localhost', port: 3306, dbType: 'mysql' },
@@ -53,7 +60,7 @@ describe('database target policy', () => {
 
     await expect(authorizeDatabaseTarget(
       { host: '127.0.0.1', port: 3306, dbType: 'mysql' },
-      { allowedCidrs: '127.0.0.0/8', allowManagedLoopback: true, production: true },
+      { allowedCidrs: '127.0.0.0/8', allowedPorts: [3306], allowManagedLoopback: true, production: true },
     )).rejects.toMatchObject({ reasonCode: 'DB_TARGET_ADDRESS_DENIED' });
   });
 
@@ -65,7 +72,7 @@ describe('database target policy', () => {
 
     await expect(authorizeDatabaseTarget(
       { host: '10.20.30.40', port: 3308, dbType: 'mysql' },
-      { allowedCidrs: '10.20.0.0/16', allowManagedPort: true, production: true },
+      { allowedCidrs: '10.20.0.0/16', allowedPorts: [3306], allowManagedPort: true, production: true },
     )).rejects.toMatchObject({ reasonCode: 'DB_TARGET_PORT_DENIED' });
   });
 });

@@ -33,6 +33,21 @@ export const loginRateLimitConfig = {
   },
 } as const;
 
+export const sensitiveOperationRateLimitConfig = {
+  max: 30,
+  timeWindow: '1 minute',
+} as const;
+
+export const expensiveOperationRateLimitConfig = {
+  max: 10,
+  timeWindow: '1 minute',
+} as const;
+
+const PUBLIC_5XX_REASON_CODES = new Set([
+  'SANDBOX_NOT_READY',
+  'SANDBOX_CONFIG_UPDATE_FAILED',
+]);
+
 export async function registerHttpSecurity(fastify: FastifyInstance, env: NodeJS.ProcessEnv = process.env): Promise<void> {
   await fastify.register(cors, { origin: resolveCorsOrigins(env) });
   await fastify.register(helmet, {
@@ -52,6 +67,10 @@ export async function registerHttpSecurity(fastify: FastifyInstance, env: NodeJS
 
   fastify.addHook('preSerialization', async (_request, reply, payload) => {
     if (reply.statusCode >= 500 && payload && typeof payload === 'object') {
+      const reasonCode = (payload as { reasonCode?: unknown }).reasonCode;
+      if (typeof reasonCode === 'string' && PUBLIC_5XX_REASON_CODES.has(reasonCode)) {
+        return { reasonCode };
+      }
       return { error: 'INTERNAL_ERROR' };
     }
     return payload;

@@ -9,6 +9,8 @@
 import mysql from 'mysql2/promise';
 import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
 import { Client } from 'ssh2';
+import { authorizeServerTarget } from './security/server-target-policy.js';
+import { createSshHostVerifier, normalizeSshHostKeyFingerprint } from './security/ssh-host-key.js';
 
 export interface ServerRow {
   id: number;
@@ -185,6 +187,7 @@ class ServerDatabaseService {
     credential_type: 'password' | 'key';
     credential_username: string;
     credential_value: string;
+    host_key_fingerprint: string;
     created_by?: number;
   }): Promise<{ success: boolean; serverId?: number; error?: string }> {
     const pool = this.getPool();
@@ -193,10 +196,12 @@ class ServerDatabaseService {
     }
 
     try {
+      const target = await authorizeServerTarget({ host: data.host, port: data.port || 22 });
+      const hostKeyFingerprint = normalizeSshHostKeyFingerprint(data.host_key_fingerprint);
       // Check for duplicate host+port
       const [existing] = await pool.execute(
         'SELECT id, host, label FROM servers WHERE host = ? AND port = ?',
-        [data.host, data.port || 22]
+        [target.hostname, target.port]
       ) as any;
 
       if (existing && existing.length > 0) {
@@ -220,15 +225,16 @@ class ServerDatabaseService {
 
       const [result] = await pool.execute(
         `INSERT INTO servers
-         (host, port, label, os_type, credential_type, credential_encrypted, collection_enabled)
-         VALUES (?, ?, ?, ?, ?, ?, 1)`,
+         (host, port, label, os_type, credential_type, credential_encrypted, host_key_fingerprint, collection_enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
         [
-          data.host,
-          data.port || 22,
+          target.hostname,
+          target.port,
           data.label || null,
           data.os_type,
           data.credential_type,
           encrypted,
+          hostKeyFingerprint,
         ]
       ) as any;
 
@@ -257,6 +263,7 @@ class ServerDatabaseService {
       credential_username?: string;
       credential_value?: string;
       collection_enabled?: number;
+      host_key_fingerprint?: string;
     }
   ): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
@@ -265,16 +272,22 @@ class ServerDatabaseService {
     }
 
     try {
+      const existingServer = await this.getServerById(id);
+      if (!existingServer) return { success: false, error: '服务器不存在' };
+      const target = await authorizeServerTarget({
+        host: data.host ?? existingServer.host,
+        port: data.port ?? existingServer.port,
+      });
       const updates: string[] = [];
       const values: any[] = [];
 
       if (data.host !== undefined) {
         updates.push('host = ?');
-        values.push(data.host);
+        values.push(target.hostname);
       }
       if (data.port !== undefined) {
         updates.push('port = ?');
-        values.push(data.port);
+        values.push(target.port);
       }
       if (data.label !== undefined) {
         updates.push('label = ?');
@@ -326,6 +339,10 @@ class ServerDatabaseService {
         updates.push('collection_enabled = ?');
         values.push(data.collection_enabled);
       }
+      if (data.host_key_fingerprint !== undefined) {
+        updates.push('host_key_fingerprint = ?');
+        values.push(normalizeSshHostKeyFingerprint(data.host_key_fingerprint));
+      }
 
       if (updates.length === 0) {
         return { success: true };
@@ -358,15 +375,38 @@ class ServerDatabaseService {
       return { success: false, error: '数据库未连接' };
     }
 
+    const connection = await pool.getConnection();
     try {
-      const [result] = await pool.execute('DELETE FROM servers WHERE id = ?', [id]) as any;
-      if (result.affectedRows === 0) {
+      await connection.beginTransaction();
+      const [servers] = await connection.execute('SELECT id FROM servers WHERE id = ? FOR UPDATE', [id]) as any;
+      if (!Array.isArray(servers) || servers.length === 0) {
+        await connection.rollback();
         return { success: false, error: '服务器不存在' };
       }
+      const [relations] = await connection.execute(
+        `SELECT id FROM resource_relations
+         WHERE source_type = 'instance' AND target_type = 'server' AND target_id = ?
+           AND relation_type = 'runs_on' AND (valid_until IS NULL OR valid_until > NOW(6))
+         LIMIT 1`,
+        [id],
+      ) as any;
+      if (Array.isArray(relations) && relations.length > 0) {
+        await connection.rollback();
+        return { success: false, error: 'SERVER_HAS_INSTANCE_RELATIONS' };
+      }
+      const [result] = await connection.execute('DELETE FROM servers WHERE id = ?', [id]) as any;
+      if (result.affectedRows === 0) {
+        await connection.rollback();
+        return { success: false, error: '服务器不存在' };
+      }
+      await connection.commit();
       return { success: true };
     } catch (error: any) {
+      await connection.rollback().catch(() => undefined);
       console.error('删除服务器失败:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection.release();
     }
   }
 
@@ -378,9 +418,12 @@ class ServerDatabaseService {
     port: number,
     credentialType: string,
     credentialValue: string,
-    username: string
+    username: string,
+    hostKeyFingerprint: string,
   ): Promise<{ success: boolean; error?: string; message?: string }> {
     try {
+      const target = await authorizeServerTarget({ host, port });
+      const hostVerifier = createSshHostVerifier(hostKeyFingerprint);
       return new Promise((resolve) => {
         const client = new Client();
 
@@ -395,13 +438,11 @@ class ServerDatabaseService {
         });
 
         const connectConfig: any = {
-          host,
-          port,
+          host: target.address,
+          port: target.port,
           username,
           readyTimeout: 10000,
-          // hostVerifier: accept any host key for initial test-connection.
-          // Production SSH connections MUST use the stored host_key_fingerprint for verification.
-          hostVerifier: () => true,
+          hostVerifier,
         };
 
         if (credentialType === 'password') {
@@ -447,9 +488,9 @@ class ServerDatabaseService {
       }
       const encrypted = encryptData(JSON.stringify(credentialPayload));
 
-      // Update credential_encrypted, credential_type, reset host_key_fingerprint
+      // Credential rotation must not change the independently trusted host key.
       await pool.execute(
-        `UPDATE servers SET credential_encrypted = ?, credential_type = ?, host_key_fingerprint = NULL WHERE id = ?`,
+        `UPDATE servers SET credential_encrypted = ?, credential_type = ? WHERE id = ?`,
         [encrypted, newCredentialType, serverId]
       );
 

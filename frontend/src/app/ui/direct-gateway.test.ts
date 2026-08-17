@@ -44,6 +44,11 @@ describe('109-04: DirectGatewayClient', () => {
     expect(client).toBeInstanceOf(DirectGatewayClient);
   });
 
+  it('uses the same-origin TLS WebSocket endpoint by default', () => {
+    vi.stubGlobal('location', { protocol: 'https:', host: 'slide.example.com' });
+    expect(directGateway.defaultAdapterUrl()).toBe('wss://slide.example.com/agent-ws');
+  });
+
   it('exposes expected API methods', () => {
     const client = new DirectGatewayClient({ onEvent, onStateChange });
     expect(typeof client.connect).toBe('function');

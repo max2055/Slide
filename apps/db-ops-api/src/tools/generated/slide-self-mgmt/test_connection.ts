@@ -8,6 +8,7 @@ import type { AnyAgentTool, ToolResult } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
 import { databaseService } from '../../../database-service.js';
 import { instanceDatabaseService } from '../../../instance-database-service.js';
+import { credentialReferenceService } from '../../../security/credential-reference-service.js';
 
 /**
  * 测试连接参数
@@ -25,8 +26,10 @@ interface TestConnectionArgs {
   port?: number;
   /** 用户名 */
   username?: string;
-  /** 密码 */
+  /** 内部解析后的密码，不属于模型参数 */
   password?: string;
+  /** 服务端短期凭据引用 */
+  credential_ref?: string;
   /** 数据库名称 */
   database?: string;
 }
@@ -62,9 +65,9 @@ export const testConnectionTool: AnyAgentTool = {
         type: 'string',
         description: '数据库用户名（用于直接连接测试）',
       },
-      password: {
+      credential_ref: {
         type: 'string',
-        description: '数据库密码（用于直接连接测试）',
+        description: '直接连接测试使用的短期单次凭据引用',
       },
       database: {
         type: 'string',
@@ -73,8 +76,11 @@ export const testConnectionTool: AnyAgentTool = {
     },
   },
   group: 'db_ops',
-  handler: async (args) => {
+  handler: async (args, context) => {
     const typedArgs = args as unknown as TestConnectionArgs;
+    if (Object.prototype.hasOwnProperty.call(args, 'password')) {
+      return { success: false, error: '禁止向 Agent Tool 传递明文凭据', errorCode: 'PLAINTEXT_CREDENTIAL_DENIED' };
+    }
 
     // 参数验证
     if (!typedArgs.instance_id && !typedArgs.instance_name && !typedArgs.host) {
@@ -100,7 +106,18 @@ export const testConnectionTool: AnyAgentTool = {
         }
         connectionParams = instanceInfo;
       } else {
-        connectionParams = typedArgs;
+        if (!context?.actor || !typedArgs.credential_ref) {
+          return { success: false, error: '直接连接测试需要凭据引用', errorCode: 'CREDENTIAL_REF_REQUIRED' };
+        }
+        const password = await credentialReferenceService.consume(
+          typedArgs.credential_ref,
+          context.actor.userId,
+          testConnectionTool.name,
+        );
+        if (!password) {
+          return { success: false, error: '凭据引用无效、已过期或已消费', errorCode: 'INVALID_CREDENTIAL_REF' };
+        }
+        connectionParams = { ...typedArgs, password };
       }
 
       // 2. 执行连接测试
@@ -239,8 +256,7 @@ function sanitizeConnectionInfo(params: TestConnectionArgs): Record<string, unkn
     port: params.port,
     username: params.username,
     database: params.database,
-    // 不暴露密码
-    password: params.password ? '***' : undefined,
+    hasCredential: Boolean(params.password),
   };
 }
 

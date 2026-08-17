@@ -8,6 +8,7 @@
 import type { AnyAgentTool } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
 import { instanceDatabaseService } from '../../../instance-database-service.js';
+import { canReadResource } from '../../../resources/resource-service.js';
 
 export const listDatabaseInstancesTool: AnyAgentTool = {
   name: 'list_database_instances',
@@ -23,15 +24,18 @@ export const listDatabaseInstancesTool: AnyAgentTool = {
     },
   },
   group: 'slide_self_mgmt',
-  handler: async (args) => {
+  handler: async (args, context) => {
     const dbTypeFilter = args.db_type as string | undefined;
 
     try {
       const instances = await instanceDatabaseService.getAllInstances();
 
+      const actorVisible = context?.actor
+        ? instances.filter((instance) => canReadResource(context.actor!, { type: 'instance', id: instance.id }))
+        : [];
       const filtered = dbTypeFilter
-        ? instances.filter(inst => inst.db_type === dbTypeFilter)
-        : instances;
+        ? actorVisible.filter(inst => inst.db_type === dbTypeFilter)
+        : actorVisible;
 
       const items = filtered.map(inst => ({
         id: inst.id,

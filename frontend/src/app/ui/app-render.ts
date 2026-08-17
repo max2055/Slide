@@ -31,8 +31,12 @@ import "./views/ai-settings.ts";
 import "./views/agent-sessions.ts";
 import "./views/agent-skills.ts";
 import "./views/agent-tools.ts";
+import "./views/agent-security-policy.ts";
+import "./views/agent-tool-audit.ts";
+import "./views/agent-sandbox-status.ts";
 import "./views/prompt-settings.ts";
 import "./views/scoring-settings.ts";
+import "./views/health-center.ts";
 import "./views/alerts.ts";
 import "./views/schema-management.ts";
 import "./views/index-management.ts";
@@ -744,6 +748,9 @@ export function renderApp(state: AppViewState) {
           : nothing}
         ${state.tab === "cron-jobs"
           ? html`<cron-jobs-settings></cron-jobs-settings>`
+          : nothing}
+        ${state.tab === "health-center"
+          ? html`<health-center-page></health-center-page>`
           : nothing}
         ${state.tab === "sql-console"
           ? html`<sql-console-page></sql-console-page>`

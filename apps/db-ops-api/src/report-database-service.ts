@@ -308,7 +308,7 @@ class ReportDatabaseService {
   /**
    * 获取报表统计
    */
-  async getReportStats(): Promise<{
+  async getReportStats(allowedInstanceIds: readonly number[] | null = null): Promise<{
     total: number;
     completed: number;
     running: number;
@@ -320,6 +320,11 @@ class ReportDatabaseService {
     }
 
     try {
+      const scopeSql = allowedInstanceIds === null
+        ? ''
+        : allowedInstanceIds.length > 0
+          ? `WHERE (instance_id IS NULL OR instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')}))`
+          : 'WHERE instance_id IS NULL';
       const [rows] = await pool.execute(`
         SELECT
           COUNT(*) as total,
@@ -327,7 +332,8 @@ class ReportDatabaseService {
           SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as running,
           SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
         FROM reports
-      `) as any;
+        ${scopeSql}
+      `, allowedInstanceIds === null ? [] : [...allowedInstanceIds]) as any;
 
       return {
         total: rows[0]?.total || 0,

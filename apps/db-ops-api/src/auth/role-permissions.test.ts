@@ -74,6 +74,14 @@ describe('DANGER_OPERATIONS', () => {
     expect(DANGER_OPERATIONS['slide_update_llm_config']).toBe(2);
   });
 
+  it('应该为安全目录中需要审批的真实工具名定义危险等级', () => {
+    expect(DANGER_OPERATIONS['slide_update_db_config']).toBe(3);
+    expect(DANGER_OPERATIONS['slide_add_database']).toBe(3);
+    expect(DANGER_OPERATIONS['slide_test_connection']).toBe(2);
+    expect(DANGER_OPERATIONS['get_instance_connection']).toBe(4);
+    expect(DANGER_OPERATIONS['slide_check_status']).toBe(2);
+  });
+
   it('应该定义实例管理为 Level 3', () => {
     expect(DANGER_OPERATIONS['slide_delete_instance']).toBe(3);
     expect(DANGER_OPERATIONS['slide_update_db_credentials']).toBe(3);

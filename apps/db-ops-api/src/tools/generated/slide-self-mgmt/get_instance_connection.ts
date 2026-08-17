@@ -37,9 +37,9 @@ export const getInstanceConnectionTool: AnyAgentTool = {
     }
 
     try {
-      const decrypted = await instanceDatabaseService.getInstanceWithDecryptedPassword(instanceId);
+      const instance = await instanceDatabaseService.getPublicConnectionMetadata(instanceId);
 
-      if (!decrypted) {
+      if (!instance) {
         return {
           success: false,
           error: `未找到实例 ID=${instanceId}`,
@@ -47,22 +47,12 @@ export const getInstanceConnectionTool: AnyAgentTool = {
         };
       }
 
-      const connectionInfo = {
-        id: decrypted.id,
-        name: decrypted.name,
-        db_type: decrypted.db_type,
-        host: decrypted.host,
-        port: decrypted.port,
-        username: decrypted.username,
-        database_name: decrypted.database_name,
-        health_status: decrypted.health_status,
-        environment: decrypted.environment,
-      };
+      const connectionInfo = instance;
 
       return {
         success: true,
         data: connectionInfo,
-        summary: `已获取实例 "${decrypted.name}" (${decrypted.db_type}) 的连接信息`,
+        summary: `已获取实例 "${String(instance.name)}" (${String(instance.db_type)}) 的连接信息`,
         details: {
           instance: connectionInfo,
         },

@@ -18,7 +18,14 @@ import {
   signAccessToken,
 } from './src/auth/actor-context.js';
 import { requirePermission } from './src/auth/require-permission.js';
-import { requireInstanceAccess } from './src/auth/require-instance-access.js';
+import {
+  filterByInstanceAccess,
+  getAccessibleInstanceIds,
+  hasInstanceAccess,
+  hasUnrestrictedInstanceAccess,
+  requireInstanceAccess,
+  requireUnrestrictedInstanceAccess,
+} from './src/auth/require-instance-access.js';
 import { RbacService } from './src/auth/rbac-service.js';
 import { rbacApiRoutes } from './src/auth/rbac-api.js';
 import { strictBody, warnUnknown } from './src/utils/strict-body.js';
@@ -34,8 +41,13 @@ import { dbConnection } from './src/db-connection.js';
 import { loadSecurityConfig } from './src/config/security-config.js';
 import { publicInstanceDto, publicNotificationDto, publicServerDto } from './src/security/public-dto.js';
 import { requireBrandingWrite } from './src/security/branding-policy.js';
-import { API_BODY_LIMIT, loginRateLimitConfig, registerHttpSecurity } from './src/security/http-security.js';
-import { AdapterCapabilitiesResponseSchema, DatabaseInstancesResponseSchema, ErrorResponseSchema, HealthResponseSchema } from './src/contracts/public-api.js';
+import { API_BODY_LIMIT, expensiveOperationRateLimitConfig, loginRateLimitConfig, registerHttpSecurity, sensitiveOperationRateLimitConfig } from './src/security/http-security.js';
+import {
+  AdapterCapabilitiesResponseSchema,
+  DatabaseInstancesResponseSchema,
+  ErrorResponseSchema,
+  HealthResponseSchema,
+} from './src/contracts/public-api.js';
 import { monitorCollector } from './src/monitor-collector.js';
 import { chatDatabaseService } from './src/chat-database-service.js';
 import { handleChatSend } from './src/chat-handler.js';
@@ -55,6 +67,7 @@ import { indexDatabaseService } from './src/index-database-service.js';
 import { topsqlAnalysisService } from './src/topsql-analysis-service.js';
 import { alertRCAService } from './src/alert-rca-service.js';
 import { faultDiagnosisService } from './src/fault-diagnosis-service.js';
+import { parseFaultDiagnosisInstanceId } from './src/fault-diagnosis-route-input.js';
 import { metricRegistry } from './src/metric-registry.js';
 import { metricDatabaseService } from './src/metric-database-service.js';
 import { baselineCalculator } from './src/baseline-calculator.js';
@@ -76,6 +89,9 @@ import { collectionCapabilityTracker } from './src/collection-capabilities.js';
 import { resourceService } from './src/resources/resource-service.js';
 import { capabilityService } from './src/resources/capability-service.js';
 import { observationService } from './src/resources/observation-service.js';
+import { instanceHostService } from './src/resources/instance-host-service.js';
+import { registerInstanceHostRoutes } from './src/instance-host-routes.js';
+import { instanceDiagnosticContextService } from './src/instance-diagnostic-context-service.js';
 import { sqlAuditService } from './src/sql-audit-service.js';
 import { queryAuditLogs, auditLogManager, DatabaseAuditLogStore } from './src/audit/audit-log.js';
 import { sqlExecutor } from './src/sql-executor.js';
@@ -97,7 +113,7 @@ import { CronManager } from './src/cron/cron-manager';
 import { CronExecutor } from './src/cron/cron-executor';
 import { ScriptService, scriptService } from './src/cron/script-service';
 import { CronJob } from 'cron';
-import { getAgentEngine, createLLMProvider, loadPlatformTools } from './src/adapter/get-agent-engine.js';
+import { getAgentEngine, createCronToolRegistry, createLLMProvider } from './src/adapter/get-agent-engine.js';
 import { DirectAdapter } from './src/adapter/direct-adapter.js';
 import { AgentRunner } from '@slide/agent-core';
 import { agentManagementService } from './src/agent-management-service.js';
@@ -107,6 +123,9 @@ import { promptManager } from './src/prompts/prompt-manager.js';
 import { serverDatabaseService } from './src/server-database-service.js';
 import { serverReportService } from './src/server-report-service.js';
 import serverCollector from './src/server-collector.js';
+import { registerAgentToolApprovalRoutes } from './src/security/agent-tool-approval-routes.js';
+import { registerAgentSecurityRoutes } from './src/security/agent-security-routes.js';
+import { agentSecurityPolicyService } from './src/security/agent-security-policy-service.js';
 
 const fastify = Fastify({
   logger: false,
@@ -182,6 +201,8 @@ async function start() {
   // No timers, connection recovery, or provider work may run before the
   // listener is acquired. A second process must fail without worker effects.
   const initializeControlPlane = async () => {
+  await agentSecurityPolicyService.initialize();
+
   // 加载预定义技能到 skillRegistry
   try {
     const skills = await loadPredefinedSkills();
@@ -259,26 +280,40 @@ async function start() {
     });
   });
 
-  // 一致性健康检查（认证保护）
-  fastify.get('/api/health/consistency', { preHandler: [verifyToken] }, async (request, reply) => {
+  // 详细健康检查共享一个短时快照，避免页面重复查询纳管资源与一致性数据。
+  fastify.get('/api/health/overview', { preHandler: [verifyToken, requirePermission('config:view')] }, async (request, reply) => {
     try {
-      const result = await consistencyChecker.runAllChecks();
-      reply.send(result);
+      const { refresh } = request.query as { refresh?: string };
+      return reply.send(await consistencyChecker.healthOverview(refresh === 'true'));
     } catch (err: any) {
-      reply.code(500).send({ error: err.message });
+      return reply.code(500).send({ error: err.message });
     }
   });
 
-  fastify.get('/api/health/readiness', { preHandler: [verifyToken] }, async (_request, reply) => {
+  fastify.get('/api/health/consistency', { preHandler: [verifyToken, requirePermission('config:view')] }, async (request, reply) => {
     try {
-      return reply.send(await consistencyChecker.resourceHealthTruth());
+      const { refresh } = request.query as { refresh?: string };
+      const { truth: _truth, ...consistency } = await consistencyChecker.healthOverview(refresh === 'true');
+      return reply.send(consistency);
+    } catch (err: any) {
+      return reply.code(500).send({ error: err.message });
+    }
+  });
+
+  fastify.get('/api/health/readiness', { preHandler: [verifyToken, requirePermission('config:view')] }, async (request, reply) => {
+    try {
+      const { refresh } = request.query as { refresh?: string };
+      return reply.send((await consistencyChecker.healthOverview(refresh === 'true')).truth);
     } catch (err: any) {
       return reply.code(500).send({ error: err.message });
     }
   });
 
   // 手动触发容量采集（认证保护）
-  fastify.post('/api/monitor/collect-capacity', { preHandler: [verifyToken] }, async (_request, reply) => {
+  fastify.post('/api/monitor/collect-capacity', {
+    config: { rateLimit: expensiveOperationRateLimitConfig },
+    preHandler: [verifyToken, requirePermission('collector:manage'), requireUnrestrictedInstanceAccess()],
+  }, async (_request, reply) => {
     try {
       await (monitorCollector as any).collectCapacity();
       reply.send({ message: '容量采集完成' });
@@ -292,6 +327,14 @@ async function start() {
 
   // 注册 RBAC 管理 API
   await fastify.register(rbacApiRoutes);
+  await registerAgentToolApprovalRoutes(fastify, verifyToken);
+  await registerAgentSecurityRoutes(fastify, verifyToken);
+  await registerInstanceHostRoutes(fastify, {
+    verifyToken,
+    service: instanceHostService,
+    serverLookup: serverDatabaseService,
+    evidenceService: instanceDiagnosticContextService,
+  });
 
   // 版本信息（无需认证）
   fastify.get('/api/version', async (_request, reply) => {
@@ -355,7 +398,7 @@ async function start() {
       const filePath = path.resolve(process.cwd(), '..', '..', 'docs', 'slide', file);
       try {
         const content = await fs.readFile(filePath, 'utf-8');
-        return reply.header('Content-Type', 'text/html; charset=utf-8').send(content);
+        return reply.send({ content });
       } catch {
         return reply.code(404).send({ error: 'Document not found' });
       }
@@ -585,10 +628,11 @@ async function start() {
   });
 
   // 数据库实例列表
-  fastify.get('/api/database/instances', { preHandler: [verifyToken], schema: { response: { 200: DatabaseInstancesResponseSchema, 500: ErrorResponseSchema } } }, async (request, reply) => {
+  fastify.get('/api/database/instances', { preHandler: [verifyToken, requirePermission('instance:view')], schema: { response: { 200: DatabaseInstancesResponseSchema, 500: ErrorResponseSchema } } }, async (request, reply) => {
     try {
       const instances = await instanceDatabaseService.getManagedInstances();
-      reply.send(instances.map((instance) => publicInstanceDto(instance as unknown as Record<string, unknown>)));
+      const visible = filterByInstanceAccess((request as any).user, instances, (instance: any) => Number(instance.id));
+      reply.send(visible.map((instance) => publicInstanceDto(instance as unknown as Record<string, unknown>)));
     } catch (error: any) {
       reply.code(500).send({ error: '获取实例列表失败：' + error.message });
     }
@@ -771,11 +815,29 @@ async function start() {
     return reply.send({ models: provider.models.map(m => ({ id: m.id, name: m.name })) });
   });
 
+  async function requireAlertAccess(request: any, reply: any, alertId: number, minLevel: 'read-only' | 'read-write' = 'read-only') {
+    const alert = await alertDatabaseService.getAlertAccessTarget(alertId);
+    if (!alert || (alert.instance_id != null && !hasInstanceAccess(request.user, alert.instance_id, minLevel))) {
+      reply.code(404).send({ error: '告警不存在' });
+      return null;
+    }
+    return alert;
+  }
+
   // 告警列表
-  fastify.get('/api/alerts', { preHandler: [verifyToken] }, async (request, reply) => {
+  fastify.get('/api/alerts', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
     try {
       const q = request.query as any;
+      const instanceId = q.instance_id === undefined ? undefined : Number(q.instance_id);
+      if (instanceId !== undefined && (!Number.isSafeInteger(instanceId) || instanceId <= 0)) {
+        return reply.code(400).send({ error: 'instance_id 必须为正整数' });
+      }
+      if (instanceId !== undefined && !hasInstanceAccess((request as any).user, instanceId, 'read-only')) {
+        return reply.code(403).send({ error: '无权访问该实例' });
+      }
       const alerts = await alertDatabaseService.getAlerts({
+        instance_id: instanceId,
+        allowed_instance_ids: getAccessibleInstanceIds((request as any).user),
         limit: q.limit ? parseInt(q.limit) : undefined,
         offset: q.offset ? parseInt(q.offset) : undefined,
         status: q.status || undefined,
@@ -791,6 +853,7 @@ async function start() {
   fastify.post('/api/alerts/:id/read', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireAlertAccess(request, reply, Number(id), 'read-write')) return;
       const result = await alertDatabaseService.acknowledgeAlert(Number(id));
       reply.send(result);
     } catch (error: any) { reply.code(500).send({ error: error.message }); }
@@ -798,6 +861,9 @@ async function start() {
 
   fastify.delete('/api/alerts', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
+      if (!hasUnrestrictedInstanceAccess((request as any).user)) {
+        return reply.code(403).send({ error: '清除全局告警需要不受限的实例管理权限' });
+      }
       const { retentionDays } = request.query as { retentionDays?: number };
       // 默认保留最近 30 天；前端主动传 0 可强制清除全部
       const days = retentionDays !== undefined ? Number(retentionDays) : 30;
@@ -813,7 +879,7 @@ async function start() {
   });
 
   // 监控指标
-  fastify.get('/api/metrics/:instanceId', { preHandler: [verifyToken] }, async (request, reply) => {
+  fastify.get('/api/metrics/:instanceId', { preHandler: [verifyToken, requirePermission('metric:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     const { instanceId } = request.params as any;
     try {
       const metrics = await metricsDatabaseService.getRealtimeMetrics(instanceId);
@@ -956,7 +1022,7 @@ async function start() {
   });
 
   // POST /api/agent/skills/:name/toggle — 启用/禁用技能
-  fastify.post('/api/agent/skills/:name/toggle', { preHandler: [verifyToken] }, async (request, reply) => {
+  fastify.post('/api/agent/skills/:name/toggle', { preHandler: [verifyToken, requirePermission('config:manage')] }, async (request, reply) => {
     try {
       const { name } = request.params as { name: string };
       const { enabled } = request.body as { enabled: boolean };
@@ -1141,7 +1207,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 获取实例详情
-  fastify.get('/api/database/instances/:id', { preHandler: [verifyToken, requireInstanceAccess('read-only')] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const instance = await instanceDatabaseService.getInstanceById(Number(id));
@@ -1218,7 +1284,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 测试连接
-  fastify.post('/api/database/instances/test-connection', { preHandler: [verifyToken, requirePermission('instance:manage')] }, async (request, reply) => {
+  fastify.post('/api/database/instances/test-connection', {
+    config: { rateLimit: sensitiveOperationRateLimitConfig },
+    preHandler: [verifyToken, requirePermission('instance:manage')],
+  }, async (request, reply) => {
     try {
       const check = strictBody(request.body as Record<string, unknown>,
           ['host', 'port', 'username', 'password', 'database_name', 'db_type'], 'POST /api/database/instances/test-connection');
@@ -1278,12 +1347,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/servers', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
     try {
       const data = request.body as any;
-      warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','created_by'], 'POST /api/servers');
+      warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','created_by'], 'POST /api/servers');
       if (!data.host) return reply.code(400).send({ error: '缺少必填字段：host' });
       if (!data.os_type) return reply.code(400).send({ error: '缺少必填字段：os_type' });
       if (!data.credential_type) return reply.code(400).send({ error: '缺少必填字段：credential_type' });
       if (!data.credential_username) return reply.code(400).send({ error: '缺少必填字段：credential_username' });
       if (!data.credential_value) return reply.code(400).send({ error: '缺少必填字段：credential_value' });
+      if (!data.host_key_fingerprint) return reply.code(400).send({ error: '缺少必填字段：host_key_fingerprint' });
       const result = await serverDatabaseService.createServer(data);
       if (result.success) {
         reply.send({ id: result.serverId, message: '创建成功' });
@@ -1300,7 +1370,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const data = request.body as any;
-      warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','collection_enabled'], 'PUT /api/servers/:id');
+      warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','collection_enabled'], 'PUT /api/servers/:id');
       const result = await serverDatabaseService.updateServer(Number(id), data);
       if (result.success) {
         reply.send({ message: '更新成功' });
@@ -1320,6 +1390,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (result.success) {
         reply.send({ message: '删除成功' });
       } else {
+        if (result.error === 'SERVER_HAS_INSTANCE_RELATIONS') {
+          return reply.code(409).send({ error: result.error });
+        }
         reply.code(400).send({ error: result.error });
       }
     } catch (error: any) {
@@ -1328,13 +1401,17 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 测试连接（stateless — accepts raw credentials, not encrypted）
-  fastify.post('/api/servers/test-connection', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
+  fastify.post('/api/servers/test-connection', {
+    config: { rateLimit: sensitiveOperationRateLimitConfig },
+    preHandler: [verifyToken, requirePermission('servers:manage')],
+  }, async (request, reply) => {
     try {
       const check = strictBody(request.body as Record<string, unknown>,
-          ['host', 'port', 'credential_type', 'credential_username', 'credential_value'], 'POST /api/servers/test-connection');
+          ['host', 'port', 'credential_type', 'credential_username', 'credential_value', 'host_key_fingerprint'], 'POST /api/servers/test-connection');
         if (check.error) return reply.code(400).send(check.error);
-        const { host, port, credential_type, credential_username, credential_value } = check.body as { host: string; port: number; credential_type: string; credential_username: string; credential_value: string };
-      const result = await serverDatabaseService.testConnection(String(host), Number(port), String(credential_type), String(credential_value), String(credential_username));
+        const { host, port, credential_type, credential_username, credential_value, host_key_fingerprint } = check.body as { host: string; port: number; credential_type: string; credential_username: string; credential_value: string; host_key_fingerprint: string };
+      if (!host_key_fingerprint) return reply.code(400).send({ error: '缺少必填字段：host_key_fingerprint' });
+      const result = await serverDatabaseService.testConnection(String(host), Number(port), String(credential_type), String(credential_value), String(credential_username), String(host_key_fingerprint));
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: '测试连接失败：' + error.message });
@@ -1362,6 +1439,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // ========== 服务器指标 API ==========
 
+  const latestServerMetricRecordedAt = (metrics: Array<{ recorded_at: any }>): any | null =>
+    metrics.reduce<any | null>((latest, metric) =>
+      latest === null || metric.recorded_at > latest ? metric.recorded_at : latest,
+    null);
+
   // 批量获取所有服务器最新指标摘要
   fastify.get('/api/servers/metrics/summary', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
     try {
@@ -1371,14 +1453,16 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
 
       const [rows] = await pool.execute(
-        `SELECT sm.server_id, sm.metric_name, sm.metric_value, sm.recorded_at
+        `SELECT sm.server_id, sm.metric_name, sm.dimensions, sm.metric_value, sm.recorded_at
          FROM server_metrics sm
          INNER JOIN (
            SELECT server_id, metric_name, MAX(recorded_at) AS max_time
            FROM server_metrics
            GROUP BY server_id, metric_name
-         ) latest ON sm.server_id = latest.server_id AND sm.metric_name = latest.metric_name AND sm.recorded_at = latest.max_time
-         ORDER BY sm.server_id, sm.metric_name`
+         ) latest ON sm.server_id = latest.server_id
+           AND sm.metric_name = latest.metric_name
+           AND sm.recorded_at = latest.max_time
+         ORDER BY sm.server_id, sm.metric_name, sm.id`
       ) as any;
 
       // Group by server_id
@@ -1392,7 +1476,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         }
       }
 
-      reply.send({ servers: grouped, recorded_at: rows.length > 0 ? rows[0].recorded_at : null });
+      reply.send({ servers: grouped, recorded_at: latestServerMetricRecordedAt(rows) });
     } catch (error: any) {
       reply.code(500).send({ error: '获取指标摘要失败：' + error.message });
     }
@@ -1413,22 +1497,23 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         return reply.code(404).send({ error: '服务器不存在' });
       }
 
-      // Get latest metric values (one row per metric_name)
+      // Get every dimension row from the latest collection snapshot for each metric.
       const [rows] = await pool.execute(
-        `SELECT sm.server_id, sm.metric_name, sm.metric_value, sm.recorded_at
+        `SELECT sm.server_id, sm.metric_name, sm.dimensions, sm.metric_value, sm.recorded_at
          FROM server_metrics sm
          INNER JOIN (
            SELECT metric_name, MAX(recorded_at) AS max_time
            FROM server_metrics
            WHERE server_id = ?
            GROUP BY metric_name
-         ) latest ON sm.metric_name = latest.metric_name AND sm.recorded_at = latest.max_time
+         ) latest ON sm.metric_name = latest.metric_name
+           AND sm.recorded_at = latest.max_time
          WHERE sm.server_id = ?
-         ORDER BY sm.metric_name`,
+         ORDER BY sm.metric_name, sm.id`,
         [Number(id), Number(id)]
       ) as any;
 
-      reply.send({ server_id: Number(id), metrics: rows, recorded_at: rows.length > 0 ? rows[0].recorded_at : null });
+      reply.send({ server_id: Number(id), metrics: rows, recorded_at: latestServerMetricRecordedAt(rows) });
     } catch (error: any) {
       reply.code(500).send({ error: '获取服务器指标失败：' + error.message });
     }
@@ -1440,8 +1525,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const { id } = request.params as any;
       const { range = '1h', metric } = request.query as { range?: string; metric?: string };
 
-      // Validate range parameter
-      const validRanges = ['1h', '6h', '24h', '7d', '30d'];
+      // Validate range parameter and bind only an allowlisted hour count.
+      const intervalMap: Record<string, number> = {
+        '1h': 1,
+        '6h': 6,
+        '24h': 24,
+        '7d': 168,
+        '30d': 720,
+      };
+      const validRanges = Object.keys(intervalMap);
       if (!validRanges.includes(range)) {
         return reply.code(400).send({ error: `range 必须为 ${validRanges.join('/')} 之一` });
       }
@@ -1457,12 +1549,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         return reply.code(404).send({ error: '服务器不存在' });
       }
 
-      let whereClause = 'WHERE server_id = ? AND recorded_at >= NOW() - INTERVAL ?';
-      const params: any[] = [Number(id)];
-
-      // Map range to INTERVAL value
-      const intervalMap: Record<string, string> = { '1h': '1 HOUR', '6h': '6 HOUR', '24h': '24 HOUR', '7d': '7 DAY', '30d': '30 DAY' };
-      params.push(intervalMap[range] || '1 HOUR');
+      let whereClause = 'WHERE server_id = ? AND recorded_at >= DATE_SUB(NOW(), INTERVAL ? HOUR)';
+      const params: any[] = [Number(id), intervalMap[range]];
 
       // Optional metric filter (comma-separated)
       if (metric) {
@@ -1480,10 +1568,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
 
       const [rows] = await pool.execute(
-        `SELECT id, server_id, metric_name, metric_value, recorded_at
+        `SELECT id, server_id, metric_name, dimensions, metric_value, recorded_at
          FROM server_metrics
          ${whereClause}
-         ORDER BY recorded_at ASC`,
+         ORDER BY recorded_at ASC, id ASC`,
         params
       ) as any;
 
@@ -1552,7 +1640,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // SQL 执行
-  fastify.post('/api/database/instances/:id/execute', { preHandler: [verifyToken, requirePermission('instance:query'), requireInstanceAccess('read-only')] }, async (request, reply) => {
+  fastify.post('/api/database/instances/:id/execute', {
+    config: { rateLimit: sensitiveOperationRateLimitConfig },
+    preHandler: [verifyToken, requirePermission('instance:query'), requireInstanceAccess('read-only')],
+  }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const check = strictBody(request.body as Record<string, unknown>,
@@ -1615,7 +1706,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // SQL 审批
-  fastify.post('/api/approval/submit', { preHandler: [verifyToken, requirePermission('approval:approve')] }, async (request, reply) => {
+  fastify.post('/api/approval/submit', {
+    config: { rateLimit: sensitiveOperationRateLimitConfig },
+    preHandler: [verifyToken, requirePermission('approval:approve')],
+  }, async (request, reply) => {
     try {
       const check = strictBody(request.body as Record<string, unknown>,
           ['instance_id', 'sql_text', 'database_name'], 'POST /api/approval/submit');
@@ -1624,11 +1718,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (!instance_id || !sql_text) return reply.code(400).send({ error: '缺少参数' });
       const user = (request as any).user;
       const targetInstanceId = Number(instance_id);
-      const canAccess = user.permissions?.includes?.('*') || user.permissions?.includes?.('instance:*') || user.instanceScopes?.[targetInstanceId];
-      if (!canAccess) return reply.code(403).send({ error: '无权访问该实例' });
-      const classification = classifySql(String(sql_text));
+      if (!hasInstanceAccess(user, targetInstanceId, 'read-write')) return reply.code(403).send({ error: '无权以读写级别访问该实例' });
+      const instance = await instanceDatabaseService.getInstanceById(targetInstanceId);
+      if (!instance) return reply.code(404).send({ error: '实例不存在' });
+      const classification = classifySql(String(sql_text), instance.db_type);
       if (classification.commandType === 'read') {
         return reply.code(400).send({ reasonCode: 'READ_DOES_NOT_REQUIRE_APPROVAL', executeUrl: `/api/database/instances/${targetInstanceId}/execute` });
+      }
+      if (classification.commandType !== 'write' && classification.commandType !== 'ddl') {
+        return reply.code(400).send({ reasonCode: 'SQL_STATEMENT_NOT_APPROVABLE', detail: classification.reasonCode });
       }
       const rawIdempotency = request.headers['idempotency-key'];
       const operation = await operationService.create({
@@ -1656,20 +1754,37 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
+  async function requireApprovalAccess(request: any, reply: any, approvalId: number, minLevel: 'read-only' | 'read-write' = 'read-only') {
+    const approval = await approvalService.getRequestById(approvalId);
+    if (!approval || !hasInstanceAccess(request.user, Number(approval.instance_id), minLevel)) {
+      reply.code(404).send({ error: '审批请求不存在' });
+      return null;
+    }
+    return approval;
+  }
+
   fastify.post('/api/approval/batch-review', { preHandler: [verifyToken, requirePermission('approval:approve')] }, async (request, reply) => {
     try {
       const check = strictBody(request.body as Record<string, unknown>,
           ['ids', 'action', 'notes', 'execute_ids'], 'POST /api/approval/batch-review');
         if (check.error) return reply.code(400).send(check.error);
         const { ids, action, notes, execute_ids } = check.body as { ids: number[]; action: string; notes?: string; execute_ids?: number[] };
-      if (!Array.isArray(ids) || ids.length === 0 || !ids.every((i: any) => Number.isInteger(i) && i > 0)) {
-        return reply.code(400).send({ error: 'ids 必须是非空的正整数数组' });
+      if (!Array.isArray(ids) || ids.length === 0 || ids.length > 100 || !ids.every((i: any) => Number.isSafeInteger(i) && i > 0)) {
+        return reply.code(400).send({ error: 'ids 必须是最多 100 个正整数' });
       }
       if (!action || !['approve', 'reject'].includes(String(action))) {
         return reply.code(400).send({ error: 'action 必须是 approve 或 reject' });
       }
       const user = (request as any).user;
-      const items = (ids as number[]).map(id => ({
+      const uniqueIds = [...new Set(ids as number[])];
+      for (const approvalId of uniqueIds) {
+        if (!await requireApprovalAccess(request, reply, approvalId, 'read-write')) return;
+      }
+      if (execute_ids !== undefined && (!Array.isArray(execute_ids)
+        || !execute_ids.every((id) => uniqueIds.includes(id)))) {
+        return reply.code(400).send({ error: 'execute_ids 必须是 ids 的子集' });
+      }
+      const items = uniqueIds.map(id => ({
         id,
         action: String(action) as 'approve' | 'reject',
         execute_after_approve: execute_ids ? execute_ids.includes(id) : true,
@@ -1726,6 +1841,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/approval/:id/review', { preHandler: [verifyToken, requirePermission('approval:approve')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireApprovalAccess(request, reply, Number(id), 'read-write')) return;
       const check = strictBody(request.body as Record<string, unknown>,
           ['action', 'notes', 'execute_after_approve'], 'POST /api/approval/:id/review');
         if (check.error) return reply.code(400).send(check.error);
@@ -1785,7 +1901,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   fastify.get('/api/approval/pending', { preHandler: [verifyToken, requirePermission('approval:view')] }, async (request, reply) => {
     try {
-      const list = await approvalService.getPendingRequests();
+      const list = await approvalService.getPendingRequests(
+        getAccessibleInstanceIds((request as any).user),
+      );
       reply.send(list);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -1838,7 +1956,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const query = request.query as any;
       const rawLimit = parseInt(query.limit || '50', 10);
       const limit = Number.isFinite(rawLimit) ? Math.min(rawLimit, 200) : 50;
-      const list = await approvalService.getProcessedRequests(limit);
+      const list = await approvalService.getProcessedRequests(
+        limit,
+        getAccessibleInstanceIds((request as any).user),
+      );
       reply.send(list);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -1848,8 +1969,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.get('/api/approval/:id', { preHandler: [verifyToken, requirePermission('approval:view')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const req = await approvalService.getRequestById(Number(id));
-      if (!req) return reply.code(404).send({ error: '审批请求不存在' });
+      const req = await requireApprovalAccess(request, reply, Number(id));
+      if (!req) return;
       // Enrich with instance name and db_type for detail view (per D-03, checker fix)
       const inst = await instanceDatabaseService.getInstanceById(req.instance_id);
       return reply.send({
@@ -1865,6 +1986,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.get('/api/approval/:id/events', { preHandler: [verifyToken, requirePermission('approval:view')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireApprovalAccess(request, reply, Number(id))) return;
       const events = await approvalService.getApprovalEvents(Number(id));
       reply.send(events);
     } catch (error: any) {
@@ -1873,7 +1995,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 获取实例指标
-  fastify.get('/api/database/instances/:id/metrics', { preHandler: [verifyToken, requireInstanceAccess('read-only')] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/metrics', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const metrics = await databaseService.getRealtimeMetrics(Number(id));
@@ -1887,7 +2009,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 获取实例历史指标
-  fastify.get('/api/database/instances/:id/metrics/history', { preHandler: [verifyToken, requireInstanceAccess('read-only')] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/metrics/history', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const { period = '1h', interval = '5m', metrics } = request.query as { period?: string; interval?: string; metrics?: string };
@@ -1921,7 +2043,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 获取慢查询 (TopSQL)
-  fastify.get('/api/database/instances/:id/topsql', { preHandler: [verifyToken, requireInstanceAccess('read-only')] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/topsql', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const { limit = 10 } = request.query as any;
@@ -1952,17 +2074,19 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // EXPLAIN 执行计划（JSON 格式）
-  fastify.get('/api/database/instances/:id/explain', { preHandler: [verifyToken, requirePermission('instance:query'), requireInstanceAccess()] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/explain', {
+    config: { rateLimit: sensitiveOperationRateLimitConfig },
+    preHandler: [verifyToken, requirePermission('instance:query'), requireInstanceAccess('read-only')],
+  }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const query = request.query as any;
       const sql = query.sql;
       if (!sql) return reply.code(400).send({ error: '缺少参数：sql' });
-      // SQL injection guard: only allow single SELECT, trim trailing semicolon
-      const cleanSql = sql.trim().replace(/;+\s*$/, '');
-      if (!/^\s*(SELECT|WITH|EXPLAIN|SHOW|DESCRIBE)\b/i.test(cleanSql)) {
-        return reply.code(400).send({ error: '只支持 SELECT 语句的 EXPLAIN' });
-      }
+      const instance = await instanceDatabaseService.getInstanceById(Number(id));
+      if (!instance) return reply.code(404).send({ error: '实例不存在' });
+      const classification = classifySql(String(sql), instance.db_type);
+      if (classification.commandType !== 'read') return reply.code(400).send({ error: '只支持单条安全 SELECT', detail: classification.reasonCode });
       const plan = await databaseService.getExplainPlanJson(Number(id), sql);
       if (!plan) {
         return reply.code(404).send({ error: '无法获取执行计划，实例可能未连接' });
@@ -1975,7 +2099,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 获取数据库对象树（SQL 控制台用）
   // List all databases for an instance (for database selector dropdown)
-  fastify.get('/api/database/instances/:id/databases', { preHandler: [verifyToken, requireInstanceAccess('read-only')] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/databases', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     const { id } = request.params as any;
     try {
       const conn = databaseService.getConnection(Number(id));
@@ -1994,7 +2118,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  fastify.get('/api/database/instances/:id/schema-objects', { preHandler: [verifyToken, requireInstanceAccess('read-only')] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/schema-objects', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const objects = await databaseService.getSchemaObjects(Number(id));
@@ -2046,7 +2170,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 获取会话列表
-  fastify.get('/api/database/instances/:id/sessions', { preHandler: [verifyToken, requireInstanceAccess('read-only')] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/sessions', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const sessions = await databaseService.getActiveSessions(Number(id));
@@ -2060,7 +2184,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 获取容量信息
-  fastify.get('/api/database/instances/:id/capacity', { preHandler: [verifyToken, requireInstanceAccess('read-only')] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/capacity', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const capacity = await databaseService.getCapacityInfo(Number(id));
@@ -2074,7 +2198,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 获取容量历史趋势
-  fastify.get('/api/database/instances/:id/capacity/history', { preHandler: [verifyToken, requireInstanceAccess('read-only')] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/capacity/history', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const hours = Number((request.query as any)?.hours) || 168; // 默认 7 天
@@ -2089,7 +2213,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 获取健康评分历史趋势
   fastify.get('/api/database/instances/:id/health-history', {
-    preHandler: [verifyToken, requireInstanceAccess('read-only')],
+    preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')],
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
@@ -2105,7 +2229,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 获取最新一次健康检查的详细 checks
   fastify.get('/api/database/instances/:id/health-checks', {
-    preHandler: [verifyToken, requireInstanceAccess('read-only')],
+    preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')],
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
@@ -2122,7 +2246,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 获取实例的采集能力状态
   fastify.get('/api/database/instances/:id/collection-capabilities', {
-    preHandler: [verifyToken, requireInstanceAccess('read-only')],
+    preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')],
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
@@ -2218,6 +2342,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const query = request.query as any;
       const hours = Number(query?.hours) || 168;
       const instance_id = query?.instance_id ? Number(query.instance_id) : null;
+      const allowedInstanceIds = getAccessibleInstanceIds((request as any).user);
+      if (instance_id !== null && (!Number.isSafeInteger(instance_id) || instance_id <= 0)) {
+        return reply.code(400).send({ error: 'instance_id 必须为正整数' });
+      }
+      if (instance_id !== null && !hasInstanceAccess((request as any).user, instance_id, 'read-only')) {
+        return reply.code(403).send({ error: '无权访问该实例' });
+      }
       const start_date = query?.start_date || null;
       const end_date = query?.end_date || null;
       const pool = dbConnection.getPool();
@@ -2238,6 +2369,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (instance_id) {
         whereClause += ' AND instance_id = ?';
         params.push(instance_id);
+      } else if (allowedInstanceIds !== null) {
+        if (allowedInstanceIds.length === 0) {
+          whereClause += ' AND 1 = 0';
+        } else {
+          whereClause += ` AND instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')})`;
+          params.push(...allowedInstanceIds);
+        }
       }
 
       // Cross-instance aggregation with hour-level bucket
@@ -2264,9 +2402,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         ) as any;
         currentTotal = Number(current[0]?.current_total || 0);
       } else {
+        const currentScope = allowedInstanceIds === null
+          ? ''
+          : allowedInstanceIds.length > 0
+            ? `WHERE id IN (${allowedInstanceIds.map(() => '?').join(', ')})`
+            : 'WHERE 1 = 0';
         const [current] = await pool.execute(
           `SELECT COALESCE(SUM(data_size_gb), 0) as current_total
-           FROM database_instances`,
+           FROM database_instances ${currentScope}`,
+          allowedInstanceIds ?? [],
         ) as any;
         currentTotal = Number(current[0]?.current_total || 0);
       }
@@ -2290,15 +2434,25 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const pool = dbConnection.getPool();
       if (!pool) return reply.code(500).send({ error: '数据库未连接' });
 
+      const allowedInstanceIds = getAccessibleInstanceIds((request as any).user);
+      const scopeSql = allowedInstanceIds === null
+        ? ''
+        : allowedInstanceIds.length > 0
+          ? ` AND instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')})`
+          : ' AND 1 = 0';
+
       const [rows] = await pool.execute(
         `SELECT COUNT(*) as cnt, analysis_type
          FROM ai_analysis
          WHERE created_at >= CURDATE()
+         ${scopeSql}
          GROUP BY analysis_type
          UNION ALL
          SELECT COUNT(*) as cnt, NULL as analysis_type
          FROM ai_analysis
-         WHERE created_at >= CURDATE()`,
+         WHERE created_at >= CURDATE()
+         ${scopeSql}`,
+        [...(allowedInstanceIds ?? []), ...(allowedInstanceIds ?? [])],
       ) as any;
 
       let today_total = 0;
@@ -2323,7 +2477,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 获取容量数据库明细
-  fastify.get('/api/database/instances/:id/capacity/databases', { preHandler: [verifyToken, requireInstanceAccess('read-only')] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/capacity/databases', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const databases = await metricsDatabaseService.getCapacityDatabases(Number(id));
@@ -2368,7 +2522,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 启动采集任务
   fastify.post('/api/collector/start', {
-    preHandler: [verifyToken, requirePermission('collector:manage')],
+    preHandler: [verifyToken, requirePermission('collector:manage'), requireUnrestrictedInstanceAccess()],
     handler: async (request, reply) => {
       const { type } = request.body as { type?: 'metrics' | 'slowQueries' | 'capacity' | 'all' };
       try {
@@ -2387,7 +2541,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 停止采集任务
   fastify.post('/api/collector/stop', {
-    preHandler: [verifyToken, requirePermission('collector:manage')],
+    preHandler: [verifyToken, requirePermission('collector:manage'), requireUnrestrictedInstanceAccess()],
     handler: async (request, reply) => {
       const { type } = request.body as { type?: 'metrics' | 'slowQueries' | 'capacity' | 'all' };
       try {
@@ -2423,7 +2577,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('report:view')],
     handler: async (request, reply) => {
       try {
-        const stats = await reportDatabaseService.getReportStats();
+        const stats = await reportDatabaseService.getReportStats(
+          getAccessibleInstanceIds((request as any).user),
+        );
         reply.send(stats);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -2446,7 +2602,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           offset: (Number(page) - 1) * Number(limit),
         };
         const reports = await reportDatabaseService.getReportsByFilters(filters);
-        reply.send(reports);
+        reply.send(filterByInstanceAccess((request as any).user, reports, (report: any) => report.instance_id));
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -2464,11 +2620,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const configs = await reportConfigService.getConfigs();
 
         // Filter by target_type at route level
-        let filtered = configs;
+        let filtered = filterByInstanceAccess((request as any).user, configs, (config: any) => config.instance_id);
         if (target_type === 'server') {
-          filtered = configs.filter((c: any) => c.server_id != null);
+          filtered = filtered.filter((c: any) => c.server_id != null);
         } else if (target_type === 'instance') {
-          filtered = configs.filter((c: any) => c.server_id == null);
+          filtered = filtered.filter((c: any) => c.server_id == null);
         }
 
         // Compute next_run for each config
@@ -2506,6 +2662,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         }
         if ((instance_id === undefined || instance_id === null) === (server_id === undefined || server_id === null)) {
           return reply.code(400).send({ error: 'instance_id 或 server_id 必须且只能提供一个' });
+        }
+        if (instance_id != null && !hasInstanceAccess((request as any).user, Number(instance_id), 'read-only')) {
+          return reply.code(403).send({ error: '无权访问该实例' });
         }
 
         const validTypes = ['health', 'performance', 'slow_query', 'capacity', 'server_health'];
@@ -2559,6 +2718,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const existing = await reportConfigService.getConfigById(Number(id));
         if (!existing) {
           return reply.code(404).send({ error: '报表配置不存在' });
+        }
+        if (existing.instance_id != null && !hasInstanceAccess((request as any).user, Number(existing.instance_id), 'read-only')) {
+          return reply.code(404).send({ error: '报表配置不存在' });
+        }
+        if (body.instance_id != null && !hasInstanceAccess((request as any).user, Number(body.instance_id), 'read-only')) {
+          return reply.code(403).send({ error: '无权访问该实例' });
         }
 
         // Validate type if provided
@@ -2623,6 +2788,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!existing) {
           return reply.code(404).send({ error: '报表配置不存在' });
         }
+        if (existing.instance_id != null && !hasInstanceAccess((request as any).user, Number(existing.instance_id), 'read-only')) {
+          return reply.code(404).send({ error: '报表配置不存在' });
+        }
 
         await reportConfigService.deleteConfig(Number(id));
         reply.send({ message: '删除成功' });
@@ -2642,6 +2810,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!report) {
           return reply.code(404).send({ error: '报表不存在' });
         }
+        if (report.instance_id != null && !hasInstanceAccess((request as any).user, Number(report.instance_id), 'read-only')) {
+          return reply.code(404).send({ error: '报表不存在' });
+        }
         reply.send(report);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -2655,7 +2826,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const { id } = request.params as { id: string };
       const reportId = Number(id);
       if (!Number.isSafeInteger(reportId) || reportId <= 0) return reply.code(400).send({ error: '无效的报表 ID' });
-      if (!await reportDatabaseService.getReportById(reportId)) return reply.code(404).send({ error: '报表不存在' });
+      const report = await reportDatabaseService.getReportById(reportId);
+      if (!report || (report.instance_id != null && !hasInstanceAccess((request as any).user, Number(report.instance_id), 'read-only'))) {
+        return reply.code(404).send({ error: '报表不存在' });
+      }
       return reply.send(await reportDatabaseService.getNotificationDeliveries(reportId));
     },
   });
@@ -2673,6 +2847,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         if (!type || !instanceId) {
           return reply.code(400).send({ error: '缺少必要参数：type, instanceId' });
+        }
+        if (!hasInstanceAccess((request as any).user, Number(instanceId), 'read-only')) {
+          return reply.code(403).send({ error: '无权访问该实例' });
         }
 
         const validTypes = ['health', 'performance', 'slow_query', 'capacity'];
@@ -2703,6 +2880,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!report) {
           return reply.code(404).send({ error: '报表不存在' });
         }
+        if (report.instance_id != null && !hasInstanceAccess((request as any).user, Number(report.instance_id), 'read-only')) {
+          return reply.code(404).send({ error: '报表不存在' });
+        }
 
         const exportFormat = format || report.format;
         const content = await reportExporter.export(report, exportFormat);
@@ -2725,6 +2905,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
+        const report = await reportDatabaseService.getReportById(Number(id));
+        if (!report || (report.instance_id != null && !hasInstanceAccess((request as any).user, Number(report.instance_id), 'read-only'))) {
+          return reply.code(404).send({ error: '报表不存在' });
+        }
         await reportDatabaseService.deleteReport(Number(id));
         reply.send({ message: '删除成功' });
       } catch (error: any) {
@@ -2735,6 +2919,61 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // ========== 告警规则管理 API ==========
 
+  function parseAlertRuleInstanceIds(value: unknown): number[] | null {
+    if (value == null) return null;
+    let parsed = value;
+    if (typeof value === 'string') {
+      try { parsed = JSON.parse(value); } catch { return []; }
+    }
+    return Array.isArray(parsed) ? parsed.map(Number) : [];
+  }
+
+  function validateAlertRuleInstanceIds(request: any, reply: any, value: unknown): number[] | null | undefined {
+    const ids = parseAlertRuleInstanceIds(value);
+    if (ids === null) {
+      if (!hasUnrestrictedInstanceAccess(request.user)) {
+        reply.code(403).send({ error: '创建全实例告警规则需要不受限的实例管理权限' });
+        return undefined;
+      }
+      return null;
+    }
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length === 0 || uniqueIds.length > 100
+      || !uniqueIds.every((id) => Number.isSafeInteger(id) && id > 0)) {
+      reply.code(400).send({ error: 'instance_ids 必须为 1-100 个正整数' });
+      return undefined;
+    }
+    if (!uniqueIds.every((id) => hasInstanceAccess(request.user, id, 'read-write'))) {
+      reply.code(403).send({ error: '无权以读写级别访问一个或多个目标实例' });
+      return undefined;
+    }
+    return uniqueIds;
+  }
+
+  function filterAlertRulesForActor(actor: any, rules: any[]): any[] {
+    return rules.filter((rule) => {
+      const ids = parseAlertRuleInstanceIds(rule.instance_ids);
+      return ids === null || (ids.length > 0 && ids.every((id) => hasInstanceAccess(actor, id, 'read-only')));
+    });
+  }
+
+  async function requireAlertRuleAccess(request: any, reply: any, ruleId: number) {
+    const rule = await alertDatabaseService.getRuleById(ruleId);
+    if (!rule) {
+      reply.code(404).send({ error: '告警规则不存在' });
+      return null;
+    }
+    const ids = parseAlertRuleInstanceIds(rule.instance_ids);
+    const allowed = ids === null
+      ? hasUnrestrictedInstanceAccess(request.user)
+      : ids.length > 0 && ids.every((id) => hasInstanceAccess(request.user, id, 'read-write'));
+    if (!allowed) {
+      reply.code(404).send({ error: '告警规则不存在' });
+      return null;
+    }
+    return rule;
+  }
+
   // 获取告警规则列表
   fastify.get('/api/alert-rules', {
     preHandler: [verifyToken, requirePermission('alert:view')],
@@ -2744,7 +2983,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const rules = await alertDatabaseService.getAlertRules(
           enabled === 'true' || enabled === 'false' ? enabled === 'true' : undefined
         );
-        reply.send(rules);
+        reply.send(filterAlertRulesForActor((request as any).user, rules));
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -2757,6 +2996,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const data = request.body as any;
+        const instanceIds = validateAlertRuleInstanceIds(request, reply, data.instance_ids ?? null);
+        if (instanceIds === undefined) return;
         // D-14: 验证 metric_name 存在于 metric_definitions 且 is_collected=true
         let metricDef: any = null;
         if (data.metric_name) {
@@ -2784,7 +3025,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           dynamic_config: data.dynamic_config,
           silence_minutes: data.silence_minutes ?? 5,
           db_types: data.db_types || (metricDef ? metricDef.db_types : null),
-          instance_ids: data.instance_ids || null,
+          instance_ids: instanceIds,
           template_id: data.template_id ?? null,
           target_type: data.target_type || 'instance',
           server_id: data.server_id ?? null,
@@ -2808,6 +3049,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const { id } = request.params as any;
         const data = request.body as any;
+        if (!await requireAlertRuleAccess(request, reply, Number(id))) return;
+        let instanceIds: number[] | null | undefined;
+        if (data.instance_ids !== undefined) {
+          instanceIds = validateAlertRuleInstanceIds(request, reply, data.instance_ids);
+          if (instanceIds === undefined) return;
+        }
         // D-14: 验证 metric_name 存在于 metric_definitions 且 is_collected=true
         if (data.metric_name) {
           const def = metricRegistry.getById(data.metric_name);
@@ -2836,7 +3083,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (data.dynamic_config !== undefined) updateData.dynamic_config = data.dynamic_config;
         if (data.silence_minutes !== undefined) updateData.silence_minutes = data.silence_minutes;
         if (data.db_types !== undefined) updateData.db_types = data.db_types;
-        if (data.instance_ids !== undefined) updateData.instance_ids = data.instance_ids;
+        if (data.instance_ids !== undefined) updateData.instance_ids = instanceIds;
         if (data.template_id !== undefined) updateData.template_id = data.template_id;
         if (data.target_type !== undefined) updateData.target_type = data.target_type;
         if (data.server_id !== undefined) updateData.server_id = data.server_id;
@@ -2859,6 +3106,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
+        if (!await requireAlertRuleAccess(request, reply, Number(id))) return;
         const result = await alertDatabaseService.deleteAlertRule(Number(id));
         if (result.success) {
           reply.send({ message: '删除成功' });
@@ -3004,7 +3252,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 手动触发告警评估
   fastify.post('/api/alert-engine/evaluate', {
-    preHandler: [verifyToken, requirePermission('alert:manage')],
+    preHandler: [verifyToken, requirePermission('alert:manage'), requireUnrestrictedInstanceAccess()],
     handler: async (request, reply) => {
       try {
         const result = await alertEngine.triggerEvaluation();
@@ -3257,6 +3505,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           related_id?: number;
           trigger_type?: 'manual' | 'auto';
         };
+        const faultInstanceId = analysis_type === 'fault_diagnosis'
+          ? parseFaultDiagnosisInstanceId(instance_id)
+          : null;
 
         // RCA resolves its sole subject from the referenced alert. A server
         // alert has no instance_id, so requiring one here made the browser
@@ -3264,6 +3515,19 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         // the server subject.
         if (!analysis_type || (analysis_type !== 'alert_rca' && !instance_id)) {
           return reply.code(400).send({ error: '缺少必要参数：analysis_type, instance_id' });
+        }
+        if (analysis_type === 'fault_diagnosis' && faultInstanceId === null) {
+          return reply.code(400).send({ error: 'instance_id 必须为正整数' });
+        }
+        if (instance_id && !hasInstanceAccess((request as any).user, Number(instance_id), 'read-only')) {
+          return reply.code(403).send({ error: '无权访问该实例' });
+        }
+        if (analysis_type === 'alert_rca' && related_id) {
+          const alert = await notificationDatabaseService.getAlertById(Number(related_id));
+          if (!alert) return reply.code(404).send({ error: '告警不存在' });
+          if (alert.instance_id && !hasInstanceAccess((request as any).user, Number(alert.instance_id), 'read-only')) {
+            return reply.code(404).send({ error: '告警不存在' });
+          }
         }
 
         let analysisId: number;
@@ -3290,7 +3554,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             break;
 
           case 'fault_diagnosis':
-            const diagnosisResult = await faultDiagnosisService.diagnoseInstance(instance_id, trigger_type);
+            const diagnosisResult = await faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId);
             if (!diagnosisResult.success) {
               return reply.code(500).send({ error: diagnosisResult.error });
             }
@@ -3334,6 +3598,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!record) {
           return reply.code(404).send({ ok: false, error: '分析记录不存在' });
         }
+        if (record.instance_id && !hasInstanceAccess((request as any).user, Number(record.instance_id), 'read-only')) {
+          return reply.code(404).send({ ok: false, error: '分析记录不存在' });
+        }
         reply.send({
           ok: true,
           record: {
@@ -3369,7 +3636,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (analysis_type) filters.analysis_type = analysis_type;
         if (limit) filters.limit = parseInt(limit);
         const records = await aiAnalysisDatabaseService.getAnalysisList(filters);
-        return { ok: true, records };
+        return { ok: true, records: filterByInstanceAccess((request as any).user, records, (record: any) => record.instance_id) };
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -3384,6 +3651,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { id } = request.params as any;
         const analysis = await aiAnalysisDatabaseService.getAnalysisById(Number(id));
         if (!analysis) {
+          return reply.code(404).send({ error: '分析记录不存在' });
+        }
+        if (analysis.instance_id && !hasInstanceAccess((request as any).user, Number(analysis.instance_id), 'read-only')) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
         reply.send({
@@ -3410,6 +3680,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!instance_id || !analysis_type) {
           return reply.code(400).send({ error: '缺少必要参数：instance_id, analysis_type' });
         }
+        if (!hasInstanceAccess((request as any).user, Number(instance_id), 'read-only')) {
+          return reply.code(403).send({ error: '无权访问该实例' });
+        }
         const analyses = await aiAnalysisDatabaseService.getAnalysisList({
           instance_id: Number(instance_id),
           analysis_type,
@@ -3433,6 +3706,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!analysis) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
+        if (analysis.instance_id && !hasInstanceAccess((request as any).user, Number(analysis.instance_id), 'read-only')) {
+          return reply.code(404).send({ error: '分析记录不存在' });
+        }
         reply.send(analysis);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -3454,7 +3730,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           limit: Number(limit),
           offset: (Number(page) - 1) * Number(limit),
         });
-        reply.send(analyses);
+        reply.send(filterByInstanceAccess((request as any).user, analyses, (analysis: any) => analysis.instance_id));
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -3467,6 +3743,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
+        const existing = await aiAnalysisDatabaseService.getAnalysisById(Number(id));
+        if (!existing || (existing.instance_id && !hasInstanceAccess((request as any).user, Number(existing.instance_id), 'read-only'))) {
+          return reply.code(404).send({ error: '分析记录不存在' });
+        }
         const result = await aiAnalysisDatabaseService.deleteAnalysis(Number(id));
         if (result.success) {
           reply.send({ message: '删除成功' });
@@ -3489,6 +3769,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!existing) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
+        const faultInstanceId = existing.analysis_type === 'fault_diagnosis'
+          ? parseFaultDiagnosisInstanceId(existing.instance_id)
+          : null;
+        if (existing.analysis_type === 'fault_diagnosis' && faultInstanceId === null) {
+          return reply.code(400).send({ error: 'instance_id 必须为正整数' });
+        }
+        if (existing.instance_id && !hasInstanceAccess((request as any).user, Number(existing.instance_id), 'read-only')) {
+          return reply.code(404).send({ error: '分析记录不存在' });
+        }
 
         if (existing.analysis_type === 'topsql_analysis' && existing.related_id) {
           const reanalyzeId = await topsqlAnalysisService.reanalyzeSlowQuery(existing.related_id, existing.instance_id);
@@ -3500,7 +3789,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           }
           reply.send({ id: rcaResult.analysisId, status: 'pending', message: '重新分析任务已提交' });
         } else if (existing.analysis_type === 'fault_diagnosis') {
-          const diagnosisResult = await faultDiagnosisService.diagnoseInstance(existing.instance_id, 'manual');
+          const diagnosisResult = await faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId);
           if (!diagnosisResult.success) {
             return reply.code(500).send({ error: diagnosisResult.error });
           }
@@ -3558,6 +3847,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 提交 SQL 审核
   fastify.post('/api/sql/audit', {
+    config: { rateLimit: expensiveOperationRateLimitConfig },
     preHandler: [verifyToken, requirePermission('sql:audit')],
     handler: async (request, reply) => {
       try {
@@ -3572,6 +3862,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         }
         if (sql_text.length > 50 * 1024) {
           return reply.code(400).send({ error: 'sql_text 超过最大长度（50KB）' });
+        }
+        if (!hasInstanceAccess((request as any).user, instance_id, 'read-only')) {
+          return reply.code(403).send({ error: '无权访问该实例' });
         }
 
         const username = (request as any).user?.username || 'anonymous';
@@ -3599,6 +3892,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!result) {
           return reply.code(404).send({ error: '审核记录不存在' });
         }
+        if (!hasInstanceAccess((request as any).user, Number(result.instance_id), 'read-only')) {
+          return reply.code(404).send({ error: '审核记录不存在' });
+        }
         reply.send(result);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -3614,6 +3910,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { id } = request.params as any;
         const analysis = await aiAnalysisDatabaseService.getAnalysisById(Number(id));
         if (!analysis) {
+          return reply.code(404).send({ error: '审核记录不存在' });
+        }
+        if (!hasInstanceAccess((request as any).user, Number(analysis.instance_id), 'read-only')) {
           return reply.code(404).send({ error: '审核记录不存在' });
         }
         reply.send({
@@ -3633,7 +3932,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 实例审核历史
   fastify.get('/api/sql/audit/instance/:instanceId', {
-    preHandler: [verifyToken, requirePermission('sql:view')],
+    preHandler: [verifyToken, requirePermission('sql:view'), requireInstanceAccess('read-only')],
     handler: async (request, reply) => {
       try {
         const { instanceId } = request.params as any;
@@ -3648,25 +3947,30 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 批量审核慢查询
   fastify.post('/api/sql/audit/batch', {
+    config: { rateLimit: expensiveOperationRateLimitConfig },
     preHandler: [verifyToken, requirePermission('sql:audit')],
     handler: async (request, reply) => {
       try {
         const body = request.body as { slow_query_ids: number[]; instance_id: number };
         const { slow_query_ids, instance_id } = body;
 
-        if (!slow_query_ids || !Array.isArray(slow_query_ids) || slow_query_ids.length === 0) {
+        if (!slow_query_ids || !Array.isArray(slow_query_ids) || slow_query_ids.length === 0 || slow_query_ids.length > 50
+          || !slow_query_ids.every((id) => Number.isSafeInteger(id) && id > 0)) {
           return reply.code(400).send({ error: '缺少必要参数：slow_query_ids（非空数组）' });
         }
         if (!instance_id || !Number.isInteger(instance_id) || instance_id <= 0) {
           return reply.code(400).send({ error: '缺少必要参数：instance_id（正整数）' });
         }
+        if (!hasInstanceAccess((request as any).user, instance_id, 'read-only')) {
+          return reply.code(403).send({ error: '无权访问该实例' });
+        }
 
         const results: Array<{ slow_query_id: number; analysis_id: number; pre_audit_results: any[] }> = [];
         const username = (request as any).user?.username || 'anonymous';
 
+        const slowQueries = await metricsDatabaseService.getSlowQueries(instance_id, 1000);
         for (const sqId of slow_query_ids) {
           // 获取慢查询 SQL 文本
-          const slowQueries = await metricsDatabaseService.getSlowQueries(instance_id, 1000);
           const sq = slowQueries.find((q) => q.id === sqId);
           if (!sq) {
             results.push({ slow_query_id: sqId, analysis_id: 0, pre_audit_results: [] });
@@ -3679,11 +3983,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             analysis_id: auditResult.analysisId,
             pre_audit_results: auditResult.preAuditResults,
           });
-
-          // 每个之间 await 50ms 避免 LLM 限流
-          if (sqId !== slow_query_ids[slow_query_ids.length - 1]) {
-            await new Promise((resolve) => setTimeout(resolve, 50));
-          }
         }
 
         reply.send({ success: true, results });
@@ -3708,6 +4007,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const instance_id = raw_id || raw_camel;
         if (!instance_id) {
           return reply.code(400).send({ error: '缺少必要参数：instance_id' });
+        }
+        if (!hasInstanceAccess((request as any).user, Number(instance_id), 'read-only')) {
+          return reply.code(403).send({ error: '无权访问该实例' });
         }
 
         const validHorizons = ['7d', '30d', '90d'];
@@ -3738,6 +4040,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!instance_id) {
           return reply.code(400).send({ error: '缺少必要参数：instance_id' });
         }
+        if (!hasInstanceAccess((request as any).user, Number(instance_id), 'read-only')) {
+          return reply.code(403).send({ error: '无权访问该实例' });
+        }
 
         const results = await capacityPredictor.predictAll(Number(instance_id), horizon as '7d' | '30d' | '90d');
         reply.send(results);
@@ -3765,6 +4070,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         if (!instanceId || isNaN(Number(instanceId)) || Number(instanceId) <= 0) {
           return reply.code(400).send({ error: '缺少必要参数：instanceId（正整数）' });
+        }
+        if (!hasInstanceAccess((request as any).user, Number(instanceId), 'read-only')) {
+          return reply.code(403).send({ error: '无权访问该实例' });
         }
 
         const result = await databaseLogService.getLogs(Number(instanceId), {
@@ -3794,6 +4102,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!instanceId || isNaN(Number(instanceId)) || Number(instanceId) <= 0) {
           return reply.code(400).send({ error: '缺少必要参数：instanceId（正整数）' });
         }
+        if (!hasInstanceAccess((request as any).user, Number(instanceId), 'read-only')) {
+          return reply.code(403).send({ error: '无权访问该实例' });
+        }
 
         const stats = await databaseLogService.getLogsStats(Number(instanceId), hours ? Number(hours) : 24);
         if (!stats) {
@@ -3814,11 +4125,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const body = request.body as { logIds: number[]; instanceId: number };
         const { logIds, instanceId } = body;
 
-        if (!logIds || !Array.isArray(logIds) || logIds.length === 0) {
-          return reply.code(400).send({ error: '缺少必要参数：logIds（非空数组）' });
+        if (!Array.isArray(logIds) || logIds.length === 0 || logIds.length > 100
+          || !logIds.every((id) => Number.isSafeInteger(id) && id > 0)) {
+          return reply.code(400).send({ error: 'logIds 必须为最多 100 个正整数' });
         }
         if (!instanceId || !Number.isInteger(instanceId) || instanceId <= 0) {
           return reply.code(400).send({ error: '缺少必要参数：instanceId（正整数）' });
+        }
+        if (!hasInstanceAccess((request as any).user, instanceId, 'read-only')) {
+          return reply.code(403).send({ error: '无权访问该实例' });
         }
 
         // 查询指定 logIds 的日志内容
@@ -3827,12 +4142,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(500).send({ error: '数据库未连接' });
         }
 
-        const placeholders = logIds.map(() => '?').join(', ');
+        const uniqueLogIds = [...new Set(logIds)];
+        const placeholders = uniqueLogIds.map(() => '?').join(', ');
         const [rows] = await pool.execute(
           `SELECT id, instance_id, log_level, source, message, raw_content,
                   detected_patterns, collected_at, created_at
-           FROM database_logs WHERE id IN (${placeholders})`,
-          logIds
+           FROM database_logs WHERE instance_id = ? AND id IN (${placeholders})`,
+          [instanceId, ...uniqueLogIds]
         ) as any;
 
         if (!Array.isArray(rows) || rows.length === 0) {
@@ -3883,6 +4199,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!analysis) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
+        if (analysis.instance_id && !hasInstanceAccess((request as any).user, Number(analysis.instance_id), 'read-only')) {
+          return reply.code(404).send({ error: '分析记录不存在' });
+        }
         reply.send(analysis);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -3893,7 +4212,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // ========== 实例表结构直接查询（SHOW TABLES / DESCRIBE）==========
 
   // 获取实例所有表（SHOW TABLES）
-  fastify.get('/api/database/instances/:id/tables', { preHandler: [verifyToken] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/tables', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const conn = databaseService.getConnection(Number(id));
@@ -3924,7 +4243,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 获取表结构详情（DESCRIBE）
-  fastify.get('/api/database/instances/:id/tables/:tableName/describe', { preHandler: [verifyToken] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/tables/:tableName/describe', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id, tableName } = request.params as any;
       const conn = databaseService.getConnection(Number(id));
@@ -3957,7 +4276,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 获取表索引信息（SHOW INDEX）
-  fastify.get('/api/database/instances/:id/tables/:tableName/indexes', { preHandler: [verifyToken] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/tables/:tableName/indexes', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id, tableName } = request.params as any;
       const conn = databaseService.getConnection(Number(id));
@@ -4329,6 +4648,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         reply.code(400).send({ error: '请提供指标描述' });
         return;
       }
+      if (instance_id && !hasInstanceAccess((request as any).user, Number(instance_id), 'read-only')) {
+        return reply.code(403).send({ error: '无权访问该实例' });
+      }
       const { generateCollectionSql } = await import('./src/sql-generator.js');
       const result = await generateCollectionSql(db_type || 'mysql', description, instance_id ? Number(instance_id) : undefined);
       if (result.error) {
@@ -4342,7 +4664,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // --- 基线计算 (2 条) ---
-  fastify.post('/api/baseline/compute', { preHandler: [verifyToken, requirePermission('baseline:manage')] }, async (request, reply) => {
+  fastify.post('/api/baseline/compute', { preHandler: [verifyToken, requirePermission('baseline:manage'), requireUnrestrictedInstanceAccess()] }, async (request, reply) => {
     try {
       const result = await baselineCalculator.computeAllBaselines();
       reply.send({ success: true, ...result });
@@ -4351,7 +4673,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  fastify.get('/api/baseline/:instanceId/:metricName', { preHandler: [verifyToken] }, async (request, reply) => {
+  fastify.get('/api/baseline/:instanceId/:metricName', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { instanceId, metricName } = request.params as any;
       const baseline = await baselineCalculator.getCachedBaseline(Number(instanceId), metricName);
@@ -4414,7 +4736,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  fastify.post('/api/alerts/escalation/check', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
+  fastify.post('/api/alerts/escalation/check', { preHandler: [verifyToken, requirePermission('alert:manage'), requireUnrestrictedInstanceAccess()] }, async (request, reply) => {
     try {
       const result = await alertEscalationService.checkEscalations();
       reply.send(result);
@@ -4427,6 +4749,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/alerts/:id/escalate', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireAlertAccess(request, reply, Number(id), 'read-write')) return;
       const check = strictBody(request.body as Record<string, unknown>,
           ['new_level'], 'POST /api/alerts/:id/escalate');
         if (check.error) return reply.code(400).send(check.error);
@@ -4443,9 +4766,24 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // --- 维护窗口 (5 条) ---
+  async function requireMaintenanceWindowAccess(request: any, reply: any, windowId: number) {
+    const window = await maintenanceWindowService.getMaintenanceWindowById(windowId);
+    const allowed = window && (window.instance_id == null
+      ? hasUnrestrictedInstanceAccess(request.user)
+      : hasInstanceAccess(request.user, Number(window.instance_id), 'read-write'));
+    if (!allowed) {
+      reply.code(404).send({ error: '维护窗口不存在' });
+      return null;
+    }
+    return window;
+  }
+
   fastify.get('/api/maintenance-windows', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
-      const windows = await maintenanceWindowService.getMaintenanceWindows();
+      const windows = await maintenanceWindowService.getMaintenanceWindows(
+        undefined,
+        getAccessibleInstanceIds((request as any).user),
+      );
       reply.send(windows);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -4454,7 +4792,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   fastify.post('/api/maintenance-windows', { preHandler: [verifyToken, requirePermission('maintenance:manage')] }, async (request, reply) => {
     try {
-      const result = await maintenanceWindowService.createMaintenanceWindow(request.body as any);
+      const body = request.body as any;
+      if (body.instance_id == null) {
+        if (!hasUnrestrictedInstanceAccess((request as any).user)) {
+          return reply.code(403).send({ error: '创建全局维护窗口需要不受限的实例管理权限' });
+        }
+      } else if (!hasInstanceAccess((request as any).user, Number(body.instance_id), 'read-write')) {
+        return reply.code(403).send({ error: '无权以读写级别访问该实例' });
+      }
+      const result = await maintenanceWindowService.createMaintenanceWindow(body);
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -4464,7 +4810,18 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.put('/api/maintenance-windows/:id', { preHandler: [verifyToken, requirePermission('maintenance:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const result = await maintenanceWindowService.updateMaintenanceWindow(Number(id), request.body as any);
+      if (!await requireMaintenanceWindowAccess(request, reply, Number(id))) return;
+      const body = request.body as any;
+      if (body.instance_id !== undefined) {
+        if (body.instance_id == null) {
+          if (!hasUnrestrictedInstanceAccess((request as any).user)) {
+            return reply.code(403).send({ error: '创建全局维护窗口需要不受限的实例管理权限' });
+          }
+        } else if (!hasInstanceAccess((request as any).user, Number(body.instance_id), 'read-write')) {
+          return reply.code(403).send({ error: '无权以读写级别访问该实例' });
+        }
+      }
+      const result = await maintenanceWindowService.updateMaintenanceWindow(Number(id), body);
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -4474,6 +4831,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.delete('/api/maintenance-windows/:id', { preHandler: [verifyToken, requirePermission('maintenance:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireMaintenanceWindowAccess(request, reply, Number(id))) return;
       const result = await maintenanceWindowService.deleteMaintenanceWindow(Number(id));
       reply.send(result);
     } catch (error: any) {
@@ -4481,7 +4839,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  fastify.get('/api/maintenance-windows/check/:instanceId', { preHandler: [verifyToken] }, async (request, reply) => {
+  fastify.get('/api/maintenance-windows/check/:instanceId', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { instanceId } = request.params as any;
       const result = await maintenanceWindowService.isActiveMaintenanceWindow(Number(instanceId));
@@ -4494,7 +4852,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // --- 静默期 (4 条) ---
   fastify.get('/api/silence', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
-      const silences = await alertSilenceService.getActiveSilences();
+      const silences = await alertSilenceService.getActiveSilences(
+        undefined,
+        getAccessibleInstanceIds((request as any).user),
+      );
       reply.send(silences);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -4507,6 +4868,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           ['instance_id', 'metric_name', 'duration_minutes'], 'POST /api/silence');
         if (check.error) return reply.code(400).send(check.error);
         const { instance_id, metric_name, duration_minutes } = check.body as { instance_id: number; metric_name: string; duration_minutes: number };
+      if (!hasInstanceAccess((request as any).user, Number(instance_id), 'read-write')) {
+        return reply.code(403).send({ error: '无权以读写级别访问该实例' });
+      }
       const result = await alertSilenceService.silence(instance_id, metric_name, duration_minutes);
       reply.send(result);
     } catch (error: any) {
@@ -4517,6 +4881,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.delete('/api/silence/:id', { preHandler: [verifyToken, requirePermission('silence:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      const instanceId = await alertSilenceService.getSilenceInstanceId(Number(id));
+      if (instanceId === null || !hasInstanceAccess((request as any).user, instanceId, 'read-write')) {
+        return reply.code(404).send({ error: '静默记录不存在' });
+      }
       const result = await alertSilenceService.clearSilence(Number(id));
       reply.send(result);
     } catch (error: any) {
@@ -4526,6 +4894,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   fastify.post('/api/silence/cleanup', { preHandler: [verifyToken, requirePermission('silence:manage')] }, async (request, reply) => {
     try {
+      if (!hasUnrestrictedInstanceAccess((request as any).user)) {
+        return reply.code(403).send({ error: '清理全局静默记录需要不受限的实例管理权限' });
+      }
       const count = await alertSilenceService.cleanupExpiredSilences();
       reply.send({ cleaned: count });
     } catch (error: any) {
@@ -4534,9 +4905,30 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // --- 事件管理 (10 条) ---
+  async function requireAlertEventAccess(request: any, reply: any, eventId: number, minLevel: 'read-only' | 'read-write' = 'read-only') {
+    const event = await alertEventService.getEventById(eventId);
+    if (!event || !hasInstanceAccess(request.user, Number(event.instance_id), minLevel)) {
+      reply.code(404).send({ error: '事件未找到' });
+      return null;
+    }
+    return event;
+  }
+
   fastify.get('/api/alerts/events', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
     try {
-      const events = await alertEventService.getEvents(request.query as any);
+      const query = request.query as any;
+      const instanceId = query.instance_id === undefined ? undefined : Number(query.instance_id);
+      if (instanceId !== undefined && (!Number.isSafeInteger(instanceId) || instanceId <= 0)) {
+        return reply.code(400).send({ error: 'instance_id 必须为正整数' });
+      }
+      if (instanceId !== undefined && !hasInstanceAccess((request as any).user, instanceId, 'read-only')) {
+        return reply.code(403).send({ error: '无权访问该实例' });
+      }
+      const events = await alertEventService.getEvents({
+        ...query,
+        instance_id: instanceId,
+        allowed_instance_ids: getAccessibleInstanceIds((request as any).user),
+      });
       reply.send(events);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -4545,7 +4937,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   fastify.get('/api/alerts/events/stats', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
     try {
-      const stats = await alertEventService.getEventStats();
+      const stats = await alertEventService.getEventStats(getAccessibleInstanceIds((request as any).user));
       reply.send(stats);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -4555,11 +4947,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.get('/api/alerts/events/:id', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const event = await alertEventService.getEventById(Number(id));
-      if (!event) {
-        reply.code(404).send({ error: '事件未找到' });
-        return;
-      }
+      const event = await requireAlertEventAccess(request, reply, Number(id));
+      if (!event) return;
       reply.send(event);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -4568,7 +4957,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   fastify.post('/api/alerts/events', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
-      const result = await alertEventService.createEvent(request.body as any);
+      const body = request.body as any;
+      const instanceId = Number(body?.instance_id);
+      if (!Number.isSafeInteger(instanceId) || instanceId <= 0) {
+        return reply.code(400).send({ error: 'instance_id 必须为正整数' });
+      }
+      if (!hasInstanceAccess((request as any).user, instanceId, 'read-write')) {
+        return reply.code(403).send({ error: '无权以读写级别访问该实例' });
+      }
+      const result = await alertEventService.createEvent({ ...body, instance_id: instanceId });
       reply.code(201).send(result);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -4578,6 +4975,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.put('/api/alerts/events/:id', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
       const result = await alertEventService.updateEvent(Number(id), request.body as any);
       if (!result.success) {
         return reply.code(400).send({ error: result.error });
@@ -4591,6 +4989,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.delete('/api/alerts/events/:id', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
       const result = await alertEventService.deleteEvent(Number(id));
       if (!result.success) {
         return reply.code(400).send({ error: result.error });
@@ -4604,6 +5003,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/alerts/events/:id/assign', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
       const check = strictBody(request.body as Record<string, unknown>,
           ['user_id'], 'POST /api/alerts/events/:id/assign');
         if (check.error) return reply.code(400).send(check.error);
@@ -4618,6 +5018,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/alerts/events/:id/investigate', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
       const result = await alertEventService.startInvestigation(Number(id));
       reply.send(result);
     } catch (error: any) {
@@ -4628,6 +5029,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/alerts/events/:id/note', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
       const check = strictBody(request.body as Record<string, unknown>,
           ['note'], 'POST /api/alerts/events/:id/note');
         if (check.error) return reply.code(400).send(check.error);
@@ -4642,6 +5044,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/alerts/events/:id/rca', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
       const result = await alertEventService.triggerRCAForEvent(Number(id));
       reply.send(result);
     } catch (error: any) {
@@ -4652,6 +5055,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/alerts/events/:id/resolve', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
       const check = strictBody(request.body as Record<string, unknown>,
           ['resolution_notes'], 'POST /api/alerts/events/:id/resolve');
         if (check.error) return reply.code(400).send(check.error);
@@ -4666,6 +5070,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/alerts/events/:id/close', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
       const result = await alertEventService.closeEvent(Number(id));
       reply.code(result.success ? 200 : 409).send(result);
     } catch (error: any) {
@@ -4676,6 +5081,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/alerts/events/:id/verify-recovery', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
       const check = strictBody(request.body as Record<string, unknown>, ['reason'], 'POST /api/alerts/events/:id/verify-recovery');
       if (check.error) return reply.code(400).send(check.error);
       const reason = String((check.body as { reason?: unknown }).reason ?? '').trim();
@@ -4690,6 +5096,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/alerts/events/:id/postmortem', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
       const check = strictBody(request.body as Record<string, unknown>,
           ['postmortem'], 'POST /api/alerts/events/:id/postmortem');
         if (check.error) return reply.code(400).send(check.error);
@@ -4704,6 +5111,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.get('/api/alerts/events/:id/logs', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
+      if (!await requireAlertEventAccess(request, reply, Number(id))) return;
       const logs = await alertEventService.getEventLogs(Number(id));
       reply.send(logs);
     } catch (error: any) {
@@ -4713,7 +5121,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   fastify.get('/api/alerts/events/mttr', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
     try {
-      const stats = await alertEventService.getMTTRStats();
+      const stats = await alertEventService.getMTTRStats(getAccessibleInstanceIds((request as any).user));
       reply.send(stats);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -4722,7 +5130,19 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   fastify.get('/api/alerts/events/search', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
     try {
-      const result = await alertEventService.searchEvents(request.query as any);
+      const query = request.query as any;
+      const instanceId = query.instance_id === undefined ? undefined : Number(query.instance_id);
+      if (instanceId !== undefined && (!Number.isSafeInteger(instanceId) || instanceId <= 0)) {
+        return reply.code(400).send({ error: 'instance_id 必须为正整数' });
+      }
+      if (instanceId !== undefined && !hasInstanceAccess((request as any).user, instanceId, 'read-only')) {
+        return reply.code(403).send({ error: '无权访问该实例' });
+      }
+      const result = await alertEventService.searchEvents({
+        ...query,
+        instance_id: instanceId,
+        allowed_instance_ids: getAccessibleInstanceIds((request as any).user),
+      });
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -4730,7 +5150,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // --- 事件聚合 (1 条) ---
-  fastify.post('/api/alerts/aggregate', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
+  fastify.post('/api/alerts/aggregate', { preHandler: [verifyToken, requirePermission('alert:manage'), requireUnrestrictedInstanceAccess()] }, async (request, reply) => {
     try {
       const result = await eventAggregator.aggregate();
       reply.send(result);
@@ -4756,6 +5176,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const workflowStore = new MysqlWorkflowStore(() => dbConnection.getPool() as any);
   notificationWorkflowStore = workflowStore;
   const workflowRegistry = new JobRegistry();
+  workflowRegistry.register('fault.diagnose-unhealthy', async () => { await faultDiagnosisService.diagnoseUnhealthyInstances(); });
   const notificationScheduler = new NotificationDispatchScheduler(notificationDatabaseService, notificationService, workflowStore);
   const enqueueNotificationDispatch = async (availableAt = new Date()) => {
     await workflowStore.enqueue(createNotificationDispatchJob(availableAt));
@@ -4928,7 +5349,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // ========== CronManager 初始化 ==========
   const cronProvider = await createLLMProvider();
   const cronRunner = new AgentRunner(cronProvider);
-  const cronTools = await loadPlatformTools();
+  const cronTools = await createCronToolRegistry();
   const cronExecutor = new CronExecutor(cronRunner, cronTools, cronProvider);
   cronManager = new CronManager(cronJobService, cronExecutor, workflowStore);
   await cronManager.start();
@@ -4966,12 +5387,24 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // ========== Cron 任务管理 API ==========
 
+  async function requireCronJobAccess(request: any, reply: any, jobId: number, minLevel: 'read-only' | 'read-write' = 'read-only') {
+    const job = await cronJobService.getJobById(jobId);
+    const allowed = job && (job.target_instance_id == null
+      ? hasUnrestrictedInstanceAccess(request.user)
+      : hasInstanceAccess(request.user, Number(job.target_instance_id), minLevel));
+    if (!allowed) {
+      reply.code(404).send({ error: '定时任务不存在' });
+      return null;
+    }
+    return job;
+  }
+
   // 获取所有定时任务
   fastify.get('/api/cron/jobs', {
     preHandler: [verifyToken, requirePermission('cron:view')],
     handler: async (request, reply) => {
       try {
-        const jobs = await cronJobService.getJobs();
+        const jobs = await cronJobService.getJobs(getAccessibleInstanceIds((request as any).user));
         reply.send(jobs);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -4985,8 +5418,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
-        const job = await cronJobService.getJobById(Number(id));
-        if (!job) return reply.code(404).send({ error: '定时任务不存在' });
+        const job = await requireCronJobAccess(request, reply, Number(id));
+        if (!job) return;
         reply.send(job);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -5004,6 +5437,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         // Validate required fields
         if (!body.name || !body.task_description || !body.cron_expr) {
           return reply.code(400).send({ error: '缺少必要参数：name, task_description, cron_expr' });
+        }
+        if (body.target_instance_id == null) {
+          if (!hasUnrestrictedInstanceAccess((request as any).user)) {
+            return reply.code(403).send({ error: '创建全局定时任务需要不受限的实例管理权限' });
+          }
+        } else if (!hasInstanceAccess((request as any).user, Number(body.target_instance_id), 'read-write')) {
+          return reply.code(403).send({ error: '无权以读写级别访问目标实例' });
         }
 
         // Validate cron expression
@@ -5042,8 +5482,17 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { id } = request.params as any;
         const body = request.body as any;
 
-        const existing = await cronJobService.getJobById(Number(id));
-        if (!existing) return reply.code(404).send({ error: '定时任务不存在' });
+        const existing = await requireCronJobAccess(request, reply, Number(id), 'read-write');
+        if (!existing) return;
+        if (body.target_instance_id !== undefined) {
+          if (body.target_instance_id == null) {
+            if (!hasUnrestrictedInstanceAccess((request as any).user)) {
+              return reply.code(403).send({ error: '创建全局定时任务需要不受限的实例管理权限' });
+            }
+          } else if (!hasInstanceAccess((request as any).user, Number(body.target_instance_id), 'read-write')) {
+            return reply.code(403).send({ error: '无权以读写级别访问目标实例' });
+          }
+        }
 
         // Validate cron expression if provided
         if (body.cron_expr) {
@@ -5093,8 +5542,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(400).send({ error: '缺少 enabled 参数' });
         }
 
-        const existing = await cronJobService.getJobById(Number(id));
-        if (!existing) return reply.code(404).send({ error: '定时任务不存在' });
+        const existing = await requireCronJobAccess(request, reply, Number(id), 'read-write');
+        if (!existing) return;
 
         await cronJobService.toggleJob(Number(id), body.enabled);
 
@@ -5115,8 +5564,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const startTime = Date.now();
       try {
         const { id } = request.params as any;
-        const config = await cronJobService.getJobById(Number(id));
-        if (!config) return reply.code(404).send({ error: '定时任务不存在' });
+        const config = await requireCronJobAccess(request, reply, Number(id), 'read-write');
+        if (!config) return;
 
         // Route through CronManager.executeJob() which handles task_type branching:
         // script jobs → executeScriptJob() (SqlExecutor), agent jobs → cronExecutor.execute()
@@ -5136,8 +5585,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const { id } = request.params as any;
 
-        const existing = await cronJobService.getJobById(Number(id));
-        if (!existing) return reply.code(404).send({ error: '定时任务不存在' });
+        const existing = await requireCronJobAccess(request, reply, Number(id), 'read-write');
+        if (!existing) return;
 
         const deleted = await cronJobService.deleteJob(Number(id));
         if (!deleted) {
@@ -5175,6 +5624,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
+        if (!await requireCronJobAccess(request, reply, Number(id))) return;
         const query = request.query as any;
         const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
         const offset = Math.max(Number(query.offset) || 0, 0);
@@ -5300,6 +5750,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 测试执行脚本（dry-run，结果限制100行）
   fastify.post('/api/cron/scripts/:id/test', {
+    config: { rateLimit: expensiveOperationRateLimitConfig },
     preHandler: [verifyToken, requirePermission('cron:manage')],
     handler: async (request, reply) => {
       try {
@@ -5308,6 +5759,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         if (!body.instance_id || typeof body.instance_id !== 'number') {
           return reply.code(400).send({ error: '缺少必要参数：instance_id（数字类型）' });
+        }
+        if (!hasInstanceAccess((request as any).user, Number(body.instance_id), 'read-only')) {
+          return reply.code(403).send({ error: '无权访问该实例' });
         }
 
         const script = await scriptService.getScriptById(Number(id));

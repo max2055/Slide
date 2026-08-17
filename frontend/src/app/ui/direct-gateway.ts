@@ -43,7 +43,7 @@ export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'aut
 export type ConnectionStateCallback = (state: ConnectionState) => void;
 
 export type DirectGatewayClientOptions = {
-  /** Default: ws://${location.hostname}:28888 */
+  /** Default: same-origin /agent-ws (proxied to DirectAdapter). */
   url?: string;
   /** Callback for incoming AdapterChatEvent payloads from DirectAdapter WS */
   onEvent: (event: AdapterChatEvent) => void;
@@ -51,10 +51,14 @@ export type DirectGatewayClientOptions = {
   onStateChange: ConnectionStateCallback;
 };
 
-const DEFAULT_PORT = 28888;
 const configuredAdapterUrl = (import.meta as ImportMeta & { env?: { VITE_AGENT_WS_URL?: string } })
   .env?.VITE_AGENT_WS_URL?.trim();
-const defaultAdapterUrl = () => configuredAdapterUrl || `ws://${typeof location !== 'undefined' ? location.hostname : 'localhost'}:${DEFAULT_PORT}`;
+export const defaultAdapterUrl = () => {
+  if (configuredAdapterUrl) return configuredAdapterUrl;
+  if (typeof location === 'undefined') return 'ws://localhost/agent-ws';
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${location.host}/agent-ws`;
+};
 export const MAX_RECONNECT_ATTEMPTS = 10;
 const INITIAL_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 30_000;

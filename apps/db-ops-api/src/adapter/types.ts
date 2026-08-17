@@ -124,6 +124,11 @@ export interface InvokeResult {
   iterationCount?: number;
 }
 
+export interface InvokeOptions {
+  /** Bind the internal completion tool to exactly one analysis record. */
+  analysisId?: number;
+}
+
 // ── IAgentEngine interface ──
 
 export interface IAgentEngine {
@@ -162,6 +167,7 @@ export interface IAgentEngine {
     sessionKey: string,
     message: string,
     systemPrompt?: string,
+    options?: InvokeOptions,
   ): Promise<InvokeResult>;
 
   /**

@@ -124,7 +124,7 @@ const LINUX_DEFINITIONS: MetricDefinition[] = [
   {
     name: 'disk_detail',
     command:
-      `LANG=C LC_ALL=C df -B1 | awk 'NR>1 {print $6,$2,$3,$4,int($5)}'`,
+      `LC_ALL=C LANG=C df -P -B1`,
     parse: (_stdout: string): number | null => {
       // disk_detail is parsed by the collector for per-mount-point rows
       return null;
@@ -132,6 +132,12 @@ const LINUX_DEFINITIONS: MetricDefinition[] = [
     osType: 'linux',
   },
 ];
+
+export function isSupportedLinuxOsType(osType: string): boolean {
+  const normalized = osType.toLowerCase().trim().replace(/\s+/g, ' ');
+  if (normalized === 'linux') return true;
+  return /^(?:rhel|red hat enterprise linux|centos(?: linux)?|rocky(?: linux)?|almalinux|oracle linux(?: server)?|ubuntu(?: linux)?|debian(?: gnu\/linux)?|fedora(?: linux)?|kylin)(?:\s*-?\s*v?\d+(?:\.\d+)*)?$/.test(normalized);
+}
 
 // ── Provider class ─────────────────────────────────────────────────────────────
 
@@ -145,18 +151,12 @@ class ServerMetricProvider {
     }
   }
 
-  private static readonly LINUX_DISTROS = new Set([
-    'linux', 'centos', 'rhel', 'ubuntu', 'debian', 'fedora', 'rocky', 'almalinux',
-    'kylin v10', 'kylin', 'other',
-  ]);
-
   /**
    * Return metric definitions for a given OS type.
    * Normalizes common Linux distribution names to 'linux'.
    */
   getDefinitions(osType: string): MetricDefinition[] {
-    const normalized = osType.toLowerCase().trim();
-    if (ServerMetricProvider.LINUX_DISTROS.has(normalized)) {
+    if (isSupportedLinuxOsType(osType)) {
       return LINUX_DEFINITIONS;
     }
     return [];
@@ -177,8 +177,7 @@ class ServerMetricProvider {
    * Returns the command strings for batch execution.
    */
   getAllCommands(osType: string): string[] {
-    const normalized = osType.toLowerCase().trim();
-    if (ServerMetricProvider.LINUX_DISTROS.has(normalized)) {
+    if (isSupportedLinuxOsType(osType)) {
       return LINUX_DEFINITIONS.map((def) => def.command);
     }
     return [];

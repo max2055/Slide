@@ -1,162 +1,269 @@
 /**
- * 故障自动诊断服务
- * 对数据库实例进行全面诊断，收集多维度数据并生成诊断报告
+ * Fault diagnosis orchestration.
+ * Evidence is collected under the requesting actor before any analysis row is created.
  */
-import { dbConnection } from './db-connection.js';
+import { randomUUID } from 'node:crypto';
+import type { ActorContext } from './auth/actor-context.js';
 import { dispatchOrReuse } from './ai-agent-bridge.js';
 import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
 import { databaseService } from './database-service.js';
 import { instanceDatabaseService } from './instance-database-service.js';
+import {
+  instanceDiagnosticContextService,
+  type InstanceDiagnosticContext,
+  type InstanceDiagnosticContextService,
+} from './instance-diagnostic-context-service.js';
 
-// In-memory lock to prevent concurrent duplicate diagnoses
-const pendingDiagnoses = new Set<string>();
+type FaultDiagnosisTrigger = 'manual' | 'auto';
+type PendingDiagnosisState = 'creating' | 'dispatched' | 'failure_unconfirmed';
+type FaultDiagnosisStatus = 'queued' | 'in_progress' | 'failure_pending';
+type FaultDiagnosisResult = { success: boolean; analysisId?: number; error?: string; status?: FaultDiagnosisStatus };
 
-class FaultDiagnosisService {
-  /**
-   * 诊断单个数据库实例
-   * @param instanceId 实例 ID
-   * @param trigger 触发类型：manual 或 auto
-   * @returns analysisId
-   */
+type FaultAnalysisStore = Pick<typeof aiAnalysisDatabaseService,
+  'findActiveFaultDiagnosis' | 'findByCacheKey' | 'createAnalysis' | 'updateStatus' | 'markDispatched'
+  | 'failAnalysis' | 'waitForCompletion'
+  | 'getAnalysisList' | 'getAnalysisStats'>;
+
+export interface FaultDiagnosisDependencies {
+  listActiveInstances: () => Promise<readonly { id: number }[]>;
+  checkHealth: (instanceId: number) => Promise<{ status: string } | null>;
+  randomUUID: () => string;
+  contextCollector: Pick<InstanceDiagnosticContextService, 'collect'>;
+  analysisStore: FaultAnalysisStore;
+  dispatch: typeof dispatchOrReuse;
+}
+
+const defaultDependencies: FaultDiagnosisDependencies = {
+  listActiveInstances: async () => (await instanceDatabaseService.listActiveInstanceIds()).map((id) => ({ id })),
+  checkHealth: (instanceId) => databaseService.checkHealth(instanceId),
+  randomUUID,
+  contextCollector: instanceDiagnosticContextService,
+  analysisStore: aiAnalysisDatabaseService,
+  dispatch: dispatchOrReuse,
+};
+
+export class FaultDiagnosisService {
+  private readonly pendingDiagnoses = new Map<string, PendingDiagnosisState>();
+
+  constructor(private readonly dependencies: FaultDiagnosisDependencies = defaultDependencies) {}
+
   async diagnoseInstance(
+    actor: ActorContext,
     instanceId: number,
-    trigger: 'manual' | 'auto' = 'auto'
-  ): Promise<{ success: boolean; analysisId?: number; error?: string; status?: string }> {
-    // a. 验证实例存在
-    const instance = await instanceDatabaseService.getInstanceById(instanceId);
-    if (!instance) {
-      return { success: false, error: `实例 ${instanceId} 不存在` };
-    }
+  ): Promise<FaultDiagnosisResult> {
+    return this.diagnose(actor, instanceId, 'manual');
+  }
 
-    // b. 构建缓存键（小时级粒度）
-    const cacheKey = this.buildCacheKey(instanceId, trigger);
-
-    // c. In-memory lock: prevent concurrent duplicate diagnoses
-    if (pendingDiagnoses.has(cacheKey)) {
-      return { success: false, error: '诊断正在创建中，请稍后重试' };
-    }
-    // Acquire lock atomically before any await to prevent race condition
-    pendingDiagnoses.add(cacheKey);
-    let lockReleased = false;
-    const releaseLock = () => {
-      if (!lockReleased) {
-        pendingDiagnoses.delete(cacheKey);
-        lockReleased = true;
+  async diagnoseUnhealthyInstances(): Promise<number[]> {
+    const instances = await this.dependencies.listActiveInstances();
+    const analysisIds: number[] = [];
+    const failedInstanceIds: number[] = [];
+    for (const instance of instances) {
+      try {
+        const health = await this.dependencies.checkHealth(instance.id);
+        if (!health || health.status === 'healthy') continue;
+        const actor: ActorContext = Object.freeze({
+          userId: 0,
+          username: 'slide-fault-diagnosis',
+          roles: Object.freeze(['system']),
+          permissions: Object.freeze([
+            'instance:view',
+            'metric:view',
+            'alert:view',
+            'log:view',
+            'servers:view',
+          ]),
+          sessionVersion: 0,
+          instanceScopes: Object.freeze({ [instance.id]: 'read-only' as const }),
+          requestId: `fault-diagnosis:${instance.id}:${this.dependencies.randomUUID()}`,
+        });
+        const result = await this.diagnose(actor, instance.id, 'auto');
+        if (result.status === 'in_progress') continue;
+        if (result.success && result.analysisId !== undefined) {
+          analysisIds.push(result.analysisId);
+        } else {
+          failedInstanceIds.push(instance.id);
+        }
+      } catch {
+        failedInstanceIds.push(instance.id);
       }
-    };
+    }
+    if (failedInstanceIds.length > 0) {
+      throw new Error(`FAULT_DIAGNOSIS_BATCH_FAILED:${failedInstanceIds.join(',')}`);
+    }
+    return analysisIds;
+  }
+
+  private async diagnose(
+    actor: ActorContext,
+    instanceId: number,
+    trigger: FaultDiagnosisTrigger,
+  ): Promise<FaultDiagnosisResult> {
+    if (!Number.isSafeInteger(instanceId) || instanceId <= 0) throw new Error('RESOURCE_REF_INVALID');
+    const pendingKey = this.buildPendingKey(actor, instanceId, trigger);
+    const cacheKey = this.buildCacheKey(actor, instanceId, trigger);
+    const pendingState = this.pendingDiagnoses.get(pendingKey);
+    if (pendingState) return pendingDiagnosisResult(pendingState);
+    this.pendingDiagnoses.set(pendingKey, 'creating');
+    let releasePendingOnReturn = true;
 
     try {
-      // d. 缓存检查（跳过空结果的无效缓存）
-      const cached = await aiAnalysisDatabaseService.findByCacheKey(cacheKey);
-      if (cached && cached.result) {
-        releaseLock();
-        return { success: true, analysisId: cached.id };
+      const diagnosticContext = await this.dependencies.contextCollector.collect(actor, instanceId);
+      if (diagnosticContext.subject?.type !== 'instance' || diagnosticContext.subject.id !== instanceId) {
+        throw new Error('DIAGNOSTIC_CONTEXT_SUBJECT_MISMATCH');
       }
 
-      // e. 创建分析记录 (lock held)
-      const createResult = await aiAnalysisDatabaseService.createAnalysis({
+      const cached = await this.dependencies.analysisStore.findByCacheKey(cacheKey);
+      if (cached?.result) return { success: true, analysisId: cached.id };
+
+      const active = await this.dependencies.analysisStore.findActiveFaultDiagnosis({
+        instanceId,
+        triggerType: trigger,
+        userId: actor.userId,
+        sessionVersion: actor.sessionVersion,
+      });
+      if (active) {
+        const state: PendingDiagnosisState = active.sessionKey ? 'dispatched' : 'failure_unconfirmed';
+        this.pendingDiagnoses.set(pendingKey, state);
+        releasePendingOnReturn = false;
+        this.monitorCompletion(active.id, pendingKey);
+        return pendingDiagnosisResult(state);
+      }
+
+      const createResult = await this.dependencies.analysisStore.createAnalysis({
         analysis_type: 'fault_diagnosis',
         instance_id: instanceId,
         trigger_type: trigger,
         cache_key: cacheKey,
       });
-      if (!createResult.success) {
-        releaseLock();
-        return { success: false, error: createResult.error };
+      if (!createResult.success || !createResult.analysisId) {
+        return { success: false, error: createResult.error || 'CREATE_ANALYSIS_FAILED' };
       }
-      const analysisId = createResult.analysisId!;
+      const analysisId = createResult.analysisId;
 
-      // f. 更新状态为 running
-      await aiAnalysisDatabaseService.updateStatus(analysisId, 'running');
+      const running = await this.dependencies.analysisStore.updateStatus(analysisId, 'running');
+      if (!running.success) {
+        const error = running.error || 'UPDATE_ANALYSIS_STATUS_FAILED';
+        releasePendingOnReturn = false;
+        await this.persistFailureOrMonitor(analysisId, pendingKey, error);
+        return { success: false, error };
+      }
 
-      // g. 通过 Agent 执行诊断
-      dispatchOrReuse({
-        type: 'fault_diagnosis',
-        cacheKey: `diagnosis:${instanceId}`,
-        instanceId,
-        sessionKey: `diagnosis-${analysisId}`,
-        triggerType: trigger,
-        existingAnalysisId: analysisId,
-        userMessage: `对实例 "${instance.name || `instance-${instanceId}`}" (${instance.db_type || 'mysql'}, ${instance.environment || 'production'}) 进行故障诊断。请使用 slide_* 工具采集指标、告警、慢查询、复制状态等数据，分析故障根因并给出修复建议。完成后调用 slide_complete_analysis 保存结果。`,
-      }).catch((err) => {
-        console.error(`[FaultDiagnosis] Agent 诊断 ${analysisId} 失败:`, err);
-        aiAnalysisDatabaseService.failAnalysis(analysisId, err.message).catch(() => {});
-      });
-
-      releaseLock();
-      return { success: true, analysisId, status: 'queued' };
-    } catch (err) {
-      releaseLock();
-      throw err;
-    }
-  }
-
-  /**
-   * 诊断所有不健康实例
-   */
-  async diagnoseUnhealthyInstances(trigger: 'auto' = 'auto'): Promise<number[]> {
-    const instances = await instanceDatabaseService.getAllInstances();
-    if (!instances || instances.length === 0) return [];
-
-    const analysisIds: number[] = [];
-    for (const instance of instances) {
-      // 先检查健康状态
+      const instance = diagnosticContext.database.instance;
+      const name = stringMetadata(instance, 'name') || `instance-${instanceId}`;
+      const databaseType = stringMetadata(instance, 'db_type') || 'unknown';
+      const environment = stringMetadata(instance, 'environment') || 'unknown';
+      const sessionKey = `diagnosis-${analysisId}`;
       try {
-        const health = await databaseService.checkHealth(instance.id);
-        if (health && health.status !== 'healthy') {
-          const result = await this.diagnoseInstance(instance.id, trigger);
-          if (result.success && result.analysisId) {
-            analysisIds.push(result.analysisId);
-          }
-        }
-      } catch (err) {
-        console.debug(`[FaultDiagnosis] Skipping instance ${instance.id}: health check failed`);
+        await this.dependencies.dispatch({
+          type: 'fault_diagnosis',
+          cacheKey,
+          instanceId,
+          sessionKey,
+          triggerType: trigger,
+          existingAnalysisId: analysisId,
+          diagnosticContext,
+          userMessage: `请仅依据随请求提供的 diagnosticContext 分析实例 "${name}" `
+            + `(${databaseType}, ${environment}) 的故障证据。缺失证据必须保持未知；完成后保存结构化诊断结果。`,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[FaultDiagnosis] Agent 诊断 ${analysisId} 失败:`, message);
+        releasePendingOnReturn = false;
+        await this.persistFailureOrMonitor(analysisId, pendingKey, message);
+        return { success: false, error: message };
       }
-    }
 
-    return analysisIds;
+      let markerConfirmed = false;
+      try {
+        markerConfirmed = await this.dependencies.analysisStore.markDispatched(analysisId, sessionKey);
+      } catch {}
+      if (!markerConfirmed) {
+        this.pendingDiagnoses.set(pendingKey, 'failure_unconfirmed');
+        releasePendingOnReturn = false;
+        this.monitorCompletion(analysisId, pendingKey);
+        return {
+          success: false,
+          error: 'FAULT_DIAGNOSIS_DISPATCH_MARKER_UNCONFIRMED',
+          status: 'failure_pending',
+        };
+      }
+
+      this.pendingDiagnoses.set(pendingKey, 'dispatched');
+      releasePendingOnReturn = false;
+      this.monitorCompletion(analysisId, pendingKey);
+
+      return { success: true, analysisId, status: 'queued' };
+    } finally {
+      if (releasePendingOnReturn) this.pendingDiagnoses.delete(pendingKey);
+    }
   }
 
-  /**
-   * 获取诊断历史
-   */
-  async getDiagnosisHistory(
-    instanceId: number,
-    limit: number = 10
-  ): Promise<any[]> {
-    return aiAnalysisDatabaseService.getAnalysisList({
+  async getDiagnosisHistory(instanceId: number, limit: number = 10): Promise<any[]> {
+    return this.dependencies.analysisStore.getAnalysisList({
       analysis_type: 'fault_diagnosis',
       instance_id: instanceId,
       limit,
     });
   }
 
-  /**
-   * 获取最新诊断结果
-   */
   async getLatestDiagnosis(instanceId: number): Promise<any> {
     const results = await this.getDiagnosisHistory(instanceId, 1);
     return results.length > 0 ? results[0] : null;
   }
 
-  /**
-   * 获取诊断服务状态统计
-   */
   async getStatus(): Promise<any> {
-    return aiAnalysisDatabaseService.getAnalysisStats('fault_diagnosis');
+    return this.dependencies.analysisStore.getAnalysisStats('fault_diagnosis');
   }
 
-  // ==================== 私有方法 ====================
-
-  /**
-   * 构建缓存键（小时级粒度，包含触发类型）
-   */
-  private buildCacheKey(instanceId: number, trigger: 'manual' | 'auto' = 'auto'): string {
+  private buildCacheKey(actor: ActorContext, instanceId: number, trigger: FaultDiagnosisTrigger): string {
     const currentHour = new Date().toISOString().slice(0, 13);
-    return `fault:${instanceId}:${currentHour}:${trigger}`;
+    return `fault:${instanceId}:${currentHour}:${trigger}:user:${actor.userId}:session:${actor.sessionVersion}`;
+  }
+
+  private buildPendingKey(actor: ActorContext, instanceId: number, trigger: FaultDiagnosisTrigger): string {
+    return `fault:${instanceId}:pending:${trigger}:user:${actor.userId}:session:${actor.sessionVersion}`;
+  }
+
+  private async persistFailureOrMonitor(analysisId: number, pendingKey: string, error: string): Promise<void> {
+    this.pendingDiagnoses.set(pendingKey, 'failure_unconfirmed');
+    try {
+      const result = await this.dependencies.analysisStore.failAnalysis(analysisId, error);
+      if (result.success) {
+        this.pendingDiagnoses.delete(pendingKey);
+        return;
+      }
+    } catch {}
+    this.monitorCompletion(analysisId, pendingKey);
+  }
+
+  private monitorCompletion(analysisId: number, pendingKey: string): void {
+    void Promise.resolve()
+      .then(() => this.dependencies.analysisStore.waitForCompletion(analysisId, 120_000))
+      .then((record) => record?.status === 'completed' || record?.status === 'failed')
+      .catch(() => false)
+      .then((terminal) => {
+        if (terminal) {
+          this.pendingDiagnoses.delete(pendingKey);
+          return;
+        }
+        const retry = setTimeout(() => this.monitorCompletion(analysisId, pendingKey), 2_000);
+        retry.unref();
+      });
   }
 }
 
-// 单例
+function pendingDiagnosisResult(state: PendingDiagnosisState): FaultDiagnosisResult {
+  return {
+    success: false,
+    error: '诊断正在创建中，请稍后重试',
+    status: state === 'failure_unconfirmed' ? 'failure_pending' : 'in_progress',
+  };
+}
+
+function stringMetadata(instance: InstanceDiagnosticContext['database']['instance'], key: string): string | null {
+  const value = instance?.[key];
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
 export const faultDiagnosisService = new FaultDiagnosisService();
-export { FaultDiagnosisService };

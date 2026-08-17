@@ -22,9 +22,10 @@ import { executeToolWithPolicy } from '../../tools/policy.js';
 import type { ActorContext } from '../../auth/actor-context.js';
 import type { AnyAgentTool } from '../../tools/types.js';
 import { chatDatabaseService } from '../../chat-database-service.js';
-import { createActorBoundToolRegistry, loadPlatformTools } from '../get-agent-engine.js';
+import { createActorBoundToolRegistry, createCronToolRegistry, loadPlatformTools } from '../get-agent-engine.js';
 import { agentRunService } from '../agent-run-service.js';
 import { instanceDatabaseService } from '../../instance-database-service.js';
+import { completeAnalysisTool } from '../../tools/generated/slide-self-mgmt/complete_analysis.js';
 
 // ── Mock LLMProvider — returns hardcoded responses ──
 
@@ -160,6 +161,57 @@ class CapturingInvokeProvider extends MockLLMProvider {
   }
 }
 
+const completionEnvelope = {
+  schemaVersion: 1,
+  analysisType: 'fault_diagnosis',
+  subject: { type: 'instance', id: 7 },
+  conclusions: ['Bound conclusion'],
+  hypotheses: [],
+  evidenceRefs: [],
+  confidence: 0.8,
+  recommendations: [],
+  displayMarkdown: '# Bound analysis',
+  provenance: { modelVersion: 'test', promptVersion: 'test', toolVersions: {} },
+  createdAt: '2026-08-10T00:00:00.000Z',
+};
+
+class AnalysisCompletionProvider extends MockLLMProvider {
+  private calls = 0;
+
+  constructor(private readonly requestedAnalysisId: number) {
+    super();
+  }
+
+  override async chat(): Promise<LLMResponse> {
+    if (this.calls++ === 0) {
+      return {
+        content: null,
+        finishReason: 'tool_calls',
+        toolCalls: [{
+          id: 'analysis-completion-call',
+          name: 'slide_complete_analysis',
+          arguments: { analysisId: this.requestedAnalysisId, envelope: completionEnvelope },
+        }],
+        usage: {},
+        shouldExecuteTools: true,
+        hasToolCalls: true,
+      };
+    }
+    return {
+      content: 'Analysis completion attempted.',
+      finishReason: 'stop',
+      toolCalls: [],
+      usage: {},
+      shouldExecuteTools: false,
+      hasToolCalls: false,
+    };
+  }
+
+  override async chatStream(): Promise<LLMResponse> {
+    return this.chat();
+  }
+}
+
 // ── Helper: create a DirectAdapter with a mock registry and provider ──
 
 function createMockAdapter(tools?: ToolRegistry): DirectAdapter {
@@ -285,11 +337,7 @@ describe('DirectAdapter', () => {
       const platformTools = await loadPlatformTools();
       const actorTools = createActorBoundToolRegistry(viewer);
       const protectedTool = actorTools.get('get_instance_connection');
-      expect(protectedTool).toBeDefined();
-      await expect(protectedTool!.execute({ instance_id: 999_999 })).resolves.toMatchObject({
-        policyDecision: { allow: false, reasonCode: 'OWNER_REQUIRED' },
-        success: false,
-      });
+      expect(protectedTool).toBeUndefined();
       const adapter = new DirectAdapter({
         tools: platformTools,
         toolsForActor: () => actorTools,
@@ -522,12 +570,7 @@ describe('DirectAdapter', () => {
       expect(platformTools.has('get_instance_connection')).toBe(true);
       const actorTools = createActorBoundToolRegistry(viewer);
       const protectedTool = actorTools.get('get_instance_connection');
-      expect(protectedTool).toBeDefined();
-      await expect(protectedTool!.execute({ instance_id: 999_999 })).resolves.toMatchObject({
-        policyDecision: { allow: false, reasonCode: 'OWNER_REQUIRED' },
-        success: false,
-        errorCode: 'OWNER_REQUIRED',
-      });
+      expect(protectedTool).toBeUndefined();
       const adapter = new DirectAdapter({
         tools: platformTools,
         toolsForActor: () => actorTools,
@@ -586,13 +629,79 @@ describe('DirectAdapter', () => {
       });
     });
 
-    it('exposes only the analysis completion tool to background invokes', async () => {
+    it('exposes no tools to an unbound background invoke', async () => {
       const provider = new CapturingInvokeProvider();
       const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: provider });
 
       await adapter.invoke('test-session-analysis-completion', 'Analyze');
 
+      expect(provider.seenTools).toEqual([]);
+    });
+
+    it('exposes only a record-bound completion tool to an analysis invoke', async () => {
+      const provider = new CapturingInvokeProvider();
+      const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: provider });
+
+      await adapter.invoke('test-session-analysis-completion', 'Analyze', undefined, { analysisId: 42 });
+
       expect(provider.seenTools.map((tool) => tool.name)).toEqual(['slide_complete_analysis']);
+    });
+
+    it('rejects a model-supplied analysis id that differs from the bound record', async () => {
+      const handler = vi.spyOn(completeAnalysisTool, 'handler').mockResolvedValue({ success: true });
+      const adapter = new DirectAdapter({
+        tools: new ToolRegistry(),
+        llmProvider: new AnalysisCompletionProvider(99),
+      });
+
+      try {
+        await adapter.invoke('test-session-analysis-mismatch', 'Analyze', undefined, { analysisId: 42 });
+
+        expect(handler).not.toHaveBeenCalled();
+      } finally {
+        handler.mockRestore();
+      }
+    });
+
+    it('forces a valid completion call onto the bound analysis record', async () => {
+      const handler = vi.spyOn(completeAnalysisTool, 'handler').mockResolvedValue({
+        success: true,
+        data: { saved: true, analysisId: 42 },
+      });
+      const adapter = new DirectAdapter({
+        tools: new ToolRegistry(),
+        llmProvider: new AnalysisCompletionProvider(42),
+      });
+
+      try {
+        await adapter.invoke('test-session-analysis-bound', 'Analyze', undefined, { analysisId: 42 });
+
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(handler).toHaveBeenCalledWith(expect.objectContaining({ analysisId: 42 }));
+      } finally {
+        handler.mockRestore();
+      }
+    });
+  });
+
+  describe('background tool registries', () => {
+    it('keeps the raw platform registry non-executable without an ActorContext', async () => {
+      const registry = await loadPlatformTools();
+      const result = await registry.execute('list_database_instances', {});
+      expect(result).toContain('ACTOR_CONTEXT_REQUIRED');
+      expect(registry.toolNames).not.toContain('slide_complete_analysis');
+      expect(registry.toolNames).toContain('spawn_subagent');
+    });
+
+    it('gives Cron only read tools and its internal completion tool', async () => {
+      const registry = await createCronToolRegistry();
+      expect(registry.toolNames).toContain('slide_complete_cron');
+      expect(registry.toolNames).toContain('list_database_instances');
+      expect(registry.toolNames).not.toContain('slide_add_database');
+      expect(registry.toolNames).not.toContain('slide_update_db_config');
+      expect(registry.toolNames).not.toContain('get_instance_connection');
+      expect(registry.toolNames).not.toContain('spawn_subagent');
+      expect(registry.toolNames).not.toContain('execute_code');
     });
   });
 

@@ -9,7 +9,8 @@
  */
 
 import { Client, ClientChannel, ConnectConfig } from 'ssh2';
-import crypto from 'crypto';
+import { authorizeServerTarget } from './security/server-target-policy.js';
+import { createSshHostVerifier, normalizeSshHostKeyFingerprint } from './security/ssh-host-key.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,7 @@ interface SshSession {
   port: number;
   lastUsed: number;
   inUse: boolean;
+  hostKeyFingerprint: string;
 }
 
 interface PoolStats {
@@ -33,6 +35,19 @@ interface SshPoolConfig {
   keepaliveIntervalMs: number;
   keepaliveCountMax: number;
   commandTimeoutMs: number;
+}
+
+interface ExecCommandOptions {
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+}
+
+interface ExecCommandResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  signal: string | null;
+  truncated: boolean;
 }
 
 type CredentialPayload =
@@ -70,8 +85,10 @@ class SshSessionPool {
     credentialValue: string,
     hostKeyFingerprint?: string | null
   ): Promise<Client> {
+    const target = await authorizeServerTarget({ host, port });
+    const normalizedFingerprint = normalizeSshHostKeyFingerprint(hostKeyFingerprint);
     // Look for an existing idle connection to this host
-    const existing = this._findIdle(host, port);
+    const existing = this._findIdle(target.hostname, target.port, normalizedFingerprint);
     if (existing) {
       existing.inUse = true;
       existing.lastUsed = Date.now();
@@ -80,7 +97,7 @@ class SshSessionPool {
 
     // Check per-server session limit
     const serverSessions = this.sessions.filter(
-      (s) => s.host === host && s.port === port
+      (s) => s.host === target.hostname && s.port === target.port
     );
     if (serverSessions.length >= this.config.maxSessionsPerServer) {
       // Try to close the oldest idle session to make room
@@ -97,14 +114,22 @@ class SshSessionPool {
     }
 
     // Create new connection
-    const client = await this._connect(host, port, username, credentialType, credentialValue, hostKeyFingerprint);
+    const client = await this._connect(
+      target.address,
+      target.port,
+      username,
+      credentialType,
+      credentialValue,
+      normalizedFingerprint,
+    );
 
     const session: SshSession = {
       client,
-      host,
-      port,
+      host: target.hostname,
+      port: target.port,
       lastUsed: Date.now(),
       inUse: true,
+      hostKeyFingerprint: normalizedFingerprint,
     };
 
     this.sessions.push(session);
@@ -152,12 +177,13 @@ class SshSessionPool {
    */
   async execCommands(
     client: Client,
-    commands: string[]
-  ): Promise<{ stdout: string; stderr: string }[]> {
-    const results: { stdout: string; stderr: string }[] = [];
+    commands: string[],
+    options: ExecCommandOptions = {},
+  ): Promise<ExecCommandResult[]> {
+    const results: ExecCommandResult[] = [];
 
     for (const command of commands) {
-      const result = await this._execCommand(client, command);
+      const result = await this._execCommand(client, command, options);
       results.push(result);
     }
 
@@ -177,9 +203,9 @@ class SshSessionPool {
 
   // ── Private helpers ──────────────────────────────────────────────────────────
 
-  private _findIdle(host: string, port: number): SshSession | undefined {
+  private _findIdle(host: string, port: number, hostKeyFingerprint: string): SshSession | undefined {
     return this.sessions.find(
-      (s) => s.host === host && s.port === port && !s.inUse
+      (s) => s.host === host && s.port === port && s.hostKeyFingerprint === hostKeyFingerprint && !s.inUse
     );
   }
 
@@ -193,42 +219,24 @@ class SshSessionPool {
   }
 
   private _connect(
-    host: string,
+    address: string,
     port: number,
     username: string,
     credentialType: string,
     credentialValue: string,
-    hostKeyFingerprint?: string | null
+    hostKeyFingerprint: string,
   ): Promise<Client> {
     return new Promise((resolve, reject) => {
       const client = new Client();
 
       const connectConfig: ConnectConfig = {
-        host,
+        host: address,
         port,
         username,
         readyTimeout: this.config.readyTimeoutMs,
         keepaliveInterval: this.config.keepaliveIntervalMs,
         keepaliveCountMax: this.config.keepaliveCountMax,
-        hostVerifier: (key: Buffer, callback: (verified: boolean) => void) => {
-          if (!hostKeyFingerprint) {
-            // No stored fingerprint — accept any key (first connection).
-            callback(true);
-            return;
-          }
-          // Hash received host key with SHA256 and compare against stored fingerprint
-          const hash = crypto.createHash('sha256').update(key).digest('base64');
-          const received = `SHA256:${hash}`;
-          if (received === hostKeyFingerprint) {
-            callback(true);
-          } else {
-            console.error(
-              `[SshSessionPool] Host key mismatch for ${host}:${port}. ` +
-              `Stored: ${hostKeyFingerprint}, received: ${received}`
-            );
-            callback(false);
-          }
-        },
+        hostVerifier: createSshHostVerifier(hostKeyFingerprint),
       };
 
       // Build credential payload based on credential type
@@ -260,49 +268,90 @@ class SshSessionPool {
 
   private _execCommand(
     client: Client,
-    command: string
-  ): Promise<{ stdout: string; stderr: string }> {
+    command: string,
+    options: ExecCommandOptions,
+  ): Promise<ExecCommandResult> {
     return new Promise((resolve, reject) => {
       let commandChannel: ClientChannel | undefined;
+      let settled = false;
+      let stdout = Buffer.alloc(0);
+      let stderr = Buffer.alloc(0);
+      let outputBytes = 0;
+      const timeoutMs = options.timeoutMs ?? this.config.commandTimeoutMs;
+      const maxOutputBytes = options.maxOutputBytes ?? 256 * 1024;
 
-      const timeout = setTimeout(() => {
-        // Close the channel to prevent resource leak on timeout
-        if (commandChannel) {
+      const finishReject = (code: string, closeChannel = false) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        reject(new Error(code));
+        if (closeChannel && commandChannel) {
           try { commandChannel.close(); } catch { /* ignore */ }
         }
-        reject(new Error(`SSH command timed out after ${this.config.commandTimeoutMs}ms: ${command.substring(0, 80)}`));
-      }, this.config.commandTimeoutMs);
+      };
 
-      client.exec(command, (err: Error | undefined, channel?: ClientChannel) => {
-        if (err) {
-          clearTimeout(timeout);
-          reject(err);
+      const append = (target: 'stdout' | 'stderr', data: Buffer | string) => {
+        if (settled) return;
+        const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        if (outputBytes + chunk.byteLength > maxOutputBytes) {
+          finishReject('SSH_COMMAND_OUTPUT_LIMIT', true);
           return;
         }
+        outputBytes += chunk.byteLength;
+        if (target === 'stdout') stdout = Buffer.concat([stdout, chunk]);
+        else stderr = Buffer.concat([stderr, chunk]);
+      };
 
-        commandChannel = channel;
+      const timeout = setTimeout(() => {
+        finishReject('SSH_COMMAND_TIMEOUT', true);
+      }, timeoutMs);
 
-        let stdout = '';
-        let stderr = '';
+      try {
+        client.exec(command, (err: Error | undefined, channel?: ClientChannel) => {
+          if (settled) {
+            if (channel) try { channel.close(); } catch { /* ignore */ }
+            return;
+          }
+          if (err) {
+            finishReject('SSH_COMMAND_FAILED');
+            return;
+          }
 
-        channel!.on('data', (data: Buffer | string) => {
-          stdout += data.toString();
+          if (!channel) {
+            finishReject('SSH_COMMAND_PROTOCOL_ERROR');
+            return;
+          }
+
+          commandChannel = channel;
+
+          channel.on('data', (data: Buffer | string) => {
+            append('stdout', data);
+          });
+
+          channel.stderr.on('data', (data: Buffer | string) => {
+            append('stderr', data);
+          });
+
+          channel.on('close', (exitCode?: number, signal?: string) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            resolve({
+              stdout: stdout.toString('utf8'),
+              stderr: stderr.toString('utf8'),
+              exitCode: typeof exitCode === 'number' ? exitCode : null,
+              signal: typeof signal === 'string' ? signal : null,
+              truncated: false,
+            });
+          });
+
+          channel.on('error', () => {
+            finishReject('SSH_COMMAND_PROTOCOL_ERROR');
+          });
         });
-
-        channel!.stderr.on('data', (data: Buffer | string) => {
-          stderr += data.toString();
-        });
-
-        channel!.on('close', () => {
-          clearTimeout(timeout);
-          resolve({ stdout, stderr });
-        });
-
-        channel!.on('error', (channelErr: Error) => {
-          clearTimeout(timeout);
-          reject(channelErr);
-        });
-      });
+      } catch {
+        finishReject('SSH_COMMAND_FAILED');
+      }
     });
   }
 }
@@ -310,4 +359,4 @@ class SshSessionPool {
 // Singleton instance
 const sshSessionPool = new SshSessionPool();
 export default sshSessionPool;
-export { SshSessionPool, SshPoolConfig };
+export { SshSessionPool, SshPoolConfig, ExecCommandOptions, ExecCommandResult };

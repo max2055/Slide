@@ -2,10 +2,20 @@
  * 技能加载器单元测试
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, it, expect, beforeEach } from 'vitest';
 import { parseSkillFrontmatter, normalizeFrontmatter } from './frontmatter.js';
-import { skillRegistry } from './loader.js';
+import { loadSkillFromFile, loadSkillsFromDirectory, PREDEFINED_SKILL_DIRS, skillRegistry } from './loader.js';
 import type { SkillEntry } from './types.js';
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  delete (globalThis as Record<string, unknown>).__slideSkillToolsExecuted;
+  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
 
 describe('Skill Frontmatter', () => {
   describe('parseSkillFrontmatter', () => {
@@ -255,5 +265,51 @@ describe('SkillRegistry', () => {
     skillRegistry.register(entry);
     expect(skillRegistry.has('test-skill')).toBe(true);
     expect(skillRegistry.has('TEST-SKILL')).toBe(true);
+  });
+});
+
+describe('Skill code isolation', () => {
+  it('loads SKILL.md metadata without importing adjacent tools.ts into the API process', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slide-skill-isolation-'));
+    tempDirs.push(dir);
+    const skillFile = path.join(dir, 'SKILL.md');
+    fs.writeFileSync(skillFile, '---\nname: isolated\ndescription: isolated skill\n---\n\nInstructions');
+    fs.writeFileSync(
+      path.join(dir, 'tools.ts'),
+      '(globalThis as any).__slideSkillToolsExecuted = true; export const generatedTools = [];',
+    );
+
+    const loaded = await loadSkillFromFile(skillFile);
+
+    expect(loaded?.skill.name).toBe('isolated');
+    expect((globalThis as Record<string, unknown>).__slideSkillToolsExecuted).toBeUndefined();
+    expect((loaded as SkillEntry & { tools?: unknown[] })?.tools).toBeUndefined();
+  });
+
+  it('records a content digest and trusted source for validated skill metadata', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slide-skill-digest-'));
+    tempDirs.push(dir);
+    const skillDir = path.join(dir, 'trusted');
+    fs.mkdirSync(skillDir);
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '---\nname: trusted\ndescription: trusted skill\n---\nBody');
+
+    const [loaded] = await loadSkillsFromDirectory(dir, { source: 'bundled' });
+
+    expect(loaded.security).toMatchObject({ source: 'bundled', trusted: true });
+    expect(loaded.security?.digest).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('does not follow a symlinked skill directory outside the trusted root', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slide-skill-root-'));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'slide-skill-outside-'));
+    tempDirs.push(root, outside);
+    fs.writeFileSync(path.join(outside, 'SKILL.md'), '---\nname: escaped\ndescription: escaped\n---\nBody');
+    fs.symlinkSync(outside, path.join(root, 'escaped'));
+
+    await expect(loadSkillsFromDirectory(root, { source: 'bundled' })).resolves.toEqual([]);
+  });
+
+  it('does not include mutable home-directory skills in production defaults', () => {
+    expect(PREDEFINED_SKILL_DIRS.some((dir) => dir.startsWith('~'))).toBe(false);
   });
 });

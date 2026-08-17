@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS agent_tool_audit (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  phase ENUM('decision','result') NOT NULL,
+  actor_id INT UNSIGNED NOT NULL,
+  request_id VARCHAR(128) NOT NULL,
+  tool_name VARCHAR(128) NOT NULL,
+  allowed BOOLEAN NOT NULL,
+  reason_code VARCHAR(64) NOT NULL,
+  resource_json JSON NOT NULL,
+  policy_snapshot JSON NOT NULL,
+  args_redacted JSON NOT NULL,
+  result_redacted JSON NULL,
+  approval_id BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_agent_tool_audit_actor_created (actor_id, created_at),
+  KEY idx_agent_tool_audit_request (request_id, created_at),
+  KEY idx_agent_tool_audit_tool_created (tool_name, created_at),
+  KEY idx_agent_tool_audit_approval (approval_id),
+  CONSTRAINT fk_agent_tool_audit_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_agent_tool_audit_approval FOREIGN KEY (approval_id) REFERENCES agent_tool_approvals(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

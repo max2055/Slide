@@ -73,18 +73,6 @@ export type UiSettings = {
   btnPalette?: Record<string, string>;
 };
 
-function isViteDevPage(): boolean {
-  if (typeof document === "undefined") {
-    return false;
-  }
-  return Boolean(document.querySelector('script[src*="/@vite/client"]'));
-}
-
-function formatHostWithPort(hostname: string, port: string): string {
-  const normalizedHost = hostname.includes(":") ? `[${hostname}]` : hostname;
-  return `${normalizedHost}:${port}`;
-}
-
 function deriveDefaultGatewayUrl(): { pageUrl: string; effectiveUrl: string } {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const configured =
@@ -93,13 +81,8 @@ function deriveDefaultGatewayUrl(): { pageUrl: string; effectiveUrl: string } {
   const basePath = configured
     ? normalizeBasePath(configured)
     : inferBasePathFromPathname(location.pathname);
-  const pageUrl = `${proto}://${location.host}${basePath}`;
-  if (!isViteDevPage()) {
-    return { pageUrl, effectiveUrl: pageUrl };
-  }
-  // Slide uses port 28888
-  const effectiveUrl = `${proto}://${formatHostWithPort(location.hostname, "28888")}/ws`;
-  return { pageUrl, effectiveUrl };
+  const pageUrl = `${proto}://${location.host}${basePath}/agent-ws`;
+  return { pageUrl, effectiveUrl: pageUrl };
 }
 
 function loadUsername(): string {

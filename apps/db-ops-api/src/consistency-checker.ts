@@ -1,6 +1,6 @@
 /**
  * Consistency Checker — cross-table integrity checks for system health monitoring.
- * Provides `GET /api/health/consistency` data source (10 checks + readiness).
+ * Provides the shared detailed health snapshot (10 checks + readiness + resource truth).
  */
 import { dbConnection } from './db-connection';
 import * as net from 'net';
@@ -36,9 +36,16 @@ export interface ConsistencyResponse {
   readiness: ReadinessStatus;
 }
 
+export interface HealthOverview extends ConsistencyResponse {
+  truth: HealthTruth;
+}
+
 // ── ConsistencyChecker ───────────────────────────────────
 
 export class ConsistencyChecker {
+  private overviewCache: { value: HealthOverview; expiresAt: number } | null = null;
+  private overviewInFlight: Promise<HealthOverview> | null = null;
+
   async resourceHealthTruth(): Promise<HealthTruth> {
     const pool = dbConnection.getPool();
     if (!pool) throw new Error('数据库未连接');
@@ -595,18 +602,88 @@ export class ConsistencyChecker {
     };
   }
 
-  // ── 10. Notification deferred ────────────────────────
+  // ── 10. Notification closure ─────────────────────────
 
-  async _checkNotificationDeferred(): Promise<ConsistencyCheck> {
+  async _checkNotificationClosure(): Promise<ConsistencyCheck> {
+    const pool = dbConnection.getPool();
+    if (!pool) throw new Error('数据库未连接');
+    const [rows] = await pool.execute(`
+      SELECT
+        (SELECT COUNT(*) FROM notification_channels WHERE enabled = TRUE) AS enabled_channels,
+        (SELECT COUNT(*) FROM notification_channels WHERE enabled = TRUE AND delivery_start_at IS NULL) AS invalid_channels,
+        (SELECT COUNT(*) FROM workflow_jobs
+          WHERE job_type IN ('notification.deliver', 'report.notify')
+            AND ((state = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < NOW()))
+              OR (state IN ('queued', 'retry') AND available_at < NOW() - INTERVAL 5 MINUTE))) AS stuck_jobs,
+        (SELECT COUNT(*) FROM workflow_jobs
+          WHERE job_type IN ('notification.deliver', 'report.notify') AND state = 'dead_letter') AS dead_letter_jobs,
+        ((SELECT COUNT(*) FROM notification_delivery_attempts
+            WHERE status = 'started' AND finished_at IS NULL AND created_at < NOW() - INTERVAL 5 MINUTE)
+          + (SELECT COUNT(*) FROM report_notification_deliveries
+            WHERE status = 'started' AND finished_at IS NULL AND created_at < NOW() - INTERVAL 5 MINUTE)) AS stale_attempts,
+        (SELECT COUNT(*) FROM notification_delivery_attempts nda
+          LEFT JOIN notification_records nr
+            ON nr.alert_id = nda.alert_id AND nr.channel_id = nda.channel_id AND nr.status = 'sent'
+          WHERE nda.status = 'sent' AND nr.id IS NULL) AS unpersisted_sent
+    `) as any;
+    const counts = {
+      enabled_channels: Number(rows[0]?.enabled_channels ?? 0),
+      invalid_channels: Number(rows[0]?.invalid_channels ?? 0),
+      stuck_jobs: Number(rows[0]?.stuck_jobs ?? 0),
+      dead_letter_jobs: Number(rows[0]?.dead_letter_jobs ?? 0),
+      stale_attempts: Number(rows[0]?.stale_attempts ?? 0),
+      unpersisted_sent: Number(rows[0]?.unpersisted_sent ?? 0),
+    };
+    const issueCounts = [counts.invalid_channels, counts.stuck_jobs, counts.dead_letter_jobs,
+      counts.stale_attempts, counts.unpersisted_sent];
+    if (issueCounts.every((count) => count === 0)) {
+      return {
+        id: 'notification_closure',
+        label: '通知闭环完成性',
+        category: 'notification',
+        status: 'pass',
+        severity: 'info',
+        summary: `通知闭环正常：${counts.enabled_channels} 个启用渠道，工作流与投递记录均已收敛`,
+        details: counts,
+      };
+    }
+    const issueSummary = [
+      counts.invalid_channels ? `${counts.invalid_channels} 个渠道配置异常` : '',
+      counts.stuck_jobs ? `${counts.stuck_jobs} 个超时任务` : '',
+      counts.dead_letter_jobs ? `${counts.dead_letter_jobs} 个死信任务` : '',
+      counts.stale_attempts ? `${counts.stale_attempts} 个超时投递尝试` : '',
+      counts.unpersisted_sent ? `${counts.unpersisted_sent} 个成功结果未落库` : '',
+    ].filter(Boolean).join('，');
     return {
       id: 'notification_closure',
       label: '通知闭环完成性',
       category: 'notification',
-      status: 'deferred',
-      severity: 'info',
-      summary: '通知闭环检查已推迟到下一 phase 实现',
-      recommendation: '通知发送链路（钉钉/企微/飞鹰/webhook）需在后续 phase 完整实现',
+      status: 'fail',
+      severity: counts.dead_letter_jobs > 0 || counts.stuck_jobs > 0 ? 'critical' : 'major',
+      summary: `通知闭环异常：${issueSummary}`,
+      details: counts,
+      recommendation: '请处理通知死信与超时任务，并核对投递尝试和最终通知记录',
     };
+  }
+
+  async healthOverview(force = false): Promise<HealthOverview> {
+    const now = Date.now();
+    if (!force && this.overviewCache && this.overviewCache.expiresAt > now) {
+      return this.overviewCache.value;
+    }
+    if (this.overviewInFlight) return this.overviewInFlight;
+
+    const request = Promise.all([this.runAllChecks(), this.resourceHealthTruth()])
+      .then(([consistency, truth]) => {
+        const value = { ...consistency, truth };
+        this.overviewCache = { value, expiresAt: Date.now() + 10_000 };
+        return value;
+      })
+      .finally(() => {
+        if (this.overviewInFlight === request) this.overviewInFlight = null;
+      });
+    this.overviewInFlight = request;
+    return request;
   }
 
   // ── Readiness check ──────────────────────────────────
@@ -705,7 +782,7 @@ export class ConsistencyChecker {
       this._checkSafe(() => this._checkCronHungJobs(), 'cron_hung_jobs', '定时任务状态检查', 'cron'),
       this._checkSafe(() => this._checkChatSessionStats(), 'chat_session_stats', 'Chat 会话统计一致性', 'chat'),
       this._checkSafe(() => this._checkApprovalEventIntegrity(), 'approval_event_integrity', '审批事件完整性', 'approval'),
-      this._checkSafe(() => this._checkNotificationDeferred(), 'notification_closure', '通知闭环完成性', 'notification'),
+      this._checkSafe(() => this._checkNotificationClosure(), 'notification_closure', '通知闭环完成性', 'notification'),
     ]);
 
     const pass = checks.filter(c => c.status === 'pass').length;

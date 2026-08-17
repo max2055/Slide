@@ -79,17 +79,27 @@ class MaintenanceWindowService {
     }
   }
 
-  async getMaintenanceWindows(enabled?: boolean): Promise<MaintenanceWindow[]> {
+  async getMaintenanceWindows(enabled?: boolean, allowedInstanceIds: readonly number[] | null = null): Promise<MaintenanceWindow[]> {
     const pool = this.getPool();
     if (!pool) return [];
 
     try {
       let sql = 'SELECT * FROM maintenance_windows';
       const params: any[] = [];
+      const conditions: string[] = [];
       if (enabled !== undefined) {
-        sql += ' WHERE enabled = ?';
+        conditions.push('enabled = ?');
         params.push(enabled ? 1 : 0);
       }
+      if (allowedInstanceIds !== null) {
+        if (allowedInstanceIds.length === 0) {
+          conditions.push('instance_id IS NULL');
+        } else {
+          conditions.push(`(instance_id IS NULL OR instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')}))`);
+          params.push(...allowedInstanceIds);
+        }
+      }
+      if (conditions.length > 0) sql += ` WHERE ${conditions.join(' AND ')}`;
       sql += ' ORDER BY id';
 
       const [rows] = await pool.execute(sql, params) as any;
@@ -98,6 +108,14 @@ class MaintenanceWindowService {
       console.error('获取维护窗口失败:', error);
       return [];
     }
+  }
+
+  async getMaintenanceWindowById(id: number): Promise<MaintenanceWindow | null> {
+    const pool = this.getPool();
+    if (!pool || !Number.isSafeInteger(id) || id <= 0) return null;
+    const [rows] = await pool.execute('SELECT * FROM maintenance_windows WHERE id = ? LIMIT 1', [id]) as any;
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    return { ...rows[0], enabled: Boolean(rows[0].enabled) };
   }
 
   async createMaintenanceWindow(data: {

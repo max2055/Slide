@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 
-qualification_encryption_key='qualification-encryption-key-2026-07-19-not-production'
+qualification_encryption_key='qualification-e2e-key-32-bytes!!'
 
 QUALIFICATION_DB_NAME=db_ops_ai_qualification \
   pnpm --filter slide-api exec node ../../scripts/qualification/reset-e2e-db.mjs

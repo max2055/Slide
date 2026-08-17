@@ -4,10 +4,17 @@ import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
 import "../components/app-form-field.js";
 import "../components/app-empty-state.js";
+import "../components/instance-host-field.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
-import type { DatabaseInstance } from "../../../api/generated/public-api.js";
+import type {
+  DatabaseInstance,
+  InstanceHostMapping,
+  InstanceHostsResponse,
+  ReplaceInstanceHostsRequest,
+  ReplaceInstanceHostsResponse,
+} from "../../../api/generated/public-api.js";
 
 interface InstanceFormData {
   name: string;
@@ -19,6 +26,21 @@ interface InstanceFormData {
   password: string;
   database_name: string;
   description: string;
+}
+
+function hasStoredPermission(required: string): boolean {
+  try {
+    const raw = localStorage.getItem("permissions");
+    if (!raw) return false;
+    const permissions = JSON.parse(raw) as unknown;
+    if (!Array.isArray(permissions)) return false;
+    const resource = required.split(":", 1)[0];
+    return permissions.includes("*")
+      || permissions.includes(required)
+      || permissions.includes(`${resource}:*`);
+  } catch {
+    return false;
+  }
 }
 
 @customElement("instances-page")
@@ -520,6 +542,37 @@ export class InstancesPage extends LitElement {
   @state() private testStatus: "idle" | "testing" | "success" | "error" = "idle";
   @state() private testMessage = "";
   @state() private isSubmitting = false;
+  @state() private instanceHosts: InstanceHostMapping[] | null = [];
+  @state() private hostRelationLoading = false;
+  @state() private hostRelationError: string | null = null;
+  @state() private pendingCreatedInstanceId: number | null = null;
+  private hostRelationRequestVersion = 0;
+  private readonly handlePermissionsLoaded = () => {
+    this.requestUpdate();
+    if (this.editingInstance && this.canViewHostRelations) {
+      void this._loadInstanceHosts(this.editingInstance.id);
+    }
+  };
+
+  private get canViewHostRelations(): boolean {
+    return hasStoredPermission("servers:view");
+  }
+
+  private get canManageHostRelations(): boolean {
+    return hasStoredPermission("instance:manage")
+      && this.canViewHostRelations
+      && hasStoredPermission("servers:manage");
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    window.addEventListener("slide-permissions-loaded", this.handlePermissionsLoaded);
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener("slide-permissions-loaded", this.handlePermissionsLoaded);
+    super.disconnectedCallback();
+  }
 
   override firstUpdated() {
     this.loadInstances();
@@ -738,6 +791,7 @@ export class InstancesPage extends LitElement {
   }
 
   private _addInstance() {
+    this.hostRelationRequestVersion += 1;
     this.formData = {
       name: "",
       environment: "development",
@@ -751,10 +805,15 @@ export class InstancesPage extends LitElement {
     };
     this.testStatus = "idle";
     this.testMessage = "";
+    this.instanceHosts = [];
+    this.hostRelationLoading = false;
+    this.hostRelationError = null;
+    this.pendingCreatedInstanceId = null;
     this.showAddDialog = true;
   }
 
   private _editInstance(inst: DatabaseInstance) {
+    this.hostRelationRequestVersion += 1;
     this.editingInstance = inst;
     this.formData = {
       name: inst.name,
@@ -769,7 +828,49 @@ export class InstancesPage extends LitElement {
     };
     this.testStatus = "idle";
     this.testMessage = "";
+    this.instanceHosts = this.canViewHostRelations ? null : [];
+    this.hostRelationLoading = this.canViewHostRelations;
+    this.hostRelationError = null;
+    this.pendingCreatedInstanceId = null;
     this.showEditDialog = true;
+    if (this.canViewHostRelations) void this._loadInstanceHosts(inst.id);
+  }
+
+  private async _loadInstanceHosts(instanceId: number) {
+    if (!this.canViewHostRelations) return;
+    const version = ++this.hostRelationRequestVersion;
+    this.instanceHosts = null;
+    this.hostRelationLoading = true;
+    this.hostRelationError = null;
+    try {
+      const response = await authFetch(`/api/database/instances/${instanceId}/hosts`);
+      if (!response.ok) {
+        throw new Error(response.status === 401 || response.status === 403
+          ? "没有权限加载主机关联关系"
+          : "主机关联关系加载失败");
+      }
+      const data = await response.json() as InstanceHostsResponse;
+      if (version !== this.hostRelationRequestVersion) return;
+      this.instanceHosts = data.hosts.map((host) => host.notes == null
+        ? { serverId: host.serverId, role: host.role }
+        : { serverId: host.serverId, role: host.role, notes: host.notes });
+    } catch (error) {
+      if (version !== this.hostRelationRequestVersion) return;
+      this.instanceHosts = null;
+      this.hostRelationError = error instanceof Error ? error.message : "主机关联关系加载失败";
+    } finally {
+      if (version === this.hostRelationRequestVersion) this.hostRelationLoading = false;
+    }
+  }
+
+  private _handleInstanceHostChange(event: CustomEvent<{ hosts: InstanceHostMapping[] }>) {
+    if (!this.canManageHostRelations) return;
+    this.instanceHosts = event.detail.hosts;
+    this.hostRelationError = null;
+  }
+
+  private _reloadInstanceHosts() {
+    if (this.canViewHostRelations && this.editingInstance) void this._loadInstanceHosts(this.editingInstance.id);
   }
 
   private async _testConnection(inst: DatabaseInstance) {
@@ -866,7 +967,8 @@ export class InstancesPage extends LitElement {
     this.showDeleteDialog = true;
   }
 
-  private _closeDialogs() {
+  private _resetDialogs() {
+    this.hostRelationRequestVersion += 1;
     this.showAddDialog = false;
     this.showEditDialog = false;
     this.showDeleteDialog = false;
@@ -876,13 +978,38 @@ export class InstancesPage extends LitElement {
     this.testingInstance = null;
     this.testStatus = "idle";
     this.testMessage = "";
+    this.instanceHosts = [];
+    this.hostRelationLoading = false;
+    this.hostRelationError = null;
+    this.pendingCreatedInstanceId = null;
+  }
+
+  private _closeDialogs() {
+    if (this.isSubmitting) return;
+    const abandonedCreatedInstance = this.pendingCreatedInstanceId !== null;
+    this._resetDialogs();
+    if (abandonedCreatedInstance) {
+      showToast("实例已创建但主机关联未保存", "warning");
+      void this.loadInstances();
+    }
   }
 
   private async _handleSubmit(isEdit: boolean) {
     if (this.isSubmitting) return;
 
+    const canManageHostRelations = this.canManageHostRelations;
+    if (canManageHostRelations && (this.hostRelationLoading || this.instanceHosts === null)) {
+      showToast("请先成功加载主机关联关系", "warning");
+      return;
+    }
+
+    const formData = { ...this.formData };
+    const instanceHosts = (this.instanceHosts ?? []).map((host) => ({ ...host }));
+    const editingInstanceId = this.editingInstance?.id ?? null;
+    const pendingCreatedInstanceId = this.pendingCreatedInstanceId;
+
     // Validate
-    if (!this.formData.name || !this.formData.host || !this.formData.username) {
+    if (!formData.name || !formData.host || !formData.username) {
       showToast("Please fill in: name, host, username", "warning");
       return;
     }
@@ -890,24 +1017,53 @@ export class InstancesPage extends LitElement {
     this.isSubmitting = true;
 
     try {
-      const url = isEdit
-        ? `/api/database/instances/${this.editingInstance!.id}`
-        : "/api/database/instances";
-
-      const res = await authFetch(url, {
-        method: isEdit ? "PUT" : "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(this.formData),
-      });
-
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || "保存失败");
+      let instanceId: number;
+      if (isEdit) {
+        if (editingInstanceId === null) throw new Error("编辑实例不存在");
+        instanceId = editingInstanceId;
+        const response = await authFetch(`/api/database/instances/${instanceId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(formData),
+        });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.error || "实例保存失败");
+        }
+      } else if (pendingCreatedInstanceId !== null) {
+        instanceId = pendingCreatedInstanceId;
+      } else {
+        const response = await authFetch("/api/database/instances", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(formData),
+        });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.error || "实例创建失败");
+        }
+        const created = await response.json() as { id: number };
+        if (!Number.isInteger(created.id) || created.id <= 0) throw new Error("实例创建响应缺少有效 ID");
+        instanceId = created.id;
+        if (canManageHostRelations) this.pendingCreatedInstanceId = created.id;
       }
 
-      this._closeDialogs();
+      if (canManageHostRelations) {
+        const relationRequest: ReplaceInstanceHostsRequest = { hosts: instanceHosts };
+        const relationResponse = await authFetch(`/api/database/instances/${instanceId}/hosts`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(relationRequest),
+        });
+        if (!relationResponse.ok) {
+          const error = await relationResponse.json().catch(() => ({}));
+          throw new Error(error.error || "主机关联关系保存失败");
+        }
+        await relationResponse.json() as ReplaceInstanceHostsResponse;
+      }
+
+      this.pendingCreatedInstanceId = null;
+      this._resetDialogs();
       await this.loadInstances();
       showToast("Instance updated successfully", "success");
     } catch (err: any) {
@@ -983,14 +1139,26 @@ export class InstancesPage extends LitElement {
   }
 
   private _renderFormDialog(title: string, isEdit: boolean) {
+    const baseFieldsLocked = this.pendingCreatedInstanceId !== null;
+    const canViewHostRelations = this.canViewHostRelations;
+    const canManageHostRelations = this.canManageHostRelations;
+    const relationUnavailable = canManageHostRelations
+      && (this.hostRelationLoading || this.instanceHosts === null);
     return html`
-      <app-dialog .open=${true} size="md" .closeOnOverlay=${false} title="${title}" @app-dialog-close=${this._closeDialogs}>
+      <app-dialog
+        .open=${true}
+        size="md"
+        .closable=${!this.isSubmitting}
+        .closeOnOverlay=${false}
+        title="${title}"
+        @app-dialog-close=${this._closeDialogs}
+      >
         <div class="form-row">
           <app-form-field label="实例名称" required>
-            <input class="form-input" type="text" .value=${this.formData.name} @input=${(e: any) => this._updateForm("name", e.target.value)} placeholder="如：生产主库" />
+            <input class="form-input" type="text" .value=${this.formData.name} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("name", e.target.value)} placeholder="如：生产主库" />
           </app-form-field>
           <app-form-field label="环境">
-            <select class="form-select" .value=${this.formData.environment} @change=${(e: any) => this._updateForm("environment", e.target.value)}>
+            <select class="form-select" .value=${this.formData.environment} .disabled=${baseFieldsLocked} @change=${(e: any) => this._updateForm("environment", e.target.value)}>
               <option value="development">开发环境</option>
               <option value="testing">测试环境</option>
               <option value="staging">预发布环境</option>
@@ -1001,7 +1169,7 @@ export class InstancesPage extends LitElement {
 
         <div class="form-row">
           <app-form-field label="数据库类型">
-            <select class="form-select" .value=${this.formData.db_type} @change=${(e: any) => {
+            <select class="form-select" .value=${this.formData.db_type} .disabled=${baseFieldsLocked} @change=${(e: any) => {
               this._updateForm("db_type", e.target.value);
               const ports: Record<string, number> = { mysql: 3306, postgresql: 5432, oracle: 1521, dameng: 5236 };
               this._updateForm("port", ports[e.target.value] || 3306);
@@ -1013,44 +1181,60 @@ export class InstancesPage extends LitElement {
             </select>
           </app-form-field>
           <app-form-field label="端口">
-            <input class="form-input" type="number" .value=${this.formData.port} @input=${(e: any) => this._updateForm("port", parseInt(e.target.value) || 0)} />
+            <input class="form-input" type="number" .value=${this.formData.port} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("port", parseInt(e.target.value) || 0)} />
           </app-form-field>
         </div>
 
         <div class="form-row">
           <app-form-field label="主机地址" required style="grid-column: 1 / -1;">
-            <input class="form-input" type="text" .value=${this.formData.host} @input=${(e: any) => this._updateForm("host", e.target.value)} placeholder="如：localhost 或 192.168.1.100" />
+            <input class="form-input" type="text" .value=${this.formData.host} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("host", e.target.value)} placeholder="如：localhost 或 192.168.1.100" />
           </app-form-field>
         </div>
 
         <div class="form-row">
           <app-form-field label="用户名" required>
-            <input class="form-input" type="text" autocomplete="off" .value=${this.formData.username} @input=${(e: any) => this._updateForm("username", e.target.value)} />
+            <input class="form-input" type="text" autocomplete="off" .value=${this.formData.username} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("username", e.target.value)} />
           </app-form-field>
-          <app-form-field label="密码${isEdit ? ' (留空不修改)' : ''}" required=${!isEdit}>
-            <input class="form-input" type="password" autocomplete="new-password" .value=${this.formData.password} @input=${(e: any) => this._updateForm("password", e.target.value)} placeholder=${isEdit ? "留空表示不修改" : ""} />
+          <app-form-field label="密码${isEdit ? ' (留空不修改)' : ''}" .required=${!isEdit}>
+            <input class="form-input" type="password" autocomplete="new-password" .value=${this.formData.password} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("password", e.target.value)} placeholder=${isEdit ? "留空表示不修改" : ""} />
           </app-form-field>
         </div>
 
         <div class="form-row">
           <app-form-field label="${this.formData.db_type === 'oracle' ? 'Oracle 数据库标识 (SID/Service Name)' : '数据库名'}" hint="${this.formData.db_type === 'oracle' ? '用于 Easy Connect 格式的数据库标识，支持 SID 或 Service Name' : '连接后默认使用的数据库'}" style="grid-column: 1 / -1;">
-            <input class="form-input" type="text" .value=${this.formData.database_name} @input=${(e: any) => this._updateForm("database_name", e.target.value)} placeholder=${this.formData.db_type === 'oracle' ? '如：ORCL 或 pdb1.subnet.vcn.oraclevcn.com' : '默认数据库名'} />
+            <input class="form-input" type="text" .value=${this.formData.database_name} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("database_name", e.target.value)} placeholder=${this.formData.db_type === 'oracle' ? '如：ORCL 或 pdb1.subnet.vcn.oraclevcn.com' : '默认数据库名'} />
           </app-form-field>
         </div>
 
         <div class="form-row">
           <app-form-field label="描述" style="grid-column: 1 / -1;">
-            <textarea class="form-textarea" .value=${this.formData.description} @input=${(e: any) => this._updateForm("description", e.target.value)} placeholder="可选：添加实例描述信息"></textarea>
+            <textarea class="form-textarea" .value=${this.formData.description} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("description", e.target.value)} placeholder="可选：添加实例描述信息"></textarea>
           </app-form-field>
         </div>
 
+        ${canViewHostRelations ? html`<div class="form-row">
+          <instance-host-field
+            style="grid-column: 1 / -1;"
+            .value=${this.instanceHosts}
+            .loading=${this.hostRelationLoading}
+            .error=${this.hostRelationError}
+            .disabled=${this.isSubmitting || !canManageHostRelations}
+            @instance-host-change=${this._handleInstanceHostChange}
+            @instance-host-reload=${this._reloadInstanceHosts}
+          ></instance-host-field>
+        </div>` : nothing}
+
         ${this.testMessage ? html`<div class="test-result ${this.testStatus}">${this.testStatus === 'success' ? icons['check-circle'] : icons['x-circle']} ${this.testMessage}</div>` : ''}
         <div slot="footer" style="display:flex;justify-content:flex-end;align-items:center;gap:var(--space-md)">
-          <button class="btn" @click=${this._handleTestConnection} ?disabled=${this.testStatus === 'testing'}>
+          <button class="btn" @click=${this._handleTestConnection} .disabled=${this.testStatus === 'testing' || this.isSubmitting || baseFieldsLocked}>
             ${this.testStatus === 'testing' ? '测试中...' : '测试连接'}
           </button>
-          <button class="btn" @click=${this._closeDialogs}>取消</button>
-          <button class="btn" @click=${() => this._handleSubmit(isEdit)} ?disabled=${this.isSubmitting}>${this.isSubmitting ? '保存中...' : isEdit ? '保存修改' : '添加实例'}</button>
+          <button class="btn" @click=${this._closeDialogs} .disabled=${this.isSubmitting}>取消</button>
+          <button
+            class="btn-primary"
+            @click=${() => this._handleSubmit(isEdit)}
+            .disabled=${this.isSubmitting || relationUnavailable}
+          >${this.isSubmitting ? '保存中...' : baseFieldsLocked ? '重试关联' : isEdit ? '保存修改' : '添加实例'}</button>
         </div>
       </app-dialog>
     `;
@@ -1128,7 +1312,7 @@ export class InstancesPage extends LitElement {
           : ''}
         <div slot="footer" style="display:flex;justify-content:${isConnected ? 'center' : 'space-between'};align-items:center">
           <button class="btn" @click=${this._closeDialogs}>关闭</button>
-          ${isConnected ? nothing : html`<button class="btn-primary" @click=${this._handleListTestConnection} ?disabled=${isTesting}>
+          ${isConnected ? nothing : html`<button class="btn-primary" @click=${this._handleListTestConnection} .disabled=${isTesting}>
             ${isTesting ? html`${icons['loader']} 测试中...` : html`${icons['link']} 测试连接`}
           </button>`}
         </div>

@@ -21,6 +21,7 @@ const allowedTags = [
   "h4",
   "hr",
   "i",
+  "img",
   "input",
   "li",
   "ol",
@@ -44,6 +45,7 @@ const allowedAttrs = [
   "class",
   "disabled",
   "href",
+  "src",
   "rel",
   "target",
   "title",
@@ -513,6 +515,24 @@ export function toSanitizedMarkdownHtml(markdown: string): string {
     setCachedMarkdown(input, sanitized);
   }
   return sanitized;
+}
+
+/** Sanitize trusted-format documents without applying the Markdown HTML escape policy. */
+export function toSanitizedDocumentHtml(documentHtml: string): string {
+  if (!documentHtml.trim()) {
+    return "";
+  }
+  installHooks();
+  const document = new DOMParser().parseFromString(documentHtml, "text/html");
+  const sanitized = DOMPurify.sanitize(document.body.innerHTML, sanitizeOptions);
+  const container = document.createElement("div");
+  container.innerHTML = sanitized;
+  container.querySelectorAll("img").forEach((image) => {
+    if (!image.getAttribute("src")?.startsWith("/docs/")) {
+      image.remove();
+    }
+  });
+  return container.innerHTML;
 }
 
 function renderEscapedPlainTextHtml(value: string): string {
