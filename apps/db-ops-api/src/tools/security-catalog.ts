@@ -2,9 +2,9 @@ import type { AnyAgentTool } from './types.js';
 
 export type ToolAudience = 'actor' | 'internal';
 export type ToolEffect = 'read' | 'write' | 'execute' | 'secret' | 'delegate';
-export type ToolResource = 'none' | 'instance' | 'server' | 'database-target' | 'cron' | 'analysis';
+export type ToolResource = 'none' | 'instance' | 'server' | 'network_device' | 'database-target' | 'cron' | 'analysis';
 export type ToolApproval = 'never' | 'on-risk' | 'always';
-export type ToolNetwork = 'none' | 'registered-database' | 'configured-provider' | 'internal';
+export type ToolNetwork = 'none' | 'registered-database' | 'registered-server' | 'registered-network-device' | 'configured-provider' | 'internal';
 export type ToolCredentialAccess = 'none' | 'use' | 'read';
 
 export interface ToolSecurityDefinition {
@@ -33,6 +33,10 @@ const TOOL_SECURITY_CATALOG: Readonly<Record<string, ToolSecurityDefinition>> = 
   get_server_metrics: definition('actor', 'read', 'server', ['servers:view'], 'never', 'none', 'none'),
   get_server_alerts: definition('actor', 'read', 'server', ['servers:view'], 'never', 'none', 'none'),
   analyze_server_health: definition('actor', 'read', 'server', ['servers:view'], 'never', 'none', 'none'),
+  list_resources: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),
+  get_resource_observations: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),
+  get_resource_relations: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),
+  diagnose_resource: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),
   slide_oracle_ash_report: definition('actor', 'read', 'instance', ['instance:view'], 'never', 'registered-database', 'use'),
   slide_oracle_awr_report: definition('actor', 'read', 'instance', ['instance:view'], 'never', 'registered-database', 'use'),
   slide_oracle_tablespace_detail: definition('actor', 'read', 'instance', ['instance:view'], 'never', 'registered-database', 'use'),

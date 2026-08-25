@@ -15,6 +15,7 @@ export { listServerInstancesTool } from './server_tools.js';
 export { getServerMetricsTool } from './server_tools.js';
 export { getServerAlertsTool } from './server_tools.js';
 export { analyzeServerHealthTool } from './server_tools.js';
+export { listResourcesTool, getResourceObservationsTool, getResourceRelationsTool, diagnoseResourceTool } from './resource_tools.js';
 
 // 导出工具数组，方便批量注册
 import { checkStatusTool } from './check_status.js';
@@ -28,6 +29,7 @@ import { listServerInstancesTool } from './server_tools.js';
 import { getServerMetricsTool } from './server_tools.js';
 import { getServerAlertsTool } from './server_tools.js';
 import { analyzeServerHealthTool } from './server_tools.js';
+import { resourceTools } from './resource_tools.js';
 
 export const slideSelfMgmtTools = [
   checkStatusTool,
@@ -41,4 +43,5 @@ export const slideSelfMgmtTools = [
   getServerMetricsTool,
   getServerAlertsTool,
   analyzeServerHealthTool,
+  ...resourceTools,
 ];

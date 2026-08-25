@@ -163,7 +163,7 @@ export interface PolicyDecision {
 }
 
 export interface ToolPolicyResource {
-  type: 'none' | 'instance' | 'server' | 'database-target' | 'cron' | 'analysis';
+  type: 'none' | 'instance' | 'server' | 'network_device' | 'database-target' | 'cron' | 'analysis';
   instanceId?: number;
   serverId?: number;
   databaseTarget?: { host: string; port: number };
