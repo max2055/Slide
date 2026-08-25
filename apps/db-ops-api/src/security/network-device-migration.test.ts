@@ -30,4 +30,3 @@ describe('network-device migration security contract', () => {
     expect(statements.every((statement) => statement.trim().length > 0)).toBe(true);
   });
 });
-

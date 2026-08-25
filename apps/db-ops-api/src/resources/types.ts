@@ -1,6 +1,6 @@
-export type ResourceType = 'instance' | 'server';
+export type ResourceType = 'instance' | 'server' | 'network_device';
 export interface ResourceRef { type: ResourceType; id: number; }
-export type ResourceRelationType = 'runs_on' | 'hosts' | 'replicates_to' | 'depends_on';
+export type ResourceRelationType = 'runs_on' | 'hosts' | 'replicates_to' | 'depends_on' | 'connected_to' | 'serves';
 export interface ResourceRelation {
   source: ResourceRef;
   target: ResourceRef;

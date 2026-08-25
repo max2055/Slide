@@ -43,6 +43,17 @@ describe('generated public API contract', () => {
       '/api/database/instances/{id}/hosts',
       '/api/database/instances/{id}/hosts/{serverId}',
       '/api/health',
+      '/api/network-devices',
+      '/api/network-devices/{id}',
+      '/api/network-devices/{id}/capabilities',
+      '/api/network-devices/{id}/config-backups',
+      '/api/network-devices/{id}/config-backups/{backupId}',
+      '/api/network-devices/{id}/config-backups/{backupId}/diff',
+      '/api/network-devices/{id}/interfaces',
+      '/api/network-devices/{id}/metrics',
+      '/api/network-devices/{id}/probe',
+      '/api/network-devices/{id}/relations',
+      '/api/network-devices/test-connection',
       '/api/servers/{id}/instances',
     ]);
     expect(buildClientTypes()).toContain('export interface DatabaseInstance');

@@ -21,6 +21,14 @@ export interface CapabilityStore {
 
 const capabilityStates = new Set<CapabilityState>(['declared', 'configured', 'verified', 'degraded', 'unsupported']);
 
+export const NETWORK_DEVICE_CAPABILITIES = [
+  'snmp.reachability',
+  'snmp.auth',
+  'metrics.core',
+  'interfaces',
+  'config.backup',
+] as const;
+
 export class CapabilityService {
   constructor(private readonly store: CapabilityStore) {}
 

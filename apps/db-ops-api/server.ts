@@ -127,6 +127,8 @@ import { registerAgentToolApprovalRoutes } from './src/security/agent-tool-appro
 import { registerAgentSecurityRoutes } from './src/security/agent-security-routes.js';
 import { registerDeviceAuthRoutes } from './src/security/device-auth-routes.js';
 import { agentSecurityPolicyService } from './src/security/agent-security-policy-service.js';
+import { registerNetworkDeviceRoutes } from './src/network-devices/network-device-routes.js';
+import { networkDeviceCollector } from './src/network-devices/network-device-collector.js';
 
 const fastify = Fastify({
   logger: false,
@@ -331,6 +333,7 @@ async function start() {
   await registerAgentToolApprovalRoutes(fastify, verifyToken);
   await registerAgentSecurityRoutes(fastify, verifyToken);
   await registerDeviceAuthRoutes(fastify, verifyToken);
+  await registerNetworkDeviceRoutes(fastify, verifyToken);
   await registerInstanceHostRoutes(fastify, {
     verifyToken,
     service: instanceHostService,
@@ -5291,6 +5294,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 启动监控采集
   monitorCollector.start();
+  // 网络设备采集器只执行 SNMPv3 只读轮询；未纳管或未启用采集的设备不会
+  // 建立连接。采集器内部按设备互斥，停止时释放定时器。
+  networkDeviceCollector.start();
 
   // 从 metric-registry 同步告警规则
   await alertEngine.syncRulesFromRegistry();
@@ -5804,6 +5810,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       clearInterval(heartbeat);
       if (workflowTimer) clearInterval(workflowTimer);
       monitorCollector.stop();
+      networkDeviceCollector.stop();
       alertEngine.stopEvaluationLoop();
       alertEscalationService.stop();
       stopSessionCleanup();

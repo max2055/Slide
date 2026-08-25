@@ -17,6 +17,8 @@ export interface ObservationStore {
   latestServerMetric(id: number, metricId: string): Promise<ObservationRow | null>;
   rangeInstanceMetric(id: number, metricId: string, from: Date, to: Date, limit: number): Promise<ObservationRow[]>;
   rangeServerMetric(id: number, metricId: string, from: Date, to: Date, limit: number): Promise<ObservationRow[]>;
+  latestNetworkDeviceMetric?(id: number, metricId: string): Promise<ObservationRow | null>;
+  rangeNetworkDeviceMetric?(id: number, metricId: string, from: Date, to: Date, limit: number): Promise<ObservationRow[]>;
 }
 
 export interface ObservationRow { metricId?: string; value: number | null; observedAt: Date | null; dimensions?: Record<string, string>; }
@@ -34,9 +36,12 @@ export class ObservationService {
     if (!canReadResource(actor, resource)) throw new Error('RESOURCE_FORBIDDEN');
     const row = resource.type === 'instance'
       ? await this.store.latestInstanceMetric(resource.id, metricId)
-      : await this.store.latestServerMetric(resource.id, metricId);
+      : resource.type === 'server'
+        ? await this.store.latestServerMetric(resource.id, metricId)
+        : await (this.store.latestNetworkDeviceMetric?.(resource.id, metricId) ?? Promise.resolve(null));
     const identity = normalizeMetricIdentity(row?.metricId ?? metricId);
-    return { ...latestObservation({ resource, metricId: identity.metricId, value: row?.value, observedAt: row?.observedAt, source: resource.type === 'instance' ? 'metrics_history' : 'server_metrics', ...options }), dimensions: canonicalDimensions(row?.dimensions ?? identity.dimensions) };
+    const source = resource.type === 'instance' ? 'metrics_history' : resource.type === 'server' ? 'server_metrics' : 'network_device_observations';
+    return { ...latestObservation({ resource, metricId: identity.metricId, value: row?.value, observedAt: row?.observedAt, source, ...options }), dimensions: canonicalDimensions(row?.dimensions ?? identity.dimensions) };
   }
 
   async range(actor: ActorContext, resource: ResourceRef, metricId: string, options: { from: Date; to: Date; validForMs: number; limit?: number; now?: Date }): Promise<Observation[]> {
@@ -45,10 +50,13 @@ export class ObservationService {
     const limit = Math.max(1, Math.min(options.limit ?? 200, 1_000));
     const rows = resource.type === 'instance'
       ? await this.store.rangeInstanceMetric(resource.id, metricId, options.from, options.to, limit)
-      : await this.store.rangeServerMetric(resource.id, metricId, options.from, options.to, limit);
+      : resource.type === 'server'
+        ? await this.store.rangeServerMetric(resource.id, metricId, options.from, options.to, limit)
+        : await (this.store.rangeNetworkDeviceMetric?.(resource.id, metricId, options.from, options.to, limit) ?? Promise.resolve([]));
+    const source = resource.type === 'instance' ? 'metrics_history' : resource.type === 'server' ? 'server_metrics' : 'network_device_observations';
     return rows.slice(0, limit).map((row) => {
       const identity = normalizeMetricIdentity(row.metricId ?? metricId);
-      return { ...latestObservation({ resource, metricId: identity.metricId, value: row.value, observedAt: row.observedAt, source: resource.type === 'instance' ? 'metrics_history' : 'server_metrics', validForMs: options.validForMs, now: options.now }), dimensions: canonicalDimensions(row.dimensions ?? identity.dimensions) };
+      return { ...latestObservation({ resource, metricId: identity.metricId, value: row.value, observedAt: row.observedAt, source, validForMs: options.validForMs, now: options.now }), dimensions: canonicalDimensions(row.dimensions ?? identity.dimensions) };
     });
   }
 }
@@ -78,7 +86,34 @@ export class MysqlObservationStore implements ObservationStore {
     const [rows] = await this.pool().execute<Array<any>>('SELECT metric_name AS metricId, dimensions, metric_value AS value, recorded_at AS observedAt FROM server_metrics WHERE server_id = ? AND recorded_at >= ? AND recorded_at <= ? AND (metric_name IN (?, ?) OR (? = \'disk_usage\' AND metric_name LIKE \'disk_usage_%\')) ORDER BY recorded_at DESC LIMIT ?', [id, from, to, names[0], names[1], metricId, limit]);
     return rows.map((row) => ({ metricId: row.metricId, dimensions: parseDimensions(row.dimensions), value: Number(row.value), observedAt: row.observedAt ? new Date(row.observedAt) : null }));
   }
+  async latestNetworkDeviceMetric(id: number, metricId: string): Promise<ObservationRow | null> {
+    assertNetworkMetricId(metricId);
+    const [rows] = await this.pool().execute<Array<any>>(
+      `SELECT metric_id AS metricId, dimensions, metric_value AS value, observed_at AS observedAt
+       FROM network_device_observations
+       WHERE device_id = ? AND metric_id = ? ORDER BY observed_at DESC, id DESC LIMIT 1`,
+      [id, metricId],
+    );
+    return rows[0] ? { metricId: rows[0].metricId, dimensions: parseDimensions(rows[0].dimensions), value: rows[0].value == null ? null : Number(rows[0].value), observedAt: rows[0].observedAt ? new Date(rows[0].observedAt) : null } : null;
+  }
+  async rangeNetworkDeviceMetric(id: number, metricId: string, from: Date, to: Date, limit: number): Promise<ObservationRow[]> {
+    assertNetworkMetricId(metricId);
+    const [rows] = await this.pool().execute<Array<any>>(
+      `SELECT metric_id AS metricId, dimensions, metric_value AS value, observed_at AS observedAt
+       FROM network_device_observations
+       WHERE device_id = ? AND metric_id = ? AND observed_at >= ? AND observed_at <= ?
+       ORDER BY observed_at DESC, id DESC LIMIT ?`,
+      [id, metricId, from, to, limit],
+    );
+    return rows.map((row) => ({ metricId: row.metricId, dimensions: parseDimensions(row.dimensions), value: row.value == null ? null : Number(row.value), observedAt: row.observedAt ? new Date(row.observedAt) : null }));
+  }
   private pool(): SqlPool { const pool = this.poolProvider(); if (!pool) throw new Error('RESOURCE_STORE_UNAVAILABLE'); return pool; }
+}
+
+function assertNetworkMetricId(metricId: string): void {
+  if (!/^(?:device_(?:uptime_seconds|cpu_percent|memory_percent|temperature_celsius)|interface_[a-z0-9_]+)$/.test(metricId)) {
+    throw new Error('METRIC_ID_UNSUPPORTED');
+  }
 }
 
 function parseDimensions(value: unknown): Record<string, string> | undefined {
