@@ -119,4 +119,17 @@ describe('persistent Agent tool approvals', () => {
     await expect(service.review('43', 9, 'approve', undefined, 'window')).resolves.toBe(true);
     expect(updateSql).toContain("WHEN risk_level = 'high' THEN 'once'");
   });
+
+  it('reports a pending approval distinctly from an invalid approval id', async () => {
+    const executor = {
+      execute: async () => [[{
+        binding_hash: 'c'.repeat(64), status: 'pending', scope: 'once', session_key: null,
+        risk_level: 'high', used_count: 0, max_uses: 1, expires_at: new Date(Date.now() + 60_000),
+      }]] as [unknown],
+    };
+    const service = new AgentToolApprovalService(() => executor as any, 'test-hmac-key');
+
+    await expect(service.consumeApprovedDetailed('44', 'c'.repeat(64), 7, { riskLevel: 'high' }))
+      .resolves.toEqual({ approved: false, failure: 'APPROVAL_PENDING' });
+  });
 });

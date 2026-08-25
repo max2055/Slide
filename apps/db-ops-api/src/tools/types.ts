@@ -145,6 +145,8 @@ export type ToolPolicyReasonCode =
   | 'INSTANCE_SCOPE_DENIED'
   | 'INSTANCE_SCOPE_LEVEL_DENIED'
   | 'APPROVAL_REQUIRED'
+  | 'APPROVAL_PENDING'
+  | 'APPROVAL_EXPIRED'
   | 'INVALID_APPROVAL';
 
 export interface PolicyDecision {

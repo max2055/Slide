@@ -40,6 +40,12 @@ export interface ApprovalConsumeOptions {
   riskLevel?: ExecuteCodeRiskLevel;
 }
 
+export type ApprovalConsumeFailure = 'APPROVAL_PENDING' | 'APPROVAL_EXPIRED' | 'INVALID_APPROVAL';
+export interface ApprovalConsumeResult {
+  approved: boolean;
+  failure?: ApprovalConsumeFailure;
+}
+
 function normalizeApprovalScope(
   requestedScope: ExecuteCodeApprovalScope | undefined,
   riskLevel: ExecuteCodeRiskLevel,
@@ -211,7 +217,18 @@ export class AgentToolApprovalService {
     requesterId: number,
     options?: ApprovalConsumeOptions,
   ): Promise<boolean> {
-    if (!/^\d+$/.test(id) || !/^[a-f0-9]{64}$/.test(bindingHash) || !Number.isSafeInteger(requesterId)) return false;
+    return (await this.consumeApprovedDetailed(id, bindingHash, requesterId, options)).approved;
+  }
+
+  async consumeApprovedDetailed(
+    id: string,
+    bindingHash: string,
+    requesterId: number,
+    options?: ApprovalConsumeOptions,
+  ): Promise<ApprovalConsumeResult> {
+    if (!/^\d+$/.test(id) || !/^[a-f0-9]{64}$/.test(bindingHash) || !Number.isSafeInteger(requesterId)) {
+      return { approved: false, failure: 'INVALID_APPROVAL' };
+    }
     if (options) {
       const [rows] = await this.executor().execute(
         `SELECT binding_hash, status, scope, session_key, risk_level, used_count, max_uses, expires_at
@@ -219,29 +236,41 @@ export class AgentToolApprovalService {
         [id, requesterId],
       );
       const row = Array.isArray(rows) ? rows[0] : undefined;
-      if (!row || row.status !== 'approved' || new Date(row.expires_at).getTime() <= Date.now()) return false;
+      if (!row) return { approved: false, failure: 'INVALID_APPROVAL' };
+      if (row.status === 'pending') return { approved: false, failure: 'APPROVAL_PENDING' };
+      if (row.status !== 'approved' || new Date(row.expires_at).getTime() <= Date.now()) {
+        return { approved: false, failure: 'APPROVAL_EXPIRED' };
+      }
       const riskRank: Record<ExecuteCodeRiskLevel, number> = { low: 1, medium: 2, high: 3 };
       const storedRisk = riskRank[row.risk_level as ExecuteCodeRiskLevel] ?? 3;
       const requestedRisk = riskRank[options.riskLevel ?? 'high'] ?? 3;
-      if (requestedRisk > storedRisk) return false;
+      if (requestedRisk > storedRisk) return { approved: false, failure: 'INVALID_APPROVAL' };
       if (row.scope === 'once') {
-        if (row.binding_hash !== bindingHash) return false;
+        if (row.binding_hash !== bindingHash) return { approved: false, failure: 'INVALID_APPROVAL' };
         const [result] = await this.executor().execute(
           `UPDATE agent_tool_approvals SET status = 'consumed', consumed_at = NOW()
            WHERE id = ? AND requester_id = ? AND binding_hash = ? AND status = 'approved' AND expires_at > NOW()`,
           [id, requesterId, bindingHash],
         );
-        return Number(result?.affectedRows) === 1;
+        return Number(result?.affectedRows) === 1
+          ? { approved: true }
+          : { approved: false, failure: 'INVALID_APPROVAL' };
       }
-      if (!options.sessionKey || !row.session_key || options.sessionKey !== row.session_key) return false;
-      if (Number(row.used_count ?? 0) === 0 && row.binding_hash !== bindingHash) return false;
+      if (!options.sessionKey || !row.session_key || options.sessionKey !== row.session_key) {
+        return { approved: false, failure: 'INVALID_APPROVAL' };
+      }
+      if (Number(row.used_count ?? 0) === 0 && row.binding_hash !== bindingHash) {
+        return { approved: false, failure: 'INVALID_APPROVAL' };
+      }
       const [result] = await this.executor().execute(
         `UPDATE agent_tool_approvals SET used_count = used_count + 1, consumed_at = NOW()
          WHERE id = ? AND requester_id = ? AND status = 'approved' AND session_key = ?
            AND used_count < max_uses AND expires_at > NOW()`,
         [id, requesterId, options.sessionKey],
       );
-      return Number(result?.affectedRows) === 1;
+      return Number(result?.affectedRows) === 1
+        ? { approved: true }
+        : { approved: false, failure: 'INVALID_APPROVAL' };
     }
     const [result] = await this.executor().execute(
       `UPDATE agent_tool_approvals
@@ -250,7 +279,9 @@ export class AgentToolApprovalService {
          AND status = 'approved' AND expires_at > NOW()`,
       [bindingHash, id, requesterId],
     );
-    return Number(result?.affectedRows) === 1;
+    return Number(result?.affectedRows) === 1
+      ? { approved: true }
+      : { approved: false, failure: 'INVALID_APPROVAL' };
   }
 
   async pending(limit = 100): Promise<unknown[]> {

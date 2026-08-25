@@ -5,7 +5,7 @@ import { hasPermission } from '../auth/require-permission.js';
 import { resolveToolResource, resolveToolResourceFromArgs } from './resource-resolver.js';
 import type { ToolPolicyResource } from './types.js';
 import { getAgentToolApprovalService } from '../security/agent-tool-approval-service.js';
-import type { ApprovalConsumeOptions, ApprovalRequestOptions } from '../security/agent-tool-approval-service.js';
+import type { ApprovalConsumeOptions, ApprovalConsumeResult, ApprovalRequestOptions } from '../security/agent-tool-approval-service.js';
 import { agentToolAuditService, type AgentToolAuditRecord } from '../security/agent-tool-audit-service.js';
 import { agentSecurityPolicyService } from '../security/agent-security-policy-service.js';
 import { classifyExecuteCodeRisk, type ExecuteCodeRisk } from '../security/execute-code-risk.js';
@@ -130,7 +130,7 @@ export interface ToolApprovalAuthorizer {
     args: Record<string, unknown>,
     resource: ToolPolicyResource,
     options?: ApprovalConsumeOptions,
-  ): Promise<boolean>;
+  ): Promise<boolean | ApprovalConsumeResult>;
 }
 
 export interface ToolApprovalRequester {
@@ -153,13 +153,13 @@ export interface ToolAuditRecorder {
 }
 
 const persistentApprovalAuthorizer: ToolApprovalAuthorizer = {
-  async consume(actor, tool, args, resource, options): Promise<boolean> {
+  async consume(actor, tool, args, resource, options): Promise<boolean | ApprovalConsumeResult> {
     const approvalId = typeof args.approvalId === 'string' ? args.approvalId : '';
     if (!approvalId) return false;
     try {
       const service = getAgentToolApprovalService();
       const binding = service.binding(actor, tool, args, resource);
-      return await service.consumeApproved(approvalId, binding.bindingHash, actor.userId, options);
+      return await service.consumeApprovedDetailed(approvalId, binding.bindingHash, actor.userId, options);
     } catch {
       return false;
     }
@@ -189,9 +189,10 @@ export async function executeToolWithPolicy(
   const approvalOptions: ApprovalConsumeOptions | undefined = risk?.requiresApproval
     ? { sessionKey: executionOptions?.sessionKey, riskLevel: risk.level }
     : undefined;
-  const approvalConsumed = actor && approvalRequired && typeof args.approvalId === 'string'
+  const approvalOutcome = actor && approvalRequired && typeof args.approvalId === 'string'
     ? await approvalAuthorizer.consume(actor, tool, args, resource, approvalOptions)
     : false;
+  const approvalConsumed = typeof approvalOutcome === 'boolean' ? approvalOutcome : approvalOutcome.approved;
   const agentPolicy = agentId ? agentSecurityPolicyService.get(agentId) : undefined;
   const agentDecision = agentId && security
     ? agentSecurityPolicyService.evaluateTool(agentId, tool.name, security.effect, resource)
@@ -199,6 +200,9 @@ export async function executeToolWithPolicy(
   let decision = agentDecision.allowed
     ? decideToolPolicy(actor, tool, args, resource, approvalConsumed, approvalRequired)
     : deny(agentDecision.reasonCode!, actor, tool, args, resource);
+  if (!approvalConsumed && typeof approvalOutcome !== 'boolean' && approvalOutcome.failure) {
+    decision = { ...decision, reasonCode: approvalOutcome.failure };
+  }
   if (risk) {
     decision = { ...decision, riskLevel: risk.level, approvalScope: risk.scope };
   }
@@ -252,6 +256,19 @@ export async function executeToolWithPolicy(
         result: { success: false, errorCode: 'AUDIT_UNAVAILABLE', error: 'Approval request unavailable' },
       };
     }
+  }
+  if (!decision.allow && (decision.reasonCode === 'APPROVAL_PENDING' || decision.reasonCode === 'APPROVAL_EXPIRED')) {
+    return {
+      decision,
+      result: {
+        success: false,
+        errorCode: decision.reasonCode,
+        error: decision.reasonCode === 'APPROVAL_PENDING'
+          ? 'Approval is pending operator review'
+          : 'Approval has expired or was already consumed',
+        data: { approvalId: args.approvalId, status: decision.reasonCode === 'APPROVAL_PENDING' ? 'pending' : 'expired' },
+      },
+    };
   }
   if (!decision.allow || !actor) {
     return { decision, result: { success: false, errorCode: decision.reasonCode, error: 'Tool access denied' } };

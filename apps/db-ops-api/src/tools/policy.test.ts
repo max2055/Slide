@@ -231,6 +231,24 @@ describe('actor tool policy', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
+  it('returns an explicit pending status instead of INVALID_APPROVAL before review', async () => {
+    const result = await executeToolWithPolicy(
+      actor(['admin'], ['ai:execute']),
+      tool({ name: 'execute_code', requiredPermissions: ['ai:execute'], requiresApproval: true }),
+      { runtime: 'shell', code: 'nmap -sV 10.17.12.0/24', approvalId: '73' },
+      undefined,
+      { consume: vi.fn(async () => ({ approved: false, failure: 'APPROVAL_PENDING' as const })) },
+      { record: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+      { sessionKey: 'agent-session-1' },
+    );
+
+    expect(result).toMatchObject({
+      decision: { reasonCode: 'APPROVAL_PENDING', approvalId: '73', riskLevel: 'high' },
+      result: { errorCode: 'APPROVAL_PENDING', data: { approvalId: '73', status: 'pending' } },
+    });
+  });
+
   it('fails closed before a side effect when the persistent audit store is unavailable', async () => {
     const handler = vi.fn().mockResolvedValue({ success: true });
     const writeTool = tool({ name: 'slide_update_db_config', handler });
