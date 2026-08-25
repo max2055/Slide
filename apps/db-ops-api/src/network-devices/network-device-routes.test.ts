@@ -56,18 +56,23 @@ describe('network-device routes', () => {
 
   it('uses view permission for backup metadata and backup permission for capture/raw reads', async () => {
     const backupService = {
-      list: vi.fn(async () => [{ id: 9, deviceId: 7, versionNo: 1, contentSha256: 'a'.repeat(64), sourceProtocol: 'ssh', collectedAt: '2026-01-01T00:00:00.000Z', sizeBytes: 10, redactionStatus: 'redacted' }]),
-      capture: vi.fn(async () => ({ success: true, backup: { id: 9, deviceId: 7, versionNo: 1 }, duplicate: false })),
+      list: vi.fn(async () => [{ id: 9, device_id: 7, version_no: 1, content_sha256: 'a'.repeat(64), source_protocol: 'ssh', collected_at: '2026-01-01T00:00:00.000Z', size_bytes: 10, redaction_status: 'redacted', content_encrypted: 'do-not-return' }]),
+      capture: vi.fn(async () => ({ success: true, backup: { id: 9, deviceId: 7, versionNo: 1, contentEncrypted: 'do-not-return', content_encrypted: 'also-do-not-return', preview: '<redacted>', secret: 'do-not-return' }, duplicate: false })),
       get: vi.fn(async (_id: number, _backupId: number, include: boolean) => include ? { id: 9, content: 'secret' } : { id: 9, preview: '<redacted>' }),
       diff: vi.fn(async () => ({ fromId: 9, toId: 10, diff: '+x' })),
     };
     const app = await appWith({ backupService });
     const metadata = await app.inject({ method: 'GET', url: '/api/network-devices/7/config-backups', headers: { authorization: 'Bearer reader' } });
     expect(metadata.statusCode).toBe(200);
+    expect(metadata.json().backups[0]).not.toHaveProperty('content_encrypted');
     const captureDenied = await app.inject({ method: 'POST', url: '/api/network-devices/7/config-backups', headers: { authorization: 'Bearer reader' } });
     expect(captureDenied.statusCode).toBe(403);
     const capture = await app.inject({ method: 'POST', url: '/api/network-devices/7/config-backups', headers: { authorization: 'Bearer backup' } });
     expect(capture.statusCode).toBe(201);
+    expect(capture.json()).toMatchObject({ id: 9, preview: '<redacted>' });
+    expect(capture.json()).not.toHaveProperty('contentEncrypted');
+    expect(capture.json()).not.toHaveProperty('content_encrypted');
+    expect(capture.json()).not.toHaveProperty('secret');
     expect(backupService.capture).toHaveBeenCalledWith(7, 3);
     const rawDenied = await app.inject({ method: 'GET', url: '/api/network-devices/7/config-backups/9?raw=true', headers: { authorization: 'Bearer reader' } });
     expect(rawDenied.statusCode).toBe(403);

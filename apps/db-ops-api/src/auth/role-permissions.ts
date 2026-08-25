@@ -13,7 +13,7 @@ import { normalizeToolName } from '../tools/catalog.js';
 /**
  * 系统角色类型
  */
-export type SystemRole = 'admin' | 'dba' | 'developer' | 'analyst' | 'viewer' | 'auditor';
+export type SystemRole = 'admin' | 'dba' | 'developer' | 'analyst' | 'viewer' | 'auditor' | 'network-operator';
 
 /**
  * 权限级别
@@ -136,6 +136,15 @@ export const DEFAULT_ROLE_POLICIES: RoleToolPolicy[] = [
     },
     requiresApprovalFor: [],
     permissionLevel: 'audit',
+  },
+  {
+    roleName: 'network-operator',
+    policy: {
+      allow: ['view_*', 'group:health_check', 'group:performance'],
+      deny: ['*'],
+    },
+    requiresApprovalFor: [],
+    permissionLevel: 'write',
   },
 ];
 

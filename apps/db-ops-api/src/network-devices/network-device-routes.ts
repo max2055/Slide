@@ -58,10 +58,30 @@ export async function registerNetworkDeviceRoutes(
   });
   const serializeCapability = (value: any) => serializeCapabilityRow({ ...value, key: value.key, checkedAt: value.checkedAt, validUntil: value.validUntil });
   const safeJson = (value: string): unknown => { try { return JSON.parse(value); } catch { return null; } };
-  const serializeBackup = (value: any, includeContent = false) => {
-    if (!value || typeof value !== 'object') return value;
-    const { contentEncrypted: _contentEncrypted, content, ...summary } = value;
-    return includeContent && typeof content === 'string' ? { ...summary, content } : summary;
+  const serializeBackup = (value: unknown, mode: 'summary' | 'detail' | 'raw' = 'summary'): Record<string, unknown> => {
+    if (!value || typeof value !== 'object') return {};
+    const row = value as Record<string, unknown>;
+    const read = (camel: string, snake = camel): unknown => row[camel] ?? row[snake];
+    const result: Record<string, unknown> = {};
+    const id = read('id');
+    const deviceId = read('deviceId', 'device_id');
+    const versionNo = read('versionNo', 'version_no');
+    const contentSha256 = read('contentSha256', 'content_sha256');
+    const sourceProtocol = read('sourceProtocol', 'source_protocol');
+    const collectedAt = read('collectedAt', 'collected_at');
+    const sizeBytes = read('sizeBytes', 'size_bytes');
+    const redactionStatus = read('redactionStatus', 'redaction_status');
+    if (id !== undefined) result.id = Number(id);
+    if (deviceId !== undefined) result.deviceId = Number(deviceId);
+    if (versionNo !== undefined) result.versionNo = Number(versionNo);
+    if (contentSha256 !== undefined) result.contentSha256 = String(contentSha256);
+    if (sourceProtocol !== undefined) result.sourceProtocol = sourceProtocol;
+    if (collectedAt !== undefined) result.collectedAt = collectedAt instanceof Date ? collectedAt.toISOString() : String(collectedAt);
+    if (sizeBytes !== undefined) result.sizeBytes = Number(sizeBytes);
+    if (redactionStatus !== undefined) result.redactionStatus = redactionStatus;
+    if (mode === 'detail' && typeof row.preview === 'string') result.preview = row.preview;
+    if (mode === 'raw' && typeof row.content === 'string') result.content = row.content;
+    return result;
   };
 
   fastify.get('/api/network-devices', { preHandler: view }, async (_request, reply) => {
@@ -201,7 +221,7 @@ export async function registerNetworkDeviceRoutes(
       if (!result.success) return reply.code(502).send({ error: result.error ?? 'CONFIG_BACKUP_FAILED' });
       // A successful capture may create a new version (or return an existing
       // hash-deduplicated version), and both are represented as a resource.
-      return reply.code(201).send(serializeBackup(result.backup ?? result));
+      return reply.code(201).send(serializeBackup(result.backup ?? result, 'detail'));
     } catch (error) {
       const failure = safeNetworkError(error);
       return reply.code(failure.status === 500 ? 502 : failure.status).send({ error: failure.error });
@@ -212,7 +232,7 @@ export async function registerNetworkDeviceRoutes(
     const id = routeId(request);
     if (id === null) return reply.code(400).send({ error: '资源 ID 无效' });
     try {
-      return reply.send({ backups: await backups.list!(id, 100) });
+      return reply.send({ backups: (await backups.list!(id, 100)).map((backup) => serializeBackup(backup)) });
     } catch (error) {
       const failure = safeNetworkError(error);
       return reply.code(failure.status).send({ error: failure.error });
@@ -227,7 +247,7 @@ export async function registerNetworkDeviceRoutes(
     if (raw && !hasPermission(new Set((request as any).user?.permissions ?? []), 'network_devices:backup')) return reply.code(403).send({ error: '权限不足' });
     try {
       const value = await backups.get!(id, backupId, raw, Number((request as any).user?.userId ?? 0) || null);
-      return value ? reply.send(serializeBackup(value, raw)) : reply.code(404).send({ error: 'CONFIG_BACKUP_NOT_FOUND' });
+      return value ? reply.send(serializeBackup(value, raw ? 'raw' : 'detail')) : reply.code(404).send({ error: 'CONFIG_BACKUP_NOT_FOUND' });
     } catch (error) {
       const failure = safeNetworkError(error);
       return reply.code(failure.status).send({ error: failure.error });
