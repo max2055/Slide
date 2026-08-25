@@ -604,6 +604,477 @@
           }
         ]
       },
+      "ConfigBackupDetail": {
+        "$id": "ConfigBackupDetail",
+        "additionalProperties": false,
+        "properties": {
+          "collectedAt": {
+            "type": "string"
+          },
+          "contentSha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "deviceId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "preview": {
+            "type": "string"
+          },
+          "redactionStatus": {
+            "anyOf": [
+              {
+                "const": "redacted",
+                "type": "string"
+              },
+              {
+                "const": "unredacted",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              }
+            ]
+          },
+          "sizeBytes": {
+            "maximum": 2097152,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sourceProtocol": {
+            "anyOf": [
+              {
+                "const": "ssh",
+                "type": "string"
+              },
+              {
+                "const": "netconf",
+                "type": "string"
+              }
+            ]
+          },
+          "versionNo": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "deviceId",
+          "versionNo",
+          "contentSha256",
+          "sourceProtocol",
+          "collectedAt",
+          "sizeBytes",
+          "redactionStatus",
+          "preview"
+        ],
+        "type": "object"
+      },
+      "ConfigBackupDiffResponse": {
+        "$id": "ConfigBackupDiffResponse",
+        "additionalProperties": false,
+        "properties": {
+          "diff": {
+            "type": "string"
+          },
+          "fromId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "toId": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "fromId",
+          "toId",
+          "diff"
+        ],
+        "type": "object"
+      },
+      "ConfigBackupRaw": {
+        "$id": "ConfigBackupRaw",
+        "additionalProperties": false,
+        "properties": {
+          "collectedAt": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "contentSha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "deviceId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "redactionStatus": {
+            "anyOf": [
+              {
+                "const": "redacted",
+                "type": "string"
+              },
+              {
+                "const": "unredacted",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              }
+            ]
+          },
+          "sizeBytes": {
+            "maximum": 2097152,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sourceProtocol": {
+            "anyOf": [
+              {
+                "const": "ssh",
+                "type": "string"
+              },
+              {
+                "const": "netconf",
+                "type": "string"
+              }
+            ]
+          },
+          "versionNo": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "deviceId",
+          "versionNo",
+          "contentSha256",
+          "sourceProtocol",
+          "collectedAt",
+          "sizeBytes",
+          "redactionStatus",
+          "content"
+        ],
+        "type": "object"
+      },
+      "ConfigBackupResponse": {
+        "$id": "ConfigBackupResponse",
+        "anyOf": [
+          {
+            "$id": "ConfigBackupDetail",
+            "additionalProperties": false,
+            "properties": {
+              "collectedAt": {
+                "type": "string"
+              },
+              "contentSha256": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "deviceId": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "preview": {
+                "type": "string"
+              },
+              "redactionStatus": {
+                "anyOf": [
+                  {
+                    "const": "redacted",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unredacted",
+                    "type": "string"
+                  },
+                  {
+                    "const": "failed",
+                    "type": "string"
+                  }
+                ]
+              },
+              "sizeBytes": {
+                "maximum": 2097152,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sourceProtocol": {
+                "anyOf": [
+                  {
+                    "const": "ssh",
+                    "type": "string"
+                  },
+                  {
+                    "const": "netconf",
+                    "type": "string"
+                  }
+                ]
+              },
+              "versionNo": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "deviceId",
+              "versionNo",
+              "contentSha256",
+              "sourceProtocol",
+              "collectedAt",
+              "sizeBytes",
+              "redactionStatus",
+              "preview"
+            ],
+            "type": "object"
+          },
+          {
+            "$id": "ConfigBackupRaw",
+            "additionalProperties": false,
+            "properties": {
+              "collectedAt": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              },
+              "contentSha256": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "deviceId": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "redactionStatus": {
+                "anyOf": [
+                  {
+                    "const": "redacted",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unredacted",
+                    "type": "string"
+                  },
+                  {
+                    "const": "failed",
+                    "type": "string"
+                  }
+                ]
+              },
+              "sizeBytes": {
+                "maximum": 2097152,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sourceProtocol": {
+                "anyOf": [
+                  {
+                    "const": "ssh",
+                    "type": "string"
+                  },
+                  {
+                    "const": "netconf",
+                    "type": "string"
+                  }
+                ]
+              },
+              "versionNo": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "deviceId",
+              "versionNo",
+              "contentSha256",
+              "sourceProtocol",
+              "collectedAt",
+              "sizeBytes",
+              "redactionStatus",
+              "content"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ConfigBackupSummariesResponse": {
+        "$id": "ConfigBackupSummariesResponse",
+        "additionalProperties": false,
+        "properties": {
+          "backups": {
+            "items": {
+              "$id": "ConfigBackupSummary",
+              "additionalProperties": false,
+              "properties": {
+                "collectedAt": {
+                  "type": "string"
+                },
+                "contentSha256": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "deviceId": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "id": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "redactionStatus": {
+                  "anyOf": [
+                    {
+                      "const": "redacted",
+                      "type": "string"
+                    },
+                    {
+                      "const": "unredacted",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "sizeBytes": {
+                  "maximum": 2097152,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "sourceProtocol": {
+                  "anyOf": [
+                    {
+                      "const": "ssh",
+                      "type": "string"
+                    },
+                    {
+                      "const": "netconf",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "versionNo": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "deviceId",
+                "versionNo",
+                "contentSha256",
+                "sourceProtocol",
+                "collectedAt",
+                "sizeBytes",
+                "redactionStatus"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "backups"
+        ],
+        "type": "object"
+      },
+      "ConfigBackupSummary": {
+        "$id": "ConfigBackupSummary",
+        "additionalProperties": false,
+        "properties": {
+          "collectedAt": {
+            "type": "string"
+          },
+          "contentSha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "deviceId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "redactionStatus": {
+            "anyOf": [
+              {
+                "const": "redacted",
+                "type": "string"
+              },
+              {
+                "const": "unredacted",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              }
+            ]
+          },
+          "sizeBytes": {
+            "maximum": 2097152,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sourceProtocol": {
+            "anyOf": [
+              {
+                "const": "ssh",
+                "type": "string"
+              },
+              {
+                "const": "netconf",
+                "type": "string"
+              }
+            ]
+          },
+          "versionNo": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "deviceId",
+          "versionNo",
+          "contentSha256",
+          "sourceProtocol",
+          "collectedAt",
+          "sizeBytes",
+          "redactionStatus"
+        ],
+        "type": "object"
+      },
       "DatabaseInstance": {
         "$id": "DatabaseInstance",
         "additionalProperties": true,
@@ -968,6 +1439,10 @@
                   },
                   {
                     "const": "server",
+                    "type": "string"
+                  },
+                  {
+                    "const": "network_device",
                     "type": "string"
                   }
                 ]
@@ -1669,6 +2144,10 @@
                         },
                         {
                           "const": "server",
+                          "type": "string"
+                        },
+                        {
+                          "const": "network_device",
                           "type": "string"
                         }
                       ]
@@ -3382,6 +3861,1775 @@
         ],
         "type": "object"
       },
+      "NetworkDevice": {
+        "$id": "NetworkDevice",
+        "additionalProperties": false,
+        "properties": {
+          "collection_enabled": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "hasSnmpCredential": {
+            "type": "boolean"
+          },
+          "hasSshCredential": {
+            "type": "boolean"
+          },
+          "host": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_check_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "os_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "serial_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "site": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "snmp_port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "ssh_port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "$id": "NetworkDeviceStatus",
+            "anyOf": [
+              {
+                "const": "unknown",
+                "type": "string"
+              },
+              {
+                "const": "online",
+                "type": "string"
+              },
+              {
+                "const": "offline",
+                "type": "string"
+              },
+              {
+                "const": "error",
+                "type": "string"
+              },
+              {
+                "const": "unreachable",
+                "type": "string"
+              }
+            ]
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "vendor": {
+            "const": "huawei",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "label",
+          "host",
+          "site",
+          "vendor",
+          "model",
+          "os_version",
+          "serial_number",
+          "snmp_port",
+          "ssh_port",
+          "status",
+          "last_check_at",
+          "collection_enabled",
+          "created_at",
+          "updated_at",
+          "hasSnmpCredential",
+          "hasSshCredential"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceCapabilitiesResponse": {
+        "$id": "NetworkDeviceCapabilitiesResponse",
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "items": {
+              "$id": "NetworkDeviceCapability",
+              "additionalProperties": false,
+              "properties": {
+                "checkedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "evidence": {
+                  "anyOf": [
+                    {
+                      "patternProperties": {
+                        "^(.*)$": {}
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "key": {
+                  "type": "string"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "state": {
+                  "anyOf": [
+                    {
+                      "const": "declared",
+                      "type": "string"
+                    },
+                    {
+                      "const": "configured",
+                      "type": "string"
+                    },
+                    {
+                      "const": "verified",
+                      "type": "string"
+                    },
+                    {
+                      "const": "degraded",
+                      "type": "string"
+                    },
+                    {
+                      "const": "unsupported",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "validUntil": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "key",
+                "state",
+                "evidence",
+                "reason",
+                "checkedAt",
+                "validUntil"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "deviceId": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deviceId",
+          "capabilities"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceCapability": {
+        "$id": "NetworkDeviceCapability",
+        "additionalProperties": false,
+        "properties": {
+          "checkedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^(.*)$": {}
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "anyOf": [
+              {
+                "const": "declared",
+                "type": "string"
+              },
+              {
+                "const": "configured",
+                "type": "string"
+              },
+              {
+                "const": "verified",
+                "type": "string"
+              },
+              {
+                "const": "degraded",
+                "type": "string"
+              },
+              {
+                "const": "unsupported",
+                "type": "string"
+              }
+            ]
+          },
+          "validUntil": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "state",
+          "evidence",
+          "reason",
+          "checkedAt",
+          "validUntil"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceInterface": {
+        "$id": "NetworkDeviceInterface",
+        "additionalProperties": false,
+        "properties": {
+          "adminStatus": {
+            "type": "string"
+          },
+          "deviceId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "ifAlias": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ifIndex": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ifName": {
+            "type": "string"
+          },
+          "lastSeenAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operStatus": {
+            "type": "string"
+          },
+          "speedBps": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "deviceId",
+          "ifIndex",
+          "ifName",
+          "ifAlias",
+          "speedBps",
+          "adminStatus",
+          "operStatus",
+          "lastSeenAt"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceInterfacesResponse": {
+        "$id": "NetworkDeviceInterfacesResponse",
+        "additionalProperties": false,
+        "properties": {
+          "interfaces": {
+            "items": {
+              "$id": "NetworkDeviceInterface",
+              "additionalProperties": false,
+              "properties": {
+                "adminStatus": {
+                  "type": "string"
+                },
+                "deviceId": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "id": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "ifAlias": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "ifIndex": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "ifName": {
+                  "type": "string"
+                },
+                "lastSeenAt": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "operStatus": {
+                  "type": "string"
+                },
+                "speedBps": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "deviceId",
+                "ifIndex",
+                "ifName",
+                "ifAlias",
+                "speedBps",
+                "adminStatus",
+                "operStatus",
+                "lastSeenAt"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "interfaces"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceMetric": {
+        "$id": "NetworkDeviceMetric",
+        "additionalProperties": false,
+        "properties": {
+          "dimensions": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^(.*)$": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metricId": {
+            "type": "string"
+          },
+          "observedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quality": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "metricId",
+          "value",
+          "observedAt",
+          "quality",
+          "source"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceMetricsResponse": {
+        "$id": "NetworkDeviceMetricsResponse",
+        "additionalProperties": false,
+        "properties": {
+          "deviceId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "metrics": {
+            "items": {
+              "$id": "NetworkDeviceMetric",
+              "additionalProperties": false,
+              "properties": {
+                "dimensions": {
+                  "anyOf": [
+                    {
+                      "patternProperties": {
+                        "^(.*)$": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "metricId": {
+                  "type": "string"
+                },
+                "observedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "quality": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "metricId",
+                "value",
+                "observedAt",
+                "quality",
+                "source"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "deviceId",
+          "metrics"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceProbeResponse": {
+        "$id": "NetworkDeviceProbeResponse",
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "interfaces": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "observations": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceProbeResult": {
+        "$id": "NetworkDeviceProbeResult",
+        "additionalProperties": false,
+        "properties": {
+          "observedAt": {
+            "type": "string"
+          },
+          "quality": {
+            "type": "string"
+          },
+          "reachable": {
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sysName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "uptimeSeconds": {
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "reachable",
+          "quality",
+          "observedAt"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceRelation": {
+        "$id": "NetworkDeviceRelation",
+        "additionalProperties": false,
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^(.*)$": {}
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provenance": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "relationType": {
+            "$id": "NetworkDeviceRelationType",
+            "anyOf": [
+              {
+                "const": "runs_on",
+                "type": "string"
+              },
+              {
+                "const": "hosts",
+                "type": "string"
+              },
+              {
+                "const": "replicates_to",
+                "type": "string"
+              },
+              {
+                "const": "depends_on",
+                "type": "string"
+              },
+              {
+                "const": "connected_to",
+                "type": "string"
+              },
+              {
+                "const": "serves",
+                "type": "string"
+              }
+            ]
+          },
+          "source": {
+            "$id": "NetworkResourceRef",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "type": {
+                "anyOf": [
+                  {
+                    "const": "instance",
+                    "type": "string"
+                  },
+                  {
+                    "const": "server",
+                    "type": "string"
+                  },
+                  {
+                    "const": "network_device",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          },
+          "target": {
+            "$id": "NetworkResourceRef",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "type": {
+                "anyOf": [
+                  {
+                    "const": "instance",
+                    "type": "string"
+                  },
+                  {
+                    "const": "server",
+                    "type": "string"
+                  },
+                  {
+                    "const": "network_device",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          },
+          "validFrom": {
+            "type": "string"
+          },
+          "validUntil": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "source",
+          "target",
+          "relationType",
+          "provenance",
+          "metadata",
+          "validFrom",
+          "validUntil"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceRelationInput": {
+        "$id": "NetworkDeviceRelationInput",
+        "additionalProperties": false,
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^(.*)$": {}
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provenance": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "relationType": {
+            "anyOf": [
+              {
+                "const": "connected_to",
+                "type": "string"
+              },
+              {
+                "const": "serves",
+                "type": "string"
+              }
+            ]
+          },
+          "target": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "type": {
+                "anyOf": [
+                  {
+                    "const": "server",
+                    "type": "string"
+                  },
+                  {
+                    "const": "network_device",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          },
+          "validFrom": {
+            "type": "string"
+          },
+          "validUntil": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "target",
+          "relationType"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceRelationsRequest": {
+        "$id": "NetworkDeviceRelationsRequest",
+        "additionalProperties": false,
+        "properties": {
+          "relations": {
+            "items": {
+              "$id": "NetworkDeviceRelationInput",
+              "additionalProperties": false,
+              "properties": {
+                "metadata": {
+                  "anyOf": [
+                    {
+                      "patternProperties": {
+                        "^(.*)$": {}
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "provenance": {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "relationType": {
+                  "anyOf": [
+                    {
+                      "const": "connected_to",
+                      "type": "string"
+                    },
+                    {
+                      "const": "serves",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "target": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "type": {
+                      "anyOf": [
+                        {
+                          "const": "server",
+                          "type": "string"
+                        },
+                        {
+                          "const": "network_device",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "validFrom": {
+                  "type": "string"
+                },
+                "validUntil": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "target",
+                "relationType"
+              ],
+              "type": "object"
+            },
+            "maxItems": 32,
+            "type": "array"
+          }
+        },
+        "required": [
+          "relations"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceRelationsResponse": {
+        "$id": "NetworkDeviceRelationsResponse",
+        "additionalProperties": false,
+        "properties": {
+          "relations": {
+            "items": {
+              "$id": "NetworkDeviceRelation",
+              "additionalProperties": false,
+              "properties": {
+                "metadata": {
+                  "anyOf": [
+                    {
+                      "patternProperties": {
+                        "^(.*)$": {}
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "provenance": {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "relationType": {
+                  "$id": "NetworkDeviceRelationType",
+                  "anyOf": [
+                    {
+                      "const": "runs_on",
+                      "type": "string"
+                    },
+                    {
+                      "const": "hosts",
+                      "type": "string"
+                    },
+                    {
+                      "const": "replicates_to",
+                      "type": "string"
+                    },
+                    {
+                      "const": "depends_on",
+                      "type": "string"
+                    },
+                    {
+                      "const": "connected_to",
+                      "type": "string"
+                    },
+                    {
+                      "const": "serves",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "source": {
+                  "$id": "NetworkResourceRef",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "type": {
+                      "anyOf": [
+                        {
+                          "const": "instance",
+                          "type": "string"
+                        },
+                        {
+                          "const": "server",
+                          "type": "string"
+                        },
+                        {
+                          "const": "network_device",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "target": {
+                  "$id": "NetworkResourceRef",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "type": {
+                      "anyOf": [
+                        {
+                          "const": "instance",
+                          "type": "string"
+                        },
+                        {
+                          "const": "server",
+                          "type": "string"
+                        },
+                        {
+                          "const": "network_device",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "validFrom": {
+                  "type": "string"
+                },
+                "validUntil": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "source",
+                "target",
+                "relationType",
+                "provenance",
+                "metadata",
+                "validFrom",
+                "validUntil"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "relations"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceRelationType": {
+        "$id": "NetworkDeviceRelationType",
+        "anyOf": [
+          {
+            "const": "runs_on",
+            "type": "string"
+          },
+          {
+            "const": "hosts",
+            "type": "string"
+          },
+          {
+            "const": "replicates_to",
+            "type": "string"
+          },
+          {
+            "const": "depends_on",
+            "type": "string"
+          },
+          {
+            "const": "connected_to",
+            "type": "string"
+          },
+          {
+            "const": "serves",
+            "type": "string"
+          }
+        ]
+      },
+      "NetworkDeviceSnmpCredential": {
+        "$id": "NetworkDeviceSnmpCredential",
+        "additionalProperties": false,
+        "properties": {
+          "authProtocol": {
+            "anyOf": [
+              {
+                "const": "MD5",
+                "type": "string"
+              },
+              {
+                "const": "SHA",
+                "type": "string"
+              },
+              {
+                "const": "SHA-256",
+                "type": "string"
+              },
+              {
+                "const": "SHA-512",
+                "type": "string"
+              }
+            ]
+          },
+          "authSecret": {
+            "minLength": 8,
+            "type": "string"
+          },
+          "privacyProtocol": {
+            "anyOf": [
+              {
+                "const": "DES",
+                "type": "string"
+              },
+              {
+                "const": "AES",
+                "type": "string"
+              },
+              {
+                "const": "AES-128",
+                "type": "string"
+              },
+              {
+                "const": "AES-192",
+                "type": "string"
+              },
+              {
+                "const": "AES-256",
+                "type": "string"
+              }
+            ]
+          },
+          "privacySecret": {
+            "minLength": 8,
+            "type": "string"
+          },
+          "securityLevel": {
+            "$id": "NetworkDeviceSnmpSecurityLevel",
+            "anyOf": [
+              {
+                "const": "noAuthNoPriv",
+                "type": "string"
+              },
+              {
+                "const": "authNoPriv",
+                "type": "string"
+              },
+              {
+                "const": "authPriv",
+                "type": "string"
+              }
+            ]
+          },
+          "username": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "securityLevel"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceSnmpSecurityLevel": {
+        "$id": "NetworkDeviceSnmpSecurityLevel",
+        "anyOf": [
+          {
+            "const": "noAuthNoPriv",
+            "type": "string"
+          },
+          {
+            "const": "authNoPriv",
+            "type": "string"
+          },
+          {
+            "const": "authPriv",
+            "type": "string"
+          }
+        ]
+      },
+      "NetworkDevicesResponse": {
+        "$id": "NetworkDevicesResponse",
+        "items": {
+          "$id": "NetworkDevice",
+          "additionalProperties": false,
+          "properties": {
+            "collection_enabled": {
+              "type": "boolean"
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "hasSnmpCredential": {
+              "type": "boolean"
+            },
+            "hasSshCredential": {
+              "type": "boolean"
+            },
+            "host": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "id": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "label": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "last_check_at": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "os_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "serial_number": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "site": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "snmp_port": {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "ssh_port": {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "status": {
+              "$id": "NetworkDeviceStatus",
+              "anyOf": [
+                {
+                  "const": "unknown",
+                  "type": "string"
+                },
+                {
+                  "const": "online",
+                  "type": "string"
+                },
+                {
+                  "const": "offline",
+                  "type": "string"
+                },
+                {
+                  "const": "error",
+                  "type": "string"
+                },
+                {
+                  "const": "unreachable",
+                  "type": "string"
+                }
+              ]
+            },
+            "updated_at": {
+              "type": "string"
+            },
+            "vendor": {
+              "const": "huawei",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "label",
+            "host",
+            "site",
+            "vendor",
+            "model",
+            "os_version",
+            "serial_number",
+            "snmp_port",
+            "ssh_port",
+            "status",
+            "last_check_at",
+            "collection_enabled",
+            "created_at",
+            "updated_at",
+            "hasSnmpCredential",
+            "hasSshCredential"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "NetworkDeviceStatus": {
+        "$id": "NetworkDeviceStatus",
+        "anyOf": [
+          {
+            "const": "unknown",
+            "type": "string"
+          },
+          {
+            "const": "online",
+            "type": "string"
+          },
+          {
+            "const": "offline",
+            "type": "string"
+          },
+          {
+            "const": "error",
+            "type": "string"
+          },
+          {
+            "const": "unreachable",
+            "type": "string"
+          }
+        ]
+      },
+      "NetworkDeviceTestConnectionRequest": {
+        "$id": "NetworkDeviceTestConnectionRequest",
+        "additionalProperties": false,
+        "properties": {
+          "host": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "snmp": {
+            "$id": "NetworkDeviceSnmpCredential",
+            "additionalProperties": false,
+            "properties": {
+              "authProtocol": {
+                "anyOf": [
+                  {
+                    "const": "MD5",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SHA",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SHA-256",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SHA-512",
+                    "type": "string"
+                  }
+                ]
+              },
+              "authSecret": {
+                "minLength": 8,
+                "type": "string"
+              },
+              "privacyProtocol": {
+                "anyOf": [
+                  {
+                    "const": "DES",
+                    "type": "string"
+                  },
+                  {
+                    "const": "AES",
+                    "type": "string"
+                  },
+                  {
+                    "const": "AES-128",
+                    "type": "string"
+                  },
+                  {
+                    "const": "AES-192",
+                    "type": "string"
+                  },
+                  {
+                    "const": "AES-256",
+                    "type": "string"
+                  }
+                ]
+              },
+              "privacySecret": {
+                "minLength": 8,
+                "type": "string"
+              },
+              "securityLevel": {
+                "$id": "NetworkDeviceSnmpSecurityLevel",
+                "anyOf": [
+                  {
+                    "const": "noAuthNoPriv",
+                    "type": "string"
+                  },
+                  {
+                    "const": "authNoPriv",
+                    "type": "string"
+                  },
+                  {
+                    "const": "authPriv",
+                    "type": "string"
+                  }
+                ]
+              },
+              "username": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "username",
+              "securityLevel"
+            ],
+            "type": "object"
+          },
+          "snmp_port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "snmpPort": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "snmpv3": {
+            "$id": "NetworkDeviceSnmpCredential",
+            "additionalProperties": false,
+            "properties": {
+              "authProtocol": {
+                "anyOf": [
+                  {
+                    "const": "MD5",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SHA",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SHA-256",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SHA-512",
+                    "type": "string"
+                  }
+                ]
+              },
+              "authSecret": {
+                "minLength": 8,
+                "type": "string"
+              },
+              "privacyProtocol": {
+                "anyOf": [
+                  {
+                    "const": "DES",
+                    "type": "string"
+                  },
+                  {
+                    "const": "AES",
+                    "type": "string"
+                  },
+                  {
+                    "const": "AES-128",
+                    "type": "string"
+                  },
+                  {
+                    "const": "AES-192",
+                    "type": "string"
+                  },
+                  {
+                    "const": "AES-256",
+                    "type": "string"
+                  }
+                ]
+              },
+              "privacySecret": {
+                "minLength": 8,
+                "type": "string"
+              },
+              "securityLevel": {
+                "$id": "NetworkDeviceSnmpSecurityLevel",
+                "anyOf": [
+                  {
+                    "const": "noAuthNoPriv",
+                    "type": "string"
+                  },
+                  {
+                    "const": "authNoPriv",
+                    "type": "string"
+                  },
+                  {
+                    "const": "authPriv",
+                    "type": "string"
+                  }
+                ]
+              },
+              "username": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "username",
+              "securityLevel"
+            ],
+            "type": "object"
+          },
+          "vendor": {
+            "const": "huawei",
+            "type": "string"
+          },
+          "version": {
+            "const": 3,
+            "type": "number"
+          }
+        },
+        "required": [
+          "host"
+        ],
+        "type": "object"
+      },
+      "NetworkDeviceTestConnectionResponse": {
+        "$id": "NetworkDeviceTestConnectionResponse",
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "probe": {
+            "$id": "NetworkDeviceProbeResult",
+            "additionalProperties": false,
+            "properties": {
+              "observedAt": {
+                "type": "string"
+              },
+              "quality": {
+                "type": "string"
+              },
+              "reachable": {
+                "type": "boolean"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sysName": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "uptimeSeconds": {
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "reachable",
+              "quality",
+              "observedAt"
+            ],
+            "type": "object"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "type": "object"
+      },
+      "NetworkResourceRef": {
+        "$id": "NetworkResourceRef",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "const": "instance",
+                "type": "string"
+              },
+              {
+                "const": "server",
+                "type": "string"
+              },
+              {
+                "const": "network_device",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "type": "object"
+      },
       "OkResponse": {
         "$id": "OkResponse",
         "additionalProperties": false,
@@ -4158,6 +6406,865 @@
             "description": "Service health"
           }
         }
+      }
+    },
+    "/api/network-devices": {
+      "get": {
+        "operationId": "listNetworkDevices",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkDevicesResponse"
+                }
+              }
+            },
+            "description": "Redacted managed network devices"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "createNetworkDevice",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkDevice"
+                }
+              }
+            },
+            "description": "Network device created"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/network-devices/{id}": {
+      "delete": {
+        "operationId": "deleteNetworkDevice",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            },
+            "description": "Network device deleted"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "get": {
+        "operationId": "getNetworkDevice",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkDevice"
+                }
+              }
+            },
+            "description": "Redacted network device"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "updateNetworkDevice",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkDevice"
+                }
+              }
+            },
+            "description": "Network device updated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/network-devices/{id}/capabilities": {
+      "get": {
+        "operationId": "getNetworkDeviceCapabilities",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "key",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkDeviceCapabilitiesResponse"
+                }
+              }
+            },
+            "description": "Capability state and bounded evidence"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid resource identifier"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Network-device view permission required"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Capability lookup failed"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/network-devices/{id}/config-backups": {
+      "get": {
+        "operationId": "listNetworkDeviceConfigBackups",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigBackupSummariesResponse"
+                }
+              }
+            },
+            "description": "Configuration backup summaries without raw content"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "captureNetworkDeviceConfigBackup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigBackupDetail"
+                }
+              }
+            },
+            "description": "New immutable configuration backup summary and redacted preview"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid backup request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Network-device backup permission required"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Backup collection failed"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/network-devices/{id}/config-backups/{backupId}": {
+      "get": {
+        "operationId": "getNetworkDeviceConfigBackup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "backupId",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "raw",
+            "required": false,
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigBackupResponse"
+                }
+              }
+            },
+            "description": "Redacted backup detail by default; raw content only with backup permission"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid backup identifier"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Raw backup permission required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Backup unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/network-devices/{id}/config-backups/{backupId}/diff": {
+      "get": {
+        "operationId": "diffNetworkDeviceConfigBackups",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "backupId",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigBackupDiffResponse"
+                }
+              }
+            },
+            "description": "Bounded redacted configuration diff"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid diff identifiers"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Network-device view permission required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Backup unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/network-devices/{id}/interfaces": {
+      "get": {
+        "operationId": "listNetworkDeviceInterfaces",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkDeviceInterfacesResponse"
+                }
+              }
+            },
+            "description": "Network device interfaces"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/network-devices/{id}/metrics": {
+      "get": {
+        "operationId": "getNetworkDeviceMetrics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkDeviceMetricsResponse"
+                }
+              }
+            },
+            "description": "Network device observations"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/network-devices/{id}/probe": {
+      "post": {
+        "operationId": "probeNetworkDevice",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkDeviceProbeResponse"
+                }
+              }
+            },
+            "description": "Collected read-only device observations"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid resource identifier or collection request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Network-device view permission required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Network device unavailable"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Collection failed"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/network-devices/{id}/relations": {
+      "get": {
+        "operationId": "listNetworkDeviceRelations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkDeviceRelationsResponse"
+                }
+              }
+            },
+            "description": "Visible active resource relations"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid resource identifier"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Network-device view permission required"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "replaceNetworkDeviceRelations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NetworkDeviceRelationsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkDeviceRelationsResponse"
+                }
+              }
+            },
+            "description": "Created active network-device relations"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid relation payload"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Network-device manage permission required"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/network-devices/test-connection": {
+      "post": {
+        "operationId": "testNetworkDeviceConnection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NetworkDeviceTestConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkDeviceTestConnectionResponse"
+                }
+              }
+            },
+            "description": "Validated read-only SNMPv3 probe result"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid or unsupported SNMPv3 payload"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Network-device manage permission required"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Probe failed or target was denied"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/api/servers/{id}/instances": {

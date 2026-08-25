@@ -27,6 +27,157 @@ export const CapabilityStateSchema = Type.Union([
   Type.Literal('unsupported'),
 ]);
 
+export const NetworkDeviceStatusSchema = Type.Union([
+  Type.Literal('unknown'), Type.Literal('online'), Type.Literal('offline'), Type.Literal('error'), Type.Literal('unreachable'),
+], { $id: 'NetworkDeviceStatus' });
+
+export const NetworkDeviceSchema = Type.Object({
+  id: Type.Integer({ minimum: 1 }),
+  name: Type.String({ minLength: 1, maxLength: 128 }),
+  label: Type.Union([Type.String(), Type.Null()]),
+  host: Type.String({ minLength: 1 }),
+  site: Type.Union([Type.String(), Type.Null()]),
+  vendor: Type.Literal('huawei'),
+  model: Type.Union([Type.String(), Type.Null()]),
+  os_version: Type.Union([Type.String(), Type.Null()]),
+  serial_number: Type.Union([Type.String(), Type.Null()]),
+  snmp_port: Type.Integer({ minimum: 1, maximum: 65535 }),
+  ssh_port: Type.Integer({ minimum: 1, maximum: 65535 }),
+  status: NetworkDeviceStatusSchema,
+  last_check_at: Type.Union([Type.String(), Type.Null()]),
+  collection_enabled: Type.Boolean(),
+  created_at: Type.String(),
+  updated_at: Type.String(),
+  hasSnmpCredential: Type.Boolean(),
+  hasSshCredential: Type.Boolean(),
+}, { $id: 'NetworkDevice', additionalProperties: false });
+
+export const NetworkDevicesResponseSchema = Type.Array(NetworkDeviceSchema, { $id: 'NetworkDevicesResponse' });
+
+export const NetworkDeviceMetricSchema = Type.Object({
+  metricId: Type.String(), value: Type.Union([Type.Number(), Type.Null()]),
+  observedAt: Type.Union([Type.String(), Type.Null()]), quality: Type.String(), source: Type.String(),
+  dimensions: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Null()])),
+}, { $id: 'NetworkDeviceMetric', additionalProperties: false });
+export const NetworkDeviceMetricsResponseSchema = Type.Object({
+  deviceId: Type.Integer({ minimum: 1 }), metrics: Type.Array(NetworkDeviceMetricSchema),
+}, { $id: 'NetworkDeviceMetricsResponse', additionalProperties: false });
+
+export const NetworkDeviceInterfaceSchema = Type.Object({
+  id: Type.Integer({ minimum: 1 }), deviceId: Type.Integer({ minimum: 1 }), ifIndex: Type.Integer({ minimum: 0 }),
+  ifName: Type.String(), ifAlias: Type.Union([Type.String(), Type.Null()]), speedBps: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+  adminStatus: Type.String(), operStatus: Type.String(), lastSeenAt: Type.Union([Type.String(), Type.Null()]),
+}, { $id: 'NetworkDeviceInterface', additionalProperties: false });
+export const NetworkDeviceInterfacesResponseSchema = Type.Object({ interfaces: Type.Array(NetworkDeviceInterfaceSchema) }, { $id: 'NetworkDeviceInterfacesResponse', additionalProperties: false });
+
+export const NetworkDeviceSnmpSecurityLevelSchema = Type.Union([
+  Type.Literal('noAuthNoPriv'), Type.Literal('authNoPriv'), Type.Literal('authPriv'),
+], { $id: 'NetworkDeviceSnmpSecurityLevel' });
+export const NetworkDeviceSnmpCredentialSchema = Type.Object({
+  username: Type.String({ minLength: 1, maxLength: 64 }),
+  securityLevel: NetworkDeviceSnmpSecurityLevelSchema,
+  authProtocol: Type.Optional(Type.Union([Type.Literal('MD5'), Type.Literal('SHA'), Type.Literal('SHA-256'), Type.Literal('SHA-512')])),
+  authSecret: Type.Optional(Type.String({ minLength: 8 })),
+  privacyProtocol: Type.Optional(Type.Union([Type.Literal('DES'), Type.Literal('AES'), Type.Literal('AES-128'), Type.Literal('AES-192'), Type.Literal('AES-256')])),
+  privacySecret: Type.Optional(Type.String({ minLength: 8 })),
+}, { $id: 'NetworkDeviceSnmpCredential', additionalProperties: false });
+export const NetworkDeviceTestConnectionRequestSchema = Type.Object({
+  host: Type.String({ minLength: 1 }),
+  version: Type.Optional(Type.Literal(3)),
+  snmpPort: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
+  snmp_port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
+  snmpv3: Type.Optional(NetworkDeviceSnmpCredentialSchema),
+  snmp: Type.Optional(NetworkDeviceSnmpCredentialSchema),
+  vendor: Type.Optional(Type.Literal('huawei')),
+}, { $id: 'NetworkDeviceTestConnectionRequest', additionalProperties: false });
+export const NetworkDeviceProbeResultSchema = Type.Object({
+  reachable: Type.Boolean(),
+  quality: Type.String(),
+  reason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  observedAt: Type.String(),
+  sysName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  uptimeSeconds: Type.Optional(Type.Number({ minimum: 0 })),
+}, { $id: 'NetworkDeviceProbeResult', additionalProperties: false });
+export const NetworkDeviceTestConnectionResponseSchema = Type.Object({
+  success: Type.Boolean(),
+  probe: Type.Optional(NetworkDeviceProbeResultSchema),
+  error: Type.Optional(Type.String()),
+}, { $id: 'NetworkDeviceTestConnectionResponse', additionalProperties: false });
+export const NetworkDeviceProbeResponseSchema = Type.Object({
+  success: Type.Boolean(),
+  observations: Type.Optional(Type.Integer({ minimum: 0 })),
+  interfaces: Type.Optional(Type.Integer({ minimum: 0 })),
+  error: Type.Optional(Type.String()),
+}, { $id: 'NetworkDeviceProbeResponse', additionalProperties: false });
+export const NetworkDeviceCapabilitySchema = Type.Object({
+  key: Type.String(),
+  state: CapabilityStateSchema,
+  evidence: Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()]),
+  reason: Type.Union([Type.String(), Type.Null()]),
+  checkedAt: Type.Union([Type.String(), Type.Null()]),
+  validUntil: Type.Union([Type.String(), Type.Null()]),
+}, { $id: 'NetworkDeviceCapability', additionalProperties: false });
+export const NetworkDeviceCapabilitiesResponseSchema = Type.Object({
+  deviceId: Type.Integer({ minimum: 1 }), capabilities: Type.Array(NetworkDeviceCapabilitySchema),
+}, { $id: 'NetworkDeviceCapabilitiesResponse', additionalProperties: false });
+
+export const ConfigBackupSummarySchema = Type.Object({
+  id: Type.Integer({ minimum: 1 }), deviceId: Type.Integer({ minimum: 1 }), versionNo: Type.Integer({ minimum: 1 }),
+  contentSha256: Type.String({ pattern: '^[a-f0-9]{64}$' }), sourceProtocol: Type.Union([Type.Literal('ssh'), Type.Literal('netconf')]),
+  collectedAt: Type.String(), sizeBytes: Type.Integer({ minimum: 0, maximum: 2097152 }),
+  redactionStatus: Type.Union([Type.Literal('redacted'), Type.Literal('unredacted'), Type.Literal('failed')]),
+}, { $id: 'ConfigBackupSummary', additionalProperties: false });
+export const ConfigBackupSummariesResponseSchema = Type.Object({ backups: Type.Array(ConfigBackupSummarySchema) }, { $id: 'ConfigBackupSummariesResponse', additionalProperties: false });
+export const ConfigBackupDetailSchema = Type.Composite([
+  ConfigBackupSummarySchema,
+  Type.Object({ preview: Type.String() }),
+], { $id: 'ConfigBackupDetail', additionalProperties: false });
+export const ConfigBackupRawSchema = Type.Composite([
+  ConfigBackupSummarySchema,
+  Type.Object({ content: Type.String() }),
+], { $id: 'ConfigBackupRaw', additionalProperties: false });
+export const ConfigBackupResponseSchema = Type.Union([
+  ConfigBackupDetailSchema, ConfigBackupRawSchema,
+], { $id: 'ConfigBackupResponse' });
+export const ConfigBackupDiffResponseSchema = Type.Object({
+  fromId: Type.Integer({ minimum: 1 }), toId: Type.Integer({ minimum: 1 }), diff: Type.String(),
+}, { $id: 'ConfigBackupDiffResponse', additionalProperties: false });
+
+export const NetworkResourceRefSchema = Type.Object({
+  type: Type.Union([Type.Literal('instance'), Type.Literal('server'), Type.Literal('network_device')]),
+  id: Type.Integer({ minimum: 1 }),
+}, { $id: 'NetworkResourceRef', additionalProperties: false });
+export const NetworkDeviceRelationTypeSchema = Type.Union([
+  Type.Literal('runs_on'), Type.Literal('hosts'), Type.Literal('replicates_to'),
+  Type.Literal('depends_on'), Type.Literal('connected_to'), Type.Literal('serves'),
+], { $id: 'NetworkDeviceRelationType' });
+export const NetworkDeviceRelationSchema = Type.Object({
+  source: NetworkResourceRefSchema,
+  target: NetworkResourceRefSchema,
+  relationType: NetworkDeviceRelationTypeSchema,
+  provenance: Type.String({ minLength: 1, maxLength: 64 }),
+  metadata: Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()]),
+  validFrom: Type.String(),
+  validUntil: Type.Union([Type.String(), Type.Null()]),
+}, { $id: 'NetworkDeviceRelation', additionalProperties: false });
+export const NetworkDeviceRelationInputSchema = Type.Object({
+  target: Type.Object({
+    type: Type.Union([Type.Literal('server'), Type.Literal('network_device')]),
+    id: Type.Integer({ minimum: 1 }),
+  }, { additionalProperties: false }),
+  relationType: Type.Union([Type.Literal('connected_to'), Type.Literal('serves')]),
+  provenance: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  metadata: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])),
+  validFrom: Type.Optional(Type.String()),
+  validUntil: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+}, { $id: 'NetworkDeviceRelationInput', additionalProperties: false });
+export const NetworkDeviceRelationsRequestSchema = Type.Object({
+  relations: Type.Array(NetworkDeviceRelationInputSchema, { maxItems: 32 }),
+}, { $id: 'NetworkDeviceRelationsRequest', additionalProperties: false });
+export const NetworkDeviceRelationsResponseSchema = Type.Object({
+  relations: Type.Array(NetworkDeviceRelationSchema),
+}, { $id: 'NetworkDeviceRelationsResponse', additionalProperties: false });
+
 const AdapterCapabilitiesSchema = Type.Partial(Type.Object({
   connect: CapabilityStateSchema,
   query: CapabilityStateSchema,
@@ -258,7 +409,7 @@ export const DiagnosticGapSchema = Type.Object({
   ])),
   code: Type.String(),
   resource: Type.Optional(Type.Object({
-    type: Type.Union([Type.Literal('instance'), Type.Literal('server')]),
+    type: Type.Union([Type.Literal('instance'), Type.Literal('server'), Type.Literal('network_device')]),
     id: Type.Integer({ minimum: 1 }),
   }, { additionalProperties: false })),
   source: Type.Optional(Type.String()),
@@ -298,6 +449,33 @@ export const PublicApiSchemas = {
   CapabilityState: CapabilityStateSchema,
   AdapterCapability: AdapterCapabilitySchema,
   AdapterCapabilitiesResponse: AdapterCapabilitiesResponseSchema,
+  NetworkDeviceStatus: NetworkDeviceStatusSchema,
+  NetworkDevice: NetworkDeviceSchema,
+  NetworkDevicesResponse: NetworkDevicesResponseSchema,
+  NetworkDeviceMetric: NetworkDeviceMetricSchema,
+  NetworkDeviceMetricsResponse: NetworkDeviceMetricsResponseSchema,
+  NetworkDeviceInterface: NetworkDeviceInterfaceSchema,
+  NetworkDeviceInterfacesResponse: NetworkDeviceInterfacesResponseSchema,
+  NetworkDeviceSnmpSecurityLevel: NetworkDeviceSnmpSecurityLevelSchema,
+  NetworkDeviceSnmpCredential: NetworkDeviceSnmpCredentialSchema,
+  NetworkDeviceTestConnectionRequest: NetworkDeviceTestConnectionRequestSchema,
+  NetworkDeviceProbeResult: NetworkDeviceProbeResultSchema,
+  NetworkDeviceTestConnectionResponse: NetworkDeviceTestConnectionResponseSchema,
+  NetworkDeviceProbeResponse: NetworkDeviceProbeResponseSchema,
+  NetworkDeviceCapability: NetworkDeviceCapabilitySchema,
+  NetworkDeviceCapabilitiesResponse: NetworkDeviceCapabilitiesResponseSchema,
+  ConfigBackupSummary: ConfigBackupSummarySchema,
+  ConfigBackupSummariesResponse: ConfigBackupSummariesResponseSchema,
+  ConfigBackupDetail: ConfigBackupDetailSchema,
+  ConfigBackupRaw: ConfigBackupRawSchema,
+  ConfigBackupResponse: ConfigBackupResponseSchema,
+  ConfigBackupDiffResponse: ConfigBackupDiffResponseSchema,
+  NetworkResourceRef: NetworkResourceRefSchema,
+  NetworkDeviceRelationType: NetworkDeviceRelationTypeSchema,
+  NetworkDeviceRelation: NetworkDeviceRelationSchema,
+  NetworkDeviceRelationInput: NetworkDeviceRelationInputSchema,
+  NetworkDeviceRelationsRequest: NetworkDeviceRelationsRequestSchema,
+  NetworkDeviceRelationsResponse: NetworkDeviceRelationsResponseSchema,
   DatabaseInstance: DatabaseInstanceSchema,
   DatabaseInstancesResponse: DatabaseInstancesResponseSchema,
   InstanceHostRole: InstanceHostRoleSchema,
@@ -322,6 +500,32 @@ export const PublicApiSchemas = {
 
 export type HealthResponse = Static<typeof HealthResponseSchema>;
 export type AdapterCapabilitiesResponse = Static<typeof AdapterCapabilitiesResponseSchema>;
+export type NetworkDevice = Static<typeof NetworkDeviceSchema>;
+export type NetworkDevicesResponse = Static<typeof NetworkDevicesResponseSchema>;
+export type NetworkDeviceMetric = Static<typeof NetworkDeviceMetricSchema>;
+export type NetworkDeviceMetricsResponse = Static<typeof NetworkDeviceMetricsResponseSchema>;
+export type NetworkDeviceInterface = Static<typeof NetworkDeviceInterfaceSchema>;
+export type NetworkDeviceInterfacesResponse = Static<typeof NetworkDeviceInterfacesResponseSchema>;
+export type NetworkDeviceSnmpSecurityLevel = Static<typeof NetworkDeviceSnmpSecurityLevelSchema>;
+export type NetworkDeviceSnmpCredential = Static<typeof NetworkDeviceSnmpCredentialSchema>;
+export type NetworkDeviceTestConnectionRequest = Static<typeof NetworkDeviceTestConnectionRequestSchema>;
+export type NetworkDeviceProbeResult = Static<typeof NetworkDeviceProbeResultSchema>;
+export type NetworkDeviceTestConnectionResponse = Static<typeof NetworkDeviceTestConnectionResponseSchema>;
+export type NetworkDeviceProbeResponse = Static<typeof NetworkDeviceProbeResponseSchema>;
+export type NetworkDeviceCapability = Static<typeof NetworkDeviceCapabilitySchema>;
+export type NetworkDeviceCapabilitiesResponse = Static<typeof NetworkDeviceCapabilitiesResponseSchema>;
+export type ConfigBackupSummary = Static<typeof ConfigBackupSummarySchema>;
+export type ConfigBackupSummariesResponse = Static<typeof ConfigBackupSummariesResponseSchema>;
+export type ConfigBackupDetail = Static<typeof ConfigBackupDetailSchema>;
+export type ConfigBackupRaw = Static<typeof ConfigBackupRawSchema>;
+export type ConfigBackupResponse = Static<typeof ConfigBackupResponseSchema>;
+export type ConfigBackupDiffResponse = Static<typeof ConfigBackupDiffResponseSchema>;
+export type NetworkResourceRef = Static<typeof NetworkResourceRefSchema>;
+export type NetworkDeviceRelationType = Static<typeof NetworkDeviceRelationTypeSchema>;
+export type NetworkDeviceRelation = Static<typeof NetworkDeviceRelationSchema>;
+export type NetworkDeviceRelationInput = Static<typeof NetworkDeviceRelationInputSchema>;
+export type NetworkDeviceRelationsRequest = Static<typeof NetworkDeviceRelationsRequestSchema>;
+export type NetworkDeviceRelationsResponse = Static<typeof NetworkDeviceRelationsResponseSchema>;
 export type DatabaseInstance = Static<typeof DatabaseInstanceSchema>;
 export type InstanceHostRole = Static<typeof InstanceHostRoleSchema>;
 export type InstanceHostMapping = Static<typeof InstanceHostMappingSchema>;

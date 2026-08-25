@@ -9,6 +9,35 @@ export type HostEvidenceSection = 'metrics' | 'filesystems' | 'systemLogs' | 'ph
 export type DiagnosticGapScope = 'instance' | 'host' | 'storage';
 export type DiagnosticGapSection = 'instance' | 'realtime' | 'history' | 'alerts' | 'logs' | 'slowQueries' | 'storage' | 'relations' | 'hostEvidence' | 'evidencePack';
 
+export type NetworkDeviceStatus = 'unknown' | 'online' | 'offline' | 'error' | 'unreachable';
+export interface NetworkDevice { id: number; name: string; label: string | null; host: string; site: string | null; vendor: 'huawei'; model: string | null; os_version: string | null; serial_number: string | null; snmp_port: number; ssh_port: number; status: NetworkDeviceStatus; last_check_at: string | null; collection_enabled: boolean; created_at: string; updated_at: string; hasSnmpCredential: boolean; hasSshCredential: boolean; }
+export type NetworkDevicesResponse = NetworkDevice[];
+export type NetworkDeviceSnmpSecurityLevel = 'noAuthNoPriv' | 'authNoPriv' | 'authPriv';
+export interface NetworkDeviceSnmpCredential { username: string; securityLevel: NetworkDeviceSnmpSecurityLevel; authProtocol?: 'MD5' | 'SHA' | 'SHA-256' | 'SHA-512'; authSecret?: string; privacyProtocol?: 'DES' | 'AES' | 'AES-128' | 'AES-192' | 'AES-256'; privacySecret?: string; }
+export interface NetworkDeviceTestConnectionRequest { host: string; version?: 3; snmpPort?: number; snmp_port?: number; snmpv3?: NetworkDeviceSnmpCredential; snmp?: NetworkDeviceSnmpCredential; vendor?: 'huawei'; }
+export interface NetworkDeviceProbeResult { reachable: boolean; quality: string; reason?: string | null; observedAt: string; sysName?: string | null; uptimeSeconds?: number; }
+export interface NetworkDeviceTestConnectionResponse { success: boolean; probe?: NetworkDeviceProbeResult; error?: string; }
+export interface NetworkDeviceProbeResponse { success: boolean; observations?: number; interfaces?: number; error?: string; }
+export interface NetworkDeviceMetric { metricId: string; value: number | null; observedAt: string | null; quality: string; source: string; dimensions?: Record<string, string> | null; }
+export interface NetworkDeviceMetricsResponse { deviceId: number; metrics: NetworkDeviceMetric[]; }
+export interface NetworkDeviceInterface { id: number; deviceId: number; ifIndex: number; ifName: string; ifAlias: string | null; speedBps: number | null; adminStatus: string; operStatus: string; lastSeenAt: string | null; }
+export interface NetworkDeviceInterfacesResponse { interfaces: NetworkDeviceInterface[]; }
+export interface NetworkDeviceCapability { key: string; state: CapabilityState; evidence: Record<string, unknown> | null; reason: string | null; checkedAt: string | null; validUntil: string | null; }
+export interface NetworkDeviceCapabilitiesResponse { deviceId: number; capabilities: NetworkDeviceCapability[]; }
+export interface ConfigBackupSummary { id: number; deviceId: number; versionNo: number; contentSha256: string; sourceProtocol: 'ssh' | 'netconf'; collectedAt: string; sizeBytes: number; redactionStatus: 'redacted' | 'unredacted' | 'failed'; }
+export interface ConfigBackupDetail extends ConfigBackupSummary { preview: string; }
+export interface ConfigBackupRaw extends ConfigBackupSummary { content: string; }
+export type ConfigBackupResponse = ConfigBackupDetail | ConfigBackupRaw;
+export interface ConfigBackupDiffResponse { fromId: number; toId: number; diff: string; }
+export interface ConfigBackupSummariesResponse { backups: ConfigBackupSummary[]; }
+export type NetworkResourceType = 'instance' | 'server' | 'network_device';
+export interface NetworkResourceRef { type: NetworkResourceType; id: number; }
+export type NetworkDeviceRelationType = 'runs_on' | 'hosts' | 'replicates_to' | 'depends_on' | 'connected_to' | 'serves';
+export interface NetworkDeviceRelation { source: NetworkResourceRef; target: NetworkResourceRef; relationType: NetworkDeviceRelationType; provenance: string; metadata: Record<string, unknown> | null; validFrom: string; validUntil: string | null; }
+export interface NetworkDeviceRelationInput { target: { type: 'server' | 'network_device'; id: number }; relationType: 'connected_to' | 'serves'; provenance?: string; metadata?: Record<string, unknown> | null; validFrom?: string; validUntil?: string | null; }
+export interface NetworkDeviceRelationsRequest { relations: NetworkDeviceRelationInput[]; }
+export interface NetworkDeviceRelationsResponse { relations: NetworkDeviceRelation[]; }
+
 export interface HealthResponse {
   status: 'ok';
   timestamp: string;
@@ -169,7 +198,7 @@ export interface DiagnosticGap {
   scope: DiagnosticGapScope;
   section?: DiagnosticGapSection;
   code: string;
-  resource?: { type: 'instance' | 'server'; id: number };
+  resource?: { type: 'instance' | 'server' | 'network_device'; id: number };
   source?: string;
 }
 
