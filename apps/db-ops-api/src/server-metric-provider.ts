@@ -8,6 +8,8 @@
  * Requirements: COL-02 (disk detail per mount), COL-03 (metric commands + parsers)
  */
 
+import { isSupportedServerOs } from './server-os-profile.js';
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface MetricDefinition {
@@ -134,9 +136,7 @@ const LINUX_DEFINITIONS: MetricDefinition[] = [
 ];
 
 export function isSupportedLinuxOsType(osType: string): boolean {
-  const normalized = osType.toLowerCase().trim().replace(/\s+/g, ' ');
-  if (normalized === 'linux') return true;
-  return /^(?:rhel|red hat enterprise linux|centos(?: linux)?|rocky(?: linux)?|almalinux|oracle linux(?: server)?|ubuntu(?: linux)?|debian(?: gnu\/linux)?|fedora(?: linux)?|kylin)(?:\s*-?\s*v?\d+(?:\.\d+)*)?$/.test(normalized);
+  return isSupportedServerOs(osType);
 }
 
 // ── Provider class ─────────────────────────────────────────────────────────────

@@ -144,12 +144,25 @@ describe('server collector Linux lifecycle', () => {
     expect(mocks.releaseConnection).toHaveBeenCalledWith(client);
     expect(mocks.closeConnection).not.toHaveBeenCalled();
   });
+
+  it('rejects an unsupported configured distribution with a stable error before connecting', async () => {
+    mocks.getServerById.mockResolvedValueOnce({
+      id: 9, host: 'db.internal', port: 22, credential_type: 'password',
+      host_key_fingerprint: 'SHA256:test', os_type: 'Ubuntu 22.04',
+    });
+    const collector = new ServerCollector();
+
+    await expect(collector.collectServer(9)).resolves.toEqual({
+      success: false, error: 'HOST_OS_UNSUPPORTED',
+    });
+    expect(mocks.getDecryptedCredentials).not.toHaveBeenCalled();
+    expect(mocks.getConnection).not.toHaveBeenCalled();
+  });
 });
 
 describe('server metric Linux OS recognition', () => {
   it.each([
-    'RHEL 7.9', 'rhel8', 'CentOS Linux 7', 'Rocky Linux 8.9',
-    'AlmaLinux 9.2', 'Oracle Linux Server 8.10',
+    'RHEL 7.9', 'rhel8', 'CentOS Linux 7', 'centos9', 'Kylin V10',
     'Red Hat Enterprise Linux 7', 'Red Hat Enterprise Linux 8.10',
   ])('recognizes supported distro label %s', (osType) => {
     expect(isSupportedLinuxOsType(osType)).toBe(true);
@@ -157,9 +170,10 @@ describe('server metric Linux OS recognition', () => {
   });
 
   it('does not trust arbitrary or unverified OS labels as Linux', () => {
-    expect(isSupportedLinuxOsType('other')).toBe(false);
-    expect(isSupportedLinuxOsType('AIX')).toBe(false);
-    expect(new ServerMetricProvider().getDefinitions('other')).toEqual([]);
+    for (const osType of ['other', 'AIX', 'Ubuntu 22.04', 'Debian 12', 'Rocky Linux 8']) {
+      expect(isSupportedLinuxOsType(osType)).toBe(false);
+      expect(new ServerMetricProvider().getDefinitions(osType)).toEqual([]);
+    }
   });
 });
 

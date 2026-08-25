@@ -15,6 +15,7 @@ import serverMetricProvider from './server-metric-provider';
 import { serverDatabaseService, ServerRow } from './server-database-service';
 import { dbConnection } from './db-connection';
 import { isFatalSshCommandError, parseFilesystemEvidence } from './linux-host-evidence-service.js';
+import { isSupportedServerOs } from './server-os-profile.js';
 
 export interface FilesystemMetricRow {
   metricName: 'disk_usage' | 'filesystem_size_bytes' | 'filesystem_used_bytes'
@@ -160,6 +161,13 @@ class ServerCollector {
   private async _collectOneServer(
     server: ServerRow
   ): Promise<{ success: boolean; metricsCount?: number; error?: string }> {
+    // Reject unsupported labels before decrypting credentials or opening a
+    // network connection. This keeps the failure deterministic and avoids
+    // treating an arbitrary label as a generic Linux host.
+    if (!isSupportedServerOs(server.os_type)) {
+      return { success: false, error: 'HOST_OS_UNSUPPORTED' };
+    }
+
     // Get decrypted credentials
     const creds = await serverDatabaseService.getDecryptedCredentials(server.id);
     if (!creds) {
