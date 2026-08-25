@@ -12,6 +12,7 @@ type PersistedUiSettings = Omit<UiSettings, "username" | "sessionKey" | "lastAct
 import { isSupportedLocale } from "../i18n/index.ts";
 import { getSafeLocalStorage } from "./local-storage.ts";
 import { inferBasePathFromPathname, normalizeBasePath } from "./navigation.ts";
+import { isLegacyMainSessionKey } from "./session-key.ts";
 import { normalizeOptionalString } from "./string-coerce.ts";
 import { parseThemeSelection, type ThemeMode, type ThemeName } from "./theme.ts";
 
@@ -96,6 +97,11 @@ function loadUsername(): string {
   } catch {
     return "";
   }
+}
+
+function normalizePersistedChatSessionKey(value: unknown): string {
+  const key = normalizeOptionalString(value) ?? "";
+  return isLegacyMainSessionKey(key) ? "" : key;
 }
 
 function persistUsername(username: string) {
@@ -201,8 +207,8 @@ export function loadSettings(): UiSettings {
       gatewayUrl: defaults.gatewayUrl,
       // Username is persisted in localStorage for convenience
       username: loadUsername(),
-      sessionKey: parsed.sessionKey ?? defaults.sessionKey,
-      lastActiveSessionKey: parsed.lastActiveSessionKey ?? defaults.lastActiveSessionKey,
+      sessionKey: normalizePersistedChatSessionKey(parsed.sessionKey),
+      lastActiveSessionKey: normalizePersistedChatSessionKey(parsed.lastActiveSessionKey),
       theme,
       themeMode: mode,
       chatFocusMode:

@@ -11,6 +11,9 @@
  * @slide/direct-adapter integration
  */
 
+import { generateUUID } from './uuid.ts';
+import type { DeviceIdentity } from './device-identity.ts';
+
 export type AdapterTextDeltaEvent = { type: 'text_delta'; delta: string };
 export type AdapterToolStartEvent = { type: 'tool_start'; toolName: string; args: Record<string, unknown> };
 export type AdapterToolResultEvent = { type: 'tool_result'; toolName: string; result: unknown };
@@ -74,11 +77,21 @@ export class DirectGatewayClient {
   private closed = false;
   private authenticated = false;
   private pendingMessages: Array<{ sessionKey?: string; message: string; messageId: string; idempotencyKey: string }> = [];
+  private deviceIdentity: DeviceIdentity | null = null;
+  private deviceAuth: { deviceId: string; publicKey: string; signature: string; timestamp: number; nonce: string } | null = null;
 
   constructor(opts: DirectGatewayClientOptions) {
     this.url = opts.url ?? defaultAdapterUrl();
     this.onEvent = opts.onEvent;
     this.onStateChange = opts.onStateChange;
+  }
+
+  setDeviceIdentity(identity: DeviceIdentity | null): void {
+    this.deviceIdentity = identity;
+  }
+
+  setDeviceAuth(auth: typeof this.deviceAuth): void {
+    this.deviceAuth = auth;
   }
 
   connect(): void {
@@ -97,7 +110,7 @@ export class DirectGatewayClient {
         ? (window as any).__apiClient?.getToken?.()
         : null;
       if (token) {
-        this.ws!.send(JSON.stringify({ type: 'auth', token }));
+        this.ws!.send(JSON.stringify({ type: 'auth', token, deviceIdentity: this.deviceIdentity, deviceAuth: this.deviceAuth }));
       }
     };
 
@@ -343,8 +356,8 @@ export class DirectGatewayClient {
     return {
       type: 'chat.send',
       protocolVersion: 2,
-      messageId: crypto.randomUUID(),
-      idempotencyKey: options?.idempotencyKey || crypto.randomUUID(),
+      messageId: generateUUID(),
+      idempotencyKey: options?.idempotencyKey || generateUUID(),
       ...(sessionKey ? { sessionKey } : {}),
       ...(options?.attachments ? { attachments: options.attachments } : {}),
       message,
@@ -668,5 +681,33 @@ export function initChatClient(host: Record<string, unknown>): void {
   });
 
   host.client = directClient;
-  directClient.connect();
+  void import('./device-identity.ts').then(async ({ loadOrCreateDeviceIdentity }) => {
+    try {
+      const identity = await loadOrCreateDeviceIdentity();
+      directClient.setDeviceIdentity(identity);
+      const token = apiClient.getToken();
+      if (token) {
+        await fetch('/api/device/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ deviceId: identity.deviceId, publicKey: identity.publicKey }),
+        });
+        const challengeResponse = await fetch('/api/device/challenge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ deviceId: identity.deviceId }),
+        });
+        if (challengeResponse.ok) {
+          const challenge = await challengeResponse.json() as { nonce: string };
+          const { signDevicePayload } = await import('./device-identity.ts');
+          const timestamp = Date.now();
+          const payload = [identity.deviceId, timestamp, challenge.nonce, 'GET', '/ws/auth', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'].join('.');
+          directClient.setDeviceAuth({ deviceId: identity.deviceId, publicKey: identity.publicKey, signature: await signDevicePayload(identity.privateKey, payload), timestamp, nonce: challenge.nonce });
+        }
+      }
+    } catch {
+      // Device registration is additive; JWT login remains available if it fails.
+    }
+    directClient.connect();
+  });
 }

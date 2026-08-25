@@ -43,8 +43,19 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 async function fingerprintPublicKey(publicKey: Uint8Array): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", publicKey.slice().buffer);
-  return bytesToHex(new Uint8Array(hash));
+  if (globalThis.crypto?.subtle?.digest) {
+    const hash = await globalThis.crypto.subtle.digest("SHA-256", publicKey.slice().buffer);
+    return bytesToHex(new Uint8Array(hash));
+  }
+
+  // HTTP deployments may not expose SubtleCrypto. Keep the device id stable
+  // within that browser context while preserving the same hex identifier shape.
+  let hash = 0x811c9dc5;
+  for (const byte of publicKey) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${(hash >>> 0).toString(16).padStart(8, "0")}${bytesToHex(publicKey).slice(0, 56)}`;
 }
 
 async function generateIdentity(): Promise<DeviceIdentity> {

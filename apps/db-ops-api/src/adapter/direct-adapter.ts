@@ -41,6 +41,7 @@ import {
 } from '../auth/actor-context.js';
 import { validateChatSendV2 } from './protocol-v2.js';
 import { agentRunService } from './agent-run-service.js';
+import { getDeviceAuthService } from '../security/device-auth-service.js';
 import { completeAnalysisTool } from '../tools/generated/slide-self-mgmt/complete_analysis.js';
 import {
   ActorConcurrencyLimiter,
@@ -365,6 +366,16 @@ export class DirectAdapter implements IAgentEngine {
               JWT_SECRET,
               randomUUID(),
             );
+            const deviceAuth = (msg as any).deviceAuth;
+            if (deviceAuth && !(await getDeviceAuthService().verify(authenticatedActor, {
+              ...deviceAuth,
+              method: 'GET',
+              path: '/ws/auth',
+              body: '',
+            }))) {
+              closeAfterAuthFailure(4001, 'Device authentication failed');
+              return;
+            }
             if (ws.readyState === WebSocket.OPEN
               && authState === 'authenticating'
               && authGeneration === authenticationGeneration) {

@@ -34,9 +34,7 @@ export type MessageContentItemBase = {
   viewId?: string;
   rawText?: string | null;
   preview?: { kind?: string; surface?: string; url?: string; title?: string; preferredHeight?: number; viewId?: string; [key: string]: unknown };
-  isVoiceNote?: boolean;
   attachment?: {
-    isVoiceNote?: boolean;
     mimeType?: string;
     url: string;
     kind: string;

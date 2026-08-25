@@ -51,14 +51,43 @@ export async function loadPlatformTools(): Promise<ToolRegistry> {
   const registry = new ToolRegistry();
 
   try {
-    // Trigger module-side registration of generated tools into toolCatalog
+    const { toolCatalog, registerPredefinedToolGroups, discoverToolsFromDirectory } = await import('../tools/catalog.js');
+    // Discover tool modules at runtime. The generated indexes remain a
+    // compatibility path for bundled builds, while directory discovery makes
+    // newly added tool modules available without editing a central index.
+    const generatedDir = new URL('../tools/generated/slide-self-mgmt/', import.meta.url).pathname;
+    const opsDir = new URL('../tools/ops/', import.meta.url).pathname;
+    const discovered = [
+      ...(await discoverToolsFromDirectory(generatedDir, '*.js')),
+      ...(await discoverToolsFromDirectory(generatedDir, '*.ts')),
+      ...(await discoverToolsFromDirectory(opsDir, '*.js')),
+      ...(await discoverToolsFromDirectory(opsDir, '*.ts')),
+    ];
+    // Bundled indexes retain side-effect registration for environments where
+    // module enumeration is unavailable; directory discovery then adds any
+    // newly introduced modules without requiring index edits.
     await import('../tools/generated/slide-self-mgmt/index.js');
-    // Register db-ops tools (get_instance_summary, list_active_alerts, query_metrics)
     await import('../tools/ops/index.js');
+    const generatedIndex = await import('../tools/generated/slide-self-mgmt/index.js');
+    const opsModules = await Promise.all([
+      import('../tools/ops/get_instance_summary.js'),
+      import('../tools/ops/list_active_alerts.js'),
+      import('../tools/ops/query_metrics.js'),
+    ]);
+    if (Array.isArray((generatedIndex as any).slideSelfMgmtTools)) {
+      toolCatalog.registerAll((generatedIndex as any).slideSelfMgmtTools);
+    }
+    for (const module of opsModules) {
+      for (const value of Object.values(module)) {
+        if (value && typeof value === 'object' && 'name' in value && 'handler' in value) {
+          toolCatalog.register(value as AnyAgentTool);
+        }
+      }
+    }
+    toolCatalog.registerAll(discovered);
     // Register the cron completion tool (agent calls slide_complete_cron to save results)
     await import('../cron/cron-completion-tool.js');
 
-    const { toolCatalog, registerPredefinedToolGroups } = await import('../tools/catalog.js');
     const { executeCodeTool } = await import('../tools/code-execution-tool.js');
     toolCatalog.register(executeCodeTool);
     registerPredefinedToolGroups();
@@ -80,7 +109,12 @@ export async function loadPlatformTools(): Promise<ToolRegistry> {
         concurrencySafe: !anyTool.ownerOnly,
         exclusive: false,
         scope: anyTool.scope, // Pass through scope for subagent filtering
-        execute: async () => {
+        ownerOnly: anyTool.ownerOnly,
+        group: anyTool.group,
+        pluginId: anyTool.pluginId,
+        requiresApproval: anyTool.requiresApproval,
+        dangerLevel: anyTool.dangerLevel,
+      execute: async () => {
           throw new Error('ACTOR_CONTEXT_REQUIRED');
         },
       };
@@ -129,7 +163,12 @@ export async function createCronToolRegistry(): Promise<ToolRegistry> {
       concurrencySafe: !anyTool.ownerOnly,
       exclusive: false,
       scope: anyTool.scope,
-      execute: async (params: Record<string, unknown>) => {
+      ownerOnly: anyTool.ownerOnly,
+      group: anyTool.group,
+      pluginId: anyTool.pluginId,
+      requiresApproval: anyTool.requiresApproval,
+      dangerLevel: anyTool.dangerLevel,
+      execute: async (params: Record<string, unknown>, context?: { sessionKey?: string }) => {
         if (isCompletion) return anyTool.handler(params, { actor: cronActor, userId: cronActor.userId });
         const { decision, result } = await executeToolWithPolicy(
           cronActor,
@@ -164,8 +203,15 @@ export function createActorBoundToolRegistry(actor: ActorContext, agentId = DEFA
       concurrencySafe: !anyTool.ownerOnly,
       exclusive: false,
       scope: anyTool.scope,
-      execute: async (params: Record<string, unknown>) => {
-        const { decision, result } = await executeToolWithPolicy(actor, anyTool, params, undefined, undefined, undefined, agentId);
+      ownerOnly: anyTool.ownerOnly,
+      group: anyTool.group,
+      pluginId: anyTool.pluginId,
+      requiresApproval: anyTool.requiresApproval,
+      dangerLevel: anyTool.dangerLevel,
+      execute: async (params: Record<string, unknown>, context?: { sessionKey?: string }) => {
+        const { decision, result } = await executeToolWithPolicy(actor, anyTool, params, undefined, undefined, undefined, agentId, {
+          sessionKey: context?.sessionKey,
+        });
         if (!decision.allow) return { ...result, policyDecision: decision };
         const value = result && typeof result === 'object' && 'data' in result
           ? (result as { data?: unknown }).data ?? result

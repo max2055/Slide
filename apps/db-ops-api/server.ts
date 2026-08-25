@@ -125,6 +125,7 @@ import { serverReportService } from './src/server-report-service.js';
 import serverCollector from './src/server-collector.js';
 import { registerAgentToolApprovalRoutes } from './src/security/agent-tool-approval-routes.js';
 import { registerAgentSecurityRoutes } from './src/security/agent-security-routes.js';
+import { registerDeviceAuthRoutes } from './src/security/device-auth-routes.js';
 import { agentSecurityPolicyService } from './src/security/agent-security-policy-service.js';
 
 const fastify = Fastify({
@@ -329,6 +330,7 @@ async function start() {
   await fastify.register(rbacApiRoutes);
   await registerAgentToolApprovalRoutes(fastify, verifyToken);
   await registerAgentSecurityRoutes(fastify, verifyToken);
+  await registerDeviceAuthRoutes(fastify, verifyToken);
   await registerInstanceHostRoutes(fastify, {
     verifyToken,
     service: instanceHostService,

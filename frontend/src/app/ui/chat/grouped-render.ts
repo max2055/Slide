@@ -17,7 +17,6 @@ import type {
 import { agentLogoUrl } from "../views/agents-utils.ts";
 import { renderCopyAsMarkdownButton } from "./copy-as-markdown.ts";
 import {
-  extractTextCached,
   extractThinkingCached,
   formatReasoningMarkdown,
 } from "./message-extract.ts";
@@ -26,7 +25,6 @@ import {
   normalizeMessage,
   normalizeRoleForGrouping,
 } from "./message-normalizer.ts";
-import { isTtsSupported, speakText, stopTts, isTtsSpeaking } from "./speech.ts";
 import {
   extractToolCards,
   renderExpandedToolCardContent,
@@ -229,7 +227,6 @@ export function renderMessageGroup(
           <span class="chat-sender-name">${who}</span>
           <span class="chat-group-timestamp">${timestamp}</span>
           ${renderMessageMeta(meta)}
-          ${normalizedRole === "assistant" && isTtsSupported() ? renderTtsButton(group) : nothing}
           ${opts.onDelete
             ? renderDeleteButton(opts.onDelete, normalizedRole === "user" ? "left" : "right")
             : nothing}
@@ -357,17 +354,6 @@ function renderMessageMeta(meta: GroupMeta | null) {
   return html`<span class="msg-meta">${parts}</span>`;
 }
 
-function extractGroupText(group: MessageGroup): string {
-  const parts: string[] = [];
-  for (const { message } of group.messages) {
-    const text = extractTextCached(message);
-    if (text?.trim()) {
-      parts.push(text.trim());
-    }
-  }
-  return parts.join("\n\n");
-}
-
 const SKIP_DELETE_CONFIRM_KEY = "slide:skipDeleteConfirm";
 
 type DeleteConfirmSide = "left" | "right";
@@ -442,48 +428,6 @@ function renderDeleteButton(onDelete: () => void, side: DeleteConfirmSide) {
         ${icons['trash'] ?? icons['x']}
       </button>
     </span>
-  `;
-}
-
-function renderTtsButton(group: MessageGroup) {
-  return html`
-    <button
-      class="btn btn--xs chat-tts-btn"
-      type="button"
-      title=${isTtsSpeaking() ? "Stop speaking" : "Read aloud"}
-      aria-label=${isTtsSpeaking() ? "Stop speaking" : "Read aloud"}
-      @click=${(e: Event) => {
-        const btn = e.currentTarget as HTMLButtonElement;
-        if (isTtsSpeaking()) {
-          stopTts();
-          btn.classList.remove("chat-tts-btn--active");
-          btn.title = "Read aloud";
-          return;
-        }
-        const text = extractGroupText(group);
-        if (!text) {
-          return;
-        }
-        btn.classList.add("chat-tts-btn--active");
-        btn.title = "Stop speaking";
-        speakText(text, {
-          onEnd: () => {
-            if (btn.isConnected) {
-              btn.classList.remove("chat-tts-btn--active");
-              btn.title = "Read aloud";
-            }
-          },
-          onError: () => {
-            if (btn.isConnected) {
-              btn.classList.remove("chat-tts-btn--active");
-              btn.title = "Read aloud";
-            }
-          },
-        });
-      }}
-    >
-      ${icons['volume-2']}
-    </button>
   `;
 }
 
@@ -878,13 +822,9 @@ function renderAssistantAttachments(
                       class="chat-assistant-attachment-badge chat-assistant-attachment-badge--muted"
                       >${availability.status === "checking" ? "Checking..." : "Unavailable"}</span
                     >`
-                  : attachment.isVoiceNote
-                    ? html`<span class="chat-assistant-attachment-badge">Voice note</span>`
                     : nothing}
               </div>
-              ${attachmentUrl
-                ? html`<audio controls preload="metadata" src=${attachmentUrl}></audio>`
-                : availability.status === "unavailable"
+              ${availability.status === "unavailable"
                   ? html`<div class="chat-assistant-attachment-card__reason">
                       ${availability.reason}
                     </div>`

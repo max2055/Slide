@@ -521,7 +521,10 @@ export class AgentRunner {
           error,
         };
       }
-      const result = await spec.tools.execute(toolCall.name, toolCall.arguments, { signal: spec.signal });
+      const result = await spec.tools.execute(toolCall.name, toolCall.arguments, {
+        signal: spec.signal,
+        sessionKey: spec.sessionKey,
+      });
       const detail = result === undefined || result === null
         ? "(empty)"
         : String(result).replace(/\n/g, " ").trim().slice(0, 120);

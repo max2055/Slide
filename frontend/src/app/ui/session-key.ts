@@ -12,6 +12,12 @@ export type ParsedAgentSessionKey = {
 export const DEFAULT_AGENT_ID = "main";
 export const DEFAULT_MAIN_KEY = "main";
 
+/** Legacy UI bootstrap keys are not persisted server-side chat sessions. */
+export function isLegacyMainSessionKey(value: string | undefined | null): boolean {
+  const key = normalizeOptionalString(value) ?? "";
+  return key === DEFAULT_MAIN_KEY || key === `agent:${DEFAULT_AGENT_ID}:${DEFAULT_MAIN_KEY}`;
+}
+
 const VALID_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 const INVALID_CHARS_RE = /[^a-z0-9_-]+/g;
 const LEADING_DASH_RE = /^-+/;

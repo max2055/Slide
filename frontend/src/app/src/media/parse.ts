@@ -133,7 +133,6 @@ export function splitMediaFromOutput(raw: string): {
   text: string;
   mediaUrls?: string[];
   mediaUrl?: string; // legacy first item for backward compatibility
-  audioAsVoice?: boolean; // true if [[audio_as_voice]] tag was found
   segments?: ParsedMediaOutputSegment[];
 } {
   // KNOWN: Leading whitespace is semantically meaningful in Markdown (lists, indented fences).
@@ -143,8 +142,7 @@ export function splitMediaFromOutput(raw: string): {
     return { text: "" };
   }
   const mayContainMediaToken = /media:/i.test(trimmedRaw);
-  const mayContainAudioTag = trimmedRaw.includes("[[");
-  if (!mayContainMediaToken && !mayContainAudioTag) {
+  if (!mayContainMediaToken) {
     return { text: trimmedRaw };
   }
 
@@ -284,7 +282,7 @@ export function splitMediaFromOutput(raw: string): {
         }
       } else if (looksLikeLocalPath) {
         // Strip MEDIA: lines with local paths even when invalid (e.g. absolute paths
-        // from internal tools like TTS). They should never leak as visible text.
+        // from internal tools. They should never leak as visible text.
         foundMediaToken = true;
       } else {
         // If no valid media was found in this match, keep the original token text.
@@ -323,22 +321,12 @@ export function splitMediaFromOutput(raw: string): {
     .replace(/\n{2,}/g, "\n")
     .trim();
 
-  // Detect and strip [[audio_as_voice]] tag - stub implementation without audio-tags.js
-  const audioTagMatch = cleanedText.match(/\[\[\s*audio_as_voice\s*\]\]/gi);
-  const hasAudioAsVoice = audioTagMatch !== null && audioTagMatch.length > 0;
-  if (hasAudioAsVoice) {
-    cleanedText = cleanedText.replace(/\[\[\s*audio_as_voice\s*\]\]/gi, "").replace(/\n{2,}/g, "\n").trim();
-  }
-
   if (media.length === 0) {
-    const parsedText = foundMediaToken || hasAudioAsVoice ? cleanedText : trimmedRaw;
+    const parsedText = foundMediaToken ? cleanedText : trimmedRaw;
     const result: ReturnType<typeof splitMediaFromOutput> = {
       text: parsedText,
       segments: parsedText ? [{ type: "text", text: parsedText }] : [],
     };
-    if (hasAudioAsVoice) {
-      result.audioAsVoice = true;
-    }
     return result;
   }
 
@@ -347,6 +335,5 @@ export function splitMediaFromOutput(raw: string): {
     mediaUrls: media,
     mediaUrl: media[0],
     segments: segments.length > 0 ? segments : [{ type: "text", text: cleanedText }],
-    ...(hasAudioAsVoice ? { audioAsVoice: true } : {}),
   };
 }

@@ -144,6 +144,10 @@ export class AgentToolAuditService {
           roles: record.actor.roles,
           permissions: record.actor.permissions,
           security,
+          ...(record.decision.riskLevel ? {
+            riskLevel: record.decision.riskLevel,
+            approvalScope: record.decision.approvalScope ?? null,
+          } : {}),
           agentPolicy: record.agentPolicy ?? null,
         }),
         JSON.stringify(auditArgs),

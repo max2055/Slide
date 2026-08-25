@@ -311,28 +311,31 @@ class ServerDatabaseService {
       // Re-encrypt if credential username or value provided (non-empty)
       if ((data.credential_username !== undefined && data.credential_username !== '')
           || (data.credential_value !== undefined && data.credential_value !== '')) {
-        // Fetch existing to merge with new values
         const existing = await this.getServerById(id);
         if (existing) {
-          const decrypted = this.decryptCredentials(existing.credential_encrypted);
-          const credPayload: Record<string, string> = {
-            username: data.credential_username !== undefined && data.credential_username !== '' ? data.credential_username : decrypted.username,
-          };
+          // A new credential is a complete replacement. Do not decrypt the
+          // old blob first: this is the recovery path for records encrypted
+          // with a rotated/lost application key (for example server 3).
           if (data.credential_value !== undefined && data.credential_value !== '') {
-            // Determine credential key from the decrypted payload when credential_type
-            // is not provided, to avoid stale column value causing type mismatch.
-            const actualType = data.credential_type
-              || (decrypted.password ? 'password'
-                : decrypted.privateKey ? 'key'
-                  : existing.credential_type);
-            const key = actualType === 'password' ? 'password' : 'privateKey';
-            credPayload[key] = data.credential_value;
+            const actualType = data.credential_type || existing.credential_type;
+            const username = data.credential_username || (() => {
+              try { return this.decryptCredentials(existing.credential_encrypted).username; } catch { return ''; }
+            })();
+            if (!username) return { success: false, error: '重新录入凭据时必须提供 SSH 用户名' };
+            const credPayload: Record<string, string> = { username };
+            credPayload[actualType === 'password' ? 'password' : 'privateKey'] = data.credential_value;
+            updates.push('credential_encrypted = ?');
+            values.push(encryptData(JSON.stringify(credPayload)));
           } else {
+            const decrypted = this.decryptCredentials(existing.credential_encrypted);
+            const credPayload: Record<string, string> = {
+              username: data.credential_username || decrypted.username,
+            };
             if (decrypted.password) credPayload.password = decrypted.password;
             if (decrypted.privateKey) credPayload.privateKey = decrypted.privateKey;
+            updates.push('credential_encrypted = ?');
+            values.push(encryptData(JSON.stringify(credPayload)));
           }
-          updates.push('credential_encrypted = ?');
-          values.push(encryptData(JSON.stringify(credPayload)));
         }
       }
       if (data.collection_enabled !== undefined) {

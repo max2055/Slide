@@ -154,6 +154,9 @@ export interface PolicyDecision {
   tool: string;
   resource: ToolPolicyResource;
   approvalId?: string;
+  /** execute_code classification captured for audit and operator review. */
+  riskLevel?: 'low' | 'medium' | 'high';
+  approvalScope?: 'none' | 'once' | 'window' | 'session';
   requestId?: string;
 }
 

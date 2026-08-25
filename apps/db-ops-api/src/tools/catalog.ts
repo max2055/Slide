@@ -12,8 +12,10 @@ import type {
   AnyAgentTool,
   ToolRegistryEntry,
   ToolGroup,
-  ToolDefinition,
 } from './types.js';
+import { readdir } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 // ============== 工具名称规范化（复用上游 string-coerce.ts 模式） ==============
 
@@ -315,12 +317,47 @@ export async function discoverToolsFromDirectory(
   dirPath: string,
   pattern = '*.ts',
 ): Promise<AnyAgentTool[]> {
-  // 注意：Node.js 运行时无法直接进行文件系统 glob
-  // 这个函数主要用于构建时工具生成
-  console.log(
-    `[ToolCatalog] 目录工具发现：${dirPath} (pattern: ${pattern}) - 需要构建时支持`,
-  );
-  return [];
+  const suffix = pattern.startsWith('*.') ? pattern.slice(1) : pattern;
+  const directory = resolve(dirPath);
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = entries
+    .filter((entry) => {
+      if (!entry.isFile()) return false;
+      if (entry.name === 'index.ts' || entry.name === 'index.js') return false;
+      // Test modules are not tool providers. Importing them during runtime
+      // discovery can execute Vitest suites and break application startup.
+      return !/\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.name);
+    })
+    .map((entry) => entry.name)
+    .filter((name) => suffix === '*' || name.endsWith(suffix))
+    .sort();
+  const discovered: AnyAgentTool[] = [];
+  const seen = new Set<string>();
+  for (const file of files) {
+    const module = await import(pathToFileURL(join(directory, file)).href);
+    for (const value of Object.values(module)) {
+      if (!value || typeof value !== 'object' || !('name' in value) || !('handler' in value)) continue;
+      const tool = value as AnyAgentTool;
+      const key = normalizeToolName(tool.name);
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        discovered.push(tool);
+      }
+    }
+    for (const value of Object.values(module)) {
+      if (!Array.isArray(value)) continue;
+      for (const item of value) {
+        if (!item || typeof item !== 'object' || !('name' in item) || !('handler' in item)) continue;
+        const tool = item as AnyAgentTool;
+        const key = normalizeToolName(tool.name);
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          discovered.push(tool);
+        }
+      }
+    }
+  }
+  return discovered;
 }
 
 // ============== 全局单例 ==============

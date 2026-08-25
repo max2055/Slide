@@ -39,10 +39,10 @@ export const executeCodeTool: AnyAgentTool = {
       },
       approvalId: {
         type: 'string',
-        description: 'Single-use server approval identifier',
+        description: 'Optional server approval identifier returned after an approval request',
       },
     },
-    required: ['runtime', 'code', 'approvalId'],
+    required: ['runtime', 'code'],
   } as AnyAgentTool['parameters'],
   requiresApproval: true,
   dangerLevel: 5,

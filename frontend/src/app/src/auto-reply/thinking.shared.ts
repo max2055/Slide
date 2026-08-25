@@ -21,17 +21,18 @@ const BASE_THINKING_LEVELS: ThinkLevel[] = ["off", "minimal", "low", "medium", "
 const NO_THINKING_LEVELS: ThinkLevel[] = [...BASE_THINKING_LEVELS];
 
 export function isBinaryThinkingProvider(provider?: string | null): boolean {
-  void provider;
-  return false;
+  const value = normalizeLowercaseStringOrEmpty(provider);
+  return value === "zai" || value === "z.ai" || value === "z-ai";
 }
 
 export function supportsBuiltInXHighThinking(
   provider?: string | null,
   model?: string | null,
 ): boolean {
-  void provider;
-  void model;
-  return false;
+  const normalizedProvider = normalizeLowercaseStringOrEmpty(provider);
+  const modelId = normalizeLowercaseStringOrEmpty(model);
+  return (normalizedProvider === "openai" || normalizedProvider === "deepseek")
+    && /reason|o1|o3|o4|thinking|deepseek/i.test(modelId);
 }
 
 // Normalize user-provided thinking level strings to the canonical enum.
@@ -74,10 +75,14 @@ export function normalizeThinkLevel(raw?: string | null): ThinkLevel | undefined
 }
 
 export function listThinkingLevels(
-  _provider?: string | null,
-  _model?: string | null,
+  provider?: string | null,
+  model?: string | null,
 ): ThinkLevel[] {
-  return [...NO_THINKING_LEVELS];
+  const levels = isBinaryThinkingProvider(provider) ? ["off", "on"] as ThinkLevel[] : [...NO_THINKING_LEVELS];
+  if (supportsBuiltInXHighThinking(provider, model) && !levels.includes("xhigh")) {
+    levels.splice(Math.max(levels.length - 1, 0), 0, "xhigh");
+  }
+  return levels;
 }
 
 export function listThinkingLevelLabels(provider?: string | null, model?: string | null): string[] {

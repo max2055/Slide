@@ -16,6 +16,21 @@ interface ApprovalRequest {
   operation_id?: string | null;
 }
 
+interface AgentApproval {
+  id: string;
+  tool_name: string;
+  requester_id: number;
+  args_redacted: unknown;
+  resource_json: unknown;
+  status: string;
+  scope?: 'once' | 'window' | 'session';
+  risk_level?: 'low' | 'medium' | 'high';
+  used_count?: number;
+  max_uses?: number;
+  expires_at: string;
+  created_at: string;
+}
+
 interface ApprovalEvent {
   id: number;
   request_id: number;
@@ -99,6 +114,8 @@ export class ApprovalDashboard extends LitElement {
 
   @state() private view: "list" | "detail" = "list";
   @state() private requests: ApprovalRequest[] = [];
+  @state() private agentApprovals: AgentApproval[] = [];
+  @state() private approvalKind: 'sql' | 'agent' = 'sql';
   @state() private filter: "pending" | "processed" = "pending";
   @state() private selectedIds: Set<number> = new Set();
   @state() private executeAfterApprove: Record<number, boolean> = {};
@@ -147,6 +164,31 @@ export class ApprovalDashboard extends LitElement {
       this.requests = [];
     }
     this.loading = false;
+    await this.loadAgentApprovals();
+  }
+
+  private async loadAgentApprovals() {
+    try {
+      const response = await authFetch('/api/agent/approvals/pending');
+      const payload = await response.json();
+      this.agentApprovals = Array.isArray(payload?.approvals) ? payload.approvals : [];
+    } catch {
+      this.agentApprovals = [];
+    }
+  }
+
+  private async reviewAgentApproval(id: string, action: 'approve' | 'reject', scope?: 'once' | 'window' | 'session') {
+    try {
+      const response = await authFetch(`/api/agent/approvals/${encodeURIComponent(id)}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ...(scope ? { scope } : {}) }),
+      });
+      if (!response.ok) throw new Error('review failed');
+      await this.loadAgentApprovals();
+    } catch {
+      this.detailError = 'Agent 审批处理失败，请重试';
+    }
   }
 
   // --- Sub-view switching ---
@@ -195,7 +237,7 @@ export class ApprovalDashboard extends LitElement {
       // Mount CodeMirror in next microtask to ensure DOM is rendered
       await this.updateComplete;
       this._mountCodeMirror(`cm-container-${requestId}`, detail.sql_text, (detail as any).db_type || 'mysql');
-    } catch (e: any) {
+    } catch {
       this.detailError = '加载失败，请重试';
       this.detailLoading = false;
     }
@@ -358,7 +400,7 @@ export class ApprovalDashboard extends LitElement {
       this._closeBatchDialog();
       this.clearSelection();
       this.loadRequests();
-    } catch (e: any) {
+    } catch {
       this.batchError = '操作失败，请重试';
       this.batchLoading = false;
     }
@@ -403,6 +445,24 @@ export class ApprovalDashboard extends LitElement {
 
   private renderList() {
     return html`
+      <div class="tabs">
+        <button class="tab ${this.approvalKind === 'sql' ? 'active' : ''}" @click=${() => { this.approvalKind = 'sql'; }}>SQL 审批</button>
+        <button class="tab ${this.approvalKind === 'agent' ? 'active' : ''}" @click=${() => { this.approvalKind = 'agent'; this.loadAgentApprovals(); }}>Agent 工具审批</button>
+      </div>
+      ${this.approvalKind === 'agent' ? html`
+        ${this.agentApprovals.length === 0 ? html`<div class="empty">暂无待审批 Agent 工具请求</div>` : this.agentApprovals.map((approval) => html`
+          <div class="card">
+            <div class="card-header"><strong>${approval.tool_name}</strong><span class="ai-badge">#${approval.id}</span></div>
+            <div class="sql-preview">${JSON.stringify({ args: approval.args_redacted, resource: approval.resource_json }, null, 2)}</div>
+            <div class="actions">
+              <span class="ai-badge">风险：${approval.risk_level || 'high'} / ${approval.scope || 'once'}</span>
+              <button class="btn btn-approve" @click=${() => this.reviewAgentApproval(approval.id, 'approve', approval.risk_level === 'high' ? 'once' : approval.scope || 'window')}>通过</button>
+              ${approval.risk_level !== 'high' ? html`<button class="btn btn-approve" @click=${() => this.reviewAgentApproval(approval.id, 'approve', 'window')}>允许 5 分钟</button>` : nothing}
+              <button class="btn btn-reject" @click=${() => this.reviewAgentApproval(approval.id, 'reject')}>驳回</button>
+            </div>
+          </div>
+        `)}
+      ` : html`
       <div class="tabs">
         <button class="tab ${this.filter === 'pending' ? 'active' : ''}" @click=${() => { this.filter = 'pending'; this.clearSelection(); this.loadRequests(); }}>
           待审批
@@ -477,6 +537,7 @@ export class ApprovalDashboard extends LitElement {
       `)}
 
       ${this._renderBatchDialog()}
+      `}
     `;
   }
 

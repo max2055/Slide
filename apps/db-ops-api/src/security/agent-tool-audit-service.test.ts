@@ -110,4 +110,29 @@ describe('Agent tool audit persistence', () => {
       },
     });
   });
+
+  it('persists execute_code risk classification in the policy snapshot', async () => {
+    let values: unknown[] = [];
+    const service = new AgentToolAuditService(() => ({
+      execute: async (_sql: string, input: unknown[]) => {
+        values = input;
+        return [{ insertId: 1 }];
+      },
+    } as any));
+
+    await service.record({
+      phase: 'decision',
+      actor,
+      decision: {
+        ...decision,
+        tool: 'execute_code',
+        resource: { type: 'none' },
+        riskLevel: 'medium',
+        approvalScope: 'window',
+      },
+      args: { runtime: 'shell', code: 'echo report > report.txt' },
+    });
+
+    expect(JSON.parse(String(values[8]))).toMatchObject({ riskLevel: 'medium', approvalScope: 'window' });
+  });
 });

@@ -9,6 +9,8 @@ interface Tool {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  security?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown>;
 }
 
 @customElement('agent-tools-page')
@@ -48,7 +50,7 @@ export class AgentToolsPage extends LitElement {
     try {
       const res = await apiClient.get<any>('/agent/tools');
       this.tools = res.tools || [];
-    } catch (err) {
+    } catch {
       showToast('加载工具列表失败', 'error');
     } finally {
       this.loading = false;
@@ -63,12 +65,14 @@ export class AgentToolsPage extends LitElement {
     const columns = [
       { key: 'name', label: '名称' },
       { key: 'description', label: '描述' },
+      { key: 'metadata', label: '元数据' },
       { key: 'actions', label: 'Schema' },
     ];
 
     const rows = this.tools.map((t) => ({
       ...t,
       description: html`<div class="tool-description">${t.description}</div>`,
+      metadata: html`<div class="tool-description">${JSON.stringify({ ...t.metadata, security: t.security ?? null })}</div>`,
       actions: html`
         <button class="btn schema-toggle" @click=${() => this.toggleSchema(t.name)}>
           ${this.expandedTool === t.name ? '收起' : '查看'}

@@ -295,14 +295,6 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     profiles: ["coding"],
     includeInSlideGroup: true,
   },
-  {
-    id: "tts",
-    label: "tts",
-    description: "Text-to-speech conversion",
-    sectionId: "media",
-    profiles: [],
-    includeInSlideGroup: true,
-  },
 ];
 
 const CORE_TOOL_BY_ID = new Map<string, CoreToolDefinition>(

@@ -162,6 +162,75 @@ describe('actor tool policy', () => {
     expect(audit.record.mock.calls.map(([record]) => record.phase)).toEqual(['decision', 'decision', 'result']);
   });
 
+  it('executes a low-risk shell command without creating or consuming approval', async () => {
+    const handler = vi.fn().mockResolvedValue({ success: true, data: { stdout: 'workspace' } });
+    const consume = vi.fn(async () => true);
+    const requester = { submit: vi.fn() };
+    const result = await executeToolWithPolicy(
+      actor(['admin'], ['ai:execute']),
+      tool({ name: 'execute_code', requiredPermissions: ['ai:execute'], requiresApproval: true, handler }),
+      { runtime: 'shell', code: 'pwd' },
+      undefined,
+      { consume },
+      { record: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+      { approvalRequester: requester },
+    );
+
+    expect(result.decision).toMatchObject({ allow: true, riskLevel: 'low', approvalScope: 'none' });
+    expect(handler).toHaveBeenCalledOnce();
+    expect(consume).not.toHaveBeenCalled();
+    expect(requester.submit).not.toHaveBeenCalled();
+  });
+
+  it('creates an approval on the first medium-risk call and preserves session context', async () => {
+    const requester = {
+      submit: vi.fn().mockResolvedValue({ id: '73', expiresAt: new Date('2026-08-24T00:05:00.000Z') }),
+    };
+    const audit = { record: vi.fn().mockResolvedValue(undefined) };
+    const result = await executeToolWithPolicy(
+      actor(['admin'], ['ai:execute']),
+      tool({ name: 'execute_code', requiredPermissions: ['ai:execute'], requiresApproval: true }),
+      { runtime: 'shell', code: 'echo report > report.txt' },
+      undefined,
+      { consume: vi.fn(async () => false) },
+      audit,
+      undefined,
+      { sessionKey: 'agent-session-1', approvalRequester: requester },
+    );
+
+    expect(result).toMatchObject({
+      decision: { reasonCode: 'APPROVAL_REQUIRED', approvalId: '73', riskLevel: 'medium', approvalScope: 'window' },
+      result: { success: false, data: { approvalId: '73', riskLevel: 'medium', approvalScope: 'window' } },
+    });
+    expect(requester.submit).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+      { scope: 'window', sessionKey: 'agent-session-1', riskLevel: 'medium' },
+    );
+    expect(JSON.stringify(audit.record.mock.calls[0][0])).toContain('"riskLevel":"medium"');
+  });
+
+  it('passes the session and risk ceiling to approval consumption on retry', async () => {
+    const consume = vi.fn(async (_actor, _tool, _args, _resource, options) => {
+      expect(options).toEqual({ sessionKey: 'agent-session-1', riskLevel: 'medium' });
+      return true;
+    });
+    const handler = vi.fn().mockResolvedValue({ success: true });
+    const result = await executeToolWithPolicy(
+      actor(['admin'], ['ai:execute']),
+      tool({ name: 'execute_code', requiredPermissions: ['ai:execute'], requiresApproval: true, handler }),
+      { runtime: 'shell', code: 'echo report > report.txt', approvalId: '73' },
+      undefined,
+      { consume },
+      { record: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+      { sessionKey: 'agent-session-1' },
+    );
+
+    expect(result.decision).toMatchObject({ allow: true, riskLevel: 'medium', approvalScope: 'window' });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
   it('fails closed before a side effect when the persistent audit store is unavailable', async () => {
     const handler = vi.fn().mockResolvedValue({ success: true });
     const writeTool = tool({ name: 'slide_update_db_config', handler });

@@ -14,6 +14,7 @@ type ChatRouteService = Pick<
   | 'updateSessionSettings'
   | 'deleteSession'
   | 'enforceMessageCap'
+  | 'getSessionMetadata'
 >;
 
 type ChatSendHandler = (
@@ -89,12 +90,19 @@ export async function registerChatRoutes(
         sessionKey,
         limit,
       );
+      const metadata = typeof deps.service.getSessionMetadata === 'function'
+        ? await deps.service.getSessionMetadata(authenticatedActor(request as any), sessionKey)
+        : null;
       const formatted = messages.map((message) => ({
         role: message.role,
         ...formatMessageContent(message.content || ''),
         timestamp: message.created_at ? new Date(message.created_at).getTime() : Date.now(),
       }));
-      return reply.send({ messages: formatted });
+      return reply.send({
+        messages: formatted,
+        model: typeof metadata?.model === 'string' ? metadata.model : null,
+        thinkingLevel: typeof metadata?.thinkingLevel === 'string' ? metadata.thinkingLevel : null,
+      });
     } catch (error) {
       if (isNotFound(error)) return reply.code(404).send({ error: 'Session not found' });
       return reply.code(500).send({ error: `获取聊天历史失败：${String((error as Error).message)}` });
@@ -132,6 +140,10 @@ export async function registerChatRoutes(
             message_count: session.message_count ?? 0,
             status: metadata?.status || 'active',
             instance_id: session.instance_id ?? null,
+            model: typeof metadata?.model === 'string' ? metadata.model : null,
+            thinkingLevel: typeof metadata?.thinkingLevel === 'string' ? metadata.thinkingLevel : null,
+            thinkingDefault: typeof metadata?.thinkingDefault === 'string' ? metadata.thinkingDefault : null,
+            thinkingLevels: Array.isArray(metadata?.thinkingLevels) ? metadata.thinkingLevels : undefined,
           };
         }),
         defaults: {},

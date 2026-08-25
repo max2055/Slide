@@ -16,6 +16,15 @@ export interface ToolSchema {
     properties: Record<string, JsonSchemaProperty>;
     required?: string[];
   };
+  metadata?: {
+    readOnly?: boolean;
+    scope?: string[];
+    ownerOnly?: boolean;
+    group?: string;
+    pluginId?: string;
+    requiresApproval?: boolean;
+    dangerLevel?: number;
+  };
 }
 
 export interface JsonSchemaProperty {
@@ -219,6 +228,7 @@ export interface RuntimeCheckpoint {
 
 export interface ToolExecutionContext {
   signal?: AbortSignal;
+  sessionKey?: string;
 }
 
 export interface Tool {
@@ -230,6 +240,11 @@ export interface Tool {
   readonly exclusive: boolean;
   /** Tool scopes for auto-discovery filtering. Default ["core"]. "subagent" scope allows use in subagents. Mirrors nanobot's _scopes. */
   readonly scope?: string[];
+  readonly ownerOnly?: boolean;
+  readonly group?: string;
+  readonly pluginId?: string;
+  readonly requiresApproval?: boolean;
+  readonly dangerLevel?: number;
   execute(params: Record<string, unknown>, context?: ToolExecutionContext): Promise<unknown>;
   castParams?(params: Record<string, unknown>): Record<string, unknown>;
 }

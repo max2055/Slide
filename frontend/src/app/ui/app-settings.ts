@@ -62,7 +62,7 @@ export function applySettings(host: SettingsHost, next: UiSettings) {
     lastActiveSessionKey:
       normalizeOptionalString(next.lastActiveSessionKey) ??
       normalizeOptionalString(next.sessionKey) ??
-      "main",
+      "",
   };
   host.settings = normalized;
   saveSettings(normalized);
@@ -141,11 +141,11 @@ export function applySettingsFromUrl(host: SettingsHost) {
   }
 
   if (shouldResetSessionForToken) {
-    host.sessionKey = "main";
+    host.sessionKey = "";
     applySettings(host, {
       ...host.settings,
-      sessionKey: "main",
-      lastActiveSessionKey: "main",
+      sessionKey: "",
+      lastActiveSessionKey: "",
     });
   }
 

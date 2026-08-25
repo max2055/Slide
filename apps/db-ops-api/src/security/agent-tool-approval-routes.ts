@@ -7,6 +7,7 @@ import { resolveToolResource } from '../tools/resource-resolver.js';
 import { getAgentToolApprovalService } from './agent-tool-approval-service.js';
 import { credentialReferenceService } from './credential-reference-service.js';
 import { getToolSecurityDefinition } from '../tools/security-catalog.js';
+import { classifyExecuteCodeRisk } from './execute-code-risk.js';
 
 export async function registerAgentToolApprovalRoutes(
   fastify: FastifyInstance,
@@ -57,7 +58,14 @@ export async function registerAgentToolApprovalRoutes(
       return reply.code(403).send({ reasonCode: 'TOOL_NOT_AVAILABLE' });
     }
     const resource = await resolveToolResource(tool.name, args);
-    const decision = decideToolPolicy(actor, tool, args, resource);
+    const risk = tool.name === 'execute_code'
+      ? classifyExecuteCodeRisk({
+        runtime: String(args.runtime ?? ''),
+        code: String(args.code ?? ''),
+        files: Array.isArray(args.files) ? args.files : undefined,
+      })
+      : undefined;
+    const decision = decideToolPolicy(actor, tool, args, resource, false, risk?.requiresApproval);
     if (decision.reasonCode !== 'APPROVAL_REQUIRED') {
       const status = decision.allow ? 409 : 403;
       return reply.code(status).send({
@@ -66,11 +74,16 @@ export async function registerAgentToolApprovalRoutes(
     }
 
     const expiresInMs = Number.isSafeInteger(body.expiresInMs) ? Number(body.expiresInMs) : undefined;
-    const approval = await getAgentToolApprovalService().submit(actor, tool, args, resource, expiresInMs);
+    const approval = await getAgentToolApprovalService().submit(actor, tool, args, resource, {
+      expiresInMs,
+      scope: risk?.scope,
+      riskLevel: risk?.level,
+    });
     return reply.code(201).send({
       approvalId: approval.id,
       toolName: tool.name,
       resource,
+      ...(risk ? { riskLevel: risk.level, approvalScope: risk.scope } : {}),
       expiresAt: approval.expiresAt.toISOString(),
     });
   });
@@ -86,7 +99,7 @@ export async function registerAgentToolApprovalRoutes(
   }, async (request, reply) => {
     const actor = (request as any).user as ActorContext;
     const id = String((request.params as { id?: unknown }).id ?? '');
-    const body = request.body as { action?: unknown; note?: unknown };
+    const body = request.body as { action?: unknown; note?: unknown; scope?: unknown };
     if (body?.action !== 'approve' && body?.action !== 'reject') {
       return reply.code(400).send({ reasonCode: 'AGENT_APPROVAL_REVIEW_INVALID' });
     }
@@ -95,6 +108,7 @@ export async function registerAgentToolApprovalRoutes(
       actor.userId,
       body.action,
       typeof body.note === 'string' ? body.note : undefined,
+      body.scope === 'once' || body.scope === 'window' || body.scope === 'session' ? body.scope : undefined,
     );
     return reviewed
       ? reply.send({ success: true, approvalId: id, status: body.action === 'approve' ? 'approved' : 'rejected' })

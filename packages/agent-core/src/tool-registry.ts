@@ -48,6 +48,15 @@ export class ToolRegistry implements IToolRegistry {
         name: tool.name,
         description: tool.description,
         parameters: tool.parameters,
+        metadata: {
+          readOnly: tool.readOnly,
+          scope: tool.scope,
+          ownerOnly: tool.ownerOnly,
+          group: tool.group,
+          pluginId: tool.pluginId,
+          requiresApproval: tool.requiresApproval,
+          dangerLevel: tool.dangerLevel,
+        },
       });
     }
 

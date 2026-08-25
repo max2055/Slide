@@ -159,7 +159,6 @@ function mergeAdjacentTextItems(items: MessageContentItem[]): MessageContentItem
 
 function expandTextContent(text: string): {
   content: MessageContentItem[];
-  audioAsVoice: boolean;
   replyTarget: NormalizedMessage["replyTarget"];
 } {
   const extracted = extractCanvasShortcodes(text);
@@ -169,7 +168,6 @@ function expandTextContent(text: string): {
 
   const parsed = splitMediaFromOutput(extractedText);
   const parts: MessageContentItem[] = [];
-  let audioAsVoice = parsed.audioAsVoice === true;
   let replyTarget: NormalizedMessage["replyTarget"] = null;
   const segments = parsed.segments ?? [{ type: "text" as const, text: parsed.text }];
 
@@ -198,7 +196,6 @@ function expandTextContent(text: string): {
       stripAudioTag: true,
       stripReplyTags: true,
     });
-    audioAsVoice = audioAsVoice || directives.audioAsVoice;
     if (directives.replyToExplicitId) {
       replyTarget = { kind: "id", id: directives.replyToExplicitId } as NormalizedMessage;
     } else if (directives.replyToCurrent && replyTarget === null) {
@@ -214,15 +211,6 @@ function expandTextContent(text: string): {
 
   const content = mergeAdjacentTextItems(
     parts.map((item) => {
-      if (item.type === "attachment" && item.attachment.kind === "audio" && audioAsVoice) {
-        return {
-          ...item,
-          attachment: {
-            ...item.attachment,
-            isVoiceNote: true,
-          },
-        };
-      }
       return item;
     }),
   );
@@ -235,10 +223,9 @@ function expandTextContent(text: string): {
           ? (parsed.mediaUrls ?? [])
               .filter((url) => shouldPreserveRelativeAssistantAttachment(url))
               .map((url) => ({ type: "text" as const, text: `MEDIA:${url}` }))
-          : replyTarget === null && !audioAsVoice && parsed.text.trim().length > 0
+          : replyTarget === null && parsed.text.trim().length > 0
             ? [{ type: "text", text: parsed.text }]
             : [],
-    audioAsVoice,
     replyTarget,
   };
 }
@@ -272,14 +259,12 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
 
   // Extract content
   let content: MessageContentItem[] = [];
-  let audioAsVoice = false;
   let replyTarget: NormalizedMessage["replyTarget"] = null;
 
   if (typeof m.content === "string") {
     if (isAssistantMessage) {
       const expanded = expandTextContent(m.content);
       content = expanded.content;
-      audioAsVoice = expanded.audioAsVoice;
       replyTarget = expanded.replyTarget;
     } else {
       content = [{ type: "text", text: m.content }];
@@ -297,7 +282,6 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
           kind?: unknown;
           label?: unknown;
           mimeType?: unknown;
-          isVoiceNote?: unknown;
         };
         if (
           typeof attachment.url !== "string" ||
@@ -317,7 +301,6 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
               kind: attachment.kind,
               label: attachment.label,
               ...(typeof attachment.mimeType === "string" ? { mimeType: attachment.mimeType } : {}),
-              ...(attachment.isVoiceNote === true ? { isVoiceNote: true } : {}),
             },
           },
         ];
@@ -342,7 +325,6 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
       }
       if (item.type === "text" && typeof item.text === "string" && isAssistantMessage) {
         const expanded = expandTextContent(item.text);
-        audioAsVoice = audioAsVoice || expanded.audioAsVoice;
         if (expanded.replyTarget?.kind === "id") {
           replyTarget = expanded.replyTarget;
         } else if (expanded.replyTarget?.kind === "current" && replyTarget === null) {
@@ -367,7 +349,6 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
     if (isAssistantMessage) {
       const expanded = expandTextContent(m.text);
       content = expanded.content;
-      audioAsVoice = expanded.audioAsVoice;
       replyTarget = expanded.replyTarget;
     } else {
       content = [{ type: "text", text: m.text }];
@@ -395,7 +376,6 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
     timestamp,
     id,
     senderLabel,
-    ...(audioAsVoice ? { audioAsVoice: true } : {}),
     ...(replyTarget ? { replyTarget } : {}),
   };
 }

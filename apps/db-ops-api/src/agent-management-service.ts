@@ -29,6 +29,15 @@ export interface ToolInfo {
   description: string;
   parameters: Record<string, unknown>;
   security: ToolSecurityDefinition | null;
+  metadata: {
+    readOnly?: boolean;
+    scope?: string[];
+    ownerOnly?: boolean;
+    group?: string;
+    pluginId?: string;
+    requiresApproval?: boolean;
+    dangerLevel?: number;
+  };
 }
 
 export class AgentManagementService {
@@ -77,6 +86,15 @@ export class AgentManagementService {
       description: t.description || '',
       parameters: (t.parameters as Record<string, unknown>) || {},
       security: getToolSecurityDefinition(t.name) ?? null,
+      metadata: {
+        readOnly: t.metadata?.readOnly,
+        scope: t.metadata?.scope,
+        ownerOnly: t.metadata?.ownerOnly,
+        group: t.metadata?.group,
+        pluginId: t.metadata?.pluginId,
+        requiresApproval: t.metadata?.requiresApproval,
+        dangerLevel: t.metadata?.dangerLevel,
+      },
     }));
   }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { handleSendChat } from './app-chat.ts';
-import { switchChatSession } from './app-render.helpers.ts';
+import { resolveSidebarChatSessionKey, switchChatSession } from './app-render.helpers.ts';
 
 describe('server-owned chat session workflow', () => {
   it('/new switches to an empty pending session instead of generating a client key', async () => {
@@ -61,5 +61,14 @@ describe('server-owned chat session workflow', () => {
     expect(state.sessionKey).toBe('');
     expect(watchSession).not.toHaveBeenCalled();
     expect(request).not.toHaveBeenCalled();
+  });
+
+  it('keeps the chat session empty when no server-owned session is available', () => {
+    const state = {
+      hello: { snapshot: { sessionDefaults: { mainKey: 'main' } } },
+      sessionsResult: { sessions: [], defaults: {} },
+    };
+
+    expect(resolveSidebarChatSessionKey(state as any)).toBe('');
   });
 });

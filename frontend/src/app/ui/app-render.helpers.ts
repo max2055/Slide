@@ -15,7 +15,7 @@ import { ChatState, loadChatHistory } from "./controllers/chat.ts";
 import { loadSessions } from "./controllers/sessions.ts";
 import { icons } from "../../icons.js";
 import { iconForTab, pathForTab, titleForTab, type Tab } from "./navigation.ts";
-import { parseAgentSessionKey } from "./session-key.ts";
+import { isLegacyMainSessionKey, parseAgentSessionKey } from "./session-key.ts";
 import { normalizeLowercaseStringOrEmpty, normalizeOptionalString } from "./string-coerce.ts";
 import type { ThemeMode } from "./theme.ts";
 import {
@@ -58,15 +58,17 @@ function resolveSidebarChatSessionKey(state: AppViewState): string {
     | { sessionDefaults?: SessionDefaultsSnapshot }
     | undefined;
   const mainSessionKey = normalizeOptionalString(snapshot?.sessionDefaults?.mainSessionKey);
-  if (mainSessionKey) {
+  if (mainSessionKey && !isLegacyMainSessionKey(mainSessionKey)) {
     return mainSessionKey;
   }
   const mainKey = normalizeOptionalString(snapshot?.sessionDefaults?.mainKey);
-  if (mainKey) {
+  if (mainKey && !isLegacyMainSessionKey(mainKey)) {
     return mainKey;
   }
-  return "main";
+  return "";
 }
+
+export { resolveSidebarChatSessionKey };
 
 function resetChatStateForSessionSwitch(state: AppViewState, sessionKey: string) {
   const host = state as unknown as SessionSwitchHost;

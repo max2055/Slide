@@ -5,7 +5,7 @@ import { executeCodeTool } from './code-execution-tool.js';
 describe('execute_code tool', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('exposes only bounded code execution inputs and mandatory approval metadata', () => {
+  it('exposes bounded code execution inputs while letting the server issue approvals', () => {
     expect(executeCodeTool).toMatchObject({
       name: 'execute_code',
       requiresApproval: true,
@@ -15,6 +15,7 @@ describe('execute_code tool', () => {
     expect(Object.keys(executeCodeTool.parameters.properties).sort()).toEqual([
       'approvalId', 'code', 'files', 'runtime', 'timeoutMs',
     ]);
+    expect(executeCodeTool.parameters.required).toEqual(['runtime', 'code']);
     expect(executeCodeTool.parameters.properties.runtime.enum).toEqual(['shell', 'python', 'node']);
   });
 
