@@ -85,6 +85,9 @@ importers:
       mysql2:
         specifier: ^3.20.0
         version: 3.22.4(@types/node@20.19.41)
+      net-snmp:
+        specifier: 3.26.3
+        version: 3.26.3
       node-sql-parser:
         specifier: ^5.4.0
         version: 5.4.0
@@ -128,6 +131,9 @@ importers:
       '@types/jsonwebtoken':
         specifier: ^9.0.5
         version: 9.0.10
+      '@types/net-snmp':
+        specifier: 3.23.0
+        version: 3.23.0
       '@types/node':
         specifier: ^20.10.0
         version: 20.19.41
@@ -1177,6 +1183,9 @@ packages:
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
 
+  '@types/net-snmp@3.23.0':
+    resolution: {integrity: sha512-54Y5NLlQ8isegHTUZdEaIFhR1iz/qlRkQlpkuXfsWjWDVLNfStLmvraaj9ZS7tmcZEltFkb4ZeDBjnSYeFc3+w==}
+
   '@types/node-fetch@2.6.13':
     resolution: {integrity: sha512-QGpRVpzSaUs30JBSGPjOg4Uveu384erbHBoT1zeONvyCfwQxIkUshLAOqN/k9EjGviPRmWTTe6aH2qySWKTVSw==}
 
@@ -1380,6 +1389,9 @@ packages:
   array-union@2.1.0:
     resolution: {integrity: sha512-HGyxoOTYUyCM6stUe6EJgnd4EoewAI7zMdfqO+kGjnlZmBDz/cR5pf8r/cR4Wq60sL/p0IkcjUEEPwS3GFrIyw==}
     engines: {node: '>=8'}
+
+  asn1-ber@1.2.2:
+    resolution: {integrity: sha512-CbNem/7hxrjSiOAOOTX4iZxu+0m3jiLqlsERQwwPM1IDR/22M8IPpA1VVndCLw5KtjRYyRODbvAEIfuTogNDng==}
 
   asn1@0.2.6:
     resolution: {integrity: sha512-ix/FxPn0MDjeyJ7i/yoHGFt/EX6LyNbxSEhPPXODPL+KB0VPk86UYfL0lMdy+KCnv+fmvIzySwaK5COwqVbWTQ==}
@@ -2404,6 +2416,9 @@ packages:
     resolution: {integrity: sha512-+EUsqGPLsM+j/zdChZjsnX51g4XrHFOIXwfnCVPGlQk/k5giakcKsuxCObBRu6DSm9opw/O6slWbJdghQM4bBg==}
     engines: {node: '>= 0.6'}
 
+  net-snmp@3.26.3:
+    resolution: {integrity: sha512-DTnzoz8Bk5Vz+7WWflo2VgSXMguadFMvsPmSOrknv+YTdA65lLUL1WZhYj6ZA/7pJvKscLJPOeU4LoEd6A1EZg==}
+
   node-addon-api@8.8.0:
     resolution: {integrity: sha512-c5Ko1fZJIJmzhFIkhRN76WTq+fC6tWnGy9CXA0fA+XygsWZmEwG8vmbkNqxMyoaa0Tin4djul49NzdVcJJcjeA==}
     engines: {node: ^18 || ^20 || >= 21}
@@ -2810,6 +2825,10 @@ packages:
   slice-ansi@4.0.0:
     resolution: {integrity: sha512-qMCMfhY040cVHT43K9BFygqYbUPFZKHOg7K73mtTWJRb8pyP3fzf4Ixd5SzdEJQ6MRUg/WBnOLxghZtKKurENQ==}
     engines: {node: '>=10'}
+
+  smart-buffer@4.2.0:
+    resolution: {integrity: sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg==}
+    engines: {node: '>= 6.0.0', npm: '>= 3.0.0'}
 
   sonic-boom@4.2.1:
     resolution: {integrity: sha512-w6AxtubXa2wTXAUsZMMWERrsIRAdrK0Sc+FUytWvYAhBJLyuI4llrMIC1DtlNSdI99EI86KZum2MMq3EAZlF9Q==}
@@ -3998,6 +4017,10 @@ snapshots:
 
   '@types/ms@2.1.0': {}
 
+  '@types/net-snmp@3.23.0':
+    dependencies:
+      '@types/node': 24.12.4
+
   '@types/node-fetch@2.6.13':
     dependencies:
       '@types/node': 20.19.41
@@ -4297,6 +4320,8 @@ snapshots:
   array-back@6.2.3: {}
 
   array-union@2.1.0: {}
+
+  asn1-ber@1.2.2: {}
 
   asn1@0.2.6:
     dependencies:
@@ -5332,6 +5357,11 @@ snapshots:
 
   negotiator@0.6.3: {}
 
+  net-snmp@3.26.3:
+    dependencies:
+      asn1-ber: 1.2.2
+      smart-buffer: 4.2.0
+
   node-addon-api@8.8.0: {}
 
   node-domexception@1.0.0: {}
@@ -5737,6 +5767,8 @@ snapshots:
       ansi-styles: 4.3.0
       astral-regex: 2.0.0
       is-fullwidth-code-point: 3.0.0
+
+  smart-buffer@4.2.0: {}
 
   sonic-boom@4.2.1:
     dependencies:
