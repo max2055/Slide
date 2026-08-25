@@ -39,7 +39,7 @@ export class SnmpClientError extends Error {
 }
 
 const OID_PATTERN = /^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))+$/;
-const DEFAULT_ROOTS = ['1.3.6.1.2.1'];
+const DEFAULT_ROOTS = ['1.3.6.1.2.1', '1.3.6.1.4.1.2011'];
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const DEFAULT_MIN_SECRET_LENGTH = 8;
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -178,13 +178,16 @@ export class SnmpClient {
       throw new Error('Invalid SNMP OID allowlist');
     }
     this.options = {
-      allowedOidRoots: roots,
+      allowedOidRoots: [...roots],
       maxResponseBytes: options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
       minSecretLength: options.minSecretLength ?? DEFAULT_MIN_SECRET_LENGTH,
       allowAuthNoPriv: options.allowAuthNoPriv ?? false,
       allowNoAuthNoPriv: options.allowNoAuthNoPriv ?? false,
       allowLegacyAlgorithms: options.allowLegacyAlgorithms ?? false,
     };
+    if (!Number.isInteger(this.options.maxResponseBytes) || this.options.maxResponseBytes < 1 || this.options.maxResponseBytes > 1_048_576) {
+      throw new Error('Invalid SNMP response limit');
+    }
   }
 
   async get(config: SnmpV3Config, oids: string[]): Promise<SnmpVarbind[]> {
