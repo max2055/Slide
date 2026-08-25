@@ -123,6 +123,7 @@ import { promptManager } from './src/prompts/prompt-manager.js';
 import { serverDatabaseService } from './src/server-database-service.js';
 import { serverReportService } from './src/server-report-service.js';
 import serverCollector from './src/server-collector.js';
+import { serverDiagnosticService } from './src/server-diagnostic-service.js';
 import { registerAgentToolApprovalRoutes } from './src/security/agent-tool-approval-routes.js';
 import { registerAgentSecurityRoutes } from './src/security/agent-security-routes.js';
 import { registerDeviceAuthRoutes } from './src/security/device-auth-routes.js';
@@ -1605,6 +1606,39 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
     } catch (error: any) {
       reply.code(500).send({ error: '采集失败：' + error.message });
+    }
+  });
+
+  // Read-only fixed-profile diagnostics. The collection endpoint only
+  // triggers the same backend-defined commands; it cannot accept a shell
+  // command, path, or host supplied by the caller.
+  fastify.get('/api/servers/:id/diagnostics', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
+    const id = Number((request.params as { id?: string }).id);
+    if (!Number.isSafeInteger(id) || id <= 0) return reply.code(400).send({ error: 'SERVER_ID_INVALID' });
+    try {
+      const query = request.query as { refresh?: string };
+      return reply.send(await serverDiagnosticService.getDiagnostics(id, { refresh: query?.refresh === 'true' }));
+    } catch (error: any) {
+      const code = typeof error?.message === 'string' ? error.message : 'DIAGNOSTIC_COLLECTION_FAILED';
+      if (code === 'SERVER_NOT_FOUND') return reply.code(404).send({ error: code });
+      if (code === 'HOST_OS_UNSUPPORTED') return reply.code(422).send({ error: code });
+      if (code === 'SERVER_ID_INVALID') return reply.code(400).send({ error: code });
+      return reply.code(503).send({ error: code });
+    }
+  });
+
+  fastify.post('/api/servers/:id/collect-diagnostics', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
+    const id = Number((request.params as { id?: string }).id);
+    if (!Number.isSafeInteger(id) || id <= 0) return reply.code(400).send({ error: 'SERVER_ID_INVALID' });
+    try {
+      const diagnostics = await serverDiagnosticService.collectDiagnostics(id);
+      return reply.send({ success: true, diagnostics });
+    } catch (error: any) {
+      const code = typeof error?.message === 'string' ? error.message : 'DIAGNOSTIC_COLLECTION_FAILED';
+      if (code === 'SERVER_NOT_FOUND') return reply.code(404).send({ error: code });
+      if (code === 'HOST_OS_UNSUPPORTED') return reply.code(422).send({ error: code });
+      if (code === 'SERVER_ID_INVALID') return reply.code(400).send({ error: code });
+      return reply.code(503).send({ error: code });
     }
   });
 

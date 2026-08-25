@@ -8,6 +8,7 @@ import { linuxHostEvidenceService } from './linux-host-evidence-service.js';
 import { metricsDatabaseService } from './metrics-database-service.js';
 import { redactSensitiveText } from './security/log-redaction.js';
 import { instanceHostService, type InstanceHostDetail } from './resources/instance-host-service.js';
+import { serverDiagnosticService } from './server-diagnostic-service.js';
 
 const SAFE_INSTANCE_METADATA_SQL = `
   SELECT id, name, environment, db_type, host, port, database_name,
@@ -102,6 +103,8 @@ export interface DiagnosticContextDependencies {
   listHosts(actor: ActorContext, instanceId: number): Promise<InstanceHostDetail[]>;
   discoverStorage(instanceId: number): Promise<StorageDiscoveryResult>;
   collectHostEvidence(serverId: number, request: HostEvidenceRequest): Promise<Record<string, unknown>>;
+  /** Optional richer fixed-profile server diagnostics (kept optional for old integrations). */
+  collectServerDiagnostics?(serverId: number): Promise<Record<string, unknown>>;
 }
 
 export interface DiagnosticGap {
@@ -493,8 +496,20 @@ export class InstanceDiagnosticContextService {
             services: servicesForDatabaseType(databaseType),
             paths: mayInspectPhysicalPaths ? inspectablePaths : [],
           });
+          let diagnostics: Record<string, unknown> | undefined;
+          if (this.dependencies.collectServerDiagnostics) {
+            try {
+              diagnostics = await this.dependencies.collectServerDiagnostics(server.serverId);
+            } catch (diagnosticError) {
+              hostGaps.push({
+                scope: 'host', section: 'hostEvidence',
+                code: stableErrorCode(diagnosticError) === 'COLLECTION_FAILED' ? 'SERVER_DIAGNOSTICS_FAILED' : stableErrorCode(diagnosticError),
+                resource: { type: 'server', id: server.serverId },
+              });
+            }
+          }
           return {
-            host: { server, evidence },
+            host: { server, evidence, ...(diagnostics ? { diagnostics } : {}) },
             gaps: hostGaps,
           };
         } catch (error) {
@@ -535,6 +550,10 @@ export class InstanceDiagnosticContextService {
 
 export const safeInstanceMetadataProvider = new SafeInstanceMetadataProvider();
 
+const instanceServerDiagnostic = async (serverId: number): Promise<Record<string, unknown>> => (
+  await serverDiagnosticService.getDiagnostics(serverId) as unknown as Record<string, unknown>
+);
+
 export const instanceDiagnosticContextService = new InstanceDiagnosticContextService({
   getInstance: (instanceId) => safeInstanceMetadataProvider.getInstance(instanceId),
   getRealtimeMetrics: async (instanceId) => (
@@ -564,6 +583,7 @@ export const instanceDiagnosticContextService = new InstanceDiagnosticContextSer
   listHosts: (actor, instanceId) => instanceHostService.listHosts(actor, instanceId),
   discoverStorage: (instanceId) => databaseStorageDiscoveryService.discover(instanceId),
   collectHostEvidence: (serverId, request) => linuxHostEvidenceService.collectHostEvidence(serverId, request),
+  collectServerDiagnostics: (serverId) => instanceServerDiagnostic(serverId),
 });
 
 export default instanceDiagnosticContextService;

@@ -45,7 +45,7 @@ const OS_PATTERNS: ReadonlyArray<readonly [SupportedServerOs, RegExp]> = [
 
 function normalizeLabel(input: unknown): string | null {
   if (typeof input !== 'string') return null;
-  const normalized = input.trim().toLowerCase().replace(/\\s+/g, ' ');
+  const normalized = input.trim().toLowerCase().replace(/\s+/g, ' ');
   if (!normalized || normalized.length > 50) return null;
   // Reject control characters and shell punctuation before pattern matching.
   if (!/^[a-z0-9 ._-]+$/.test(normalized)) return null;

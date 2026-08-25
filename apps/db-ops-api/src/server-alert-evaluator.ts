@@ -16,6 +16,7 @@ interface ServerMetricRow {
   metric_name: string;
   metric_value: number;
   recorded_at: Date;
+  dimensions?: Record<string, unknown> | string | null;
 }
 
 interface ServerAlertRuleRaw {
@@ -36,6 +37,24 @@ interface ServerAlertRuleRaw {
   db_types: string | null;
   instance_ids: string | null;
   template_id: number | null;
+  dimensions?: Record<string, unknown> | null;
+}
+
+function parseDimensions(value: unknown): Record<string, string> | null {
+  const parsed = typeof value === 'string' ? (() => { try { return JSON.parse(value); } catch { return null; } })() : value;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const result: Record<string, string> = {};
+  for (const key of ['interface', 'device', 'mount', 'direction']) {
+    if (typeof (parsed as any)[key] === 'string' && (parsed as any)[key].length <= 128) result[key] = (parsed as any)[key];
+  }
+  return Object.keys(result).length ? result : null;
+}
+
+function dimensionsMatch(actual: Record<string, string> | null, expected: unknown): boolean {
+  const wanted = parseDimensions(expected);
+  if (!wanted) return true;
+  if (!actual) return false;
+  return Object.entries(wanted).every(([key, value]) => actual[key] === value);
 }
 
 class ServerAlertEvaluator {
@@ -100,13 +119,35 @@ class ServerAlertEvaluator {
 
         // Build metric lookup map
         const metricMap = new Map<string, number>();
+        const metricDimensions = new Map<string, Record<string, string> | null>();
+        const metricRecordedAt = new Map<string, Date>();
         for (const m of latestMetrics) {
-          metricMap.set(m.metric_name, m.metric_value);
+          // A rule without an explicit dimension evaluates the newest sample
+          // for the metric; dimensions remain attached for alert context.
+          const current = metricRecordedAt.get(m.metric_name);
+          const recordedAt = new Date(m.recorded_at);
+          if (!current || recordedAt >= current) {
+            metricMap.set(m.metric_name, m.metric_value);
+            metricDimensions.set(m.metric_name, parseDimensions(m.dimensions));
+            metricRecordedAt.set(m.metric_name, recordedAt);
+          }
         }
 
         for (const rule of rules) {
           try {
-            const currentValue = metricMap.get(rule.metric_name);
+            let currentValue = metricMap.get(rule.metric_name);
+            let selectedDimensions = metricDimensions.get(rule.metric_name);
+            let selectedRecordedAt = metricRecordedAt.get(rule.metric_name);
+            if (rule.dimensions) {
+              const matching = latestMetrics
+                .filter((metric) => metric.metric_name === rule.metric_name && dimensionsMatch(parseDimensions(metric.dimensions), rule.dimensions))
+                .sort((left, right) => new Date(right.recorded_at).getTime() - new Date(left.recorded_at).getTime())[0];
+              if (matching) {
+                currentValue = matching.metric_value;
+                selectedDimensions = parseDimensions(matching.dimensions);
+                selectedRecordedAt = new Date(matching.recorded_at);
+              } else currentValue = undefined;
+            }
             if (currentValue === undefined) {
               continue; // Metric not collected for this server
             }
@@ -131,7 +172,10 @@ class ServerAlertEvaluator {
 
             // Create alert
             const title = `[${rule.severity.toUpperCase()}] ${rule.name} - ${server.label || server.host}`;
-            const message = `服务器指标 "${rule.metric_name}" 当前值为 ${currentValue}，超过阈值 ${rule.threshold}`;
+            const dimensions = selectedDimensions;
+            const collectedAt = selectedRecordedAt?.toISOString() ?? null;
+            const dimensionText = dimensions ? `（${Object.entries(dimensions).map(([key, value]) => `${key}=${value}`).join(', ')}）` : '';
+            const message = `服务器指标 "${rule.metric_name}"${dimensionText} 当前值为 ${currentValue}，超过阈值 ${rule.threshold}；采集时间 ${collectedAt ?? 'unknown'}`;
 
             await alertDatabaseService.createAlert({
               server_id: serverId,
@@ -149,6 +193,8 @@ class ServerAlertEvaluator {
                 rule_name: rule.name,
                 target_type: 'server',
                 auto_generated: true,
+                dimensions,
+                collected_at: collectedAt,
               },
             });
 
@@ -252,14 +298,16 @@ class ServerAlertEvaluator {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT sm.server_id, sm.metric_name, sm.metric_value, sm.recorded_at
+        `SELECT sm.server_id, sm.metric_name, sm.dimensions, sm.metric_value, sm.recorded_at
          FROM server_metrics sm
          INNER JOIN (
-           SELECT metric_name, MAX(recorded_at) AS max_time
+           SELECT metric_name, dimensions, MAX(recorded_at) AS max_time
            FROM server_metrics
            WHERE server_id = ?
-           GROUP BY metric_name
-         ) latest ON sm.metric_name = latest.metric_name AND sm.recorded_at = latest.max_time
+           GROUP BY metric_name, dimensions
+         ) latest ON sm.metric_name = latest.metric_name
+           AND ((sm.dimensions = latest.dimensions) OR (sm.dimensions IS NULL AND latest.dimensions IS NULL))
+           AND sm.recorded_at = latest.max_time
          WHERE sm.server_id = ?`,
         [serverId, serverId],
       ) as any;

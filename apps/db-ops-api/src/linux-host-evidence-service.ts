@@ -502,22 +502,35 @@ export class LinuxHostEvidenceService {
       if (validatedPaths.truncated) gaps.push({ section: 'physicalFiles', reason: 'PHYSICAL_PATH_LIMIT' });
 
       const metricValues: Record<string, number> = {};
-      const metricDefinitions = serverMetricProvider.getDefinitions('linux')
+      const metricDefinitions = serverMetricProvider.getDefinitions(server.os_type)
         .filter((definition) => definition.name !== 'disk_usage' && definition.name !== 'disk_detail');
       let metricGap = false;
-      for (const definition of metricDefinitions) {
-        const result = (await this.dependencies.sshSessionPool.execCommands(client, [definition.command]))[0];
+      const metricBatches = serverMetricProvider.getCollectionBatches(server.os_type)
+        .filter((batch) => batch.definitions.some((definition) => metricDefinitions.includes(definition)));
+      for (const batch of metricBatches) {
+        const result = (await this.dependencies.sshSessionPool.execCommands(client, [batch.command]))[0];
         if (result.exitCode !== 0) {
           metricGap = true;
           gaps.push({ section: 'metrics', reason: 'METRIC_COMMAND_FAILED' });
           continue;
         }
-        const value = definition.parse(result.stdout.trim());
-        if (value === null) {
-          metricGap = true;
-          gaps.push({ section: 'metrics', reason: 'METRIC_PARSE_FAILED' });
-        } else {
-          metricValues[definition.name] = value;
+        const activeDefinitions = batch.definitions.filter((definition) => metricDefinitions.includes(definition));
+        const samples = activeDefinitions[0]?.parseRows?.(result.stdout) ?? [];
+        for (const definition of activeDefinitions) {
+          if (definition.parseRows && !definition.parseProcesses) {
+            const values = samples.filter((sample) => sample.name === definition.name).map((sample) => sample.value);
+            if (values.length > 0) metricValues[definition.name] = values.reduce((sum, value) => sum + value, 0);
+            else {
+              metricGap = true;
+              gaps.push({ section: 'metrics', reason: 'METRIC_PARSE_FAILED' });
+            }
+            continue;
+          }
+          const value = definition.parse(result.stdout.trim());
+          if (value === null) {
+            metricGap = true;
+            gaps.push({ section: 'metrics', reason: 'METRIC_PARSE_FAILED' });
+          } else metricValues[definition.name] = value;
         }
       }
 
@@ -675,7 +688,7 @@ export class LinuxHostEvidenceService {
         quality,
         truncated,
         metrics: {
-          source: ['procfs', 'top', 'free'], collectedAt,
+          source: ['procfs', 'top', 'free', 'ps'], collectedAt,
           quality: sectionQuality(Object.keys(metricValues).length > 0, metricGap),
           ...(Object.keys(metricValues).length === 0 ? { reason: 'METRICS_UNAVAILABLE' } : {}),
           values: metricValues,

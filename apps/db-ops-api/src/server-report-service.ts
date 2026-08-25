@@ -20,12 +20,21 @@ export interface ServerReportEntry {
   memory_score: number;
   disk_score: number;
   load_score: number;
+  reachability_score: number | null;
+  network_score: number | null;
+  io_score: number | null;
+  health_status: 'healthy' | 'warning' | 'critical' | 'unknown';
+  metrics_fresh: boolean;
+  metrics_recorded_at: string | null;
   overall_score: number;
   metrics_summary: {
     cpu_usage_pct: number | null;
     memory_usage_pct: number | null;
     disk_usage_pct: number | null;
     load_1min: number | null;
+    network_errors: number | null;
+    network_drops: number | null;
+    disk_io_time_ms: number | null;
   };
 }
 
@@ -35,6 +44,7 @@ export interface ReportData {
   healthy_count: number;
   warning_count: number;
   critical_count: number;
+  unknown_count: number;
   servers: ServerReportEntry[];
 }
 
@@ -51,6 +61,29 @@ function scorePercentile(value: number | null): number {
   if (value < 50) return 100;
   if (value <= 80) return 60;
   return 20;
+}
+
+export function scoreNetwork(errors: number | null, drops: number | null): number | null {
+  if (errors === null && drops === null) return null;
+  const total = (errors ?? 0) + (drops ?? 0);
+  if (total <= 0) return 100;
+  if (total <= 10) return 60;
+  return 20;
+}
+
+export function scoreReachability(status: string): number | null {
+  if (status === 'online') return 100;
+  if (status === 'offline' || status === 'error' || status === 'unreachable') return 0;
+  return null;
+}
+
+export function scoreIo(load: number | null, ioTimeMs: number | null): number | null {
+  const scores: number[] = [];
+  if (load !== null) scores.push(scoreLoad(load));
+  if (ioTimeMs !== null) {
+    scores.push(ioTimeMs <= 100 ? 100 : ioTimeMs <= 1000 ? 60 : 20);
+  }
+  return scores.length ? scores.reduce((sum, value) => sum + value, 0) / scores.length : null;
 }
 
 /**
@@ -76,7 +109,9 @@ function scoreClass(value: number): string {
 
 // ── Service ─────────────────────────────────────────────────────────────────────
 
-class ServerReportService {
+export class ServerReportService {
+  constructor(private readonly now: () => Date = () => new Date()) {}
+
   /**
    * Generate a health report for all servers with their latest metrics.
    */
@@ -99,11 +134,13 @@ class ServerReportService {
         `SELECT sm.server_id, sm.metric_name, sm.dimensions, sm.metric_value, sm.recorded_at
          FROM server_metrics sm
          INNER JOIN (
-           SELECT metric_name, MAX(recorded_at) AS max_time
+           SELECT metric_name, dimensions, MAX(recorded_at) AS max_time
            FROM server_metrics
            WHERE server_id = ?
-           GROUP BY metric_name
-         ) latest ON sm.metric_name = latest.metric_name AND sm.recorded_at = latest.max_time
+           GROUP BY metric_name, dimensions
+         ) latest ON sm.metric_name = latest.metric_name
+           AND ((sm.dimensions = latest.dimensions) OR (sm.dimensions IS NULL AND latest.dimensions IS NULL))
+           AND sm.recorded_at = latest.max_time
          WHERE sm.server_id = ?
          ORDER BY sm.metric_name`,
         [server.id, server.id]
@@ -111,11 +148,18 @@ class ServerReportService {
 
       const metrics: Record<string, number> = {};
       const diskMetrics: { mount: string; value: number }[] = [];
+      let networkErrors = 0;
+      let networkDrops = 0;
+      let networkSeen = false;
+      let diskIoTime: number | null = null;
+      let latestRecordedAt: Date | null = null;
 
       for (const row of rows) {
         const name: string = row.metric_name;
         if (row.metric_value === null || row.metric_value === undefined) continue;
         const value = Number(row.metric_value);
+        const recordedAt = row.recorded_at ? new Date(row.recorded_at) : null;
+        if (recordedAt && !Number.isNaN(recordedAt.getTime()) && (!latestRecordedAt || recordedAt > latestRecordedAt)) latestRecordedAt = recordedAt;
 
         if (name === 'cpu_usage') {
           metrics.cpu_usage = value;
@@ -129,6 +173,14 @@ class ServerReportService {
             mount: dimensions?.mount || name.replace('disk_usage_', ''),
             value,
           });
+        } else if (name === 'network_rx_errors' || name === 'network_tx_errors') {
+          networkErrors += value;
+          networkSeen = true;
+        } else if (name === 'network_rx_drops' || name === 'network_tx_drops') {
+          networkDrops += value;
+          networkSeen = true;
+        } else if (name === 'disk_io_time_ms') {
+          diskIoTime = (diskIoTime ?? 0) + value;
         }
       }
 
@@ -144,15 +196,25 @@ class ServerReportService {
       }
 
       const load_score = scoreLoad(metrics.load_1min ?? null);
-
-      // Overall: avg of dimension scores
-      const scoredDimensions = [cpu_score, memory_score, disk_score, load_score].filter(
-        (s) => s > 0
-      );
-      const overall_score =
-        scoredDimensions.length > 0
-          ? Math.round(scoredDimensions.reduce((a, b) => a + b, 0) / scoredDimensions.length)
-          : 0;
+      const reachability_score = scoreReachability(server.status);
+      const network_score = scoreNetwork(networkSeen ? networkErrors : null, networkSeen ? networkDrops : null);
+      const io_score = scoreIo(metrics.load_1min ?? null, diskIoTime);
+      const fresh = latestRecordedAt !== null && this.now().getTime() - latestRecordedAt.getTime() <= 5 * 60 * 1000;
+      const weighted: Array<[number | null, number]> = [
+        [reachability_score, 30],
+        [fresh && metrics.cpu_usage !== undefined ? cpu_score : null, 12.5],
+        [fresh && metrics.memory_usage !== undefined ? memory_score : null, 12.5],
+        [fresh && diskMetrics.length > 0 ? disk_score : null, 20],
+        [fresh ? network_score : null, 15],
+        [fresh ? io_score : null, 10],
+      ];
+      const knownWeight = weighted.reduce((sum, [score, weight]) => score === null ? sum : sum + weight, 0);
+      const hasHealthEvidence = weighted.slice(1).some(([score]) => score !== null);
+      const overall_score = knownWeight > 0 && hasHealthEvidence
+        ? Math.round(weighted.reduce((sum, [score, weight]) => score === null ? sum : sum + score * weight, 0) / knownWeight)
+        : 0;
+      const health_status: ServerReportEntry['health_status'] = !hasHealthEvidence || knownWeight === 0
+        ? 'unknown' : overall_score >= 80 ? 'healthy' : overall_score >= 60 ? 'warning' : 'critical';
 
       serverEntries.push({
         host: server.host,
@@ -162,6 +224,12 @@ class ServerReportService {
         memory_score,
         disk_score,
         load_score,
+        reachability_score,
+        network_score,
+        io_score,
+        health_status,
+        metrics_fresh: fresh,
+        metrics_recorded_at: latestRecordedAt?.toISOString() ?? null,
         overall_score,
         metrics_summary: {
           cpu_usage_pct: metrics.cpu_usage ?? null,
@@ -171,6 +239,9 @@ class ServerReportService {
               ? Math.round(diskMetrics.reduce((s, m) => s + m.value, 0) / diskMetrics.length * 100) / 100
               : null,
           load_1min: metrics.load_1min ?? null,
+          network_errors: networkSeen ? networkErrors : null,
+          network_drops: networkSeen ? networkDrops : null,
+          disk_io_time_ms: diskIoTime,
         },
       });
     }
@@ -182,9 +253,11 @@ class ServerReportService {
     let healthy_count = 0;
     let warning_count = 0;
     let critical_count = 0;
+    let unknown_count = 0;
 
     for (const entry of serverEntries) {
-      if (entry.overall_score >= 80) healthy_count++;
+      if (entry.health_status === 'unknown') unknown_count++;
+      else if (entry.overall_score >= 80) healthy_count++;
       else if (entry.overall_score >= 60) warning_count++;
       else critical_count++;
     }
@@ -195,6 +268,7 @@ class ServerReportService {
       healthy_count,
       warning_count,
       critical_count,
+      unknown_count,
       servers: serverEntries,
     };
   }

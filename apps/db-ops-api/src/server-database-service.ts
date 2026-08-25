@@ -11,6 +11,7 @@ import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from
 import { Client } from 'ssh2';
 import { authorizeServerTarget } from './security/server-target-policy.js';
 import { createSshHostVerifier, normalizeSshHostKeyFingerprint } from './security/ssh-host-key.js';
+import { normalizeServerOs } from './server-os-profile.js';
 
 export interface ServerRow {
   id: number;
@@ -196,6 +197,8 @@ class ServerDatabaseService {
     }
 
     try {
+      const canonicalOs = normalizeServerOs(data.os_type);
+      if (!canonicalOs) return { success: false, error: 'HOST_OS_UNSUPPORTED' };
       const target = await authorizeServerTarget({ host: data.host, port: data.port || 22 });
       const hostKeyFingerprint = normalizeSshHostKeyFingerprint(data.host_key_fingerprint);
       // Check for duplicate host+port
@@ -231,7 +234,7 @@ class ServerDatabaseService {
           target.hostname,
           target.port,
           data.label || null,
-          data.os_type,
+          canonicalOs,
           data.credential_type,
           encrypted,
           hostKeyFingerprint,
@@ -274,6 +277,10 @@ class ServerDatabaseService {
     try {
       const existingServer = await this.getServerById(id);
       if (!existingServer) return { success: false, error: '服务器不存在' };
+      const canonicalOs = data.os_type === undefined ? undefined : normalizeServerOs(data.os_type);
+      if (data.os_type !== undefined && !canonicalOs) {
+        return { success: false, error: 'HOST_OS_UNSUPPORTED' };
+      }
       const target = await authorizeServerTarget({
         host: data.host ?? existingServer.host,
         port: data.port ?? existingServer.port,
@@ -295,7 +302,7 @@ class ServerDatabaseService {
       }
       if (data.os_type !== undefined) {
         updates.push('os_type = ?');
-        values.push(data.os_type);
+        values.push(canonicalOs);
       }
       if (data.credential_type !== undefined) {
         // When credential_type changes, require new credential_value to avoid payload/type mismatch
