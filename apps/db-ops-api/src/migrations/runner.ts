@@ -10,6 +10,24 @@ const defaultDirectory = join(here, '../../sql/migrations');
 const lockName = 'slide:db-ops:migrations:v1';
 const snapshotId = '000_schema_baseline.sql';
 
+// 067 was already applied on early device-auth deployments without schema
+// comments. The corrected migration is intentionally accepted only for that
+// exact historical checksum; migration 069 repairs the live schema forward.
+export const LEGACY_MIGRATION_CHECKSUMS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  '067_device_registrations.sql': Object.freeze([
+    '94403810bcae74f546a719b6d2f062e1699c18440e2ad76a5c787fa3f2c10ebb',
+  ]),
+});
+
+export function isMigrationChecksumAccepted(
+  migrationId: string,
+  recordedChecksum: string,
+  currentChecksum: string,
+): boolean {
+  return recordedChecksum === currentChecksum
+    || (LEGACY_MIGRATION_CHECKSUMS[migrationId] ?? []).includes(recordedChecksum);
+}
+
 export class MigrationError extends Error {}
 
 export async function loadMigrations(directory = defaultDirectory): Promise<SqlMigration[]> {
@@ -146,7 +164,9 @@ export class MigrationRunner {
       const [rows] = await connection.query<MigrationLedgerEntry[]>('SELECT migration_id, checksum, status, statement_index, error FROM app_schema_migrations WHERE migration_id = ?', [migration.id]);
       const recorded = rows[0];
       if (recorded) {
-        if (recorded.checksum !== migration.checksum) throw new MigrationError(`Checksum mismatch for ${migration.id}`);
+        if (!isMigrationChecksumAccepted(migration.id, recorded.checksum, migration.checksum)) {
+          throw new MigrationError(`Checksum mismatch for ${migration.id}`);
+        }
         if (recorded.status === 'completed' || recorded.status === 'baselined') continue;
         throw new MigrationError(`Migration ${migration.id} requires explicit repair: ${recorded.error ?? recorded.status}`);
       }
