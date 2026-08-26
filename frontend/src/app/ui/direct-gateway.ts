@@ -681,6 +681,12 @@ export function initChatClient(host: Record<string, unknown>): void {
   });
 
   host.client = directClient;
+
+  // JWT authentication is the primary login path. Device registration is
+  // additive, so do not make the WebSocket connection wait for an optional
+  // dynamic module or its network requests.
+  directClient.connect();
+
   void import('./device-identity.ts').then(async ({ loadOrCreateDeviceIdentity }) => {
     try {
       const identity = await loadOrCreateDeviceIdentity();
@@ -708,6 +714,7 @@ export function initChatClient(host: Record<string, unknown>): void {
     } catch {
       // Device registration is additive; JWT login remains available if it fails.
     }
-    directClient.connect();
+  }).catch(() => {
+    // A stale Vite optimized dependency must not leave the user on the login gate.
   });
 }

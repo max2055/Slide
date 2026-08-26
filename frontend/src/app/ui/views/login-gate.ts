@@ -21,9 +21,9 @@ export function renderLoginGate(state: AppViewState) {
       return;
     }
     state.lastError = null;
-    const { apiClient } = await import("../../../api/index.js");
     let token: string | null;
     try {
+      const { apiClient } = await import("../../../api/index.js");
       token = await apiClient.directLogin(u, p);
     } catch (err) {
       // Network or server error — backend unreachable, not a credential issue
