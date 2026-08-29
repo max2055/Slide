@@ -53,6 +53,8 @@ export interface LLMResponse {
   rawResponse?: string;
   errorKind?: string;
   error?: string;
+  errorCode?: string;
+  providerStatus?: number;
   shouldExecuteTools: boolean;
   hasToolCalls: boolean;
 }

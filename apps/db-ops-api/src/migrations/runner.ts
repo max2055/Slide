@@ -14,6 +14,11 @@ const snapshotId = '000_schema_baseline.sql';
 // comments. The corrected migration is intentionally accepted only for that
 // exact historical checksum; migration 069 repairs the live schema forward.
 export const LEGACY_MIGRATION_CHECKSUMS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  // 071_v010 was deployed once with a harmless trailing-whitespace variant.
+  // Accept that recorded checksum so later forward migrations can run.
+  '071_v010_infrastructure_assistant.sql': Object.freeze([
+    '2a070214f68fbc1fd760d1708b3b39d5376d226495a0df5d77c32fb96fd4763f',
+  ]),
   '067_device_registrations.sql': Object.freeze([
     '94403810bcae74f546a719b6d2f062e1699c18440e2ad76a5c787fa3f2c10ebb',
   ]),

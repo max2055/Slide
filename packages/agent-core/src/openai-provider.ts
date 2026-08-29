@@ -29,6 +29,41 @@ export function retainPartialThinkOpenTag(value: string): string {
   return '';
 }
 
+export interface NormalizedProviderError {
+  message: string;
+  errorCode?: string;
+  status?: number;
+}
+
+/** Convert provider HTTP failures into messages an operator can act on. */
+export function normalizeProviderError(error: unknown): NormalizedProviderError {
+  const candidate = error as { status?: unknown; code?: unknown; message?: unknown; error?: { message?: unknown } } | null;
+  const status = Number(candidate?.status);
+  const rawMessage = String(candidate?.message ?? candidate?.error?.message ?? error ?? 'Unknown provider error');
+  const lower = rawMessage.toLowerCase();
+  if (status === 402 || lower.includes('insufficient balance') || lower.includes('insufficient funds')) {
+    return {
+      status: 402,
+      errorCode: 'LLM_INSUFFICIENT_BALANCE',
+      message: '当前大模型服务余额不足，请充值或切换可用模型提供商后重试。',
+    };
+  }
+  if (status === 401 || status === 403) {
+    return { status, errorCode: 'LLM_AUTHENTICATION_FAILED', message: '大模型服务认证失败，请检查 API Key 和提供商配置。' };
+  }
+  if (status === 429) {
+    return { status, errorCode: 'LLM_RATE_LIMITED', message: '大模型服务达到频率或配额限制，请稍后重试或切换提供商。' };
+  }
+  if (status >= 500 && status <= 599) {
+    return { status, errorCode: 'LLM_PROVIDER_UNAVAILABLE', message: '大模型服务暂时不可用，请稍后重试或切换提供商。' };
+  }
+  return {
+    ...(Number.isFinite(status) && status > 0 ? { status } : {}),
+    ...(typeof candidate?.code === 'string' ? { errorCode: candidate.code } : {}),
+    message: rawMessage,
+  };
+}
+
 export class OpenAIProvider implements LLMProvider {
   private client: OpenAI;
   private model: string;
@@ -65,7 +100,8 @@ export class OpenAIProvider implements LLMProvider {
 
       return parseOpenAIResponse(response);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const normalized = normalizeProviderError(err);
+      const message = normalized.message;
       console.error("[OpenAIProvider] chat() failed:", message);
       return {
         content: null,
@@ -76,6 +112,8 @@ export class OpenAIProvider implements LLMProvider {
         hasToolCalls: false,
         errorKind: "provider_error",
         error: message,
+        errorCode: normalized.errorCode,
+        providerStatus: normalized.status,
       };
     }
   }
@@ -253,7 +291,8 @@ export class OpenAIProvider implements LLMProvider {
     } catch (err) {
       if (idleTimer) clearTimeout(idleTimer);
       options?.signal?.removeEventListener('abort', abortFromCaller);
-      const message = err instanceof Error ? err.message : String(err);
+      const normalized = normalizeProviderError(err);
+      const message = normalized.message;
       console.error("[OpenAIProvider] chatStream() failed:", message);
       return {
         content: null,
@@ -264,6 +303,8 @@ export class OpenAIProvider implements LLMProvider {
         hasToolCalls: false,
         errorKind: "provider_error",
         error: message,
+        errorCode: normalized.errorCode,
+        providerStatus: normalized.status,
       };
     }
   }

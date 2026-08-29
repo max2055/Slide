@@ -46,7 +46,8 @@ export { SkillsLoader } from "./skills.js";
 export type { Skill, SkillMeta } from "./skills.js";
 export { MemoryStore } from "./memory.js";
 export { ContextBuilder } from "./context.js";
-export { OpenAIProvider } from "./openai-provider.js";
+export { OpenAIProvider, normalizeProviderError } from "./openai-provider.js";
+export type { NormalizedProviderError } from "./openai-provider.js";
 export type {
   // Core types
   LLMProvider,
