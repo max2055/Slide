@@ -191,7 +191,7 @@ describe('109-04: DirectGatewayClient', () => {
     expect(onEvent).toHaveBeenCalledWith(cancelled);
   });
 
-  it('keeps thinking events separate from answer deltas and preserves their order', () => {
+  it('keeps thinking events separate from answer deltas and preserves their order', async () => {
     const host = {
       chatRunId: 'run-1',
       sessionKey: 'session-1',
@@ -223,10 +223,29 @@ describe('109-04: DirectGatewayClient', () => {
       (directGateway as any).handleDirectAdapterEvent(host, event);
     }
 
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
     expect(host.chatThinkingText).toBe('inspect the target');
     expect(host.chatThinkingComplete).toBe(true);
     expect(host.chatStream).toBe('Done.');
     expect(host.chatMessages).toEqual([]);
+  });
+
+  it('coalesces rapid answer deltas and keeps the latest text', async () => {
+    const host = {
+      chatRunId: 'run-1', sessionKey: 'session-1', chatThinkingText: '', chatThinkingComplete: false,
+      chatStream: '', chatMessages: [], chatSending: true, lastError: null,
+      settings: { lastActiveSessionKey: '' }, applySettings(next: Record<string, unknown>) { this.settings = next; },
+      refreshSessionsAfterChat: new Set<string>(), chatToolMessages: [], chatStreamSegments: [],
+      toolStreamById: new Map(), toolStreamOrder: [], toolStreamSyncTimer: null,
+    };
+
+    (directGateway as any).handleDirectAdapterEvent(host, { type: 'text_delta', delta: '第一段' });
+    (directGateway as any).handleDirectAdapterEvent(host, { type: 'text_delta', delta: '第一段第二段' });
+    expect(host.chatStream).toBe('');
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(host.chatStream).toBe('第一段第二段');
   });
 
   it('adopts the server session key without resetting the active run and uses it next', async () => {

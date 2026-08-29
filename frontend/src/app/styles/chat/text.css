@@ -2,20 +2,52 @@
    CHAT TEXT STYLING
    ============================================= */
 
-.chat-thinking {
+.chat-thinking-disclosure {
   margin-bottom: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
+  border: 1px dashed var(--border);
   border-radius: var(--radius-md);
-  border: 1px dashed rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--secondary) 34%, transparent);
   color: var(--muted);
   font-size: var(--text-sm);
   line-height: 1.4;
 }
 
-:root[data-theme-mode="light"] .chat-thinking {
-  border-color: rgba(16, 24, 40, 0.25);
-  background: rgba(16, 24, 40, 0.04);
+.chat-thinking-disclosure summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  cursor: pointer;
+  color: var(--text-secondary, var(--muted));
+  font-weight: 600;
+  user-select: none;
+}
+
+.chat-thinking-disclosure__icon {
+  display: inline-flex;
+  color: var(--accent);
+}
+
+.chat-thinking-disclosure__icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.chat-thinking-disclosure__status {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 400;
+}
+
+.chat-thinking-disclosure__body {
+  max-height: 300px;
+  margin-top: var(--space-xs);
+  overflow-y: auto;
+  color: var(--muted);
+}
+
+.chat-thinking-disclosure__body :where(p, ul, ol, pre, blockquote, table) {
+  margin: 0;
 }
 
 .chat-text {
@@ -44,13 +76,13 @@
 /* Hide default marker only for unordered task lists; ordered lists keep numbers */
 .chat-text :where(ul > .task-list-item),
 .sidebar-markdown :where(ul > .task-list-item),
-.chat-thinking :where(ul > .task-list-item) {
+.chat-thinking-disclosure__body :where(ul > .task-list-item) {
   list-style: none;
 }
 
 .chat-text :where(.task-list-item-checkbox),
 .sidebar-markdown :where(.task-list-item-checkbox),
-.chat-thinking :where(.task-list-item-checkbox) {
+.chat-thinking-disclosure__body :where(.task-list-item-checkbox) {
   margin-right: 0.4em;
   vertical-align: middle;
 }

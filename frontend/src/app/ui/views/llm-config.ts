@@ -420,7 +420,14 @@ export class LLMConfigPage extends LitElement {
   private async _test(p: LLMProvider) {
     this.testing = true; this.testResult = null;
     try {
-      const r = await apiClient.post<any>("/llm/test", { providerName: p.name });
+      // Existing providers are resolved by their persisted name; other fields remain draft-only.
+      const draft: Record<string, string> = { providerName: p.name };
+      if (this.form.api_key.trim()) draft.apiKey = this.form.api_key.trim();
+      if (this.form.api_base_url.trim()) draft.baseURL = this.form.api_base_url.trim();
+      if (this.form.default_model.trim()) draft.model = this.form.default_model.trim();
+      if (this.form.api_format.trim()) draft.apiFormat = this.form.api_format.trim();
+      if (this.form.deployment_type.trim()) draft.deploymentType = this.form.deployment_type.trim();
+      const r = await apiClient.post<any>("/llm/test", draft);
       this.testResult = r.success ? `✅ ${r.message || "连接成功"}` : `❌ ${r.error || r.message || "连接失败"}`;
     } catch (e: any) { this.testResult = `❌ ${e.message}`; }
     finally { this.testing = false; setTimeout(() => { this.testResult = null; }, 8000); }

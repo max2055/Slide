@@ -493,6 +493,57 @@ function isEventForDifferentActiveRun(
   return Boolean(activeRunId && payload && payload.runId !== activeRunId);
 }
 
+type PendingDirectStreamUpdate = {
+  thinkingText?: string;
+  thinkingComplete?: boolean;
+  textPayload?: ChatEventPayload;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+
+const pendingDirectStreamUpdates = new WeakMap<object, PendingDirectStreamUpdate>();
+
+function pendingStreamUpdateFor(host: Record<string, unknown>): PendingDirectStreamUpdate {
+  const key = host as object;
+  let pending = pendingDirectStreamUpdates.get(key);
+  if (!pending) {
+    pending = { timer: null };
+    pendingDirectStreamUpdates.set(key, pending);
+  }
+  return pending;
+}
+
+function flushDirectStreamUpdates(host: Record<string, unknown>): void {
+  const key = host as object;
+  const pending = pendingDirectStreamUpdates.get(key);
+  if (!pending) return;
+  if (pending.timer !== null) {
+    clearTimeout(pending.timer);
+  }
+  pending.timer = null;
+  if (pending.thinkingText !== undefined) {
+    host.chatThinkingText = pending.thinkingText;
+  }
+  if (pending.thinkingComplete !== undefined) {
+    host.chatThinkingComplete = pending.thinkingComplete;
+  }
+  const payload = pending.textPayload;
+  pending.thinkingText = undefined;
+  pending.thinkingComplete = undefined;
+  pending.textPayload = undefined;
+  if (payload) {
+    handleChatGatewayEvent(host, payload);
+  }
+  if (pending.timer === null && !pending.thinkingText && !pending.thinkingComplete && !pending.textPayload) {
+    pendingDirectStreamUpdates.delete(key);
+  }
+}
+
+function scheduleDirectStreamFlush(host: Record<string, unknown>): void {
+  const pending = pendingStreamUpdateFor(host);
+  if (pending.timer !== null) return;
+  pending.timer = setTimeout(() => flushDirectStreamUpdates(host), 16);
+}
+
 function handleTerminalChatEvent(
   host: Record<string, unknown>,
   payload: ChatEventPayload | undefined,
@@ -594,17 +645,30 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     }
     case 'thinking_delta':
       // Accumulate thinking text
-      host.chatThinkingText = ((host.chatThinkingText as string) || '') + event.delta;
-      host.chatThinkingComplete = false;
+      {
+        const pending = pendingStreamUpdateFor(host);
+        pending.thinkingText = (pending.thinkingText ?? (host.chatThinkingText as string) ?? '') + event.delta;
+        pending.thinkingComplete = false;
+        scheduleDirectStreamFlush(host);
+      }
       break;
     case 'thinking_end':
+      flushDirectStreamUpdates(host);
       host.chatThinkingComplete = true;
       break;
-    case 'text_delta':
+    case 'text_delta': {
+      const payload = mapAdapterChatEventToPayload(event, runId, sessionKey);
+      if (payload) {
+        pendingStreamUpdateFor(host).textPayload = payload;
+        scheduleDirectStreamFlush(host);
+      }
+      break;
+    }
     case 'complete':
     case 'cancelled':
     case 'protocol.error':
     case 'error': {
+      flushDirectStreamUpdates(host);
       const payload = mapAdapterChatEventToPayload(event, runId, sessionKey);
       if (payload) {
         handleChatGatewayEvent(host, payload);
@@ -614,6 +678,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     case 'tool_start':
     case 'tool_result':
     case 'tool_error': {
+      flushDirectStreamUpdates(host);
       const agentPayload: AgentEventPayload = {
         runId: runId ?? '',
         seq: 0,
@@ -629,6 +694,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
       break;
     }
     case 'tool_progress': {
+      flushDirectStreamUpdates(host);
       const agentPayload: AgentEventPayload = {
         runId: runId ?? '',
         seq: Number(event.progress.sequence ?? 0),

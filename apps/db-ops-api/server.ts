@@ -756,31 +756,35 @@ async function start() {
   fastify.post('/api/llm/test', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
       const check = strictBody(request.body as Record<string, unknown>,
-          ['providerName'], 'POST /api/llm/test');
+        ['providerName', 'apiKey', 'baseURL', 'model', 'apiFormat', 'deploymentType'], 'POST /api/llm/test');
         if (check.error) return reply.code(400).send(check.error);
-        const { providerName } = check.body as { providerName: string };
+      const { providerName, apiKey: draftApiKey, baseURL, model, apiFormat, deploymentType } = check.body as {
+        providerName: string; apiKey?: string; baseURL?: string; model?: string; apiFormat?: string; deploymentType?: string;
+      };
+      if (!providerName || typeof providerName !== 'string') return reply.code(400).send({ error: '缺少必填字段：providerName' });
       const provider = await llmDatabaseService.getProviderByName(providerName);
       if (!provider) return reply.code(404).send({ error: '提供商不存在' });
-      const apiKey = provider.api_key_encrypted
+      const effectiveDeploymentType = typeof deploymentType === 'string' && deploymentType.trim()
+        ? deploymentType.trim() : provider.deployment_type;
+      const draftKey = typeof draftApiKey === 'string' ? draftApiKey.trim() : '';
+      const apiKey = draftKey || (provider.api_key_encrypted
         ? await llmDatabaseService.getProviderApiKey(provider.name)
-        : '';
-      if (!apiKey) return reply.code(400).send({ success: false, error: '未配置 API Key' });
+        : '');
+      if (!apiKey && effectiveDeploymentType !== 'local') return reply.code(400).send({ success: false, error: '未配置 API Key' });
 
-      // 直接使用 OpenAI SDK 测试，不经过 callLLM
-      const OpenAI = (await import('openai')).default;
-      const client = new OpenAI({
+      const result = await llmService.testConnectionWithConfig(
+        providerName,
         apiKey,
-        baseURL: provider.api_base_url || undefined,
-      });
-      const response = await client.chat.completions.create({
-        model: provider.default_model || 'gpt-4o',
-        messages: [{ role: 'user', content: 'hi' }],
-        max_tokens: 10,
-      });
+        typeof baseURL === 'string' && baseURL.trim() ? baseURL.trim() : undefined,
+        typeof model === 'string' && model.trim() ? model.trim() : undefined,
+        {
+          apiFormat: typeof apiFormat === 'string' && apiFormat.trim() ? apiFormat.trim() : undefined,
+          deploymentType: effectiveDeploymentType,
+        },
+      );
       reply.send({
-        success: true,
-        message: `连接成功，模型: ${response.model || provider.default_model}`,
-        provider: providerName,
+        ...result,
+        message: result.success ? `连接成功，模型: ${result.model || model || provider.default_model || 'unknown'}` : undefined,
       });
     } catch (error: any) {
       reply.send({

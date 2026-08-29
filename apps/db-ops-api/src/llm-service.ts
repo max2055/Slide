@@ -887,18 +887,33 @@ class LLMService {
   /**
    * 使用临时配置测试连接
    */
-  async testConnectionWithConfig(provider: string, apiKey: string, baseURL?: string, model?: string): Promise<LLMResponse> {
+  async testConnectionWithConfig(
+    provider: string,
+    apiKey: string,
+    baseURL?: string,
+    model?: string,
+    overrides?: { apiFormat?: string; deploymentType?: string },
+  ): Promise<LLMResponse> {
     try {
       // 创建临时客户端
       const providerInfo = await llmDatabaseService.getProviderByName(provider);
-      const apiFormat = providerInfo?.api_format || null;
-      const deploymentType = providerInfo?.deployment_type || 'api';
+      if (!providerInfo) return { success: false, error: `LLM 提供商 '${provider}' 未配置`, provider };
+      // 测试只使用内存中的草稿覆盖项，不修改数据库配置。
+      const config: LLMProvider = {
+        ...providerInfo,
+        api_format: overrides?.apiFormat || providerInfo.api_format,
+        deployment_type: (overrides?.deploymentType as LLMProvider['deployment_type']) || providerInfo.deployment_type,
+        api_base_url: baseURL || providerInfo.api_base_url,
+        default_model: model || providerInfo.default_model,
+      };
+      const apiFormat = config.api_format || null;
+      const deploymentType = config.deployment_type || 'api';
 
       let client;
       if (apiFormat === 'anthropic-messages') {
-        client = { name: provider, type: 'anthropic', client: new Anthropic({ apiKey }), config: providerInfo };
+        client = { name: provider, type: 'anthropic', client: new Anthropic({ apiKey, baseURL: baseURL || undefined }), config };
       } else if (!apiFormat && deploymentType === 'local') {
-        client = { name: provider, type: 'ollama', client: null, config: providerInfo };
+        client = { name: provider, type: 'ollama', client: null, config };
       } else {
         // OpenAI 兼容接口（openai-completions / null / 未知）
         client = {
@@ -908,11 +923,11 @@ class LLMService {
             apiKey,
             baseURL: baseURL || undefined,
           }),
-          config: providerInfo,
+          config,
         };
       }
 
-      const testModel = model || providerInfo?.default_model || 'qwen-plus';
+      const testModel = config.default_model || 'qwen-plus';
 
       // 调用测试
       const result = await this.callLLM(
