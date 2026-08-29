@@ -26,6 +26,7 @@ export type AuditEventType =
   | 'config_change'
   | 'user_change'
   | 'instance_change'
+  | 'config_backup_access'
   | 'permission_denied'
   | 'sql_execution';
 
@@ -620,6 +621,44 @@ export class AuditLogManager {
     await this.handler.write(entry);
     if (this.persistentStore) await this.persistentStore.write(entry);
     this.events.emit('log:config_change', entry);
+  }
+
+  /**
+   * Record configuration-backup access using metadata only. Raw configuration,
+   * credentials, and transport details must never enter the audit payload.
+   */
+  async logConfigBackupAccess(params: {
+    userId?: string;
+    action: 'collect' | 'read_raw' | 'read_denied' | 'failed';
+    deviceId: number;
+    backupId?: number;
+    reason?: string;
+    contentSha256?: string;
+    sizeBytes?: number;
+  }): Promise<void> {
+    const failed = params.action === 'read_denied' || params.action === 'failed';
+    const entry: AuditLogEntry = {
+      id: this.generateId(),
+      eventType: 'config_backup_access',
+      level: failed ? 'warning' : 'info',
+      userId: params.userId,
+      action: `config_backup_${params.action}`,
+      resourceType: 'network_device_config_backup',
+      resourceId: String(params.backupId ?? params.deviceId),
+      details: {
+        deviceId: params.deviceId,
+        ...(params.backupId === undefined ? {} : { backupId: params.backupId }),
+        ...(params.contentSha256 === undefined ? {} : { contentSha256: params.contentSha256 }),
+        ...(params.sizeBytes === undefined ? {} : { sizeBytes: params.sizeBytes }),
+      },
+      result: failed ? 'failure' : 'success',
+      errorMessage: params.reason,
+      timestamp: Date.now(),
+    };
+
+    await this.handler.write(entry);
+    if (this.persistentStore) await this.persistentStore.write(entry);
+    this.events.emit('log:config_backup_access', entry);
   }
 
   /**

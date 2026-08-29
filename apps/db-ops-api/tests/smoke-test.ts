@@ -66,8 +66,8 @@ const ROUTES: TestCase[] = [
   },
 
   // ── Database instances ──
-  { method: "GET", path: "/api/database/instances", name: "List instances", auth: false },
-  { method: "GET", path: "/api/database/instances/1", name: "Get instance 1", auth: false, expect: [200, 404] },
+  { method: "GET", path: "/api/database/instances", name: "List instances", auth: true },
+  { method: "GET", path: "/api/database/instances/1", name: "Get instance 1", auth: true, expect: [200, 404] },
   {
     method: "POST",
     path: "/api/database/instances",
@@ -82,14 +82,14 @@ const ROUTES: TestCase[] = [
     name: "Update instance",
     auth: true,
     body: "auto",
-    expect: [200, 404],
+    expect: [200, 400, 404],
   },
   {
     method: "DELETE",
     path: "/api/database/instances/99999",
     name: "Delete instance (404)",
     auth: true,
-    expect: [200, 404, 500],
+    expect: [200, 400, 404, 500],
   },
   {
     method: "POST",
@@ -101,31 +101,31 @@ const ROUTES: TestCase[] = [
   },
 
   // ── LLM ──
-  { method: "GET", path: "/api/llm/configs", name: "LLM configs", auth: false },
+  { method: "GET", path: "/api/llm/configs", name: "LLM configs", auth: true },
   {
     method: "POST",
     path: "/api/llm/test",
     name: "LLM test",
-    auth: false,
-    body: { provider: "anthropic" },
-    expect: [200, 500],
+    auth: true,
+    body: { providerName: "anthropic" },
+    expect: [200, 400, 404, 500],
   },
 
   // ── Alerts ──
-  { method: "GET", path: "/api/alerts", name: "List alerts", auth: false },
+  { method: "GET", path: "/api/alerts", name: "List alerts", auth: true },
   { method: "DELETE", path: "/api/alerts", name: "Clear alerts", auth: true, expect: [200] },
 
   // ── Metrics ──
-  { method: "GET", path: "/api/metrics/1", name: "Metrics for instance 1", auth: false, expect: [200, 404] },
+  { method: "GET", path: "/api/metrics/1", name: "Metrics for instance 1", auth: true, expect: [200, 404] },
 
   // ── Instance sub-resources ──
-  { method: "GET", path: "/api/database/instances/1/metrics", name: "Instance metrics", auth: false, expect: [200, 404] },
-  { method: "GET", path: "/api/database/instances/1/metrics/history", name: "Metrics history", auth: false, expect: [200, 404] },
-  { method: "GET", path: "/api/database/instances/1/topsql", name: "TopSQL", auth: false, expect: [200, 404] },
-  { method: "GET", path: "/api/database/instances/1/sessions", name: "Sessions", auth: false, expect: [200, 404] },
-  { method: "GET", path: "/api/database/instances/1/capacity", name: "Capacity", auth: false, expect: [200, 404] },
-  { method: "GET", path: "/api/database/instances/1/capacity/history", name: "Capacity history", auth: false, expect: [200, 404] },
-  { method: "GET", path: "/api/database/instances/1/capacity/databases", name: "Capacity databases", auth: false, expect: [200, 404] },
+  { method: "GET", path: "/api/database/instances/1/metrics", name: "Instance metrics", auth: true, expect: [200, 404] },
+  { method: "GET", path: "/api/database/instances/1/metrics/history", name: "Metrics history", auth: true, expect: [200, 404] },
+  { method: "GET", path: "/api/database/instances/1/topsql", name: "TopSQL", auth: true, expect: [200, 404] },
+  { method: "GET", path: "/api/database/instances/1/sessions", name: "Sessions", auth: true, expect: [200, 404] },
+  { method: "GET", path: "/api/database/instances/1/capacity", name: "Capacity", auth: true, expect: [200, 404] },
+  { method: "GET", path: "/api/database/instances/1/capacity/history", name: "Capacity history", auth: true, expect: [200, 404] },
+  { method: "GET", path: "/api/database/instances/1/capacity/databases", name: "Capacity databases", auth: true, expect: [200, 404] },
   {
     method: "POST",
     path: "/api/database/instances/1/capacity/collect",
@@ -288,11 +288,11 @@ const ROUTES: TestCase[] = [
 
   // ── Baseline ──
   { method: "POST", path: "/api/baseline/compute", name: "Compute baselines", auth: true, expect: [200] },
-  { method: "GET", path: "/api/baseline/1/cpu_usage", name: "Get baseline", auth: false, expect: [200, 404] },
+  { method: "GET", path: "/api/baseline/1/cpu_usage", name: "Get baseline", auth: true, expect: [200, 404] },
   { method: "GET", path: "/api/baseline/schedule", name: "Baseline schedule", auth: true },
 
   // ── Escalation rules ──
-  { method: "GET", path: "/api/alerts/escalation/rules", name: "Escalation rules", auth: false },
+  { method: "GET", path: "/api/alerts/escalation/rules", name: "Escalation rules", auth: true },
   {
     method: "POST",
     path: "/api/alerts/escalation/rules",
@@ -303,7 +303,7 @@ const ROUTES: TestCase[] = [
   },
 
   // ── Maintenance windows ──
-  { method: "GET", path: "/api/maintenance-windows", name: "Maintenance windows", auth: false },
+  { method: "GET", path: "/api/maintenance-windows", name: "Maintenance windows", auth: true },
   {
     method: "POST",
     path: "/api/maintenance-windows",
@@ -316,12 +316,12 @@ const ROUTES: TestCase[] = [
     method: "GET",
     path: "/api/maintenance-windows/check/1",
     name: "Check maint window",
-    auth: false,
+    auth: true,
     expect: [200, 404],
   },
 
   // ── Silence ──
-  { method: "GET", path: "/api/silence", name: "List silence rules", auth: false },
+  { method: "GET", path: "/api/silence", name: "List silence rules", auth: true },
   {
     method: "POST",
     path: "/api/silence",
@@ -414,7 +414,7 @@ async function runOne(tc: TestCase): Promise<TestResult> {
     const res = await fetch(`${BASE_URL}${tc.path}`, {
       method: tc.method,
       headers,
-      body: tc.method === "GET" || tc.method === "DELETE" ? undefined : getBody(tc),
+      body: tc.method === "GET" ? undefined : getBody(tc),
     });
 
     const durationMs = Date.now() - start;

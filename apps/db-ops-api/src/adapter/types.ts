@@ -43,6 +43,14 @@ export interface CompleteEvent {
   type: 'complete';
   finalContent?: string;
   thinkingContent?: string;
+  /** Monotonic chat_messages.id assigned by the shared database. */
+  messageSequence?: number;
+}
+
+export interface ToolProgressEvent {
+  type: 'tool_progress';
+  toolName: string;
+  progress: Record<string, unknown>;
 }
 
 export interface ThinkingDeltaEvent {
@@ -70,6 +78,7 @@ export type ChatEvent =
   | ToolErrorEvent
   | ThinkingDeltaEvent
   | ThinkingEndEvent
+  | ToolProgressEvent
   | CompleteEvent
   | CancelledEvent
   | ErrorEvent;

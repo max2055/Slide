@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDockerRunArgs, parseImageAllowlist, validateRelativeFilePath } from './sandbox-policy.js';
+import { buildDockerRunArgs, parseExecutionProfiles, parseImageAllowlist, validateRelativeFilePath } from './sandbox-policy.js';
 
 describe('rootless Docker sandbox policy', () => {
   const images = { node: 'node:22-alpine@sha256:' + 'a'.repeat(64) };
@@ -35,5 +35,40 @@ describe('rootless Docker sandbox policy', () => {
       job: { runtime: 'node', command: ['node', 'main.js'], env },
       images,
     })).toThrow('SANDBOX_ENV_INVALID');
+  });
+
+  it('uses only the preconfigured restricted network for network jobs', () => {
+    const args = buildDockerRunArgs({
+      jobId: '11111111-1111-1111-1111-111111111111',
+      workspace: '/var/lib/slide-sandbox/job',
+      job: { runtime: 'node', command: ['node', 'main.js'], networkMode: 'restricted' },
+      images,
+      restrictedNetwork: 'slide-restricted-egress',
+      networkImage: 'slide-network-tools@sha256:' + 'b'.repeat(64),
+    });
+    expect(args).toContain('--network');
+    expect(args).toContain('slide-restricted-egress');
+    expect(() => buildDockerRunArgs({
+      jobId: '11111111-1111-1111-1111-111111111111',
+      workspace: '/var/lib/slide-sandbox/job',
+      job: { runtime: 'node', command: ['node', 'main.js'], networkMode: 'restricted' },
+      images,
+    })).toThrow('SANDBOX_NETWORK_UNAVAILABLE');
+  });
+
+  it('resolves a logical execution profile to a digest-pinned image', () => {
+    const args = buildDockerRunArgs({
+      jobId: '123e4567-e89b-12d3-a456-426614174000', workspace: '/var/lib/slide-sandbox/job',
+      job: { runtime: 'shell', command: ['nmap', '-V'], networkMode: 'restricted', executionProfile: 'database-network-scan' },
+      images: { shell: 'node@sha256:' + 'a'.repeat(64) },
+      executionProfiles: { 'database-network-scan': 'nmap@sha256:' + 'b'.repeat(64) },
+      restrictedNetwork: 'restricted-net',
+    });
+    expect(args).toContain('nmap@sha256:' + 'b'.repeat(64));
+    expect(args).not.toContain('node@sha256:' + 'a'.repeat(64));
+  });
+
+  it('rejects unpinned or malformed execution profiles', () => {
+    expect(() => parseExecutionProfiles('{"database-network-scan":"nmap:latest"}')).toThrow('SANDBOX_EXECUTION_PROFILES_INVALID');
   });
 });

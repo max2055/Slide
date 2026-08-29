@@ -15,6 +15,20 @@ import type {
   StreamCallbacks,
 } from "./types.js";
 
+const THINK_OPEN_TAG_PREFIXES = [
+  '<', '<t', '<th', '<thi', '<thin', '<think', '<thinki', '<thinkin', '<thinking',
+];
+
+/** Keep only a suffix that can still become a split <think> opening tag. */
+export function retainPartialThinkOpenTag(value: string): string {
+  const lower = value.toLowerCase();
+  for (let length = Math.min(THINK_OPEN_TAG_PREFIXES.at(-1)!.length, value.length); length > 0; length -= 1) {
+    const suffix = lower.slice(-length);
+    if (THINK_OPEN_TAG_PREFIXES.includes(suffix)) return value.slice(-length);
+  }
+  return '';
+}
+
 export class OpenAIProvider implements LLMProvider {
   private client: OpenAI;
   private model: string;
@@ -119,7 +133,6 @@ export class OpenAIProvider implements LLMProvider {
           const rc = (delta as any).reasoning_content || '';
           reasoningContent += rc;
           if (rc && callbacks.onThinkingDelta) await callbacks.onThinkingDelta(rc);
-          continue;
         }
 
         let deltaContent = delta?.content || '';
@@ -190,8 +203,13 @@ export class OpenAIProvider implements LLMProvider {
             }
           } else {
             // Regular content, no <think> tags
-            content += deltaContent;
-            await callbacks.onContentDelta(deltaContent);
+            const partial = retainPartialThinkOpenTag(thinkTagBuffer);
+            const safeContent = partial ? thinkTagBuffer.slice(0, -partial.length) : thinkTagBuffer;
+            if (safeContent) {
+              content += safeContent;
+              await callbacks.onContentDelta(safeContent);
+            }
+            thinkTagBuffer = partial;
           }
         }
 

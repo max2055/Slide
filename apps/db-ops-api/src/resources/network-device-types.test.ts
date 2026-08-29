@@ -15,9 +15,19 @@ describe('network device input contracts', () => {
     expect(() => validateSnmpV3Credential({ username: 'm', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: 'short', privacyProtocol: 'AES', privacySecret: 'long-enough' })).toThrow('SNMPV3_AUTH_SECRET_INVALID');
   });
 
+  it.each([
+    ['SHA-256', 'AES'],
+    ['SHA-512', 'AES'],
+    ['SHA', 'AES-192'],
+    ['SHA', 'AES-256'],
+  ])('rejects SNMP algorithms not supported by the production client (%s/%s)', (authProtocol, privacyProtocol) => {
+    expect(() => validateSnmpV3Credential({
+      username: 'monitor', securityLevel: 'authPriv', authProtocol, authSecret: 'auth-secret', privacyProtocol, privacySecret: 'privacy-secret',
+    } as any)).toThrow(/SNMPV3_(AUTH|PRIVACY)_PROTOCOL_INVALID/);
+  });
+
   it('enforces the 2 MiB backup limit', () => {
     expect(() => validateConfigBackupSize(2 * 1024 * 1024)).not.toThrow();
     expect(() => validateConfigBackupSize(2 * 1024 * 1024 + 1)).toThrow('CONFIG_BACKUP_TOO_LARGE');
   });
 });
-

@@ -76,18 +76,27 @@ export const NetworkDeviceSnmpSecurityLevelSchema = Type.Union([
 export const NetworkDeviceSnmpCredentialSchema = Type.Object({
   username: Type.String({ minLength: 1, maxLength: 64 }),
   securityLevel: NetworkDeviceSnmpSecurityLevelSchema,
-  authProtocol: Type.Optional(Type.Union([Type.Literal('MD5'), Type.Literal('SHA'), Type.Literal('SHA-256'), Type.Literal('SHA-512')])),
+  authProtocol: Type.Optional(Type.Union([Type.Literal('MD5'), Type.Literal('SHA')])),
   authSecret: Type.Optional(Type.String({ minLength: 8 })),
-  privacyProtocol: Type.Optional(Type.Union([Type.Literal('DES'), Type.Literal('AES'), Type.Literal('AES-128'), Type.Literal('AES-192'), Type.Literal('AES-256')])),
+  privacyProtocol: Type.Optional(Type.Union([Type.Literal('DES'), Type.Literal('AES')])),
   privacySecret: Type.Optional(Type.String({ minLength: 8 })),
 }, { $id: 'NetworkDeviceSnmpCredential', additionalProperties: false });
+export const NetworkDeviceSshCredentialSchema = Type.Object({
+  credentialType: Type.Union([Type.Literal('password'), Type.Literal('key')]),
+  username: Type.String({ minLength: 1, maxLength: 255 }),
+  credentialValue: Type.String({ minLength: 1, maxLength: 512 }),
+  hostKeyFingerprint: Type.String({ pattern: '^SHA256:[A-Za-z0-9+/]{43}$' }),
+}, { $id: 'NetworkDeviceSshCredential', additionalProperties: false });
 export const NetworkDeviceTestConnectionRequestSchema = Type.Object({
   host: Type.String({ minLength: 1 }),
   version: Type.Optional(Type.Literal(3)),
   snmpPort: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
   snmp_port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
+  sshPort: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
+  ssh_port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
   snmpv3: Type.Optional(NetworkDeviceSnmpCredentialSchema),
   snmp: Type.Optional(NetworkDeviceSnmpCredentialSchema),
+  ssh: Type.Optional(NetworkDeviceSshCredentialSchema),
   vendor: Type.Optional(Type.Literal('huawei')),
 }, { $id: 'NetworkDeviceTestConnectionRequest', additionalProperties: false });
 export const NetworkDeviceProbeResultSchema = Type.Object({
@@ -101,6 +110,7 @@ export const NetworkDeviceProbeResultSchema = Type.Object({
 export const NetworkDeviceTestConnectionResponseSchema = Type.Object({
   success: Type.Boolean(),
   probe: Type.Optional(NetworkDeviceProbeResultSchema),
+  ssh: Type.Optional(Type.Object({ verified: Type.Boolean() }, { additionalProperties: false })),
   error: Type.Optional(Type.String()),
 }, { $id: 'NetworkDeviceTestConnectionResponse', additionalProperties: false });
 export const NetworkDeviceProbeResponseSchema = Type.Object({
@@ -123,7 +133,7 @@ export const NetworkDeviceCapabilitiesResponseSchema = Type.Object({
 
 export const ConfigBackupSummarySchema = Type.Object({
   id: Type.Integer({ minimum: 1 }), deviceId: Type.Integer({ minimum: 1 }), versionNo: Type.Integer({ minimum: 1 }),
-  contentSha256: Type.String({ pattern: '^[a-f0-9]{64}$' }), sourceProtocol: Type.Union([Type.Literal('ssh'), Type.Literal('netconf')]),
+  contentSha256: Type.String({ pattern: '^[a-f0-9]{64}$' }), sourceProtocol: Type.Literal('ssh'),
   collectedAt: Type.String(), sizeBytes: Type.Integer({ minimum: 0, maximum: 2097152 }),
   redactionStatus: Type.Union([Type.Literal('redacted'), Type.Literal('unredacted'), Type.Literal('failed')]),
 }, { $id: 'ConfigBackupSummary', additionalProperties: false });
@@ -177,6 +187,48 @@ export const NetworkDeviceRelationsRequestSchema = Type.Object({
 export const NetworkDeviceRelationsResponseSchema = Type.Object({
   relations: Type.Array(NetworkDeviceRelationSchema),
 }, { $id: 'NetworkDeviceRelationsResponse', additionalProperties: false });
+
+const ResourceTypeSchema = Type.Union([
+  Type.Literal('instance'), Type.Literal('server'), Type.Literal('network_device'),
+], { $id: 'ResourceType' });
+const ResourceRefSchema = Type.Object({ type: ResourceTypeSchema, id: Type.Integer({ minimum: 1 }) }, { $id: 'ResourceRef' });
+export const ResourceListResponseSchema = Type.Object({
+  items: Type.Array(Type.Object({
+    resource: ResourceRefSchema, label: Type.String(), status: Type.String(),
+    attributes: Type.Record(Type.String(), Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()])),
+  }, { additionalProperties: false }), { maxItems: 500 }),
+  collectedAt: Type.String(),
+  dataQuality: Type.Union([Type.Literal('complete'), Type.Literal('partial'), Type.Literal('empty')]),
+}, { $id: 'ResourceListResponse', additionalProperties: false });
+export const ResourceOverviewItemSchema = Type.Object({
+  resource: ResourceRefSchema,
+  label: Type.String(),
+  status: Type.String(),
+  quality: Type.Union([Type.Literal('good'), Type.Literal('degraded'), Type.Literal('invalid'), Type.Literal('unknown'), Type.Literal('partial')]),
+  freshness: Type.Union([Type.Literal('fresh'), Type.Literal('stale'), Type.Literal('missing')]),
+  observedAt: Type.Union([Type.String(), Type.Null()]),
+  unresolvedAlerts: Type.Integer({ minimum: 0 }),
+  relationCount: Type.Integer({ minimum: 0 }),
+  impactScope: Type.Array(ResourceRefSchema, { maxItems: 64 }),
+  gaps: Type.Array(Type.String(), { maxItems: 32 }),
+}, { $id: 'ResourceOverviewItem', additionalProperties: false });
+export const ResourceOverviewResponseSchema = Type.Object({
+  schemaVersion: Type.Literal(1), collectedAt: Type.String(),
+  dataQuality: Type.Union([Type.Literal('complete'), Type.Literal('partial'), Type.Literal('empty')]),
+  summary: Type.Object({
+    total: Type.Integer({ minimum: 0 }),
+    byType: Type.Object({ instance: Type.Integer({ minimum: 0 }), server: Type.Integer({ minimum: 0 }), network_device: Type.Integer({ minimum: 0 }) }, { additionalProperties: false }),
+    byStatus: Type.Record(Type.String(), Type.Integer({ minimum: 0 })),
+    fresh: Type.Integer({ minimum: 0 }), stale: Type.Integer({ minimum: 0 }), missing: Type.Integer({ minimum: 0 }),
+    unresolvedAlerts: Type.Integer({ minimum: 0 }), impactedResources: Type.Integer({ minimum: 0 }),
+  }, { additionalProperties: false }),
+  items: Type.Array(ResourceOverviewItemSchema, { maxItems: 500 }),
+}, { $id: 'ResourceOverviewResponse', additionalProperties: false });
+export const ResourceAgentDiagnosisResponseSchema = Type.Object({
+  success: Type.Boolean(), analysisId: Type.Optional(Type.Integer({ minimum: 1 })),
+  status: Type.Optional(Type.Union([Type.Literal('queued'), Type.Literal('cached')])),
+  error: Type.Optional(Type.String()),
+}, { $id: 'ResourceAgentDiagnosisResponse', additionalProperties: false });
 
 const AdapterCapabilitiesSchema = Type.Partial(Type.Object({
   connect: CapabilityStateSchema,
@@ -286,6 +338,83 @@ export const HostedInstancesResponseSchema = Type.Object({
   instances: Type.Array(HostedInstanceSchema),
 }, { $id: 'HostedInstancesResponse', additionalProperties: false });
 
+const NullableStringSchema = Type.Union([Type.String(), Type.Null()]);
+const UnknownRecordSchema = Type.Record(Type.String(), Type.Unknown());
+
+// Fixed-profile server diagnostics. These schemas deliberately model only
+// backend-produced fields; callers cannot extend a diagnostic section with
+// command/path data or arbitrary credential-bearing properties.
+const ServerDiagnosticSectionProperties = {
+  source: Type.Array(Type.String(), { maxItems: 8 }),
+  collectedAt: Type.String(),
+  expiresAt: Type.String(),
+  validForMs: Type.Integer({ minimum: 1 }),
+  quality: Type.Union([
+    Type.Literal('good'), Type.Literal('partial'), Type.Literal('unknown'), Type.Literal('unsupported'),
+  ]),
+  reason: Type.Optional(Type.String()),
+  truncated: Type.Boolean(),
+};
+
+const ServerServiceStatusSchema = Type.Object({
+  name: Type.String(), loadState: Type.String(), activeState: Type.String(), subState: Type.String(),
+  description: NullableStringSchema,
+}, { additionalProperties: false });
+
+const ServerListeningPortSchema = Type.Object({
+  protocol: Type.Union([Type.Literal('tcp'), Type.Literal('udp'), Type.Literal('unknown')]),
+  address: Type.String(), port: Type.Integer({ minimum: 1, maximum: 65535 }), process: NullableStringSchema,
+}, { additionalProperties: false });
+
+const ServerProcessSampleSchema = Type.Object({
+  pid: Type.Integer({ minimum: 1 }), command: Type.String(), cpuPercent: Type.Number({ minimum: 0 }),
+  memoryPercent: Type.Number({ minimum: 0 }),
+}, { additionalProperties: false });
+
+const ServerDiagnosticLogEntrySchema = Type.Object({
+  timestamp: NullableStringSchema, severity: Type.String(), unit: NullableStringSchema,
+  identifier: NullableStringSchema, message: Type.String(),
+}, { additionalProperties: false });
+
+const ServerInterfaceErrorSummarySchema = Type.Object({
+  interface: Type.String(), rxBytes: Type.Number({ minimum: 0 }), txBytes: Type.Number({ minimum: 0 }),
+  rxErrors: Type.Number({ minimum: 0 }), txErrors: Type.Number({ minimum: 0 }),
+  rxDrops: Type.Number({ minimum: 0 }), txDrops: Type.Number({ minimum: 0 }),
+}, { additionalProperties: false });
+
+function ServerDiagnosticSectionSchema<T extends TSchema>(itemSchema: T) {
+  return Type.Object({
+    ...ServerDiagnosticSectionProperties,
+    items: Type.Array(itemSchema),
+  }, { additionalProperties: false });
+}
+
+export const ServerDiagnosticsSchema = Type.Object({
+  schemaVersion: Type.Literal(1), serverId: Type.Integer({ minimum: 1 }), osType: Type.String(),
+  collectedAt: Type.String(), expiresAt: Type.String(), validForMs: Type.Integer({ minimum: 1 }),
+  quality: Type.Union([
+    Type.Literal('good'), Type.Literal('partial'), Type.Literal('unknown'), Type.Literal('unsupported'),
+  ]),
+  truncated: Type.Boolean(),
+  sections: Type.Object({
+    services: ServerDiagnosticSectionSchema(ServerServiceStatusSchema),
+    listeningPorts: ServerDiagnosticSectionSchema(ServerListeningPortSchema),
+    topProcesses: ServerDiagnosticSectionSchema(ServerProcessSampleSchema),
+    systemLogs: ServerDiagnosticSectionSchema(ServerDiagnosticLogEntrySchema),
+    interfaceErrors: ServerDiagnosticSectionSchema(ServerInterfaceErrorSummarySchema),
+  }, { additionalProperties: false }),
+  serviceStatus: ServerDiagnosticSectionSchema(ServerServiceStatusSchema),
+  listeningPorts: ServerDiagnosticSectionSchema(ServerListeningPortSchema),
+  topProcesses: ServerDiagnosticSectionSchema(ServerProcessSampleSchema),
+  recentSystemLogs: ServerDiagnosticSectionSchema(ServerDiagnosticLogEntrySchema),
+  interfaceErrors: ServerDiagnosticSectionSchema(ServerInterfaceErrorSummarySchema),
+  gaps: Type.Array(Type.Object({ section: Type.String(), reason: Type.String() }, { additionalProperties: false })),
+}, { $id: 'ServerDiagnostics', additionalProperties: false });
+
+export const CollectServerDiagnosticsResponseSchema = Type.Object({
+  success: Type.Literal(true), diagnostics: ServerDiagnosticsSchema,
+}, { $id: 'CollectServerDiagnosticsResponse', additionalProperties: false });
+
 const EvidenceQualityValueSchema = Type.Union([
   Type.Literal('good'),
   Type.Literal('partial'),
@@ -298,9 +427,6 @@ export const EvidenceQualitySchema = Type.Union([
   Type.Literal('unknown'),
   Type.Literal('unsupported'),
 ], { $id: 'EvidenceQuality' });
-
-const NullableStringSchema = Type.Union([Type.String(), Type.Null()]);
-const UnknownRecordSchema = Type.Record(Type.String(), Type.Unknown());
 
 const FilesystemEvidenceProperties = {
   mount: Type.String(),
@@ -458,6 +584,7 @@ export const PublicApiSchemas = {
   NetworkDeviceInterfacesResponse: NetworkDeviceInterfacesResponseSchema,
   NetworkDeviceSnmpSecurityLevel: NetworkDeviceSnmpSecurityLevelSchema,
   NetworkDeviceSnmpCredential: NetworkDeviceSnmpCredentialSchema,
+  NetworkDeviceSshCredential: NetworkDeviceSshCredentialSchema,
   NetworkDeviceTestConnectionRequest: NetworkDeviceTestConnectionRequestSchema,
   NetworkDeviceProbeResult: NetworkDeviceProbeResultSchema,
   NetworkDeviceTestConnectionResponse: NetworkDeviceTestConnectionResponseSchema,
@@ -476,6 +603,10 @@ export const PublicApiSchemas = {
   NetworkDeviceRelationInput: NetworkDeviceRelationInputSchema,
   NetworkDeviceRelationsRequest: NetworkDeviceRelationsRequestSchema,
   NetworkDeviceRelationsResponse: NetworkDeviceRelationsResponseSchema,
+  ResourceOverviewItem: ResourceOverviewItemSchema,
+  ResourceListResponse: ResourceListResponseSchema,
+  ResourceOverviewResponse: ResourceOverviewResponseSchema,
+  ResourceAgentDiagnosisResponse: ResourceAgentDiagnosisResponseSchema,
   DatabaseInstance: DatabaseInstanceSchema,
   DatabaseInstancesResponse: DatabaseInstancesResponseSchema,
   InstanceHostRole: InstanceHostRoleSchema,
@@ -486,6 +617,8 @@ export const PublicApiSchemas = {
   InstanceHostsResponse: InstanceHostsResponseSchema,
   ReplaceInstanceHostsResponse: ReplaceInstanceHostsResponseSchema,
   HostedInstancesResponse: HostedInstancesResponseSchema,
+  ServerDiagnostics: ServerDiagnosticsSchema,
+  CollectServerDiagnosticsResponse: CollectServerDiagnosticsResponseSchema,
   EvidenceQuality: EvidenceQualitySchema,
   FilesystemEvidence: FilesystemEvidenceSchema,
   JournalEvidence: JournalEvidenceSchema,
@@ -508,6 +641,7 @@ export type NetworkDeviceInterface = Static<typeof NetworkDeviceInterfaceSchema>
 export type NetworkDeviceInterfacesResponse = Static<typeof NetworkDeviceInterfacesResponseSchema>;
 export type NetworkDeviceSnmpSecurityLevel = Static<typeof NetworkDeviceSnmpSecurityLevelSchema>;
 export type NetworkDeviceSnmpCredential = Static<typeof NetworkDeviceSnmpCredentialSchema>;
+export type NetworkDeviceSshCredential = Static<typeof NetworkDeviceSshCredentialSchema>;
 export type NetworkDeviceTestConnectionRequest = Static<typeof NetworkDeviceTestConnectionRequestSchema>;
 export type NetworkDeviceProbeResult = Static<typeof NetworkDeviceProbeResultSchema>;
 export type NetworkDeviceTestConnectionResponse = Static<typeof NetworkDeviceTestConnectionResponseSchema>;
@@ -526,6 +660,9 @@ export type NetworkDeviceRelation = Static<typeof NetworkDeviceRelationSchema>;
 export type NetworkDeviceRelationInput = Static<typeof NetworkDeviceRelationInputSchema>;
 export type NetworkDeviceRelationsRequest = Static<typeof NetworkDeviceRelationsRequestSchema>;
 export type NetworkDeviceRelationsResponse = Static<typeof NetworkDeviceRelationsResponseSchema>;
+export type ResourceOverviewItem = Static<typeof ResourceOverviewItemSchema>;
+export type ResourceOverviewResponse = Static<typeof ResourceOverviewResponseSchema>;
+export type ResourceAgentDiagnosisResponse = Static<typeof ResourceAgentDiagnosisResponseSchema>;
 export type DatabaseInstance = Static<typeof DatabaseInstanceSchema>;
 export type InstanceHostRole = Static<typeof InstanceHostRoleSchema>;
 export type InstanceHostMapping = Static<typeof InstanceHostMappingSchema>;
@@ -535,6 +672,8 @@ export type ReplaceInstanceHostsBody = Static<typeof ReplaceInstanceHostsBodySch
 export type InstanceHostsResponse = Static<typeof InstanceHostsResponseSchema>;
 export type ReplaceInstanceHostsResponse = Static<typeof ReplaceInstanceHostsResponseSchema>;
 export type HostedInstancesResponse = Static<typeof HostedInstancesResponseSchema>;
+export type ServerDiagnostics = Static<typeof ServerDiagnosticsSchema>;
+export type CollectServerDiagnosticsResponse = Static<typeof CollectServerDiagnosticsResponseSchema>;
 export type EvidenceQuality = Static<typeof EvidenceQualitySchema>;
 export type FilesystemEvidence = Static<typeof FilesystemEvidenceSchema>;
 export type JournalEvidence = Static<typeof JournalEvidenceSchema>;

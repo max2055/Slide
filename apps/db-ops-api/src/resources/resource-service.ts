@@ -19,7 +19,8 @@ function hasValidTopology(relation: ResourceRelation): boolean {
   }
   if (relation.relationType === 'hosts') return false;
   if (relation.relationType === 'connected_to') {
-    return relation.source.type === 'server' && relation.target.type === 'network_device';
+    return (relation.source.type === 'server' && relation.target.type === 'network_device')
+      || (relation.source.type === 'network_device' && relation.target.type === 'server');
   }
   if (relation.relationType === 'serves') {
     return relation.source.type === 'network_device' && relation.target.type === 'server';

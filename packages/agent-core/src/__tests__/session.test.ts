@@ -1,7 +1,7 @@
 /**
  * Tests for Session and SessionManager.
  *
- * Ported from nanobot session/manager.py patterns.
+ * Covers the Slide TypeScript session manager behavior.
  * Run: npx vitest run packages/agent-core/src/__tests__/session.test.ts
  */
 

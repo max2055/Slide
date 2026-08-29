@@ -1,5 +1,5 @@
 /**
- * MemoryStore + Consolidator — ported from nanobot agent/memory.py
+ * MemoryStore + Consolidator — TypeScript persistence implemented for Slide.
  *
  * MemoryStore: persists MEMORY.md and session context files with atomic writes.
  * Consolidator: simplified history compaction (archival concatenation, no LLM).
@@ -205,8 +205,8 @@ export class MemoryStore {
 export class Consolidator {
   /**
    * Summarize memory (simplified: no LLM call, just extracts recent entries).
-   * Full nanobot Consolidator uses LLM summarization; this is a lightweight
-   * version that archives recent history entries.
+   * This lightweight implementation archives recent history entries without
+   * requiring an LLM summarization pass.
    */
   async summarize(store: MemoryStore, maxEntries?: number): Promise<string> {
     const recent = await store.readUnprocessedHistory(0);
@@ -227,7 +227,7 @@ export class Consolidator {
   /**
    * Merge recent history into MEMORY.md as structured entries,
    * then compact the history file to prevent unbounded growth.
-   * This is the nanobot-style consolidation pipeline.
+   * This is the Slide session consolidation pipeline.
    */
   async consolidateToMemory(store: MemoryStore, keepCount?: number): Promise<void> {
     const summary = await this.summarize(store);

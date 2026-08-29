@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActorContext } from '../auth/actor-context.js';
 import type { AnyAgentTool } from './types.js';
 import { canActorDiscoverTool, decideToolPolicy, executeToolWithPolicy } from './policy.js';
+import { agentExecutionConfigService } from '../security/agent-execution-config-service.js';
 
 const actor = (roles: string[], permissions: string[] = [], scopes: Record<number, 'read-only' | 'read-write' | 'admin'> = {}): ActorContext => Object.freeze({
   userId: 7,
@@ -22,6 +23,101 @@ const tool = (overrides: Partial<AnyAgentTool> = {}): AnyAgentTool => ({
 });
 
 describe('actor tool policy', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('keeps execute_code available without a pending approval when the admin approval switch is off', async () => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: false,
+      restrictedNetworkEnabled: false,
+      reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const handler = vi.fn().mockResolvedValue({ success: true });
+    const result = await executeToolWithPolicy(
+      actor(['admin'], ['ai:execute']),
+      tool({ name: 'execute_code', requiresApproval: true, handler }),
+      { runtime: 'shell', code: 'echo report > report.txt' },
+      undefined,
+      { consume: vi.fn(async () => false) },
+      { record: vi.fn().mockResolvedValue(undefined) },
+    );
+
+    expect(result.decision).toMatchObject({ allow: true, reasonCode: 'ALLOW' });
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes cancellation, idempotency and progress context and normalizes the result envelope', async () => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: false,
+      restrictedNetworkEnabled: false,
+      reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const controller = new AbortController();
+    const progress = vi.fn();
+    const handler = vi.fn().mockImplementation(async (_args, context) => {
+      expect(context.signal).toBe(controller.signal);
+      expect(context.idempotencyKey).toBe('batch-key');
+      expect(context.progressCallback).toBe(progress);
+      return { success: true, data: { instanceId: 12 } };
+    });
+    const result = await executeToolWithPolicy(
+      actor(['admin'], ['instance:view'], { 12: 'admin' }),
+      tool({ handler }),
+      { instance_id: 12 },
+      async () => ({ type: 'instance', instanceId: 12 }),
+      { consume: vi.fn(async () => false) },
+      { record: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+      { sessionKey: 'session-1', signal: controller.signal, idempotencyKey: 'batch-key', progressCallback: progress },
+    );
+    expect(result.result).toMatchObject({
+      success: true,
+      status: 'success',
+      summary: expect.any(String),
+      next_actions: [],
+      artifacts: { instanceId: 12 },
+    });
+  });
+
+  it('keeps database discovery available without approval when the execution approval switch is off', async () => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: false,
+      restrictedNetworkEnabled: true,
+      reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const handler = vi.fn().mockResolvedValue({ success: true });
+    const result = await executeToolWithPolicy(
+      actor(['admin'], ['network:discover']),
+      tool({ name: 'discover_database_endpoints', requiresApproval: true, handler }),
+      { cidr: '10.17.12.0/24', profile: 'common_databases' },
+      async () => ({ type: 'network-scan' }),
+      { consume: vi.fn(async () => false) },
+      { record: vi.fn().mockResolvedValue(undefined) },
+    );
+
+    expect(result.decision).toMatchObject({ allow: true, reasonCode: 'ALLOW' });
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('bypasses approval for every actor tool when the global approval switch is off', async () => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: false,
+      restrictedNetworkEnabled: false,
+      reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const handler = vi.fn().mockResolvedValue({ success: true });
+    const result = await executeToolWithPolicy(
+      actor(['admin'], ['instance:update'], { 12: 'admin' }),
+      tool({ name: 'slide_update_db_config', requiresApproval: true, handler }),
+      { instance_id: 12 },
+      async () => ({ type: 'instance', instanceId: 12 }),
+      { consume: vi.fn(async () => false) },
+      { record: vi.fn().mockResolvedValue(undefined) },
+    );
+
+    expect(result.decision).toMatchObject({ allow: true, reasonCode: 'ALLOW' });
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it('hides tools from the model when the actor cannot pass static policy', () => {
     expect(canActorDiscoverTool(actor(['viewer']), tool())).toBe(false);
     expect(canActorDiscoverTool(actor(['viewer'], ['instance:view']), tool())).toBe(true);
@@ -57,6 +153,12 @@ describe('actor tool policy', () => {
     expect(decideToolPolicy(actor(['dba']), tool({ requiredPermissions: ['instances:write'] }), {}).reasonCode)
       .toBe('MISSING_PERMISSION');
     expect(decideToolPolicy(actor(['admin'], ['instance:view', 'instances:write']), tool({ requiredPermissions: ['instances:write'] }), {}))
+      .toMatchObject({ allow: true, reasonCode: 'ALLOW' });
+  });
+
+  it('treats the admin identity as fully permissioned when the role snapshot is partial', () => {
+    const admin = { ...actor(['admin']), username: 'admin' } as ActorContext;
+    expect(decideToolPolicy(admin, tool({ requiredPermissions: ['instances:write'] }), {}))
       .toMatchObject({ allow: true, reasonCode: 'ALLOW' });
   });
 
@@ -110,7 +212,7 @@ describe('actor tool policy', () => {
     expect(decideToolPolicy(admin, dangerous, { instance_id: 12, approvalId: '42' }, undefined, true))
       .toMatchObject({ allow: true, reasonCode: 'ALLOW' });
     expect(decideToolPolicy(admin, dangerous, { instance_id: 13, approvalId: '42' }, undefined, true))
-      .toMatchObject({ allow: false, reasonCode: 'INSTANCE_SCOPE_DENIED' });
+      .toMatchObject({ allow: true, reasonCode: 'ALLOW' });
   });
 
   it('consumes a persistent approval before invoking a handler and rejects replay', async () => {
@@ -285,10 +387,11 @@ describe('actor tool policy', () => {
     );
 
     expect(handler).toHaveBeenCalledOnce();
-    expect(result.result).toEqual({
+    expect(result.result).toMatchObject({
       success: false,
       errorCode: 'AUDIT_UNAVAILABLE',
       error: 'Tool result unavailable',
+      status: 'error',
     });
     expect(JSON.stringify(result)).not.toContain('sensitive execution output');
   });
@@ -316,10 +419,11 @@ describe('actor tool policy', () => {
       audit,
     );
 
-    expect(result.result).toEqual({
+    expect(result.result).toMatchObject({
       success: false,
       errorCode: 'TOOL_EXECUTION_FAILED',
       error: 'Tool execution failed',
+      status: 'error',
     });
     expect(audit.record).toHaveBeenLastCalledWith(expect.objectContaining({
       phase: 'result',

@@ -9,8 +9,9 @@ export interface AiAnalysisRecord {
   id: number;
   analysis_type: 'topsql_analysis' | 'alert_rca' | 'fault_diagnosis' | 'capacity_prediction' | 'sql_audit';
   instance_id: number | null;
-  target_type: 'instance' | 'server';
+  target_type: 'instance' | 'server' | 'network_device';
   server_id: number | null;
+  network_device_id: number | null;
   related_id: number | null;
   status: 'pending' | 'running' | 'completed' | 'failed';
   trigger_type: 'manual' | 'auto';
@@ -61,6 +62,7 @@ class AiAnalysisDatabaseService {
     analysis_type: string;
     instance_id?: number;
     server_id?: number;
+    network_device_id?: number;
     related_id?: number;
     trigger_type?: string;
     cache_key?: string;
@@ -70,7 +72,8 @@ class AiAnalysisDatabaseService {
   }): Promise<{ success: boolean; analysisId?: number; error?: string }> {
     const hasInstance = Number.isSafeInteger(data.instance_id) && Number(data.instance_id) > 0;
     const hasServer = Number.isSafeInteger(data.server_id) && Number(data.server_id) > 0;
-    if (hasInstance === hasServer) return { success: false, error: 'ANALYSIS_SUBJECT_INVALID' };
+    const hasNetworkDevice = Number.isSafeInteger(data.network_device_id) && Number(data.network_device_id) > 0;
+    if ([hasInstance, hasServer, hasNetworkDevice].filter(Boolean).length !== 1) return { success: false, error: 'ANALYSIS_SUBJECT_INVALID' };
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
@@ -79,13 +82,14 @@ class AiAnalysisDatabaseService {
     try {
       const [result] = await pool.execute(
         `INSERT INTO ai_analysis
-         (analysis_type, target_type, instance_id, server_id, related_id, status, trigger_type, cache_key, ttl_minutes, session_key, cache_ttl_minutes)
-         VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+         (analysis_type, target_type, instance_id, server_id, network_device_id, related_id, status, trigger_type, cache_key, ttl_minutes, session_key, cache_ttl_minutes)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
         [
           data.analysis_type,
-          hasServer ? 'server' : 'instance',
+          hasServer ? 'server' : hasNetworkDevice ? 'network_device' : 'instance',
           hasInstance ? data.instance_id : null,
           hasServer ? data.server_id : null,
+          hasNetworkDevice ? data.network_device_id : null,
           data.related_id || null,
           data.trigger_type || 'manual',
           data.cache_key || null,

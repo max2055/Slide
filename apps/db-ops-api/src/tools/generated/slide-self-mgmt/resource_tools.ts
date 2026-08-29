@@ -1,4 +1,5 @@
 import type { AnyAgentTool, ToolExecutionContext, ToolResult } from '../../types.js';
+import { toolCatalog } from '../../catalog.js';
 import { resourceDiagnosticService } from '../../../resources/resource-diagnostic-service.js';
 import type { ResourceRef, ResourceType } from '../../../resources/types.js';
 
@@ -76,3 +77,7 @@ export const diagnoseResourceTool: AnyAgentTool = {
 };
 
 export const resourceTools = [listResourcesTool, getResourceObservationsTool, getResourceRelationsTool, diagnoseResourceTool];
+
+// Keep direct module imports equivalent to the other generated tools. The
+// central index also calls registerAll(), which is idempotent by tool name.
+for (const tool of resourceTools) toolCatalog.register(tool);

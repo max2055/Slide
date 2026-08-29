@@ -17,6 +17,30 @@ function poolFor(execute: ReturnType<typeof vi.fn>, getConnection?: () => any) {
 }
 
 describe('NetworkDeviceDatabaseService', () => {
+  it('uses valid qualified columns for inventory reads', async () => {
+    const execute = vi.fn().mockResolvedValueOnce([[
+      {
+        id: 7,
+        name: 'edge-1',
+        host: '192.0.2.10',
+        vendor: 'huawei',
+        snmp_port: 161,
+        ssh_port: 22,
+        status: 'declared',
+        collection_enabled: 1,
+        has_snmp_credential: 1,
+        has_ssh_credential: 0,
+      },
+    ], []]);
+    const service = new NetworkDeviceDatabaseService(() => poolFor(execute));
+
+    await expect(service.getAllDevices()).resolves.toMatchObject([
+      { id: 7, host: '192.0.2.10', vendor: 'huawei', hasSnmpCredential: true },
+    ]);
+    expect(execute.mock.calls[0][0]).not.toContain('d.d.id');
+    expect(execute.mock.calls[0][0]).toContain('SELECT d.id, d.name');
+  });
+
   it('stores SNMPv3 secrets encrypted and returns only a redacted inventory DTO', async () => {
     const execute = vi.fn()
       .mockResolvedValueOnce([{ insertId: 7 }, []])

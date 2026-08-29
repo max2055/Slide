@@ -4,7 +4,7 @@ import { NetworkDeviceCollector, type NetworkDeviceCollectionStore } from './net
 import type { HuaweiInterfaceCollection, HuaweiMetricObservation, HuaweiProbeResult } from './huawei-adapter.js';
 import type { SnmpV3Config } from './snmp-types.js';
 
-const target = { id: 7, host: '192.0.2.10', snmpPort: 161, collectionEnabled: true };
+const target = { id: 7, host: '10.20.30.40', snmpPort: 161, collectionEnabled: true };
 const credentials = {
   protocol: 'snmpv3' as const, username: 'monitor', securityLevel: 'authPriv' as const,
   authProtocol: 'SHA' as const, authSecret: 'auth-secret-123', privacyProtocol: 'AES' as const, privacySecret: 'priv-secret-123',
@@ -39,6 +39,39 @@ function adapter(overrides: Partial<{
 }
 
 describe('NetworkDeviceCollector', () => {
+  it('fails closed on a denied target before reading credentials or opening SNMP', async () => {
+    const persistence = store();
+    const snmp = adapter();
+    const authorizeTarget = vi.fn(async () => {
+      throw Object.assign(new Error('target denied'), { reasonCode: 'SNMP_TARGET_ADDRESS_DENIED' });
+    });
+    const collector = new NetworkDeviceCollector(persistence, snmp as any, {
+      authorizeTarget,
+      targetPolicy: { allowedCidrs: '10.0.0.0/8', allowedPorts: [161], production: true },
+    });
+
+    await expect(collector.collectDevice(7)).resolves.toEqual({ success: false, error: 'SNMP_TARGET_DENIED' });
+    expect(authorizeTarget).toHaveBeenCalledWith(
+      { host: target.host, port: target.snmpPort },
+      expect.objectContaining({ allowedCidrs: '10.0.0.0/8', allowedPorts: [161], production: true }),
+    );
+    expect(persistence.getCredentials).not.toHaveBeenCalled();
+    expect(snmp.probe).not.toHaveBeenCalled();
+    expect(persistence.updateStatus).toHaveBeenCalledWith(7, 'error');
+  });
+
+  it('collects in production without a network-specific CIDR policy', async () => {
+    const persistence = store();
+    const snmp = adapter();
+    const collector = new NetworkDeviceCollector(persistence, snmp as any, {
+      targetPolicy: { production: true, allowedPorts: [161] },
+    });
+
+    await expect(collector.collectDevice(7)).resolves.toMatchObject({ success: true });
+    expect(persistence.getCredentials).toHaveBeenCalledWith(7);
+    expect(snmp.probe).toHaveBeenCalledWith(expect.objectContaining({ host: target.host, port: target.snmpPort }));
+  });
+
   it('collects system and interface evidence, then marks the device online', async () => {
     const persistence = store();
     const snmp = adapter({

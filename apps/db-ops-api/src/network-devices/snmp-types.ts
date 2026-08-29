@@ -11,8 +11,11 @@ export const SNMP_ERROR_CODES = [
 
 export type SnmpErrorCode = typeof SNMP_ERROR_CODES[number];
 export type SnmpSecurityLevel = 'authPriv' | 'authNoPriv' | 'noAuthNoPriv';
-export type SnmpAuthProtocol = 'SHA' | 'MD5';
-export type SnmpPrivacyProtocol = 'AES' | 'DES';
+/** Algorithms supported by the current net-snmp adapter. */
+export const SNMP_AUTH_PROTOCOLS = ['SHA', 'MD5'] as const;
+export const SNMP_PRIVACY_PROTOCOLS = ['AES', 'DES'] as const;
+export type SnmpAuthProtocol = typeof SNMP_AUTH_PROTOCOLS[number];
+export type SnmpPrivacyProtocol = typeof SNMP_PRIVACY_PROTOCOLS[number];
 
 export interface SnmpV3Config {
   host: string;

@@ -436,6 +436,33 @@ describe('AuditLogManager', () => {
     });
   });
 
+  describe('logConfigBackupAccess', () => {
+    it('persists bounded backup metadata without raw configuration', async () => {
+      const persistentStore = new MemoryAuditLogStore();
+      manager = new AuditLogManager(store, persistentStore);
+
+      await manager.logConfigBackupAccess({
+        userId: '7',
+        action: 'read_raw',
+        deviceId: 12,
+        backupId: 34,
+        contentSha256: 'a'.repeat(64),
+        sizeBytes: 128,
+      });
+
+      const result = await manager.query({ eventType: 'config_backup_access' });
+      expect(result.entries).toHaveLength(1);
+      expect(result.entries[0]).toMatchObject({
+        action: 'config_backup_read_raw',
+        resourceType: 'network_device_config_backup',
+        resourceId: '34',
+        result: 'success',
+        details: { deviceId: 12, backupId: 34, contentSha256: 'a'.repeat(64), sizeBytes: 128 },
+      });
+      expect(JSON.stringify(result.entries[0])).not.toContain('raw configuration');
+    });
+  });
+
   describe('logUserChange', () => {
     it('应该记录用户变更日志', async () => {
       await manager.logUserChange({

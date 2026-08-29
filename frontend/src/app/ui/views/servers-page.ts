@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
+import { sharedResourceToolbarStyles } from "../../styles/shared-resource-toolbar-styles.ts";
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
 import "../components/app-form-field.js";
@@ -25,6 +26,8 @@ interface ServerRow {
   created_at: string;
   updated_at: string;
   host_key_fingerprint: string;
+  environment?: string | null;
+  related_instance_count?: number;
 }
 
 interface ServerFormData {
@@ -52,9 +55,41 @@ interface MetricSummaryData {
   recorded_at: string | null;
 }
 
+type ServerFilterQuality = "all" | "good" | "partial" | "unknown";
+
+const SERVER_ENVIRONMENT_OPTIONS = [
+  { value: "development", label: "开发环境" },
+  { value: "testing", label: "测试环境" },
+  { value: "staging", label: "预发布环境" },
+  { value: "production", label: "生产环境" },
+  { value: "unknown", label: "未标注环境" },
+] as const;
+
+const CANONICAL_OS_OPTIONS = [
+  { value: "kylin", label: "Kylin OS" },
+  { value: "rhel", label: "Red Hat Enterprise Linux" },
+  { value: "centos", label: "CentOS" },
+] as const;
+
+function canonicalOsLabel(value: string | null | undefined): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized.startsWith("kylin")) return "Kylin OS";
+  if (normalized.startsWith("rhel") || normalized.startsWith("redhat") || normalized.startsWith("red hat")) return "Red Hat Enterprise Linux";
+  if (normalized.startsWith("centos")) return "CentOS";
+  return value || "未知";
+}
+
+function canonicalOsKey(value: string | null | undefined): "kylin" | "rhel" | "centos" | "unknown" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized.startsWith("kylin")) return "kylin";
+  if (normalized.startsWith("rhel") || normalized.startsWith("redhat") || normalized.startsWith("red hat")) return "rhel";
+  if (normalized.startsWith("centos")) return "centos";
+  return "unknown";
+}
+
 @customElement("servers-page")
 export class ServersPage extends LitElement {
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedBtnStyles, sharedResourceToolbarStyles, css`
     :host {
       display: block;
       animation: fade-in 0.25s var(--ease-out);
@@ -76,49 +111,9 @@ export class ServersPage extends LitElement {
       overflow: hidden;
     }
 
-    .toolbar {
-      display: flex;
-      align-items: center;
-      gap: var(--space-md);
-      padding: var(--space-md) var(--space-lg);
-      border-bottom: 1px solid var(--border);
-      flex-wrap: wrap;
+    .empty-toolbar {
+      justify-content: flex-end;
     }
-
-    .search-box {
-      position: relative;
-      flex: 1;
-      min-width: 200px;
-      max-width: 300px;
-    }
-
-    .search-input {
-      width: 100%;
-      padding: var(--space-sm) var(--space-md) var(--space-sm) 34px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      font-size: var(--text-base);
-      color: var(--text);
-      background: var(--card);
-      transition: all var(--duration-normal) var(--ease-out);
-    }
-
-    .search-input:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px var(--accent-subtle);
-    }
-
-    .search-icon {
-      position: absolute;
-      left: 10px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: var(--muted);
-      display: flex;
-      opacity: 0.6;
-    }
-
     /* Form styles */
     .form-input,
     .form-select,
@@ -324,7 +319,7 @@ export class ServersPage extends LitElement {
     host: "",
     port: 22,
     label: "",
-    os_type: "CentOS",
+    os_type: "centos",
     credential_type: "password",
     credential_username: "",
     credential_value: "",
@@ -333,6 +328,11 @@ export class ServersPage extends LitElement {
   @state() private _testConnectionMessage = "";
   @state() private _testConnectionSuccess: boolean | null = null;
   @state() private _metricSummary: MetricSummaryData | null = null;
+  @state() private _osFilter = "all";
+  @state() private _statusFilter = "all";
+  @state() private _qualityFilter: ServerFilterQuality = "all";
+  @state() private _environmentFilter = "all";
+  @state() private _relationFilter = "all";
 
   override firstUpdated() {
     this._loadServers();
@@ -368,7 +368,7 @@ export class ServersPage extends LitElement {
       host: "",
       port: 22,
       label: "",
-      os_type: "CentOS",
+      os_type: "centos",
       credential_type: "password",
       credential_username: "",
       credential_value: "",
@@ -396,7 +396,7 @@ export class ServersPage extends LitElement {
       host: server.host,
       port: server.port,
       label: server.label || "",
-      os_type: server.os_type,
+      os_type: canonicalOsKey(server.os_type) === "unknown" ? "centos" : canonicalOsKey(server.os_type),
       credential_type: server.credential_type,
       credential_username: credentialUsername,
       credential_value: "",
@@ -568,6 +568,30 @@ export class ServersPage extends LitElement {
     return serverMetrics.metrics.find(m => m.metric_name === metricName) || null;
   }
 
+  private _serverQuality(serverId: number): ServerFilterQuality {
+    const metrics = this._metricSummary?.servers?.[serverId]?.metrics ?? [];
+    if (metrics.length === 0) return "unknown";
+    const expected = ["cpu_usage", "memory_usage", "load_1min"];
+    const present = expected.filter((name) => metrics.some((metric) => metric.metric_name === name)).length;
+    return present === expected.length ? "good" : "partial";
+  }
+
+  private _serverFreshness(server: ServerRow): string {
+    const recordedAt = this._metricSummary?.servers?.[server.id]?.recorded_at ?? server.last_check_at;
+    if (!recordedAt) return "unknown";
+    const age = Date.now() - new Date(recordedAt).getTime();
+    if (!Number.isFinite(age) || age < 0) return "unknown";
+    if (age < 5 * 60_000) return "fresh";
+    if (age < 30 * 60_000) return "stale";
+    return "expired";
+  }
+
+  private _qualityVariant(quality: ServerFilterQuality): "ok" | "warn" | "danger" | "muted" {
+    if (quality === "good") return "ok";
+    if (quality === "partial") return "warn";
+    return quality === "unknown" ? "muted" : "danger";
+  }
+
   private _getAggregateDiskMetric(serverId: number): MetricSummaryEntry | null {
     if (!this._metricSummary) return null;
     const serverMetrics = this._metricSummary.servers?.[serverId];
@@ -590,12 +614,32 @@ export class ServersPage extends LitElement {
 
   private get _filteredServers(): ServerRow[] {
     const q = this._searchQuery.trim().toLowerCase();
-    if (!q) return this._servers;
     return this._servers.filter((srv) =>
-      srv.host.toLowerCase().includes(q) ||
-      (srv.label ?? "").toLowerCase().includes(q) ||
-      srv.os_type.toLowerCase().includes(q)
+      (!q || srv.host.toLowerCase().includes(q) ||
+        (srv.label ?? "").toLowerCase().includes(q) ||
+        srv.os_type.toLowerCase().includes(q)) &&
+      (this._osFilter === "all" || canonicalOsKey(srv.os_type) === this._osFilter) &&
+      (this._statusFilter === "all" || srv.status === this._statusFilter) &&
+      (this._qualityFilter === "all" || this._serverQuality(srv.id) === this._qualityFilter) &&
+      (this._environmentFilter === "all" || (srv.environment ?? "unknown") === this._environmentFilter) &&
+      (this._relationFilter === "all" || (this._relationFilter === "linked"
+        ? Number(srv.related_instance_count ?? 0) > 0
+        : Number(srv.related_instance_count ?? 0) === 0))
     );
+  }
+
+  private get _activeFilterCount(): number {
+    return [this._searchQuery.trim(), this._osFilter, this._statusFilter, this._qualityFilter, this._environmentFilter, this._relationFilter]
+      .filter((value) => Boolean(value) && value !== "all").length;
+  }
+
+  private _resetFilters() {
+    this._searchQuery = "";
+    this._osFilter = "all";
+    this._statusFilter = "all";
+    this._qualityFilter = "all";
+    this._environmentFilter = "all";
+    this._relationFilter = "all";
   }
 
   private _getColumns() {
@@ -606,7 +650,11 @@ export class ServersPage extends LitElement {
       { key: "cpu", label: "CPU", textAlign: "center" },
       { key: "memory", label: "内存", textAlign: "center" },
       { key: "disk", label: "磁盘", textAlign: "center" },
+      { key: "network", label: "网络流量", textAlign: "center" },
+      { key: "errors", label: "网络错误", textAlign: "center" },
       { key: "status", label: "状态", textAlign: "center" },
+      { key: "quality", label: "采集质量", textAlign: "center" },
+      { key: "freshness", label: "证据新鲜度", textAlign: "center" },
       { key: "last_collection", label: "上次采集", textAlign: "center" },
       { key: "actions", label: "操作", textAlign: "center" },
     ];
@@ -620,6 +668,12 @@ export class ServersPage extends LitElement {
       const cpuValue = cpuMetric?.metric_value ?? null;
       const memValue = memMetric?.metric_value ?? null;
       const diskValue = diskMetric?.metric_value ?? null;
+      const rx = this._getServerMetric(srv.id, "network_rx_bytes")?.metric_value ?? null;
+      const tx = this._getServerMetric(srv.id, "network_tx_bytes")?.metric_value ?? null;
+      const errors = (this._getServerMetric(srv.id, "network_rx_errors")?.metric_value ?? 0)
+        + (this._getServerMetric(srv.id, "network_tx_errors")?.metric_value ?? 0);
+      const quality = this._serverQuality(srv.id);
+      const freshness = this._serverFreshness(srv);
 
       return {
         host: html`
@@ -627,11 +681,15 @@ export class ServersPage extends LitElement {
             ${srv.host}
           </div>`,
         label: srv.label || html`<span style="color:var(--muted);">—</span>`,
-        os_type: html`<app-badge variant="muted">${srv.os_type}</app-badge>`,
+        os_type: html`<app-badge variant="muted">${canonicalOsLabel(srv.os_type)}</app-badge>`,
         cpu: html`<app-badge variant="${this._usageVariant(cpuValue)}">CPU ${cpuValue != null ? cpuValue.toFixed(1) + "%" : "--"}</app-badge>`,
         memory: html`<app-badge variant="${this._usageVariant(memValue)}">内存 ${memValue != null ? memValue.toFixed(1) + "%" : "--"}</app-badge>`,
         disk: html`<app-badge variant="${this._usageVariant(diskValue)}">磁盘 ${diskValue != null ? diskValue.toFixed(1) + "%" : "--"}</app-badge>`,
+        network: html`<span>${rx != null || tx != null ? `${this._formatRate(rx)} / ${this._formatRate(tx)}` : "--"}</span>`,
+        errors: html`<app-badge variant=${errors > 0 ? "warn" : "muted"}>${errors || "--"}</app-badge>`,
         status: html`<app-badge variant="${this._statusBadgeVariant(srv.status)}">${this._statusLabel(srv.status)}</app-badge>`,
+        quality: html`<app-badge variant=${this._qualityVariant(quality)}>${quality}</app-badge>`,
+        freshness: html`<app-badge variant=${freshness === "fresh" ? "ok" : freshness === "stale" ? "warn" : "muted"}>${freshness}</app-badge>`,
         last_collection: html`<span style="font-size:var(--text-sm);color:var(--muted);">${this._formatLastCheck(srv.last_check_at)}</span>`,
         actions: html`
           <div class="actions">
@@ -661,6 +719,14 @@ export class ServersPage extends LitElement {
     return new Date(lastCheckAt).toLocaleDateString("zh-CN");
   }
 
+  private _formatRate(value: number | null): string {
+    if (value == null || !Number.isFinite(value)) return "--";
+    if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+    if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+    if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${value.toFixed(0)} B`;
+  }
+
   override render() {
     if (this._loading) {
       return html`<div class="page"><div class="loading">加载中...</div></div>`;
@@ -670,9 +736,9 @@ export class ServersPage extends LitElement {
       return html`
         <div class="page">
           <div class="card">
-            <div class="toolbar">
-              <button class="btn" style="margin-left:auto;" @click=${this._openAddDialog}>
-                + 添加服务器
+            <div class="toolbar resource-toolbar empty-toolbar">
+              <button class="btn-primary" @click=${this._openAddDialog}>
+                ${icons['plus']} 添加服务器
               </button>
             </div>
             <app-empty-state
@@ -697,7 +763,7 @@ export class ServersPage extends LitElement {
     return html`
       <div class="page">
         <div class="card">
-          <div class="toolbar">
+          <div class="toolbar resource-toolbar">
             <div class="search-box">
               <span class="search-icon"><span style="width:14px;height:14px;display:flex;">${icons['search']}</span></span>
               <input
@@ -709,9 +775,40 @@ export class ServersPage extends LitElement {
                 @input=${(e: any) => (this._searchQuery = e.target.value)}
               />
             </div>
-            <button class="btn" style="margin-left:auto;" @click=${this._openAddDialog}>
-              + 添加服务器
-            </button>
+            <select class="form-select filter-select" aria-label="OS filter" .value=${this._osFilter} @change=${(e: Event) => (this._osFilter = (e.target as HTMLSelectElement).value)}>
+              <option value="all">全部操作系统</option>
+              ${CANONICAL_OS_OPTIONS.map((option) => html`<option value=${option.value}>${option.label}</option>`)}
+            </select>
+            <select class="form-select filter-select" aria-label="Status filter" .value=${this._statusFilter} @change=${(e: Event) => (this._statusFilter = (e.target as HTMLSelectElement).value)}>
+              <option value="all">全部状态</option>
+              <option value="online">在线</option><option value="offline">离线</option><option value="unreachable">不可达</option><option value="error">异常</option>
+            </select>
+            <select class="form-select filter-select" aria-label="Quality filter" .value=${this._qualityFilter} @change=${(e: Event) => (this._qualityFilter = (e.target as HTMLSelectElement).value as ServerFilterQuality)}>
+              <option value="all">全部采集质量</option><option value="good">良好</option><option value="partial">部分缺失</option><option value="unknown">未知</option>
+            </select>
+            <select class="form-select filter-select" aria-label="Environment filter" .value=${this._environmentFilter} @change=${(e: Event) => (this._environmentFilter = (e.target as HTMLSelectElement).value)}>
+              <option value="all">全部环境</option>
+              ${SERVER_ENVIRONMENT_OPTIONS.map((option) => html`<option value=${option.value}>${option.label}</option>`)}
+            </select>
+            <select class="form-select filter-select" aria-label="Database relation filter" .value=${this._relationFilter} @change=${(e: Event) => (this._relationFilter = (e.target as HTMLSelectElement).value)}>
+              <option value="all">全部关联状态</option>
+              <option value="linked">已关联数据库</option>
+              <option value="unlinked">未关联数据库</option>
+            </select>
+            <div class="toolbar-actions">
+              ${this._activeFilterCount > 0
+                ? html`<button class="btn-ghost resource-filter-reset" @click=${this._resetFilters}>重置筛选</button>`
+                : nothing}
+              <button class="btn-primary" @click=${this._openAddDialog}>
+                ${icons['plus']} 添加服务器
+              </button>
+            </div>
+          </div>
+          <div class="resource-toolbar-meta" aria-live="polite">
+            <span class="resource-result-count">共 ${rows.length} 台服务器</span>
+            ${this._activeFilterCount > 0
+              ? html`<span class="resource-filter-state">已启用 ${this._activeFilterCount} 项筛选</span>`
+              : html`<span>未启用筛选</span>`}
           </div>
           ${rows.length > 0
             ? html`<app-data-table .columns=${columns} .rows=${rows}></app-data-table>`
@@ -759,10 +856,9 @@ export class ServersPage extends LitElement {
             <app-form-field label="操作系统">
               <select class="form-select" .value=${this._form.os_type}
                 @change=${(e: any) => this._updateForm("os_type", e.target.value)}>
-                <option value="CentOS">CentOS</option>
-                <option value="RHEL">RHEL</option>
-                <option value="Kylin V10">Kylin V10</option>
-                <option value="Other">其他</option>
+                <option value="kylin">Kylin OS</option>
+                <option value="rhel">Red Hat Enterprise Linux</option>
+                <option value="centos">CentOS</option>
               </select>
             </app-form-field>
 

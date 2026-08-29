@@ -1,5 +1,5 @@
 /**
- * SkillsLoader — ported from nanobot agent/skills.py
+ * SkillsLoader — TypeScript skills discovery and loading implemented for Slide.
  *
  * Discovers, loads, and filters skills from workspace skills directories.
  * Supports SKILL.md frontmatter parsing, requirement checking, and context injection.

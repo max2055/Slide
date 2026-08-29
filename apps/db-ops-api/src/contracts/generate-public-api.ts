@@ -29,9 +29,24 @@ function pathId(name: 'id' | 'serverId' | 'backupId') {
 export function buildOpenApiDocument() {
   return stable({
     openapi: '3.1.0',
-    info: { title: 'Slide Public API', version: '0.9.0' },
+    info: { title: 'Slide Public API', version: '0.10' },
     paths: {
       '/api/health': { get: { operationId: 'getHealth', responses: { '200': { description: 'Service health', content: { 'application/json': { schema: refSchema(PublicApiSchemas.HealthResponse) } } } } } },
+      '/api/resources': {
+        get: { operationId: 'listResources', security: [{ bearerAuth: [] }], responses: { '200': { description: 'Permission-filtered infrastructure resources', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ResourceListResponse) } } } } },
+      },
+      '/api/resources/overview': {
+        get: { operationId: 'getResourceOverview', security: [{ bearerAuth: [] }], responses: { '200': { description: 'Cross-resource state, freshness, alerts and impact scope', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ResourceOverviewResponse) } } } } },
+      },
+      '/api/resources/{type}/{id}/observations': {
+        get: { operationId: 'getResourceObservations', security: [{ bearerAuth: [] }], parameters: [pathId('id'), { name: 'type', in: 'path', required: true, schema: { type: 'string', enum: ['instance', 'server', 'network_device'] } }, { name: 'metricIds', in: 'query', required: false, schema: { type: 'string' } }, { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 200 } }], responses: { '200': { description: 'Latest resource observations', content: { 'application/json': { schema: { type: 'object' } } } } } },
+      },
+      '/api/resources/{type}/{id}/diagnose': {
+        post: { operationId: 'diagnoseResource', security: [{ bearerAuth: [] }], parameters: [pathId('id'), { name: 'type', in: 'path', required: true, schema: { type: 'string', enum: ['instance', 'server', 'network_device'] } }], responses: { '200': { description: 'Bounded cross-resource evidence pack', content: { 'application/json': { schema: { type: 'object' } } } } } },
+      },
+      '/api/resources/{type}/{id}/diagnose-agent': {
+        post: { operationId: 'diagnoseResourceWithAgent', security: [{ bearerAuth: [] }], parameters: [pathId('id'), { name: 'type', in: 'path', required: true, schema: { type: 'string', enum: ['instance', 'server', 'network_device'] } }], responses: { '202': { description: 'Read-only Agent diagnosis queued', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ResourceAgentDiagnosisResponse) } } }, '200': { description: 'Cached diagnosis reused', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ResourceAgentDiagnosisResponse) } } }, '403': { description: 'AI diagnosis permission required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } } } },
+      },
       '/api/adapters/capabilities': { get: { operationId: 'getAdapterCapabilities', security: [{ bearerAuth: [] }], responses: { '200': { description: 'Database adapter capabilities', content: { 'application/json': { schema: refSchema(PublicApiSchemas.AdapterCapabilitiesResponse) } } } } } },
       '/api/database/instances': { get: { operationId: 'listDatabaseInstances', security: [{ bearerAuth: [] }], responses: { '200': { description: 'Redacted managed database instances', content: { 'application/json': { schema: refSchema(PublicApiSchemas.DatabaseInstancesResponse) } } } } } },
       '/api/network-devices': {
@@ -157,6 +172,37 @@ export function buildOpenApiDocument() {
           },
         },
       },
+      '/api/servers/{id}/diagnostics': {
+        get: {
+          operationId: 'getServerDiagnostics', security: [{ bearerAuth: [] }], parameters: [
+            pathId('id'),
+            { name: 'refresh', in: 'query', required: false, schema: { type: 'boolean', default: false } },
+          ],
+          responses: {
+            '200': { description: 'Fixed-profile read-only server diagnostics', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ServerDiagnostics) } } },
+            '400': { description: 'Invalid server identifier', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '401': { description: 'Authentication required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '403': { description: 'Server view permission required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '404': { description: 'Server unavailable', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '422': { description: 'Server operating-system profile unsupported', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '503': { description: 'Diagnostics unavailable or stale evidence returned by a later read', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+          },
+        },
+      },
+      '/api/servers/{id}/collect-diagnostics': {
+        post: {
+          operationId: 'collectServerDiagnostics', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
+          responses: {
+            '200': { description: 'Collected fixed-profile server diagnostics', content: { 'application/json': { schema: refSchema(PublicApiSchemas.CollectServerDiagnosticsResponse) } } },
+            '400': { description: 'Invalid server identifier', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '401': { description: 'Authentication required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '403': { description: 'Server manage permission required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '404': { description: 'Server unavailable', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '422': { description: 'Server operating-system profile unsupported', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '503': { description: 'Diagnostics collection failed', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+          },
+        },
+      },
     },
     components: {
       securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' } },
@@ -173,10 +219,11 @@ const NETWORK_CLIENT_TYPES = `export type NetworkDeviceStatus = 'unknown' | 'onl
 export interface NetworkDevice { id: number; name: string; label: string | null; host: string; site: string | null; vendor: 'huawei'; model: string | null; os_version: string | null; serial_number: string | null; snmp_port: number; ssh_port: number; status: NetworkDeviceStatus; last_check_at: string | null; collection_enabled: boolean; created_at: string; updated_at: string; hasSnmpCredential: boolean; hasSshCredential: boolean; }
 export type NetworkDevicesResponse = NetworkDevice[];
 export type NetworkDeviceSnmpSecurityLevel = 'noAuthNoPriv' | 'authNoPriv' | 'authPriv';
-export interface NetworkDeviceSnmpCredential { username: string; securityLevel: NetworkDeviceSnmpSecurityLevel; authProtocol?: 'MD5' | 'SHA' | 'SHA-256' | 'SHA-512'; authSecret?: string; privacyProtocol?: 'DES' | 'AES' | 'AES-128' | 'AES-192' | 'AES-256'; privacySecret?: string; }
-export interface NetworkDeviceTestConnectionRequest { host: string; version?: 3; snmpPort?: number; snmp_port?: number; snmpv3?: NetworkDeviceSnmpCredential; snmp?: NetworkDeviceSnmpCredential; vendor?: 'huawei'; }
+export interface NetworkDeviceSnmpCredential { username: string; securityLevel: NetworkDeviceSnmpSecurityLevel; authProtocol?: 'MD5' | 'SHA'; authSecret?: string; privacyProtocol?: 'DES' | 'AES'; privacySecret?: string; }
+export interface NetworkDeviceSshCredential { credentialType: 'password' | 'key'; username: string; credentialValue: string; hostKeyFingerprint: string; }
+export interface NetworkDeviceTestConnectionRequest { host: string; version?: 3; snmpPort?: number; snmp_port?: number; sshPort?: number; ssh_port?: number; snmpv3?: NetworkDeviceSnmpCredential; snmp?: NetworkDeviceSnmpCredential; ssh?: NetworkDeviceSshCredential; vendor?: 'huawei'; }
 export interface NetworkDeviceProbeResult { reachable: boolean; quality: string; reason?: string | null; observedAt: string; sysName?: string | null; uptimeSeconds?: number; }
-export interface NetworkDeviceTestConnectionResponse { success: boolean; probe?: NetworkDeviceProbeResult; error?: string; }
+export interface NetworkDeviceTestConnectionResponse { success: boolean; probe?: NetworkDeviceProbeResult; ssh?: { verified: boolean }; error?: string; }
 export interface NetworkDeviceProbeResponse { success: boolean; observations?: number; interfaces?: number; error?: string; }
 export interface NetworkDeviceMetric { metricId: string; value: number | null; observedAt: string | null; quality: string; source: string; dimensions?: Record<string, string> | null; }
 export interface NetworkDeviceMetricsResponse { deviceId: number; metrics: NetworkDeviceMetric[]; }
@@ -184,7 +231,7 @@ export interface NetworkDeviceInterface { id: number; deviceId: number; ifIndex:
 export interface NetworkDeviceInterfacesResponse { interfaces: NetworkDeviceInterface[]; }
 export interface NetworkDeviceCapability { key: string; state: CapabilityState; evidence: Record<string, unknown> | null; reason: string | null; checkedAt: string | null; validUntil: string | null; }
 export interface NetworkDeviceCapabilitiesResponse { deviceId: number; capabilities: NetworkDeviceCapability[]; }
-export interface ConfigBackupSummary { id: number; deviceId: number; versionNo: number; contentSha256: string; sourceProtocol: 'ssh' | 'netconf'; collectedAt: string; sizeBytes: number; redactionStatus: 'redacted' | 'unredacted' | 'failed'; }
+export interface ConfigBackupSummary { id: number; deviceId: number; versionNo: number; contentSha256: string; sourceProtocol: 'ssh'; collectedAt: string; sizeBytes: number; redactionStatus: 'redacted' | 'unredacted' | 'failed'; }
 export interface ConfigBackupDetail extends ConfigBackupSummary { preview: string; }
 export interface ConfigBackupRaw extends ConfigBackupSummary { content: string; }
 export type ConfigBackupResponse = ConfigBackupDetail | ConfigBackupRaw;
@@ -200,10 +247,55 @@ export interface NetworkDeviceRelationsResponse { relations: NetworkDeviceRelati
 
 `;
 
+const RESOURCE_CLIENT_TYPES = `export type ResourceType = 'instance' | 'server' | 'network_device';
+export interface ResourceRef { type: ResourceType; id: number; }
+export interface ResourceListItem { resource: ResourceRef; label: string; status: string; attributes: Record<string, string | number | boolean | null>; }
+export interface ResourceListResponse { items: ResourceListItem[]; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; }
+export interface ResourceOverviewItem { resource: ResourceRef; label: string; status: string; quality: 'good' | 'degraded' | 'invalid' | 'unknown' | 'partial'; freshness: 'fresh' | 'stale' | 'missing'; observedAt: string | null; unresolvedAlerts: number; relationCount: number; impactScope: ResourceRef[]; gaps: string[]; }
+export interface ResourceOverviewResponse { schemaVersion: 1; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; summary: { total: number; byType: Record<ResourceType, number>; byStatus: Record<string, number>; fresh: number; stale: number; missing: number; unresolvedAlerts: number; impactedResources: number; }; items: ResourceOverviewItem[]; }
+export interface ResourceAgentDiagnosisResponse { success: boolean; analysisId?: number; status?: 'queued' | 'cached'; error?: string; }
+
+`;
+
+const SERVER_CLIENT_TYPES = `export type ServerDiagnosticQuality = 'good' | 'partial' | 'unknown' | 'unsupported';
+export interface ServerDiagnosticServiceStatus { name: string; loadState: string; activeState: string; subState: string; description: string | null; }
+export interface ServerDiagnosticListeningPort { protocol: 'tcp' | 'udp' | 'unknown'; address: string; port: number; process: string | null; }
+export interface ServerDiagnosticProcessSample { pid: number; command: string; cpuPercent: number; memoryPercent: number; }
+export interface ServerDiagnosticLogEntry { timestamp: string | null; severity: string; unit: string | null; identifier: string | null; message: string; }
+export interface ServerInterfaceErrorSummary { interface: string; rxBytes: number; txBytes: number; rxErrors: number; txErrors: number; rxDrops: number; txDrops: number; }
+export interface ServerDiagnosticSection<T> { source: string[]; collectedAt: string; expiresAt: string; validForMs: number; quality: ServerDiagnosticQuality; reason?: string; truncated: boolean; items: T[]; }
+export interface ServerDiagnostics {
+  schemaVersion: 1; serverId: number; osType: string; collectedAt: string; expiresAt: string; validForMs: number;
+  quality: ServerDiagnosticQuality; truncated: boolean;
+  sections: {
+    services: ServerDiagnosticSection<ServerDiagnosticServiceStatus>;
+    listeningPorts: ServerDiagnosticSection<ServerDiagnosticListeningPort>;
+    topProcesses: ServerDiagnosticSection<ServerDiagnosticProcessSample>;
+    systemLogs: ServerDiagnosticSection<ServerDiagnosticLogEntry>;
+    interfaceErrors: ServerDiagnosticSection<ServerInterfaceErrorSummary>;
+  };
+  serviceStatus: ServerDiagnosticSection<ServerDiagnosticServiceStatus>;
+  listeningPorts: ServerDiagnosticSection<ServerDiagnosticListeningPort>;
+  topProcesses: ServerDiagnosticSection<ServerDiagnosticProcessSample>;
+  recentSystemLogs: ServerDiagnosticSection<ServerDiagnosticLogEntry>;
+  interfaceErrors: ServerDiagnosticSection<ServerInterfaceErrorSummary>;
+  gaps: Array<{ section: string; reason: string }>;
+}
+export interface CollectServerDiagnosticsResponse { success: true; diagnostics: ServerDiagnostics; }
+
+`;
+
 export function buildClientTypes(): string {
   return buildLegacyClientTypes()
     .replace('export interface HealthResponse {', `${NETWORK_CLIENT_TYPES}export interface HealthResponse {`)
-    .replace("type: 'instance' | 'server'", "type: 'instance' | 'server' | 'network_device'");
+    .replace('export interface HealthResponse {', `${RESOURCE_CLIENT_TYPES}export interface HealthResponse {`)
+    .replace('export interface EvidenceSection {', `${SERVER_CLIENT_TYPES}export interface EvidenceSection {`)
+    // Extend only the legacy diagnostic gap reference. Network relation types
+    // are already emitted by NETWORK_CLIENT_TYPES and must not be rewritten.
+    .replace(
+      "resource?: { type: 'instance' | 'server'; id: number }",
+      "resource?: { type: 'instance' | 'server' | 'network_device'; id: number }",
+    );
 }
 
 export async function generatePublicApi(): Promise<void> {

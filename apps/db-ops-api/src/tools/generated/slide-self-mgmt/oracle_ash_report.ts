@@ -47,12 +47,21 @@ export const oracleAshReportTool: AnyAgentTool = {
   handler: async (args) => {
     const typedArgs = args as unknown as AshReportArgs;
 
-    if (!typedArgs.instance_id) {
+    if (!Number.isSafeInteger(typedArgs.instance_id) || typedArgs.instance_id <= 0) {
       return {
         success: false,
         error: '请提供实例 ID (instance_id)',
         errorCode: 'MISSING_ARGUMENTS',
       };
+    }
+
+    const start = normalizeOracleTimestamp(typedArgs.start_time);
+    const end = normalizeOracleTimestamp(typedArgs.end_time);
+    if (!start || !end || new Date(end).getTime() <= new Date(start).getTime()) {
+      return { success: false, status: 'error', error: 'start_time/end_time 必须是有效时间，且 end_time 晚于 start_time', errorCode: 'INVALID_ARGUMENTS' };
+    }
+    if (new Date(end).getTime() - new Date(start).getTime() > 7 * 24 * 60 * 60 * 1000) {
+      return { success: false, status: 'error', error: 'ASH 时间范围不能超过 7 天', errorCode: 'TIME_RANGE_TOO_LARGE' };
     }
 
     try {
@@ -87,7 +96,7 @@ export const oracleAshReportTool: AnyAgentTool = {
           l_bnstime => TO_TIMESTAMP(:start, 'YYYY-MM-DD HH24:MI:SS'),
           l_etime => TO_TIMESTAMP(:end, 'YYYY-MM-DD HH24:MI:SS')
         ))`,
-        { dbid, start: typedArgs.start_time, end: typedArgs.end_time }
+        { dbid, start, end }
       );
 
       // 收集 HTML 报告
@@ -100,8 +109,10 @@ export const oracleAshReportTool: AnyAgentTool = {
       if (lines.length === 0) {
         return {
           success: true,
+          status: 'warning',
           data: { html: '' },
           summary: 'ASH 报告生成完成，但内容为空（指定时间范围内可能没有活跃会话数据）',
+          next_actions: ['确认时间范围内存在 ASH 数据，或检查实例采集状态'],
         };
       }
 
@@ -109,6 +120,7 @@ export const oracleAshReportTool: AnyAgentTool = {
 
       return {
         success: true,
+        status: 'success',
         data: {
           html: htmlContent,
           format: 'html',
@@ -128,18 +140,27 @@ export const oracleAshReportTool: AnyAgentTool = {
       if (errMsg.includes('ORA-00942') || errMsg.includes('DBMS_WORKLOAD_REPOSITORY') || errMsg.includes('insufficient privileges')) {
         return {
           success: false,
+          status: 'error',
           error: 'ASH 报告需要 Oracle Enterprise Edition + Diagnostics Pack 许可证。请确认目标实例已安装 Diagnostics Pack，且当前用户有访问 DBMS_WORKLOAD_REPOSITORY 的权限。',
           errorCode: 'DIAGNOSTICS_PACK_REQUIRED',
         };
       }
       return {
         success: false,
+        status: 'error',
         error: `获取 ASH 报告失败：${errMsg}`,
         errorCode: 'ASH_REPORT_FAILED',
       };
     }
   },
 };
+
+function normalizeOracleTimestamp(value: unknown): string | null {
+  if (typeof value !== 'string' || value.trim().length === 0) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 19).replace('T', ' ');
+}
 
 // 注册工具
 toolCatalog.register(oracleAshReportTool);

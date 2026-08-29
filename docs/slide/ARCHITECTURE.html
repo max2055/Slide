@@ -188,7 +188,8 @@
   <tbody>
     <tr><td>身份认证</td><td>JWT、刷新令牌、WebSocket auth 首帧和心跳复验</td><td>保证 HTTP 与 Agent 会话都绑定有效用户。</td></tr>
     <tr><td>权限控制</td><td>RBAC、实例级访问、工具策略</td><td>限制用户能查看和操作的资源。</td></tr>
-    <tr><td>目标数据库</td><td><code>DB_ALLOWED_CIDRS</code>、<code>DB_ALLOWED_PORTS</code>、目标地址策略</td><td>防止连接未授权网络和敏感地址。</td></tr>
+    <tr><td>目标数据库</td><td>目标地址策略</td><td>阻止特殊/元数据地址；端口仅校验为有效 TCP 端口。</td></tr>
+    <tr><td>目标服务器与网络设备</td><td>目标地址策略</td><td>DNS 解析固定并阻止特殊/元数据地址；端口仅校验为有效 TCP 端口。</td></tr>
     <tr><td>凭据保护</td><td><code>ENCRYPTION_KEY</code>、密钥格式校验、生产默认值阻断</td><td>保护数据库和 LLM Provider 凭据。</td></tr>
     <tr><td>写入治理</td><td>SQL 审核、审批、操作状态机、审计日志</td><td>把高风险动作纳入人工确认和可追溯流程。</td></tr>
     <tr><td>出站访问</td><td>通知 URL 策略、SSRF 防护、提供商配置</td><td>限制 Webhook 和 LLM 调用的出站风险。</td></tr>

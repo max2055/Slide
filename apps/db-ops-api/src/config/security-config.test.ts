@@ -7,10 +7,6 @@ const secure = {
   ENCRYPTION_KEY: 'e'.repeat(32),
   INITIAL_ADMIN_USERNAME: 'bootstrap-admin',
   INITIAL_ADMIN_PASSWORD: 'p'.repeat(32),
-  DB_ALLOWED_CIDRS: '10.20.0.0/16',
-  DB_ALLOWED_PORTS: '3306,5432',
-  SERVER_ALLOWED_CIDRS: '10.30.0.0/16',
-  SERVER_ALLOWED_PORTS: '22,2222',
 };
 
 describe('security startup configuration', () => {
@@ -32,17 +28,4 @@ describe('security startup configuration', () => {
     expect(requireEncryptionKey('0123456789abcdef'.repeat(4))).toHaveLength(64);
   });
 
-  it.each(['DB_ALLOWED_CIDRS', 'DB_ALLOWED_PORTS', 'SERVER_ALLOWED_CIDRS', 'SERVER_ALLOWED_PORTS'])
-  ('rejects production configuration without %s', (key) => {
-    expect(() => loadSecurityConfig({ ...secure, [key]: '' })).toThrow(SecurityConfigurationError);
-  });
-
-  it.each([
-    ['DB_ALLOWED_CIDRS', '10.0.0.0/99'],
-    ['SERVER_ALLOWED_CIDRS', 'not-a-cidr'],
-    ['DB_ALLOWED_PORTS', '0,70000'],
-    ['SERVER_ALLOWED_PORTS', 'ssh'],
-  ])('rejects malformed production target policy %s', (key, value) => {
-    expect(() => loadSecurityConfig({ ...secure, [key]: value })).toThrow(SecurityConfigurationError);
-  });
 });

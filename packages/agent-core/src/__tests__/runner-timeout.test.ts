@@ -1,7 +1,7 @@
 /**
  * Tests for timeout layering in AgentRunner.requestModel().
  *
- * Ported from nanobot agent/runner.py timeout pattern (lines 610-739).
+ * Covers the Slide AgentRunner timeout behavior.
  * Run: npx vitest run packages/agent-core/src/__tests__/runner-timeout.test.ts
  */
 
@@ -130,6 +130,44 @@ class NormalProvider implements LLMProvider {
   }
 }
 
+class EmptyThenHangingProvider implements LLMProvider {
+  calls = 0;
+
+  getDefaultModel(): string {
+    return "empty-then-hanging";
+  }
+
+  async chat(
+    _messages: Message[],
+    _tools: ToolSchema[],
+    _options?: LLMCallOptions,
+  ): Promise<LLMResponse> {
+    this.calls += 1;
+    if (this.calls === 1) {
+      return {
+        content: "",
+        finishReason: "stop",
+        toolCalls: [],
+        usage: {},
+        shouldExecuteTools: false,
+        hasToolCalls: false,
+      };
+    }
+    return new Promise<LLMResponse>(() => {
+      // Intentionally hanging to verify finalization retry timeout.
+    });
+  }
+
+  async chatStream(
+    _messages: Message[],
+    _tools: ToolSchema[],
+    _callbacks: StreamCallbacks,
+    _options?: LLMCallOptions,
+  ): Promise<LLMResponse> {
+    return this.chat(_messages, _tools, _options);
+  }
+}
+
 // ── Recording hook ──
 
 class RecordingHook extends NoopHook {
@@ -237,5 +275,15 @@ describe("AgentRunner timeout layering", () => {
     const result = await runner.run(spec);
     expect(result.stopReason).toBe("completed");
     expect(result.error).toBeNull();
+  });
+
+  it("applies the run timeout to empty-response finalization retry", async () => {
+    const provider = new EmptyThenHangingProvider();
+    const runner = new AgentRunner(provider);
+    const result = await runner.run(makeSpec({ llmTimeoutS: 0.1 }));
+
+    expect(provider.calls).toBe(2);
+    expect(result.stopReason).toBe("timed_out");
+    expect(result.error).toMatch(/timed out/i);
   });
 });

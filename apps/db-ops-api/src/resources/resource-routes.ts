@@ -1,6 +1,7 @@
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import type { ActorContext } from '../auth/actor-context.js';
 import { resourceDiagnosticService, type ResourceDiagnosticService } from './resource-diagnostic-service.js';
+import { resourceAgentDiagnosisService, type ResourceAgentDiagnosisService } from './resource-agent-diagnosis-service.js';
 import type { ResourceRef, ResourceType } from './types.js';
 
 const RESOURCE_TYPES = new Set<ResourceType>(['instance', 'server', 'network_device']);
@@ -29,6 +30,7 @@ export async function registerResourceRoutes(
   fastify: FastifyInstance,
   verifyToken: preHandlerHookHandler,
   service: ResourceDiagnosticService = resourceDiagnosticService,
+  agentDiagnosis: ResourceAgentDiagnosisService = resourceAgentDiagnosisService,
 ): Promise<void> {
   const preHandler = [verifyToken];
   fastify.get('/api/resources', { preHandler }, async (request, reply) => {
@@ -36,6 +38,14 @@ export async function registerResourceRoutes(
       return reply.send(await service.listResources(actor(request)));
     } catch (error) {
       return reply.code(errorStatus(error)).send({ error: error instanceof Error ? error.message : 'RESOURCE_LIST_FAILED' });
+    }
+  });
+
+  fastify.get('/api/resources/overview', { preHandler }, async (request, reply) => {
+    try {
+      return reply.send(await service.overview(actor(request)));
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ error: error instanceof Error ? error.message : 'RESOURCE_OVERVIEW_FAILED' });
     }
   });
 
@@ -52,16 +62,6 @@ export async function registerResourceRoutes(
     }
   });
 
-  fastify.get('/api/resources/:type/:id/relations', { preHandler }, async (request, reply) => {
-    const ref = parseRef(request.params as Record<string, unknown>);
-    if (!ref) return reply.code(400).send({ error: 'RESOURCE_REF_INVALID' });
-    try {
-      return reply.send({ resource: ref, relations: await service.getRelations(actor(request), ref) });
-    } catch (error) {
-      return reply.code(errorStatus(error)).send({ error: error instanceof Error ? error.message : 'RESOURCE_RELATIONS_FAILED' });
-    }
-  });
-
   fastify.post('/api/resources/:type/:id/diagnose', { preHandler }, async (request, reply) => {
     const ref = parseRef(request.params as Record<string, unknown>);
     if (!ref) return reply.code(400).send({ error: 'RESOURCE_REF_INVALID' });
@@ -69,6 +69,24 @@ export async function registerResourceRoutes(
       return reply.send(await service.diagnose(actor(request), ref));
     } catch (error) {
       return reply.code(errorStatus(error)).send({ error: error instanceof Error ? error.message : 'RESOURCE_DIAGNOSIS_FAILED' });
+    }
+  });
+
+  fastify.post('/api/resources/:type/:id/diagnose-agent', { preHandler }, async (request, reply) => {
+    const ref = parseRef(request.params as Record<string, unknown>);
+    if (!ref) return reply.code(400).send({ error: 'RESOURCE_REF_INVALID' });
+    const currentActor = actor(request);
+    if (!currentActor.permissions.includes('*')
+      && !currentActor.permissions.includes('ai:manage')
+      && !currentActor.permissions.includes('ai:*')) {
+      return reply.code(403).send({ error: 'AI_DIAGNOSIS_FORBIDDEN' });
+    }
+    try {
+      const result = await agentDiagnosis.diagnose(currentActor, ref);
+      if (!result.success) return reply.code(503).send(result);
+      return reply.code(result.status === 'cached' ? 200 : 202).send(result);
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ error: error instanceof Error ? error.message : 'RESOURCE_AGENT_DIAGNOSIS_FAILED' });
     }
   });
 }

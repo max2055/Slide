@@ -27,6 +27,25 @@ describe('MetricsDatabaseService.getRealtimeMetrics', () => {
     await expect(metricsDatabaseService.getRealtimeMetrics(7, { strict: true }))
       .resolves.toBeNull();
   });
+
+  it('returns a structured storage-unavailable outcome distinct from no samples', async () => {
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue(null);
+    await expect(metricsDatabaseService.getRealtimeMetricsWithStatus(7)).resolves.toMatchObject({
+      available: false,
+      data: null,
+      errorCode: 'METRICS_STORAGE_UNAVAILABLE',
+    });
+  });
+
+  it('returns available=true when the query succeeds with no samples', async () => {
+    const execute = vi.fn().mockResolvedValue([[], []]);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+    await expect(metricsDatabaseService.getRealtimeMetricsWithStatus(7)).resolves.toMatchObject({
+      available: true,
+      data: null,
+      errorCode: 'METRICS_NOT_COLLECTED',
+    });
+  });
 });
 
 describe('MetricsDatabaseService.getHistoricalMetrics', () => {
@@ -43,8 +62,8 @@ describe('MetricsDatabaseService.getHistoricalMetrics', () => {
     await metricsDatabaseService.getHistoricalMetrics(7, start, end, undefined, 288);
 
     const [sql, params] = execute.mock.calls[0];
-    expect(sql).toMatch(/FROM\s*\(.*ORDER BY recorded_at DESC\s*LIMIT \?.*\)\s+AS recent\s*ORDER BY recorded_at ASC/is);
+    expect(sql).toMatch(/FROM\s*\(.*ORDER BY recorded_at DESC\s*LIMIT 288.*\)\s+AS recent\s*ORDER BY recorded_at ASC/is);
     expect(sql).not.toContain('LIMIT 1000');
-    expect(params).toEqual([7, start, end, 288]);
+    expect(params).toEqual([7, start, end]);
   });
 });

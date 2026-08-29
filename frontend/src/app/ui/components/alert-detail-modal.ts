@@ -19,6 +19,11 @@ interface Alert {
   id: number;
   instance_id: number;
   instance_name?: string;
+  server_id?: number;
+  server_name?: string;
+  target_type?: string;
+  network_device_id?: number | null;
+  network_device_name?: string;
   alert_type: string;
   severity: "critical" | "warning" | "info";
   title: string;
@@ -70,7 +75,7 @@ export class AlertDetailModal extends LitElement {
 
         <!-- Metadata grid -->
         <div style="display:grid;grid-template-columns:80px 1fr;gap:var(--space-sm) var(--space-md);font-size:var(--text-base);margin-bottom:var(--space-lg);padding:var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);">
-          <span style="color:var(--muted);">实例</span><span>${a.instance_name || '—'}</span>
+          <span style="color:var(--muted);">目标</span><span>${a.target_type === 'network_device' ? (a.network_device_name || `网络设备 #${a.network_device_id ?? '—'}`) : a.target_type === 'server' ? (a.server_name || `服务器 #${a.server_id ?? '—'}`) : (a.instance_name || '—')}</span>
           <span style="color:var(--muted);">时间</span><span>${new Date(a.created_at).toLocaleString('zh-CN')}</span>
           <span style="color:var(--muted);">状态</span><span><app-badge variant="${this._statusVariant(a.status)}">${this._statusLabel(a)}</app-badge></span>
           <span style="color:var(--muted);">描述</span><span style="line-height:1.5;">${a.message || '—'}</span>

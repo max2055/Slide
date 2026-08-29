@@ -17,6 +17,11 @@ export const LEGACY_MIGRATION_CHECKSUMS: Readonly<Record<string, readonly string
   '067_device_registrations.sql': Object.freeze([
     '94403810bcae74f546a719b6d2f062e1699c18440e2ad76a5c787fa3f2c10ebb',
   ]),
+  // 072 only changed its human-readable description after early deployments.
+  // Accept the already-applied checksum so forward migrations can continue.
+  '072_agent_execution_controls.sql': Object.freeze([
+    'ddedfc2c11ce30af437a40867959a5e3dfc966e04bddae5ea3b4c2eaeab2335c',
+  ]),
 });
 
 export function isMigrationChecksumAccepted(

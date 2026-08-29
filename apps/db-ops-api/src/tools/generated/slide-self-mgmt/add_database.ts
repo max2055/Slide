@@ -24,7 +24,7 @@ interface AddDatabaseArgs {
   /** 用户名 */
   username: string;
   /** 服务端短期凭据引用 */
-  credential_ref: string;
+  credential_ref?: string;
   /** 数据库名称（可选） */
   database_name?: string;
   /** 环境 */
@@ -62,7 +62,7 @@ export const addDatabaseTool: AnyAgentTool = {
       },
       credential_ref: {
         type: 'string',
-        description: '通过凭据 API 创建的短期单次引用',
+        description: '可选：通过凭据 API 创建的短期单次引用；未提供时先创建实例，密码可后续补充',
       },
       database_name: {
         type: 'string',
@@ -78,14 +78,14 @@ export const addDatabaseTool: AnyAgentTool = {
         description: '实例描述',
       },
     },
-    required: ['db_type', 'host', 'port', 'username', 'credential_ref'],
+    required: ['db_type', 'host', 'port', 'username'],
   },
   group: 'db_ops',
   requiresApproval: false,
   handler: async (args, context) => {
     const typedArgs = args as unknown as AddDatabaseArgs;
     if (Object.prototype.hasOwnProperty.call(args, 'password')) {
-      return { success: false, error: '禁止向 Agent Tool 传递明文凭据', errorCode: 'PLAINTEXT_CREDENTIAL_DENIED' };
+      return { success: false, status: 'error', error: '禁止向 Agent Tool 传递明文凭据', errorCode: 'PLAINTEXT_CREDENTIAL_DENIED', next_actions: ['使用服务端签发的 credential_ref 重试'] };
     }
 
     // 参数验证
@@ -93,6 +93,7 @@ export const addDatabaseTool: AnyAgentTool = {
     if (validationError) {
       return {
         success: false,
+        status: 'error',
         error: validationError,
         errorCode: 'INVALID_ARGUMENTS',
       };
@@ -103,34 +104,60 @@ export const addDatabaseTool: AnyAgentTool = {
       const instanceName = typedArgs.name || generateInstanceName(typedArgs);
 
       // 2. 检查实例是否已存在
-      const exists = await checkInstanceExists(instanceName);
-      if (exists) {
+      const existing = await checkInstanceExists(instanceName);
+      if (existing) {
         return {
           success: false,
+          status: 'warning',
           error: `实例 "${instanceName}" 已存在`,
           errorCode: 'INSTANCE_EXISTS',
+          data: {
+            instanceId: existing.id,
+            name: existing.name,
+            connectionStatus: 'already_managed',
+          },
+          details: {
+            instanceId: existing.id,
+            terminal: true,
+            retryable: false,
+          },
+          next_actions: [`复用已有实例 ID ${existing.id}，不要重复纳管同一实例`],
         };
       }
 
       if (!context?.actor) {
-        return { success: false, error: '缺少认证执行上下文', errorCode: 'MISSING_ACTOR' };
+        return { success: false, status: 'error', error: '缺少认证执行上下文', errorCode: 'MISSING_ACTOR' };
       }
-      const password = await credentialReferenceService.consume(
-        typedArgs.credential_ref,
-        context.actor.userId,
-        addDatabaseTool.name,
-      );
-      if (!password) {
-        return { success: false, error: '凭据引用无效、已过期或已消费', errorCode: 'INVALID_CREDENTIAL_REF' };
+      let password = '';
+      if (typedArgs.credential_ref) {
+        password = await credentialReferenceService.consume(
+          typedArgs.credential_ref,
+          context.actor.userId,
+          addDatabaseTool.name,
+        ) ?? '';
+        if (!password) {
+          return {
+            success: false,
+            status: 'error',
+            error: '凭据引用无效、已过期或已消费；请创建新的凭据引用后重试，不要重复使用当前参数',
+            errorCode: 'INVALID_CREDENTIAL_REF',
+            details: { terminal: true, retryable: false },
+          };
+        }
       }
 
       // 3. 测试连接
-      const connectionTest = await testDatabaseConnection(typedArgs, password);
-      if (!connectionTest.success) {
+      const connectionTest = password
+        ? await testDatabaseConnection(typedArgs, password)
+        : { success: false, error: '密码尚未提供' };
+      if (password && !connectionTest.success) {
         return {
           success: false,
+          status: 'error',
           error: `连接测试失败：${connectionTest.error}`,
           errorCode: 'CONNECTION_FAILED',
+          details: { terminal: true, retryable: false },
+          next_actions: ['该条目已终止且凭据已消费；修复连接后申请新的 credential_ref 再重试'],
         };
       }
 
@@ -145,13 +172,31 @@ export const addDatabaseTool: AnyAgentTool = {
         password,
         database_name: typedArgs.database_name,
         description: typedArgs.description,
+        created_by: context.actor.userId,
       });
 
       if (!createResult.success) {
+        if (createResult.instanceId) {
+          return {
+            success: false,
+            status: 'warning',
+            error: `该地址已被实例纳管，请复用已有实例 ID ${createResult.instanceId}`,
+            errorCode: 'INSTANCE_EXISTS',
+            data: {
+              instanceId: createResult.instanceId,
+              name: instanceName,
+              connectionStatus: 'already_managed',
+            },
+            details: { instanceId: createResult.instanceId, terminal: true, retryable: false },
+            next_actions: [`复用已有实例 ID ${createResult.instanceId}，不要重复纳管同一实例`],
+          };
+        }
         return {
           success: false,
+          status: 'error',
           error: `创建实例失败：${createResult.error}`,
           errorCode: 'CREATE_INSTANCE_FAILED',
+          details: { terminal: false, retryable: true },
         };
       }
 
@@ -161,18 +206,21 @@ export const addDatabaseTool: AnyAgentTool = {
       const content = buildAddDatabaseResponse({
         instanceName,
         instanceId: realInstanceId,
-        connectionTest: connectionTest.success,
+        connectionTest: password ? connectionTest.success : null,
         args: typedArgs,
       });
 
       return {
         success: true,
+        status: 'success',
         data: {
           instanceId: realInstanceId,
           name: instanceName,
-          connectionStatus: 'connected',
+          connectionStatus: password ? 'connected' : 'pending_credentials',
         },
-        summary: `✅ 成功纳管 ${typedArgs.db_type.toUpperCase()} 实例 "${instanceName}"`,
+        summary: password
+          ? `✅ 成功纳管 ${typedArgs.db_type.toUpperCase()} 实例 "${instanceName}"`
+          : `✅ 已创建 ${typedArgs.db_type.toUpperCase()} 实例 "${instanceName}"，等待补充凭据`,
         details: {
           instanceName,
           instanceId: realInstanceId,
@@ -180,14 +228,19 @@ export const addDatabaseTool: AnyAgentTool = {
           host: typedArgs.host,
           port: typedArgs.port,
           environment: typedArgs.environment || 'development',
+          message: content,
+          terminal: false,
+          retryable: false,
         },
       };
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         success: false,
+        status: 'error',
         error: `纳管失败：${errorMessage}`,
         errorCode: 'ADD_DATABASE_FAILED',
+        next_actions: ['检查实例数据库状态和后端日志；仅在原因已改变后重试'],
       };
     }
   },
@@ -199,25 +252,25 @@ export const addDatabaseTool: AnyAgentTool = {
  * 验证参数
  */
 function validateAddDatabaseArgs(args: AddDatabaseArgs): string | null {
-  if (!args.db_type) {
-    return '缺少必要参数：db_type';
+  const supportedTypes = new Set(['mysql', 'postgresql', 'mongodb', 'redis', 'elasticsearch', 'dameng', 'oracle']);
+  if (typeof args.db_type !== 'string' || !supportedTypes.has(args.db_type)) {
+    return 'db_type 必须是受支持的数据库类型';
   }
 
-  if (!args.host) {
+  if (typeof args.host !== 'string' || !args.host.trim()) {
     return '缺少必要参数：host';
   }
 
-  if (!args.port || args.port <= 0 || args.port > 65535) {
+  if (!Number.isSafeInteger(args.port) || args.port <= 0 || args.port > 65535) {
     return '端口必须在 1-65535 范围内';
   }
 
-  if (!args.username) {
+  if (typeof args.username !== 'string' || !args.username.trim()) {
     return '缺少必要参数：username';
   }
-
-  if (!args.credential_ref) {
-    return '缺少必要参数：credential_ref';
-  }
+  if (args.name !== undefined && (typeof args.name !== 'string' || !args.name.trim())) return 'name 不能为空';
+  if (args.credential_ref !== undefined && (typeof args.credential_ref !== 'string' || !args.credential_ref.trim())) return 'credential_ref 不能为空';
+  if (args.environment !== undefined && !['development', 'staging', 'production'].includes(args.environment)) return 'environment 无效';
 
   // 端口范围验证
   const defaultPorts: Record<string, number[]> = {
@@ -250,9 +303,10 @@ function generateInstanceName(args: AddDatabaseArgs): string {
 /**
  * 检查实例是否存在
  */
-async function checkInstanceExists(name: string): Promise<boolean> {
+async function checkInstanceExists(name: string): Promise<{ id: number; name: string } | null> {
   const instances = await instanceDatabaseService.getAllInstances();
-  return instances.some(inst => inst.name === name);
+  const instance = instances.find(inst => inst.name === name);
+  return instance ? { id: instance.id, name: instance.name } : null;
 }
 
 /**
@@ -279,12 +333,12 @@ async function testDatabaseConnection(
 function buildAddDatabaseResponse(params: {
   instanceName: string;
   instanceId: number;
-  connectionTest: boolean;
+  connectionTest: boolean | null;
   args: AddDatabaseArgs;
 }): string {
   const lines: string[] = [];
 
-  lines.push(`✅ 成功纳管数据库实例`);
+  lines.push(params.connectionTest === null ? `✅ 已创建数据库实例` : `✅ 成功纳管数据库实例`);
   lines.push('');
   lines.push(`实例名称：${params.instanceName}`);
   lines.push(`实例 ID: ${params.instanceId}`);
@@ -297,7 +351,7 @@ function buildAddDatabaseResponse(params: {
   }
 
   lines.push('');
-  lines.push(`连接测试：${params.connectionTest ? '✅ 成功' : '❌ 失败'}`);
+  lines.push(`连接测试：${params.connectionTest === null ? '⏳ 未执行（等待补充凭据）' : params.connectionTest ? '✅ 成功' : '❌ 失败'}`);
 
   if (params.args.description) {
     lines.push('');

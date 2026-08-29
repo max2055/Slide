@@ -10,6 +10,7 @@ async function app() {
   fastify.post('/echo', async () => ({ ok: true }));
   fastify.get('/failure', async (_request, reply) => reply.code(500).send({ error: 'password=secret', stack: 'internal' }));
   fastify.get('/sandbox-failure', async (_request, reply) => reply.code(503).send({ reasonCode: 'SANDBOX_NOT_READY', detail: 'hidden' }));
+  fastify.get('/sandbox-network-failure', async (_request, reply) => reply.code(503).send({ reasonCode: 'SANDBOX_NETWORK_NOT_READY', detail: 'hidden' }));
   await fastify.ready();
   return fastify;
 }
@@ -46,6 +47,14 @@ describe('HTTP security boundary', () => {
     expect(response.statusCode).toBe(503);
     expect(response.json()).toEqual({ reasonCode: 'SANDBOX_NOT_READY' });
     expect(response.body).not.toContain('hidden');
+    await fastify.close();
+  });
+
+  it('preserves the restricted-network readiness reason code', async () => {
+    const fastify = await app();
+    const response = await fastify.inject({ method: 'GET', url: '/sandbox-network-failure' });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ reasonCode: 'SANDBOX_NETWORK_NOT_READY' });
     await fastify.close();
   });
 

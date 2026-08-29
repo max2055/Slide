@@ -11,11 +11,13 @@ import { JobConcurrencyLimiter } from './job-concurrency.js';
 import {
   buildDockerRunArgs,
   DEFAULT_SANDBOX_LIMITS,
+  parseExecutionProfiles,
   parseImageAllowlist,
   validateRelativeFilePath,
   validateWorkspacePath,
   type SandboxJob,
 } from './sandbox-policy.js';
+import { buildDatabaseScanJob, parseDatabaseScanRequest } from './network-scan.js';
 
 interface JobRequest extends SandboxJob {
   files?: Array<{ path: string; contentBase64: string }>;
@@ -29,6 +31,9 @@ if (!path.isAbsolute(configuredWorkspaceRoot) || configuredWorkspaceRoot === '/'
 }
 const workspaceRoot = path.resolve(configuredWorkspaceRoot);
 const images = parseImageAllowlist();
+const executionProfiles = parseExecutionProfiles();
+const restrictedNetwork = process.env.SANDBOX_RESTRICTED_NETWORK || '';
+const networkImage = process.env.SANDBOX_NETWORK_IMAGE || '';
 const maxBodyBytes = 2 * 1024 * 1024;
 const maxConcurrentJobs = Math.min(Math.max(Number(process.env.SANDBOX_MAX_CONCURRENT_JOBS || 4), 1), 32);
 const concurrencyLimiter = new JobConcurrencyLimiter(maxConcurrentJobs);
@@ -87,7 +92,7 @@ async function prepareWorkspace(jobId: string, files: JobRequest['files']): Prom
 }
 
 async function runDocker(jobId: string, workspace: string, job: JobRequest): Promise<unknown> {
-  const args = buildDockerRunArgs({ jobId, workspace, job, images });
+  const args = buildDockerRunArgs({ jobId, workspace, job, images, executionProfiles, restrictedNetwork, networkImage });
   const timeoutMs = Math.min(Math.max(Number(job.timeoutMs || DEFAULT_SANDBOX_LIMITS.timeoutMs), 1000), 120_000);
   return new Promise((resolve, reject) => {
     const child = spawn('docker', args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } });
@@ -148,6 +153,16 @@ async function dockerDaemonStatus(): Promise<{ checkedAt: string; reachable: boo
   return { ...daemonStatusCache, checkedAt: new Date(daemonStatusCache.checkedAt).toISOString() };
 }
 
+async function restrictedNetworkAvailable(): Promise<boolean> {
+  if (!/^[a-z0-9][a-z0-9_.-]{0,62}$/.test(restrictedNetwork)) return false;
+  try {
+    await execFile('docker', ['network', 'inspect', restrictedNetwork], { timeout: 3000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const server = http.createServer(async (request, response) => {
   if (request.method === 'GET' && request.url === '/health') return send(response, 200, { status: 'ok', activeJobs: concurrencyLimiter.active });
   if (request.method === 'GET' && request.url === '/v1/status') {
@@ -160,13 +175,15 @@ const server = http.createServer(async (request, response) => {
       body,
     });
     if (!authenticated) return send(response, 401, { error: 'Unauthorized' });
+    const restrictedNetworkReady = await restrictedNetworkAvailable();
     return send(response, 200, {
       status: 'ok',
       activeJobs: concurrencyLimiter.active,
       maxConcurrentJobs,
       daemon: await dockerDaemonStatus(),
       policy: {
-        network: 'none',
+        network: restrictedNetworkReady && (/@sha256:[a-f0-9]{64}$/.test(networkImage) || Object.keys(executionProfiles).length > 0) ? 'restricted' : 'none',
+        restrictedNetworkConfigured: restrictedNetworkReady && (/@sha256:[a-f0-9]{64}$/.test(networkImage) || Object.keys(executionProfiles).length > 0),
         rootFilesystem: 'read-only',
         user: '65532:65532',
         capabilities: 'none',
@@ -177,7 +194,8 @@ const server = http.createServer(async (request, response) => {
       recentJobs: jobHistory.list(),
     });
   }
-  if (request.method !== 'POST' || request.url !== '/v1/jobs') return send(response, 404, { error: 'Not found' });
+  const networkScanRequest = request.method === 'POST' && request.url === '/v1/network-scans';
+  if (request.method !== 'POST' || (request.url !== '/v1/jobs' && !networkScanRequest)) return send(response, 404, { error: 'Not found' });
   let body: Buffer;
   try {
     body = await readBody(request);
@@ -200,9 +218,13 @@ const server = http.createServer(async (request, response) => {
   let workspace: string | undefined;
   let runtime = 'unknown';
   try {
-    const job = JSON.parse(body.toString('utf8')) as JobRequest;
+    const raw = JSON.parse(body.toString('utf8')) as unknown;
+    const job = networkScanRequest
+      ? buildDatabaseScanJob(parseDatabaseScanRequest(raw))
+      : raw as JobRequest;
+    if (!networkScanRequest && job.executionProfile) throw new Error('SANDBOX_PROFILE_NOT_ALLOWED');
     runtime = typeof job.runtime === 'string' ? job.runtime : 'unknown';
-    workspace = await prepareWorkspace(jobId, job.files);
+    workspace = await prepareWorkspace(jobId, networkScanRequest ? undefined : (job as JobRequest).files);
     const result = await runDocker(jobId, workspace, job) as {
       exitCode: number | null; timedOut: boolean; outputTruncated: boolean;
     };

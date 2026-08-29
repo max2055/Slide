@@ -78,12 +78,12 @@ export class MysqlObservationStore implements ObservationStore {
   }
   async rangeInstanceMetric(id: number, metricId: string, from: Date, to: Date, limit: number): Promise<ObservationRow[]> {
     if (!INSTANCE_METRICS.has(metricId)) throw new Error('METRIC_ID_UNSUPPORTED');
-    const [rows] = await this.pool().execute<Array<any>>(`SELECT ${metricId} AS value, recorded_at AS observedAt FROM metrics_history WHERE instance_id = ? AND recorded_at >= ? AND recorded_at <= ? ORDER BY recorded_at DESC LIMIT ?`, [id, from, to, limit]);
+    const [rows] = await this.pool().execute<Array<any>>(`SELECT ${metricId} AS value, recorded_at AS observedAt FROM metrics_history WHERE instance_id = ? AND recorded_at >= ? AND recorded_at <= ? ORDER BY recorded_at DESC LIMIT ${limit}`, [id, from, to]);
     return rows.map((row) => ({ value: row.value == null ? null : Number(row.value), observedAt: row.observedAt ? new Date(row.observedAt) : null }));
   }
   async rangeServerMetric(id: number, metricId: string, from: Date, to: Date, limit: number): Promise<ObservationRow[]> {
     const names = metricId === 'disk_usage' ? ['disk_usage', 'server_disk_usage'] : [metricId, `server_${metricId}`];
-    const [rows] = await this.pool().execute<Array<any>>('SELECT metric_name AS metricId, dimensions, metric_value AS value, recorded_at AS observedAt FROM server_metrics WHERE server_id = ? AND recorded_at >= ? AND recorded_at <= ? AND (metric_name IN (?, ?) OR (? = \'disk_usage\' AND metric_name LIKE \'disk_usage_%\')) ORDER BY recorded_at DESC LIMIT ?', [id, from, to, names[0], names[1], metricId, limit]);
+    const [rows] = await this.pool().execute<Array<any>>(`SELECT metric_name AS metricId, dimensions, metric_value AS value, recorded_at AS observedAt FROM server_metrics WHERE server_id = ? AND recorded_at >= ? AND recorded_at <= ? AND (metric_name IN (?, ?) OR (? = 'disk_usage' AND metric_name LIKE 'disk_usage_%')) ORDER BY recorded_at DESC LIMIT ${limit}`, [id, from, to, names[0], names[1], metricId]);
     return rows.map((row) => ({ metricId: row.metricId, dimensions: parseDimensions(row.dimensions), value: Number(row.value), observedAt: row.observedAt ? new Date(row.observedAt) : null }));
   }
   async latestNetworkDeviceMetric(id: number, metricId: string): Promise<ObservationRow | null> {
@@ -102,8 +102,8 @@ export class MysqlObservationStore implements ObservationStore {
       `SELECT metric_id AS metricId, dimensions, metric_value AS value, observed_at AS observedAt
        FROM network_device_observations
        WHERE device_id = ? AND metric_id = ? AND observed_at >= ? AND observed_at <= ?
-       ORDER BY observed_at DESC, id DESC LIMIT ?`,
-      [id, metricId, from, to, limit],
+       ORDER BY observed_at DESC, id DESC LIMIT ${limit}`,
+      [id, metricId, from, to],
     );
     return rows.map((row) => ({ metricId: row.metricId, dimensions: parseDimensions(row.dimensions), value: row.value == null ? null : Number(row.value), observedAt: row.observedAt ? new Date(row.observedAt) : null }));
   }
@@ -111,7 +111,7 @@ export class MysqlObservationStore implements ObservationStore {
 }
 
 function assertNetworkMetricId(metricId: string): void {
-  if (!/^(?:device_(?:uptime_seconds|cpu_percent|memory_percent|temperature_celsius)|interface_[a-z0-9_]+)$/.test(metricId)) {
+  if (!/^(?:device_(?:reachability|uptime_seconds|cpu_percent|memory_percent|temperature_celsius)|interface_[a-z0-9_]+)$/.test(metricId)) {
     throw new Error('METRIC_ID_UNSUPPORTED');
   }
 }

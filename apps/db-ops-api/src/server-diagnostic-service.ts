@@ -258,9 +258,9 @@ class ServerDiagnosticService {
     try {
       return await this.collectDiagnostics(serverId);
     } catch (error) {
-      if (cached && !isFatalSshCommandError(error)) {
-        return this.markStale(cached, stableErrorCode(error));
-      }
+      const code = stableErrorCode(error);
+      const nonRecoverable = new Set(['SERVER_ID_INVALID', 'SERVER_NOT_FOUND', 'HOST_OS_UNSUPPORTED', 'SERVER_CREDENTIALS_UNAVAILABLE']);
+      if (cached && !nonRecoverable.has(code)) return this.markStale(cached, code);
       throw error;
     }
   }
@@ -453,10 +453,10 @@ class ServerDiagnosticService {
     const params: unknown[] = [serverId];
     let where = 'WHERE server_id = ?';
     if (options.metricName) { where += ' AND metric_name = ?'; params.push(options.metricName); }
-    if (hours) { where += ' AND recorded_at >= DATE_SUB(NOW(), INTERVAL ? HOUR)'; params.push(hours); }
+    if (hours) { where += ` AND recorded_at >= DATE_SUB(NOW(), INTERVAL ${hours} HOUR)`; }
     const [rows] = await (pool as any).execute(
-      `SELECT metric_name, metric_value, dimensions, recorded_at FROM server_metrics ${where} ORDER BY recorded_at DESC, id DESC LIMIT ?`,
-      [...params, limit],
+      `SELECT metric_name, metric_value, dimensions, recorded_at FROM server_metrics ${where} ORDER BY recorded_at DESC, id DESC LIMIT ${limit}`,
+      params,
     ) as any;
     const history = (rows ?? []).map((row: any) => ({
       metric_name: String(row.metric_name),
@@ -494,7 +494,8 @@ class ServerDiagnosticService {
       ? await (async () => {
         const pool = dbConnection.getPool();
         if (!pool) return [] as any[];
-        const [rows] = await (pool as any).execute('SELECT id, host, port, label, os_type, status, last_check_at, collection_enabled FROM servers ORDER BY host LIMIT ?', [Math.min(Math.max(maxRows, 1), 100)]);
+        const limit = Math.min(Math.max(maxRows, 1), 100);
+        const [rows] = await (pool as any).execute(`SELECT id, host, port, label, os_type, status, last_check_at, collection_enabled FROM servers ORDER BY host LIMIT ${limit}`);
         return rows as any[];
       })()
       : [];

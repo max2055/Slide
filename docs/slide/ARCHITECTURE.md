@@ -1,8 +1,8 @@
 # Slide 系统架构
 
-Slide 是一个 AI 原生的数据库运维管理平台（Database Ops Platform），基于 OpenClaw Agent 框架构建，集成 LLM 实现自动化数据库运维。平台覆盖数据库监控、告警、性能分析、SQL 审核与执行、AI 辅助故障诊断等全链路运维场景，通过 Agent 驱动的方式将 DBA 从重复性工作中释放。
+Slide v0.10 是一个 AI 原生的基础运维助手（Infrastructure Operations Assistant），基于内置 Agent 框架构建，集成 LLM 实现跨资源只读诊断。平台覆盖数据库、Kylin/RHEL/CentOS 服务器和华为 VRP 网络设备的监控、告警、关系影响分析与审计；网络设备配置仅支持加密备份，不支持下发或恢复。华为 enterprise CPU/内存/温度指标由版本化 MIB fixture 驱动，未完成型号/固件 UAT 时保持 unsupported。
 
-Slide 的核心定位是"AI 原生的数据库运维"：Agent 自动采集数据、分析问题、给出建议，同时保持人工审批和手动控制的能力。系统由四个主要部分组成：
+Slide 的核心定位是"AI 原生的基础运维"：Agent 自动采集数据库、服务器和网络设备数据，分析关联问题、给出建议，同时保持人工审批和手动控制的能力。系统由四个主要部分组成：
 基于 Lit + Vite 的前端 SPA、基于 Fastify + TypeScript 的后端 API 服务器、基于 OpenClaw Gateway 的 AI Agent 运行时，以及 MySQL/Elasticsearch/Redis/MongoDB 等数据层。
 
 ## 技术栈总览

@@ -97,4 +97,85 @@ describe('Feishu notification settings', () => {
     expect(authFetch).toHaveBeenCalledTimes(callsBeforeSave);
     expect(subject.error).toContain('open.feishu.cn');
   });
+
+  it('loads an existing email channel without placing SMTP credentials in the form', async () => {
+    authFetch.mockResolvedValue(response([{
+      id: 12, name: '邮件告警', type: 'email', enabled: true,
+      config: {
+        smtp_host: 'smtp.example.com', smtp_port: 587,
+        smtp_username: 'alerts@example.com', smtp_auth: 'password',
+        from: 'alerts@example.com', to: 'dba@example.com', smtp_secure: false,
+        hasCredential: true,
+      },
+    }]));
+    const subject = page();
+    document.body.append(subject);
+    await subject.load();
+    await subject.updateComplete;
+
+    expect(subject.selectedType).toBe('email');
+    expect(subject.channelId).toBe(12);
+    expect(subject.emailHost).toBe('smtp.example.com');
+    expect(subject.emailPort).toBe('587');
+    expect(subject.emailUsername).toBe('alerts@example.com');
+    expect(subject.emailPassword).toBe('');
+    expect(subject.emailFrom).toBe('alerts@example.com');
+    expect(subject.emailTo).toBe('dba@example.com');
+    expect(subject.emailHasStoredCredential).toBe(true);
+    const inputs = subject.shadowRoot?.querySelectorAll<HTMLInputElement>('input') || [];
+    const password = Array.from(inputs).find((input) => input.type === 'password');
+    expect(password?.value).toBe('');
+    expect(subject.shadowRoot?.innerHTML).not.toContain('password_encrypted');
+    expect(subject.shadowRoot?.textContent).toContain('邮件');
+  });
+
+  it('creates an email channel with SMTP settings and clears the password after saving', async () => {
+    authFetch.mockResolvedValue(response([]));
+    const subject = page();
+    document.body.append(subject);
+    await subject.load();
+    subject.selectedType = 'email';
+    subject.emailHost = 'smtp.example.com';
+    subject.emailPort = '465';
+    subject.emailUsername = 'alerts@example.com';
+    subject.emailPassword = 'smtp-app-password';
+    subject.emailFrom = 'alerts@example.com';
+    subject.emailTo = 'dba@example.com';
+    subject.emailSecure = true;
+    subject.enabled = true;
+    authFetch.mockResolvedValueOnce(response({ id: 13 }));
+
+    await subject.save();
+
+    const [path, options] = authFetch.mock.lastCall;
+    expect(path).toBe('/api/notification/channels');
+    expect(options).toMatchObject({ method: 'POST' });
+    expect(JSON.parse(options.body)).toEqual({
+      name: '邮件告警', type: 'email', enabled: true,
+      config: {
+        smtp_host: 'smtp.example.com', smtp_port: 465,
+        smtp_username: 'alerts@example.com', smtp_auth: 'password',
+        password: 'smtp-app-password', from: 'alerts@example.com',
+        to: 'dba@example.com', smtp_secure: true, severity: 'info',
+      },
+    });
+    expect(subject.channelId).toBe(13);
+    expect(subject.emailPassword).toBe('');
+    expect(subject.emailHasStoredCredential).toBe(true);
+  });
+
+  it('tests the selected email channel through the common notification endpoint', async () => {
+    authFetch.mockResolvedValue(response([{
+      id: 14, name: '邮件告警', type: 'email', enabled: false,
+      config: { smtp_host: 'smtp.example.com', hasCredential: true },
+    }]));
+    const subject = page();
+    document.body.append(subject);
+    await subject.load();
+    authFetch.mockResolvedValueOnce(response({ success: true }));
+
+    await subject.test();
+
+    expect(authFetch).toHaveBeenLastCalledWith('/api/notification/channels/14/test', { method: 'POST' });
+  });
 });

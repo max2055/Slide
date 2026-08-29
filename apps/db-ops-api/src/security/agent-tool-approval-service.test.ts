@@ -66,6 +66,21 @@ describe('persistent Agent tool approvals', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('loads pending approvals with a MySQL-compatible literal limit', async () => {
+    let query = '';
+    const executor = {
+      execute: async (sql: string, values?: unknown[]) => {
+        query = sql;
+        expect(values).toBeUndefined();
+        return [[{ id: 42, status: 'pending' }]] as [unknown];
+      },
+    };
+    const service = new AgentToolApprovalService(() => executor as any, 'test-hmac-key');
+
+    await expect(service.pending(2)).resolves.toEqual([{ id: 42, status: 'pending' }]);
+    expect(query).toContain('LIMIT 2');
+  });
+
   it('allows a reviewed window approval to be reused only in its session and risk ceiling', async () => {
     const executor = {
       execute: async (sql: string, values?: unknown[]) => {

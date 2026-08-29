@@ -16,6 +16,7 @@ export type CardVariant = "default" | "elevated" | "bordered";
 @customElement("app-card")
 export class AppCard extends LitElement {
   @property() variant: CardVariant = "default";
+  @property({ type: Boolean }) compact = false;
 
   createRenderRoot() { return this.attachShadow({ mode: "open" }); }
 
@@ -48,6 +49,8 @@ export class AppCard extends LitElement {
           background: transparent;
           box-shadow: none;
         }
+        .card--compact .card-header { display: none; }
+        .card--compact .card-body { padding: 0; }
         .card-header {
           display: flex;
           justify-content: space-between;
@@ -80,7 +83,7 @@ export class AppCard extends LitElement {
         }
         .card-footer.empty { display: none; }
       </style>
-      <div class="card card--${this.variant}">
+      <div class="card card--${this.variant}${this.compact ? " card--compact" : ""}">
         <div class="card-header">
           <slot name="header" @slotchange=${this._onHeaderSlotChange}></slot>
         </div>

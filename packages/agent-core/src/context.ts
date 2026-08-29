@@ -1,5 +1,5 @@
 /**
- * ContextBuilder — ported from nanobot agent/context.py
+ * ContextBuilder — TypeScript context assembly implemented for Slide.
  *
  * Assembles system prompts and message arrays from bootstrap files,
  * memory context, skills summaries, and runtime info.

@@ -32,31 +32,22 @@ export const getInstanceSummaryTool: AnyAgentTool = {
       };
 
       if (typedArgs.instance_id !== undefined) {
+        if (!Number.isSafeInteger(typedArgs.instance_id) || typedArgs.instance_id <= 0) {
+          return { success: false, status: 'error', error: 'instance_id 必须为正整数', errorCode: 'INVALID_ARGUMENTS' };
+        }
         // 查询单个实例 — 检查用户是否有权限访问
         if (context?.userId) {
           const userInstances = await rbacService.getUserInstanceAccess(context.userId);
           const hasAccess = userInstances.some(ui => ui.instance_id === typedArgs.instance_id);
           if (!hasAccess) {
-            return {
-              success: true,
-              data: {
-                count: 0,
-                instances: [],
-              },
-            };
+            return { success: false, status: 'error', error: '无权访问该数据库实例', errorCode: 'INSTANCE_SCOPE_DENIED' };
           }
         }
 
         const instance = await instanceDatabaseService.getInstanceById(typedArgs.instance_id);
 
         if (!instance) {
-          return {
-            success: true,
-            data: {
-              count: 0,
-              instances: [],
-            },
-          };
+          return { success: false, status: 'error', error: `未找到实例 ID=${typedArgs.instance_id}`, errorCode: 'INSTANCE_NOT_FOUND', next_actions: ['先调用 list_database_instances 获取有效实例 ID'] };
         }
 
         const summary: Record<string, any> = {
@@ -72,6 +63,7 @@ export const getInstanceSummaryTool: AnyAgentTool = {
 
         return {
           success: true,
+          status: 'success',
           data: {
             count: 1,
             instances: [summary],
@@ -102,6 +94,7 @@ export const getInstanceSummaryTool: AnyAgentTool = {
 
       return {
         success: true,
+        status: 'success',
         data: {
           count: summaries.length,
           instances: summaries,
@@ -110,7 +103,10 @@ export const getInstanceSummaryTool: AnyAgentTool = {
     } catch (error: any) {
       return {
         success: false,
+        status: 'error',
         error: `获取实例摘要失败: ${error.message}`,
+        errorCode: 'INSTANCE_SUMMARY_FAILED',
+        next_actions: ['检查后端数据库连接后重试'],
       };
     }
   },

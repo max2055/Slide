@@ -24,27 +24,19 @@ describe('database target policy', () => {
     [{ host: 'localhost', port: 3306, dbType: 'mysql' }, 'DB_TARGET_INVALID_HOST'],
     [{ host: '127.0.0.1', port: 3306, dbType: 'mysql' }, 'DB_TARGET_ADDRESS_DENIED'],
     [{ host: '169.254.169.254', port: 3306, dbType: 'mysql' }, 'DB_TARGET_ADDRESS_DENIED'],
-    [{ host: 'db.internal.example', port: 22, dbType: 'mysql' }, 'DB_TARGET_PORT_DENIED'],
+    [{ host: 'db.internal.example', port: 0, dbType: 'mysql' }, 'DB_TARGET_INVALID_PORT'],
     [{ host: 'mixed.internal.example', port: 3306, dbType: 'mysql' }, 'DB_TARGET_ADDRESS_DENIED'],
-    [{ host: 'public.example', port: 3306, dbType: 'mysql' }, 'DB_TARGET_ADDRESS_DENIED'],
     [{ host: 'missing.example', port: 3306, dbType: 'mysql' }, 'DB_TARGET_DNS_FAILED'],
   ])('rejects an unauthorized target with a stable reason code', async (target, reasonCode) => {
     await expect(authorizeDatabaseTarget(target, { allowedCidrs: '10.20.0.0/16', lookup }))
       .rejects.toMatchObject({ name: DatabaseTargetPolicyError.name, reasonCode });
   });
 
-  it('fails closed in production when no CIDR policy is configured', async () => {
+  it('allows a public target when it is not a special or metadata address', async () => {
     await expect(authorizeDatabaseTarget(
-      { host: '10.20.30.40', port: 3306, dbType: 'mysql' },
-      { allowedCidrs: '', production: true },
-    )).rejects.toMatchObject({ reasonCode: 'DB_TARGET_POLICY_NOT_CONFIGURED' });
-  });
-
-  it('fails closed in production when no port policy is configured', async () => {
-    await expect(authorizeDatabaseTarget(
-      { host: '10.20.30.40', port: 3306, dbType: 'mysql' },
-      { allowedCidrs: '10.20.0.0/16', allowedPorts: [], production: true },
-    )).rejects.toMatchObject({ reasonCode: 'DB_TARGET_POLICY_NOT_CONFIGURED' });
+      { host: 'public.example', port: 3306, dbType: 'mysql' },
+      { lookup },
+    )).resolves.toMatchObject({ address: '203.0.113.10', port: 3306 });
   });
 
   it('allows a persisted loopback target only for non-production managed reconnects', async () => {
@@ -64,15 +56,15 @@ describe('database target policy', () => {
     )).rejects.toMatchObject({ reasonCode: 'DB_TARGET_ADDRESS_DENIED' });
   });
 
-  it('allows a persisted non-standard port only on the non-production managed path', async () => {
+  it('allows a persisted non-standard port in an allowed network', async () => {
     await expect(authorizeDatabaseTarget(
       { host: '10.20.30.40', port: 3308, dbType: 'mysql' },
-      { allowedCidrs: '10.20.0.0/16', allowManagedPort: true, production: false },
+      { allowedCidrs: '10.20.0.0/16', production: false },
     )).resolves.toMatchObject({ port: 3308 });
 
     await expect(authorizeDatabaseTarget(
       { host: '10.20.30.40', port: 3308, dbType: 'mysql' },
-      { allowedCidrs: '10.20.0.0/16', allowedPorts: [3306], allowManagedPort: true, production: true },
-    )).rejects.toMatchObject({ reasonCode: 'DB_TARGET_PORT_DENIED' });
+      { allowedCidrs: '10.20.0.0/16', production: true },
+    )).resolves.toMatchObject({ port: 3308 });
   });
 });

@@ -60,6 +60,7 @@ describe('network-device routes', () => {
       capture: vi.fn(async () => ({ success: true, backup: { id: 9, deviceId: 7, versionNo: 1, contentEncrypted: 'do-not-return', content_encrypted: 'also-do-not-return', preview: '<redacted>', secret: 'do-not-return' }, duplicate: false })),
       get: vi.fn(async (_id: number, _backupId: number, include: boolean) => include ? { id: 9, content: 'secret' } : { id: 9, preview: '<redacted>' }),
       diff: vi.fn(async () => ({ fromId: 9, toId: 10, diff: '+x' })),
+      recordAudit: vi.fn(),
     };
     const app = await appWith({ backupService });
     const metadata = await app.inject({ method: 'GET', url: '/api/network-devices/7/config-backups', headers: { authorization: 'Bearer reader' } });
@@ -76,6 +77,7 @@ describe('network-device routes', () => {
     expect(backupService.capture).toHaveBeenCalledWith(7, 3);
     const rawDenied = await app.inject({ method: 'GET', url: '/api/network-devices/7/config-backups/9?raw=true', headers: { authorization: 'Bearer reader' } });
     expect(rawDenied.statusCode).toBe(403);
+    expect(backupService.recordAudit).toHaveBeenCalledWith(expect.objectContaining({ action: 'read_denied', deviceId: 7, backupId: 9, reason: 'NETWORK_DEVICE_BACKUP_PERMISSION_REQUIRED', actorId: 1 }));
     const raw = await app.inject({ method: 'GET', url: '/api/network-devices/7/config-backups/9?raw=true', headers: { authorization: 'Bearer backup' } });
     expect(raw.statusCode).toBe(200);
     await app.close();
@@ -83,15 +85,36 @@ describe('network-device routes', () => {
 
   it('rejects unknown test-connection fields and probes only validated SNMPv3 payloads', async () => {
     const probe = vi.fn(async () => ({ reachable: true, observedAt: new Date(), quality: 'good' as const }));
+    const sshProbe = vi.fn(async () => undefined);
     const app = await appWith({
       snmpAdapter: { probe },
+      sshProbe,
       authorizeTarget: vi.fn(async ({ host, port }: { host: string; port: number }) => ({ hostname: host, address: host, port })),
     });
     const unknown = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { host: '192.0.2.10', snmpv3: { username: 'm', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: '12345678', privacyProtocol: 'AES', privacySecret: '12345678' }, command: 'display current-configuration' } });
     expect(unknown.statusCode).toBe(400);
+    const sshWithoutFingerprint = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { host: '192.0.2.10', snmpv3: { username: 'm', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: '12345678', privacyProtocol: 'AES', privacySecret: '12345678' }, ssh: { username: 'readonly', credentialType: 'password', credentialValue: 'secret' } } });
+    expect(sshWithoutFingerprint.statusCode).toBe(400);
     const valid = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { host: '192.0.2.10', version: 3, snmpPort: 161, snmpv3: { username: 'm', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: '12345678', privacyProtocol: 'AES', privacySecret: '12345678' } } });
     expect(valid.statusCode).toBe(200);
-    expect(probe).toHaveBeenCalledTimes(1);
+    expect(probe).toHaveBeenCalledTimes(2);
+    const withSsh = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { host: '192.0.2.10', version: 3, snmpPort: 161, sshPort: 22, snmpv3: { username: 'm', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: '12345678', privacyProtocol: 'AES', privacySecret: '12345678' }, ssh: { username: 'readonly', credentialType: 'password', credentialValue: 'secret', hostKeyFingerprint: `SHA256:${'A'.repeat(43)}` } } });
+    expect(withSsh.statusCode).toBe(200);
+    expect(withSsh.json()).toMatchObject({ success: true, ssh: { verified: true } });
+    expect(sshProbe).toHaveBeenCalledWith(expect.objectContaining({ host: '192.0.2.10', port: 22, username: 'readonly', credentialType: 'password', hostKeyFingerprint: `SHA256:${'A'.repeat(43)}` }));
+    await app.close();
+  });
+
+  it('maps an SSH host-key handshake failure to a stable error without leaking credentials', async () => {
+    const app = await appWith({
+      snmpAdapter: { probe: vi.fn(async () => ({ reachable: true, observedAt: new Date(), quality: 'good' as const })) },
+      sshProbe: vi.fn(async () => { throw new Error('SSH_HOST_KEY_MISMATCH secret-password'); }),
+      authorizeTarget: vi.fn(async ({ host, port }: { host: string; port: number }) => ({ hostname: host, address: host, port })),
+    });
+    const response = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { host: '192.0.2.10', version: 3, snmpv3: { username: 'm', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: '12345678', privacyProtocol: 'AES', privacySecret: '12345678' }, ssh: { username: 'readonly', credentialType: 'password', credentialValue: 'secret-password', hostKeyFingerprint: `SHA256:${'A'.repeat(43)}` } } });
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toEqual({ success: false, error: 'NETWORK_DEVICE_OPERATION_FAILED' });
+    expect(JSON.stringify(response.json())).not.toContain('secret-password');
     await app.close();
   });
 
@@ -99,6 +122,18 @@ describe('network-device routes', () => {
     const app = await appWith();
     const response = await app.inject({ method: 'GET', url: '/api/network-devices/not-an-id/metrics', headers: { authorization: 'Bearer reader' } });
     expect(response.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('does not create direct database-instance relations from a network device', async () => {
+    const app = await appWith();
+    const response = await app.inject({
+      method: 'PUT', url: '/api/network-devices/7/relations',
+      headers: { authorization: 'Bearer manager', 'content-type': 'application/json' },
+      payload: { relations: [{ target: { type: 'instance', id: 11 }, relationType: 'serves' }] },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: 'RESOURCE_RELATION_TOPOLOGY_INVALID' });
     await app.close();
   });
 });

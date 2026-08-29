@@ -1,5 +1,5 @@
 /**
- * Tests for MemoryStore — ported from nanobot Python.
+ * Tests for the Slide TypeScript MemoryStore implementation.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";

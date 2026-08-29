@@ -68,4 +68,70 @@ describe('ResourceDiagnosticService', () => {
     await expect(service.diagnose(actor, { type: 'network_device', id: 0 })).rejects.toThrow('RESOURCE_REF_INVALID');
     expect(deps.detail).not.toHaveBeenCalled();
   });
+
+  it('builds a cross-resource overview with freshness, alert and impact scope', async () => {
+    const serverRef = { type: 'server' as const, id: 3 };
+    const deviceRef = { type: 'network_device' as const, id: 9 };
+    const deps = dependencies({
+      list: vi.fn(async () => [detail(serverRef), detail(deviceRef)]),
+      observations: vi.fn(async (ref) => ref.type === 'server'
+        ? [observation(ref, 'cpu_percent', 12)]
+        : []),
+      alerts: vi.fn(async (ref) => ref.type === 'server'
+        ? [{ id: 1, status: 'firing' }]
+        : []),
+      relations: vi.fn(async (ref) => ref.type === 'server'
+        ? [{ source: serverRef, target: deviceRef, relationType: 'connected_to' as const, provenance: 'fixture', validFrom: new Date('2026-08-25T00:00:00.000Z'), validUntil: null }]
+        : []),
+    });
+    const service = new ResourceDiagnosticService(deps);
+    const result = await service.overview(actor, new Date('2026-08-26T00:01:00.000Z'));
+    expect(result.schemaVersion).toBe(1);
+    expect(result.summary).toMatchObject({ total: 2, fresh: 1, missing: 1, unresolvedAlerts: 1, impactedResources: 1 });
+    expect(result.items[0]).toMatchObject({ freshness: 'fresh', unresolvedAlerts: 1, relationCount: 1, impactScope: [deviceRef] });
+    expect(result.items[1]).toMatchObject({ freshness: 'missing', gaps: ['OBSERVATIONS_EMPTY'] });
+    expect(result.dataQuality).toBe('partial');
+  });
+
+  it('orders bounded related evidence so an interface drop is visible beside database and host evidence', async () => {
+    const subject = { type: 'instance' as const, id: 11 };
+    const serverRef = { type: 'server' as const, id: 3 };
+    const deviceRef = { type: 'network_device' as const, id: 9 };
+    const relation = (target: ResourceRef, relationType: ResourceRelation['relationType']): ResourceRelation => ({
+      source: subject,
+      target,
+      relationType,
+      provenance: 'fixture',
+      validFrom: new Date('2026-08-25T00:00:00.000Z'),
+      validUntil: null,
+    });
+    const deps = dependencies({
+      detail: vi.fn(async (ref) => ({
+        ...detail(ref),
+        status: ref.type === 'server' ? 'online' : ref.type === 'network_device' ? 'degraded' : 'warning',
+      })),
+      observations: vi.fn(async (ref) => {
+        if (ref.type === 'instance') return [observation(ref, 'slow_queries', 42)];
+        if (ref.type === 'server') return [observation(ref, 'cpu_percent', 12)];
+        return [{
+          ...observation(ref, 'interface_drop_rate', 4),
+          dimensions: { direction: 'in', if_index: '7' },
+        }];
+      }),
+      relations: vi.fn(async (ref) => ref.type === 'instance'
+        ? [relation(serverRef, 'runs_on'), relation(deviceRef, 'connected_to')]
+        : []),
+      alerts: vi.fn(async (ref) => ref.type === 'instance' ? [{ id: 1, status: 'firing', level: 'critical' }] : []),
+    });
+    const service = new ResourceDiagnosticService(deps);
+    const result = await service.diagnose(actor, subject);
+
+    expect(result.relatedEvidence.map((entry) => entry.resource.resource)).toEqual([deviceRef, serverRef]);
+    expect(result.relatedEvidence[0]).toMatchObject({
+      observations: [expect.objectContaining({ metricId: 'interface_drop_rate', dimensions: { direction: 'in', if_index: '7' } })],
+      priority: expect.any(Number),
+    });
+    expect(result.relatedEvidence[0].priority).toBeGreaterThan(result.relatedEvidence[1].priority);
+    expect(result.relatedEvidence[1].gaps).toEqual([]);
+  });
 });

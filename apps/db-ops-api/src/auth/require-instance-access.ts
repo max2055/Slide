@@ -17,12 +17,13 @@ const ACCESS_LEVEL_HIERARCHY: Record<AccessLevel, number> = {
 
 type InstanceScopedActor = {
   permissions?: readonly string[];
+  roles?: readonly string[];
   instanceScopes?: Readonly<Record<number, AccessLevel>>;
 };
 
 export function hasUnrestrictedInstanceAccess(actor: InstanceScopedActor | null | undefined): boolean {
   const permissions = new Set(Array.isArray(actor?.permissions) ? actor.permissions : []);
-  return permissions.has('*') || permissions.has('instance:*');
+  return permissions.has('*') || permissions.has('instance:*') || actor?.roles?.includes('admin') === true;
 }
 
 /** null means unrestricted; an empty array means no instance access. */

@@ -443,7 +443,7 @@ export class LLMConfigPage extends LitElement {
     return html`
       <div style="display:flex;flex-direction:column;height:100%">
         <div class="page-header">
-          <h1>LLM 配置</h1>
+          <h1>模型配置</h1>
           <p>管理 AI 提供商：添加、编辑、启停、测试连接</p>
         </div>
         <div class="shell" style="flex:1">

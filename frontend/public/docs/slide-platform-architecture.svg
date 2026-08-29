@@ -9,7 +9,7 @@
   </defs>
   <rect width="1200" height="660" fill="#f7fafc"/>
   <rect x="32" y="26" width="1136" height="56" rx="8" fill="#0f5f9d"/>
-  <text x="58" y="61" class="t h w">Slide 数据库运维平台</text>
+  <text x="58" y="61" class="t h w">Slide 基础运维助手</text>
   <text x="1142" y="61" class="s wl" text-anchor="end">控制面架构 · DirectAdapter</text>
 
   <rect x="32" y="112" width="184" height="460" rx="8" fill="#e8f2fb" stroke="#b8d1e7" class="box"/>

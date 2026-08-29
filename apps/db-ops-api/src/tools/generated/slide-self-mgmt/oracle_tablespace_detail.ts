@@ -41,12 +41,15 @@ export const oracleTablespaceDetailTool: AnyAgentTool = {
   handler: async (args) => {
     const typedArgs = args as unknown as TablespaceDetailArgs;
 
-    if (!typedArgs.instance_id) {
+    if (!Number.isSafeInteger(typedArgs.instance_id) || typedArgs.instance_id <= 0) {
       return {
         success: false,
         error: '请提供实例 ID (instance_id)',
         errorCode: 'MISSING_ARGUMENTS',
       };
+    }
+    if (typedArgs.tablespace_name !== undefined && (typeof typedArgs.tablespace_name !== 'string' || typedArgs.tablespace_name.trim().length === 0)) {
+      return { success: false, status: 'error', error: 'tablespace_name 不能为空', errorCode: 'INVALID_ARGUMENTS' };
     }
 
     try {
@@ -70,7 +73,7 @@ export const oracleTablespaceDetailTool: AnyAgentTool = {
       // 1. 获取表空间概览信息 (DBA_TABLESPACES + DBA_DATA_FILES)
       let tablespaceFilter = '';
       const bindParams: any = {};
-      if (typedArgs.tablespace_name) {
+      if (typedArgs.tablespace_name !== undefined) {
         tablespaceFilter = 'AND t.tablespace_name = :ts_name';
         bindParams.ts_name = typedArgs.tablespace_name;
       }
@@ -185,6 +188,7 @@ export const oracleTablespaceDetailTool: AnyAgentTool = {
 
       return {
         success: true,
+        status: tablespaces.length === 0 ? 'warning' : 'success',
         data: {
           tablespaces,
           top_segments: topSegments,
@@ -196,6 +200,7 @@ export const oracleTablespaceDetailTool: AnyAgentTool = {
           },
         },
         summary: `✅ 获取到 ${tablespaces.length} 个表空间信息，总大小 ${Math.round(totalSize * 100) / 100} GB，已用 ${Math.round(totalUsed * 100) / 100} GB`,
+        next_actions: tablespaces.length === 0 ? ['确认表空间名称和数据库用户权限'] : [],
       };
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);

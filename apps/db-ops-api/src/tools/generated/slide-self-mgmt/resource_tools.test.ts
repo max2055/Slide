@@ -26,7 +26,7 @@ describe('resource agent tools', () => {
     const spy = vi.spyOn(resourceDiagnosticService, 'diagnose').mockResolvedValue({
       schemaVersion: 1, subject: { type: 'server', id: 4 }, collectedAt: new Date().toISOString(),
       resource: { resource: { type: 'server', id: 4 }, label: 'server-4', status: 'online', attributes: {} },
-      observations: [], relations: [], alerts: [], gaps: [], truncated: false,
+      observations: [], relations: [], alerts: [], relatedEvidence: [], gaps: [], truncated: false,
     });
     const result = await diagnoseResourceTool.handler({ resourceType: 'server', resourceId: 4 }, { actor });
     expect(result.success).toBe(true);

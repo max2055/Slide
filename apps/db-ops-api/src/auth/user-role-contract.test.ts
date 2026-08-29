@@ -8,6 +8,7 @@
  * Uses mocked pool/transaction connections — no database connection required.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { readFile } from 'node:fs/promises';
 import { RbacService } from './rbac-service.js';
 import { authDatabaseService, User } from '../auth-database-service.js';
 
@@ -154,5 +155,15 @@ describe('User ↔ Role Contract', () => {
 
     const roles = await rbacService.getUserRoles(999); // deleted user
     expect(roles).toEqual([]);
+  });
+
+  it('ships a forward migration that restores legacy role_backup assignments', async () => {
+    const migration = await readFile(
+      new URL('../../sql/migrations/074_restore_legacy_role_assignments.sql', import.meta.url),
+      'utf8',
+    );
+    expect(migration).toContain('INSERT IGNORE INTO user_roles');
+    expect(migration).toContain('u.role_backup');
+    expect(migration).toContain('r.name = u.role_backup');
   });
 });

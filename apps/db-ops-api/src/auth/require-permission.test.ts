@@ -62,6 +62,14 @@ describe('requirePermission middleware', () => {
     expect(reply.code).not.toHaveBeenCalled();
   });
 
+  it('should pass for the admin identity even when legacy permissions are incomplete', async () => {
+    const request = { user: { userId: 1, username: 'admin', roles: [], permissions: ['instance:view'] } };
+    const reply = makeReply();
+
+    await requirePermission('agent:security:manage')(request as any, reply as any);
+    expect(reply.code).not.toHaveBeenCalled();
+  });
+
   it('should pass when user has action wildcard *:action', async () => {
     const request = { user: { userId: 1, username: 'test', permissions: ['*:view'] } };
     const reply = makeReply();

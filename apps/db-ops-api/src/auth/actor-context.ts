@@ -350,6 +350,9 @@ export class ActorContextService {
         instanceScopes[Number(row.instance_id)] = row.access_level;
       }
     }
+    // The bootstrap admin identity is a super administrator even when an
+    // older database has a partially populated role_permissions table.
+    if (String(user.username).toLowerCase() === 'admin' || roles.has('admin')) permissions.add('*');
 
     return Object.freeze({
       userId: Number(user.id),

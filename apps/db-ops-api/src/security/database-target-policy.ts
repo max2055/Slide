@@ -30,28 +30,12 @@ function denyTarget(reasonCode: DatabaseTargetReason): DatabaseTargetPolicyError
   return new DatabaseTargetPolicyError(reasonCode);
 }
 
-const DEFAULT_PORTS: Record<string, readonly number[]> = {
-  mysql: [3306],
-  postgresql: [5432],
-  oracle: [1521],
-  dameng: [5236],
-};
-
-const NON_PRODUCTION_CIDRS = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
 const ALWAYS_DENIED_CIDRS = [
   '0.0.0.0/8', '100.100.100.200/32', '168.63.129.16/32', '169.254.0.0/16',
   '192.0.0.192/32', '224.0.0.0/4', '240.0.0.0/4',
   '::/128', 'fe80::/10', 'ff00::/8', 'fd00:ec2::254/128',
 ];
 const LOOPBACK_CIDRS = ['127.0.0.0/8', '::1/128'];
-
-function parseCidrs(raw: string | undefined, production: boolean): string[] {
-  if (!raw?.trim()) {
-    if (production) throw denyTarget('DB_TARGET_POLICY_NOT_CONFIGURED');
-    return NON_PRODUCTION_CIDRS;
-  }
-  return raw.split(',').map((entry) => entry.trim()).filter(Boolean);
-}
 
 function addCidr(list: BlockList, cidr: string): void {
   const slash = cidr.lastIndexOf('/');
@@ -63,16 +47,6 @@ function addCidr(list: BlockList, cidr: string): void {
     throw denyTarget('DB_TARGET_POLICY_NOT_CONFIGURED');
   }
   list.addSubnet(address, prefix, version === 4 ? 'ipv4' : 'ipv6');
-}
-
-function allowedPorts(dbType: string, production: boolean, raw = process.env.DB_ALLOWED_PORTS): readonly number[] {
-  if (!raw?.trim()) {
-    if (production) throw denyTarget('DB_TARGET_POLICY_NOT_CONFIGURED');
-    return DEFAULT_PORTS[dbType] ?? [];
-  }
-  const configured = raw.split(',').map(Number).filter((port) => Number.isInteger(port) && port > 0 && port <= 65535);
-  if (configured.length === 0) throw denyTarget('DB_TARGET_POLICY_NOT_CONFIGURED');
-  return configured;
 }
 
 export async function authorizeDatabaseTarget(
@@ -95,14 +69,11 @@ export async function authorizeDatabaseTarget(
     throw denyTarget('DB_TARGET_INVALID_PORT');
   }
   const production = options.production ?? process.env.NODE_ENV === 'production';
-  const ports = options.allowedPorts ?? allowedPorts(input.dbType, production);
-  if (production && ports.length === 0) throw denyTarget('DB_TARGET_POLICY_NOT_CONFIGURED');
-  if (!ports.includes(port) && !(options.allowManagedPort && !production)) {
-    throw denyTarget('DB_TARGET_PORT_DENIED');
-  }
+  // Port and CIDR allowlists are intentionally not environment-configured.
+  // Database instances may use vendor-specific or operator-defined ports; the
+  // numeric range and special-address checks below remain enforced. Keep the
+  // legacy options in the type for caller compatibility.
 
-  const allowed = new BlockList();
-  for (const cidr of parseCidrs(options.allowedCidrs ?? process.env.DB_ALLOWED_CIDRS, production)) addCidr(allowed, cidr);
   const denied = new BlockList();
   for (const cidr of ALWAYS_DENIED_CIDRS) addCidr(denied, cidr);
   const loopback = new BlockList();
@@ -122,7 +93,7 @@ export async function authorizeDatabaseTarget(
     const isLoopback = loopback.check(address, family);
     const managedLoopback = Boolean(options.allowManagedLoopback && !production && isLoopback);
     if (isLoopback) return managedLoopback;
-    return family && !denied.check(address, family) && (managedLoopback || allowed.check(address, family));
+    return family && !denied.check(address, family);
   });
   if (authorized.length !== addresses.length) throw denyTarget('DB_TARGET_ADDRESS_DENIED');
 

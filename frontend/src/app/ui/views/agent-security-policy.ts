@@ -42,6 +42,12 @@ interface PolicyHistoryRecord {
   createdAt: string;
 }
 
+interface AgentExecutionConfig {
+  approvalEnabled: boolean;
+  restrictedNetworkEnabled: boolean;
+  reasonCode: string;
+}
+
 const EFFECTS: Array<{ id: ToolEffect; label: string }> = [
   { id: 'read', label: '读取' },
   { id: 'write', label: '写入' },
@@ -90,6 +96,8 @@ export class AgentSecurityPolicyPage extends LitElement {
   @state() private serverIds = '';
   @state() private changeNote = '';
   @state() private history: PolicyHistoryRecord[] = [];
+  @state() private executionConfig: AgentExecutionConfig | null = null;
+  @state() private executionConfigSaving = false;
   @state() private loading = true;
   @state() private saving = false;
 
@@ -128,6 +136,19 @@ export class AgentSecurityPolicyPage extends LitElement {
     input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent-subtle); border-color: var(--accent); }
     .footer-actions { display: flex; justify-content: flex-end; align-items: center; gap: var(--space-md); }
     .empty-block { padding: var(--space-lg); border: 1px dashed var(--border); border-radius: var(--radius-sm); color: var(--muted); font-size: var(--text-sm); }
+    .control-list { display: grid; gap: var(--space-md); }
+    .control-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); padding: var(--space-md) 0; border-bottom: 1px solid var(--border); }
+    .control-row:last-child { border-bottom: 0; padding-bottom: 0; }
+    .control-copy { display: grid; gap: var(--space-xs); }
+    .control-copy strong { color: var(--text-strong); font-size: var(--text-sm); }
+    .control-copy span { color: var(--muted); font-size: var(--text-xs); line-height: 1.4; }
+    .toggle { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; cursor: pointer; }
+    .toggle input { position: absolute; opacity: 0; pointer-events: none; }
+    .toggle-track { width: 2.75rem; height: 1.5rem; border-radius: 999px; background: var(--border); transition: background .15s ease; }
+    .toggle-track::after { content: ''; display: block; width: 1.1rem; height: 1.1rem; margin: .2rem; border-radius: 50%; background: var(--card); transition: transform .15s ease; box-shadow: 0 1px 2px rgb(0 0 0 / .2); }
+    .toggle input:checked + .toggle-track { background: var(--accent); }
+    .toggle input:checked + .toggle-track::after { transform: translateX(1.25rem); }
+    .toggle input:disabled + .toggle-track { opacity: var(--disabled-opacity); cursor: not-allowed; }
     @media (max-width: 760px) {
       .page-header, .row-between { align-items: stretch; flex-direction: column; }
       .header-actions { width: 100%; }
@@ -149,11 +170,53 @@ export class AgentSecurityPolicyPage extends LitElement {
       this.selectedAgentId = this.selectedAgentId || this.catalog.agents[0]?.id || '';
       this.applyPolicy();
       await this.loadHistory();
+      await this.loadExecutionConfig();
     } catch {
       showToast('加载 Agent 安全策略失败', 'error');
     } finally {
       this.loading = false;
     }
+  }
+
+  private async loadExecutionConfig(): Promise<void> {
+    if (!hasPermission('admin:*')) {
+      this.executionConfig = null;
+      return;
+    }
+    try {
+      this.executionConfig = await apiClient.get<AgentExecutionConfig>('/agent/security/config');
+    } catch {
+      this.executionConfig = null;
+      showToast('加载 Agent 执行控制失败', 'error');
+    }
+  }
+
+  private async saveExecutionConfig(patch: Partial<AgentExecutionConfig>): Promise<void> {
+    if (!this.executionConfig) return;
+    const previous = this.executionConfig;
+    this.executionConfigSaving = true;
+    try {
+      this.executionConfig = await apiClient.put<AgentExecutionConfig>('/agent/security/config', {
+        approvalEnabled: patch.approvalEnabled ?? previous.approvalEnabled,
+        restrictedNetworkEnabled: patch.restrictedNetworkEnabled ?? previous.restrictedNetworkEnabled,
+      });
+      showToast('Agent 执行控制已更新', 'success');
+    } catch (error) {
+      this.executionConfig = previous;
+      const detail = error instanceof Error ? error.message : '';
+      showToast(detail.includes('SANDBOX_NETWORK_NOT_READY')
+        ? '受限网络未就绪，请先配置 Sandbox Controller 的专用网络'
+        : '更新 Agent 执行控制失败', 'error');
+    } finally {
+      this.executionConfigSaving = false;
+    }
+  }
+
+  private onExecutionToggle(key: 'approvalEnabled' | 'restrictedNetworkEnabled', event: Event): void {
+    const input = event.currentTarget as HTMLInputElement;
+    const enabled = input.checked;
+    input.checked = this.executionConfig?.[key] === true;
+    void this.saveExecutionConfig({ [key]: enabled });
   }
 
   private applyPolicy(): void {
@@ -253,7 +316,7 @@ export class AgentSecurityPolicyPage extends LitElement {
     const isAdmin = hasPermission('admin:*');
     return html`
       <div class="page-header">
-        <div><h1>Agent 安全策略</h1><p>在平台 Tool 目录、Skill 环境策略与用户 RBAC 基础上进一步收窄 Agent 权限</p></div>
+        <div><h1>Agent 安全</h1><p>在平台 Tool 目录、Skill 环境策略与用户 RBAC 基础上进一步收窄 Agent 权限</p></div>
         <div class="header-actions">
           <select aria-label="Agent" .value=${this.selectedAgentId} @change=${this.selectAgent}>
             ${(this.catalog?.agents ?? []).map((agent) => html`<option value=${agent.id}>${agent.name} (${agent.id})</option>`)}
@@ -263,6 +326,25 @@ export class AgentSecurityPolicyPage extends LitElement {
       </div>
       ${this.loading || !this.policy || !this.catalog ? html`<div class="skeleton"></div>` : html`
         <div class="layout">
+          ${isAdmin ? html`<app-card>
+            <span slot="header" class="card-title">${icons.shield} Agent 执行控制</span>
+            ${this.executionConfig ? html`<div class="control-list">
+              <div class="control-row">
+                <div class="control-copy"><strong>执行审批</strong><span>关闭后绕过 Agent 工具执行审批（包括代码执行和数据库发现）；用户权限、沙箱隔离和审计仍然保留。</span></div>
+                <label class="toggle" title=${this.executionConfig.approvalEnabled ? '关闭执行审批' : '开启执行审批'}>
+                  <input data-action="approval-toggle" type="checkbox" .checked=${this.executionConfig.approvalEnabled} .disabled=${this.executionConfigSaving} @change=${(event: Event) => this.onExecutionToggle('approvalEnabled', event)} aria-label="Agent 执行审批开关">
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+              <div class="control-row">
+                <div class="control-copy"><strong>受限网络</strong><span>允许代码请求预配置的受限 Sandbox 网络；仍需 Controller 配置专用网络和出口策略。</span></div>
+                <label class="toggle" title=${this.executionConfig.restrictedNetworkEnabled ? '关闭受限网络' : '开启受限网络'}>
+                  <input data-action="restricted-network-toggle" type="checkbox" .checked=${this.executionConfig.restrictedNetworkEnabled} .disabled=${this.executionConfigSaving} @change=${(event: Event) => this.onExecutionToggle('restrictedNetworkEnabled', event)} aria-label="Agent 受限网络开关">
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+            </div>` : html`<div class="empty-block">执行控制配置不可用，系统按安全默认值运行。</div>`}
+          </app-card>` : nothing}
           <app-card>
             <span slot="header" class="card-title">${icons.shield} 权限边界 <app-badge variant="info">v${this.policy.version}</app-badge></span>
             <section class="section">

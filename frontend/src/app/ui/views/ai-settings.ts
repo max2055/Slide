@@ -207,7 +207,7 @@ export class AiSettingsPage extends LitElement {
       ${this.error ? html`<div class="msg msg-err">${this.error}</div>` : ""}
 
       <div class="page-header">
-        <h1>AI 分析配置</h1>
+        <h1>自动分析</h1>
         <p>管理 AI 自动分析的启用开关、分析级别、实例白名单和时间窗口</p>
       </div>
 

@@ -22,6 +22,25 @@ describe('network-device migration security contract', () => {
     expect(sql).toMatch(/p\.code = 'network_devices:view'/);
   });
 
+  it('seeds the built-in Huawei alert templates with an idempotent identity guard', async () => {
+    const sql = await readFile(migrationUrl, 'utf8');
+    for (const metric of [
+      'device_reachability',
+      'device_cpu_percent',
+      'device_memory_percent',
+      'device_temperature_celsius',
+      'interface_oper_status',
+      'interface_error_rate',
+      'interface_drop_rate',
+    ]) {
+      expect(sql).toContain(`'${metric}'`);
+    }
+    expect(sql).toMatch(/INSERT INTO `alert_rule_templates`[\s\S]*FROM \([\s\S]*UNION ALL[\s\S]*WHERE NOT EXISTS/);
+    expect(sql).toContain("existing.`target_type` = seed.`target_type`");
+    expect(sql).toContain("existing.`name` = seed.`name`");
+    expect(sql).toContain("existing.`metric_name` = seed.`metric_name`");
+  });
+
   it('parses every migration statement without splitting quoted SQL', async () => {
     const sql = await readFile(migrationUrl, 'utf8');
     const statements = splitSqlStatements(sql);

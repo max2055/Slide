@@ -13,6 +13,7 @@ import { eventAggregator } from './event-aggregator';
 import { alertEventService } from './alert-event-service';
 import { dbConnection } from './db-connection';
 import { serverAlertEvaluator } from './server-alert-evaluator';
+import { networkDeviceAlertEvaluator } from './network-devices/network-device-alert-evaluator.js';
 
 interface AlertEngineStatus {
   running: boolean;
@@ -164,6 +165,15 @@ class AlertEngine {
       await serverAlertEvaluator.checkUnreachable();
     } catch (error) {
       console.error('[AlertEngine] Server unreachable check failed:', error);
+    }
+
+    // Network-device rules use the same compiled-rule/dedup contract, but
+    // read from the dedicated observation table and preserve interface
+    // dimensions in alert tags.
+    try {
+      await networkDeviceAlertEvaluator.evaluateNetworkDeviceRules();
+    } catch (error) {
+      console.error('[AlertEngine] Network-device rule evaluation failed:', error);
     }
 
     return {

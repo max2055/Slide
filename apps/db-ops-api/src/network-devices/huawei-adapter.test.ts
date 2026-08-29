@@ -60,9 +60,17 @@ describe('HuaweiAdapter', () => {
 
     rows[0].values['6'] = 1_100;
     rows[0].values['10'] = 350;
+    rows[0].values['14'] = 5;
+    rows[0].values['20'] = 9;
+    rows[0].values['13'] = 7;
+    rows[0].values['19'] = 11;
     const second = await adapter.collectInterfaces(config);
     expect(second.observations.find((metric) => metric.metricId === 'interface_in_bps')).toMatchObject({ value: 8_000, quality: 'good' });
     expect(second.observations.find((metric) => metric.metricId === 'interface_out_bps')).toMatchObject({ value: 1_200, quality: 'good' });
+    expect(second.observations.find((metric) => metric.metricId === 'interface_error_rate' && metric.dimensions?.direction === 'in')).toMatchObject({ value: 3, quality: 'good', dimensions: { direction: 'in' } });
+    expect(second.observations.find((metric) => metric.metricId === 'interface_error_rate' && metric.dimensions?.direction === 'out')).toMatchObject({ value: 6, quality: 'good', dimensions: { direction: 'out' } });
+    expect(second.observations.find((metric) => metric.metricId === 'interface_drop_rate' && metric.dimensions?.direction === 'in')).toMatchObject({ value: 3, quality: 'good', dimensions: { direction: 'in' } });
+    expect(second.observations.find((metric) => metric.metricId === 'interface_drop_rate' && metric.dimensions?.direction === 'out')).toMatchObject({ value: 6, quality: 'good', dimensions: { direction: 'out' } });
     expect(calls).toBe(2);
   });
 

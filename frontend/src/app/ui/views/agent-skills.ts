@@ -5,6 +5,7 @@ import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { showToast } from '../components/app-toast-container.js';
 import '../components/app-data-table.js';
 import '../components/app-badge.js';
+import '../components/agent-extension-manager.js';
 
 interface Skill {
   name: string;
@@ -91,6 +92,7 @@ export class AgentSkillsPage extends LitElement {
             <p>查看和管理 Agent 加载的技能文件</p>
           </div>
         </div>
+        <agent-extension-manager kind="skill"></agent-extension-manager>
 
       ${this.loading
         ? html`<div class="skeleton">加载中...</div>`

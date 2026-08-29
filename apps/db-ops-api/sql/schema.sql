@@ -896,7 +896,7 @@ INSERT INTO `alert_rules` (`name`, `description`, `metric_name`, `operator`, `th
 -- 插入系统配置
 INSERT INTO `system_config` (`config_key`, `config_value`, `value_type`, `description`) VALUES
 ('system.name', '数据库智能运维系统', 'string', '系统名称'),
-('system.version', '1.0.0', 'string', '系统版本'),
+('system.version', 'v0.10', 'string', '系统版本'),
 ('auth.jwt_expiration_minutes', '1440', 'number', 'JWT 令牌过期时间（分钟）'),
 ('monitor.collect_interval_seconds', '30', 'number', '监控采集间隔'),
 ('monitor.history_retention_days', '30', 'number', '监控历史保留天数'),
@@ -905,6 +905,8 @@ INSERT INTO `system_config` (`config_key`, `config_value`, `value_type`, `descri
 ('notification.wecom_enabled', 'false', 'boolean', '企业微信通知是否启用'),
 ('notification.feishu_enabled', 'false', 'boolean', '飞书通知是否启用'),
 ('agent_sandbox_enabled', 'false', 'boolean', 'Enable Agent-generated Shell, Python, and Node execution through Sandbox Controller'),
+('agent_tool_approval_enabled', 'true', 'boolean', 'Require approval before Agent code execution and database network discovery'),
+('agent_sandbox_network_enabled', 'false', 'boolean', 'Allow Agent code execution to request the dedicated restricted sandbox network'),
 ('ai_analysis.default_ttl_minutes', '1440', 'number', 'AI 分析结果默认缓存时长（分钟），默认 24 小时');
 
 -- ============================================
@@ -1260,6 +1262,7 @@ INSERT IGNORE INTO `permissions` (`code`, `name`, `description`, `resource`, `ac
 ('config:view',   '查看配置',   '查看系统配置', 'config', 'view'),
 ('config:manage', '管理配置',   '修改系统配置', 'config', 'manage'),
 ('ai:execute',    '执行 Agent 代码', '在隔离 Sandbox 中执行经过审批的 Agent Shell、Python 或 Node 代码', 'ai', 'execute'),
+('network:discover', '发现数据库端点', '在预配置的受限网络中扫描允许网段的数据库端口', 'network', 'discover'),
 ('audit:view',   '查看审计',   '查看审计日志', 'audit', 'view'),
 ('audit:export', '导出审计',   '导出审计日志', 'audit', 'export'),
 ('collector:view',   '查看采集任务',   '查看采集任务状态', 'collector', 'view'),
@@ -1494,7 +1497,7 @@ CREATE TABLE IF NOT EXISTS `network_device_config_backups` (
   `version_no` INT UNSIGNED NOT NULL COMMENT '设备配置版本号',
   `content_encrypted` MEDIUMTEXT NOT NULL COMMENT '加密后的配置原文',
   `content_sha256` CHAR(64) NOT NULL COMMENT '配置明文 SHA-256 摘要',
-  `source_protocol` ENUM('ssh','netconf') NOT NULL COMMENT '配置采集协议',
+  `source_protocol` ENUM('ssh') NOT NULL COMMENT '配置采集协议（本版本仅支持 SSH 只读采集）',
   `collected_at` DATETIME NOT NULL COMMENT '采集时间',
   `size_bytes` INT UNSIGNED NOT NULL COMMENT '配置明文大小（字节）',
   `redaction_status` ENUM('redacted','unredacted','failed') NOT NULL DEFAULT 'redacted' COMMENT '脱敏状态',
@@ -1508,3 +1511,27 @@ CREATE TABLE IF NOT EXISTS `network_device_config_backups` (
   CONSTRAINT `fk_network_device_config_backups_creator` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
   CONSTRAINT `chk_network_device_backup_size` CHECK (`size_bytes` <= 2097152)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='网络设备配置备份';
+
+CREATE TABLE IF NOT EXISTS `agent_extensions` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Agent 扩展版本 ID',
+  `kind` ENUM('tool','skill') NOT NULL COMMENT '扩展类型：Tool 或 Skill',
+  `name` VARCHAR(128) NOT NULL COMMENT '扩展名称',
+  `description` VARCHAR(2000) NOT NULL DEFAULT '' COMMENT '扩展描述',
+  `definition_json` JSON NOT NULL COMMENT '声明式定义及 Schema',
+  `source_text` MEDIUMTEXT DEFAULT NULL COMMENT '说明文本；不在 API 进程执行',
+  `status` ENUM('draft','published','archived') NOT NULL DEFAULT 'draft' COMMENT '扩展生命周期状态',
+  `version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT '同名扩展版本号',
+  `digest` CHAR(64) NOT NULL COMMENT '定义内容 SHA-256 摘要',
+  `created_by` INT UNSIGNED NOT NULL COMMENT '创建人用户 ID',
+  `updated_by` INT UNSIGNED NOT NULL COMMENT '最后修改人用户 ID',
+  `published_by` INT UNSIGNED DEFAULT NULL COMMENT '发布人用户 ID',
+  `published_at` DATETIME DEFAULT NULL COMMENT '发布时间',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最后更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_agent_extension_name_version` (`kind`,`name`,`version`),
+  KEY `idx_agent_extension_status` (`kind`,`status`,`updated_at`),
+  CONSTRAINT `fk_agent_extension_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_agent_extension_updated_by` FOREIGN KEY (`updated_by`) REFERENCES `users` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_agent_extension_published_by` FOREIGN KEY (`published_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='受控 Agent Tool/Skill 扩展版本';

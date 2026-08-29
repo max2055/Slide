@@ -1,4 +1,5 @@
 import { isIP } from 'node:net';
+import { SNMP_AUTH_PROTOCOLS, SNMP_PRIVACY_PROTOCOLS } from '../network-devices/snmp-types.js';
 
 export type NetworkDeviceVendor = 'huawei';
 export type NetworkDeviceStatus = 'unknown' | 'online' | 'offline' | 'error' | 'unreachable';
@@ -10,9 +11,10 @@ export interface SnmpV3CredentialInput {
   protocol?: 'snmpv3';
   username: string;
   securityLevel: SnmpV3SecurityLevel;
-  authProtocol?: 'MD5' | 'SHA' | 'SHA-256' | 'SHA-512';
+  /** Matches the algorithms exposed by the net-snmp adapter. */
+  authProtocol?: 'MD5' | 'SHA';
   authSecret?: string;
-  privacyProtocol?: 'DES' | 'AES' | 'AES-128' | 'AES-192' | 'AES-256';
+  privacyProtocol?: 'DES' | 'AES';
   privacySecret?: string;
 }
 
@@ -87,7 +89,7 @@ export interface ConfigBackupSummary {
   deviceId: number;
   versionNo: number;
   contentSha256: string;
-  sourceProtocol: 'ssh' | 'netconf';
+  sourceProtocol: 'ssh';
   collectedAt: string;
   sizeBytes: number;
   redactionStatus: 'redacted' | 'unredacted' | 'failed';
@@ -142,11 +144,11 @@ export function validateSnmpV3Credential(input: unknown): SnmpV3CredentialInput 
   const authProtocol = value.authProtocol as SnmpV3CredentialInput['authProtocol'];
   const privacyProtocol = value.privacyProtocol as SnmpV3CredentialInput['privacyProtocol'];
   if (securityLevel !== 'noAuthNoPriv') {
-    if (!['MD5', 'SHA', 'SHA-256', 'SHA-512'].includes(authProtocol ?? '')) throw new Error('SNMPV3_AUTH_PROTOCOL_INVALID');
+    if (!(SNMP_AUTH_PROTOCOLS as readonly unknown[]).includes(authProtocol ?? '')) throw new Error('SNMPV3_AUTH_PROTOCOL_INVALID');
     if (typeof value.authSecret !== 'string' || value.authSecret.length < 8 || value.authSecret.length > MAX_SECRET) throw new Error('SNMPV3_AUTH_SECRET_INVALID');
   }
   if (securityLevel === 'authPriv') {
-    if (!['DES', 'AES', 'AES-128', 'AES-192', 'AES-256'].includes(privacyProtocol ?? '')) throw new Error('SNMPV3_PRIVACY_PROTOCOL_INVALID');
+    if (!(SNMP_PRIVACY_PROTOCOLS as readonly unknown[]).includes(privacyProtocol ?? '')) throw new Error('SNMPV3_PRIVACY_PROTOCOL_INVALID');
     if (typeof value.privacySecret !== 'string' || value.privacySecret.length < 8 || value.privacySecret.length > MAX_SECRET) throw new Error('SNMPV3_PRIVACY_SECRET_INVALID');
   }
   return {

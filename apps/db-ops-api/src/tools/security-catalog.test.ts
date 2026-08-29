@@ -30,6 +30,11 @@ describe('agent tool security catalog', () => {
       credentials: 'use',
     });
     expect(getToolSecurityDefinition('slide_add_database')?.permissions.length).toBeGreaterThan(0);
+    expect(getToolSecurityDefinition('slide_add_database_batch')).toMatchObject({
+      audience: 'actor', effect: 'write', resource: 'database-target',
+      permissions: ['instance:create'], approval: 'always',
+      network: 'registered-database', credentials: 'use',
+    });
   });
 
   it('keeps completion internal and gates delegation with operator permission', () => {
@@ -51,6 +56,13 @@ describe('agent tool security catalog', () => {
       approval: 'always',
       network: 'none',
       credentials: 'none',
+    });
+  });
+
+  it('gives database discovery a separate network-scanning permission and profile', () => {
+    expect(getToolSecurityDefinition('discover_database_endpoints')).toEqual({
+      audience: 'actor', effect: 'execute', resource: 'network-scan', permissions: ['network:discover'],
+      approval: 'always', network: 'restricted', credentials: 'none',
     });
   });
 });

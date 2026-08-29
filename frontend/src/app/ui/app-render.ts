@@ -25,6 +25,7 @@ import "./components/app-badge.ts";
 import "./components/app-toast-container.ts";
 import "./views/instances-db.ts";
 import "./views/servers-page.ts";
+import "./views/network-devices-page.ts";
 import "./views/llm-config.ts";
 import "./views/feishu-notification-settings.ts";
 import "./views/ai-settings.ts";
@@ -91,6 +92,7 @@ const lazySessions = createLazy(() => import("./views/sessions.ts"));
 const heavyViewLoaders: Partial<Record<AppViewState["tab"], () => Promise<unknown>>> = {
   dashboard: () => import("./views/dashboard.ts"),
   "server-detail": () => import("./views/server-detail.ts"),
+  "network-device-detail": () => import("./views/network-device-detail.ts"),
   "instance-detail": () => import("./views/instance-detail.ts"),
   "cron-jobs": () => import("./views/cron-jobs-settings.ts"),
   "sql-console": () => import("./views/sql-console.ts"),
@@ -712,6 +714,12 @@ export function renderApp(state: AppViewState) {
           : nothing}
         ${state.tab === "server-detail"
           ? html`<server-detail .serverId=${state.serverId}></server-detail>`
+          : nothing}
+        ${state.tab === "network-devices"
+          ? html`<network-devices-page></network-devices-page>`
+          : nothing}
+        ${state.tab === "network-device-detail"
+          ? html`<network-device-detail .deviceId=${state.networkDeviceId}></network-device-detail>`
           : nothing}
         ${state.tab === "instance-detail"
           ? html`<instance-detail-page></instance-detail-page>`

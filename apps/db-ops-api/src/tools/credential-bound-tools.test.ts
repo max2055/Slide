@@ -12,8 +12,8 @@ describe('credential-bearing Agent tools', () => {
     expect(tool.parameters.properties).not.toHaveProperty('password');
   });
 
-  it('requires a credential reference when adding a database', () => {
+  it('allows adding a database before a credential reference is available', () => {
     expect(addDatabaseTool.parameters.properties).toHaveProperty('credential_ref');
-    expect(addDatabaseTool.parameters.required).toContain('credential_ref');
+    expect(addDatabaseTool.parameters.required).not.toContain('credential_ref');
   });
 });

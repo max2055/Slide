@@ -5,7 +5,7 @@ import { normalizeLowercaseStringOrEmpty } from "./string-coerce.ts";
 export const TAB_GROUPS = [
   {
     label: "slide",
-    tabs: ["chat", "dashboard", "servers", "instances-db", "sql-console", "approval", "alerts", "metric-registry", "reports", "events", "cron-jobs", "health-center"],
+    tabs: ["chat", "dashboard", "servers", "network-devices", "instances-db", "sql-console", "approval", "alerts", "metric-registry", "reports", "events", "cron-jobs", "health-center"],
   },
   {
     label: "settings",
@@ -30,6 +30,8 @@ export type Tab =
   | "instances-db"
   | "servers"
   | "server-detail"
+  | "network-devices"
+  | "network-device-detail"
   | "alerts"
   | "schema"
   | "indexes"
@@ -56,6 +58,8 @@ const TAB_PATHS: Record<Tab, string> = {
   "agent-tools": "/agent-tools",
   "scoring-settings": "/scoring-settings",
   "server-detail": "/server-detail",
+  "network-devices": "/network-devices",
+  "network-device-detail": "/network-device-detail",
   sessions: "/sessions",
   chat: "/chat",
   config: "/config",
@@ -93,7 +97,7 @@ const REMOVED_LEGACY_PATHS = new Set(['/system', '/appearance']);
  */
 /** Tabs suitable as a default landing page (excludes context-dependent tabs). */
 export const DEFAULT_TAB_OPTIONS: Tab[] = [
-  "chat", "dashboard", "instances-db", "servers", "sql-console",
+  "chat", "dashboard", "instances-db", "servers", "network-devices", "sql-console",
   "alerts", "metric-registry", "reports",
   "events", "approval", "cron-jobs", "health-center", "sessions",
   "schema", "indexes", "settings", "ai-settings",
@@ -117,6 +121,8 @@ export const TAB_REQUIRED_PERMISSIONS: Partial<Record<Tab, string>> = {
   'dashboard': 'instance:view',
   'instances-db': 'instance:view',
   'servers': 'servers:view',
+  'network-devices': 'network_devices:view',
+  'network-device-detail': 'network_devices:view',
   'sql-console': 'instance:query',
   'schema': 'schema:view',
   'approval': 'approval:view',
@@ -233,6 +239,9 @@ export function iconForTab(tab: Tab): IconName {
       return "server";
     case "server-detail":
       return "server";
+    case "network-devices":
+    case "network-device-detail":
+      return "globe";
     case "alerts":
       return "bell";
     case "schema":

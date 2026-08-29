@@ -1,5 +1,5 @@
 /**
- * Tests for ContextBuilder — ported from nanobot Python.
+ * Tests for the Slide TypeScript ContextBuilder implementation.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";

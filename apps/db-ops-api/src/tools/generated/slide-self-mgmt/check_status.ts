@@ -99,6 +99,7 @@ export const checkStatusTool: AnyAgentTool = {
 
       return {
         success: true,
+        status: status.overall === 'healthy' ? 'success' : status.overall === 'unknown' ? 'warning' : 'warning',
         data: status,
         summary: `Slide 状态：${translateStatus(status.overall)}，${status.services.length} 个服务组件`,
         details: {
@@ -110,6 +111,7 @@ export const checkStatusTool: AnyAgentTool = {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         success: false,
+        status: 'error',
         error: `状态检查失败：${errorMessage}`,
         errorCode: 'STATUS_CHECK_FAILED',
       };
@@ -215,23 +217,18 @@ async function checkDatabaseConnections(): Promise<ServiceStatus[]> {
   try {
     const instances = await instanceDatabaseService.getAllInstances();
     const conns = databaseService.getAllConnections();
-
-    for (const inst of instances) {
-      if (inst.status !== 'active') continue;
+    const active = instances.filter((inst) => inst.status === 'active');
+    const results = await Promise.all(active.map(async (inst) => {
       const conn = conns.find(c => c.id === inst.id);
-      const alive = conn ? await databaseService.checkConnectionAlive(inst.id) : false;
-
-      statuses.push({
+      const alive = conn ? await withTimeout(databaseService.checkConnectionAlive(inst.id), 5000, false) : false;
+      return {
         name: `${inst.name} (${inst.db_type?.toUpperCase()})`,
         status: alive ? 'running' : 'error',
         port: inst.port,
-        error: conn && !alive
-          ? '连接已断开'
-          : !conn
-            ? '未建立连接'
-            : undefined,
-      });
-    }
+        error: conn && !alive ? '连接已断开' : !conn ? '未建立连接' : undefined,
+      } satisfies ServiceStatus;
+    }));
+    statuses.push(...results);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     statuses.push({
@@ -242,6 +239,18 @@ async function checkDatabaseConnections(): Promise<ServiceStatus[]> {
   }
 
   return statuses;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), timeoutMs); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**

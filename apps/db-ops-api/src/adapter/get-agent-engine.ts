@@ -7,10 +7,16 @@
 
 import { ToolRegistry } from '@slide/agent-core';
 import type { Tool } from '@slide/agent-core';
+type CoreToolExecutionContext = {
+  sessionKey?: string;
+  signal?: AbortSignal;
+  idempotencyKey?: string;
+  progressCallback?: ((event: Record<string, unknown>) => Promise<void> | void) | null;
+};
 import type { IAgentEngine } from './types.js';
 import { DirectAdapter } from './direct-adapter.js';
 import type { ActorContext } from '../auth/actor-context.js';
-import type { AnyAgentTool } from '../tools/types.js';
+import { normalizeToolResult, type AnyAgentTool } from '../tools/types.js';
 import { canActorDiscoverTool, executeToolWithPolicy } from '../tools/policy.js';
 import {
   assertToolSecurityCatalogCoverage,
@@ -124,10 +130,13 @@ export async function loadPlatformTools(): Promise<ToolRegistry> {
 
     console.log(`[getAgentEngine] Loaded ${registeredCount} platform tools (catalog + subagent)`);
   } catch (err) {
-    console.warn(
+    // Do not cache a partially discovered or empty registry. A transient
+    // filesystem/import failure must be retriable on the next request.
+    console.error(
       '[getAgentEngine] Could not load platform tools from catalog:',
       err instanceof Error ? err.message : String(err),
     );
+    throw err;
   }
 
   platformToolRegistry = registry;
@@ -168,8 +177,8 @@ export async function createCronToolRegistry(): Promise<ToolRegistry> {
       pluginId: anyTool.pluginId,
       requiresApproval: anyTool.requiresApproval,
       dangerLevel: anyTool.dangerLevel,
-      execute: async (params: Record<string, unknown>, context?: { sessionKey?: string }) => {
-        if (isCompletion) return anyTool.handler(params, { actor: cronActor, userId: cronActor.userId });
+      execute: async (params: Record<string, unknown>, context?: CoreToolExecutionContext) => {
+        if (isCompletion) return normalizeToolResult(await anyTool.handler(params, { actor: cronActor, userId: cronActor.userId }), anyTool.name);
         const { decision, result } = await executeToolWithPolicy(
           cronActor,
           anyTool,
@@ -177,11 +186,10 @@ export async function createCronToolRegistry(): Promise<ToolRegistry> {
           undefined,
           undefined,
           noPersistentSystemAudit,
+          undefined,
+          { sessionKey: context?.sessionKey, signal: context?.signal, idempotencyKey: context?.idempotencyKey, progressCallback: context?.progressCallback },
         );
-        if (!decision.allow) return { ...result, policyDecision: decision };
-        return result && typeof result === 'object' && 'data' in result
-          ? (result as { data?: unknown }).data ?? result
-          : result;
+        return { ...result, policyDecision: decision };
       },
     });
   }
@@ -208,17 +216,14 @@ export function createActorBoundToolRegistry(actor: ActorContext, agentId = DEFA
       pluginId: anyTool.pluginId,
       requiresApproval: anyTool.requiresApproval,
       dangerLevel: anyTool.dangerLevel,
-      execute: async (params: Record<string, unknown>, context?: { sessionKey?: string }) => {
+      execute: async (params: Record<string, unknown>, context?: CoreToolExecutionContext) => {
         const { decision, result } = await executeToolWithPolicy(actor, anyTool, params, undefined, undefined, undefined, agentId, {
           sessionKey: context?.sessionKey,
+          signal: context?.signal,
+          idempotencyKey: context?.idempotencyKey,
+          progressCallback: context?.progressCallback,
         });
-        if (!decision.allow) return { ...result, policyDecision: decision };
-        const value = result && typeof result === 'object' && 'data' in result
-          ? (result as { data?: unknown }).data ?? result
-          : result;
-        return value && typeof value === 'object'
-          ? { ...(value as Record<string, unknown>), policyDecision: decision }
-          : { value, policyDecision: decision };
+        return { ...result, policyDecision: decision };
       },
     });
   }

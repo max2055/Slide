@@ -7,6 +7,7 @@ import { agentSecurityPolicyService, DEFAULT_AGENT_ID } from './agent-security-p
 import { agentToolAuditService } from './agent-tool-audit-service.js';
 import { sandboxClient } from './sandbox-client.js';
 import { agentSandboxConfigService } from './agent-sandbox-config-service.js';
+import { agentExecutionConfigService } from './agent-execution-config-service.js';
 import { auditLogManager } from '../audit/audit-log.js';
 
 const policy = {
@@ -24,7 +25,9 @@ function actor(permissions: string[]): ActorContext {
   return {
     userId: 7,
     username: 'alice',
-    roles: ['admin'],
+    // Keep the route-boundary fixture non-admin so permission assertions test
+    // the requested permission rather than the intentional admin bypass.
+    roles: [],
     permissions,
     sessionVersion: 1,
     instanceScopes: {},
@@ -89,6 +92,47 @@ describe('Agent security routes', () => {
     const response = await app.inject({ method: 'GET', url: '/api/agent/security/sandbox/config' });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ enabled: false, reasonCode: 'SANDBOX_DISABLED' });
+    await app.close();
+  });
+
+  it('returns and updates the independent approval and restricted-network controls', async () => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: true,
+      restrictedNetworkEnabled: false,
+      reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const set = vi.spyOn(agentExecutionConfigService, 'set').mockResolvedValue({
+      approvalEnabled: false,
+      restrictedNetworkEnabled: true,
+      reasonCode: 'EXECUTION_CONFIG_UPDATED',
+    });
+    vi.spyOn(sandboxClient, 'configured').mockReturnValue(true);
+    vi.spyOn(sandboxClient, 'status').mockResolvedValue({
+      status: 'ok', daemon: { reachable: true, rootless: true }, policy: { network: 'restricted' },
+    });
+    const audit = vi.spyOn(auditLogManager, 'logConfigChange').mockResolvedValue();
+    const app = await appFor(['admin:*']);
+
+    expect((await app.inject({ method: 'GET', url: '/api/agent/security/config' })).json()).toEqual({
+      approvalEnabled: true,
+      restrictedNetworkEnabled: false,
+      reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const response = await app.inject({
+      method: 'PUT', url: '/api/agent/security/config',
+      payload: { approvalEnabled: false, restrictedNetworkEnabled: true },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(set).toHaveBeenCalledWith({ approvalEnabled: false, restrictedNetworkEnabled: true }, 7);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ configKey: 'agent_tool_approval_enabled', newValue: false }));
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ configKey: 'agent_sandbox_network_enabled', newValue: true }));
+    await app.close();
+  });
+
+  it('rejects non-admin access to the execution controls', async () => {
+    const app = await appFor(['ai:view']);
+    expect((await app.inject({ method: 'GET', url: '/api/agent/security/config' })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'PUT', url: '/api/agent/security/config', payload: { approvalEnabled: false } })).statusCode).toBe(403);
     await app.close();
   });
 

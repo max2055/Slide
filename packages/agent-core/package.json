@@ -1,7 +1,7 @@
 {
   "name": "@slide/agent-core",
   "version": "0.1.0",
-  "description": "Production-grade TypeScript agent engine — ported from nanobot. LLM ↔ Tool execution loop with parallel tools, context management, interrupt recovery, and structured tracing.",
+  "description": "Production-grade TypeScript agent engine rewritten for Slide from the original Python nanobot design. The current runtime has no dependency on the original Python runtime. LLM-to-tool execution loop with parallel tools, context management, interrupt recovery, and structured tracing.",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -20,6 +20,6 @@
     "typescript": "^6.0.3",
     "vitest": "^4.1.4"
   },
-  "keywords": ["agent", "llm", "tool-calling", "ai", "nanobot"],
+  "keywords": ["agent", "llm", "tool-calling", "ai", "database-ops"],
   "license": "MIT"
 }

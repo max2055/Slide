@@ -18,9 +18,10 @@ export type AdapterTextDeltaEvent = { type: 'text_delta'; delta: string };
 export type AdapterToolStartEvent = { type: 'tool_start'; toolName: string; args: Record<string, unknown> };
 export type AdapterToolResultEvent = { type: 'tool_result'; toolName: string; result: unknown };
 export type AdapterToolErrorEvent = { type: 'tool_error'; toolName: string; error: string };
+export type AdapterToolProgressEvent = { type: 'tool_progress'; toolName: string; progress: Record<string, unknown> };
 export type AdapterThinkingDeltaEvent = { type: 'thinking_delta'; delta: string };
 export type AdapterThinkingEndEvent = { type: 'thinking_end' };
-export type AdapterCompleteEvent = { type: 'complete'; finalContent?: string; thinkingContent?: string };
+export type AdapterCompleteEvent = { type: 'complete'; finalContent?: string; thinkingContent?: string; messageSequence?: number };
 export type AdapterCancelledEvent = { type: 'cancelled'; runId?: string; sessionKey?: string };
 export type AdapterErrorEvent = { type: 'error'; error: string };
 export type AdapterSessionCreatedEvent = { type: 'session.created'; sessionKey: string };
@@ -36,6 +37,7 @@ export type AdapterChatEvent =
   | AdapterToolStartEvent
   | AdapterToolResultEvent
   | AdapterToolErrorEvent
+  | AdapterToolProgressEvent
   | AdapterThinkingDeltaEvent
   | AdapterThinkingEndEvent
   | AdapterCompleteEvent
@@ -99,7 +101,6 @@ export class DirectGatewayClient {
       return;
     }
     this.authenticated = false;
-    this.pendingMessages = [];
     this.onStateChange('connecting');
     this.ws = new WebSocket(this.url);
 
@@ -174,10 +175,13 @@ export class DirectGatewayClient {
         ? p.sessionKey.trim()
         : undefined;
       const message = (p?.message as string) || '';
-      this.sendChat(sessionKey, message, {
+      const accepted = this.sendChat(sessionKey, message, {
         idempotencyKey: typeof p?.idempotencyKey === 'string' ? p.idempotencyKey : undefined,
         attachments: Array.isArray(p?.attachments) ? p.attachments : undefined,
       });
+      if (!accepted) {
+        throw new Error('[DirectGatewayClient] chat.send could not be queued because the WebSocket is not connected');
+      }
       return undefined as T;
     }
     if (method === 'chat.history') {
@@ -203,11 +207,12 @@ export class DirectGatewayClient {
         headers['Authorization'] = `Bearer ${token}`;
       }
       return fetch(url, { headers }).then(async r => {
+        if (!r.ok) {
+          throw new Error(`[DirectGatewayClient] REST API error: ${r.status} ${r.statusText}`);
+        }
         const data = await r.json();
         const rawMessages = Array.isArray(data) ? data : (data?.messages ?? []);
         return { messages: rawMessages };
-      }).catch(() => {
-        return { messages: [] };
       }) as unknown as T;
     }
     if (method === 'agents.list') {
@@ -263,18 +268,19 @@ export class DirectGatewayClient {
     return response.json() as Promise<T>;
   }
 
-  sendChat(sessionKey: string | undefined, message: string, options?: { idempotencyKey?: string; attachments?: unknown[] }): void {
+  sendChat(sessionKey: string | undefined, message: string, options?: { idempotencyKey?: string; attachments?: unknown[] }): boolean {
     const frame = this.chatSendFrame(sessionKey, message, options);
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.warn('[DirectGatewayClient] cannot sendChat: not connected');
-      return;
+      return false;
     }
     // Queue messages until auth_ok is received to avoid race condition
     if (!this.authenticated) {
       this.pendingMessages.push(frame as { sessionKey?: string; message: string; messageId: string; idempotencyKey: string });
-      return;
+      return true;
     }
     this.ws.send(JSON.stringify(frame));
+    return true;
   }
 
   cancelChat(runId: string, sessionKey: string): void {
@@ -341,6 +347,7 @@ export class DirectGatewayClient {
       case 'tool_start':
       case 'tool_result':
       case 'tool_error':
+      case 'tool_progress':
       case 'complete':
       case 'cancelled':
       case 'error':
@@ -610,6 +617,21 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
       const agentPayload: AgentEventPayload = {
         runId: runId ?? '',
         seq: 0,
+        stream: 'tool',
+        ts: Date.now(),
+        sessionKey,
+        data: event as unknown as Record<string, unknown>,
+      };
+      handleAgentEvent(
+        host as unknown as Parameters<typeof handleAgentEvent>[0],
+        agentPayload,
+      );
+      break;
+    }
+    case 'tool_progress': {
+      const agentPayload: AgentEventPayload = {
+        runId: runId ?? '',
+        seq: Number(event.progress.sequence ?? 0),
         stream: 'tool',
         ts: Date.now(),
         sessionKey,

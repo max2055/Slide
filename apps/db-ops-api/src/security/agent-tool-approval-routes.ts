@@ -8,6 +8,7 @@ import { getAgentToolApprovalService } from './agent-tool-approval-service.js';
 import { credentialReferenceService } from './credential-reference-service.js';
 import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 import { classifyExecuteCodeRisk } from './execute-code-risk.js';
+import { agentExecutionConfigService } from './agent-execution-config-service.js';
 
 export async function registerAgentToolApprovalRoutes(
   fastify: FastifyInstance,
@@ -57,6 +58,7 @@ export async function registerAgentToolApprovalRoutes(
     if (!tool || !canActorDiscoverTool(actor, tool)) {
       return reply.code(403).send({ reasonCode: 'TOOL_NOT_AVAILABLE' });
     }
+    const security = getToolSecurityDefinition(tool.name);
     const resource = await resolveToolResource(tool.name, args);
     const risk = tool.name === 'execute_code'
       ? classifyExecuteCodeRisk({
@@ -65,7 +67,17 @@ export async function registerAgentToolApprovalRoutes(
         files: Array.isArray(args.files) ? args.files : undefined,
       })
       : undefined;
-    const decision = decideToolPolicy(actor, tool, args, resource, false, risk?.requiresApproval);
+    const approvalConfigEnabled = (await agentExecutionConfigService.get()).approvalEnabled;
+    const approvalBaseRequired = risk?.requiresApproval
+      ?? Boolean(tool.requiresApproval || (security && security.approval !== 'never'));
+    const decision = decideToolPolicy(
+      actor,
+      tool,
+      args,
+      resource,
+      false,
+      Boolean(approvalConfigEnabled && approvalBaseRequired),
+    );
     if (decision.reasonCode !== 'APPROVAL_REQUIRED') {
       const status = decision.allow ? 409 : 403;
       return reply.code(status).send({
@@ -91,7 +103,12 @@ export async function registerAgentToolApprovalRoutes(
   fastify.get('/api/agent/approvals/pending', {
     preHandler: [verifyToken, requirePermission('approval:view')],
   }, async (_request, reply) => {
-    return reply.send({ approvals: await getAgentToolApprovalService().pending() });
+    try {
+      return reply.send({ approvals: await getAgentToolApprovalService().pending() });
+    } catch (error) {
+      console.error('[AgentToolApproval] Failed to load pending approvals:', error instanceof Error ? error.message : String(error));
+      return reply.code(503).send({ reasonCode: 'AGENT_APPROVAL_LIST_UNAVAILABLE' });
+    }
   });
 
   fastify.post('/api/agent/approvals/:id/review', {

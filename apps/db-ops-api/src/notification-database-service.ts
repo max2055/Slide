@@ -3,6 +3,7 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection, encryptData } from './db-connection';
+import type { NotificationChannelType } from './notification-channel-config.js';
 
 export interface NotificationChannelConfig {
   webhook_url?: string;
@@ -22,12 +23,13 @@ export interface NotificationChannelConfig {
   from?: string;
   to?: string;
   smtp_secure?: boolean;
+  smtp_require_tls?: boolean;
 }
 
 export interface NotificationChannel {
   id: number;
   name: string;
-  type: 'email' | 'dingtalk' | 'wecom' | 'feishu' | 'webhook';
+  type: NotificationChannelType;
   config: NotificationChannelConfig;
   enabled: boolean;
   delivery_start_at?: Date | null;
@@ -239,7 +241,6 @@ class NotificationDatabaseService {
         values.push(data.type);
       }
       if (data.config !== undefined) {
-        const config = this.prepareConfigForStorage(data.config);
         const suppliedConfig = data.config && typeof data.config === 'object'
           ? data.config as Record<string, unknown>
           : {};
@@ -247,23 +248,38 @@ class NotificationDatabaseService {
           || Object.prototype.hasOwnProperty.call(suppliedConfig, 'password_encrypted');
         const secretWasSupplied = Object.prototype.hasOwnProperty.call(suppliedConfig, 'secret')
           || Object.prototype.hasOwnProperty.call(suppliedConfig, 'secret_encrypted');
-        if (!passwordWasSupplied || !secretWasSupplied) {
+        const oauthRefreshTokenWasSupplied = Object.prototype.hasOwnProperty.call(suppliedConfig, 'oauth2_refresh_token')
+          || Object.prototype.hasOwnProperty.call(suppliedConfig, 'oauth2_refresh_token_encrypted');
+        let existingConfig: Record<string, unknown> = {};
+        let existingType: string | undefined;
+        const completeChannelConfig = ['smtp_host', 'smtp_port', 'smtp_username', 'smtp_auth', 'from', 'to']
+          .every((field) => Object.prototype.hasOwnProperty.call(suppliedConfig, field));
+        if (!completeChannelConfig || !passwordWasSupplied || !secretWasSupplied || !oauthRefreshTokenWasSupplied) {
           const [rows] = await pool.execute(
-            'SELECT config FROM notification_channels WHERE id = ?',
+            'SELECT type, config FROM notification_channels WHERE id = ?',
             [id],
           ) as any;
-          const existingConfig = rows[0]?.config;
+          existingType = typeof rows[0]?.type === 'string' ? rows[0].type : undefined;
           try {
-            const parsed = typeof existingConfig === 'string' ? JSON.parse(existingConfig) : existingConfig;
-            if (typeof parsed?.password_encrypted === 'string') {
-              if (!passwordWasSupplied) config.password_encrypted = parsed.password_encrypted;
-            }
-            if (typeof parsed?.secret_encrypted === 'string' && !secretWasSupplied) {
-              config.secret_encrypted = parsed.secret_encrypted;
-            }
+            const parsed = typeof rows[0]?.config === 'string' ? JSON.parse(rows[0].config) : rows[0]?.config;
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existingConfig = parsed as Record<string, unknown>;
           } catch {
             // An invalid legacy config will be rejected by the normal UPDATE path rather than exposing its contents.
           }
+        }
+        // PUT is also used by the settings UI for field-level edits. Preserve
+        // existing non-secret SMTP fields when the channel type is unchanged;
+        // replacing a channel with a different type still starts from scratch.
+        const sameType = !existingType || data.type === undefined || data.type === existingType;
+        const config = this.prepareConfigForStorage(sameType ? { ...existingConfig, ...suppliedConfig } : suppliedConfig);
+        if (!passwordWasSupplied && typeof existingConfig.password_encrypted === 'string') {
+          config.password_encrypted = existingConfig.password_encrypted;
+        }
+        if (!secretWasSupplied && typeof existingConfig.secret_encrypted === 'string') {
+          config.secret_encrypted = existingConfig.secret_encrypted;
+        }
+        if (!oauthRefreshTokenWasSupplied && typeof existingConfig.oauth2_refresh_token_encrypted === 'string') {
+          config.oauth2_refresh_token_encrypted = existingConfig.oauth2_refresh_token_encrypted;
         }
         updates.push('config = ?');
         values.push(JSON.stringify(config));

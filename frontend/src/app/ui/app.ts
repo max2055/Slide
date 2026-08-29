@@ -457,24 +457,34 @@ export class SlideApp extends LitElement {
     // Check URL params for tab navigation
     const urlParams = new URLSearchParams(window.location.search);
     const tabParam = urlParams.get("tab");
-    if (tabParam && ["dashboard", "instances-db", "instance-detail", "alerts", "reports", "metric-registry", "events", "llm-config", "health-center"].includes(tabParam)) {
+    if (tabParam && ["dashboard", "instances-db", "instance-detail", "alerts", "reports", "metric-registry", "events", "llm-config", "health-center", "servers", "server-detail", "network-devices", "network-device-detail"].includes(tabParam)) {
+      const initialId = urlParams.get("id");
+      const initialNetworkId = urlParams.get("networkDeviceId") ?? (tabParam === "network-device-detail" ? initialId : null);
+      if (tabParam === "server-detail" && initialId) (this as any).serverId = Number(initialId);
+      if (tabParam === "network-device-detail" && initialNetworkId) (this as any).networkDeviceId = Number(initialNetworkId);
       this.setTab(tabParam as Tab);
     }
 
     // Listen for navigation events
     window.addEventListener("slide-navigate", (e: any) => {
-      const { tab, id, session, serverId } = e.detail;
-      const effectiveId = id ?? serverId;
+      const { tab, id, session, serverId, networkDeviceId } = e.detail;
+      const effectiveServerId = serverId ?? (tab === "server-detail" ? id : undefined);
+      const effectiveNetworkDeviceId = networkDeviceId ?? (tab === "network-device-detail" ? id : undefined);
       if (tab) {
         if (tab === "chat" && session) {
           switchChatSession(this as unknown as AppViewState, session);
         }
         this.setTab(tab as Tab);
-        // Set serverId in state for server-detail view
-        if (tab === "server-detail" && effectiveId != null) {
-          (this as any).serverId = Number(effectiveId);
-        } else if (tab !== "server-detail") {
+        // Keep server and network-device context IDs independent.
+        if (tab === "server-detail" && effectiveServerId != null) {
+          (this as any).serverId = Number(effectiveServerId);
+          (this as any).networkDeviceId = undefined;
+        } else if (tab === "network-device-detail" && effectiveNetworkDeviceId != null) {
+          (this as any).networkDeviceId = Number(effectiveNetworkDeviceId);
           (this as any).serverId = undefined;
+        } else if (tab !== "server-detail" && tab !== "network-device-detail") {
+          (this as any).serverId = undefined;
+          (this as any).networkDeviceId = undefined;
         }
         // Handle pending chat message from diagnosis "继续分析"
         const pendingMsg = (window as any).__pendingChatMessage;
@@ -492,11 +502,10 @@ export class SlideApp extends LitElement {
         // Update URL
         const url = new URL(window.location.href);
         url.searchParams.set("tab", tab);
-        if (effectiveId) {
-          url.searchParams.set("id", String(effectiveId));
-        } else {
-          url.searchParams.delete("id");
-        }
+        if (effectiveServerId) url.searchParams.set("id", String(effectiveServerId));
+        else url.searchParams.delete("id");
+        if (effectiveNetworkDeviceId) url.searchParams.set("networkDeviceId", String(effectiveNetworkDeviceId));
+        else url.searchParams.delete("networkDeviceId");
         if (session) {
           url.searchParams.set("session", session);
         } else {
@@ -514,7 +523,11 @@ export class SlideApp extends LitElement {
     window.addEventListener("popstate", () => {
       const urlParams = new URLSearchParams(window.location.search);
       const tabParam = urlParams.get("tab");
-      if (tabParam && ["dashboard", "instances-db", "instance-detail", "alerts", "reports", "metric-registry", "events", "llm-config", "docs", "health-center"].includes(tabParam)) {
+      if (tabParam && ["dashboard", "instances-db", "instance-detail", "alerts", "reports", "metric-registry", "events", "llm-config", "docs", "health-center", "servers", "server-detail", "network-devices", "network-device-detail"].includes(tabParam)) {
+        const id = urlParams.get("id");
+        const networkId = urlParams.get("networkDeviceId") ?? (tabParam === "network-device-detail" ? id : null);
+        if (tabParam === "server-detail") (this as any).serverId = id ? Number(id) : undefined;
+        if (tabParam === "network-device-detail") (this as any).networkDeviceId = networkId ? Number(networkId) : undefined;
         this.setTab(tabParam as Tab);
       }
     });
@@ -592,13 +605,18 @@ export class SlideApp extends LitElement {
     setTabInternal(this as unknown as Parameters<typeof setTabInternal>[0], next);
     this.navDrawerOpen = false;
     // Clear URL search params when switching tabs via sidebar
-    // Preserve id param for instance-detail and chat tabs (page refresh support)
+    // Preserve the context identifier for detail tabs (page refresh support).
     const url = new URL(window.location.href);
     const preserveId = url.searchParams.get("id");
+    const preserveNetworkId = url.searchParams.get("networkDeviceId") ?? (next === "network-device-detail" ? preserveId : null);
     url.search = "";
     url.searchParams.set("tab", next);
-    if (preserveId && (next === "instance-detail" || next === "chat")) {
+    if (preserveId && (next === "instance-detail" || next === "chat" || next === "server-detail")) {
       url.searchParams.set("id", preserveId);
+    }
+    if (preserveNetworkId && next === "network-device-detail") {
+      url.searchParams.set("networkDeviceId", preserveNetworkId);
+      url.searchParams.delete("id");
     }
     window.history.replaceState({}, "", url);
   }

@@ -7,3 +7,4 @@
 import './get_instance_summary.js';
 import './list_active_alerts.js';
 import './query_metrics.js';
+import './discover_database_endpoints.js';

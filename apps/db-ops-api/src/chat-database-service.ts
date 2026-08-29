@@ -41,6 +41,8 @@ export interface ChatSessionRecord {
 
 export interface ChatMessageRecord {
   id: number;
+  /** Global database sequence; monotonic across processes and sessions. */
+  sequence: number;
   message_id: string;
   parent_id: string | null;
   session_id: string;
@@ -197,7 +199,7 @@ export class ChatDatabaseService {
        LEFT JOIN chat_messages cm ON cm.session_id = cs.session_id
        WHERE cs.session_id = ?
          AND ${this.accessPredicate('history')}
-       ORDER BY cm.created_at DESC
+       ORDER BY cm.created_at DESC, cm.id DESC
        LIMIT ?`,
       [sessionId, ...this.accessValues(actor, 'history'), limit],
     );
@@ -243,13 +245,13 @@ export class ChatDatabaseService {
        JOIN chat_sessions cs ON cs.session_id = cm.session_id
        WHERE cm.parent_id = ? AND cm.session_id = ?
          AND ${this.accessPredicate('history')}
-       ORDER BY cm.created_at ASC`,
+       ORDER BY cm.created_at ASC, cm.id ASC`,
       [parentId, sessionId, ...this.accessValues(actor, 'history')],
     );
     return rows.map((row) => this.mapMessageRow(row));
   }
 
-  async addMessage(actor: ActorContext, sessionId: string, message: NewChatMessage): Promise<void> {
+  async addMessage(actor: ActorContext, sessionId: string, message: NewChatMessage): Promise<number | undefined> {
     const [result] = await this.getPool().query<ResultSetHeader>(
       `INSERT INTO chat_messages
          (session_id, message_id, parent_id, role, content, related_tool, related_skill, metadata)
@@ -270,9 +272,10 @@ export class ChatDatabaseService {
     );
     if (result.affectedRows !== 1) throw new ChatSessionNotFoundError();
     await this.updateSessionStats(this.getPool(), sessionId, actor.userId);
+    return Number.isFinite(Number(result.insertId)) && Number(result.insertId) > 0 ? Number(result.insertId) : undefined;
   }
 
-  async addMessageForMaintenance(sessionId: string, message: NewChatMessage): Promise<void> {
+  async addMessageForMaintenance(sessionId: string, message: NewChatMessage): Promise<number | undefined> {
     const [result] = await this.getPool().query<ResultSetHeader>(
       `INSERT INTO chat_messages
          (session_id, message_id, parent_id, role, content, related_tool, related_skill, metadata)
@@ -291,6 +294,7 @@ export class ChatDatabaseService {
     );
     if (result.affectedRows !== 1) throw new ChatSessionNotFoundError();
     await this.updateSessionStats(this.getPool(), sessionId);
+    return Number.isFinite(Number(result.insertId)) && Number(result.insertId) > 0 ? Number(result.insertId) : undefined;
   }
 
   private async updateSessionStats(
@@ -516,6 +520,7 @@ export class ChatDatabaseService {
   private mapMessageRow(row: RowDataPacket): ChatMessageRecord {
     return {
       id: row.id,
+      sequence: Number(row.id),
       message_id: row.message_id,
       parent_id: row.parent_id || null,
       session_id: row.session_id,

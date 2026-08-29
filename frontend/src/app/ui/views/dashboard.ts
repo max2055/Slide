@@ -1,8 +1,9 @@
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-card.js";
 import "../components/app-badge.js";
 import "../components/app-empty-state.js";
+import "../components/app-data-table.js";
 import * as echarts from "echarts";
 import type { EChartsType } from "echarts";
 import { icons } from "../../../icons.js";
@@ -22,6 +23,36 @@ interface AlertSummary {
   unread: number;
   critical: number;
   warning: number;
+}
+
+type ResourceType = "instance" | "server" | "network_device";
+interface ResourceOverviewItem {
+  resource: { type: ResourceType; id: number };
+  label: string;
+  status: string;
+  quality: "good" | "degraded" | "invalid" | "unknown" | "partial";
+  freshness: "fresh" | "stale" | "missing";
+  observedAt: string | null;
+  unresolvedAlerts: number;
+  relationCount: number;
+  impactScope: Array<{ type: ResourceType; id: number }>;
+  gaps: string[];
+}
+interface ResourceOverview {
+  schemaVersion: 1;
+  collectedAt: string;
+  dataQuality: "complete" | "partial" | "empty";
+  summary: {
+    total: number;
+    byType: Record<ResourceType, number>;
+    byStatus: Record<string, number>;
+    fresh: number;
+    stale: number;
+    missing: number;
+    unresolvedAlerts: number;
+    impactedResources: number;
+  };
+  items: ResourceOverviewItem[];
 }
 
 @customElement("dashboard-page")
@@ -201,6 +232,28 @@ export class DashboardPage extends LitElement {
       margin-top: var(--space-sm);
     }
 
+    .resource-overview-card {
+      display: block;
+    }
+
+    .resource-overview-summary {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: var(--space-sm) var(--space-lg);
+      margin-bottom: var(--space-md);
+      color: var(--muted);
+      font-size: var(--text-sm);
+    }
+
+    .resource-overview-summary span {
+      white-space: nowrap;
+    }
+
+    .resource-overview-table {
+      overflow-x: auto;
+    }
+
 
     .status-list {
       display: flex;
@@ -326,6 +379,7 @@ export class DashboardPage extends LitElement {
   @state() private startDate = '';
   @state() private endDate = '';
   @state() private trendLoading = false;
+  @state() private resourceOverview: ResourceOverview | null = null;
 
   // ECharts instances for lifecycle management
   private _pieChart: EChartsType | null = null;
@@ -382,11 +436,12 @@ export class DashboardPage extends LitElement {
 
   private async loadDashboardData() {
     try {
-      const [instancesRes, alertsRes, capacityRes, aiRes] = await Promise.all([
+      const [instancesRes, alertsRes, capacityRes, aiRes, resourceOverviewRes] = await Promise.all([
         authFetch("/api/database/instances"),
         authFetch("/api/alerts"),
         authFetch(`/api/dashboard/capacity-trend?hours=${this.selectedHours}`),
         authFetch("/api/dashboard/ai-stats"),
+        authFetch("/api/resources/overview"),
       ]);
 
       if (!instancesRes.ok) throw new Error("加载实例数据失败");
@@ -399,6 +454,11 @@ export class DashboardPage extends LitElement {
       const alerts = alertsData.items ?? alertsData;
       const capacityData = await capacityRes.json();
       const aiData = await aiRes.json();
+      if (resourceOverviewRes.ok) {
+        this.resourceOverview = await resourceOverviewRes.json() as ResourceOverview;
+      } else {
+        this.resourceOverview = null;
+      }
 
       // --- Health status computation ---
       const healthy = instances.filter((i: any) => i.health_status === "healthy").length;
@@ -596,6 +656,59 @@ export class DashboardPage extends LitElement {
     window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab } }));
   }
 
+  private _resourceTypeLabel(type: ResourceType): string {
+    return type === "instance" ? "数据库" : type === "server" ? "服务器" : "网络设备";
+  }
+
+  private _resourceStatusVariant(item: ResourceOverviewItem): "ok" | "warn" | "danger" | "muted" {
+    if (item.freshness === "missing" || item.quality === "invalid") return "muted";
+    if (item.freshness === "stale" || item.quality === "degraded" || item.quality === "partial" || item.unresolvedAlerts > 0) return "warn";
+    if (["offline", "error", "critical", "unreachable", "down"].includes(item.status.toLowerCase())) return "danger";
+    return "ok";
+  }
+
+  private _resourceRows(): Array<Record<string, unknown>> {
+    return (this.resourceOverview?.items ?? []).map((item) => ({
+      resource: html`<span>${this._resourceTypeLabel(item.resource.type)} · ${item.label}</span>`,
+      status: html`<app-badge variant=${this._resourceStatusVariant(item)}>${item.status || "unknown"}</app-badge>`,
+      freshness: html`<app-badge variant=${item.freshness === "fresh" ? "ok" : item.freshness === "stale" ? "warn" : "muted"}>${item.freshness === "fresh" ? "新鲜" : item.freshness === "stale" ? "已过期" : "无数据"}</app-badge>`,
+      alerts: item.unresolvedAlerts,
+      relations: `${item.relationCount} · 影响 ${item.impactScope.length}`,
+      gaps: item.gaps.length ? item.gaps.join(", ") : "-",
+    }));
+  }
+
+  private _renderResourceOverview() {
+    const overview = this.resourceOverview;
+    if (!overview) return nothing;
+    const summary = overview.summary;
+    return html`
+      <app-card class="resource-overview-card">
+        <span slot="header">基础运维总览</span>
+        <div class="resource-overview-summary">
+          <span>资源 ${summary.total}</span>
+          <span>数据库 ${summary.byType.instance ?? 0}</span>
+          <span>服务器 ${summary.byType.server ?? 0}</span>
+          <span>网络设备 ${summary.byType.network_device ?? 0}</span>
+          <span>新鲜 ${summary.fresh}</span>
+          <span>未解决告警 ${summary.unresolvedAlerts}</span>
+          <span>影响范围 ${summary.impactedResources}</span>
+          <app-badge variant=${overview.dataQuality === "complete" ? "ok" : overview.dataQuality === "partial" ? "warn" : "muted"}>数据${overview.dataQuality === "complete" ? "完整" : overview.dataQuality === "partial" ? "部分可用" : "为空"}</app-badge>
+        </div>
+        ${overview.items.length
+          ? html`<div class="resource-overview-table"><app-data-table .columns=${[
+            { key: "resource", label: "资源" },
+            { key: "status", label: "状态" },
+            { key: "freshness", label: "数据新鲜度" },
+            { key: "alerts", label: "未解决告警", textAlign: "right" },
+            { key: "relations", label: "关系 / 影响范围" },
+            { key: "gaps", label: "缺口" },
+          ]} .rows=${this._resourceRows()} .dense=${true} emptyMessage="暂无资源"></app-data-table></div>`
+          : html`<app-empty-state title="暂无基础资源" description="请先纳管数据库、服务器或网络设备"></app-empty-state>`}
+      </app-card>
+    `;
+  }
+
   private _formatBytes(gb: number): string {
     if (gb >= 1024) return `${(gb / 1024).toFixed(2)} TB`;
     return `${gb.toFixed(2)} GB`;
@@ -700,6 +813,8 @@ export class DashboardPage extends LitElement {
             hint="今日汇总 · RCA/SQL 审核等"
           ></stat-card>
         </div>
+
+        ${this._renderResourceOverview()}
 
         <!-- Row 2: Charts -->
         <div class="dashboard__charts">

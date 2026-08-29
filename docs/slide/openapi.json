@@ -604,6 +604,1129 @@
           }
         ]
       },
+      "CollectServerDiagnosticsResponse": {
+        "$id": "CollectServerDiagnosticsResponse",
+        "additionalProperties": false,
+        "properties": {
+          "diagnostics": {
+            "$id": "ServerDiagnostics",
+            "additionalProperties": false,
+            "properties": {
+              "collectedAt": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              },
+              "gaps": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "reason": {
+                      "type": "string"
+                    },
+                    "section": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "section",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "interfaceErrors": {
+                "additionalProperties": false,
+                "properties": {
+                  "collectedAt": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "string"
+                  },
+                  "items": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "interface": {
+                          "type": "string"
+                        },
+                        "rxBytes": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "rxDrops": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "rxErrors": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "txBytes": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "txDrops": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "txErrors": {
+                          "minimum": 0,
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "interface",
+                        "rxBytes",
+                        "txBytes",
+                        "rxErrors",
+                        "txErrors",
+                        "rxDrops",
+                        "txDrops"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "quality": {
+                    "anyOf": [
+                      {
+                        "const": "good",
+                        "type": "string"
+                      },
+                      {
+                        "const": "partial",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unknown",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unsupported",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "validForMs": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "source",
+                  "collectedAt",
+                  "expiresAt",
+                  "validForMs",
+                  "quality",
+                  "truncated",
+                  "items"
+                ],
+                "type": "object"
+              },
+              "listeningPorts": {
+                "additionalProperties": false,
+                "properties": {
+                  "collectedAt": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "string"
+                  },
+                  "items": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "address": {
+                          "type": "string"
+                        },
+                        "port": {
+                          "maximum": 65535,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "process": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "protocol": {
+                          "anyOf": [
+                            {
+                              "const": "tcp",
+                              "type": "string"
+                            },
+                            {
+                              "const": "udp",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unknown",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "protocol",
+                        "address",
+                        "port",
+                        "process"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "quality": {
+                    "anyOf": [
+                      {
+                        "const": "good",
+                        "type": "string"
+                      },
+                      {
+                        "const": "partial",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unknown",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unsupported",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "validForMs": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "source",
+                  "collectedAt",
+                  "expiresAt",
+                  "validForMs",
+                  "quality",
+                  "truncated",
+                  "items"
+                ],
+                "type": "object"
+              },
+              "osType": {
+                "type": "string"
+              },
+              "quality": {
+                "anyOf": [
+                  {
+                    "const": "good",
+                    "type": "string"
+                  },
+                  {
+                    "const": "partial",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "recentSystemLogs": {
+                "additionalProperties": false,
+                "properties": {
+                  "collectedAt": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "string"
+                  },
+                  "items": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "identifier": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "severity": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "unit": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "timestamp",
+                        "severity",
+                        "unit",
+                        "identifier",
+                        "message"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "quality": {
+                    "anyOf": [
+                      {
+                        "const": "good",
+                        "type": "string"
+                      },
+                      {
+                        "const": "partial",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unknown",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unsupported",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "validForMs": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "source",
+                  "collectedAt",
+                  "expiresAt",
+                  "validForMs",
+                  "quality",
+                  "truncated",
+                  "items"
+                ],
+                "type": "object"
+              },
+              "schemaVersion": {
+                "const": 1,
+                "type": "number"
+              },
+              "sections": {
+                "additionalProperties": false,
+                "properties": {
+                  "interfaceErrors": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "collectedAt": {
+                        "type": "string"
+                      },
+                      "expiresAt": {
+                        "type": "string"
+                      },
+                      "items": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "interface": {
+                              "type": "string"
+                            },
+                            "rxBytes": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "rxDrops": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "rxErrors": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "txBytes": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "txDrops": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "txErrors": {
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "interface",
+                            "rxBytes",
+                            "txBytes",
+                            "rxErrors",
+                            "txErrors",
+                            "rxDrops",
+                            "txDrops"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "quality": {
+                        "anyOf": [
+                          {
+                            "const": "good",
+                            "type": "string"
+                          },
+                          {
+                            "const": "partial",
+                            "type": "string"
+                          },
+                          {
+                            "const": "unknown",
+                            "type": "string"
+                          },
+                          {
+                            "const": "unsupported",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 8,
+                        "type": "array"
+                      },
+                      "truncated": {
+                        "type": "boolean"
+                      },
+                      "validForMs": {
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "collectedAt",
+                      "expiresAt",
+                      "validForMs",
+                      "quality",
+                      "truncated",
+                      "items"
+                    ],
+                    "type": "object"
+                  },
+                  "listeningPorts": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "collectedAt": {
+                        "type": "string"
+                      },
+                      "expiresAt": {
+                        "type": "string"
+                      },
+                      "items": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "address": {
+                              "type": "string"
+                            },
+                            "port": {
+                              "maximum": 65535,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "process": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "protocol": {
+                              "anyOf": [
+                                {
+                                  "const": "tcp",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "udp",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unknown",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "protocol",
+                            "address",
+                            "port",
+                            "process"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "quality": {
+                        "anyOf": [
+                          {
+                            "const": "good",
+                            "type": "string"
+                          },
+                          {
+                            "const": "partial",
+                            "type": "string"
+                          },
+                          {
+                            "const": "unknown",
+                            "type": "string"
+                          },
+                          {
+                            "const": "unsupported",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 8,
+                        "type": "array"
+                      },
+                      "truncated": {
+                        "type": "boolean"
+                      },
+                      "validForMs": {
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "collectedAt",
+                      "expiresAt",
+                      "validForMs",
+                      "quality",
+                      "truncated",
+                      "items"
+                    ],
+                    "type": "object"
+                  },
+                  "services": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "collectedAt": {
+                        "type": "string"
+                      },
+                      "expiresAt": {
+                        "type": "string"
+                      },
+                      "items": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "activeState": {
+                              "type": "string"
+                            },
+                            "description": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "loadState": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "subState": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "loadState",
+                            "activeState",
+                            "subState",
+                            "description"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "quality": {
+                        "anyOf": [
+                          {
+                            "const": "good",
+                            "type": "string"
+                          },
+                          {
+                            "const": "partial",
+                            "type": "string"
+                          },
+                          {
+                            "const": "unknown",
+                            "type": "string"
+                          },
+                          {
+                            "const": "unsupported",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 8,
+                        "type": "array"
+                      },
+                      "truncated": {
+                        "type": "boolean"
+                      },
+                      "validForMs": {
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "collectedAt",
+                      "expiresAt",
+                      "validForMs",
+                      "quality",
+                      "truncated",
+                      "items"
+                    ],
+                    "type": "object"
+                  },
+                  "systemLogs": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "collectedAt": {
+                        "type": "string"
+                      },
+                      "expiresAt": {
+                        "type": "string"
+                      },
+                      "items": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "identifier": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "message": {
+                              "type": "string"
+                            },
+                            "severity": {
+                              "type": "string"
+                            },
+                            "timestamp": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "unit": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "timestamp",
+                            "severity",
+                            "unit",
+                            "identifier",
+                            "message"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "quality": {
+                        "anyOf": [
+                          {
+                            "const": "good",
+                            "type": "string"
+                          },
+                          {
+                            "const": "partial",
+                            "type": "string"
+                          },
+                          {
+                            "const": "unknown",
+                            "type": "string"
+                          },
+                          {
+                            "const": "unsupported",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 8,
+                        "type": "array"
+                      },
+                      "truncated": {
+                        "type": "boolean"
+                      },
+                      "validForMs": {
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "collectedAt",
+                      "expiresAt",
+                      "validForMs",
+                      "quality",
+                      "truncated",
+                      "items"
+                    ],
+                    "type": "object"
+                  },
+                  "topProcesses": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "collectedAt": {
+                        "type": "string"
+                      },
+                      "expiresAt": {
+                        "type": "string"
+                      },
+                      "items": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "command": {
+                              "type": "string"
+                            },
+                            "cpuPercent": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "memoryPercent": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "pid": {
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "pid",
+                            "command",
+                            "cpuPercent",
+                            "memoryPercent"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "quality": {
+                        "anyOf": [
+                          {
+                            "const": "good",
+                            "type": "string"
+                          },
+                          {
+                            "const": "partial",
+                            "type": "string"
+                          },
+                          {
+                            "const": "unknown",
+                            "type": "string"
+                          },
+                          {
+                            "const": "unsupported",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 8,
+                        "type": "array"
+                      },
+                      "truncated": {
+                        "type": "boolean"
+                      },
+                      "validForMs": {
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "collectedAt",
+                      "expiresAt",
+                      "validForMs",
+                      "quality",
+                      "truncated",
+                      "items"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "services",
+                  "listeningPorts",
+                  "topProcesses",
+                  "systemLogs",
+                  "interfaceErrors"
+                ],
+                "type": "object"
+              },
+              "serverId": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "serviceStatus": {
+                "additionalProperties": false,
+                "properties": {
+                  "collectedAt": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "string"
+                  },
+                  "items": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "activeState": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "loadState": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "subState": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "loadState",
+                        "activeState",
+                        "subState",
+                        "description"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "quality": {
+                    "anyOf": [
+                      {
+                        "const": "good",
+                        "type": "string"
+                      },
+                      {
+                        "const": "partial",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unknown",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unsupported",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "validForMs": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "source",
+                  "collectedAt",
+                  "expiresAt",
+                  "validForMs",
+                  "quality",
+                  "truncated",
+                  "items"
+                ],
+                "type": "object"
+              },
+              "topProcesses": {
+                "additionalProperties": false,
+                "properties": {
+                  "collectedAt": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "string"
+                  },
+                  "items": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "command": {
+                          "type": "string"
+                        },
+                        "cpuPercent": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "memoryPercent": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "pid": {
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "pid",
+                        "command",
+                        "cpuPercent",
+                        "memoryPercent"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "quality": {
+                    "anyOf": [
+                      {
+                        "const": "good",
+                        "type": "string"
+                      },
+                      {
+                        "const": "partial",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unknown",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unsupported",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "validForMs": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "source",
+                  "collectedAt",
+                  "expiresAt",
+                  "validForMs",
+                  "quality",
+                  "truncated",
+                  "items"
+                ],
+                "type": "object"
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "validForMs": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "serverId",
+              "osType",
+              "collectedAt",
+              "expiresAt",
+              "validForMs",
+              "quality",
+              "truncated",
+              "sections",
+              "serviceStatus",
+              "listeningPorts",
+              "topProcesses",
+              "recentSystemLogs",
+              "interfaceErrors",
+              "gaps"
+            ],
+            "type": "object"
+          },
+          "success": {
+            "const": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "diagnostics"
+        ],
+        "type": "object"
+      },
       "ConfigBackupDetail": {
         "$id": "ConfigBackupDetail",
         "additionalProperties": false,
@@ -648,16 +1771,8 @@
             "type": "integer"
           },
           "sourceProtocol": {
-            "anyOf": [
-              {
-                "const": "ssh",
-                "type": "string"
-              },
-              {
-                "const": "netconf",
-                "type": "string"
-              }
-            ]
+            "const": "ssh",
+            "type": "string"
           },
           "versionNo": {
             "minimum": 1,
@@ -744,16 +1859,8 @@
             "type": "integer"
           },
           "sourceProtocol": {
-            "anyOf": [
-              {
-                "const": "ssh",
-                "type": "string"
-              },
-              {
-                "const": "netconf",
-                "type": "string"
-              }
-            ]
+            "const": "ssh",
+            "type": "string"
           },
           "versionNo": {
             "minimum": 1,
@@ -820,16 +1927,8 @@
                 "type": "integer"
               },
               "sourceProtocol": {
-                "anyOf": [
-                  {
-                    "const": "ssh",
-                    "type": "string"
-                  },
-                  {
-                    "const": "netconf",
-                    "type": "string"
-                  }
-                ]
+                "const": "ssh",
+                "type": "string"
               },
               "versionNo": {
                 "minimum": 1,
@@ -893,16 +1992,8 @@
                 "type": "integer"
               },
               "sourceProtocol": {
-                "anyOf": [
-                  {
-                    "const": "ssh",
-                    "type": "string"
-                  },
-                  {
-                    "const": "netconf",
-                    "type": "string"
-                  }
-                ]
+                "const": "ssh",
+                "type": "string"
               },
               "versionNo": {
                 "minimum": 1,
@@ -970,16 +2061,8 @@
                   "type": "integer"
                 },
                 "sourceProtocol": {
-                  "anyOf": [
-                    {
-                      "const": "ssh",
-                      "type": "string"
-                    },
-                    {
-                      "const": "netconf",
-                      "type": "string"
-                    }
-                  ]
+                  "const": "ssh",
+                  "type": "string"
                 },
                 "versionNo": {
                   "minimum": 1,
@@ -1047,16 +2130,8 @@
             "type": "integer"
           },
           "sourceProtocol": {
-            "anyOf": [
-              {
-                "const": "ssh",
-                "type": "string"
-              },
-              {
-                "const": "netconf",
-                "type": "string"
-              }
-            ]
+            "const": "ssh",
+            "type": "string"
           },
           "versionNo": {
             "minimum": 1,
@@ -5064,14 +6139,6 @@
               {
                 "const": "SHA",
                 "type": "string"
-              },
-              {
-                "const": "SHA-256",
-                "type": "string"
-              },
-              {
-                "const": "SHA-512",
-                "type": "string"
               }
             ]
           },
@@ -5087,18 +6154,6 @@
               },
               {
                 "const": "AES",
-                "type": "string"
-              },
-              {
-                "const": "AES-128",
-                "type": "string"
-              },
-              {
-                "const": "AES-192",
-                "type": "string"
-              },
-              {
-                "const": "AES-256",
                 "type": "string"
               }
             ]
@@ -5311,6 +6366,45 @@
         },
         "type": "array"
       },
+      "NetworkDeviceSshCredential": {
+        "$id": "NetworkDeviceSshCredential",
+        "additionalProperties": false,
+        "properties": {
+          "credentialType": {
+            "anyOf": [
+              {
+                "const": "password",
+                "type": "string"
+              },
+              {
+                "const": "key",
+                "type": "string"
+              }
+            ]
+          },
+          "credentialValue": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "hostKeyFingerprint": {
+            "pattern": "^SHA256:[A-Za-z0-9+/]{43}$",
+            "type": "string"
+          },
+          "username": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "credentialType",
+          "username",
+          "credentialValue",
+          "hostKeyFingerprint"
+        ],
+        "type": "object"
+      },
       "NetworkDeviceStatus": {
         "$id": "NetworkDeviceStatus",
         "anyOf": [
@@ -5357,14 +6451,6 @@
                   {
                     "const": "SHA",
                     "type": "string"
-                  },
-                  {
-                    "const": "SHA-256",
-                    "type": "string"
-                  },
-                  {
-                    "const": "SHA-512",
-                    "type": "string"
                   }
                 ]
               },
@@ -5380,18 +6466,6 @@
                   },
                   {
                     "const": "AES",
-                    "type": "string"
-                  },
-                  {
-                    "const": "AES-128",
-                    "type": "string"
-                  },
-                  {
-                    "const": "AES-192",
-                    "type": "string"
-                  },
-                  {
-                    "const": "AES-256",
                     "type": "string"
                   }
                 ]
@@ -5452,14 +6526,6 @@
                   {
                     "const": "SHA",
                     "type": "string"
-                  },
-                  {
-                    "const": "SHA-256",
-                    "type": "string"
-                  },
-                  {
-                    "const": "SHA-512",
-                    "type": "string"
                   }
                 ]
               },
@@ -5475,18 +6541,6 @@
                   },
                   {
                     "const": "AES",
-                    "type": "string"
-                  },
-                  {
-                    "const": "AES-128",
-                    "type": "string"
-                  },
-                  {
-                    "const": "AES-192",
-                    "type": "string"
-                  },
-                  {
-                    "const": "AES-256",
                     "type": "string"
                   }
                 ]
@@ -5523,6 +6577,55 @@
               "securityLevel"
             ],
             "type": "object"
+          },
+          "ssh": {
+            "$id": "NetworkDeviceSshCredential",
+            "additionalProperties": false,
+            "properties": {
+              "credentialType": {
+                "anyOf": [
+                  {
+                    "const": "password",
+                    "type": "string"
+                  },
+                  {
+                    "const": "key",
+                    "type": "string"
+                  }
+                ]
+              },
+              "credentialValue": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "hostKeyFingerprint": {
+                "pattern": "^SHA256:[A-Za-z0-9+/]{43}$",
+                "type": "string"
+              },
+              "username": {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "credentialType",
+              "username",
+              "credentialValue",
+              "hostKeyFingerprint"
+            ],
+            "type": "object"
+          },
+          "ssh_port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "sshPort": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
           },
           "vendor": {
             "const": "huawei",
@@ -5587,6 +6690,18 @@
               "reachable",
               "quality",
               "observedAt"
+            ],
+            "type": "object"
+          },
+          "ssh": {
+            "additionalProperties": false,
+            "properties": {
+              "verified": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "verified"
             ],
             "type": "object"
           },
@@ -5978,6 +7093,1676 @@
         ],
         "type": "object"
       },
+      "ResourceAgentDiagnosisResponse": {
+        "$id": "ResourceAgentDiagnosisResponse",
+        "additionalProperties": false,
+        "properties": {
+          "analysisId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "queued",
+                "type": "string"
+              },
+              {
+                "const": "cached",
+                "type": "string"
+              }
+            ]
+          },
+          "success": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "type": "object"
+      },
+      "ResourceListResponse": {
+        "$id": "ResourceListResponse",
+        "additionalProperties": false,
+        "properties": {
+          "collectedAt": {
+            "type": "string"
+          },
+          "dataQuality": {
+            "anyOf": [
+              {
+                "const": "complete",
+                "type": "string"
+              },
+              {
+                "const": "partial",
+                "type": "string"
+              },
+              {
+                "const": "empty",
+                "type": "string"
+              }
+            ]
+          },
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "attributes": {
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "resource": {
+                  "$id": "ResourceRef",
+                  "properties": {
+                    "id": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "type": {
+                      "$id": "ResourceType",
+                      "anyOf": [
+                        {
+                          "const": "instance",
+                          "type": "string"
+                        },
+                        {
+                          "const": "server",
+                          "type": "string"
+                        },
+                        {
+                          "const": "network_device",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "resource",
+                "label",
+                "status",
+                "attributes"
+              ],
+              "type": "object"
+            },
+            "maxItems": 500,
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "collectedAt",
+          "dataQuality"
+        ],
+        "type": "object"
+      },
+      "ResourceOverviewItem": {
+        "$id": "ResourceOverviewItem",
+        "additionalProperties": false,
+        "properties": {
+          "freshness": {
+            "anyOf": [
+              {
+                "const": "fresh",
+                "type": "string"
+              },
+              {
+                "const": "stale",
+                "type": "string"
+              },
+              {
+                "const": "missing",
+                "type": "string"
+              }
+            ]
+          },
+          "gaps": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "impactScope": {
+            "items": {
+              "$id": "ResourceRef",
+              "properties": {
+                "id": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "type": {
+                  "$id": "ResourceType",
+                  "anyOf": [
+                    {
+                      "const": "instance",
+                      "type": "string"
+                    },
+                    {
+                      "const": "server",
+                      "type": "string"
+                    },
+                    {
+                      "const": "network_device",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "id"
+              ],
+              "type": "object"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "label": {
+            "type": "string"
+          },
+          "observedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quality": {
+            "anyOf": [
+              {
+                "const": "good",
+                "type": "string"
+              },
+              {
+                "const": "degraded",
+                "type": "string"
+              },
+              {
+                "const": "invalid",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              },
+              {
+                "const": "partial",
+                "type": "string"
+              }
+            ]
+          },
+          "relationCount": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "resource": {
+            "$id": "ResourceRef",
+            "properties": {
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "type": {
+                "$id": "ResourceType",
+                "anyOf": [
+                  {
+                    "const": "instance",
+                    "type": "string"
+                  },
+                  {
+                    "const": "server",
+                    "type": "string"
+                  },
+                  {
+                    "const": "network_device",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          },
+          "unresolvedAlerts": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "resource",
+          "label",
+          "status",
+          "quality",
+          "freshness",
+          "observedAt",
+          "unresolvedAlerts",
+          "relationCount",
+          "impactScope",
+          "gaps"
+        ],
+        "type": "object"
+      },
+      "ResourceOverviewResponse": {
+        "$id": "ResourceOverviewResponse",
+        "additionalProperties": false,
+        "properties": {
+          "collectedAt": {
+            "type": "string"
+          },
+          "dataQuality": {
+            "anyOf": [
+              {
+                "const": "complete",
+                "type": "string"
+              },
+              {
+                "const": "partial",
+                "type": "string"
+              },
+              {
+                "const": "empty",
+                "type": "string"
+              }
+            ]
+          },
+          "items": {
+            "items": {
+              "$id": "ResourceOverviewItem",
+              "additionalProperties": false,
+              "properties": {
+                "freshness": {
+                  "anyOf": [
+                    {
+                      "const": "fresh",
+                      "type": "string"
+                    },
+                    {
+                      "const": "stale",
+                      "type": "string"
+                    },
+                    {
+                      "const": "missing",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "gaps": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 32,
+                  "type": "array"
+                },
+                "impactScope": {
+                  "items": {
+                    "$id": "ResourceRef",
+                    "properties": {
+                      "id": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "type": {
+                        "$id": "ResourceType",
+                        "anyOf": [
+                          {
+                            "const": "instance",
+                            "type": "string"
+                          },
+                          {
+                            "const": "server",
+                            "type": "string"
+                          },
+                          {
+                            "const": "network_device",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 64,
+                  "type": "array"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "observedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "quality": {
+                  "anyOf": [
+                    {
+                      "const": "good",
+                      "type": "string"
+                    },
+                    {
+                      "const": "degraded",
+                      "type": "string"
+                    },
+                    {
+                      "const": "invalid",
+                      "type": "string"
+                    },
+                    {
+                      "const": "unknown",
+                      "type": "string"
+                    },
+                    {
+                      "const": "partial",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "relationCount": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "resource": {
+                  "$id": "ResourceRef",
+                  "properties": {
+                    "id": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "type": {
+                      "$id": "ResourceType",
+                      "anyOf": [
+                        {
+                          "const": "instance",
+                          "type": "string"
+                        },
+                        {
+                          "const": "server",
+                          "type": "string"
+                        },
+                        {
+                          "const": "network_device",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "unresolvedAlerts": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "resource",
+                "label",
+                "status",
+                "quality",
+                "freshness",
+                "observedAt",
+                "unresolvedAlerts",
+                "relationCount",
+                "impactScope",
+                "gaps"
+              ],
+              "type": "object"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "summary": {
+            "additionalProperties": false,
+            "properties": {
+              "byStatus": {
+                "patternProperties": {
+                  "^(.*)$": {
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "byType": {
+                "additionalProperties": false,
+                "properties": {
+                  "instance": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "network_device": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "server": {
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "instance",
+                  "server",
+                  "network_device"
+                ],
+                "type": "object"
+              },
+              "fresh": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "impactedResources": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "missing": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "stale": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "unresolvedAlerts": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "byType",
+              "byStatus",
+              "fresh",
+              "stale",
+              "missing",
+              "unresolvedAlerts",
+              "impactedResources"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "collectedAt",
+          "dataQuality",
+          "summary",
+          "items"
+        ],
+        "type": "object"
+      },
+      "ServerDiagnostics": {
+        "$id": "ServerDiagnostics",
+        "additionalProperties": false,
+        "properties": {
+          "collectedAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "gaps": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "reason": {
+                  "type": "string"
+                },
+                "section": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "section",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "interfaceErrors": {
+            "additionalProperties": false,
+            "properties": {
+              "collectedAt": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              },
+              "items": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "interface": {
+                      "type": "string"
+                    },
+                    "rxBytes": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "rxDrops": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "rxErrors": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "txBytes": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "txDrops": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "txErrors": {
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "interface",
+                    "rxBytes",
+                    "txBytes",
+                    "rxErrors",
+                    "txErrors",
+                    "rxDrops",
+                    "txDrops"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "quality": {
+                "anyOf": [
+                  {
+                    "const": "good",
+                    "type": "string"
+                  },
+                  {
+                    "const": "partial",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "source": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "validForMs": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source",
+              "collectedAt",
+              "expiresAt",
+              "validForMs",
+              "quality",
+              "truncated",
+              "items"
+            ],
+            "type": "object"
+          },
+          "listeningPorts": {
+            "additionalProperties": false,
+            "properties": {
+              "collectedAt": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              },
+              "items": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "address": {
+                      "type": "string"
+                    },
+                    "port": {
+                      "maximum": 65535,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "process": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "protocol": {
+                      "anyOf": [
+                        {
+                          "const": "tcp",
+                          "type": "string"
+                        },
+                        {
+                          "const": "udp",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unknown",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "protocol",
+                    "address",
+                    "port",
+                    "process"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "quality": {
+                "anyOf": [
+                  {
+                    "const": "good",
+                    "type": "string"
+                  },
+                  {
+                    "const": "partial",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "source": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "validForMs": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source",
+              "collectedAt",
+              "expiresAt",
+              "validForMs",
+              "quality",
+              "truncated",
+              "items"
+            ],
+            "type": "object"
+          },
+          "osType": {
+            "type": "string"
+          },
+          "quality": {
+            "anyOf": [
+              {
+                "const": "good",
+                "type": "string"
+              },
+              {
+                "const": "partial",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              },
+              {
+                "const": "unsupported",
+                "type": "string"
+              }
+            ]
+          },
+          "recentSystemLogs": {
+            "additionalProperties": false,
+            "properties": {
+              "collectedAt": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              },
+              "items": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "identifier": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "severity": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "unit": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "timestamp",
+                    "severity",
+                    "unit",
+                    "identifier",
+                    "message"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "quality": {
+                "anyOf": [
+                  {
+                    "const": "good",
+                    "type": "string"
+                  },
+                  {
+                    "const": "partial",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "source": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "validForMs": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source",
+              "collectedAt",
+              "expiresAt",
+              "validForMs",
+              "quality",
+              "truncated",
+              "items"
+            ],
+            "type": "object"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "sections": {
+            "additionalProperties": false,
+            "properties": {
+              "interfaceErrors": {
+                "additionalProperties": false,
+                "properties": {
+                  "collectedAt": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "string"
+                  },
+                  "items": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "interface": {
+                          "type": "string"
+                        },
+                        "rxBytes": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "rxDrops": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "rxErrors": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "txBytes": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "txDrops": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "txErrors": {
+                          "minimum": 0,
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "interface",
+                        "rxBytes",
+                        "txBytes",
+                        "rxErrors",
+                        "txErrors",
+                        "rxDrops",
+                        "txDrops"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "quality": {
+                    "anyOf": [
+                      {
+                        "const": "good",
+                        "type": "string"
+                      },
+                      {
+                        "const": "partial",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unknown",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unsupported",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "validForMs": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "source",
+                  "collectedAt",
+                  "expiresAt",
+                  "validForMs",
+                  "quality",
+                  "truncated",
+                  "items"
+                ],
+                "type": "object"
+              },
+              "listeningPorts": {
+                "additionalProperties": false,
+                "properties": {
+                  "collectedAt": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "string"
+                  },
+                  "items": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "address": {
+                          "type": "string"
+                        },
+                        "port": {
+                          "maximum": 65535,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "process": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "protocol": {
+                          "anyOf": [
+                            {
+                              "const": "tcp",
+                              "type": "string"
+                            },
+                            {
+                              "const": "udp",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unknown",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "protocol",
+                        "address",
+                        "port",
+                        "process"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "quality": {
+                    "anyOf": [
+                      {
+                        "const": "good",
+                        "type": "string"
+                      },
+                      {
+                        "const": "partial",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unknown",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unsupported",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "validForMs": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "source",
+                  "collectedAt",
+                  "expiresAt",
+                  "validForMs",
+                  "quality",
+                  "truncated",
+                  "items"
+                ],
+                "type": "object"
+              },
+              "services": {
+                "additionalProperties": false,
+                "properties": {
+                  "collectedAt": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "string"
+                  },
+                  "items": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "activeState": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "loadState": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "subState": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "loadState",
+                        "activeState",
+                        "subState",
+                        "description"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "quality": {
+                    "anyOf": [
+                      {
+                        "const": "good",
+                        "type": "string"
+                      },
+                      {
+                        "const": "partial",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unknown",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unsupported",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "validForMs": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "source",
+                  "collectedAt",
+                  "expiresAt",
+                  "validForMs",
+                  "quality",
+                  "truncated",
+                  "items"
+                ],
+                "type": "object"
+              },
+              "systemLogs": {
+                "additionalProperties": false,
+                "properties": {
+                  "collectedAt": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "string"
+                  },
+                  "items": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "identifier": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "severity": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "unit": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "timestamp",
+                        "severity",
+                        "unit",
+                        "identifier",
+                        "message"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "quality": {
+                    "anyOf": [
+                      {
+                        "const": "good",
+                        "type": "string"
+                      },
+                      {
+                        "const": "partial",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unknown",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unsupported",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "validForMs": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "source",
+                  "collectedAt",
+                  "expiresAt",
+                  "validForMs",
+                  "quality",
+                  "truncated",
+                  "items"
+                ],
+                "type": "object"
+              },
+              "topProcesses": {
+                "additionalProperties": false,
+                "properties": {
+                  "collectedAt": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "string"
+                  },
+                  "items": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "command": {
+                          "type": "string"
+                        },
+                        "cpuPercent": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "memoryPercent": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "pid": {
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "pid",
+                        "command",
+                        "cpuPercent",
+                        "memoryPercent"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "quality": {
+                    "anyOf": [
+                      {
+                        "const": "good",
+                        "type": "string"
+                      },
+                      {
+                        "const": "partial",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unknown",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unsupported",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "validForMs": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "source",
+                  "collectedAt",
+                  "expiresAt",
+                  "validForMs",
+                  "quality",
+                  "truncated",
+                  "items"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "services",
+              "listeningPorts",
+              "topProcesses",
+              "systemLogs",
+              "interfaceErrors"
+            ],
+            "type": "object"
+          },
+          "serverId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "serviceStatus": {
+            "additionalProperties": false,
+            "properties": {
+              "collectedAt": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              },
+              "items": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "activeState": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "loadState": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "subState": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "loadState",
+                    "activeState",
+                    "subState",
+                    "description"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "quality": {
+                "anyOf": [
+                  {
+                    "const": "good",
+                    "type": "string"
+                  },
+                  {
+                    "const": "partial",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "source": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "validForMs": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source",
+              "collectedAt",
+              "expiresAt",
+              "validForMs",
+              "quality",
+              "truncated",
+              "items"
+            ],
+            "type": "object"
+          },
+          "topProcesses": {
+            "additionalProperties": false,
+            "properties": {
+              "collectedAt": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              },
+              "items": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "command": {
+                      "type": "string"
+                    },
+                    "cpuPercent": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "memoryPercent": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "pid": {
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "command",
+                    "cpuPercent",
+                    "memoryPercent"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "quality": {
+                "anyOf": [
+                  {
+                    "const": "good",
+                    "type": "string"
+                  },
+                  {
+                    "const": "partial",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "source": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "validForMs": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source",
+              "collectedAt",
+              "expiresAt",
+              "validForMs",
+              "quality",
+              "truncated",
+              "items"
+            ],
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "validForMs": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "serverId",
+          "osType",
+          "collectedAt",
+          "expiresAt",
+          "validForMs",
+          "quality",
+          "truncated",
+          "sections",
+          "serviceStatus",
+          "listeningPorts",
+          "topProcesses",
+          "recentSystemLogs",
+          "interfaceErrors",
+          "gaps"
+        ],
+        "type": "object"
+      },
       "StorageDescriptor": {
         "$id": "StorageDescriptor",
         "additionalProperties": false,
@@ -6024,7 +8809,7 @@
   },
   "info": {
     "title": "Slide Public API",
-    "version": "0.9.0"
+    "version": "0.10"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -7258,6 +10043,421 @@
               }
             },
             "description": "Probe failed or target was denied"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/resources": {
+      "get": {
+        "operationId": "listResources",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceListResponse"
+                }
+              }
+            },
+            "description": "Permission-filtered infrastructure resources"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/resources/{type}/{id}/diagnose": {
+      "post": {
+        "operationId": "diagnoseResource",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "instance",
+                "server",
+                "network_device"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bounded cross-resource evidence pack"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/resources/{type}/{id}/diagnose-agent": {
+      "post": {
+        "operationId": "diagnoseResourceWithAgent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "instance",
+                "server",
+                "network_device"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceAgentDiagnosisResponse"
+                }
+              }
+            },
+            "description": "Cached diagnosis reused"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceAgentDiagnosisResponse"
+                }
+              }
+            },
+            "description": "Read-only Agent diagnosis queued"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "AI diagnosis permission required"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/resources/{type}/{id}/observations": {
+      "get": {
+        "operationId": "getResourceObservations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "instance",
+                "server",
+                "network_device"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "metricIds",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Latest resource observations"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/resources/overview": {
+      "get": {
+        "operationId": "getResourceOverview",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceOverviewResponse"
+                }
+              }
+            },
+            "description": "Cross-resource state, freshness, alerts and impact scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/servers/{id}/collect-diagnostics": {
+      "post": {
+        "operationId": "collectServerDiagnostics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectServerDiagnosticsResponse"
+                }
+              }
+            },
+            "description": "Collected fixed-profile server diagnostics"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid server identifier"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server manage permission required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server unavailable"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server operating-system profile unsupported"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Diagnostics collection failed"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/servers/{id}/diagnostics": {
+      "get": {
+        "operationId": "getServerDiagnostics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "refresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerDiagnostics"
+                }
+              }
+            },
+            "description": "Fixed-profile read-only server diagnostics"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid server identifier"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server view permission required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server unavailable"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server operating-system profile unsupported"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Diagnostics unavailable or stale evidence returned by a later read"
           }
         },
         "security": [

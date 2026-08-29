@@ -1,5 +1,5 @@
 /**
- * Tests for SkillsLoader — ported from nanobot Python.
+ * Tests for the Slide TypeScript SkillsLoader implementation.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";

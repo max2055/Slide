@@ -25,7 +25,6 @@ export interface AuthorizedServerTarget {
   port: number;
 }
 
-const NON_PRODUCTION_CIDRS = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
 const ALWAYS_DENIED_CIDRS = [
   '0.0.0.0/8', '100.100.100.200/32', '127.0.0.0/8', '168.63.129.16/32',
   '169.254.0.0/16', '192.0.0.192/32', '224.0.0.0/4', '240.0.0.0/4',
@@ -50,24 +49,6 @@ function addCidr(list: BlockList, cidr: string): void {
   list.addSubnet(address, prefix, version === 4 ? 'ipv4' : 'ipv6');
 }
 
-function parseCidrs(raw: string | undefined, production: boolean): string[] {
-  if (!raw?.trim()) {
-    if (production) throw denyTarget('SERVER_TARGET_POLICY_NOT_CONFIGURED');
-    return NON_PRODUCTION_CIDRS;
-  }
-  return raw.split(',').map((entry) => entry.trim()).filter(Boolean);
-}
-
-function parsePorts(raw: string | undefined, production: boolean): number[] {
-  if (!raw?.trim()) {
-    if (production) throw denyTarget('SERVER_TARGET_POLICY_NOT_CONFIGURED');
-    return [22];
-  }
-  const ports = raw.split(',').map(Number).filter((port) => Number.isInteger(port) && port > 0 && port <= 65535);
-  if (ports.length === 0) throw denyTarget('SERVER_TARGET_POLICY_NOT_CONFIGURED');
-  return ports;
-}
-
 export async function authorizeServerTarget(
   input: { host: string; port: number },
   options: {
@@ -85,13 +66,9 @@ export async function authorizeServerTarget(
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     throw denyTarget('SERVER_TARGET_INVALID_PORT');
   }
-  const production = options.production ?? process.env.NODE_ENV === 'production';
-  const ports = options.allowedPorts ?? parsePorts(process.env.SERVER_ALLOWED_PORTS, production);
-  if (production && ports.length === 0) throw denyTarget('SERVER_TARGET_POLICY_NOT_CONFIGURED');
-  if (!ports.includes(port)) throw denyTarget('SERVER_TARGET_PORT_DENIED');
+  // Ports are deliberately unrestricted after numeric validation. Keep the
+  // legacy allowedPorts and allowedCidrs options in the API for compatibility.
 
-  const allowed = new BlockList();
-  for (const cidr of parseCidrs(options.allowedCidrs ?? process.env.SERVER_ALLOWED_CIDRS, production)) addCidr(allowed, cidr);
   const denied = new BlockList();
   for (const cidr of ALWAYS_DENIED_CIDRS) addCidr(denied, cidr);
 
@@ -106,7 +83,7 @@ export async function authorizeServerTarget(
     const version = isIP(address);
     if (!version) return false;
     const family = version === 4 ? 'ipv4' : 'ipv6';
-    return !denied.check(address, family) && allowed.check(address, family);
+    return !denied.check(address, family);
   });
   if (authorized.length !== addresses.length) throw denyTarget('SERVER_TARGET_ADDRESS_DENIED');
 

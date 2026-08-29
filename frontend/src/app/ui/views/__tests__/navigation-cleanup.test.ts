@@ -23,4 +23,12 @@ describe('UI-02: navigation contract', () => {
     expect(tabFromPath('/health')).toBe('health-center');
     expect(TAB_REQUIRED_PERMISSIONS['health-center']).toBe('config:view');
   });
+
+  it('round-trips network-device inventory and context routes independently', () => {
+    expect(pathForTab('network-devices' as any)).toBe('/network-devices');
+    expect(tabFromPath('/network-devices')).toBe('network-devices');
+    expect(pathForTab('network-device-detail' as any)).toBe('/network-device-detail');
+    expect(tabFromPath('/network-device-detail')).toBe('network-device-detail');
+    expect(TAB_REQUIRED_PERMISSIONS['network-devices' as any]).toBe('network_devices:view');
+  });
 });

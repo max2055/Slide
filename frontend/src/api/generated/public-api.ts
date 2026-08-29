@@ -13,10 +13,11 @@ export type NetworkDeviceStatus = 'unknown' | 'online' | 'offline' | 'error' | '
 export interface NetworkDevice { id: number; name: string; label: string | null; host: string; site: string | null; vendor: 'huawei'; model: string | null; os_version: string | null; serial_number: string | null; snmp_port: number; ssh_port: number; status: NetworkDeviceStatus; last_check_at: string | null; collection_enabled: boolean; created_at: string; updated_at: string; hasSnmpCredential: boolean; hasSshCredential: boolean; }
 export type NetworkDevicesResponse = NetworkDevice[];
 export type NetworkDeviceSnmpSecurityLevel = 'noAuthNoPriv' | 'authNoPriv' | 'authPriv';
-export interface NetworkDeviceSnmpCredential { username: string; securityLevel: NetworkDeviceSnmpSecurityLevel; authProtocol?: 'MD5' | 'SHA' | 'SHA-256' | 'SHA-512'; authSecret?: string; privacyProtocol?: 'DES' | 'AES' | 'AES-128' | 'AES-192' | 'AES-256'; privacySecret?: string; }
-export interface NetworkDeviceTestConnectionRequest { host: string; version?: 3; snmpPort?: number; snmp_port?: number; snmpv3?: NetworkDeviceSnmpCredential; snmp?: NetworkDeviceSnmpCredential; vendor?: 'huawei'; }
+export interface NetworkDeviceSnmpCredential { username: string; securityLevel: NetworkDeviceSnmpSecurityLevel; authProtocol?: 'MD5' | 'SHA'; authSecret?: string; privacyProtocol?: 'DES' | 'AES'; privacySecret?: string; }
+export interface NetworkDeviceSshCredential { credentialType: 'password' | 'key'; username: string; credentialValue: string; hostKeyFingerprint: string; }
+export interface NetworkDeviceTestConnectionRequest { host: string; version?: 3; snmpPort?: number; snmp_port?: number; sshPort?: number; ssh_port?: number; snmpv3?: NetworkDeviceSnmpCredential; snmp?: NetworkDeviceSnmpCredential; ssh?: NetworkDeviceSshCredential; vendor?: 'huawei'; }
 export interface NetworkDeviceProbeResult { reachable: boolean; quality: string; reason?: string | null; observedAt: string; sysName?: string | null; uptimeSeconds?: number; }
-export interface NetworkDeviceTestConnectionResponse { success: boolean; probe?: NetworkDeviceProbeResult; error?: string; }
+export interface NetworkDeviceTestConnectionResponse { success: boolean; probe?: NetworkDeviceProbeResult; ssh?: { verified: boolean }; error?: string; }
 export interface NetworkDeviceProbeResponse { success: boolean; observations?: number; interfaces?: number; error?: string; }
 export interface NetworkDeviceMetric { metricId: string; value: number | null; observedAt: string | null; quality: string; source: string; dimensions?: Record<string, string> | null; }
 export interface NetworkDeviceMetricsResponse { deviceId: number; metrics: NetworkDeviceMetric[]; }
@@ -24,7 +25,7 @@ export interface NetworkDeviceInterface { id: number; deviceId: number; ifIndex:
 export interface NetworkDeviceInterfacesResponse { interfaces: NetworkDeviceInterface[]; }
 export interface NetworkDeviceCapability { key: string; state: CapabilityState; evidence: Record<string, unknown> | null; reason: string | null; checkedAt: string | null; validUntil: string | null; }
 export interface NetworkDeviceCapabilitiesResponse { deviceId: number; capabilities: NetworkDeviceCapability[]; }
-export interface ConfigBackupSummary { id: number; deviceId: number; versionNo: number; contentSha256: string; sourceProtocol: 'ssh' | 'netconf'; collectedAt: string; sizeBytes: number; redactionStatus: 'redacted' | 'unredacted' | 'failed'; }
+export interface ConfigBackupSummary { id: number; deviceId: number; versionNo: number; contentSha256: string; sourceProtocol: 'ssh'; collectedAt: string; sizeBytes: number; redactionStatus: 'redacted' | 'unredacted' | 'failed'; }
 export interface ConfigBackupDetail extends ConfigBackupSummary { preview: string; }
 export interface ConfigBackupRaw extends ConfigBackupSummary { content: string; }
 export type ConfigBackupResponse = ConfigBackupDetail | ConfigBackupRaw;
@@ -37,6 +38,14 @@ export interface NetworkDeviceRelation { source: NetworkResourceRef; target: Net
 export interface NetworkDeviceRelationInput { target: { type: 'server' | 'network_device'; id: number }; relationType: 'connected_to' | 'serves'; provenance?: string; metadata?: Record<string, unknown> | null; validFrom?: string; validUntil?: string | null; }
 export interface NetworkDeviceRelationsRequest { relations: NetworkDeviceRelationInput[]; }
 export interface NetworkDeviceRelationsResponse { relations: NetworkDeviceRelation[]; }
+
+export type ResourceType = 'instance' | 'server' | 'network_device';
+export interface ResourceRef { type: ResourceType; id: number; }
+export interface ResourceListItem { resource: ResourceRef; label: string; status: string; attributes: Record<string, string | number | boolean | null>; }
+export interface ResourceListResponse { items: ResourceListItem[]; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; }
+export interface ResourceOverviewItem { resource: ResourceRef; label: string; status: string; quality: 'good' | 'degraded' | 'invalid' | 'unknown' | 'partial'; freshness: 'fresh' | 'stale' | 'missing'; observedAt: string | null; unresolvedAlerts: number; relationCount: number; impactScope: ResourceRef[]; gaps: string[]; }
+export interface ResourceOverviewResponse { schemaVersion: 1; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; summary: { total: number; byType: Record<ResourceType, number>; byStatus: Record<string, number>; fresh: number; stale: number; missing: number; unresolvedAlerts: number; impactedResources: number; }; items: ResourceOverviewItem[]; }
+export interface ResourceAgentDiagnosisResponse { success: boolean; analysisId?: number; status?: 'queued' | 'cached'; error?: string; }
 
 export interface HealthResponse {
   status: 'ok';
@@ -120,6 +129,32 @@ export interface ReplaceInstanceHostsResponse extends InstanceHostsResponse {
 export interface HostedInstancesResponse {
   instances: HostedInstance[];
 }
+
+export type ServerDiagnosticQuality = 'good' | 'partial' | 'unknown' | 'unsupported';
+export interface ServerDiagnosticServiceStatus { name: string; loadState: string; activeState: string; subState: string; description: string | null; }
+export interface ServerDiagnosticListeningPort { protocol: 'tcp' | 'udp' | 'unknown'; address: string; port: number; process: string | null; }
+export interface ServerDiagnosticProcessSample { pid: number; command: string; cpuPercent: number; memoryPercent: number; }
+export interface ServerDiagnosticLogEntry { timestamp: string | null; severity: string; unit: string | null; identifier: string | null; message: string; }
+export interface ServerInterfaceErrorSummary { interface: string; rxBytes: number; txBytes: number; rxErrors: number; txErrors: number; rxDrops: number; txDrops: number; }
+export interface ServerDiagnosticSection<T> { source: string[]; collectedAt: string; expiresAt: string; validForMs: number; quality: ServerDiagnosticQuality; reason?: string; truncated: boolean; items: T[]; }
+export interface ServerDiagnostics {
+  schemaVersion: 1; serverId: number; osType: string; collectedAt: string; expiresAt: string; validForMs: number;
+  quality: ServerDiagnosticQuality; truncated: boolean;
+  sections: {
+    services: ServerDiagnosticSection<ServerDiagnosticServiceStatus>;
+    listeningPorts: ServerDiagnosticSection<ServerDiagnosticListeningPort>;
+    topProcesses: ServerDiagnosticSection<ServerDiagnosticProcessSample>;
+    systemLogs: ServerDiagnosticSection<ServerDiagnosticLogEntry>;
+    interfaceErrors: ServerDiagnosticSection<ServerInterfaceErrorSummary>;
+  };
+  serviceStatus: ServerDiagnosticSection<ServerDiagnosticServiceStatus>;
+  listeningPorts: ServerDiagnosticSection<ServerDiagnosticListeningPort>;
+  topProcesses: ServerDiagnosticSection<ServerDiagnosticProcessSample>;
+  recentSystemLogs: ServerDiagnosticSection<ServerDiagnosticLogEntry>;
+  interfaceErrors: ServerDiagnosticSection<ServerInterfaceErrorSummary>;
+  gaps: Array<{ section: string; reason: string }>;
+}
+export interface CollectServerDiagnosticsResponse { success: true; diagnostics: ServerDiagnostics; }
 
 export interface EvidenceSection {
   source: string[];

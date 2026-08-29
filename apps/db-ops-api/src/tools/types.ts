@@ -18,6 +18,8 @@ export interface ToolParameterProperty {
   enum?: string[];
   default?: unknown;
   items?: ToolParameterProperty;
+  properties?: Record<string, unknown>;
+  required?: string[];
 }
 
 /**
@@ -46,6 +48,8 @@ export interface ToolDefinition {
 export interface ToolResult<T = unknown> {
   /** 执行是否成功 */
   success: boolean;
+  /** Machine-readable outcome used by the Agent to decide whether to retry. */
+  status?: 'success' | 'warning' | 'error';
   /** 结果数据 */
   data?: T;
   /** 错误信息 */
@@ -58,6 +62,33 @@ export interface ToolResult<T = unknown> {
   summary?: string;
   /** 详细内容（用于完整展示） */
   details?: Record<string, unknown>;
+  /** Explicit recovery guidance for the next Agent step. */
+  next_actions?: string[];
+  /** IDs or other durable artifacts produced by the operation. */
+  artifacts?: Record<string, unknown>;
+}
+
+/**
+ * Normalize handler output at the policy boundary. Individual tools may omit
+ * presentation fields, but Agent-facing calls always expose the same outcome
+ * and recovery contract.
+ */
+export function normalizeToolResult<T>(result: ToolResult<T>, toolName = 'tool'): ToolResult<T> {
+  const status: NonNullable<ToolResult['status']> = result.status ?? (result.success ? 'success' : 'error');
+  const summary = result.summary ?? (result.success ? `${toolName} 执行完成` : `${toolName} 执行失败`);
+  const next_actions = result.next_actions ?? (result.success ? [] : ['检查错误原因后，仅在修正原因后重试']);
+  const artifacts = result.artifacts ?? extractArtifacts(result.data);
+  return { ...result, status, summary, next_actions, artifacts };
+}
+
+function extractArtifacts(data: unknown): Record<string, unknown> {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+  const record = data as Record<string, unknown>;
+  const artifacts: Record<string, unknown> = {};
+  for (const key of ['instanceId', 'instance_id', 'scanId', 'runId', 'analysisId', 'reportId', 'jobId']) {
+    if (record[key] !== undefined) artifacts[key] = record[key];
+  }
+  return artifacts;
 }
 
 /**
@@ -84,6 +115,12 @@ export interface ToolExecutionContext {
   instanceId?: number;
   /** Auditable authorization outcome calculated before a handler is called. */
   policyDecision?: PolicyDecision;
+  /** Cancellation propagated from the Agent run. */
+  signal?: AbortSignal;
+  /** Stable caller-supplied key for idempotent side-effecting tools. */
+  idempotencyKey?: string;
+  /** Progress callback for long-running or batch tools. */
+  progressCallback?: ((event: Record<string, unknown>) => Promise<void> | void) | null;
   /** 调用其他工具的方法 */
   invokeTool?: (toolName: string, args: Record<string, unknown>) => Promise<ToolResult>;
   /** 生成摘要的辅助方法 */
@@ -163,9 +200,10 @@ export interface PolicyDecision {
 }
 
 export interface ToolPolicyResource {
-  type: 'none' | 'instance' | 'server' | 'network_device' | 'database-target' | 'cron' | 'analysis';
+  type: 'none' | 'instance' | 'server' | 'network_device' | 'database-target' | 'network-scan' | 'cron' | 'analysis';
   instanceId?: number;
   serverId?: number;
+  networkDeviceId?: number;
   databaseTarget?: { host: string; port: number };
   error?: 'RESOURCE_INVALID' | 'RESOURCE_NOT_FOUND';
 }

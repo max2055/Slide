@@ -45,6 +45,7 @@ export const expensiveOperationRateLimitConfig = {
 
 const PUBLIC_5XX_REASON_CODES = new Set([
   'SANDBOX_NOT_READY',
+  'SANDBOX_NETWORK_NOT_READY',
   'SANDBOX_CONFIG_UPDATE_FAILED',
 ]);
 

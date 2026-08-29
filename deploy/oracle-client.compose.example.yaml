@@ -1,0 +1,9 @@
+# Optional production override for a source-built API deployment.
+# The release API image already bundles the ARM64 Oracle Instant Client and
+# enables Thick mode by default, so this host bind mount is normally unused.
+services:
+  api:
+    environment:
+      NODE_ORACLEDB_DRIVER_MODE: thick
+      NODE_ORACLEDB_CLIENT_LIB_DIR: /opt/oracle/instantclient
+      LD_LIBRARY_PATH: /opt/oracle/instantclient

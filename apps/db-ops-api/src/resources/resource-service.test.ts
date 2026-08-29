@@ -67,6 +67,23 @@ describe('Resource relations', () => {
     expect(saved).toHaveLength(2);
   });
 
+  it('rejects direct network-device to database-instance edges', async () => {
+    const service = new ResourceService({
+      exists: async () => true,
+      insertRelation: async () => {},
+      listRelations: async () => [],
+    });
+    const manager = actor({}, ['network_devices:manage', 'instance:manage']);
+    await expect(service.createRelation(manager, {
+      source: { type: 'network_device', id: 9 }, target: { type: 'instance', id: 11 }, relationType: 'serves',
+      provenance: 'manual', validFrom: new Date('2026-08-10T00:00:00Z'),
+    })).rejects.toThrow('RESOURCE_RELATION_TOPOLOGY_INVALID');
+    await expect(service.createRelation(manager, {
+      source: { type: 'instance', id: 11 }, target: { type: 'network_device', id: 9 }, relationType: 'connected_to',
+      provenance: 'manual', validFrom: new Date('2026-08-10T00:00:00Z'),
+    })).rejects.toThrow('RESOURCE_RELATION_TOPOLOGY_INVALID');
+  });
+
   it('does not treat instance-wide permissions as server permissions', () => {
     const instanceAdmin = actor({ 1: 'admin' }, ['instance:*']);
     expect(canReadResource(instanceAdmin, { type: 'server', id: 20 })).toBe(false);

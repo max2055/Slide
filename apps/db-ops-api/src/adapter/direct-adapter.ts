@@ -43,6 +43,7 @@ import { validateChatSendV2 } from './protocol-v2.js';
 import { agentRunService } from './agent-run-service.js';
 import { getDeviceAuthService } from '../security/device-auth-service.js';
 import { completeAnalysisTool } from '../tools/generated/slide-self-mgmt/complete_analysis.js';
+import { normalizeToolResult } from '../tools/types.js';
 import {
   ActorConcurrencyLimiter,
   FixedWindowRateLimiter,
@@ -64,12 +65,10 @@ function analysisCompletionTools(analysisId?: number): ToolRegistry {
     scope: completeAnalysisTool.scope,
     execute: async (args: Record<string, unknown>) => {
       if (Number(args.analysisId) !== analysisId) {
-        return { success: false, errorCode: 'ANALYSIS_BINDING_MISMATCH', error: 'Analysis target denied' };
+        return normalizeToolResult({ success: false, errorCode: 'ANALYSIS_BINDING_MISMATCH', error: 'Analysis target denied' }, completeAnalysisTool.name);
       }
       const result = await completeAnalysisTool.handler({ ...args, analysisId });
-      return result && typeof result === 'object' && 'data' in result
-        ? (result as { data?: unknown }).data ?? result
-        : result;
+      return normalizeToolResult(result, completeAnalysisTool.name);
     },
   });
   return tools;
@@ -83,10 +82,15 @@ function mapHookEventToChatEvent(
   thinkingHolder?: { text: string },
   streamHolder?: { text: string },
 ): AgentHook {
+  let reasoningActive = false;
   return {
     wantsStreaming: () => true,
     beforeIteration: async () => {},
     onStream: async (_ctx: AgentHookContext, delta: string) => {
+      if (reasoningActive) {
+        reasoningActive = false;
+        onEvent({ type: 'thinking_end' });
+      }
       // Accumulate full text and send as delta so the frontend's chatStream
       // replacement renders as progressively building text (not flickering chars).
       if (streamHolder) streamHolder.text += delta;
@@ -100,20 +104,16 @@ function mapHookEventToChatEvent(
     },
     emitReasoning: async (text: string | null) => {
       if (text) {
+        reasoningActive = true;
         if (thinkingHolder) thinkingHolder.text += text;
-        if (streamHolder) {
-          streamHolder.text += text;
-          onEvent({ type: 'text_delta', delta: streamHolder.text });
-        }
+        onEvent({ type: 'thinking_delta', delta: text });
       }
     },
     emitReasoningEnd: async () => {
       // Only insert separator if reasoning text was accumulated (WR-08)
-      if (thinkingHolder && !thinkingHolder.text) return;
-      if (streamHolder) {
-        streamHolder.text += '\n\n';
-        onEvent({ type: 'text_delta', delta: streamHolder.text });
-      }
+      if (!reasoningActive) return;
+      reasoningActive = false;
+      onEvent({ type: 'thinking_end' });
     },
     afterIteration: async (ctx: AgentHookContext) => {
       for (const te of ctx.toolEvents) {
@@ -175,6 +175,7 @@ export class DirectAdapter implements IAgentEngine {
   private readonly runLimiter = new ActorConcurrencyLimiter(this.runtimeLimits.maxConcurrentRunsPerActor);
   private wsServer: WebSocketServer | null = null;
   private activeRuns = new Map<string, { actorId: number; sessionId: string; controller: AbortController }>();
+  private sessionLocks = new Map<string, Promise<void>>();
   /** Track WebSocket clients subscribed to each session for invoke() broadcast. */
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
 
@@ -480,7 +481,7 @@ export class DirectAdapter implements IAgentEngine {
               }
 
               await chatDatabaseService.addMessage(messageActor, sessionKey, {
-                messageId: `msg_${Date.now()}_user`,
+                messageId: `msg_${randomUUID()}_user`,
                 role: 'user',
                 content: userMessage,
               });
@@ -494,6 +495,7 @@ export class DirectAdapter implements IAgentEngine {
               const chatResult = await this.chat(sessionKey, userMessage, async (event) => {
                 // Persist assistant's final response BEFORE sending to client,
                 // so the history API returns the complete conversation.
+                let outgoingEvent: ChatEvent = event;
                 if (event.type === 'complete' && event.finalContent) {
                   try {
                     // Embed thinking as <think> tags in the content for DB storage.
@@ -502,20 +504,21 @@ export class DirectAdapter implements IAgentEngine {
                     const dbContent = thinking
                       ? `<think>${thinking}</think>\n\n${event.finalContent}`
                       : event.finalContent;
-                    await chatDatabaseService.addMessage(messageActor, sessionKey, {
-                      messageId: `msg_${Date.now()}_asst`,
+                    const messageSequence = await chatDatabaseService.addMessage(messageActor, sessionKey, {
+                      messageId: `msg_${randomUUID()}_asst`,
                       role: 'assistant',
                       content: dbContent,
                     });
+                    outgoingEvent = { ...event, messageSequence };
                   } catch (dbErr) {
                     console.error('[DirectAdapter] Failed to persist assistant message:', dbErr instanceof Error ? dbErr.message : String(dbErr));
                   }
                 }
                 ws.send(JSON.stringify({
-                  ...event,
+                  ...outgoingEvent,
                   ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
                 }));
-              }, messageActor, controller.signal);
+                }, messageActor, controller.signal, idempotencyKey);
               if (persistentRun) {
                 const terminal = chatResult.stopReason === 'completed'
                   ? 'completed'
@@ -564,6 +567,7 @@ export class DirectAdapter implements IAgentEngine {
               // Map DB records to frontend-compatible message format
               const mapped = messages.map((m) => ({
                 id: m.message_id,
+                sequence: m.sequence,
                 role: m.role,
                 content: m.content,
                 createdAt: m.created_at instanceof Date ? m.created_at.toISOString() : m.created_at,
@@ -614,6 +618,22 @@ export class DirectAdapter implements IAgentEngine {
     console.log(`[DirectAdapter] WS transport listening on port ${port}`);
   }
 
+  private async withSessionLock<T>(sessionKey: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.sessionLocks.get(sessionKey) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    this.sessionLocks.set(sessionKey, current);
+    await previous;
+    try {
+      return await task();
+    } finally {
+      release();
+      if (this.sessionLocks.get(sessionKey) === current) {
+        this.sessionLocks.delete(sessionKey);
+      }
+    }
+  }
+
   // ── chat() — streaming chat session with subsystem integration ──
 
   async chat(
@@ -622,6 +642,20 @@ export class DirectAdapter implements IAgentEngine {
     onEvent: (event: ChatEvent) => void,
     _actor?: ActorContext,
     signal?: AbortSignal,
+    idempotencyKey?: string,
+  ): Promise<ChatResult> {
+    return this.withSessionLock(sessionKey, () =>
+      this.runChat(sessionKey, message, onEvent, _actor, signal, idempotencyKey),
+    );
+  }
+
+  private async runChat(
+    sessionKey: string,
+    message: string,
+    onEvent: (event: ChatEvent) => void,
+    _actor?: ActorContext,
+    signal?: AbortSignal,
+    idempotencyKey?: string,
   ): Promise<ChatResult> {
     // Get or create session via SessionManager (D-07)
     const session = this.sessionManager.getOrCreate(sessionKey);
@@ -682,6 +716,11 @@ export class DirectAdapter implements IAgentEngine {
         maxTokens: 4096,
         sessionKey,
         signal,
+        idempotencyKey,
+        toolProgressCallback: async (progress) => {
+          const toolName = typeof progress.toolName === 'string' ? progress.toolName : 'tool';
+          onEvent({ type: 'tool_progress', toolName, progress });
+        },
       });
 
       // Embed reasoning as <think> tags in the session/DB content string.
@@ -727,6 +766,17 @@ export class DirectAdapter implements IAgentEngine {
   // ── invoke() — fire-and-forget task execution ──
 
   async invoke(
+    sessionKey: string,
+    message: string,
+    systemPrompt?: string,
+    options?: InvokeOptions,
+  ): Promise<InvokeResult> {
+    return this.withSessionLock(sessionKey, () =>
+      this.runInvoke(sessionKey, message, systemPrompt, options),
+    );
+  }
+
+  private async runInvoke(
     sessionKey: string,
     message: string,
     systemPrompt?: string,

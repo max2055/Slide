@@ -31,6 +31,16 @@ interface AgentApproval {
   created_at: string;
 }
 
+export function agentApprovalsLoadError(status: number): string {
+  if (status === 401 || status === 403) {
+    return 'Agent 审批列表加载失败：当前用户没有审批查看权限';
+  }
+  if (status === 503) {
+    return 'Agent 审批列表加载失败：审批表不可用，请检查数据库迁移';
+  }
+  return `Agent 审批列表加载失败（HTTP ${status}）`;
+}
+
 interface ApprovalEvent {
   id: number;
   request_id: number;
@@ -115,7 +125,7 @@ export class ApprovalDashboard extends LitElement {
   @state() private view: "list" | "detail" = "list";
   @state() private requests: ApprovalRequest[] = [];
   @state() private agentApprovals: AgentApproval[] = [];
-  @state() private approvalKind: 'sql' | 'agent' = 'sql';
+  @state() private agentApprovalsError: string | null = null;
   @state() private filter: "pending" | "processed" = "pending";
   @state() private selectedIds: Set<number> = new Set();
   @state() private executeAfterApprove: Record<number, boolean> = {};
@@ -150,31 +160,28 @@ export class ApprovalDashboard extends LitElement {
   private async loadRequests() {
     this.loading = true;
     try {
-      const endpoint = this.filter === "pending" ? "/api/approval/pending" : "/api/approval/history";
+      const endpoint = `/api/approval/unified?status=${this.filter}`;
       const res = await authFetch(endpoint);
       if (res.ok) {
-        this.requests = await res.json() || [];
+        const payload = await res.json() as { items?: Array<ApprovalRequest & { kind?: 'sql' | 'agent' }> };
+        const items = Array.isArray(payload?.items) ? payload.items : [];
+        this.requests = items.filter((item) => item.kind !== 'agent') as ApprovalRequest[];
+        this.agentApprovals = items.filter((item) => item.kind === 'agent') as unknown as AgentApproval[];
+        this.agentApprovalsError = null;
         if (this.filter === 'pending') {
           this.executeAfterApprove = Object.fromEntries(this.requests.map(r => [r.id, true]));
         }
       } else {
         this.requests = [];
+        this.agentApprovals = [];
+        this.agentApprovalsError = agentApprovalsLoadError(res.status);
       }
     } catch {
       this.requests = [];
+      this.agentApprovals = [];
+      this.agentApprovalsError = '审批列表加载失败，请检查数据库迁移和当前用户权限';
     }
     this.loading = false;
-    await this.loadAgentApprovals();
-  }
-
-  private async loadAgentApprovals() {
-    try {
-      const response = await authFetch('/api/agent/approvals/pending');
-      const payload = await response.json();
-      this.agentApprovals = Array.isArray(payload?.approvals) ? payload.approvals : [];
-    } catch {
-      this.agentApprovals = [];
-    }
   }
 
   private async reviewAgentApproval(id: string, action: 'approve' | 'reject', scope?: 'once' | 'window' | 'session') {
@@ -185,7 +192,7 @@ export class ApprovalDashboard extends LitElement {
         body: JSON.stringify({ action, ...(scope ? { scope } : {}) }),
       });
       if (!response.ok) throw new Error('review failed');
-      await this.loadAgentApprovals();
+      await this.loadRequests();
     } catch {
       this.detailError = 'Agent 审批处理失败，请重试';
     }
@@ -247,7 +254,7 @@ export class ApprovalDashboard extends LitElement {
   private _statusLabel(status: string): string {
     const labels: Record<string, string> = {
       'pending': '待审批', 'approved': '已通过', 'rejected': '已驳回',
-      'executed': '已执行', 'cancelled': '已取消',
+      'executed': '已执行', 'cancelled': '已取消', 'consumed': '已执行', 'expired': '已过期',
     };
     return labels[status] || status;
   }
@@ -444,33 +451,30 @@ export class ApprovalDashboard extends LitElement {
   }
 
   private renderList() {
+    const agentItems = this.agentApprovals;
+    const sqlItems = this.requests;
     return html`
       <div class="tabs">
-        <button class="tab ${this.approvalKind === 'sql' ? 'active' : ''}" @click=${() => { this.approvalKind = 'sql'; }}>SQL 审批</button>
-        <button class="tab ${this.approvalKind === 'agent' ? 'active' : ''}" @click=${() => { this.approvalKind = 'agent'; this.loadAgentApprovals(); }}>Agent 工具审批</button>
+        <button class="tab ${this.filter === 'pending' ? 'active' : ''}" @click=${() => { this.filter = 'pending'; this.clearSelection(); this.loadRequests(); }}>待审批</button>
+        <button class="tab ${this.filter === 'processed' ? 'active' : ''}" @click=${() => { this.filter = 'processed'; this.clearSelection(); this.loadRequests(); }}>已审批</button>
       </div>
-      ${this.approvalKind === 'agent' ? html`
-        ${this.agentApprovals.length === 0 ? html`<div class="empty">暂无待审批 Agent 工具请求</div>` : this.agentApprovals.map((approval) => html`
+      ${this.agentApprovalsError ? html`<div class="error-box">${this.agentApprovalsError}</div>` : nothing}
+      ${this.loading ? html`<div class="loading">加载中...</div>` : html`
+        ${agentItems.map((approval) => html`
           <div class="card">
-            <div class="card-header"><strong>${approval.tool_name}</strong><span class="ai-badge">#${approval.id}</span></div>
+            <div class="card-header"><div><app-badge variant="info">Agent</app-badge> <strong>${approval.tool_name}</strong></div><span class="ai-badge">#${approval.id}</span></div>
             <div class="sql-preview">${JSON.stringify({ args: approval.args_redacted, resource: approval.resource_json }, null, 2)}</div>
+            <div style="margin-top:8px;font-size:12px;color:var(--muted)">状态：${this._statusLabel(approval.status)}</div>
+            ${approval.status === 'pending' ? html`
             <div class="actions">
               <span class="ai-badge">风险：${approval.risk_level || 'high'} / ${approval.scope || 'once'}</span>
               <button class="btn btn-approve" @click=${() => this.reviewAgentApproval(approval.id, 'approve', approval.risk_level === 'high' ? 'once' : approval.scope || 'window')}>通过</button>
               ${approval.risk_level !== 'high' ? html`<button class="btn btn-approve" @click=${() => this.reviewAgentApproval(approval.id, 'approve', 'window')}>允许 5 分钟</button>` : nothing}
               <button class="btn btn-reject" @click=${() => this.reviewAgentApproval(approval.id, 'reject')}>驳回</button>
             </div>
+            ` : nothing}
           </div>
         `)}
-      ` : html`
-      <div class="tabs">
-        <button class="tab ${this.filter === 'pending' ? 'active' : ''}" @click=${() => { this.filter = 'pending'; this.clearSelection(); this.loadRequests(); }}>
-          待审批
-        </button>
-        <button class="tab ${this.filter === 'processed' ? 'active' : ''}" @click=${() => { this.filter = 'processed'; this.clearSelection(); this.loadRequests(); }}>
-          已处理
-        </button>
-      </div>
 
       ${this.filter === 'pending' && this.selectedIds.size > 0 ? html`
         <div class="batch-bar">
@@ -485,9 +489,7 @@ export class ApprovalDashboard extends LitElement {
         </div>
       ` : ''}
 
-      ${this.loading ? html`<div class="loading">加载中...</div>` :
-      this.requests.length === 0 ? html`<div class="empty">${this.filter === 'pending' ? '暂无待审批请求' : '暂无已处理记录'}</div>` :
-      this.requests.map(r => html`
+      ${sqlItems.map(r => html`
         <div class="card ${this.selectedIds.has(r.id) ? 'selected' : ''}">
           <div class="card-row" @click=${() => this.openDetail(r)}>
             ${this.filter === 'pending' ? html`
@@ -498,7 +500,7 @@ export class ApprovalDashboard extends LitElement {
             <div class="card-body">
               <div class="card-header">
                 <div>
-                  ${this._riskBadge(r.risk_level)}
+                  <app-badge variant="info">SQL</app-badge> ${this._riskBadge(r.risk_level)}
                   <span style="margin-left:8px;font-size:12px;color:var(--muted)">#${r.id} · ${new Date(r.created_at).toLocaleString("zh-CN")}</span>
                   ${r.target_database ? html`
                     <span style="margin-left:8px;font-size:11px;color:var(--muted, #6b7280)">DB: ${r.target_database}</span>
@@ -535,6 +537,7 @@ export class ApprovalDashboard extends LitElement {
           ` : ''}
         </div>
       `)}
+      ${agentItems.length === 0 && sqlItems.length === 0 ? html`<div class="empty">${this.filter === 'pending' ? '暂无待审批请求' : '暂无已审批记录'}</div>` : nothing}
 
       ${this._renderBatchDialog()}
       `}

@@ -6,11 +6,13 @@ import "../components/metric-chart.js";
 import "../components/app-badge.js";
 import "../components/app-card.js";
 import "../components/app-empty-state.js";
+import "../components/server-diagnostic-panel.js";
 import { showToast } from "../components/app-toast-container.js";
 import { authFetch } from "../../../api/index.js";
 import { aggregateServerDiskUsage } from "./server-metric-utils.js";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.js";
 import type { HostedInstance, HostedInstancesResponse } from "../../../api/generated/public-api.js";
+import type { ServerDiagnosticEvidence } from "../components/server-diagnostic-panel.js";
 
 interface ServerDetail {
   id: number;
@@ -33,6 +35,8 @@ interface MetricEntry {
   recorded_at: string;
   dimensions?: Record<string, unknown> | string | null;
 }
+
+type EvidenceQualityLabel = "good" | "partial" | "unknown";
 
 @customElement("server-detail")
 export class ServerDetailPage extends LitElement {
@@ -179,12 +183,16 @@ export class ServerDetailPage extends LitElement {
   @state() private activeTab: string = "overview";
   @state() private activeRange: string = "1h";
   @state() private historyLoading = false;
-  @state() private historyData: { time: string[]; metrics: Record<string, number[]> } | null = null;
+  @state() private historyData: { time: string[]; metrics: Record<string, number[]>; dimensions?: Record<string, Record<string, unknown> | null> } | null = null;
   @state() private lastUpdated: Date | null = null;
   @state() private isRefreshing = false;
   @state() private hostedInstances: HostedInstance[] = [];
   @state() private hostedInstancesLoading = false;
   @state() private hostedInstancesError: string | null = null;
+  @state() private diagnostics: ServerDiagnosticEvidence | null = null;
+  @state() private diagnosticsLoading = false;
+  @state() private diagnosticsError: string | null = null;
+  @state() private diagnosticsCollecting = false;
   private _navHandler: ((e: any) => void) | null = null;
   private contextVersion = 0;
 
@@ -300,6 +308,47 @@ export class ServerDetailPage extends LitElement {
     }
   }
 
+  private async loadDiagnostics(id: number, version = this.contextVersion): Promise<void> {
+    this.diagnosticsLoading = true;
+    this.diagnosticsError = null;
+    try {
+      const response = await authFetch(`/api/servers/${id}/diagnostics`);
+      if (response.status === 404) {
+        // Older backends may not expose the optional evidence route yet.
+        if (version === this.contextVersion) this.diagnostics = null;
+        return;
+      }
+      if (!response.ok) throw new Error("服务器诊断证据加载失败");
+      const payload = await response.json();
+      const evidence = payload?.evidence ?? payload;
+      if (version === this.contextVersion) this.diagnostics = evidence as ServerDiagnosticEvidence;
+    } catch (error) {
+      if (version === this.contextVersion) {
+        this.diagnosticsError = error instanceof Error ? error.message : "服务器诊断证据加载失败";
+      }
+    } finally {
+      if (version === this.contextVersion) this.diagnosticsLoading = false;
+    }
+  }
+
+  private async collectDiagnostics() {
+    if (!this.serverId || this.diagnosticsCollecting) return;
+    this.diagnosticsCollecting = true;
+    try {
+      const response = await authFetch(`/api/servers/${this.serverId}/collect-diagnostics`, { method: "POST" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "诊断采集失败");
+      }
+      await this.loadDiagnostics(this.serverId);
+      showToast("诊断证据已更新", "success");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "诊断采集失败", "error");
+    } finally {
+      this.diagnosticsCollecting = false;
+    }
+  }
+
   private async loadMetricHistory(id: number, range: string) {
     this.historyLoading = true;
     try {
@@ -313,22 +362,33 @@ export class ServerDetailPage extends LitElement {
         // Group by metric_name, extract time/value arrays
         const timeMap = new Map<string, string[]>();
         const valueMap = new Map<string, number[]>();
+        const dimensionMap = new Map<string, Record<string, unknown> | null>();
 
         for (const entry of metrics) {
-          const name = entry.metric_name;
+          let dimensions: Record<string, unknown> | null = null;
+          if (typeof entry.dimensions === "string") {
+            try { dimensions = JSON.parse(entry.dimensions); } catch { dimensions = null; }
+          } else if (entry.dimensions && typeof entry.dimensions === "object") {
+            dimensions = entry.dimensions;
+          }
+          const suffix = dimensions && Object.keys(dimensions).length
+            ? ` [${Object.entries(dimensions).map(([key, value]) => `${key}=${String(value)}`).join(", ")}]`
+            : "";
+          const name = `${entry.metric_name}${suffix}`;
           const time = entry.recorded_at ? entry.recorded_at.substring(0, 16).replace("T", " ") : "";
           const val = Number(entry.metric_value);
           if (!timeMap.has(name)) timeMap.set(name, []);
           if (!valueMap.has(name)) valueMap.set(name, []);
           timeMap.get(name)!.push(time);
           valueMap.get(name)!.push(val);
+          dimensionMap.set(name, dimensions);
         }
 
         // Use the first metric's time array as the common time axis
         const firstKey = timeMap.keys().next().value;
         const commonTime = firstKey ? timeMap.get(firstKey) || [] : [];
 
-        this.historyData = { time: commonTime, metrics: Object.fromEntries(valueMap) };
+        this.historyData = { time: commonTime, metrics: Object.fromEntries(valueMap), dimensions: Object.fromEntries(dimensionMap) };
       }
     } catch (err: any) {
       // Silently fail for history
@@ -354,6 +414,7 @@ export class ServerDetailPage extends LitElement {
       }
       this.lastUpdated = new Date();
       if (this.activeTab === "metrics") await this.loadMetricHistory(serverId, this.activeRange);
+      if (["network", "processes", "services", "logs"].includes(this.activeTab)) await this.loadDiagnostics(serverId);
     } catch (err: any) {
       console.warn('[server-detail] refresh failed:', err);
       showToast(err.message || '刷新失败', 'error');
@@ -414,6 +475,9 @@ export class ServerDetailPage extends LitElement {
     if (tab === "metrics" && this.serverId) {
       this.loadMetricHistory(this.serverId, this.activeRange);
     }
+    if (["diagnostics", "network", "processes", "services", "logs"].includes(tab) && this.serverId && !this.diagnostics) {
+      this.loadDiagnostics(this.serverId);
+    }
   }
 
   private _setRange(range: string) {
@@ -431,6 +495,34 @@ export class ServerDetailPage extends LitElement {
   private _metricValue(name: string): number | null {
     const entry = this.metrics.find(m => m.metric_name === name);
     return entry ? entry.metric_value : null;
+  }
+
+  private _evidenceQuality(): EvidenceQualityLabel {
+    const explicit = (this.server as ServerDetail & { collection_quality?: string } | null)?.collection_quality;
+    if (explicit === "good" || explicit === "partial" || explicit === "unknown") return explicit;
+    const expected = ["cpu_usage", "memory_usage", "load_1min"];
+    const count = expected.filter((name) => this.metrics.some((metric) => metric.metric_name === name)).length;
+    if (count === 0) return "unknown";
+    return count === expected.length ? "good" : "partial";
+  }
+
+  private _evidenceFreshness(): "fresh" | "stale" | "expired" | "unknown" {
+    const timestamp = this.metrics.reduce<string | null>((latest, metric) => {
+      if (!metric.recorded_at) return latest;
+      return !latest || metric.recorded_at > latest ? metric.recorded_at : latest;
+    }, this.server?.last_check_at ?? null);
+    if (!timestamp) return "unknown";
+    const age = Date.now() - new Date(timestamp).getTime();
+    if (!Number.isFinite(age) || age < 0) return "unknown";
+    if (age < 5 * 60_000) return "fresh";
+    if (age < 30 * 60_000) return "stale";
+    return "expired";
+  }
+
+  private _qualityVariant(quality: EvidenceQualityLabel): "ok" | "warn" | "muted" {
+    if (quality === "good") return "ok";
+    if (quality === "partial") return "warn";
+    return "muted";
   }
 
   private _aggregateDiskUsage(): number | null {
@@ -516,6 +608,12 @@ export class ServerDetailPage extends LitElement {
             { key: "metrics", label: "指标" },
             { key: "config", label: "配置" },
             { key: "alerts", label: "告警" },
+            { key: "diagnostics", label: "诊断" },
+            { key: "network", label: "网络" },
+            { key: "processes", label: "进程" },
+            { key: "services", label: "服务" },
+            { key: "logs", label: "日志" },
+            { key: "related", label: "关联资源" },
           ].map(t => html`
             <button class="tab ${this.activeTab === t.key ? "active" : ""}" @click=${() => this._setTab(t.key)}>
               ${t.label}
@@ -533,8 +631,42 @@ export class ServerDetailPage extends LitElement {
       case "overview": return this._renderOverview();
       case "metrics": return this._renderMetrics();
       case "config": return this._renderConfig();
+      case "diagnostics": return this._renderDiagnosticSection(null);
+      case "network": return this._renderDiagnosticSection("network");
+      case "processes": return this._renderDiagnosticSection("processes");
+      case "services": return this._renderDiagnosticSection("services");
+      case "logs": return this._renderDiagnosticSection("logs");
+      case "related": return this._renderRelatedResources();
       default: return this._renderOverview();
     }
+  }
+
+  private _renderDiagnosticSection(section: string | null) {
+    return html`
+      <app-card>
+        <span slot="header">${section === "network" ? "网络证据" : section === "processes" ? "进程证据" : section === "services" ? "服务证据" : section === "logs" ? "系统日志" : "服务器诊断证据"}</span>
+        <server-diagnostic-panel
+          .evidence=${this.diagnostics}
+          .loading=${this.diagnosticsLoading}
+          .error=${this.diagnosticsError}
+          .sectionFilter=${section}
+        ></server-diagnostic-panel>
+        <div slot="footer">
+          <button class="btn" type="button" @click=${this.collectDiagnostics} .disabled=${this.diagnosticsCollecting}>
+            ${this.diagnosticsCollecting ? "采集中…" : "采集诊断证据"}
+          </button>
+        </div>
+      </app-card>
+    `;
+  }
+
+  private _renderRelatedResources() {
+    return html`
+      <app-card>
+        <span slot="header">关联资源</span>
+        ${this._renderHostedInstances()}
+      </app-card>
+    `;
   }
 
   private _renderOverview() {
@@ -547,6 +679,8 @@ export class ServerDetailPage extends LitElement {
     const load5 = this._metricValue("load_5min");
     const load15 = this._metricValue("load_15min");
     const uptime = this._metricValue("uptime");
+    const quality = this._evidenceQuality();
+    const freshness = this._evidenceFreshness();
 
     return html`
       <!-- Summary cards -->
@@ -614,6 +748,14 @@ export class ServerDetailPage extends LitElement {
           <div class="status-item">
             <div class="status-label">上次采集</div>
             <div class="status-value">${this._formatLastCheck()}</div>
+          </div>
+          <div class="status-item">
+            <div class="status-label">采集质量</div>
+            <div class="status-value"><app-badge variant=${this._qualityVariant(quality)}>${quality}</app-badge></div>
+          </div>
+          <div class="status-item">
+            <div class="status-label">证据新鲜度</div>
+            <div class="status-value"><app-badge variant=${freshness === "fresh" ? "ok" : freshness === "stale" ? "warn" : "muted"}>${freshness}</app-badge></div>
           </div>
         </div>
       </app-card>

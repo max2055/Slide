@@ -8,6 +8,7 @@ import { sandboxClient } from './sandbox-client.js';
 import { agentSandboxConfigService } from './agent-sandbox-config-service.js';
 import { auditLogManager } from '../audit/audit-log.js';
 import { securityEventService } from './security-event-service.js';
+import { agentExecutionConfigService, type AgentExecutionConfigUpdate } from './agent-execution-config-service.js';
 
 const SUPPORTED_AGENT_IDS = new Set([DEFAULT_AGENT_ID]);
 const CODE_RUNTIMES = new Set(['shell', 'sh', 'bash', 'python', 'python3', 'node', 'nodejs']);
@@ -22,10 +23,27 @@ function sandboxReady(status: unknown): boolean {
     && value.policy.runtimes.some((runtime: unknown) => typeof runtime === 'string' && CODE_RUNTIMES.has(runtime));
 }
 
+function restrictedNetworkReady(status: unknown): boolean {
+  if (!status || typeof status !== 'object') return false;
+  const value = status as Record<string, any>;
+  return value.status === 'ok'
+    && value.daemon?.reachable === true
+    && value.daemon?.rootless === true
+    && value.policy?.network === 'restricted';
+}
+
 function strictSandboxConfigBody(value: unknown): value is { enabled: boolean } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const entries = Object.entries(value);
   return entries.length === 1 && entries[0]?.[0] === 'enabled' && typeof entries[0][1] === 'boolean';
+}
+
+function strictExecutionConfigBody(value: unknown): value is AgentExecutionConfigUpdate {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  if (entries.length === 0 || entries.some(([key, item]) =>
+    !['approvalEnabled', 'restrictedNetworkEnabled'].includes(key) || typeof item !== 'boolean')) return false;
+  return true;
 }
 
 function validName(value: unknown, max = 128): value is string {
@@ -149,6 +167,64 @@ export async function registerAgentSecurityRoutes(
       return reply.send({ configured: true, reachable: true, status });
     } catch {
       return reply.send({ configured: true, reachable: false });
+    }
+  });
+
+  fastify.get('/api/agent/security/config', {
+    preHandler: [verifyToken, requirePermission('admin:*')],
+  }, async (_request, reply) => reply.send(await agentExecutionConfigService.get()));
+
+  fastify.put('/api/agent/security/config', {
+    preHandler: [verifyToken, requirePermission('admin:*')],
+  }, async (request, reply) => {
+    const actor = (request as any).user as ActorContext;
+    if (!strictExecutionConfigBody(request.body)) {
+      return reply.code(400).send({ reasonCode: 'EXECUTION_CONFIG_UPDATE_INVALID' });
+    }
+    const current = await agentExecutionConfigService.get();
+    if (request.body.restrictedNetworkEnabled && !current.restrictedNetworkEnabled) {
+      let ready = false;
+      if (sandboxClient.configured()) {
+        try {
+          ready = restrictedNetworkReady(await sandboxClient.status(AbortSignal.timeout(4000)));
+        } catch {
+          ready = false;
+        }
+      }
+      if (!ready) {
+        await securityEventService.record({
+          eventType: 'agent_sandbox_config_denied',
+          reasonCode: 'SANDBOX_NETWORK_NOT_READY',
+          actorId: actor.userId,
+          resourceType: 'system-config',
+          resourceId: 'agent_sandbox_network_enabled',
+          requestId: actor.requestId,
+        }).catch(() => undefined);
+        return reply.code(503).send({ reasonCode: 'SANDBOX_NETWORK_NOT_READY' });
+      }
+    }
+    try {
+      const updated = await agentExecutionConfigService.set(request.body, actor.userId);
+      for (const [configKey, oldValue, newValue] of [
+        ['agent_tool_approval_enabled', current.approvalEnabled, updated.approvalEnabled],
+        ['agent_sandbox_network_enabled', current.restrictedNetworkEnabled, updated.restrictedNetworkEnabled],
+      ] as const) {
+        if (oldValue !== newValue) {
+          await auditLogManager.logConfigChange({
+            userId: String(actor.userId),
+            username: actor.username,
+            configKey,
+            oldValue,
+            newValue,
+            clientIp: request.ip,
+          });
+        }
+      }
+      return reply.send(updated);
+    } catch (error) {
+      const reasonCode = error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
+        ? error.message : 'EXECUTION_CONFIG_UPDATE_FAILED';
+      return reply.code(reasonCode === 'EXECUTION_CONFIG_UPDATE_INVALID' ? 400 : 500).send({ reasonCode });
     }
   });
 

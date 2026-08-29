@@ -5,7 +5,7 @@
 ## Architecture
 - **Frontend** - Lit 3.3 + Vite (Web Components), port 5173
 - **Backend** - Fastify + TypeScript, port 3000
-- **Agent Engine** - @slide/agent-core (nanobot port), DirectAdapter WS on port 28888
+- **Agent Engine** - @slide/agent-core (原 nanobot 为 Python；项目组以 TypeScript 重写 Agent 核心), DirectAdapter WS on port 28888
 - **Databases** - MySQL (primary) + Elasticsearch + MongoDB + Redis
 - **Auth** - JWT
 - **LLM** - Anthropic SDK / OpenAI SDK / Ollama

@@ -207,17 +207,24 @@ export class HuaweiAdapter {
       const adminStatus = mapStatus(rowValue(row, this.catalog.interfaces.ifAdminStatus, 7, ['ifAdminStatus']));
       const operStatus = mapStatus(rowValue(row, this.catalog.interfaces.ifOperStatus, 8, ['ifOperStatus']));
       interfaces.push({ ifIndex, name, alias, speedBps: speed, adminStatus, operStatus });
-      const dimensions = { interface: name, if_index: String(ifIndex) };
-      observations.push(this.metric('interface_oper_status', operStatus === 'up' ? 1 : operStatus === 'down' ? 0 : null, observedAt, operStatus === 'unknown' ? 'unknown' : 'good', operStatus === 'unknown' ? 'status_unknown' : undefined, undefined, dimensions));
-      const counters: Array<[string, bigint | null, 32 | 64]> = [
-        ['interface_in_bps', ...this.counterValue(row, this.catalog.interfaces.ifHCInOctets, this.catalog.interfaces.ifInOctets, 6, 10, ['ifHCInOctets', 'ifInOctets'])],
-        ['interface_out_bps', ...this.counterValue(row, this.catalog.interfaces.ifHCOutOctets, this.catalog.interfaces.ifOutOctets, 10, 16, ['ifHCOutOctets', 'ifOutOctets'])],
-        ['interface_error_rate', ...this.counterValue(row, this.catalog.interfaces.ifInErrors, this.catalog.interfaces.ifInErrors, 14, 14, ['ifInErrors'])],
-        ['interface_drop_rate', ...this.counterValue(row, this.catalog.interfaces.ifInDiscards, this.catalog.interfaces.ifInDiscards, 13, 13, ['ifInDiscards'])],
+      const baseDimensions = { interface: name, if_index: String(ifIndex) };
+      observations.push(this.metric('interface_oper_status', operStatus === 'up' ? 1 : operStatus === 'down' ? 0 : null, observedAt, operStatus === 'unknown' ? 'unknown' : 'good', operStatus === 'unknown' ? 'status_unknown' : undefined, undefined, baseDimensions));
+      const counter = (metricId: string, direction: 'in' | 'out', preferred: HuaweiOidDefinition, fallback: HuaweiOidDefinition, preferredColumn: number, fallbackColumn: number, names: string[]) => {
+        const [current, bits] = this.counterValue(row, preferred, fallback, preferredColumn, fallbackColumn, names);
+        return { metricId, direction, current, bits };
+      };
+      const counters: Array<{ metricId: string; direction: 'in' | 'out'; current: bigint | null; bits: 32 | 64 }> = [
+        counter('interface_in_bps', 'in', this.catalog.interfaces.ifHCInOctets, this.catalog.interfaces.ifInOctets, 6, 10, ['ifHCInOctets', 'ifInOctets']),
+        counter('interface_out_bps', 'out', this.catalog.interfaces.ifHCOutOctets, this.catalog.interfaces.ifOutOctets, 10, 16, ['ifHCOutOctets', 'ifOutOctets']),
+        counter('interface_error_rate', 'in', this.catalog.interfaces.ifInErrors, this.catalog.interfaces.ifInErrors, 14, 14, ['ifInErrors']),
+        counter('interface_error_rate', 'out', this.catalog.interfaces.ifOutErrors, this.catalog.interfaces.ifOutErrors, 20, 20, ['ifOutErrors']),
+        counter('interface_drop_rate', 'in', this.catalog.interfaces.ifInDiscards, this.catalog.interfaces.ifInDiscards, 13, 13, ['ifInDiscards']),
+        counter('interface_drop_rate', 'out', this.catalog.interfaces.ifOutDiscards, this.catalog.interfaces.ifOutDiscards, 19, 19, ['ifOutDiscards']),
       ];
-      for (const [metricId, current, bits] of counters) {
-        const result = this.rate(`${ifIndex}:${metricId}`, current, bits, observedAt.getTime());
-        observations.push(this.metric(metricId, metricId.endsWith('_bps') && result.value != null ? result.value * 8 : result.value, observedAt, result.quality, result.reason, current == null || current > BigInt(Number.MAX_SAFE_INTEGER) ? undefined : Number(current), dimensions));
+      for (const counter of counters) {
+        const result = this.rate(`${ifIndex}:${counter.metricId}:${counter.direction}`, counter.current, counter.bits, observedAt.getTime());
+        const dimensions = { ...baseDimensions, direction: counter.direction };
+        observations.push(this.metric(counter.metricId, counter.metricId.endsWith('_bps') && result.value != null ? result.value * 8 : result.value, observedAt, result.quality, result.reason, counter.current == null || counter.current > BigInt(Number.MAX_SAFE_INTEGER) ? undefined : Number(counter.current), dimensions));
       }
     }
     return { interfaces, observations, observedAt };

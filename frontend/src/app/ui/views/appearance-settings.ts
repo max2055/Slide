@@ -116,30 +116,52 @@ export class AppearanceSettings extends LitElement {
   @state() private btnPalGhostColor: string = "#6e6e73";
 
   static styles = [sharedBtnStyles, css`
-    :host { display: block; max-width: 800px; }
-    .page-header { margin-bottom: 24px; }
+    :host { display: block; width: min(100%, 800px); }
+    :host > app-card { display: block; }
+    :host > app-card + app-card { margin-top: var(--space-sm); }
+    .page-header { margin-bottom: var(--space-lg); }
     .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
     .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
-    .color-grid { display: flex; gap: 8px; flex-wrap: wrap; }
+    .color-grid { display: flex; gap: var(--space-sm); flex-wrap: wrap; }
     .color-swatch {
       width: 36px; height: 36px;
+      box-sizing: border-box;
       border-radius: 50%;
       border: 3px solid transparent;
       cursor: pointer;
       transition: transform 0.15s, border-color 0.15s;
     }
     .color-swatch:hover { transform: scale(1.12); }
-    .color-swatch.active { border-color: var(--text-strong); transform: scale(1.15); }
+    .color-swatch.active { border-color: var(--text-strong); outline: 2px solid var(--card); outline-offset: -5px; }
     .custom-color-row {
       display: flex; align-items: center; gap: 10px; margin-top: 10px;
     }
-    .custom-color-row input[type="color"] {
-      width: 36px; height: 36px;
+    .color-input {
+      appearance: none;
+      -webkit-appearance: none;
+      flex: 0 0 auto;
+      width: 40px;
+      height: 40px;
+      box-sizing: border-box;
+      padding: 4px;
       border: 2px solid var(--border);
       border-radius: 50%;
+      background: var(--card);
       cursor: pointer;
+      overflow: hidden;
+    }
+    .color-input::-webkit-color-swatch-wrapper {
       padding: 0;
-      background: none;
+      border-radius: 50%;
+      overflow: hidden;
+    }
+    .color-input::-webkit-color-swatch {
+      border: 0;
+      border-radius: 50%;
+    }
+    .color-input::-moz-color-swatch {
+      border: 0;
+      border-radius: 50%;
     }
     .custom-color-row .hint {
       font-size: 12px; color: var(--muted);
@@ -151,6 +173,21 @@ export class AppearanceSettings extends LitElement {
       display: flex; flex-direction: column; gap: 12px;
     }
     .field-hint { font-size: 12px; color: var(--muted); }
+    .color-setting-group { display: flex; flex-direction: column; gap: 6px; }
+    .color-setting-row { display: flex; align-items: center; gap: var(--space-sm); min-height: 40px; }
+    .color-setting-row .hint { font-size: 12px; color: var(--muted); }
+    .color-setting-row code { margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .button-preview-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--space-sm);
+      margin-top: var(--space-xs);
+      padding-top: var(--space-sm);
+      border-top: 1px solid var(--border);
+    }
+    .button-preview { font-size: var(--text-xs); padding: var(--space-xs) var(--space-md); }
+    .button-preview.btn-ghost { padding-inline: var(--space-sm); }
     .text-input {
       width: 100%; padding: 6px 10px;
       border: 1px solid var(--border);
@@ -236,7 +273,7 @@ export class AppearanceSettings extends LitElement {
           `)}
         </div>
         <div class="custom-color-row">
-          <input type="color" .value=${this.accent} @input=${(e: Event) => this._setAccent((e.target as HTMLInputElement).value)} />
+          <input class="color-input" type="color" .value=${this.accent} aria-label="自定义主题色" @input=${(e: Event) => this._setAccent((e.target as HTMLInputElement).value)} />
           <span class="hint">${t("appearance.customColor")}</span>
           <code>${this.accent}</code>
         </div>
@@ -397,47 +434,47 @@ export class AppearanceSettings extends LitElement {
 
       <!-- Button Colors -->
       <app-card>
-        <div slot="header">Button Colors</div>
-        <p class="desc">Customize button fill and text colors per semantic level.</p>
+        <div slot="header">按钮颜色</div>
+        <p class="desc">按操作类型自定义按钮颜色。</p>
         <div class="field-group">
-          <div>
-            <span class="field-hint">Primary (main actions)</span>
-            <div class="custom-color-row" style="margin-top:6px">
-              <input type="color" .value=${this.btnPalPrimaryBg} @input=${(e: Event) => this._setBtnColor("primary", "bg", (e.target as HTMLInputElement).value)} title="Fill" />
-              <input type="color" .value=${this.btnPalPrimaryColor} @input=${(e: Event) => this._setBtnColor("primary", "color", (e.target as HTMLInputElement).value)} title="Text" />
-              <span class="hint">fill / text</span>
-              <code style="margin-left:auto">${this.btnPalPrimaryBg}</code>
+          <div class="color-setting-group">
+            <span class="field-hint">主要操作</span>
+            <div class="color-setting-row">
+              <input class="color-input" type="color" .value=${this.btnPalPrimaryBg} aria-label="主要操作填充色" @input=${(e: Event) => this._setBtnColor("primary", "bg", (e.target as HTMLInputElement).value)} />
+              <input class="color-input" type="color" .value=${this.btnPalPrimaryColor} aria-label="主要操作文字色" @input=${(e: Event) => this._setBtnColor("primary", "color", (e.target as HTMLInputElement).value)} />
+              <span class="hint">填充色 / 文字色</span>
+              <code>${this.btnPalPrimaryBg}</code>
             </div>
           </div>
-          <div>
-            <span class="field-hint">Secondary (regular actions)</span>
-            <div class="custom-color-row" style="margin-top:6px">
-              <input type="color" .value=${this.btnPalSecondaryBg} @input=${(e: Event) => this._setBtnColor("secondary", "bg", (e.target as HTMLInputElement).value)} title="Fill" />
-              <span class="hint">background</span>
-              <code style="margin-left:auto">${this.btnPalSecondaryBg}</code>
+          <div class="color-setting-group">
+            <span class="field-hint">常规操作</span>
+            <div class="color-setting-row">
+              <input class="color-input" type="color" .value=${this.btnPalSecondaryBg} aria-label="常规操作背景色" @input=${(e: Event) => this._setBtnColor("secondary", "bg", (e.target as HTMLInputElement).value)} />
+              <span class="hint">背景色</span>
+              <code>${this.btnPalSecondaryBg}</code>
             </div>
           </div>
-          <div>
-            <span class="field-hint">Ghost (inline actions)</span>
-            <div class="custom-color-row" style="margin-top:6px">
-              <input type="color" .value=${this.btnPalGhostColor} @input=${(e: Event) => this._setBtnColor("ghost", "color", (e.target as HTMLInputElement).value)} title="Color" />
-              <span class="hint">text color</span>
-              <code style="margin-left:auto">${this.btnPalGhostColor}</code>
+          <div class="color-setting-group">
+            <span class="field-hint">行内操作</span>
+            <div class="color-setting-row">
+              <input class="color-input" type="color" .value=${this.btnPalGhostColor} aria-label="行内操作文字色" @input=${(e: Event) => this._setBtnColor("ghost", "color", (e.target as HTMLInputElement).value)} />
+              <span class="hint">文字色</span>
+              <code>${this.btnPalGhostColor}</code>
             </div>
           </div>
-          <div>
-            <span class="field-hint">Danger (destructive actions)</span>
-            <div class="custom-color-row" style="margin-top:6px">
-              <input type="color" .value=${this.btnPalDangerBg} @input=${(e: Event) => this._setBtnColor("danger", "bg", (e.target as HTMLInputElement).value)} title="Fill" />
-              <span class="hint">background</span>
-              <code style="margin-left:auto">${this.btnPalDangerBg}</code>
+          <div class="color-setting-group">
+            <span class="field-hint">危险操作</span>
+            <div class="color-setting-row">
+              <input class="color-input" type="color" .value=${this.btnPalDangerBg} aria-label="危险操作背景色" @input=${(e: Event) => this._setBtnColor("danger", "bg", (e.target as HTMLInputElement).value)} />
+              <span class="hint">背景色</span>
+              <code>${this.btnPalDangerBg}</code>
             </div>
           </div>
-          <div style="display:flex;gap:8px;margin-top:8px">
-            <button class="btn-primary" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-md)">Primary</button>
-            <button class="btn" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-md)">Secondary</button>
-            <button class="btn-ghost" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-sm)">Ghost</button>
-            <button class="btn-primary btn-danger" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-md)">Danger</button>
+          <div class="button-preview-row" aria-label="按钮样式预览">
+            <button class="btn-primary button-preview" type="button">主要</button>
+            <button class="btn button-preview" type="button">常规</button>
+            <button class="btn-ghost button-preview" type="button">行内</button>
+            <button class="btn-primary btn-danger button-preview" type="button">危险</button>
           </div>
         </div>
       </app-card>

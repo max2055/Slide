@@ -39,8 +39,8 @@ export interface NetworkDeviceCredentials {
   hostKeyFingerprint?: string;
 }
 
-const DEVICE_COLUMNS = `id, name, label, host, site, vendor, model, os_version, serial_number,
-  snmp_port, ssh_port, status, last_check_at, collection_enabled, created_at, updated_at`;
+const DEVICE_COLUMNS = `d.id, d.name, d.label, d.host, d.site, d.vendor, d.model, d.os_version, d.serial_number,
+  d.snmp_port, d.ssh_port, d.status, d.last_check_at, d.collection_enabled, d.created_at, d.updated_at`;
 
 export class NetworkDeviceDatabaseService {
   constructor(private readonly poolProvider: () => SqlPool | null = () => dbConnection.getPool() as unknown as SqlPool | null) {}
@@ -48,7 +48,7 @@ export class NetworkDeviceDatabaseService {
   async getAllDevices(): Promise<NetworkDevicePublicDto[]> {
     const pool = this.pool();
     const [rows] = await pool.execute<Array<any>>(
-      `SELECT d.${DEVICE_COLUMNS.replace(/\bid, /, 'd.id, ')} ,
+      `SELECT ${DEVICE_COLUMNS},
               EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol = 'snmpv3') AS has_snmp_credential,
               EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol = 'ssh') AS has_ssh_credential
        FROM network_devices d ORDER BY d.host, d.id`,
@@ -59,7 +59,7 @@ export class NetworkDeviceDatabaseService {
   async getDeviceById(id: number): Promise<NetworkDevicePublicDto | null> {
     const pool = this.pool();
     const [rows] = await pool.execute<Array<any>>(
-      `SELECT d.${DEVICE_COLUMNS.replace(/\bid, /, 'd.id, ')} ,
+      `SELECT ${DEVICE_COLUMNS},
               EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol = 'snmpv3') AS has_snmp_credential,
               EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol = 'ssh') AS has_ssh_credential
        FROM network_devices d WHERE d.id = ? LIMIT 1`, [id],

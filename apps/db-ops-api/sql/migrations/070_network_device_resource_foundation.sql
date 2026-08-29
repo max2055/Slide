@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS `network_device_config_backups` (
   `version_no` INT UNSIGNED NOT NULL COMMENT '设备配置版本号',
   `content_encrypted` MEDIUMTEXT NOT NULL COMMENT '加密后的配置原文',
   `content_sha256` CHAR(64) NOT NULL COMMENT '配置明文 SHA-256 摘要',
-  `source_protocol` ENUM('ssh','netconf') NOT NULL COMMENT '配置采集协议',
+  `source_protocol` ENUM('ssh') NOT NULL COMMENT '配置采集协议（本版本仅支持 SSH 只读采集）',
   `collected_at` DATETIME NOT NULL COMMENT '采集时间',
   `size_bytes` INT UNSIGNED NOT NULL COMMENT '配置明文大小（字节）',
   `redaction_status` ENUM('redacted','unredacted','failed') NOT NULL DEFAULT 'redacted' COMMENT '脱敏状态',
@@ -198,8 +198,41 @@ INSERT IGNORE INTO `roles` (`name`, `description`, `is_system`) VALUES ('network
 INSERT IGNORE INTO `permissions` (`code`, `name`, `description`, `resource`, `action`) VALUES
   ('network_devices:view', '查看网络设备', '查看网络设备库存和观测', 'network_devices', 'view'),
   ('network_devices:manage', '管理网络设备', '新增、修改和删除网络设备', 'network_devices', 'manage'),
-  ('network_devices:backup', '查看配置备份', '查看和恢复网络设备配置备份', 'network_devices', 'backup');
+  ('network_devices:backup', '访问配置备份', '查看或下载网络设备配置备份（不提供配置恢复）', 'network_devices', 'backup');
 INSERT IGNORE INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r JOIN permissions p ON p.code IN ('network_devices:view','network_devices:manage','network_devices:backup') WHERE r.name IN ('admin','network-operator');
 INSERT IGNORE INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r JOIN permissions p ON p.code = 'network_devices:view' WHERE r.name = 'dba';
+
+-- Seed the built-in Huawei alert templates exactly once. The template table
+-- predates network-device support and has no unique name constraint, so an
+-- INSERT IGNORE alone would duplicate rows every time this migration is
+-- retried. Match on the stable target/name/metric identity instead.
+INSERT INTO `alert_rule_templates`
+  (`name`, `description`, `target_type`, `metric_name`, `operator`, `threshold_template`,
+   `duration_seconds`, `severity`, `silence_minutes`, `enabled`)
+SELECT seed.`name`, seed.`description`, seed.`target_type`, seed.`metric_name`, seed.`operator`,
+       seed.`threshold_template`, seed.`duration_seconds`, seed.`severity`, seed.`silence_minutes`, seed.`enabled`
+FROM (
+  SELECT '网络设备不可达' AS `name`, '网络设备连续采集失败或不可达' AS `description`, 'network_device' AS `target_type`,
+         'device_reachability' AS `metric_name`, '=' AS `operator`, '{"warning":0,"error":0,"critical":0}' AS `threshold_template`,
+         600 AS `duration_seconds`, 'error' AS `severity`, 5 AS `silence_minutes`, TRUE AS `enabled`
+  UNION ALL SELECT '网络设备 CPU 过高', '华为 VRP 设备 CPU 使用率超过阈值', 'network_device',
+         'device_cpu_percent', '>=', '{"warning":80,"error":90,"critical":95}', 120, 'warning', 5, TRUE
+  UNION ALL SELECT '网络设备内存过高', '华为 VRP 设备内存使用率超过阈值', 'network_device',
+         'device_memory_percent', '>=', '{"warning":80,"error":90,"critical":95}', 120, 'warning', 5, TRUE
+  UNION ALL SELECT '网络设备温度过高', '华为 VRP 设备温度超过阈值', 'network_device',
+         'device_temperature_celsius', '>=', '{"warning":70,"error":80,"critical":90}', 120, 'warning', 5, TRUE
+  UNION ALL SELECT '网络接口 down', '网络设备接口 operStatus 为 down', 'network_device',
+         'interface_oper_status', '=', '{"warning":0,"error":0,"critical":0}', 60, 'critical', 5, TRUE
+  UNION ALL SELECT '网络接口错误率过高', '网络设备接口错误包速率超过阈值', 'network_device',
+         'interface_error_rate', '>=', '{"warning":1,"error":10,"critical":100}', 120, 'warning', 5, TRUE
+  UNION ALL SELECT '网络接口丢弃率过高', '网络设备接口丢弃包速率超过阈值', 'network_device',
+         'interface_drop_rate', '>=', '{"warning":1,"error":10,"critical":100}', 120, 'warning', 5, TRUE
+) AS seed
+WHERE NOT EXISTS (
+  SELECT 1 FROM `alert_rule_templates` existing
+  WHERE existing.`target_type` = seed.`target_type`
+    AND existing.`name` = seed.`name`
+    AND existing.`metric_name` = seed.`metric_name`
+);

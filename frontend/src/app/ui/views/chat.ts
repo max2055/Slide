@@ -38,6 +38,7 @@ import { buildSidebarContent, extractToolCards, extractToolPreview } from "../ch
 import type { EmbedSandboxMode } from "../embed-sandbox.ts";
 import { icons } from "../../../icons.js";
 import { toSanitizedMarkdownHtml } from "../markdown.ts";
+import { copyTextToClipboard } from "../chat/copy-as-markdown.ts";
 import type { SidebarContent } from "../sidebar-content.ts";
 import { detectTextDirection } from "../text-direction.ts";
 import type { GatewaySessionRow, SessionsListResult } from "../types.ts";
@@ -1420,8 +1421,9 @@ export function renderChat(props: ChatProps) {
       return;
     }
     const code = (btn as HTMLElement).dataset.code ?? "";
-    navigator.clipboard.writeText(code).then(
-      () => {
+    copyTextToClipboard(code).then(
+      (copied) => {
+        if (!copied) return;
         btn.classList.add("copied");
         setTimeout(() => btn.classList.remove("copied"), 1500);
       },

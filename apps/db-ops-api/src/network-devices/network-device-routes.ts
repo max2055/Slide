@@ -5,15 +5,15 @@ import { publicNetworkDeviceDto } from '../security/public-dto.js';
 import { dbConnection } from '../db-connection.js';
 import { networkDeviceDatabaseService } from './network-device-database-service.js';
 import { NetworkDeviceCollector, networkDeviceCollector, type NetworkDeviceCollectionStore } from './network-device-collector.js';
-import { ConfigBackupError, configBackupService, type ConfigBackupService } from './config-backup-service.js';
+import { ConfigBackupError, configBackupService, verifySshHostKey, type ConfigBackupAuditEvent, type ConfigBackupService } from './config-backup-service.js';
 import { HuaweiAdapter } from './huawei-adapter.js';
 import { SnmpClient, SnmpClientError } from './snmp-client.js';
-import { validateNetworkHost, validatePort, validateSnmpV3Credential } from '../resources/network-device-types.js';
+import { validateNetworkHost, validatePort, validateSnmpV3Credential, validateSshCredential } from '../resources/network-device-types.js';
 import { capabilityService } from '../resources/capability-service.js';
 import { resourceService } from '../resources/resource-service.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { hasPermission } from '../auth/require-permission.js';
-import { authorizeServerTarget } from '../security/server-target-policy.js';
+import { authorizeNetworkDeviceTarget } from '../security/network-device-target-policy.js';
 import type { ResourceRelationType } from '../resources/types.js';
 
 export async function registerNetworkDeviceRoutes(
@@ -21,15 +21,19 @@ export async function registerNetworkDeviceRoutes(
   verifyToken: preHandlerHookHandler,
   dependencies: {
     collector?: Pick<NetworkDeviceCollector, 'collectDevice'>;
-    backupService?: Pick<ConfigBackupService, 'collect' | 'capture' | 'list' | 'get' | 'diff'>;
+    backupService?: Pick<ConfigBackupService, 'collect' | 'capture' | 'list' | 'get' | 'diff'> & {
+      recordAudit?: (event: ConfigBackupAuditEvent) => Promise<void> | void;
+    };
+    sshProbe?: typeof verifySshHostKey;
     snmpAdapter?: Pick<HuaweiAdapter, 'probe'>;
-    authorizeTarget?: typeof authorizeServerTarget;
+    authorizeTarget?: typeof authorizeNetworkDeviceTarget;
   } = {},
 ): Promise<void> {
   const collector = dependencies.collector ?? networkDeviceCollector;
   const backups = dependencies.backupService ?? configBackupService;
+  const sshProbe = dependencies.sshProbe ?? verifySshHostKey;
   const snmpAdapter = dependencies.snmpAdapter ?? new HuaweiAdapter(new SnmpClient());
-  const authorizeTarget = dependencies.authorizeTarget ?? authorizeServerTarget;
+  const authorizeTarget = dependencies.authorizeTarget ?? authorizeNetworkDeviceTarget;
   const view = [verifyToken, requirePermission('network_devices:view')];
   const manage = [verifyToken, requirePermission('network_devices:manage')];
   const backupRead = [verifyToken, requirePermission('network_devices:view')];
@@ -89,11 +93,12 @@ export async function registerNetworkDeviceRoutes(
     catch { return reply.code(500).send({ error: '获取网络设备列表失败' }); }
   });
 
-  // Keep the static probe endpoint before /:id. Secrets are accepted only for
-  // the in-memory probe and are never persisted or included in the response.
+  // Keep the static probe endpoint before /:id. The enrollment probe is
+  // SNMP-first; when an SSH credential is supplied,
+  // it performs a second, command-free host-key handshake before returning.
   fastify.post('/api/network-devices/test-connection', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } }, preHandler: manage }, async (request, reply) => {
     try {
-      const check = strictBody(request.body as Record<string, unknown>, ['host', 'version', 'snmpPort', 'snmp_port', 'snmpv3', 'snmp', 'vendor'], 'POST /api/network-devices/test-connection');
+      const check = strictBody(request.body as Record<string, unknown>, ['host', 'version', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'snmpv3', 'snmp', 'ssh', 'vendor'], 'POST /api/network-devices/test-connection');
       if (check.error) return reply.code(400).send(check.error);
       const body = check.body as Record<string, unknown>;
       if (body.vendor !== undefined && body.vendor !== 'huawei') return reply.code(400).send({ success: false, error: 'NETWORK_DEVICE_VENDOR_UNSUPPORTED' });
@@ -104,9 +109,23 @@ export async function registerNetworkDeviceRoutes(
       if (!['SHA', 'MD5', undefined].includes(credential.authProtocol as any) || !['AES', 'DES', undefined].includes(credential.privacyProtocol as any)) {
         return reply.code(400).send({ success: false, error: 'SNMP_UNSUPPORTED_SECURITY' });
       }
-      const target = await authorizeTarget({ host, port }, { allowedPorts: [port], allowedCidrs: process.env.NETWORK_DEVICE_ALLOWED_CIDRS });
+      const target = await authorizeTarget({ host, port });
       const probe = await snmpAdapter.probe({ host: target.address, port, username: credential.username, securityLevel: credential.securityLevel, authProtocol: credential.authProtocol as any, authSecret: credential.authSecret, privacyProtocol: credential.privacyProtocol as any, privacySecret: credential.privacySecret });
-      return reply.send({ success: Boolean(probe.reachable), probe: { reachable: Boolean(probe.reachable), quality: probe.quality, reason: probe.reason, observedAt: probe.observedAt.toISOString(), sysName: probe.sysName, uptimeSeconds: probe.uptimeSeconds } });
+      let sshVerified = false;
+      if (body.ssh !== undefined) {
+        const ssh = validateSshCredential(body.ssh);
+        const sshPort = validatePort(body.sshPort ?? body.ssh_port, 'ssh_port', 22);
+        await sshProbe({
+          host,
+          port: sshPort,
+          username: ssh.username,
+          credentialType: ssh.credentialType,
+          credentialValue: ssh.credentialValue,
+          hostKeyFingerprint: ssh.hostKeyFingerprint,
+        });
+        sshVerified = true;
+      }
+      return reply.send({ success: Boolean(probe.reachable), probe: { reachable: Boolean(probe.reachable), quality: probe.quality, reason: probe.reason, observedAt: probe.observedAt.toISOString(), sysName: probe.sysName, uptimeSeconds: probe.uptimeSeconds }, ...(body.ssh !== undefined ? { ssh: { verified: sshVerified } } : {}) });
     } catch (error) {
       const failure = safeNetworkError(error);
       return reply.code(failure.status === 500 ? 502 : failure.status).send({ success: false, error: failure.error });
@@ -244,7 +263,18 @@ export async function registerNetworkDeviceRoutes(
     const backupId = typeof (request.params as any)?.backupId === 'string' && /^[1-9]\d*$/.test((request.params as any).backupId) ? Number((request.params as any).backupId) : Number.NaN;
     if (id === null || !Number.isSafeInteger(backupId) || backupId < 1) return reply.code(400).send({ error: '资源 ID 无效' });
     const raw = String((request.query as any)?.raw ?? '').toLowerCase() === 'true';
-    if (raw && !hasPermission(new Set((request as any).user?.permissions ?? []), 'network_devices:backup')) return reply.code(403).send({ error: '权限不足' });
+    if (raw && !hasPermission(new Set((request as any).user?.permissions ?? []), 'network_devices:backup')) {
+      try {
+        await backups.recordAudit?.({
+          action: 'read_denied',
+          deviceId: id,
+          backupId,
+          reason: 'NETWORK_DEVICE_BACKUP_PERMISSION_REQUIRED',
+          actorId: Number((request as any).user?.userId ?? 0) || null,
+        });
+      } catch { /* access remains denied even if audit persistence is unavailable */ }
+      return reply.code(403).send({ error: '权限不足' });
+    }
     try {
       const value = await backups.get!(id, backupId, raw, Number((request as any).user?.userId ?? 0) || null);
       return value ? reply.send(serializeBackup(value, raw ? 'raw' : 'detail')) : reply.code(404).send({ error: 'CONFIG_BACKUP_NOT_FOUND' });

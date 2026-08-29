@@ -1,12 +1,26 @@
 # Slide 用户手册
 
-**版本**: v1.2
+**版本**: v0.10
 **目标读者**: DBA / 运维用户
 **最后更新**: 2026-05-17
 
 ---
 
-本文档介绍 Slide 数据库运维平台的全部功能模块和操作步骤。Slide 是一款 AI 原生的数据库运维管理平台，集成了数据库监控、告警通知、性能分析、SQL 审核执行和 AI 辅助故障诊断等能力。
+本文档介绍 Slide v0.10 基础运维助手的功能模块和操作步骤。Slide 覆盖数据库、Kylin/RHEL/CentOS 服务器和华为 VRP 网络设备，提供监控、告警、关系影响分析、只读诊断和加密配置备份能力。华为厂商级 CPU、内存和温度指标必须在目标型号/VRP 固件完成 MIB fixture 和真实设备 UAT 后才可标记为已支持。
+
+### v0.10 验收边界（2026-08-26）
+
+| 能力 | 当前状态 | 说明 |
+| --- | --- | --- |
+| Kylin / RHEL / CentOS 服务器 | 已有 fixture 和 focused tests | 未识别发行版明确返回 `HOST_OS_UNSUPPORTED` |
+| 华为 SNMPv3、uptime、接口状态/计数器 | 代码与 fixture 已验证 | 真实设备仍需确认 SNMPv3 视图、型号和接口 MIB 行为 |
+| 华为 CPU、内存、温度 | **UAT 阻塞** | 默认 catalog 不填充未经确认的 enterprise OID；无对应 fixture 时返回 `mib_unsupported`，不会伪造数值 |
+| SSH 配置备份 | API/加密存储/权限审计已实现 | 需要登记 SSH host key 和只读账户后执行真实设备验证 |
+| 跨资源 Agent 诊断 | 有界一跳关系证据包已实现 | 缺失观测保持 unknown，并在 evidence gaps 中说明原因 |
+
+网络设备关系按“设备-服务器”直接边维护；数据库影响通过该服务器已有的实例关系展示，避免创建未经证实的设备-数据库直连边。
+
+在取得目标 Huawei 型号、VRP 版本、厂商 MIB fixture、SNMPv3 凭据和 SSH host key 前，不得将“华为网络设备完整监控”作为真实生产能力对外承诺。
 
 ---
 

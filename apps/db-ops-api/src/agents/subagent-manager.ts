@@ -155,6 +155,8 @@ export class SubagentManager {
         model: this.agentRunner.getDefaultModel(),
         maxIterations: Math.min(this.limits.maxIterations, 25),
         maxToolResultChars: Math.min(this.limits.maxToolResultChars, 10_000),
+        contextWindowTokens: 200_000,
+        maxTokens: 4096,
         temperature: 0.0,
         hook: {
           wantsStreaming: () => false,

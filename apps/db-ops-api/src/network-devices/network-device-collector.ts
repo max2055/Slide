@@ -1,5 +1,6 @@
 import { dbConnection } from '../db-connection.js';
 import { canonicalDimensions } from '../resources/types.js';
+import { authorizeNetworkDeviceTarget } from '../security/network-device-target-policy.js';
 import {
   networkDeviceDatabaseService,
   type NetworkDeviceCredentials,
@@ -34,18 +35,28 @@ export interface NetworkDeviceCollectorOptions {
   collectionIntervalMs?: number;
   maxFailuresBeforeUnreachable?: number;
   commandTimeoutMs?: number;
+  authorizeTarget?: typeof authorizeNetworkDeviceTarget;
+  targetPolicy?: {
+    allowedCidrs?: string;
+    allowedPorts?: readonly number[];
+    production?: boolean;
+    lookup?: (hostname: string) => Promise<Array<{ address: string }>>;
+  };
 }
 
 function stableError(error: unknown): string {
   const code = error && typeof error === 'object' && 'code' in error ? String((error as any).code) : '';
   if (/^SNMP_[A-Z0-9_]+$/.test(code)) return code;
+  const reasonCode = error && typeof error === 'object' && 'reasonCode' in error ? String((error as any).reasonCode) : '';
+  if (reasonCode === 'SNMP_TARGET_POLICY_NOT_CONFIGURED') return reasonCode;
+  if (/^SNMP_TARGET_/.test(reasonCode)) return 'SNMP_TARGET_DENIED';
   const message = error instanceof Error ? error.message : String(error);
   if (/timeout/i.test(message)) return 'SNMP_TIMEOUT';
   if (/auth|usm|security/i.test(message)) return 'SNMP_AUTH_FAILED';
   return 'SNMP_RESPONSE_INVALID';
 }
 
-function toSnmpConfig(target: NetworkDeviceCollectionTarget, credentials: NetworkDeviceCredentials): SnmpV3Config {
+function toSnmpConfig(target: NetworkDeviceCollectionTarget, credentials: NetworkDeviceCredentials, authorizedHost = target.host): SnmpV3Config {
   if (credentials.protocol !== 'snmpv3' || !credentials.username || !credentials.securityLevel) {
     throw Object.assign(new Error('SNMP_AUTH_FAILED'), { code: 'SNMP_AUTH_FAILED' });
   }
@@ -56,7 +67,7 @@ function toSnmpConfig(target: NetworkDeviceCollectionTarget, credentials: Networ
     throw Object.assign(new Error('SNMP_UNSUPPORTED_SECURITY'), { code: 'SNMP_UNSUPPORTED_SECURITY' });
   }
   return {
-    host: target.host,
+    host: authorizedHost,
     port: target.snmpPort,
     username: credentials.username,
     securityLevel: credentials.securityLevel,
@@ -71,7 +82,13 @@ export class NetworkDeviceCollector {
   private readonly failures = new Map<number, number>();
   private readonly inFlight = new Set<number>();
   private timer: ReturnType<typeof setInterval> | null = null;
-  private readonly options: Required<NetworkDeviceCollectorOptions>;
+  private readonly options: {
+    collectionIntervalMs: number;
+    maxFailuresBeforeUnreachable: number;
+    commandTimeoutMs: number;
+    authorizeTarget: typeof authorizeNetworkDeviceTarget;
+    targetPolicy: NonNullable<NetworkDeviceCollectorOptions['targetPolicy']>;
+  };
 
   constructor(
     private readonly store: NetworkDeviceCollectionStore,
@@ -82,6 +99,8 @@ export class NetworkDeviceCollector {
       collectionIntervalMs: options.collectionIntervalMs ?? (Number(process.env.NETWORK_DEVICE_COLLECTION_INTERVAL_MS) || 300_000),
       maxFailuresBeforeUnreachable: options.maxFailuresBeforeUnreachable ?? 3,
       commandTimeoutMs: options.commandTimeoutMs ?? 15_000,
+      authorizeTarget: options.authorizeTarget ?? authorizeNetworkDeviceTarget,
+      targetPolicy: options.targetPolicy ?? {},
     };
   }
 
@@ -112,10 +131,24 @@ export class NetworkDeviceCollector {
       const target = await this.store.getDevice(id);
       if (!target) return { success: false, error: 'NETWORK_DEVICE_NOT_FOUND' };
       if (!target.collectionEnabled) return { success: false, error: 'COLLECTION_DISABLED' };
+      let authorizedTarget: { address: string; port: number };
+      try {
+        authorizedTarget = await this.options.authorizeTarget(
+          { host: target.host, port: target.snmpPort },
+          {
+            allowedCidrs: this.options.targetPolicy.allowedCidrs,
+            allowedPorts: this.options.targetPolicy.allowedPorts,
+            production: this.options.targetPolicy.production,
+            lookup: this.options.targetPolicy.lookup,
+          },
+        );
+      } catch (error) {
+        return this.recordFailure(id, stableError(error));
+      }
       const credentials = await this.store.getCredentials(id);
       if (!credentials) return this.recordFailure(id, 'SNMP_AUTH_FAILED');
       let config: SnmpV3Config;
-      try { config = toSnmpConfig(target, credentials); } catch (error) { return this.recordFailure(id, stableError(error)); }
+      try { config = toSnmpConfig(target, credentials, authorizedTarget.address); } catch (error) { return this.recordFailure(id, stableError(error)); }
 
       try {
         const probe = await this.adapter.probe(config);

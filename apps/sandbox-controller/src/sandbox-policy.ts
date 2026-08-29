@@ -3,6 +3,9 @@ import path from 'node:path';
 export interface SandboxJob {
   runtime: string;
   command: string[];
+  networkMode?: 'restricted';
+  /** Logical server-selected profile; callers never provide an image digest. */
+  executionProfile?: string;
   timeoutMs?: number;
   env?: Record<string, string>;
 }
@@ -37,6 +40,20 @@ export function parseImageAllowlist(raw = process.env.SANDBOX_IMAGES || '{}'): R
   return Object.freeze(result);
 }
 
+export function parseExecutionProfiles(raw = process.env.SANDBOX_EXECUTION_PROFILES || '{}'): Readonly<Record<string, string>> {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { throw new Error('SANDBOX_EXECUTION_PROFILES_INVALID'); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('SANDBOX_EXECUTION_PROFILES_INVALID');
+  const result: Record<string, string> = {};
+  for (const [profile, image] of Object.entries(parsed)) {
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(profile) || typeof image !== 'string' || !/@sha256:[a-f0-9]{64}$/.test(image)) {
+      throw new Error('SANDBOX_EXECUTION_PROFILES_INVALID');
+    }
+    result[profile] = image;
+  }
+  return Object.freeze(result);
+}
+
 export function validateWorkspacePath(root: string, jobId: string): string {
   if (!/^[a-f0-9-]{36}$/.test(jobId)) throw new Error('SANDBOX_JOB_ID_INVALID');
   const workspace = path.resolve(root, jobId);
@@ -59,20 +76,33 @@ export function buildDockerRunArgs(input: {
   workspace: string;
   job: SandboxJob;
   images: Readonly<Record<string, string>>;
+  executionProfiles?: Readonly<Record<string, string>>;
+  restrictedNetwork?: string;
+  networkImage?: string;
   limits?: SandboxLimits;
 }): string[] {
   const limits = input.limits ?? DEFAULT_SANDBOX_LIMITS;
-  const image = input.images[input.job.runtime];
-  if (!image || !/@sha256:[a-f0-9]{64}$/.test(image)) throw new Error('SANDBOX_RUNTIME_DENIED');
+  const networkJob = input.job.networkMode === 'restricted';
+  const profileImage = input.job.executionProfile ? input.executionProfiles?.[input.job.executionProfile] : undefined;
+  if (input.job.executionProfile && !networkJob) throw new Error('SANDBOX_PROFILE_NETWORK_REQUIRED');
+  const image = networkJob ? (profileImage ?? input.networkImage) : input.images[input.job.runtime];
+  if (!image || !/@sha256:[a-f0-9]{64}$/.test(image)) {
+    throw new Error(networkJob ? 'SANDBOX_NETWORK_UNAVAILABLE' : 'SANDBOX_RUNTIME_DENIED');
+  }
   if (!Array.isArray(input.job.command) || input.job.command.length === 0 || input.job.command.length > 64
     || input.job.command.some((part) => typeof part !== 'string' || !part || part.length > 4096)) {
     throw new Error('SANDBOX_COMMAND_INVALID');
   }
 
+  const network = networkJob
+    ? input.restrictedNetwork
+    : 'none';
+  if (!network || !/^[a-z0-9][a-z0-9_.-]{0,62}$/.test(network)) throw new Error('SANDBOX_NETWORK_UNAVAILABLE');
+
   const args = [
     'run', '--rm', '--name', `slide-sandbox-${input.jobId}`,
     '--label', 'com.slide.sandbox=true',
-    '--network', 'none',
+    '--network', network,
     '--read-only',
     '--cap-drop', 'ALL',
     '--security-opt', 'no-new-privileges=true',

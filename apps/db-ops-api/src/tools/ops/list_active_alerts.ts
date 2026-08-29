@@ -35,6 +35,9 @@ export const listActiveAlertsTool: AnyAgentTool = {
   group: 'db_ops',
   handler: async (args, context) => {
     try {
+      if (!context?.actor) {
+        return { success: false, status: 'error', error: '缺少已认证的操作员上下文', errorCode: 'MISSING_ACTOR' };
+      }
       const typedArgs = args as {
         severity?: string;
         since?: string;
@@ -43,9 +46,21 @@ export const listActiveAlertsTool: AnyAgentTool = {
 
       const severity = typedArgs.severity?.toLowerCase();
       const since = typedArgs.since;
-      const limit = typeof typedArgs.limit === 'number' && typedArgs.limit > 0
-        ? typedArgs.limit
-        : 20;
+      const validSeverities = new Set(['critical', 'error', 'warning', 'info']);
+      if (severity !== undefined && !validSeverities.has(severity)) {
+        return { success: false, status: 'error', error: 'severity 必须为 critical、error、warning 或 info', errorCode: 'INVALID_ARGUMENTS' };
+      }
+      let sinceDate: Date | undefined;
+      if (since !== undefined) {
+        sinceDate = new Date(since);
+        if (Number.isNaN(sinceDate.getTime())) {
+          return { success: false, status: 'error', error: 'since 必须是有效的 ISO 时间', errorCode: 'INVALID_ARGUMENTS' };
+        }
+      }
+      const limit = typedArgs.limit === undefined ? 20 : typedArgs.limit;
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+        return { success: false, status: 'error', error: 'limit 必须为 1-100 的整数', errorCode: 'INVALID_ARGUMENTS' };
+      }
 
       // 获取告警列表（alertDatabaseService.getAlerts 支持 level/limit 过滤）
       const alerts = await alertDatabaseService.getAlerts({
@@ -55,14 +70,11 @@ export const listActiveAlertsTool: AnyAgentTool = {
 
       // 应用 since 时间过滤（getAlerts 不支持 since 参数，在此做内存过滤）
       let filtered = alerts;
-      if (since) {
-        const sinceDate = new Date(since);
-        if (!isNaN(sinceDate.getTime())) {
-          filtered = alerts.filter((a: any) => {
+      if (sinceDate) {
+        filtered = alerts.filter((a: any) => {
             const createdAt = new Date(a.created_at);
             return createdAt >= sinceDate;
-          });
-        }
+        });
       }
 
       // RBAC 过滤：根据用户权限缩小可见告警范围
@@ -85,10 +97,12 @@ export const listActiveAlertsTool: AnyAgentTool = {
 
       return {
         success: true,
+        status: 'success',
         data: {
           total: summaries.length,
           alerts: summaries,
         },
+        summary: `找到 ${summaries.length} 条活跃告警`,
       };
     } catch (error: any) {
       return {

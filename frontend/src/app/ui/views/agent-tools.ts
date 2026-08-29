@@ -4,6 +4,7 @@ import { apiClient } from '../../../api/index.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { showToast } from '../components/app-toast-container.js';
 import '../components/app-data-table.js';
+import '../components/agent-extension-manager.js';
 
 interface Tool {
   name: string;
@@ -91,6 +92,7 @@ export class AgentToolsPage extends LitElement {
             <p>查看 Agent 注册的所有工具及其 Schema 定义</p>
           </div>
         </div>
+        <agent-extension-manager kind="tool"></agent-extension-manager>
 
       ${this.loading
         ? html`<div class="skeleton">加载中...</div>`
