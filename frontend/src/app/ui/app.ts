@@ -67,6 +67,7 @@ import type {
 } from "./types.ts";
 import { type ChatAttachment, type ChatQueueItem, type CronFormState } from "./ui-types.ts";
 import { generateUUID } from "./uuid.ts";
+import { buildNavigationUrl } from "./app-navigation.ts";
 
 declare global {
   interface Window {
@@ -500,21 +501,12 @@ export class SlideApp extends LitElement {
           });
         }
         // Update URL
-        const url = new URL(window.location.href);
-        url.searchParams.set("tab", tab);
-        if (effectiveServerId) url.searchParams.set("id", String(effectiveServerId));
-        else url.searchParams.delete("id");
-        if (effectiveNetworkDeviceId) url.searchParams.set("networkDeviceId", String(effectiveNetworkDeviceId));
-        else url.searchParams.delete("networkDeviceId");
-        if (session) {
-          url.searchParams.set("session", session);
-        } else {
-          url.searchParams.delete("session");
-        }
-        // Clear hash when navigating away from docs
-        if (tab !== "docs") {
-          url.hash = "";
-        }
+        const url = buildNavigationUrl(window.location.href, tab as Tab, {
+          id,
+          session,
+          serverId: effectiveServerId,
+          networkDeviceId: effectiveNetworkDeviceId,
+        });
         window.history.pushState({}, "", url);
       }
     });
