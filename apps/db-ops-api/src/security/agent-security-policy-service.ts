@@ -31,6 +31,8 @@ interface PolicyRow {
 export interface AgentResourceScope {
   instanceIds: number[] | null;
   serverIds: number[] | null;
+  /** Optional on input for compatibility with pre-v0.10 policy clients. */
+  networkDeviceIds?: number[] | null;
 }
 
 export interface AgentSecurityPolicy {
@@ -86,6 +88,9 @@ function normalizeRow(row: PolicyRow): AgentSecurityPolicy {
     resourceScope: Object.freeze({
       instanceIds: idList(scope?.instanceIds),
       serverIds: idList(scope?.serverIds),
+      // Policies created before network-device support do not have this key;
+      // treat the missing field as an inherited (unrestricted) scope.
+      networkDeviceIds: idList(scope?.networkDeviceIds),
     }),
     version: Number(row.version),
     updatedBy: row.updated_by === null ? null : Number(row.updated_by),
@@ -128,6 +133,7 @@ export function validateAgentSecurityPolicyUpdate(input: AgentSecurityPolicyUpda
     resourceScope: {
       instanceIds: validateIds(input.resourceScope?.instanceIds, 'AGENT_INSTANCE_SCOPE'),
       serverIds: validateIds(input.resourceScope?.serverIds, 'AGENT_SERVER_SCOPE'),
+      networkDeviceIds: validateIds(input.resourceScope?.networkDeviceIds ?? null, 'AGENT_NETWORK_DEVICE_SCOPE'),
     },
     changeNote,
   };
@@ -139,7 +145,7 @@ function inheritedPolicy(agentId: string): AgentSecurityPolicy {
     toolAllowlist: null,
     skillAllowlist: null,
     allowedEffects: [...AGENT_TOOL_EFFECTS],
-    resourceScope: Object.freeze({ instanceIds: null, serverIds: null }),
+    resourceScope: Object.freeze({ instanceIds: null, serverIds: null, networkDeviceIds: null }),
     version: 0,
     updatedBy: null,
     updatedAt: null,
@@ -203,6 +209,8 @@ export class AgentSecurityPolicyService {
       && !policy.resourceScope.instanceIds.includes(resource.instanceId)) return { allowed: false, reasonCode: 'AGENT_RESOURCE_DENIED' };
     if (resource?.serverId !== undefined && policy.resourceScope.serverIds !== null
       && !policy.resourceScope.serverIds.includes(resource.serverId)) return { allowed: false, reasonCode: 'AGENT_RESOURCE_DENIED' };
+    if (resource?.networkDeviceId !== undefined && policy.resourceScope.networkDeviceIds !== null
+      && !policy.resourceScope.networkDeviceIds.includes(resource.networkDeviceId)) return { allowed: false, reasonCode: 'AGENT_RESOURCE_DENIED' };
     return { allowed: true };
   }
 

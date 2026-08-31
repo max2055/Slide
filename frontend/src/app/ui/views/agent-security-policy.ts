@@ -16,7 +16,7 @@ interface AgentSecurityPolicy {
   toolAllowlist: string[] | null;
   skillAllowlist: string[] | null;
   allowedEffects: ToolEffect[];
-  resourceScope: { instanceIds: number[] | null; serverIds: number[] | null };
+  resourceScope: { instanceIds: number[] | null; serverIds: number[] | null; networkDeviceIds?: number[] | null };
   version: number;
   updatedBy: number | null;
   updatedAt: string | null;
@@ -89,11 +89,13 @@ export class AgentSecurityPolicyPage extends LitElement {
   @state() private skillMode: 'inherit' | 'custom' = 'inherit';
   @state() private instanceMode: 'inherit' | 'custom' = 'inherit';
   @state() private serverMode: 'inherit' | 'custom' = 'inherit';
+  @state() private networkDeviceMode: 'inherit' | 'custom' = 'inherit';
   @state() private selectedTools = new Set<string>();
   @state() private selectedSkills = new Set<string>();
   @state() private selectedEffects = new Set<ToolEffect>();
   @state() private instanceIds = '';
   @state() private serverIds = '';
+  @state() private networkDeviceIds = '';
   @state() private changeNote = '';
   @state() private history: PolicyHistoryRecord[] = [];
   @state() private executionConfig: AgentExecutionConfig | null = null;
@@ -130,7 +132,7 @@ export class AgentSecurityPolicyPage extends LitElement {
     .choice span { display: block; margin-top: var(--space-xs); color: var(--muted); font-size: var(--text-xs); line-height: 1.4; }
     .effect-list { flex-wrap: wrap; gap: var(--space-lg); }
     .effect-list label { display: inline-flex; align-items: center; gap: var(--space-xs); font-size: var(--text-sm); }
-    .scope-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-lg); }
+    .scope-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-lg); }
     input[type='text'], textarea, select { box-sizing: border-box; width: 100%; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); color: var(--text); padding: var(--space-sm) var(--space-md); font: inherit; }
     textarea { resize: vertical; min-height: 5rem; }
     input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent-subtle); border-color: var(--accent); }
@@ -227,11 +229,13 @@ export class AgentSecurityPolicyPage extends LitElement {
     this.skillMode = policy.skillAllowlist === null ? 'inherit' : 'custom';
     this.instanceMode = policy.resourceScope.instanceIds === null ? 'inherit' : 'custom';
     this.serverMode = policy.resourceScope.serverIds === null ? 'inherit' : 'custom';
+    this.networkDeviceMode = policy.resourceScope.networkDeviceIds == null ? 'inherit' : 'custom';
     this.selectedTools = new Set(policy.toolAllowlist ?? this.catalog?.tools.map((tool) => tool.name) ?? []);
     this.selectedSkills = new Set(policy.skillAllowlist ?? this.catalog?.skills.map((skill) => skill.name) ?? []);
     this.selectedEffects = new Set(policy.allowedEffects);
     this.instanceIds = policy.resourceScope.instanceIds?.join(', ') ?? '';
     this.serverIds = policy.resourceScope.serverIds?.join(', ') ?? '';
+    this.networkDeviceIds = policy.resourceScope.networkDeviceIds?.join(', ') ?? '';
     this.changeNote = '';
   }
 
@@ -278,6 +282,7 @@ export class AgentSecurityPolicyPage extends LitElement {
         resourceScope: {
           instanceIds: this.instanceMode === 'inherit' ? null : parseIds(this.instanceIds),
           serverIds: this.serverMode === 'inherit' ? null : parseIds(this.serverIds),
+          networkDeviceIds: this.networkDeviceMode === 'inherit' ? null : parseIds(this.networkDeviceIds),
         },
         changeNote: this.changeNote.trim(),
       });
@@ -367,6 +372,7 @@ export class AgentSecurityPolicyPage extends LitElement {
               <div class="scope-grid">
                 <div><div class="row-between"><h2 class="section-title">实例范围</h2>${this.renderMode(this.instanceMode, (value) => { this.instanceMode = value; })}</div>${this.instanceMode === 'custom' ? html`<app-form-field label="实例 ID" hint="多个 ID 使用英文逗号分隔；留空表示拒绝所有实例"><input type="text" .value=${this.instanceIds} .disabled=${!isAdmin} @input=${(event: Event) => { this.instanceIds = (event.target as HTMLInputElement).value; }}></app-form-field>` : html`<p class="subtle">继承用户实例 RBAC 范围</p>`}</div>
                 <div><div class="row-between"><h2 class="section-title">服务器范围</h2>${this.renderMode(this.serverMode, (value) => { this.serverMode = value; })}</div>${this.serverMode === 'custom' ? html`<app-form-field label="服务器 ID" hint="多个 ID 使用英文逗号分隔；留空表示拒绝所有服务器"><input type="text" .value=${this.serverIds} .disabled=${!isAdmin} @input=${(event: Event) => { this.serverIds = (event.target as HTMLInputElement).value; }}></app-form-field>` : html`<p class="subtle">继承用户服务器 RBAC 范围</p>`}</div>
+                <div><div class="row-between"><h2 class="section-title">网络设备范围</h2>${this.renderMode(this.networkDeviceMode, (value) => { this.networkDeviceMode = value; })}</div>${this.networkDeviceMode === 'custom' ? html`<app-form-field label="网络设备 ID" hint="多个 ID 使用英文逗号分隔；留空表示拒绝所有网络设备"><input type="text" .value=${this.networkDeviceIds} .disabled=${!isAdmin} @input=${(event: Event) => { this.networkDeviceIds = (event.target as HTMLInputElement).value; }}></app-form-field>` : html`<p class="subtle">继承用户网络设备 RBAC 范围</p>`}</div>
               </div>
             </section>
             ${isAdmin ? html`<section class="section"><app-form-field label="变更说明" hint="将写入不可变策略历史" required><textarea maxlength="500" .value=${this.changeNote} @input=${(event: Event) => { this.changeNote = (event.target as HTMLTextAreaElement).value; }}></textarea></app-form-field><div class="footer-actions"><button class="btn-primary" @click=${this.save} .disabled=${this.saving || !this.changeNote.trim()}>${icons.save} ${this.saving ? '保存中' : '保存策略'}</button></div></section>` : html`<section class="section"><app-badge variant="muted">只读</app-badge> <span class="subtle">仅管理员可修改策略</span></section>`}

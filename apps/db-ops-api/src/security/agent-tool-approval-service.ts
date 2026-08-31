@@ -264,9 +264,9 @@ export class AgentToolApprovalService {
       }
       const [result] = await this.executor().execute(
         `UPDATE agent_tool_approvals SET used_count = used_count + 1, consumed_at = NOW()
-         WHERE id = ? AND requester_id = ? AND status = 'approved' AND session_key = ?
+         WHERE id = ? AND requester_id = ? AND binding_hash = ? AND status = 'approved' AND session_key = ?
            AND used_count < max_uses AND expires_at > NOW()`,
-        [id, requesterId, options.sessionKey],
+        [id, requesterId, bindingHash, options.sessionKey],
       );
       return Number(result?.affectedRows) === 1
         ? { approved: true }

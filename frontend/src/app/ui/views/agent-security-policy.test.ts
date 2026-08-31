@@ -18,7 +18,7 @@ describe('Agent security execution controls', () => {
     localStorage.setItem('permissions', JSON.stringify(['admin:*', 'ai:view', 'audit:view']));
     mocks.get.mockImplementation(async (path: string) => path.endsWith('/history')
       ? { records: [] }
-      : { agents: [{ id: 'slide-db-ops', name: 'Slide' }], policies: [{ agentId: 'slide-db-ops', toolAllowlist: null, skillAllowlist: null, allowedEffects: ['read'], resourceScope: { instanceIds: null, serverIds: null }, version: 1, updatedBy: null, updatedAt: null }], tools: [], skills: [] });
+      : { agents: [{ id: 'slide-db-ops', name: 'Slide' }], policies: [{ agentId: 'slide-db-ops', toolAllowlist: null, skillAllowlist: null, allowedEffects: ['read'], resourceScope: { instanceIds: null, serverIds: null, networkDeviceIds: null }, version: 1, updatedBy: null, updatedAt: null }], tools: [], skills: [] });
   });
 
   afterEach(() => {
@@ -32,7 +32,7 @@ describe('Agent security execution controls', () => {
       ? { records: [] }
       : path === '/agent/security/config'
         ? { approvalEnabled: true, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY' }
-        : { agents: [{ id: 'slide-db-ops', name: 'Slide' }], policies: [{ agentId: 'slide-db-ops', toolAllowlist: null, skillAllowlist: null, allowedEffects: ['read'], resourceScope: { instanceIds: null, serverIds: null }, version: 1, updatedBy: null, updatedAt: null }], tools: [], skills: [] });
+        : { agents: [{ id: 'slide-db-ops', name: 'Slide' }], policies: [{ agentId: 'slide-db-ops', toolAllowlist: null, skillAllowlist: null, allowedEffects: ['read'], resourceScope: { instanceIds: null, serverIds: null, networkDeviceIds: null }, version: 1, updatedBy: null, updatedAt: null }], tools: [], skills: [] });
     mocks.put.mockResolvedValue({ approvalEnabled: false, restrictedNetworkEnabled: true, reasonCode: 'EXECUTION_CONFIG_UPDATED' });
     const page = document.createElement('agent-security-policy-page') as Page;
     document.body.append(page);
@@ -40,6 +40,7 @@ describe('Agent security execution controls', () => {
     await page.updateComplete;
 
     expect(mocks.get).toHaveBeenCalledWith('/agent/security/config');
+    expect(page.shadowRoot?.textContent).toContain('网络设备范围');
     const approval = page.shadowRoot?.querySelector<HTMLInputElement>('[data-action="approval-toggle"]');
     const network = page.shadowRoot?.querySelector<HTMLInputElement>('[data-action="restricted-network-toggle"]');
     expect(approval?.checked).toBe(true);
