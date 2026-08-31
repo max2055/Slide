@@ -3,6 +3,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
 import "../components/metric-chart.js";
 import { authFetch } from "../../../api/index.js";
+import { resolveHealthScoreState, type HealthScoreInstanceState } from "./health-score-state.js";
 
 interface HealthHistory {
   health_score: number;
@@ -22,6 +23,18 @@ interface HealthChecksResponse {
   status: string;
 }
 
+interface HealthScoreInstance extends HealthScoreInstanceState {
+  health_score?: number | null;
+}
+
+function isHealthScoreInstance(value: unknown): value is HealthScoreInstance {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const instance = value as Record<string, unknown>;
+  return typeof instance.health_status === "string"
+    && typeof instance.hasCredential === "boolean"
+    && (typeof instance.health_score === "number" || instance.health_score === null);
+}
+
 interface CollectionCapability {
   metricId: string;
   name: string;
@@ -36,11 +49,13 @@ export class HealthScoreTab extends LitElement {
   @state() private healthHistory: HealthHistory[] | null = null;
   @state() private latestChecks: HealthCheck[] = [];
   @state() private healthStatus: string = "unknown";
+  @state() private instanceState: HealthScoreInstance | null = null;
   @state() private capabilities: CollectionCapability[] = [];
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private timeRange: string = "7d";
   @state() private expandedChecks = false;
+  private loadRequestVersion = 0;
 
   static override styles = css`
     :host {
@@ -303,33 +318,70 @@ export class HealthScoreTab extends LitElement {
   }
 
   private async _loadData() {
-    if (!this.instanceId) return;
+    const requestVersion = ++this.loadRequestVersion;
     this.loading = true;
     this.error = null;
+    // Never let a refresh render evidence from the previous instance state.
+    this.healthHistory = null;
+    this.latestChecks = [];
+    this.healthStatus = "unknown";
+    this.instanceState = null;
+    this.capabilities = [];
+
+    const instanceId = this.instanceId;
+    if (!instanceId) {
+      this.loading = false;
+      return;
+    }
 
     try {
       const days = this._timeRangeToDays(this.timeRange);
-      const [historyRes, checksRes, capsRes] = await Promise.all([
-        authFetch(`/api/database/instances/${this.instanceId}/health-history?days=${days}`),
-        authFetch(`/api/database/instances/${this.instanceId}/health-checks`),
-        authFetch(`/api/database/instances/${this.instanceId}/collection-capabilities`),
+      const [historyRes, checksRes, capsRes, instanceRes] = await Promise.all([
+        authFetch(`/api/database/instances/${instanceId}/health-history?days=${days}`),
+        authFetch(`/api/database/instances/${instanceId}/health-checks`),
+        authFetch(`/api/database/instances/${instanceId}/collection-capabilities`),
+        authFetch(`/api/database/instances/${instanceId}`),
       ]);
 
+      if (requestVersion !== this.loadRequestVersion) return;
+
       if (historyRes.ok) {
-        this.healthHistory = await historyRes.json();
+        const history = await historyRes.json();
+        if (requestVersion !== this.loadRequestVersion) return;
+        this.healthHistory = Array.isArray(history) ? history : null;
       }
       if (checksRes.ok) {
         const data: HealthChecksResponse = await checksRes.json();
-        this.latestChecks = data.checks || [];
-        this.healthStatus = data.status || "unknown";
+        if (requestVersion !== this.loadRequestVersion) return;
+        this.latestChecks = Array.isArray(data?.checks) ? data.checks : [];
+        this.healthStatus = typeof data?.status === "string" ? data.status : "unknown";
+      }
+      if (instanceRes.ok) {
+        const instance = await instanceRes.json();
+        if (requestVersion !== this.loadRequestVersion) return;
+        if (!isHealthScoreInstance(instance)) {
+          throw new Error("实例健康状态响应无效");
+        }
+        this.instanceState = instance;
+        this.healthStatus = this.instanceState?.health_status || "unknown";
+      } else {
+        // Checks/history may still have loaded, but without the current
+        // instance snapshot there is no safe credential/readiness evidence.
+        this.instanceState = null;
+        this.healthStatus = "unknown";
       }
       if (capsRes.ok) {
-        this.capabilities = await capsRes.json();
+        const capabilities = await capsRes.json();
+        if (requestVersion !== this.loadRequestVersion) return;
+        this.capabilities = Array.isArray(capabilities) ? capabilities : [];
       }
     } catch (err: any) {
+      if (requestVersion !== this.loadRequestVersion) return;
+      this.instanceState = null;
+      this.healthStatus = "unknown";
       this.error = err.message || "加载健康评分数据失败";
     } finally {
-      this.loading = false;
+      if (requestVersion === this.loadRequestVersion) this.loading = false;
     }
   }
 
@@ -391,9 +443,15 @@ export class HealthScoreTab extends LitElement {
     }
   }
 
-  private _getLatestScore(): number {
-    if (!this.healthHistory || this.healthHistory.length === 0) return 0;
-    return this.healthHistory[this.healthHistory.length - 1].health_score;
+  private _getLatestScore(): number | null {
+    const historyScore = this.healthHistory?.length
+      ? this.healthHistory[this.healthHistory.length - 1].health_score
+      : null;
+    const latestScore = this.instanceState?.health_score ?? historyScore;
+    return resolveHealthScoreState({
+      ...(this.instanceState || {}),
+      health_status: this.instanceState?.health_status || this.healthStatus,
+    }, latestScore).score;
   }
 
   override render() {
@@ -406,7 +464,7 @@ export class HealthScoreTab extends LitElement {
     }
 
     const score = this._getLatestScore();
-    const scoreColor = this._getScoreColor(score);
+    const scoreColor = score === null ? "var(--muted)" : this._getScoreColor(score);
 
     return html`
       ${this._renderTimeRangeSelector()}
@@ -417,8 +475,9 @@ export class HealthScoreTab extends LitElement {
 
       <div class="card-section">
         <div class="score-card">
-          <div class="score-number" style="color: ${scoreColor};">${score}</div>
+          <div class="score-number" style="color: ${scoreColor};">${score ?? "未知"}</div>
           <div class="score-label">当前健康评分</div>
+          ${score === null ? html`<div class="score-label">实例未就绪或暂无可用观测数据</div>` : nothing}
         </div>
       </div>
 
@@ -456,6 +515,9 @@ export class HealthScoreTab extends LitElement {
   }
 
   private _renderTrendChart() {
+    if (this._getLatestScore() === null) {
+      return html`<div class="empty">暂无可用评分数据</div>`;
+    }
     if (!this.healthHistory || this.healthHistory.length === 0) {
       return html`<div class="empty">暂无评分数据</div>`;
     }

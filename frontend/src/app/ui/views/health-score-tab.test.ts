@@ -90,7 +90,9 @@ describe('health-score-tab stale score handling', () => {
       '/api/database/instances/7': response({ error: 'unavailable' }, false),
     });
 
-    await (element as any)._loadData();
+    const refresh = (element as any)._loadData();
+    expect((element as any)._getLatestScore()).toBeNull();
+    await refresh;
     await settle(element);
 
     expect(element.shadowRoot?.querySelector('.score-number')?.textContent).toBe('未知');
