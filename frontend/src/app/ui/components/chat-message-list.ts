@@ -4,6 +4,7 @@ import { repeat } from "lit/directives/repeat.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { icons } from "../../../icons.js";
 import { toSanitizedMarkdownHtml } from "../markdown.ts";
+import { copyTextToClipboard } from "../chat/copy-as-markdown.ts";
 import { authFetch } from "../../../api/index.js";
 import type { SidebarContent } from "../sidebar-content.ts";
 import type { ChatItem, MessageGroup } from "../types/chat-types.ts";
@@ -123,7 +124,11 @@ export class ChatMessageList extends LitElement {
   private handleCodeBlockCopy(e: Event) {
     const btn = (e.target as HTMLElement).closest(".code-block-copy");
     if (!btn) return;
-    navigator.clipboard.writeText((btn as HTMLElement).dataset.code ?? "").then(() => { btn.classList.add("copied"); setTimeout(() => btn.classList.remove("copied"), 1500); }, () => {});
+    copyTextToClipboard((btn as HTMLElement).dataset.code ?? "").then((copied) => {
+      if (!copied) return;
+      btn.classList.add("copied");
+      setTimeout(() => btn.classList.remove("copied"), 1500);
+    });
   }
 
   override render() {

@@ -10,6 +10,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { normalizeProviderError } from '@slide/agent-core';
 import type {
   LLMProvider,
   Message,
@@ -161,7 +162,8 @@ export class AnthropicProvider implements LLMProvider {
 
       return this.parseResponse(response);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const normalized = normalizeProviderError(err);
+      const message = normalized.message;
       console.error('[AnthropicProvider] chat() failed:', message);
       return {
         content: null,
@@ -172,6 +174,8 @@ export class AnthropicProvider implements LLMProvider {
         hasToolCalls: false,
         errorKind: 'provider_error',
         error: message,
+        errorCode: normalized.errorCode,
+        providerStatus: normalized.status,
       };
     }
   }
@@ -206,7 +210,8 @@ export class AnthropicProvider implements LLMProvider {
       const finalMessage = await stream.finalMessage();
       return this.parseResponse(finalMessage);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const normalized = normalizeProviderError(err);
+      const message = normalized.message;
       console.error('[AnthropicProvider] chatStream() failed:', message);
       return {
         content: null,
@@ -217,6 +222,8 @@ export class AnthropicProvider implements LLMProvider {
         hasToolCalls: false,
         errorKind: 'provider_error',
         error: message,
+        errorCode: normalized.errorCode,
+        providerStatus: normalized.status,
       };
     }
   }

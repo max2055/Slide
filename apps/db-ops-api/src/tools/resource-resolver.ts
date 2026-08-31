@@ -34,6 +34,13 @@ function serverReference(args: Record<string, unknown>): Pick<ToolPolicyResource
   return serverId ? { serverId } : { error: 'RESOURCE_INVALID' };
 }
 
+function networkDeviceReference(args: Record<string, unknown>): Pick<ToolPolicyResource, 'networkDeviceId' | 'error'> {
+  const key = hasOwn(args, 'networkDeviceId') ? 'networkDeviceId' : hasOwn(args, 'network_device_id') ? 'network_device_id' : undefined;
+  if (!key) return {};
+  const networkDeviceId = positiveInteger(args[key]);
+  return networkDeviceId ? { networkDeviceId } : { error: 'RESOURCE_INVALID' };
+}
+
 export function resolveToolResourceFromArgs(
   toolName: string,
   args: Record<string, unknown>,
@@ -41,8 +48,27 @@ export function resolveToolResourceFromArgs(
   const definition = getToolSecurityDefinition(toolName);
   const type = definition?.resource ?? 'none';
 
+  // Cross-resource read tools carry an explicit, typed reference rather than
+  // pretending every target is a database instance. Resolve it before the
+  // handler so Agent policy/audit records retain the concrete subject.
+  if (['list_resources', 'get_resource_observations', 'get_resource_relations', 'diagnose_resource'].includes(toolName)
+    && hasOwn(args, 'resourceType')) {
+    const resourceType = args.resourceType;
+    const resourceId = positiveInteger(args.resourceId);
+    if (!['instance', 'server', 'network_device'].includes(String(resourceType)) || resourceId === undefined) {
+      return { type: 'none', error: 'RESOURCE_INVALID' };
+    }
+    return resourceType === 'instance'
+      ? { type: 'instance', instanceId: resourceId }
+      : resourceType === 'server'
+        ? { type: 'server', serverId: resourceId }
+        : { type: 'network_device', networkDeviceId: resourceId };
+  }
+
   if (type === 'instance') return { type, ...instanceReference(args) };
   if (type === 'server') return { type, ...serverReference(args) };
+  if (type === 'network_device') return { type, ...networkDeviceReference(args) };
+  if (type === 'network-scan') return { type };
   if (type === 'database-target') {
     const instance = instanceReference(args);
     if (instance.error) return { type, ...instance };

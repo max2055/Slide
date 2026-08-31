@@ -47,6 +47,71 @@ describe('NotificationDatabaseService email credentials', () => {
     expect(encryptData).not.toHaveBeenCalled();
   });
 
+  it('keeps an existing encrypted OAuth refresh token when an update omits it', async () => {
+    execute
+      .mockResolvedValueOnce([[
+        { config: JSON.stringify({
+          smtp_auth: 'oauth2',
+          oauth2_refresh_token_encrypted: 'encrypted:old-refresh-token',
+          smtp_host: 'smtp.old.example',
+        }) },
+      ]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+    await expect(notificationDatabaseService.updateChannel(10, {
+      config: {
+        smtp_auth: 'oauth2',
+        smtp_host: 'smtp.new.example',
+        oauth2_tenant: 'common',
+        oauth2_client_id: 'client-id',
+      },
+    })).resolves.toEqual({ success: true });
+
+    const config = JSON.parse(execute.mock.calls[1][1][0]);
+    expect(config).toMatchObject({
+      smtp_host: 'smtp.new.example',
+      oauth2_refresh_token_encrypted: 'encrypted:old-refresh-token',
+    });
+    expect(config).not.toHaveProperty('oauth2_refresh_token');
+    expect(encryptData).not.toHaveBeenCalled();
+  });
+
+  it('merges a partial email config instead of dropping existing SMTP fields', async () => {
+    execute
+      .mockResolvedValueOnce([[
+        { config: JSON.stringify({
+          smtp_host: 'smtp.old.example',
+          smtp_port: 587,
+          smtp_username: 'alerts@example.com',
+          smtp_auth: 'oauth2',
+          oauth2_tenant: 'common',
+          oauth2_client_id: 'old-client',
+          oauth2_refresh_token_encrypted: 'encrypted:old-refresh-token',
+          from: 'alerts@example.com',
+          to: 'dba@example.com',
+          severity: 'info',
+        }) },
+      ]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+    await expect(notificationDatabaseService.updateChannel(10, {
+      config: { smtp_port: 2525, oauth2_client_id: 'new-client' },
+    })).resolves.toEqual({ success: true });
+
+    const config = JSON.parse(execute.mock.calls[1][1][0]);
+    expect(config).toMatchObject({
+      smtp_host: 'smtp.old.example',
+      smtp_port: 2525,
+      smtp_username: 'alerts@example.com',
+      smtp_auth: 'oauth2',
+      oauth2_tenant: 'common',
+      oauth2_client_id: 'new-client',
+      oauth2_refresh_token_encrypted: 'encrypted:old-refresh-token',
+      from: 'alerts@example.com',
+      to: 'dba@example.com',
+    });
+  });
+
   it('encrypts OAuth refresh tokens before storing an email channel', async () => {
     execute.mockResolvedValue([{ insertId: 10 }]);
 

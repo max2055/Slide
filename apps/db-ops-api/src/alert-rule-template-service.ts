@@ -10,7 +10,7 @@ export interface AlertRuleTemplate {
   id: number;
   name: string;
   description: string | null;
-  target_type: 'instance' | 'server';
+  target_type: 'instance' | 'server' | 'network_device';
   metric_name: string;
   operator: string;
   threshold_template: Record<string, number> | null;
@@ -22,6 +22,84 @@ export interface AlertRuleTemplate {
   created_at: Date;
   updated_at: Date;
 }
+
+/** Built-in read-only presets for fixed-profile server evidence. */
+export const SERVER_ALERT_TEMPLATES = Object.freeze([
+  {
+    name: '服务器不可达', description: '服务器连接连续失败或无法访问', target_type: 'server' as const,
+    metric_name: 'reachability', operator: '=', threshold_template: { warning: 1, error: 2, critical: 3 },
+    duration_seconds: 600, severity: 'error' as const, silence_minutes: 5, enabled: true,
+  },
+  {
+    name: '网络接收错误过高', description: '服务器网络接口接收错误累计值超过阈值', target_type: 'server' as const,
+    metric_name: 'network_rx_errors', operator: '>=', threshold_template: { warning: 1, error: 10, critical: 100 },
+    duration_seconds: 120, severity: 'warning' as const, silence_minutes: 5, enabled: true,
+  },
+  {
+    name: '网络发送错误过高', description: '服务器网络接口发送错误累计值超过阈值', target_type: 'server' as const,
+    metric_name: 'network_tx_errors', operator: '>=', threshold_template: { warning: 1, error: 10, critical: 100 },
+    duration_seconds: 120, severity: 'warning' as const, silence_minutes: 5, enabled: true,
+  },
+  {
+    name: '网络接收丢包过高', description: '服务器网络接口接收丢弃累计值超过阈值', target_type: 'server' as const,
+    metric_name: 'network_rx_drops', operator: '>=', threshold_template: { warning: 1, error: 10, critical: 100 },
+    duration_seconds: 120, severity: 'warning' as const, silence_minutes: 5, enabled: true,
+  },
+  {
+    name: '网络发送丢包过高', description: '服务器网络接口发送丢弃累计值超过阈值', target_type: 'server' as const,
+    metric_name: 'network_tx_drops', operator: '>=', threshold_template: { warning: 1, error: 10, critical: 100 },
+    duration_seconds: 120, severity: 'warning' as const, silence_minutes: 5, enabled: true,
+  },
+  {
+    name: '磁盘 I/O 时间过高', description: '服务器块设备累计 I/O 时间超过阈值', target_type: 'server' as const,
+    metric_name: 'disk_io_time_ms', operator: '>=', threshold_template: { warning: 100, error: 500, critical: 1000 },
+    duration_seconds: 180, severity: 'warning' as const, silence_minutes: 5, enabled: true,
+  },
+  {
+    name: '进程数过高', description: '服务器当前进程数量超过阈值', target_type: 'server' as const,
+    metric_name: 'process_count', operator: '>=', threshold_template: { warning: 500, error: 1000, critical: 2000 },
+    duration_seconds: 120, severity: 'warning' as const, silence_minutes: 5, enabled: true,
+  },
+] as const);
+
+/** Built-in read-only presets for Huawei VRP network-device evidence. */
+export const NETWORK_DEVICE_ALERT_TEMPLATES = Object.freeze([
+  {
+    name: '网络设备不可达', description: '网络设备连续采集失败或不可达', target_type: 'network_device' as const,
+    metric_name: 'device_reachability', operator: '=', threshold_template: { warning: 0, error: 0, critical: 0 },
+    duration_seconds: 600, severity: 'error' as const, silence_minutes: 5, enabled: true,
+  },
+  {
+    name: '网络设备 CPU 过高', description: '华为 VRP 设备 CPU 使用率超过阈值', target_type: 'network_device' as const,
+    metric_name: 'device_cpu_percent', operator: '>=', threshold_template: { warning: 80, error: 90, critical: 95 },
+    duration_seconds: 120, severity: 'warning' as const, silence_minutes: 5, enabled: true,
+  },
+  {
+    name: '网络设备内存过高', description: '华为 VRP 设备内存使用率超过阈值', target_type: 'network_device' as const,
+    metric_name: 'device_memory_percent', operator: '>=', threshold_template: { warning: 80, error: 90, critical: 95 },
+    duration_seconds: 120, severity: 'warning' as const, silence_minutes: 5, enabled: true,
+  },
+  {
+    name: '网络设备温度过高', description: '华为 VRP 设备温度超过阈值', target_type: 'network_device' as const,
+    metric_name: 'device_temperature_celsius', operator: '>=', threshold_template: { warning: 70, error: 80, critical: 90 },
+    duration_seconds: 120, severity: 'warning' as const, silence_minutes: 5, enabled: true,
+  },
+  {
+    name: '网络接口 down', description: '网络设备接口 operStatus 为 down', target_type: 'network_device' as const,
+    metric_name: 'interface_oper_status', operator: '=', threshold_template: { warning: 0, error: 0, critical: 0 },
+    duration_seconds: 60, severity: 'critical' as const, silence_minutes: 5, enabled: true,
+  },
+  {
+    name: '网络接口错误率过高', description: '网络设备接口错误包速率超过阈值', target_type: 'network_device' as const,
+    metric_name: 'interface_error_rate', operator: '>=', threshold_template: { warning: 1, error: 10, critical: 100 },
+    duration_seconds: 120, severity: 'warning' as const, silence_minutes: 5, enabled: true,
+  },
+  {
+    name: '网络接口丢弃率过高', description: '网络设备接口丢弃包速率超过阈值', target_type: 'network_device' as const,
+    metric_name: 'interface_drop_rate', operator: '>=', threshold_template: { warning: 1, error: 10, critical: 100 },
+    duration_seconds: 120, severity: 'warning' as const, silence_minutes: 5, enabled: true,
+  },
+] as const);
 
 class AlertRuleTemplateDatabaseService {
   private getPool(): mysql.Pool | null {
@@ -91,7 +169,7 @@ class AlertRuleTemplateDatabaseService {
   async createTemplate(data: {
     name: string;
     description?: string;
-    target_type?: 'instance' | 'server';
+    target_type?: 'instance' | 'server' | 'network_device';
     metric_name: string;
     operator: string;
     threshold_template?: Record<string, number>;
@@ -137,7 +215,7 @@ class AlertRuleTemplateDatabaseService {
   async updateTemplate(id: number, data: {
     name?: string;
     description?: string;
-    target_type?: 'instance' | 'server';
+    target_type?: 'instance' | 'server' | 'network_device';
     metric_name?: string;
     operator?: string;
     threshold_template?: Record<string, number> | null;

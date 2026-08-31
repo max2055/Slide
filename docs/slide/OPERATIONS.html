@@ -52,7 +52,7 @@
     <tr><td><code>JWT_SECRET_KEY</code></td><td>JWT 签名</td><td>至少 32 字符，不能是默认值。</td></tr>
     <tr><td><code>ENCRYPTION_KEY</code></td><td>实例和提供商凭据加密</td><td>必须为恰好 32 字节的 UTF-8、64 位 hex 或有效 base64；不得与 JWT 密钥相同。</td></tr>
     <tr><td><code>INITIAL_ADMIN_USERNAME</code>、<code>INITIAL_ADMIN_PASSWORD</code></td><td>初始管理员</td><td><code>NODE_ENV=production</code> 时必需。</td></tr>
-    <tr><td><code>DB_ALLOWED_CIDRS</code>、<code>DB_ALLOWED_PORTS</code></td><td>受管数据库目标允许范围</td><td>按实际网络和端口收窄。</td></tr>
+    <tr><td>目标地址策略</td><td>受管数据库、服务器和网络设备的目标校验</td><td>不通过环境变量配置网段或端口；阻止特殊/元数据地址并校验端口范围。</td></tr>
     <tr><td><code>CORS_ORIGINS</code></td><td>允许的前端来源</td><td>只设置生产域名。</td></tr>
     <tr><td><code>SESSION_RETENTION_DAYS</code>、<code>SESSION_MAX_MESSAGES</code></td><td>Agent 会话保留与消息上限</td><td>默认分别为 30 天和 2000 条消息。</td></tr>
   </tbody>
@@ -103,7 +103,7 @@ lsof -i :28888</code></pre>
     <tr><td>聊天连接失败</td><td>确认 API 持有 Worker lease、<code>28888</code> 未被占用、浏览器可访问该地址，且 WebSocket 首帧发送有效 JWT。</td></tr>
     <tr><td>AI 没有回答</td><td>在 LLM 设置中启用可用提供商；确认模型、密钥和出站网络。无数据库提供商时才会使用 <code>ANTHROPIC_API_KEY</code> 回退。</td></tr>
     <tr><td>没有指标或告警</td><td>确认实例为 active、数据库连接和类型能力正常；检查指标注册表中的采集开关与间隔，并确认 Worker lease 未被其他副本占用。</td></tr>
-    <tr><td>无法添加实例</td><td>仅支持 MySQL、PostgreSQL、Oracle、达梦；确认主机地址和端口符合 <code>DB_ALLOWED_CIDRS</code>、<code>DB_ALLOWED_PORTS</code>。</td></tr>
+    <tr><td>无法添加实例</td><td>仅支持 MySQL、PostgreSQL、Oracle、达梦；确认主机地址可解析且端口为 1-65535。</td></tr>
     <tr><td>通知未发送</td><td>通知渠道需要完成配置和测试；检查死信队列与交付记录，确认未被出站 URL 策略拒绝。</td></tr>
   </tbody>
 </table>

@@ -67,6 +67,27 @@ class MockLLMProvider implements LLMProvider {
   }
 }
 
+class ThinkingStreamingProvider extends MockLLMProvider {
+  override async chatStream(
+    _messages: Message[],
+    _tools: ToolSchema[],
+    callbacks: StreamCallbacks,
+    _options?: LLMCallOptions,
+  ): Promise<LLMResponse> {
+    await callbacks.onThinkingDelta?.('first reason');
+    await callbacks.onThinkingDelta?.(' second reason');
+    await callbacks.onContentDelta('final answer');
+    return {
+      content: 'final answer',
+      finishReason: 'stop',
+      toolCalls: [],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+      shouldExecuteTools: false,
+      hasToolCalls: false,
+    };
+  }
+}
+
 class ToolCallingProvider extends MockLLMProvider {
   private calls = 0;
   override async chat(): Promise<LLMResponse> {
@@ -256,6 +277,30 @@ afterEach(async () => {
 // ── Tests ──
 
 describe('DirectAdapter', () => {
+  it('serializes chat runs for the same session key', async () => {
+    const adapter = createMockAdapter();
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let call = 0;
+    (adapter as any).runChat = async (_sessionKey: string, message: string) => {
+      call += 1;
+      order.push(`start:${message}`);
+      if (call === 1) await firstStarted;
+      order.push(`end:${message}`);
+      return { finalContent: message, usage: {}, stopReason: 'completed' };
+    };
+
+    const first = adapter.chat('same-session', 'first', () => {});
+    await Promise.resolve();
+    const second = adapter.chat('same-session', 'second', () => {});
+    await Promise.resolve();
+    expect(order).toEqual(['start:first']);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(order).toEqual(['start:first', 'end:first', 'start:second', 'end:second']);
+  });
+
   describe('instantiation', () => {
     it('should compile and be instantiated with mock ToolRegistry + mock LLMProvider', () => {
       const adapter = createMockAdapter();
@@ -332,7 +377,7 @@ describe('DirectAdapter', () => {
       });
       const metadata = vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
       const createSession = vi.spyOn(chatDatabaseService, 'createSession').mockResolvedValue({ session_id: 'ws-catalog-policy-session' } as any);
-      const addMessage = vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue();
+      const addMessage = vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
       const decryptedInstanceLookup = vi.spyOn(instanceDatabaseService, 'getInstanceWithDecryptedPassword');
       const platformTools = await loadPlatformTools();
       const actorTools = createActorBoundToolRegistry(viewer);
@@ -407,7 +452,7 @@ describe('DirectAdapter', () => {
       });
       const metadata = vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
       const createSession = vi.spyOn(chatDatabaseService, 'createSession').mockResolvedValue({ session_id: 'ws-provider-failure-session' } as any);
-      const addMessage = vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue();
+      const addMessage = vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
       const claim = vi.spyOn(agentRunService, 'claim').mockResolvedValue({
         created: true,
         run: { id: 'provider-failure-run', actorId: actor.userId, sessionId: 'ws-provider-failure-session', messageId: 'failure-message', idempotencyKey: 'failure-key', state: 'running' },
@@ -501,6 +546,25 @@ describe('DirectAdapter', () => {
       expect(result.finalContent).toBeTruthy();
       expect(result.usage).toBeDefined();
       expect(result.usage!.prompt_tokens).toBeGreaterThan(0);
+    });
+
+    it('keeps thinking events separate from the visible answer stream', async () => {
+      const adapter = new DirectAdapter({
+        tools: new ToolRegistry(),
+        llmProvider: new ThinkingStreamingProvider(),
+      });
+      const events: ChatEvent[] = [];
+
+      await adapter.chat('test-session-thinking', 'Hello', (event) => events.push(event));
+
+      expect(events.map((event) => event.type)).toEqual([
+        'thinking_delta', 'thinking_delta', 'thinking_end', 'text_delta', 'complete',
+      ]);
+      expect(events.find((event) => event.type === 'text_delta')).toMatchObject({ delta: 'final answer' });
+      expect(events.filter((event) => event.type === 'thinking_delta')).toEqual([
+        { type: 'thinking_delta', delta: 'first reason' },
+        { type: 'thinking_delta', delta: ' second reason' },
+      ]);
     });
 
     it('binds an authenticated actor to a dangerous tool call and denies the handler', async () => {

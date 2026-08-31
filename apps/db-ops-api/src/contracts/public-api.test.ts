@@ -14,6 +14,11 @@ import {
   OkResponseSchema,
   ReplaceInstanceHostsBodySchema,
   ReplaceInstanceHostsResponseSchema,
+  ServerDiagnosticsSchema,
+  CollectServerDiagnosticsResponseSchema,
+  NetworkDeviceRelationInputSchema,
+  NetworkDeviceTestConnectionRequestSchema,
+  NetworkDeviceTestConnectionResponseSchema,
 } from './public-api.js';
 import { buildClientTypes, buildOpenApiDocument } from './generate-public-api.js';
 
@@ -43,6 +48,25 @@ describe('generated public API contract', () => {
       '/api/database/instances/{id}/hosts',
       '/api/database/instances/{id}/hosts/{serverId}',
       '/api/health',
+      '/api/network-devices',
+      '/api/network-devices/{id}',
+      '/api/network-devices/{id}/capabilities',
+      '/api/network-devices/{id}/config-backups',
+      '/api/network-devices/{id}/config-backups/{backupId}',
+      '/api/network-devices/{id}/config-backups/{backupId}/diff',
+      '/api/network-devices/{id}/interfaces',
+      '/api/network-devices/{id}/metrics',
+      '/api/network-devices/{id}/probe',
+      '/api/network-devices/{id}/relations',
+      '/api/network-devices/test-connection',
+      '/api/resources',
+      '/api/resources/{type}/{id}/diagnose',
+      '/api/resources/{type}/{id}/diagnose-agent',
+      '/api/resources/{type}/{id}/observations',
+      '/api/resources/metrics/summary',
+      '/api/resources/overview',
+      '/api/servers/{id}/collect-diagnostics',
+      '/api/servers/{id}/diagnostics',
       '/api/servers/{id}/instances',
     ]);
     expect(buildClientTypes()).toContain('export interface DatabaseInstance');
@@ -51,7 +75,20 @@ describe('generated public API contract', () => {
     expect(buildClientTypes()).toContain('export interface JournalEvidence');
     expect(buildClientTypes()).toContain('export interface PhysicalFileEvidence');
     expect(buildClientTypes()).toContain('export interface DiagnosticGap');
+    expect(buildClientTypes()).toContain('export interface ServerDiagnostics');
+    expect(buildClientTypes()).toContain('export interface CollectServerDiagnosticsResponse');
     expect(buildClientTypes()).toBe(buildClientTypes());
+  });
+
+  it('documents optional SSH host-key probing and the server-only relation boundary', () => {
+    expect(Value.Check(NetworkDeviceTestConnectionRequestSchema, {
+      host: '192.0.2.10', version: 3, snmpPort: 161, sshPort: 22,
+      snmpv3: { username: 'monitor', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: '12345678', privacyProtocol: 'AES', privacySecret: '12345678' },
+      ssh: { credentialType: 'password', username: 'readonly', credentialValue: 'secret', hostKeyFingerprint: `SHA256:${'A'.repeat(43)}` },
+    })).toBe(true);
+    expect(Value.Check(NetworkDeviceTestConnectionResponseSchema, { success: true, ssh: { verified: true } })).toBe(true);
+    expect(Value.Check(NetworkDeviceRelationInputSchema, { target: { type: 'server', id: 3 }, relationType: 'connected_to' })).toBe(true);
+    expect(Value.Check(NetworkDeviceRelationInputSchema, { target: { type: 'instance', id: 11 }, relationType: 'serves' })).toBe(false);
   });
 
   it('types complete host freshness, filesystems, journals, physical files, roles, and gaps', () => {
@@ -122,6 +159,8 @@ describe('generated public API contract', () => {
     app.put('/instance-hosts', { schema: { body: ReplaceInstanceHostsBodySchema, response: { 200: ReplaceInstanceHostsResponseSchema } } }, async () => ({ ok: true, hosts: [] }));
     app.delete('/instance-hosts', { schema: { response: { 200: OkResponseSchema } } }, async () => ({ ok: true }));
     app.get('/hosted-instances', { schema: { response: { 200: HostedInstancesResponseSchema } } }, async () => ({ instances: [] }));
+    app.get('/server-diagnostics', { schema: { response: { 200: ServerDiagnosticsSchema } } }, async () => ({}));
+    app.post('/server-diagnostics/collect', { schema: { response: { 200: CollectServerDiagnosticsResponseSchema } } }, async () => ({}));
     await expect(app.ready()).resolves.toBe(app);
     await app.close();
   });

@@ -4,6 +4,7 @@ import { dbConnection } from '../db-connection.js';
 export type SecurityEventType =
   | 'database_target_denied'
   | 'server_target_denied'
+  | 'network_device_target_denied'
   | 'approval_execution_denied'
   | 'refresh_replay'
   | 'branding_write_denied'

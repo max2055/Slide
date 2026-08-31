@@ -275,6 +275,14 @@ function normalizeFinalAssistantMessage(message: unknown): Record<string, unknow
   });
 }
 
+function attachRunId(
+  message: Record<string, unknown> | null,
+  runId: string | null,
+): Record<string, unknown> | null {
+  if (!message || !runId) return message;
+  return { ...message, runId };
+}
+
 export async function sendChatMessage(
   state: ChatState,
   message: string,
@@ -387,7 +395,10 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
   // Triggered when a sub-agent announces completion from a different runId.
   if (state.chatRunId && payload.runId !== state.chatRunId) {
     if (payload.state === "final") {
-      const finalMessage = normalizeFinalAssistantMessage(payload.message);
+      const finalMessage = attachRunId(
+        normalizeFinalAssistantMessage(payload.message),
+        payload.runId || null,
+      );
       if (finalMessage && !isAssistantSilentReply(finalMessage)) {
         state.chatMessages = [...state.chatMessages, finalMessage];
         return null;
@@ -418,7 +429,10 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
       state.chatStream = next;
     }
   } else if (payload.state === "final") {
-    const finalMessage = normalizeFinalAssistantMessage(payload.message);
+    const finalMessage = attachRunId(
+      normalizeFinalAssistantMessage(payload.message),
+      terminalRunId,
+    );
     if (finalMessage && !isAssistantSilentReply(finalMessage)) {
       state.chatMessages = [...state.chatMessages, finalMessage];
     } else if (state.chatStream?.trim() && !isSilentReplyStream(state.chatStream)) {
@@ -426,6 +440,7 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
         ...state.chatMessages,
         {
           role: "assistant",
+          runId: terminalRunId,
           content: [{ type: "text", text: state.chatStream }],
           timestamp: Date.now(),
         },
@@ -433,7 +448,10 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
     }
     reconcileTerminalRun("done", "done");
   } else if (payload.state === "aborted") {
-    const normalizedMessage = normalizeAbortedAssistantMessage(payload.message);
+    const normalizedMessage = attachRunId(
+      normalizeAbortedAssistantMessage(payload.message),
+      terminalRunId,
+    );
     if (normalizedMessage && !isAssistantSilentReply(normalizedMessage)) {
       state.chatMessages = [...state.chatMessages, normalizedMessage];
     } else {
@@ -443,6 +461,7 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
           ...state.chatMessages,
           {
             role: "assistant",
+            runId: terminalRunId,
             content: [{ type: "text", text: streamedText }],
             timestamp: Date.now(),
           },

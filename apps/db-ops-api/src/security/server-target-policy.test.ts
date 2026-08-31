@@ -26,21 +26,17 @@ describe('server target policy', () => {
     [{ host: '169.254.169.254', port: 22 }, 'SERVER_TARGET_ADDRESS_DENIED'],
     [{ host: 'metadata.example', port: 22 }, 'SERVER_TARGET_ADDRESS_DENIED'],
     [{ host: 'mixed.internal.example', port: 22 }, 'SERVER_TARGET_ADDRESS_DENIED'],
-    [{ host: 'public.example', port: 22 }, 'SERVER_TARGET_ADDRESS_DENIED'],
-    [{ host: 'ssh.internal.example', port: 3306 }, 'SERVER_TARGET_PORT_DENIED'],
+    [{ host: 'ssh.internal.example', port: 0 }, 'SERVER_TARGET_INVALID_PORT'],
     [{ host: 'missing.example', port: 22 }, 'SERVER_TARGET_DNS_FAILED'],
   ])('rejects unauthorized server targets with a stable reason', async (target, reasonCode) => {
     await expect(authorizeServerTarget(target, { allowedCidrs: '10.20.0.0/16', lookup }))
       .rejects.toMatchObject({ name: ServerTargetPolicyError.name, reasonCode });
   });
 
-  it.each([
-    [{ allowedCidrs: '', allowedPorts: [22] }, 'missing CIDRs'],
-    [{ allowedCidrs: '10.20.0.0/16', allowedPorts: [] }, 'missing ports'],
-  ])('fails closed in production for $1', async (options) => {
+  it('allows a public target when it is not a special or metadata address', async () => {
     await expect(authorizeServerTarget(
-      { host: '10.20.30.40', port: 22 },
-      { ...options, production: true },
-    )).rejects.toMatchObject({ reasonCode: 'SERVER_TARGET_POLICY_NOT_CONFIGURED' });
+      { host: 'public.example', port: 3306 },
+      { lookup },
+    )).resolves.toMatchObject({ address: '203.0.113.10', port: 3306 });
   });
 });

@@ -1,6 +1,6 @@
 /**
  * ToolRegistry — dynamic tool registration and execution.
- * Direct port of nanobot/nanobot/agent/tools/registry.py.
+ * TypeScript tool registry implemented for Slide.
  */
 
 import { readdirSync, statSync } from 'node:fs';
@@ -124,6 +124,11 @@ export class ToolRegistry implements IToolRegistry {
       }
       return result;
     } catch (e: unknown) {
+      // Preserve thrown exceptions so AgentRunner can distinguish infrastructure
+      // failures from a structured business result such as { success: false }.
+      if (context?.preserveErrors) {
+        throw e instanceof Error ? e : new Error(String(e));
+      }
       const message = e instanceof Error ? e.message : String(e);
       return `Error executing ${name}: ${message}${HINT}`;
     }
@@ -134,7 +139,7 @@ export class ToolRegistry implements IToolRegistry {
   }
 }
 
-// ── JSON Schema validation (ported from nanobot Schema class) ──
+// ── JSON Schema validation ──
 
 const JSON_TYPE_MAP: Record<string, string | [string, string]> = {
   string: "string",
@@ -234,7 +239,7 @@ export function validateJsonSchema(
   return errors;
 }
 
-// ── Tool parameter casting (ported from nanobot Tool._cast_value) ──
+// ── Tool parameter casting ──
 
 export function castToolParams(
   params: Record<string, unknown>,
@@ -267,8 +272,14 @@ function castValue(val: unknown, propSchema: JSP): unknown {
 
   // String → number coercion
   if (typeof val === "string" && (t === "integer" || t === "number")) {
-    const n = t === "integer" ? parseInt(val, 10) : parseFloat(val);
-    if (!isNaN(n)) return n;
+    const normalized = val.trim();
+    const pattern = t === "integer"
+      ? /^[+-]?\d+$/
+      : /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+    if (pattern.test(normalized)) {
+      const n = Number(normalized);
+      if (Number.isFinite(n) && (t !== "integer" || Number.isInteger(n))) return n;
+    }
   }
 
   // Any → string coercion
@@ -308,7 +319,7 @@ function castValue(val: unknown, propSchema: JSP): unknown {
   return val;
 }
 
-// ── Tool auto-discovery utilities (ported from nanobot tools/loader.py) ──
+// ── Tool auto-discovery utilities ──
 
 const TOOL_EXTENSIONS = new Set(['.js', '.ts', '.mjs', '.cjs']);
 const SKIP_FILES = new Set(['index.ts', 'index.js', 'types.ts', 'types.js', 'schema.ts', 'schema.js']);

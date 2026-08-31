@@ -73,6 +73,13 @@ interface StrictReadOptions {
   strict?: boolean;
 }
 
+export interface MetricsReadStatus<T> {
+  available: boolean;
+  data: T | null;
+  errorCode?: 'METRICS_STORAGE_UNAVAILABLE' | 'METRICS_STORAGE_QUERY_FAILED' | 'METRICS_NOT_COLLECTED';
+  error?: string;
+}
+
 class MetricsDatabaseService {
   /**
    * 获取数据库连接池
@@ -230,6 +237,18 @@ class MetricsDatabaseService {
     }
   }
 
+  async getRealtimeMetricsWithStatus(instanceId: number): Promise<MetricsReadStatus<MetricsRecord>> {
+    if (!this.getPool()) return { available: false, data: null, errorCode: 'METRICS_STORAGE_UNAVAILABLE' };
+    try {
+      const data = await this.getRealtimeMetrics(instanceId, { strict: true });
+      return data
+        ? { available: true, data }
+        : { available: true, data: null, errorCode: 'METRICS_NOT_COLLECTED' };
+    } catch (error) {
+      return { available: false, data: null, errorCode: 'METRICS_STORAGE_QUERY_FAILED', error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   /**
    * 获取历史指标
    */
@@ -260,12 +279,12 @@ class MetricsDatabaseService {
           FROM metrics_history
           WHERE instance_id = ? AND recorded_at BETWEEN ? AND ?
           ORDER BY recorded_at DESC
-          LIMIT ?
+          LIMIT ${boundedLimit}
         ) AS recent
         ORDER BY recorded_at ASC
       `;
 
-      const params: any[] = [instanceId, startTime, endTime, boundedLimit];
+      let params: any[] = [instanceId, startTime, endTime];
 
       // 如果指定了间隔，使用聚合
       if (interval) {
@@ -296,10 +315,11 @@ class MetricsDatabaseService {
             WHERE instance_id = ? AND recorded_at BETWEEN ? AND ?
             GROUP BY instance_id, DATE_FORMAT(recorded_at, '%Y-%m-%d %H:%i:00')
             ORDER BY recorded_at DESC
-            LIMIT ?
+            LIMIT ${boundedLimit}
           ) AS recent
           ORDER BY recorded_at ASC
         `;
+        params = [instanceId, startTime, endTime];
       }
 
       const [rows] = await pool.execute(sql, params) as any;
@@ -318,10 +338,12 @@ class MetricsDatabaseService {
     instanceId: number,
     period: '1h' | '6h' | '24h' | '7d',
     interval: '1m' | '5m' | '15m' | '1h',
-    metricIds?: string[]
+    metricIds?: string[],
+    options: StrictReadOptions = {},
   ): Promise<{ time: string[]; metrics: Record<string, number[]> }> {
     const pool = this.getPool();
     if (!pool) {
+      if (options.strict) throw new Error('METRICS_STORAGE_UNAVAILABLE');
       return { time: [], metrics: {} };
     }
 
@@ -436,7 +458,25 @@ class MetricsDatabaseService {
       return { time, metrics };
     } catch (error) {
       console.error('获取历史指标范围失败:', error);
+      if (options.strict) throw new Error('METRICS_STORAGE_QUERY_FAILED', { cause: error });
       return { time: [], metrics: {} };
+    }
+  }
+
+  async getHistoricalMetricsWithRangeStatus(
+    instanceId: number,
+    period: '1h' | '6h' | '24h' | '7d',
+    interval: '1m' | '5m' | '15m' | '1h',
+    metricIds?: string[],
+  ): Promise<MetricsReadStatus<{ time: string[]; metrics: Record<string, number[]> }>> {
+    if (!this.getPool()) return { available: false, data: null, errorCode: 'METRICS_STORAGE_UNAVAILABLE' };
+    try {
+      const data = await this.getHistoricalMetricsWithRange(instanceId, period, interval, metricIds, { strict: true });
+      return data.time.length > 0
+        ? { available: true, data }
+        : { available: true, data: null, errorCode: 'METRICS_NOT_COLLECTED' };
+    } catch (error) {
+      return { available: false, data: null, errorCode: 'METRICS_STORAGE_QUERY_FAILED', error: error instanceof Error ? error.message : String(error) };
     }
   }
 

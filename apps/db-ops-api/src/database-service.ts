@@ -10,6 +10,9 @@ import { scoringConfigService } from './scoring-config-service.js';
 import { withTimeout } from './promise-timeout.js';
 import { authorizeDatabaseTarget } from './security/database-target-policy.js';
 import { classifySql } from './sql-validator.js';
+import { ensureOracleClientReady, formatOracleConnectionError, initializeOracleClient } from './oracle-client.js';
+
+initializeOracleClient();
 
 const EXPLAIN_TIMEOUT_MS = 15_000;
 
@@ -228,6 +231,7 @@ class DatabaseService {
         console.log(`✅ PostgreSQL 连接成功：${name} (${config.host}:${config.port})`);
         return true;
       } else if (dbType === 'oracle') {
+        ensureOracleClientReady();
         // Oracle 连接 — 使用连接池 (D-14) + TCPS (D-13)
         // D-19: 检测 oracledb 版本 — Thin mode 支持 12c+, 11g 需要 Thick mode
         if (oracledb.oracleClientVersion === 0 || oracledb.oracleClientVersion == null) {
@@ -350,7 +354,8 @@ class DatabaseService {
         return false;
       }
     } catch (error: any) {
-      console.error(`❌ ${dbType === 'postgresql' ? 'PostgreSQL' : dbType === 'oracle' ? 'Oracle' : dbType === 'dameng' ? '达梦' : 'MySQL'} 连接失败：${name}`, error);
+      const connectionError = dbType === 'oracle' ? formatOracleConnectionError(error) : error;
+      console.error(`❌ ${dbType === 'postgresql' ? 'PostgreSQL' : dbType === 'oracle' ? 'Oracle' : dbType === 'dameng' ? '达梦' : 'MySQL'} 连接失败：${name}`, connectionError);
       return false;
     }
   }

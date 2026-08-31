@@ -59,4 +59,17 @@ describe('SandboxClient status', () => {
     await expect(client.execute({ runtime: 'node', command: ['node', 'main.mjs'] }))
       .rejects.toMatchObject({ name: 'AbortError' });
   });
+
+  it('signs typed database scan requests on the dedicated controller endpoint', async () => {
+    const secret = 's'.repeat(32);
+    const fetchMock = vi.fn(async (url: URL, init?: RequestInit) => {
+      expect(String(url)).toBe('http://sandbox-controller:3010/v1/network-scans');
+      expect(init?.method).toBe('POST');
+      expect(JSON.parse(String(init?.body))).toEqual({ cidr: '10.17.12.0/24', profile: 'common_databases' });
+      return new Response(JSON.stringify({ jobId: 'scan-1' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new SandboxClient('http://sandbox-controller:3010', secret);
+    await expect(client.scanDatabaseEndpoints({ cidr: '10.17.12.0/24', profile: 'common_databases' })).resolves.toEqual({ jobId: 'scan-1' });
+  });
 });

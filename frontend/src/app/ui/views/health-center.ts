@@ -382,7 +382,7 @@ export class HealthCenterPage extends LitElement {
       <!-- Page header -->
       <div class="page-header">
         <div>
-          <h1>系统健康与一致性</h1>
+          <h1>系统自检</h1>
           <p>系统数据一致性与运行状态检查 · ${new Date(d.timestamp).toLocaleString()}</p>
         </div>
         <button class="btn refresh-btn" @click=${this._refresh} ?disabled=${this.refreshing}>

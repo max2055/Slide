@@ -1,7 +1,7 @@
 /**
  * query_metrics — 查询实例指标数据（实时快照或历史趋势）
  */
-import type { AnyAgentTool } from '../types.js';
+import type { AnyAgentTool, ToolResult } from '../types.js';
 import { toolCatalog } from '../catalog.js';
 import { metricsDatabaseService } from '../../metrics-database-service.js';
 import { metricRegistry } from '../../metric-registry.js';
@@ -57,17 +57,35 @@ export const queryMetricsTool: AnyAgentTool = {
 
       const instanceId = typedArgs.instance_id;
       const mode = typedArgs.mode || 'realtime';
+      if (!Number.isSafeInteger(instanceId) || instanceId <= 0) {
+        return { success: false, status: 'error', error: 'instance_id 必须为正整数', errorCode: 'INVALID_ARGUMENTS' };
+      }
+      if (mode !== 'realtime' && mode !== 'history') {
+        return { success: false, status: 'error', error: 'mode 必须为 realtime 或 history', errorCode: 'INVALID_ARGUMENTS' };
+      }
+      if (typedArgs.metric_ids !== undefined && (!Array.isArray(typedArgs.metric_ids) || typedArgs.metric_ids.length > 32 || typedArgs.metric_ids.some((id) => typeof id !== 'string' || !/^[a-z][a-z0-9_]{1,80}$/.test(id)))) {
+        return { success: false, status: 'error', error: 'metric_ids 必须是最多 32 个合法指标 ID', errorCode: 'INVALID_ARGUMENTS' };
+      }
+      const unknownMetric = typedArgs.metric_ids?.find((id) => !metricRegistry.getById(id));
+      if (unknownMetric) {
+        return { success: false, status: 'error', error: `未知指标 ID：${unknownMetric}`, errorCode: 'UNKNOWN_METRIC', next_actions: ['先使用已支持的指标 ID 重试'] };
+      }
+      const validPeriods = new Set(['1h', '6h', '24h', '7d']);
+      const validIntervals = new Set(['1m', '5m', '15m', '1h']);
+      if (typedArgs.period !== undefined && !validPeriods.has(typedArgs.period)) {
+        return { success: false, status: 'error', error: 'period 无效', errorCode: 'INVALID_ARGUMENTS' };
+      }
+      if (typedArgs.interval !== undefined && !validIntervals.has(typedArgs.interval)) {
+        return { success: false, status: 'error', error: 'interval 无效', errorCode: 'INVALID_ARGUMENTS' };
+      }
 
       // Resolve instance name for context
-      let instanceName = `instance-${instanceId}`;
-      let instanceDbType = 'unknown';
-      try {
-        const inst = await instanceDatabaseService.getInstanceById(instanceId);
-        if (inst) {
-          instanceName = inst.name;
-          instanceDbType = inst.db_type || 'unknown';
-        }
-      } catch { /* non-critical */ }
+      const inst = await instanceDatabaseService.getInstanceById(instanceId);
+      if (!inst) {
+        return { success: false, status: 'error', error: `未找到实例 ID=${instanceId}`, errorCode: 'INSTANCE_NOT_FOUND', next_actions: ['先调用 list_database_instances 获取有效实例 ID'] };
+      }
+      const instanceName = inst.name;
+      const instanceDbType = inst.db_type || 'unknown';
 
       if (mode === 'history') {
         return await queryHistory(instanceId, instanceName, instanceDbType, typedArgs);
@@ -91,12 +109,24 @@ async function queryRealtime(
   instanceName: string,
   instanceDbType: string,
   args: { metric_ids?: string[] },
-) {
-  const record = await metricsDatabaseService.getRealtimeMetrics(instanceId);
+): Promise<ToolResult> {
+  const read = await metricsDatabaseService.getRealtimeMetricsWithStatus(instanceId);
+
+  if (!read.available) {
+    return {
+      success: false,
+      status: 'error',
+      errorCode: read.errorCode,
+      error: '指标存储当前不可用，未能读取实时指标',
+      next_actions: ['检查指标数据库连接和服务状态，恢复后重试 query_metrics'],
+    };
+  }
+  const record = read.data;
 
   if (!record) {
     return {
       success: true,
+      status: 'warning',
       data: {
         instance_id: instanceId,
         instance_name: instanceName,
@@ -104,6 +134,8 @@ async function queryRealtime(
         metrics: null,
         message: `实例 "${instanceName}" 暂无指标数据，可能采集尚未开始或连接不可用`,
       },
+      summary: `实例 "${instanceName}" 暂无实时指标`,
+      next_actions: ['确认采集任务和数据库连接状态；稍后重试 query_metrics'],
     };
   }
 
@@ -112,6 +144,7 @@ async function queryRealtime(
 
   return {
     success: true,
+    status: 'success',
     data: {
       instance_id: instanceId,
       instance_name: instanceName,
@@ -120,6 +153,7 @@ async function queryRealtime(
       recorded_at: record.recorded_at,
       metrics: filtered,
     },
+    summary: `已获取实例 "${instanceName}" 的实时指标`,
   };
 }
 
@@ -137,20 +171,32 @@ async function queryHistory(
   instanceName: string,
   instanceDbType: string,
   args: { metric_ids?: string[]; period?: '1h' | '6h' | '24h' | '7d'; interval?: '1m' | '5m' | '15m' | '1h' },
-) {
+): Promise<ToolResult> {
   const period = args.period || '24h';
   const interval = args.interval || autoInterval(period);
 
-  const result = await metricsDatabaseService.getHistoricalMetricsWithRange(
+  const read = await metricsDatabaseService.getHistoricalMetricsWithRangeStatus(
     instanceId,
     period,
     interval,
     args.metric_ids,
   );
 
-  if (result.time.length === 0) {
+  if (!read.available) {
+    return {
+      success: false,
+      status: 'error',
+      errorCode: read.errorCode,
+      error: '指标存储当前不可用，未能读取历史指标',
+      next_actions: ['检查指标数据库连接和服务状态，恢复后重试 query_metrics'],
+    };
+  }
+  const result = read.data;
+
+  if (!result || result.time.length === 0) {
     return {
       success: true,
+      status: 'warning',
       data: {
         instance_id: instanceId,
         instance_name: instanceName,
@@ -161,6 +207,8 @@ async function queryHistory(
         metrics: {},
         message: `实例 "${instanceName}" 在过去 ${period} 内无历史数据`,
       },
+      summary: `实例 "${instanceName}" 在 ${period} 内暂无历史指标`,
+      next_actions: ['确认采集任务已运行或扩大查询时间范围'],
     };
   }
 
@@ -203,6 +251,7 @@ async function queryHistory(
 
   return {
     success: true,
+    status: 'success',
     data: {
       instance_id: instanceId,
       instance_name: instanceName,

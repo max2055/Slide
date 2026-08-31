@@ -44,6 +44,7 @@ export type AppViewState = {
   userPermissions?: Set<string>;
   tab: Tab;
   serverId?: number;
+  networkDeviceId?: number;
   onboarding: boolean;
   basePath: string;
   connected: boolean;

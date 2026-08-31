@@ -48,6 +48,42 @@ const actor = (scopes: Record<number, 'read-only' | 'read-write' | 'admin'>, per
 });
 
 describe('Resource relations', () => {
+  it('supports network-device topology with dedicated permissions', async () => {
+    const saved: unknown[] = [];
+    const service = new ResourceService({
+      exists: async () => true,
+      insertRelation: async (relation) => { saved.push(relation); },
+      listRelations: async () => [],
+    });
+    const manager = actor({}, ['servers:manage', 'network_devices:manage']);
+    await service.createRelation(manager, {
+      source: { type: 'server', id: 2 }, target: { type: 'network_device', id: 9 }, relationType: 'connected_to',
+      provenance: 'manual', validFrom: new Date('2026-08-10T00:00:00Z'),
+    });
+    await service.createRelation(manager, {
+      source: { type: 'network_device', id: 9 }, target: { type: 'server', id: 2 }, relationType: 'serves',
+      provenance: 'manual', validFrom: new Date('2026-08-10T00:00:00Z'),
+    });
+    expect(saved).toHaveLength(2);
+  });
+
+  it('rejects direct network-device to database-instance edges', async () => {
+    const service = new ResourceService({
+      exists: async () => true,
+      insertRelation: async () => {},
+      listRelations: async () => [],
+    });
+    const manager = actor({}, ['network_devices:manage', 'instance:manage']);
+    await expect(service.createRelation(manager, {
+      source: { type: 'network_device', id: 9 }, target: { type: 'instance', id: 11 }, relationType: 'serves',
+      provenance: 'manual', validFrom: new Date('2026-08-10T00:00:00Z'),
+    })).rejects.toThrow('RESOURCE_RELATION_TOPOLOGY_INVALID');
+    await expect(service.createRelation(manager, {
+      source: { type: 'instance', id: 11 }, target: { type: 'network_device', id: 9 }, relationType: 'connected_to',
+      provenance: 'manual', validFrom: new Date('2026-08-10T00:00:00Z'),
+    })).rejects.toThrow('RESOURCE_RELATION_TOPOLOGY_INVALID');
+  });
+
   it('does not treat instance-wide permissions as server permissions', () => {
     const instanceAdmin = actor({ 1: 'admin' }, ['instance:*']);
     expect(canReadResource(instanceAdmin, { type: 'server', id: 20 })).toBe(false);

@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
+import { sharedResourceToolbarStyles } from "../../styles/shared-resource-toolbar-styles.ts";
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
 import "../components/app-form-field.js";
@@ -28,6 +29,17 @@ interface InstanceFormData {
   description: string;
 }
 
+export function buildTestConnectionPayload(formData: InstanceFormData) {
+  return {
+    host: formData.host,
+    port: formData.port,
+    username: formData.username,
+    password: formData.password,
+    database_name: formData.database_name,
+    db_type: formData.db_type,
+  };
+}
+
 function hasStoredPermission(required: string): boolean {
   try {
     const raw = localStorage.getItem("permissions");
@@ -45,7 +57,7 @@ function hasStoredPermission(required: string): boolean {
 
 @customElement("instances-page")
 export class InstancesPage extends LitElement {
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedBtnStyles, sharedResourceToolbarStyles, css`
     :host {
       display: block;
       animation: fade-in 0.25s var(--ease-out);
@@ -64,7 +76,7 @@ export class InstancesPage extends LitElement {
     .card {
       background: var(--card);
       border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
+      border-radius: var(--radius-md);
       overflow: hidden;
     }
 
@@ -86,82 +98,17 @@ export class InstancesPage extends LitElement {
       color: var(--text-strong);
     }
 
-    /* 工具栏 */
-    .toolbar {
-      display: flex;
-      align-items: center;
-      gap: var(--space-md);
-      padding: var(--space-md) var(--space-lg);
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-elevated);
-      flex-wrap: wrap;
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      display: inline-block;
+      flex-shrink: 0;
     }
 
-    .filter-group {
-      display: flex;
-      align-items: center;
-      gap: var(--space-sm);
-    }
-
-    .filter-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: var(--space-sm);
-      padding: var(--space-sm) var(--space-md);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      font-size: var(--text-sm);
-      font-weight: 500;
-      color: var(--text);
-      background: var(--secondary);
-      cursor: pointer;
-      transition: all var(--duration-normal) var(--ease-out);
-    }
-
-    .filter-btn:hover {
-      border-color: var(--border-strong);
-      background: var(--bg-hover);
-    }
-
-    .filter-btn.active {
-      background: var(--accent);
-      color: var(--accent-foreground);
-      border-color: var(--accent);
-    }
-
-    .search-box {
-      position: relative;
-      flex: 1;
-      min-width: 200px;
-      max-width: 300px;
-    }
-
-    .search-input {
-      box-sizing: border-box;
-      width: 100%;
-      padding: var(--space-sm) var(--space-md) var(--space-sm) 34px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      font-size: var(--text-base);
-      color: var(--text);
-      background: var(--card);
-      transition: all var(--duration-normal) var(--ease-out);
-    }
-
-    .search-input:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px var(--accent-subtle);
-    }
-
-    .search-icon {
-      position: absolute;
-      left: 10px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: var(--muted);
-      font-size: var(--text-base);
-    }
+    .status-dot-ok { background: var(--ok); }
+    .status-dot-warn { background: var(--warn); }
+    .status-dot-danger { background: var(--danger); }
 
     /* 表格样式 */
     .table-container {
@@ -639,6 +586,16 @@ export class InstancesPage extends LitElement {
     };
   }
 
+  private get activeFilterCount(): number {
+    return [this.searchQuery.trim(), this.filter]
+      .filter((value) => Boolean(value) && value !== "all").length;
+  }
+
+  private resetFilters() {
+    this.searchQuery = "";
+    this.filter = "all";
+  }
+
   override render() {
     if (this.loading) {
       return html`<div class="loading">加载中...</div>`;
@@ -654,24 +611,9 @@ export class InstancesPage extends LitElement {
       <div class="page">
         <!-- 实例列表卡片 -->
         <div class="card">
-          <div class="toolbar" style="display: flex; align-items: center; gap: var(--space-md); padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--border); flex-wrap: wrap;">
-            <div class="filter-group" style="display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap;">
-              <button class="filter-btn ${this.filter === "all" ? "active" : ""}" @click=${() => (this.filter = "all")} style="padding: var(--space-sm) var(--space-md); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-sm); font-weight: 500; cursor: pointer; background: ${this.filter === "all" ? 'var(--accent)' : 'var(--secondary)'}; color: ${this.filter === "all" ? 'var(--accent-foreground)' : 'var(--text)'}; border-color: ${this.filter === "all" ? 'var(--accent)' : 'var(--border)'};">
-                全部 (${this.instances.length})
-              </button>
-              <button class="filter-btn ${this.filter === "healthy" ? "active" : ""}" @click=${() => (this.filter = "healthy")} style="padding: var(--space-sm) var(--space-md); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-sm); font-weight: 500; cursor: pointer; background: ${this.filter === "healthy" ? 'var(--accent)' : 'var(--secondary)'}; color: ${this.filter === "healthy" ? 'var(--accent-foreground)' : 'var(--text)'}; border-color: ${this.filter === "healthy" ? 'var(--accent)' : 'var(--border)'};">
-                <span style="width: 6px; height: 6px; border-radius: 50%; display: inline-block; background: var(--ok); margin-right: 4px;"></span> 健康 (${this.stats.healthy})
-              </button>
-              <button class="filter-btn ${this.filter === "warning" ? "active" : ""}" @click=${() => (this.filter = "warning")} style="padding: var(--space-sm) var(--space-md); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-sm); font-weight: 500; cursor: pointer; background: ${this.filter === "warning" ? 'var(--accent)' : 'var(--secondary)'}; color: ${this.filter === "warning" ? 'var(--accent-foreground)' : 'var(--text)'}; border-color: ${this.filter === "warning" ? 'var(--accent)' : 'var(--border)'};">
-                <span style="width: 6px; height: 6px; border-radius: 50%; display: inline-block; background: var(--warn); margin-right: 4px;"></span> 警告 (${this.stats.warning})
-              </button>
-              <button class="filter-btn ${this.filter === "critical" ? "active" : ""}" @click=${() => (this.filter = "critical")} style="padding: var(--space-sm) var(--space-md); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-sm); font-weight: 500; cursor: pointer; background: ${this.filter === "critical" ? 'var(--accent)' : 'var(--secondary)'}; color: ${this.filter === "critical" ? 'var(--accent-foreground)' : 'var(--text)'}; border-color: ${this.filter === "critical" ? 'var(--accent)' : 'var(--border)'};">
-                <span style="width: 6px; height: 6px; border-radius: 50%; display: inline-block; background: var(--danger); margin-right: 4px;"></span> 异常 (${this.stats.critical})
-              </button>
-            </div>
-
-            <div class="search-box" style="position: relative; flex: 1; min-width: 200px; max-width: 300px;">
-              <span style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); display: flex;"><span style="width: 14px; height: 14px; display: flex; opacity: 0.6;">${icons['search']}</span></span>
+          <div class="toolbar resource-toolbar">
+            <div class="search-box">
+              <span class="search-icon"><span style="width:14px;height:14px;display:flex;">${icons['search']}</span></span>
               <input
                 class="search-input"
                 placeholder="搜索名称、主机、类型..."
@@ -682,9 +624,35 @@ export class InstancesPage extends LitElement {
               />
             </div>
 
-            <button class="btn-primary" style="margin-left:auto;" @click=${() => this._addInstance()}>
-              + 添加实例
-            </button>
+            <div class="filter-group">
+              <button class="filter-btn ${this.filter === "all" ? "active" : ""}" @click=${() => (this.filter = "all")}>
+                全部 (${this.instances.length})
+              </button>
+              <button class="filter-btn ${this.filter === "healthy" ? "active" : ""}" @click=${() => (this.filter = "healthy")}>
+                <span class="status-dot status-dot-ok"></span> 健康 (${this.stats.healthy})
+              </button>
+              <button class="filter-btn ${this.filter === "warning" ? "active" : ""}" @click=${() => (this.filter = "warning")}>
+                <span class="status-dot status-dot-warn"></span> 警告 (${this.stats.warning})
+              </button>
+              <button class="filter-btn ${this.filter === "critical" ? "active" : ""}" @click=${() => (this.filter = "critical")}>
+                <span class="status-dot status-dot-danger"></span> 异常 (${this.stats.critical})
+              </button>
+            </div>
+            <div class="toolbar-actions">
+              ${this.activeFilterCount > 0
+                ? html`<button class="btn-ghost resource-filter-reset" @click=${this.resetFilters}>重置筛选</button>`
+                : nothing}
+              <button class="btn-primary" @click=${() => this._addInstance()}>
+                ${icons['plus']} 添加实例
+              </button>
+            </div>
+          </div>
+
+          <div class="resource-toolbar-meta" aria-live="polite">
+            <span class="resource-result-count">共 ${filtered.length} 个数据库实例</span>
+            ${this.activeFilterCount > 0
+              ? html`<span class="resource-filter-state">已启用 ${this.activeFilterCount} 项筛选</span>`
+              : html`<span>未启用筛选</span>`}
           </div>
 
           <div class="table-container">
@@ -1112,7 +1080,7 @@ export class InstancesPage extends LitElement {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(this.formData),
+        body: JSON.stringify(buildTestConnectionPayload(this.formData)),
       });
       const result = await res.json();
 

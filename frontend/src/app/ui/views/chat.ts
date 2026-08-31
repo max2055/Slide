@@ -38,6 +38,7 @@ import { buildSidebarContent, extractToolCards, extractToolPreview } from "../ch
 import type { EmbedSandboxMode } from "../embed-sandbox.ts";
 import { icons } from "../../../icons.js";
 import { toSanitizedMarkdownHtml } from "../markdown.ts";
+import { copyTextToClipboard } from "../chat/copy-as-markdown.ts";
 import type { SidebarContent } from "../sidebar-content.ts";
 import { detectTextDirection } from "../text-direction.ts";
 import type { GatewaySessionRow, SessionsListResult } from "../types.ts";
@@ -1420,8 +1421,9 @@ export function renderChat(props: ChatProps) {
       return;
     }
     const code = (btn as HTMLElement).dataset.code ?? "";
-    navigator.clipboard.writeText(code).then(
-      () => {
+    copyTextToClipboard(code).then(
+      (copied) => {
+        if (!copied) return;
         btn.classList.add("copied");
         setTimeout(() => btn.classList.remove("copied"), 1500);
       },
@@ -1509,31 +1511,32 @@ export function renderChat(props: ChatProps) {
               `;
             }
             if (item.kind === "reading-indicator") {
+              if (props.thinkingText?.trim()) {
+                return renderStreamingGroup(
+                  "",
+                  props.streamStartedAt ?? Date.now(),
+                  props.onOpenSidebar,
+                  assistantIdentity,
+                  props.basePath,
+                  props.thinkingText,
+                  props.thinkingComplete ?? false,
+                );
+              }
               return renderReadingIndicatorGroup(assistantIdentity, props.basePath);
             }
             if (item.kind === "stream") {
               if (isHeartbeatAckText(item.text)) {
                 return nothing;
               }
-              // Render thinking block before stream if thinking is active
-              const thinkingBlock = props.thinkingText
-                ? html`
-                    <details class="thinking-block" ?open=${!props.thinkingComplete}>
-                      <summary>💭 思考过程${props.thinkingComplete ? '' : '中...'}</summary>
-                      <pre>${props.thinkingText}</pre>
-                    </details>
-                  `
-                : nothing;
-              return html`
-                ${thinkingBlock}
-                ${renderStreamingGroup(
-                  item.text,
-                  item.startedAt,
-                  props.onOpenSidebar,
-                  assistantIdentity,
-                  props.basePath,
-                )}
-              `;
+              return renderStreamingGroup(
+                item.text,
+                item.startedAt,
+                props.onOpenSidebar,
+                assistantIdentity,
+                props.basePath,
+                props.thinkingText,
+                props.thinkingComplete ?? false,
+              );
             }
             if (item.kind === "group") {
               if (deleted.has(item.key)) {
@@ -1720,9 +1723,6 @@ export function renderChat(props: ChatProps) {
         .connection-status__dot.connecting { background: var(--muted); box-shadow: 0 0 0 4px color-mix(in srgb, var(--muted) 14%, transparent); }
         .connection-status__reconnect { margin-left: auto; padding: 4px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); color: var(--text); font-size: var(--text-sm); font-weight: 600; cursor: pointer; transition: border-color 100ms ease, background 100ms ease, color 100ms ease; }
         .connection-status__reconnect:hover { border-color: var(--accent); background: var(--accent-subtle); color: var(--accent); }
-        .thinking-block { margin: var(--space-sm, 8px) 0; padding: var(--space-sm, 8px); background: var(--card, var(--bg-elevated)); border-radius: var(--radius-sm, 6px); border-left: 3px solid var(--accent); }
-        .thinking-block summary { cursor: pointer; font-weight: 500; color: var(--text-secondary, var(--muted)); font-size: 13px; user-select: none; }
-        .thinking-block pre { margin: var(--space-xs, 4px) 0 0; white-space: pre-wrap; font-size: 12px; color: var(--text-muted, var(--muted)); font-family: var(--font-mono, monospace); line-height: 1.5; max-height: 300px; overflow-y: auto; }
         .connection-banner { display: flex; align-items: center; gap: var(--space-sm, 8px); padding: var(--space-sm, 8px) var(--space-md, 12px); background: rgba(255, 193, 7, 0.15); border-bottom: 1px solid rgba(255, 193, 7, 0.3); color: var(--text); font-size: 13px; }
         .connection-banner__icon { font-size: 16px; }
         .connection-banner__pulse { width: 8px; height: 8px; border-radius: 50%; background: #ffc107; animation: pulse 1.5s ease-in-out infinite; }
@@ -1965,7 +1965,10 @@ function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
       }
       currentGroup = {
         kind: "group",
-        key: `group:${role}:${item.key}`,
+        key:
+          role === "assistant" && item.key.startsWith("assistant-run:")
+            ? item.key
+            : `group:${role}:${item.key}`,
         role,
         senderLabel,
         messages: [{ message: item.message, key: item.key }],
@@ -2067,7 +2070,9 @@ function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
   }
 
   if (props.stream !== null) {
-    const key = `stream:${props.sessionKey}:${props.streamStartedAt ?? "live"}`;
+    const key = props.runId
+      ? `assistant-run:${props.runId}`
+      : `stream:${props.sessionKey}:${props.streamStartedAt ?? "live"}`;
     if (props.stream.trim().length > 0) {
       items.push({
         kind: "stream",
@@ -2111,8 +2116,12 @@ function messageKey(message: unknown, index: number): string {
   if (messageId) {
     return `msg:${messageId}`;
   }
-  const timestamp = typeof m.timestamp === "number" ? m.timestamp : null;
+  const runId = typeof m.runId === "string" ? m.runId : "";
   const role = typeof m.role === "string" ? m.role : "unknown";
+  if (runId && normalizeRoleForGrouping(role) === "assistant") {
+    return `assistant-run:${runId}`;
+  }
+  const timestamp = typeof m.timestamp === "number" ? m.timestamp : null;
   if (timestamp != null) {
     return `msg:${role}:${timestamp}:${index}`;
   }

@@ -264,9 +264,9 @@ export class AgentToolApprovalService {
       }
       const [result] = await this.executor().execute(
         `UPDATE agent_tool_approvals SET used_count = used_count + 1, consumed_at = NOW()
-         WHERE id = ? AND requester_id = ? AND status = 'approved' AND session_key = ?
+         WHERE id = ? AND requester_id = ? AND binding_hash = ? AND status = 'approved' AND session_key = ?
            AND used_count < max_uses AND expires_at > NOW()`,
-        [id, requesterId, options.sessionKey],
+        [id, requesterId, bindingHash, options.sessionKey],
       );
       return Number(result?.affectedRows) === 1
         ? { approved: true }
@@ -284,17 +284,23 @@ export class AgentToolApprovalService {
       : { approved: false, failure: 'INVALID_APPROVAL' };
   }
 
-  async pending(limit = 100): Promise<unknown[]> {
+  async list(status: 'pending' | 'processed' = 'pending', limit = 100): Promise<unknown[]> {
     const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), 200);
+    const statusSql = status === 'pending'
+      ? "status = 'pending' AND expires_at > NOW()"
+      : "status IN ('approved', 'rejected', 'consumed', 'expired')";
     const [rows] = await this.executor().execute(
       `SELECT id, tool_name, requester_id, args_redacted, resource_json, policy_snapshot,
               status, scope, session_key, risk_level, max_uses, used_count, expires_at, created_at
        FROM agent_tool_approvals
-       WHERE status = 'pending' AND expires_at > NOW()
-       ORDER BY created_at ASC LIMIT ?`,
-      [safeLimit],
+       WHERE ${statusSql}
+       ORDER BY ${status === 'pending' ? 'created_at ASC' : 'updated_at DESC'} LIMIT ${safeLimit}`,
     );
     return Array.isArray(rows) ? rows : [];
+  }
+
+  async pending(limit = 100): Promise<unknown[]> {
+    return this.list('pending', limit);
   }
 
   private executor(): ApprovalExecutor {

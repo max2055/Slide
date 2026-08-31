@@ -191,7 +191,7 @@ async function main() {
     const userErrors = assertShape("user-item", usersBody[0], [
       { field: "id", type: "number" },
       { field: "username", type: "string" },
-      { field: "role", type: "string" },
+      { field: "status", type: "string" },
     ]);
     if (userErrors.length === 0) {
       console.log("  ✅ /api/users — user shape correct");

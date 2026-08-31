@@ -10,6 +10,23 @@
 - ✅ **v0.8 服务器纳管** — Phases 124-129 (shipped 2026-07-11)
 - ✅ **v0.9 生产化与可信运维闭环** — Phases 131-139 (shipped 2026-07-20; Phase 139 GO)
 - ✅ **Post-v0.9 安全整改** — Phase 140 (complete 2026-07-24)
+- 📝 **Proposed v0.10 基础运维助手** — planned 2026-08-25; scope frozen in `docs/superpowers/plans/2026-08-25-infrastructure-ops-master.md`
+
+### Proposed v0.10: 基础运维助手
+
+This is a new milestone proposal. It does not rewrite the shipped v0.9 history above.
+
+- **Phase 141: 基础运维资源内核** — add `network_device` resource type, relations, capabilities, observations, permissions, and compatibility contracts
+- **Phase 142: 服务器运维增强** — constrain support to Kylin/RHEL/CentOS and add network/process/IO/service/log evidence
+- **Phase 143: 华为网络设备只读纳管** — SNMPv3 reachability, system/interface metrics, device alerts, and encrypted configuration backups
+- **Phase 144: 跨资源总览与 Agent 诊断** — unified dashboard, database-server-device evidence correlation, and final qualification gates
+
+The four executable plans are:
+
+1. `docs/superpowers/plans/2026-08-25-infrastructure-ops-foundation.md`
+2. `docs/superpowers/plans/2026-08-25-server-ops-expansion.md`
+3. `docs/superpowers/plans/2026-08-25-huawei-network-device.md`
+4. `docs/superpowers/plans/2026-08-25-infrastructure-ops-master.md`
 
 ## Phases
 

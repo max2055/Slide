@@ -26,6 +26,12 @@ export const listDatabaseInstancesTool: AnyAgentTool = {
   group: 'slide_self_mgmt',
   handler: async (args, context) => {
     const dbTypeFilter = args.db_type as string | undefined;
+    if (!context?.actor) {
+      return { success: false, status: 'error', data: [], error: '缺少已认证的操作员上下文', errorCode: 'MISSING_ACTOR', next_actions: ['通过已认证的 Agent 会话调用此工具'] };
+    }
+    if (dbTypeFilter !== undefined && (typeof dbTypeFilter !== 'string' || dbTypeFilter.trim().length === 0)) {
+      return { success: false, status: 'error', error: 'db_type 不能为空', errorCode: 'INVALID_ARGUMENTS' };
+    }
 
     try {
       const instances = await instanceDatabaseService.getAllInstances();
@@ -50,6 +56,7 @@ export const listDatabaseInstancesTool: AnyAgentTool = {
 
       return {
         success: true,
+        status: 'success',
         data: items,
         summary: `找到 ${items.length} 个${dbTypeFilter ? ` ${dbTypeFilter}` : ''}数据库实例`,
         details: {

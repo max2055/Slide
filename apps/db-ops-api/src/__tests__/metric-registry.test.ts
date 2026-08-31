@@ -66,7 +66,7 @@ describe('MetricRegistry Oracle support', () => {
 
 describe('MetricRegistry server producer parity', () => {
   it('registers every metric name persisted by the Linux server collector', () => {
-    const providerNames = serverMetricProvider.getDefinitions('linux')
+    const providerNames = serverMetricProvider.getDefinitions('RHEL 8')
       .map((definition) => definition.name)
       .filter((name) => name !== 'disk_detail' && name !== 'disk_usage');
     const persistedNames = [...providerNames, 'disk_usage'];
@@ -75,5 +75,31 @@ describe('MetricRegistry server producer parity', () => {
     );
 
     expect(persistedNames.filter((name) => !registeredNames.has(name))).toEqual([]);
+  });
+});
+
+describe('MetricRegistry network-device support', () => {
+  it('registers the bounded Huawei device and interface metric set under network_device', () => {
+    const expected = [
+      'device_uptime_seconds',
+      'device_cpu_percent',
+      'device_memory_percent',
+      'device_temperature_celsius',
+      'interface_oper_status',
+      'interface_error_rate',
+      'interface_drop_rate',
+      'interface_in_bps',
+      'interface_out_bps',
+    ];
+    expect(metricRegistry.getByTargetType('network_device').map((metric) => metric.id)).toEqual(expect.arrayContaining(expected));
+    for (const id of expected) {
+      expect(metricRegistry.getById(id, 'network_device')).toMatchObject({ id, target_type: 'network_device' });
+    }
+  });
+
+  it('keeps same-named instance and network metrics distinct', () => {
+    expect(metricRegistry.getById('cpu_usage', 'instance')?.target_type).toBeUndefined();
+    expect(metricRegistry.getById('device_cpu_percent', 'instance')).toBeNull();
+    expect(metricRegistry.getById('device_cpu_percent', 'network_device')).toBeTruthy();
   });
 });

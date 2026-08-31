@@ -17,7 +17,7 @@ import {
   actorContextService,
   signAccessToken,
 } from './src/auth/actor-context.js';
-import { requirePermission } from './src/auth/require-permission.js';
+import { hasPermission, requirePermission } from './src/auth/require-permission.js';
 import {
   filterByInstanceAccess,
   getAccessibleInstanceIds,
@@ -40,6 +40,7 @@ import { llmService } from './src/llm-service.js';
 import { dbConnection } from './src/db-connection.js';
 import { loadSecurityConfig } from './src/config/security-config.js';
 import { publicInstanceDto, publicNotificationDto, publicServerDto } from './src/security/public-dto.js';
+import { isNotificationChannelType, validateNotificationChannelConfig } from './src/notification-channel-config.js';
 import { requireBrandingWrite } from './src/security/branding-policy.js';
 import { API_BODY_LIMIT, expensiveOperationRateLimitConfig, loginRateLimitConfig, registerHttpSecurity, sensitiveOperationRateLimitConfig } from './src/security/http-security.js';
 import {
@@ -47,6 +48,8 @@ import {
   DatabaseInstancesResponseSchema,
   ErrorResponseSchema,
   HealthResponseSchema,
+  ServerDiagnosticsSchema,
+  CollectServerDiagnosticsResponseSchema,
 } from './src/contracts/public-api.js';
 import { monitorCollector } from './src/monitor-collector.js';
 import { chatDatabaseService } from './src/chat-database-service.js';
@@ -123,10 +126,15 @@ import { promptManager } from './src/prompts/prompt-manager.js';
 import { serverDatabaseService } from './src/server-database-service.js';
 import { serverReportService } from './src/server-report-service.js';
 import serverCollector from './src/server-collector.js';
+import { serverDiagnosticService } from './src/server-diagnostic-service.js';
 import { registerAgentToolApprovalRoutes } from './src/security/agent-tool-approval-routes.js';
 import { registerAgentSecurityRoutes } from './src/security/agent-security-routes.js';
+import { getAgentToolApprovalService } from './src/security/agent-tool-approval-service.js';
 import { registerDeviceAuthRoutes } from './src/security/device-auth-routes.js';
 import { agentSecurityPolicyService } from './src/security/agent-security-policy-service.js';
+import { registerNetworkDeviceRoutes } from './src/network-devices/network-device-routes.js';
+import { networkDeviceCollector } from './src/network-devices/network-device-collector.js';
+import { registerResourceRoutes } from './src/resources/resource-routes.js';
 
 const fastify = Fastify({
   logger: false,
@@ -331,6 +339,8 @@ async function start() {
   await registerAgentToolApprovalRoutes(fastify, verifyToken);
   await registerAgentSecurityRoutes(fastify, verifyToken);
   await registerDeviceAuthRoutes(fastify, verifyToken);
+  await registerNetworkDeviceRoutes(fastify, verifyToken);
+  await registerResourceRoutes(fastify, verifyToken);
   await registerInstanceHostRoutes(fastify, {
     verifyToken,
     service: instanceHostService,
@@ -348,10 +358,10 @@ async function start() {
       const config: Record<string, string> = {};
       for (const r of rows) config[r.config_key] = r.config_value;
       reply.send({
-        version: config.slide_version || '1.2.0',
+        version: config.slide_version || 'v0.10',
       });
     } catch {
-      reply.send({ version: '1.2.0' });
+      reply.send({ version: 'v0.10' });
     }
   });
 
@@ -746,31 +756,35 @@ async function start() {
   fastify.post('/api/llm/test', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
       const check = strictBody(request.body as Record<string, unknown>,
-          ['providerName'], 'POST /api/llm/test');
+        ['providerName', 'apiKey', 'baseURL', 'model', 'apiFormat', 'deploymentType'], 'POST /api/llm/test');
         if (check.error) return reply.code(400).send(check.error);
-        const { providerName } = check.body as { providerName: string };
+      const { providerName, apiKey: draftApiKey, baseURL, model, apiFormat, deploymentType } = check.body as {
+        providerName: string; apiKey?: string; baseURL?: string; model?: string; apiFormat?: string; deploymentType?: string;
+      };
+      if (!providerName || typeof providerName !== 'string') return reply.code(400).send({ error: '缺少必填字段：providerName' });
       const provider = await llmDatabaseService.getProviderByName(providerName);
       if (!provider) return reply.code(404).send({ error: '提供商不存在' });
-      const apiKey = provider.api_key_encrypted
+      const effectiveDeploymentType = typeof deploymentType === 'string' && deploymentType.trim()
+        ? deploymentType.trim() : provider.deployment_type;
+      const draftKey = typeof draftApiKey === 'string' ? draftApiKey.trim() : '';
+      const apiKey = draftKey || (provider.api_key_encrypted
         ? await llmDatabaseService.getProviderApiKey(provider.name)
-        : '';
-      if (!apiKey) return reply.code(400).send({ success: false, error: '未配置 API Key' });
+        : '');
+      if (!apiKey && effectiveDeploymentType !== 'local') return reply.code(400).send({ success: false, error: '未配置 API Key' });
 
-      // 直接使用 OpenAI SDK 测试，不经过 callLLM
-      const OpenAI = (await import('openai')).default;
-      const client = new OpenAI({
+      const result = await llmService.testConnectionWithConfig(
+        providerName,
         apiKey,
-        baseURL: provider.api_base_url || undefined,
-      });
-      const response = await client.chat.completions.create({
-        model: provider.default_model || 'gpt-4o',
-        messages: [{ role: 'user', content: 'hi' }],
-        max_tokens: 10,
-      });
+        typeof baseURL === 'string' && baseURL.trim() ? baseURL.trim() : undefined,
+        typeof model === 'string' && model.trim() ? model.trim() : undefined,
+        {
+          apiFormat: typeof apiFormat === 'string' && apiFormat.trim() ? apiFormat.trim() : undefined,
+          deploymentType: effectiveDeploymentType,
+        },
+      );
       reply.send({
-        success: true,
-        message: `连接成功，模型: ${response.model || provider.default_model}`,
-        provider: providerName,
+        ...result,
+        message: result.success ? `连接成功，模型: ${result.model || model || provider.default_model || 'unknown'}` : undefined,
       });
     } catch (error: any) {
       reply.send({
@@ -819,7 +833,15 @@ async function start() {
 
   async function requireAlertAccess(request: any, reply: any, alertId: number, minLevel: 'read-only' | 'read-write' = 'read-only') {
     const alert = await alertDatabaseService.getAlertAccessTarget(alertId);
-    if (!alert || (alert.instance_id != null && !hasInstanceAccess(request.user, alert.instance_id, minLevel))) {
+    const permissions = new Set<string>(Array.isArray(request.user?.permissions) ? request.user.permissions : []);
+    const targetType = alert?.target_type
+      || (alert?.network_device_id != null ? 'network_device' : alert?.server_id != null ? 'server' : 'instance');
+    const targetAllowed = targetType === 'network_device'
+      ? hasPermission(permissions, minLevel === 'read-only' ? 'network_devices:view' : 'network_devices:manage')
+      : targetType === 'server'
+        ? hasPermission(permissions, minLevel === 'read-only' ? 'servers:view' : 'servers:manage')
+        : true;
+    if (!alert || !targetAllowed || (alert.instance_id != null && !hasInstanceAccess(request.user, alert.instance_id, minLevel))) {
       reply.code(404).send({ error: '告警不存在' });
       return null;
     }
@@ -840,6 +862,8 @@ async function start() {
       const alerts = await alertDatabaseService.getAlerts({
         instance_id: instanceId,
         allowed_instance_ids: getAccessibleInstanceIds((request as any).user),
+        allowed_server_ids: hasPermission(new Set((request as any).user?.permissions ?? []), 'servers:view') ? null : [],
+        allowed_network_device_ids: hasPermission(new Set((request as any).user?.permissions ?? []), 'network_devices:view') ? null : [],
         limit: q.limit ? parseInt(q.limit) : undefined,
         offset: q.offset ? parseInt(q.offset) : undefined,
         status: q.status || undefined,
@@ -899,8 +923,8 @@ async function start() {
 
   fastify.get('/api/resources/:type/:id', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
-      const { type, id } = request.params as { type: 'instance' | 'server'; id: string };
-      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || Number(id) < 1) return reply.code(400).send({ error: 'Invalid resource reference' });
+      const { type, id } = request.params as { type: 'instance' | 'server' | 'network_device'; id: string };
+      if (!['instance', 'server', 'network_device'].includes(type) || !Number.isInteger(Number(id)) || Number(id) < 1) return reply.code(400).send({ error: 'Invalid resource reference' });
       return reply.send({ detail: await resourceService.detail((request as any).user, { type, id: Number(id) }) });
     } catch (error: any) {
       return reply.code(error?.message === 'RESOURCE_FORBIDDEN' || error?.message === 'RESOURCE_NOT_FOUND' ? 404 : 500).send({ error: error?.message || 'Resource lookup failed' });
@@ -909,8 +933,8 @@ async function start() {
 
   fastify.get('/api/resources/:type/:id/relations', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
-      const { type, id } = request.params as { type: 'instance' | 'server'; id: string };
-      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || Number(id) < 1) {
+      const { type, id } = request.params as { type: 'instance' | 'server' | 'network_device'; id: string };
+      if (!['instance', 'server', 'network_device'].includes(type) || !Number.isInteger(Number(id)) || Number(id) < 1) {
         return reply.code(400).send({ error: 'Invalid resource reference' });
       }
       const relations = await resourceService.currentRelations((request as any).user, { type, id: Number(id) });
@@ -922,10 +946,10 @@ async function start() {
 
   fastify.post('/api/resources/:type/:id/relations', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
-      const { type, id } = request.params as { type: 'instance' | 'server'; id: string };
+      const { type, id } = request.params as { type: 'instance' | 'server' | 'network_device'; id: string };
       const body = request.body as Record<string, unknown>;
-      const target = body?.target as { type?: 'instance' | 'server'; id?: number } | undefined;
-      if ((type !== 'instance' && type !== 'server') || !target || (target.type !== 'instance' && target.type !== 'server') || !Number.isInteger(Number(id)) || !Number.isInteger(target.id)) {
+      const target = body?.target as { type?: 'instance' | 'server' | 'network_device'; id?: number } | undefined;
+      if (!['instance', 'server', 'network_device'].includes(type) || !target || !['instance', 'server', 'network_device'].includes(target.type ?? '') || !Number.isInteger(Number(id)) || !Number.isInteger(target.id)) {
         return reply.code(400).send({ error: 'Invalid relation reference' });
       }
       await resourceService.createRelation((request as any).user, {
@@ -943,8 +967,8 @@ async function start() {
 
   fastify.get('/api/resources/:type/:id/capabilities/:key', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
-      const { type, id, key } = request.params as { type: 'instance' | 'server'; id: string; key: string };
-      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || !key) return reply.code(400).send({ error: 'Invalid capability reference' });
+      const { type, id, key } = request.params as { type: 'instance' | 'server' | 'network_device'; id: string; key: string };
+      if (!['instance', 'server', 'network_device'].includes(type) || !Number.isInteger(Number(id)) || !key) return reply.code(400).send({ error: 'Invalid capability reference' });
       const capability = await capabilityService.get((request as any).user, { type, id: Number(id) }, key);
       return reply.send({ capability });
     } catch (error: any) {
@@ -954,9 +978,9 @@ async function start() {
 
   fastify.put('/api/resources/:type/:id/capabilities/:key', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
-      const { type, id, key } = request.params as { type: 'instance' | 'server'; id: string; key: string };
+      const { type, id, key } = request.params as { type: 'instance' | 'server' | 'network_device'; id: string; key: string };
       const body = request.body as Record<string, unknown>;
-      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || !key || typeof body.state !== 'string') return reply.code(400).send({ error: 'Invalid capability payload' });
+      if (!['instance', 'server', 'network_device'].includes(type) || !Number.isInteger(Number(id)) || !key || typeof body.state !== 'string') return reply.code(400).send({ error: 'Invalid capability payload' });
       await capabilityService.put((request as any).user, {
         resource: { type, id: Number(id) }, key, state: body.state as any,
         evidence: body.evidence as Record<string, unknown> | undefined, reason: typeof body.reason === 'string' ? body.reason : undefined,
@@ -971,10 +995,10 @@ async function start() {
 
   fastify.get('/api/resources/:type/:id/observations/:metricId', { preHandler: [verifyToken] }, async (request, reply) => {
     try {
-      const { type, id, metricId } = request.params as { type: 'instance' | 'server'; id: string; metricId: string };
+      const { type, id, metricId } = request.params as { type: 'instance' | 'server' | 'network_device'; id: string; metricId: string };
       const { validForMs, from, to, limit } = request.query as { validForMs?: string; from?: string; to?: string; limit?: string };
       const validity = validForMs === undefined ? 300_000 : Number(validForMs);
-      if ((type !== 'instance' && type !== 'server') || !Number.isInteger(Number(id)) || !metricId || !Number.isFinite(validity) || validity < 1 || validity > 86_400_000) {
+      if (!['instance', 'server', 'network_device'].includes(type) || !Number.isInteger(Number(id)) || !metricId || !Number.isFinite(validity) || validity < 1 || validity > 86_400_000) {
         return reply.code(400).send({ error: 'Invalid observation query' });
       }
       if (from !== undefined || to !== undefined || limit !== undefined) {
@@ -1035,6 +1059,79 @@ async function start() {
       return { ok: true };
     } catch (error: any) {
       reply.code(500).send({ error: '切换技能状态失败：' + error.message });
+    }
+  });
+
+  // Controlled Tool/Skill extension lifecycle. Extensions are persisted as
+  // drafts and are never loaded as executable API-process code.
+  fastify.get('/api/agent/extensions', { preHandler: [verifyToken, requirePermission('ai:view')] }, async (request, reply) => {
+    const kind = (request.query as any)?.kind;
+    if (kind !== undefined && kind !== 'tool' && kind !== 'skill') return reply.code(400).send({ reasonCode: 'AGENT_EXTENSION_KIND_INVALID' });
+    try {
+      return reply.send({ extensions: await agentManagementService.listExtensions(kind) });
+    } catch (error: any) {
+      return reply.code(503).send({ reasonCode: error?.message === 'AGENT_EXTENSION_STORE_UNAVAILABLE' ? error.message : 'AGENT_EXTENSION_LIST_FAILED' });
+    }
+  });
+
+  fastify.post('/api/agent/extensions', { preHandler: [verifyToken, requirePermission('admin:*')] }, async (request, reply) => {
+    const actor = (request as any).user;
+    try {
+      const extension = await agentManagementService.createExtension(request.body as any, actor.userId);
+      return reply.code(201).send({ extension });
+    } catch (error: any) {
+      const reasonCode = /^[A-Z0-9_]+$/.test(error?.message || '') ? error.message : 'AGENT_EXTENSION_CREATE_FAILED';
+      return reply.code(reasonCode === 'AGENT_EXTENSION_STORE_UNAVAILABLE' ? 503 : 400).send({ reasonCode });
+    }
+  });
+
+  // Agents and non-admin operators may submit an inert draft proposal. Only
+  // administrators can edit, publish, or archive it.
+  fastify.post('/api/agent/extensions/proposals', { preHandler: [verifyToken, requirePermission('ai:view')] }, async (request, reply) => {
+    const actor = (request as any).user;
+    try {
+      const extension = await agentManagementService.createExtension(request.body as any, actor.userId);
+      return reply.code(201).send({ extension, requiresAdminPublish: true });
+    } catch (error: any) {
+      const reasonCode = /^[A-Z0-9_]+$/.test(error?.message || '') ? error.message : 'AGENT_EXTENSION_PROPOSAL_FAILED';
+      return reply.code(reasonCode === 'AGENT_EXTENSION_STORE_UNAVAILABLE' ? 503 : 400).send({ reasonCode });
+    }
+  });
+
+  fastify.put('/api/agent/extensions/:id', { preHandler: [verifyToken, requirePermission('admin:*')] }, async (request, reply) => {
+    const actor = (request as any).user;
+    const id = Number((request.params as any)?.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return reply.code(400).send({ reasonCode: 'AGENT_EXTENSION_ID_INVALID' });
+    try {
+      const extension = await agentManagementService.updateExtension(id, request.body as any, actor.userId);
+      return extension ? reply.send({ extension }) : reply.code(404).send({ reasonCode: 'AGENT_EXTENSION_NOT_FOUND' });
+    } catch (error: any) {
+      const reasonCode = /^[A-Z0-9_]+$/.test(error?.message || '') ? error.message : 'AGENT_EXTENSION_UPDATE_FAILED';
+      return reply.code(reasonCode === 'AGENT_EXTENSION_STORE_UNAVAILABLE' ? 503 : 400).send({ reasonCode });
+    }
+  });
+
+  fastify.post('/api/agent/extensions/:id/publish', { preHandler: [verifyToken, requirePermission('admin:*')] }, async (request, reply) => {
+    const actor = (request as any).user;
+    const id = Number((request.params as any)?.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return reply.code(400).send({ reasonCode: 'AGENT_EXTENSION_ID_INVALID' });
+    try {
+      const extension = await agentManagementService.setExtensionStatus(id, 'published', actor.userId);
+      return extension ? reply.send({ extension }) : reply.code(409).send({ reasonCode: 'AGENT_EXTENSION_PUBLISH_NOT_ALLOWED' });
+    } catch (error: any) {
+      return reply.code(error?.message === 'AGENT_EXTENSION_STORE_UNAVAILABLE' ? 503 : 400).send({ reasonCode: error?.message || 'AGENT_EXTENSION_PUBLISH_FAILED' });
+    }
+  });
+
+  fastify.delete('/api/agent/extensions/:id', { preHandler: [verifyToken, requirePermission('admin:*')] }, async (request, reply) => {
+    const actor = (request as any).user;
+    const id = Number((request.params as any)?.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return reply.code(400).send({ reasonCode: 'AGENT_EXTENSION_ID_INVALID' });
+    try {
+      const extension = await agentManagementService.setExtensionStatus(id, 'archived', actor.userId);
+      return extension ? reply.send({ extension }) : reply.code(404).send({ reasonCode: 'AGENT_EXTENSION_NOT_FOUND' });
+    } catch (error: any) {
+      return reply.code(error?.message === 'AGENT_EXTENSION_STORE_UNAVAILABLE' ? 503 : 400).send({ reasonCode: error?.message || 'AGENT_EXTENSION_DELETE_FAILED' });
     }
   });
 
@@ -1605,6 +1702,45 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
+  // Read-only fixed-profile diagnostics. The collection endpoint only
+  // triggers the same backend-defined commands; it cannot accept a shell
+  // command, path, or host supplied by the caller.
+  fastify.get('/api/servers/:id/diagnostics', {
+    preHandler: [verifyToken, requirePermission('servers:view')],
+    schema: { response: { 200: ServerDiagnosticsSchema, 400: ErrorResponseSchema, 401: ErrorResponseSchema, 403: ErrorResponseSchema, 404: ErrorResponseSchema, 422: ErrorResponseSchema, 503: ErrorResponseSchema } },
+  }, async (request, reply) => {
+    const id = Number((request.params as { id?: string }).id);
+    if (!Number.isSafeInteger(id) || id <= 0) return reply.code(400).send({ error: 'SERVER_ID_INVALID' });
+    try {
+      const query = request.query as { refresh?: string };
+      return reply.send(await serverDiagnosticService.getDiagnostics(id, { refresh: query?.refresh === 'true' }));
+    } catch (error: any) {
+      const code = typeof error?.message === 'string' ? error.message : 'DIAGNOSTIC_COLLECTION_FAILED';
+      if (code === 'SERVER_NOT_FOUND') return reply.code(404).send({ error: code });
+      if (code === 'HOST_OS_UNSUPPORTED') return reply.code(422).send({ error: code });
+      if (code === 'SERVER_ID_INVALID') return reply.code(400).send({ error: code });
+      return reply.code(503).send({ error: code });
+    }
+  });
+
+  fastify.post('/api/servers/:id/collect-diagnostics', {
+    preHandler: [verifyToken, requirePermission('servers:manage')],
+    schema: { response: { 200: CollectServerDiagnosticsResponseSchema, 400: ErrorResponseSchema, 401: ErrorResponseSchema, 403: ErrorResponseSchema, 404: ErrorResponseSchema, 422: ErrorResponseSchema, 503: ErrorResponseSchema } },
+  }, async (request, reply) => {
+    const id = Number((request.params as { id?: string }).id);
+    if (!Number.isSafeInteger(id) || id <= 0) return reply.code(400).send({ error: 'SERVER_ID_INVALID' });
+    try {
+      const diagnostics = await serverDiagnosticService.collectDiagnostics(id);
+      return reply.send({ success: true, diagnostics });
+    } catch (error: any) {
+      const code = typeof error?.message === 'string' ? error.message : 'DIAGNOSTIC_COLLECTION_FAILED';
+      if (code === 'SERVER_NOT_FOUND') return reply.code(404).send({ error: code });
+      if (code === 'HOST_OS_UNSUPPORTED') return reply.code(422).send({ error: code });
+      if (code === 'SERVER_ID_INVALID') return reply.code(400).send({ error: code });
+      return reply.code(503).send({ error: code });
+    }
+  });
+
   // ========== 服务器报告 API ==========
 
   // POST /api/servers/reports/generate — Generate and persist server health report
@@ -1909,6 +2045,30 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       reply.send(list);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
+    }
+  });
+
+  // Unified approval feed used by the UI. `kind` is deliberately part of
+  // every item so SQL and Agent approvals can be filtered without separate pages.
+  fastify.get('/api/approval/unified', { preHandler: [verifyToken, requirePermission('approval:view')] }, async (request, reply) => {
+    const query = request.query as { status?: unknown; limit?: unknown };
+    const status = query.status === undefined ? 'pending' : String(query.status);
+    if (status !== 'pending' && status !== 'processed') return reply.code(400).send({ reasonCode: 'APPROVAL_STATUS_INVALID' });
+    const rawLimit = query.limit === undefined ? 100 : Number(query.limit);
+    const limit = Number.isSafeInteger(rawLimit) ? Math.min(Math.max(rawLimit, 1), 200) : NaN;
+    if (Number.isNaN(limit)) return reply.code(400).send({ reasonCode: 'APPROVAL_LIMIT_INVALID' });
+    try {
+      const [sql, agent] = await Promise.all([
+        status === 'pending'
+          ? approvalService.getPendingRequests(getAccessibleInstanceIds((request as any).user))
+          : approvalService.getProcessedRequests(limit, getAccessibleInstanceIds((request as any).user)),
+        getAgentToolApprovalService().list(status, limit),
+      ]);
+      const sqlItems = (sql as any[]).map((item) => ({ ...item, kind: 'sql' as const }));
+      const agentItems = (agent as any[]).map((item) => ({ ...item, kind: 'agent' as const }));
+      return reply.send({ items: [...sqlItems, ...agentItems].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))) });
+    } catch (error: any) {
+      return reply.code(503).send({ reasonCode: error?.message || 'APPROVAL_LIST_UNAVAILABLE' });
     }
   });
 
@@ -3031,6 +3191,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           template_id: data.template_id ?? null,
           target_type: data.target_type || 'instance',
           server_id: data.server_id ?? null,
+          network_device_id: data.network_device_id ?? null,
           created_by: (request as any).user?.userId,
         });
         if (result.success) {
@@ -3089,6 +3250,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (data.template_id !== undefined) updateData.template_id = data.template_id;
         if (data.target_type !== undefined) updateData.target_type = data.target_type;
         if (data.server_id !== undefined) updateData.server_id = data.server_id;
+        if (data.network_device_id !== undefined) updateData.network_device_id = data.network_device_id;
 
         const result = await alertDatabaseService.updateAlertRule(Number(id), updateData);
         if (result.success) {
@@ -3294,6 +3456,14 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   }
 
+  function notificationConfigError(reply: any, result: { valid: false; code: string; field?: string; message: string }) {
+    return reply.code(400).send({
+      error: result.message,
+      reasonCode: result.code,
+      ...(result.field ? { field: result.field } : {}),
+    });
+  }
+
   // ========== 通知渠道管理 API ==========
 
   // 获取通知渠道列表
@@ -3320,19 +3490,24 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!data.name || !data.type || !data.config) {
           return reply.code(400).send({ error: '缺少必要参数：name, type, config' });
         }
+        const configValidation = validateNotificationChannelConfig(data.type, data.config, {
+          allowEncryptedCredentials: false,
+        });
+        if (configValidation.valid === false) return notificationConfigError(reply, configValidation);
+        const config = configValidation.config;
         // 验证 webhook_url 格式与 SSRF 防护（T-04-01）
-        if (data.config.webhook_url) {
-          if (!data.config.webhook_url.startsWith('http://') && !data.config.webhook_url.startsWith('https://')) {
+        if (typeof config.webhook_url === 'string' && config.webhook_url) {
+          if (!config.webhook_url.startsWith('http://') && !config.webhook_url.startsWith('https://')) {
             return reply.code(400).send({ error: 'webhook_url 必须以 http:// 或 https:// 开头' });
           }
-          if (!validateWebhookUrl(data.config.webhook_url)) {
+          if (!validateWebhookUrl(config.webhook_url)) {
             return reply.code(400).send({ error: 'webhook_url 不允许指向内部/私有网络地址' });
           }
         }
         const result = await notificationDatabaseService.createChannel({
           name: data.name,
           type: data.type,
-          config: data.config,
+          config,
           enabled: data.enabled !== undefined ? data.enabled : true,
         });
         if (result.success) {
@@ -3353,19 +3528,40 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const { id } = request.params as any;
         const data = request.body as any;
+        if (data.type !== undefined && !isNotificationChannelType(data.type)) {
+          return reply.code(400).send({
+            error: '不支持的通知渠道类型',
+            reasonCode: 'NOTIFICATION_CHANNEL_TYPE_INVALID',
+            field: 'type',
+          });
+        }
+        let validationType = data.type;
+        if (data.config !== undefined && validationType === undefined) {
+          const existing = await notificationDatabaseService.getChannelById(Number(id));
+          validationType = existing?.type;
+        }
+        let config = data.config;
+        if (data.config !== undefined && validationType !== undefined) {
+          const configValidation = validateNotificationChannelConfig(validationType, data.config, {
+            partial: true,
+            allowEncryptedCredentials: false,
+          });
+          if (configValidation.valid === false) return notificationConfigError(reply, configValidation);
+          config = configValidation.config;
+        }
         // 验证 webhook_url 格式与 SSRF 防护（T-04-01）
-        if (data.config?.webhook_url) {
-          if (!data.config.webhook_url.startsWith('http://') && !data.config.webhook_url.startsWith('https://')) {
+        if (typeof config?.webhook_url === 'string' && config.webhook_url) {
+          if (!config.webhook_url.startsWith('http://') && !config.webhook_url.startsWith('https://')) {
             return reply.code(400).send({ error: 'webhook_url 必须以 http:// 或 https:// 开头' });
           }
-          if (!validateWebhookUrl(data.config.webhook_url)) {
+          if (!validateWebhookUrl(config.webhook_url)) {
             return reply.code(400).send({ error: 'webhook_url 不允许指向内部/私有网络地址' });
           }
         }
         const result = await notificationDatabaseService.updateChannel(Number(id), {
           name: data.name,
           type: data.type,
-          config: data.config,
+          config,
           enabled: data.enabled,
         });
         if (result.success) {
@@ -5291,6 +5487,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 启动监控采集
   monitorCollector.start();
+  // 网络设备采集器只执行 SNMPv3 只读轮询；未纳管或未启用采集的设备不会
+  // 建立连接。采集器内部按设备互斥，停止时释放定时器。
+  networkDeviceCollector.start();
 
   // 从 metric-registry 同步告警规则
   await alertEngine.syncRulesFromRegistry();
@@ -5804,6 +6003,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       clearInterval(heartbeat);
       if (workflowTimer) clearInterval(workflowTimer);
       monitorCollector.stop();
+      networkDeviceCollector.stop();
       alertEngine.stopEvaluationLoop();
       alertEscalationService.stop();
       stopSessionCleanup();

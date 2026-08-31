@@ -9,13 +9,22 @@ export interface ResourceRelationStore {
   describe?(ref: ResourceRef): Promise<ResourceDetail | null>;
 }
 
-const relationTypes = new Set<ResourceRelationType>(['runs_on', 'hosts', 'replicates_to', 'depends_on']);
+const relationTypes = new Set<ResourceRelationType>([
+  'runs_on', 'hosts', 'replicates_to', 'depends_on', 'connected_to', 'serves',
+]);
 
 function hasValidTopology(relation: ResourceRelation): boolean {
   if (relation.relationType === 'runs_on') {
     return relation.source.type === 'instance' && relation.target.type === 'server';
   }
   if (relation.relationType === 'hosts') return false;
+  if (relation.relationType === 'connected_to') {
+    return (relation.source.type === 'server' && relation.target.type === 'network_device')
+      || (relation.source.type === 'network_device' && relation.target.type === 'server');
+  }
+  if (relation.relationType === 'serves') {
+    return relation.source.type === 'network_device' && relation.target.type === 'server';
+  }
   if (relation.relationType === 'replicates_to') {
     return relation.source.type === 'instance' && relation.target.type === 'instance';
   }
@@ -32,11 +41,14 @@ function hasPermission(actor: ActorContext, permission: string): boolean {
 export function canReadResource(actor: ActorContext, ref: ResourceRef): boolean {
   return ref.type === 'instance'
     ? actor.permissions.includes('*') || actor.permissions.includes('instance:*') || Boolean(actor.instanceScopes[ref.id])
-    : hasPermission(actor, 'servers:view');
+    : ref.type === 'server'
+      ? hasPermission(actor, 'servers:view')
+      : hasPermission(actor, 'network_devices:view');
 }
 
 export function canManageResource(actor: ActorContext, ref: ResourceRef): boolean {
   if (ref.type === 'server') return hasPermission(actor, 'servers:manage');
+  if (ref.type === 'network_device') return hasPermission(actor, 'network_devices:manage');
   if (actor.permissions.includes('*') || actor.permissions.includes('instance:*')) return true;
   return hasPermission(actor, 'instance:manage')
     && (actor.instanceScopes[ref.id] === 'read-write' || actor.instanceScopes[ref.id] === 'admin');
@@ -100,7 +112,7 @@ export class MysqlResourceRelationStore implements ResourceRelationStore {
 
   async exists(ref: ResourceRef): Promise<boolean> {
     const pool = this.pool();
-    const table = ref.type === 'instance' ? 'database_instances' : 'servers';
+    const table = resourceTable(ref.type);
     const [rows] = await pool.execute<Array<{ id: number }>>(`SELECT id FROM ${table} WHERE id = ? LIMIT 1`, [ref.id]);
     return rows.length > 0;
   }
@@ -109,13 +121,13 @@ export class MysqlResourceRelationStore implements ResourceRelationStore {
     const connection = await this.pool().getConnection();
     try {
       await connection.beginTransaction();
-      for (const type of ['instance', 'server'] as const) {
+      for (const type of ['instance', 'server', 'network_device'] as const) {
         const ids = [relation.source, relation.target]
           .filter((ref) => ref.type === type)
           .map((ref) => ref.id)
           .sort((left, right) => left - right);
         if (ids.length === 0) continue;
-        const table = type === 'instance' ? 'database_instances' : 'servers';
+        const table = resourceTable(type);
         const placeholders = ids.map(() => '?').join(', ');
         const [rows] = await connection.execute<Array<{ id: number }>>(
           `SELECT id FROM ${table} WHERE id IN (${placeholders}) ORDER BY id FOR UPDATE`, ids,
@@ -171,19 +183,31 @@ export class MysqlResourceRelationStore implements ResourceRelationStore {
   async describe(ref: ResourceRef): Promise<ResourceDetail | null> {
     const [rows] = ref.type === 'instance'
       ? await this.pool().execute<Array<any>>('SELECT id, name, db_type, environment, host, port, status, health_status FROM database_instances WHERE id = ? LIMIT 1', [ref.id])
-      : await this.pool().execute<Array<any>>('SELECT id, label, host, port, os_type, status, collection_enabled FROM servers WHERE id = ? LIMIT 1', [ref.id]);
+      : ref.type === 'server'
+        ? await this.pool().execute<Array<any>>('SELECT id, label, host, port, os_type, status, collection_enabled FROM servers WHERE id = ? LIMIT 1', [ref.id])
+        : await this.pool().execute<Array<any>>('SELECT id, name, label, host, site, vendor, model, os_version, status, collection_enabled FROM network_devices WHERE id = ? LIMIT 1', [ref.id]);
     const row = rows[0];
     if (!row) return null;
     const attributes = ref.type === 'instance'
       ? { dbType: row.db_type, environment: row.environment, host: row.host, port: Number(row.port), healthStatus: row.health_status }
-      : { host: row.host, port: Number(row.port), osType: row.os_type, collectionEnabled: Boolean(row.collection_enabled) };
-    return { resource: ref, label: ref.type === 'instance' ? row.name : row.label || row.host, status: row.status, attributes };
+      : ref.type === 'server'
+        ? { host: row.host, port: Number(row.port), osType: row.os_type, collectionEnabled: Boolean(row.collection_enabled) }
+        : { host: row.host, site: row.site, vendor: row.vendor, model: row.model, osVersion: row.os_version, collectionEnabled: Boolean(row.collection_enabled) };
+    return { resource: ref, label: ref.type === 'instance' ? row.name : row.label || row.name || row.host, status: row.status, attributes };
   }
 
   private pool(): SqlPool {
     const pool = this.poolProvider();
     if (!pool) throw new Error('RESOURCE_STORE_UNAVAILABLE');
     return pool;
+  }
+}
+
+function resourceTable(type: ResourceRef['type']): string {
+  switch (type) {
+    case 'instance': return 'database_instances';
+    case 'server': return 'servers';
+    case 'network_device': return 'network_devices';
   }
 }
 

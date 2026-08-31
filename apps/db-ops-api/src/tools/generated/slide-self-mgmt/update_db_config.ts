@@ -85,16 +85,37 @@ export const updateDbConfigTool: AnyAgentTool = {
   handler: async (args, context) => {
     const typedArgs = args as unknown as UpdateDbConfigArgs;
     if (Object.prototype.hasOwnProperty.call(args, 'password')) {
-      return { success: false, error: '禁止向 Agent Tool 传递明文凭据', errorCode: 'PLAINTEXT_CREDENTIAL_DENIED' };
+      return { success: false, status: 'error', error: '禁止向 Agent Tool 传递明文凭据', errorCode: 'PLAINTEXT_CREDENTIAL_DENIED', next_actions: ['使用服务端签发的 credential_ref 重试'] };
     }
 
     // 参数验证
-    if (!typedArgs.instance_id && !typedArgs.instance_name) {
+    if (typedArgs.instance_id === undefined && typedArgs.instance_name === undefined) {
       return {
         success: false,
+        status: 'error',
         error: '请提供实例 ID 或实例名称',
         errorCode: 'MISSING_ARGUMENTS',
       };
+    }
+    if (typedArgs.instance_id !== undefined && (!Number.isSafeInteger(typedArgs.instance_id) || typedArgs.instance_id <= 0)) {
+      return { success: false, status: 'error', error: 'instance_id 必须为正整数', errorCode: 'INVALID_ARGUMENTS' };
+    }
+    if (typedArgs.instance_name !== undefined && (typeof typedArgs.instance_name !== 'string' || typedArgs.instance_name.trim().length === 0)) {
+      return { success: false, status: 'error', error: 'instance_name 不能为空', errorCode: 'INVALID_ARGUMENTS' };
+    }
+    if (typedArgs.instance_id !== undefined && typedArgs.instance_name !== undefined) {
+      return { success: false, status: 'error', error: 'instance_id 与 instance_name 只能二选一', errorCode: 'MUTUALLY_EXCLUSIVE_ARGUMENTS' };
+    }
+    if (typedArgs.port !== undefined && (!Number.isSafeInteger(typedArgs.port) || typedArgs.port < 1 || typedArgs.port > 65535)) {
+      return { success: false, status: 'error', error: 'port 必须为 1-65535 的整数', errorCode: 'INVALID_ARGUMENTS' };
+    }
+    for (const field of ['name', 'host', 'username'] as const) {
+      if (typedArgs[field] !== undefined && (typeof typedArgs[field] !== 'string' || typedArgs[field].trim().length === 0)) {
+        return { success: false, status: 'error', error: `${field} 不能为空`, errorCode: 'INVALID_ARGUMENTS' };
+      }
+    }
+    if (typedArgs.credential_ref !== undefined && (typeof typedArgs.credential_ref !== 'string' || typedArgs.credential_ref.trim().length === 0)) {
+      return { success: false, status: 'error', error: 'credential_ref 不能为空', errorCode: 'INVALID_ARGUMENTS' };
     }
 
     // 检查是否有实际要更新的字段
@@ -104,6 +125,7 @@ export const updateDbConfigTool: AnyAgentTool = {
     if (!hasUpdateField) {
       return {
         success: false,
+        status: 'error',
         error: '请提供至少一个要更新的字段',
         errorCode: 'NO_UPDATE_FIELDS',
       };
@@ -111,20 +133,22 @@ export const updateDbConfigTool: AnyAgentTool = {
 
     try {
       // 1. 查找实例
-      const instanceId = typedArgs.instance_id || await findInstanceIdByName(typedArgs.instance_name!);
+      const instanceId = typedArgs.instance_id ?? await findInstanceIdByName(typedArgs.instance_name!);
 
       if (!instanceId) {
         return {
           success: false,
+          status: 'error',
           error: `未找到实例：${typedArgs.instance_name ? `"${typedArgs.instance_name}"` : `ID=${typedArgs.instance_id}`}`,
           errorCode: 'INSTANCE_NOT_FOUND',
+          next_actions: ['先调用 list_database_instances 确认实例 ID 或名称'],
         };
       }
 
       let password: string | undefined;
       if (typedArgs.credential_ref) {
         if (!context?.actor) {
-          return { success: false, error: '缺少认证执行上下文', errorCode: 'MISSING_ACTOR' };
+          return { success: false, status: 'error', error: '缺少认证执行上下文', errorCode: 'MISSING_ACTOR' };
         }
         password = await credentialReferenceService.consume(
           typedArgs.credential_ref,
@@ -132,19 +156,19 @@ export const updateDbConfigTool: AnyAgentTool = {
           updateDbConfigTool.name,
         ) ?? undefined;
         if (!password) {
-          return { success: false, error: '凭据引用无效、已过期或已消费', errorCode: 'INVALID_CREDENTIAL_REF' };
+          return { success: false, status: 'error', error: '凭据引用无效、已过期或已消费', errorCode: 'INVALID_CREDENTIAL_REF', next_actions: ['重新申请一次性 credential_ref；不要重复使用该引用'] };
         }
       }
 
       // 2. 构建更新数据
       const updateData: Record<string, unknown> = {};
-      if (typedArgs.name) updateData.name = typedArgs.name;
-      if (typedArgs.host) updateData.host = typedArgs.host;
-      if (typedArgs.port) updateData.port = typedArgs.port;
-      if (typedArgs.username) updateData.username = typedArgs.username;
-      if (password) updateData.password = password;
-      if (typedArgs.environment) updateData.environment = typedArgs.environment;
-      if (typedArgs.description) updateData.description = typedArgs.description;
+      if (typedArgs.name !== undefined) updateData.name = typedArgs.name;
+      if (typedArgs.host !== undefined) updateData.host = typedArgs.host;
+      if (typedArgs.port !== undefined) updateData.port = typedArgs.port;
+      if (typedArgs.username !== undefined) updateData.username = typedArgs.username;
+      if (password !== undefined) updateData.password = password;
+      if (typedArgs.environment !== undefined) updateData.environment = typedArgs.environment;
+      if (typedArgs.description !== undefined) updateData.description = typedArgs.description;
 
       // 3. 执行更新
       const result = await instanceDatabaseService.updateInstance(instanceId, updateData);
@@ -152,8 +176,11 @@ export const updateDbConfigTool: AnyAgentTool = {
       if (!result.success) {
         return {
           success: false,
+          status: 'error',
           error: `更新失败：${result.error}`,
           errorCode: 'UPDATE_FAILED',
+          details: { credentialConsumed: Boolean(password), retryable: !password },
+          next_actions: [password ? '凭据引用已消费，请重新申请后重试' : '确认实例状态和参数后重试'],
         };
       }
 
@@ -161,17 +188,17 @@ export const updateDbConfigTool: AnyAgentTool = {
       let connectionTested = false;
       let connectionSuccess = false;
 
-      if (typedArgs.host || typedArgs.port || typedArgs.username || password) {
+      if (typedArgs.host !== undefined || typedArgs.port !== undefined || typedArgs.username !== undefined || password !== undefined) {
         connectionTested = true;
         // 获取更新后的实例信息进行连接测试
         const decrypted = await instanceDatabaseService.getInstanceWithDecryptedPassword(instanceId);
         if (decrypted) {
           const testResult = await instanceDatabaseService.testConnection({
             db_type: decrypted.db_type,
-            host: typedArgs.host || decrypted.host,
-            port: typedArgs.port || decrypted.port,
-            username: typedArgs.username || decrypted.username,
-            password: password || decrypted.password,
+            host: typedArgs.host ?? decrypted.host,
+            port: typedArgs.port ?? decrypted.port,
+            username: typedArgs.username ?? decrypted.username,
+            password: password ?? decrypted.password,
             database: decrypted.database_name || undefined,
           });
           connectionSuccess = testResult.success;
@@ -183,12 +210,17 @@ export const updateDbConfigTool: AnyAgentTool = {
 
       return {
         success: true,
+        status: connectionTested && !connectionSuccess ? 'warning' : 'success',
         data: {
           instanceId,
           updatedFields,
           connectionTested,
           connectionSuccess,
+          ...(connectionTested && !connectionSuccess ? { warning: '配置已保存，但新连接测试失败' } : {}),
         },
+        next_actions: connectionTested && !connectionSuccess
+          ? ['检查网络、端口和凭据；配置已保存，修复后调用 slide_test_connection 验证']
+          : [],
         summary: `✅ 成功更新实例配置：${updatedFields.join(', ')}`,
         details: {
           instanceId,
@@ -201,8 +233,10 @@ export const updateDbConfigTool: AnyAgentTool = {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         success: false,
+        status: 'error',
         error: `更新失败：${errorMessage}`,
         errorCode: 'UPDATE_CONFIG_FAILED',
+        next_actions: ['确认实例状态和参数后重试；若使用 credential_ref，请重新申请引用'],
       };
     }
   },

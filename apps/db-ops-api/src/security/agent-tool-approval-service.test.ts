@@ -66,6 +66,21 @@ describe('persistent Agent tool approvals', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('loads pending approvals with a MySQL-compatible literal limit', async () => {
+    let query = '';
+    const executor = {
+      execute: async (sql: string, values?: unknown[]) => {
+        query = sql;
+        expect(values).toBeUndefined();
+        return [[{ id: 42, status: 'pending' }]] as [unknown];
+      },
+    };
+    const service = new AgentToolApprovalService(() => executor as any, 'test-hmac-key');
+
+    await expect(service.pending(2)).resolves.toEqual([{ id: 42, status: 'pending' }]);
+    expect(query).toContain('LIMIT 2');
+  });
+
   it('allows a reviewed window approval to be reused only in its session and risk ceiling', async () => {
     const executor = {
       execute: async (sql: string, values?: unknown[]) => {
@@ -85,6 +100,45 @@ describe('persistent Agent tool approvals', () => {
       sessionKey: 'other-session',
       riskLevel: 'medium',
     })).resolves.toBe(false);
+  });
+
+  it('keeps a reusable approval bound to the reviewed arguments after first use', async () => {
+    const approvedBinding = 'b'.repeat(64);
+    let usedCount = 1;
+    const updateValues: unknown[][] = [];
+    const executor = {
+      execute: async (sql: string, values?: unknown[]) => {
+        if (sql.includes('UPDATE agent_tool_approvals') && sql.includes('used_count')) {
+          updateValues.push(values ?? []);
+          const matchesBinding = values?.includes(approvedBinding);
+          if (matchesBinding) usedCount += 1;
+          return [{ affectedRows: matchesBinding ? 1 : 0 }] as [unknown];
+        }
+        return [[{
+          binding_hash: approvedBinding,
+          scope: 'window',
+          session_key: 'session-1',
+          risk_level: 'medium',
+          used_count: usedCount,
+          max_uses: 5,
+          status: 'approved',
+          expires_at: new Date(Date.now() + 60_000),
+        }]] as [unknown];
+      },
+    };
+    const service = new AgentToolApprovalService(() => executor as any, 'test-hmac-key');
+
+    await expect(service.consumeApproved('42', approvedBinding, 7, {
+      sessionKey: 'session-1',
+      riskLevel: 'medium',
+    })).resolves.toBe(true);
+    await expect(service.consumeApproved('42', 'c'.repeat(64), 7, {
+      sessionKey: 'session-1',
+      riskLevel: 'medium',
+    })).resolves.toBe(false);
+    expect(updateValues).toHaveLength(2);
+    expect(updateValues[0]).toContain(approvedBinding);
+    expect(updateValues[1]).toContain('c'.repeat(64));
   });
 
   it('normalizes high-risk requests to one-time scope even when a caller asks for a window', async () => {

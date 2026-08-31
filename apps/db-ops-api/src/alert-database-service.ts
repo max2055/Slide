@@ -8,6 +8,9 @@ export interface Alert {
   id: number;
   instance_id: number | null;
   server_id: number | null;
+  target_type?: 'instance' | 'server' | 'network_device';
+  network_device_id?: number | null;
+  network_device_name?: string;
   alert_type: 'performance' | 'availability' | 'security' | 'backup' | 'replication' | 'capacity';
   level: 'info' | 'warning' | 'error' | 'critical';
   title: string;
@@ -47,7 +50,8 @@ export interface AlertRule {
   instance_ids?: number[] | null;
   /** @deprecated metric_templates system removed (Phase 130) — kept for backward compat with existing data */
   template_id?: number | null;
-  target_type?: 'instance' | 'server';
+  target_type?: 'instance' | 'server' | 'network_device';
+  network_device_id?: number | null;
   server_id?: number | null;
   created_by: number | null;
   created_at: Date;
@@ -63,6 +67,8 @@ class AlertDatabaseService {
       id: row.id,
       instance_id: row.instance_id,
       server_id: row.server_id,
+      target_type: row.target_type,
+      network_device_id: row.network_device_id == null ? null : Number(row.network_device_id),
       alert_type: row.alert_type,
       level: row.level,
       title: row.title,
@@ -104,6 +110,8 @@ class AlertDatabaseService {
   async createAlert(data: {
     instance_id?: number;
     server_id?: number;
+    target_type?: 'instance' | 'server' | 'network_device';
+    network_device_id?: number;
     alert_type: string;
     level: string;
     title: string;
@@ -123,11 +131,13 @@ class AlertDatabaseService {
     try {
       const [result] = await pool.execute(
         `INSERT INTO alerts
-         (instance_id, server_id, alert_type, level, title, message, description, source, metric_name, metric_value, threshold_value, tags)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (instance_id, server_id, target_type, network_device_id, alert_type, level, title, message, description, source, metric_name, metric_value, threshold_value, tags)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           data.instance_id || null,
           data.server_id || null,
+          data.target_type || (data.network_device_id ? 'network_device' : data.server_id ? 'server' : 'instance'),
+          data.network_device_id || null,
           data.alert_type,
           data.level,
           data.title,
@@ -154,6 +164,9 @@ class AlertDatabaseService {
   async getAlerts(options?: {
     instance_id?: number;
     allowed_instance_ids?: readonly number[] | null;
+    /** Target-specific scopes: null is unrestricted, [] denies that target class. */
+    allowed_server_ids?: readonly number[] | null;
+    allowed_network_device_ids?: readonly number[] | null;
     server_id?: number;
     status?: string;
     level?: string;
@@ -168,9 +181,98 @@ class AlertDatabaseService {
     }
 
     try {
+      const targetScopeEnabled = options?.allowed_server_ids !== undefined
+        || options?.allowed_network_device_ids !== undefined;
+
+      const buildWhere = (includeStatusAndLevel = true): { clause: string; params: any[] } => {
+        const whereParts: string[] = [];
+        const whereParams: any[] = [];
+
+        if (options?.instance_id !== undefined) {
+          whereParts.push('a.instance_id = ?');
+          whereParams.push(options.instance_id);
+        }
+
+        if (targetScopeEnabled) {
+          const targetBranches: string[] = [];
+          const targetExpression = {
+            instance: "(a.target_type = 'instance' OR (a.target_type IS NULL AND a.server_id IS NULL AND a.network_device_id IS NULL))",
+            server: "(a.target_type = 'server' OR (a.target_type IS NULL AND a.server_id IS NOT NULL AND a.network_device_id IS NULL))",
+            networkDevice: "(a.target_type = 'network_device' OR (a.target_type IS NULL AND a.network_device_id IS NOT NULL))",
+          };
+
+          // Callers that do not provide an instance scope retain the historical
+          // unrestricted behavior. Scoped routes pass an explicit list.
+          if (options?.allowed_instance_ids === null || options?.allowed_instance_ids === undefined) {
+            targetBranches.push(targetExpression.instance);
+          } else if (options.allowed_instance_ids.length === 0) {
+            // Global instance alerts remain visible, but null instance IDs on
+            // server/network rows are no longer an implicit authorization.
+            targetBranches.push(`${targetExpression.instance} AND a.instance_id IS NULL`);
+          } else {
+            targetBranches.push(`${targetExpression.instance} AND (a.instance_id IS NULL OR a.instance_id IN (${options.allowed_instance_ids.map(() => '?').join(', ')}))`);
+            whereParams.push(...options.allowed_instance_ids);
+          }
+
+          const addTargetBranch = (
+            allowedIds: readonly number[] | null | undefined,
+            expression: string,
+            column: string,
+          ) => {
+            if (allowedIds === undefined) return;
+            if (allowedIds === null) {
+              targetBranches.push(expression);
+              return;
+            }
+            if (allowedIds.length === 0) return;
+            targetBranches.push(`${expression} AND ${column} IN (${allowedIds.map(() => '?').join(', ')})`);
+            whereParams.push(...allowedIds);
+          };
+
+          addTargetBranch(options?.allowed_server_ids, targetExpression.server, 'a.server_id');
+          addTargetBranch(options?.allowed_network_device_ids, targetExpression.networkDevice, 'a.network_device_id');
+          whereParts.push(targetBranches.length ? `(${targetBranches.join(' OR ')})` : '1=0');
+        } else if (options?.allowed_instance_ids !== undefined && options.allowed_instance_ids !== null) {
+          // Preserve the legacy behavior for callers that have not opted into
+          // target-specific scopes yet.
+          if (options.allowed_instance_ids.length === 0) {
+            whereParts.push('a.instance_id IS NULL');
+          } else {
+            whereParts.push(`(a.instance_id IS NULL OR a.instance_id IN (${options.allowed_instance_ids.map(() => '?').join(', ')}))`);
+            whereParams.push(...options.allowed_instance_ids);
+          }
+        }
+
+        if (options?.server_id !== undefined) {
+          whereParts.push('a.server_id = ?');
+          whereParams.push(options.server_id);
+        }
+
+        if (includeStatusAndLevel && options?.status) {
+          const statuses = options.status.split(',').map(s => s.trim()).filter(Boolean);
+          if (statuses.length === 1) {
+            whereParts.push('a.status = ?');
+            whereParams.push(statuses[0]);
+          } else if (statuses.length > 1) {
+            whereParts.push(`a.status IN (${statuses.map(() => '?').join(',')})`);
+            whereParams.push(...statuses);
+          }
+        }
+
+        if (includeStatusAndLevel && options?.level) {
+          whereParts.push('a.level = ?');
+          whereParams.push(options.level);
+        }
+
+        return { clause: whereParts.length ? whereParts.join(' AND ') : '1=1', params: whereParams };
+      };
+
+      const baseWhere = buildWhere();
       let sql = `
         SELECT a.id, a.instance_id, COALESCE(d.name, '') as instance_name,
                a.server_id, COALESCE(s.label, s.host, '') as server_name,
+               a.target_type, a.network_device_id,
+               COALESCE(n.label, n.name, '') as network_device_name,
                a.alert_type, a.level, a.title, a.message, a.description,
                a.status, a.acknowledged_by, a.acknowledged_at, a.resolved_by, a.resolved_at,
                a.assigned_to, a.source, a.metric_name, a.metric_value, a.threshold_value,
@@ -178,40 +280,10 @@ class AlertDatabaseService {
         FROM alerts a
         LEFT JOIN database_instances d ON a.instance_id = d.id
         LEFT JOIN servers s ON a.server_id = s.id
-        WHERE 1=1
+        LEFT JOIN network_devices n ON a.network_device_id = n.id
+        WHERE ${baseWhere.clause}
       `;
-      const params: any[] = [];
-
-      if (options?.instance_id !== undefined) {
-        sql += ' AND a.instance_id = ?';
-        params.push(options.instance_id);
-      }
-      if (options?.allowed_instance_ids !== undefined && options.allowed_instance_ids !== null) {
-        if (options.allowed_instance_ids.length === 0) {
-          sql += ' AND a.instance_id IS NULL';
-        } else {
-          sql += ` AND (a.instance_id IS NULL OR a.instance_id IN (${options.allowed_instance_ids.map(() => '?').join(', ')}))`;
-          params.push(...options.allowed_instance_ids);
-        }
-      }
-      if (options?.server_id !== undefined) {
-        sql += ' AND a.server_id = ?';
-        params.push(options.server_id);
-      }
-      if (options?.status) {
-        const statuses = options.status.split(',').map(s => s.trim()).filter(Boolean);
-        if (statuses.length === 1) {
-          sql += ' AND a.status = ?';
-          params.push(statuses[0]);
-        } else if (statuses.length > 1) {
-          sql += ` AND a.status IN (${statuses.map(() => '?').join(',')})`;
-          params.push(...statuses);
-        }
-      }
-      if (options?.level) {
-        sql += ' AND level = ?';
-        params.push(options.level);
-      }
+      const params: any[] = [...baseWhere.params];
 
       sql += ' ORDER BY created_at DESC';
 
@@ -230,54 +302,21 @@ class AlertDatabaseService {
       let total = rows.length;
       let unread = 0, critical = 0, warning = 0, resolved = 0;
       if (options?.limit !== undefined) {
-        const whereParts: string[] = [];
-        const countParams: any[] = [];
-        if (options?.instance_id !== undefined) { whereParts.push('instance_id = ?'); countParams.push(options.instance_id); }
-        if (options?.allowed_instance_ids !== undefined && options.allowed_instance_ids !== null) {
-          if (options.allowed_instance_ids.length === 0) {
-            whereParts.push('instance_id IS NULL');
-          } else {
-            whereParts.push(`(instance_id IS NULL OR instance_id IN (${options.allowed_instance_ids.map(() => '?').join(', ')}))`);
-            countParams.push(...options.allowed_instance_ids);
-          }
-        }
-        if (options?.server_id !== undefined) { whereParts.push('server_id = ?'); countParams.push(options.server_id); }
-        if (options?.status) {
-          const statuses = options.status.split(',').map(s => s.trim()).filter(Boolean);
-          if (statuses.length === 1) {
-            whereParts.push('status = ?'); countParams.push(statuses[0]);
-          } else if (statuses.length > 1) {
-            whereParts.push(`status IN (${statuses.map(() => '?').join(',')})`); countParams.push(...statuses);
-          }
-        }
-        if (options?.level) { whereParts.push('level = ?'); countParams.push(options.level); }
-        const whereClause = whereParts.length ? 'WHERE ' + whereParts.join(' AND ') : '';
-        const [[{ total: t }]] = await pool.query(`SELECT COUNT(*) AS total FROM alerts ${whereClause}`, countParams) as any;
+        const whereClause = `WHERE ${baseWhere.clause}`;
+        const countParams = baseWhere.params;
+        const [[{ total: t }]] = await pool.query(`SELECT COUNT(*) AS total FROM alerts a ${whereClause}`, countParams) as any;
         total = t ?? rows.length;
-        const extraWhere = whereParts.length ? ' AND' : 'WHERE';
-        const [[{ total: ur }]] = await pool.query(`SELECT COUNT(*) AS total FROM alerts ${whereClause}${extraWhere} status NOT IN ('acknowledged','resolved','closed','read')`, countParams) as any;
+        const [[{ total: ur }]] = await pool.query(`SELECT COUNT(*) AS total FROM alerts a ${whereClause} AND a.status NOT IN ('acknowledged','resolved','closed','read')`, countParams) as any;
         unread = ur ?? 0;
-        const [[{ total: cr }]] = await pool.query(`SELECT COUNT(*) AS total FROM alerts ${whereClause}${extraWhere} level = 'critical'`, countParams) as any;
+        const [[{ total: cr }]] = await pool.query(`SELECT COUNT(*) AS total FROM alerts a ${whereClause} AND a.level = 'critical'`, countParams) as any;
         critical = cr ?? 0;
-        const [[{ total: wr }]] = await pool.query(`SELECT COUNT(*) AS total FROM alerts ${whereClause}${extraWhere} level = 'warning'`, countParams) as any;
+        const [[{ total: wr }]] = await pool.query(`SELECT COUNT(*) AS total FROM alerts a ${whereClause} AND a.level = 'warning'`, countParams) as any;
         warning = wr ?? 0;
         // Resolved count: always cross-tab (ignores status filter)
-        const resolvedCountParams: any[] = [];
-        const resolvedWhereParts: string[] = [];
-        if (options?.instance_id !== undefined) { resolvedWhereParts.push('instance_id = ?'); resolvedCountParams.push(options.instance_id); }
-        if (options?.allowed_instance_ids !== undefined && options.allowed_instance_ids !== null) {
-          if (options.allowed_instance_ids.length === 0) {
-            resolvedWhereParts.push('instance_id IS NULL');
-          } else {
-            resolvedWhereParts.push(`(instance_id IS NULL OR instance_id IN (${options.allowed_instance_ids.map(() => '?').join(', ')}))`);
-            resolvedCountParams.push(...options.allowed_instance_ids);
-          }
-        }
-        if (options?.server_id !== undefined) { resolvedWhereParts.push('server_id = ?'); resolvedCountParams.push(options.server_id); }
-        const resolvedWhere = resolvedWhereParts.length ? 'WHERE ' + resolvedWhereParts.join(' AND ') : '';
+        const resolvedWhereData = buildWhere(false);
         const [[{ total: rv }]] = await pool.query(
-          `SELECT COUNT(*) AS total FROM alerts ${resolvedWhere}${resolvedWhereParts.length ? ' AND' : 'WHERE'} status IN ('resolved','closed')`,
-          resolvedCountParams
+          `SELECT COUNT(*) AS total FROM alerts a WHERE ${resolvedWhereData.clause} AND a.status IN ('resolved','closed')`,
+          resolvedWhereData.params
         ) as any;
         resolved = rv ?? 0;
       }
@@ -289,6 +328,9 @@ class AlertDatabaseService {
         instance_name: row.instance_name || `实例 #${row.instance_id}`,
         server_id: row.server_id,
         server_name: row.server_name || (row.server_id ? `服务器 #${row.server_id}` : undefined),
+        target_type: row.target_type || (row.network_device_id ? 'network_device' : row.server_id ? 'server' : 'instance'),
+        network_device_id: row.network_device_id == null ? null : Number(row.network_device_id),
+        network_device_name: row.network_device_name || (row.network_device_id ? `网络设备 #${row.network_device_id}` : undefined),
         alert_type: row.alert_type,
         severity: row.level,
         title: row.title,
@@ -318,15 +360,15 @@ class AlertDatabaseService {
     }
   }
 
-  async getAlertAccessTarget(alertId: number): Promise<{ instance_id: number | null; server_id: number | null } | null> {
+  async getAlertAccessTarget(alertId: number): Promise<{ instance_id: number | null; server_id: number | null; network_device_id: number | null; target_type?: string } | null> {
     const pool = this.getPool();
     if (!pool || !Number.isSafeInteger(alertId) || alertId <= 0) return null;
     const [rows] = await pool.execute(
-      'SELECT instance_id, server_id FROM alerts WHERE id = ? LIMIT 1',
+      'SELECT instance_id, server_id, network_device_id, target_type FROM alerts WHERE id = ? LIMIT 1',
       [alertId],
     ) as any;
     return Array.isArray(rows) && rows.length > 0
-      ? { instance_id: rows[0].instance_id == null ? null : Number(rows[0].instance_id), server_id: rows[0].server_id == null ? null : Number(rows[0].server_id) }
+      ? { instance_id: rows[0].instance_id == null ? null : Number(rows[0].instance_id), server_id: rows[0].server_id == null ? null : Number(rows[0].server_id), network_device_id: rows[0].network_device_id == null ? null : Number(rows[0].network_device_id), target_type: rows[0].target_type }
       : null;
   }
 
@@ -565,6 +607,37 @@ class AlertDatabaseService {
     }
   }
 
+  /** Find an active network-device alert, preserving interface dimensions. */
+  async findActiveNetworkDeviceAlert(
+    networkDeviceId: number,
+    metricName: string,
+    ruleId: number,
+    dimensions?: Record<string, string>,
+  ): Promise<Alert | null> {
+    const pool = this.getPool();
+    if (!pool) return null;
+    try {
+      const [rows] = await pool.query<mysql.RowDataPacket[]>(
+        `SELECT * FROM alerts
+         WHERE network_device_id = ? AND target_type = 'network_device' AND metric_name = ?
+         AND JSON_EXTRACT(tags, '$.rule_id') = CAST(? AS JSON)
+         AND status IN ('unread', 'read', 'acknowledged')
+         ORDER BY created_at DESC LIMIT 100`,
+        [networkDeviceId, metricName, ruleId],
+      );
+      const canonical = dimensions ? JSON.stringify(Object.fromEntries(Object.entries(dimensions).sort(([a], [b]) => a.localeCompare(b)))) : undefined;
+      for (const row of rows) {
+        const tags = row.tags ? (typeof row.tags === 'string' ? JSON.parse(row.tags) : row.tags) : {};
+        const rowDimensions = tags?.dimensions ? JSON.stringify(Object.fromEntries(Object.entries(tags.dimensions).sort(([a], [b]) => a.localeCompare(b)))) : undefined;
+        if (canonical === rowDimensions) return this._rowToAlert(row);
+      }
+      return null;
+    } catch (error) {
+      console.error('查找网络设备活跃告警失败:', error);
+      return null;
+    }
+  }
+
   /**
    * 更新已有告警的指标值和更新时间（去重 touch）
    */
@@ -631,7 +704,7 @@ class AlertDatabaseService {
                 threshold_template, threshold_type, dynamic_config, silence_minutes,
                 db_types, instance_ids, template_id,
                 duration_seconds, severity, enabled, notification_channels,
-                target_type, server_id,
+                target_type, server_id, network_device_id,
                 created_by, created_at, updated_at
          FROM alert_rules WHERE id = ?`,
         [ruleId]
@@ -658,7 +731,7 @@ class AlertDatabaseService {
                threshold_template, threshold_type, dynamic_config, silence_minutes,
                db_types, instance_ids, template_id, duration_seconds, severity,
                enabled, notification_channels,
-               target_type, server_id,
+               target_type, server_id, network_device_id,
                created_by, created_at, updated_at
         FROM alert_rules
       `;
@@ -702,8 +775,9 @@ class AlertDatabaseService {
     instance_ids?: number[] | null;
     /** @deprecated metric_templates system removed (Phase 130), kept for data compat */
     template_id?: number | null;
-    target_type?: 'instance' | 'server';
+    target_type?: 'instance' | 'server' | 'network_device';
     server_id?: number;
+    network_device_id?: number;
     created_by?: number;
   }): Promise<{ success: boolean; ruleId?: number; error?: string }> {
     const pool = this.getPool();
@@ -717,8 +791,8 @@ class AlertDatabaseService {
          (name, description, metric_name, operator, threshold, threshold_template,
           threshold_type, dynamic_config, silence_minutes, duration_seconds,
           severity, notification_channels, db_types, instance_ids, template_id,
-          target_type, server_id, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          target_type, server_id, network_device_id, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           data.name,
           data.description || null,
@@ -737,6 +811,7 @@ class AlertDatabaseService {
           data.template_id || null,
           data.target_type || 'instance',
           data.server_id || null,
+          data.network_device_id || null,
           data.created_by || null,
         ]
       ) as any;
@@ -771,8 +846,9 @@ class AlertDatabaseService {
       instance_ids?: number[] | null;
       /** @deprecated metric_templates system removed (Phase 130), kept for data compat */
       template_id?: number | null;
-      target_type?: 'instance' | 'server';
+      target_type?: 'instance' | 'server' | 'network_device';
       server_id?: number | null;
+      network_device_id?: number | null;
     }
   ): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
@@ -855,6 +931,10 @@ class AlertDatabaseService {
       if (data.server_id !== undefined) {
         updates.push('server_id = ?');
         values.push(data.server_id);
+      }
+      if (data.network_device_id !== undefined) {
+        updates.push('network_device_id = ?');
+        values.push(data.network_device_id);
       }
 
       if (updates.length === 0) {

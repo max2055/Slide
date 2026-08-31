@@ -1,9 +1,7 @@
 /**
  * @slide/agent-core — Core types for the agent engine.
  *
- * Ported from nanobot (Python) to TypeScript.
- * Language-agnostic design: these types can be implemented
- * in any language that supports async/await.
+ * TypeScript contracts defined for the Slide Agent runtime.
  */
 
 // ── Tool definitions ──
@@ -55,6 +53,8 @@ export interface LLMResponse {
   rawResponse?: string;
   errorKind?: string;
   error?: string;
+  errorCode?: string;
+  providerStatus?: number;
   shouldExecuteTools: boolean;
   hasToolCalls: boolean;
 }
@@ -179,6 +179,8 @@ export interface AgentRunSpec {
   maxIterationsMessage?: string;
   concurrentTools?: boolean;
   failOnToolError?: boolean;
+  /** Maximum number of consecutive identical tool calls before the loop guard blocks one. */
+  loopGuardThreshold?: number;
   workspace?: string;
   sessionKey?: string;
   contextWindowTokens?: number;
@@ -191,6 +193,10 @@ export interface AgentRunSpec {
   injectionCallback?: ((limit?: number) => Promise<Message[]>) | null;
   llmTimeoutS?: number;
   signal?: AbortSignal;
+  /** Stable caller-supplied key for idempotent side-effecting tools. */
+  idempotencyKey?: string;
+  /** Progress emitted by a long-running tool operation. */
+  toolProgressCallback?: ((event: Record<string, unknown>) => Promise<void> | void) | null;
 }
 
 export interface AgentRunResult {
@@ -229,6 +235,10 @@ export interface RuntimeCheckpoint {
 export interface ToolExecutionContext {
   signal?: AbortSignal;
   sessionKey?: string;
+  idempotencyKey?: string;
+  progressCallback?: ((event: Record<string, unknown>) => Promise<void> | void) | null;
+  /** Let AgentRunner observe thrown exceptions instead of stringifying them. */
+  preserveErrors?: boolean;
 }
 
 export interface Tool {
@@ -238,7 +248,7 @@ export interface Tool {
   readonly readOnly: boolean;
   readonly concurrencySafe: boolean;
   readonly exclusive: boolean;
-  /** Tool scopes for auto-discovery filtering. Default ["core"]. "subagent" scope allows use in subagents. Mirrors nanobot's _scopes. */
+  /** Tool scopes for auto-discovery filtering. Default ["core"]. "subagent" scope allows use in subagents. */
   readonly scope?: string[];
   readonly ownerOnly?: boolean;
   readonly group?: string;

@@ -63,9 +63,23 @@ describe('109-04: DirectGatewayClient', () => {
     expect(() => client.sendChat('test-session', 'hello world')).not.toThrow();
   });
 
+  it('reports chat.send as rejected when no WebSocket is available', async () => {
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    await expect(client.request('chat.send', { sessionKey: 'session-1', message: 'hello' }))
+      .rejects.toThrow(/could not be queued/);
+  });
+
   it('requestHistory does not throw', () => {
     const client = new DirectGatewayClient({ onEvent, onStateChange });
     expect(() => client.requestHistory('test-session')).not.toThrow();
+  });
+
+  it('surfaces chat.history transport failures instead of returning an empty transcript', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+
+    await expect(client.request('chat.history', { sessionKey: 'session-1' }))
+      .rejects.toThrow('network down');
   });
 
   it('connect calls onStateChange with connecting state', () => {
@@ -138,6 +152,20 @@ describe('109-04: DirectGatewayClient', () => {
     }));
   });
 
+  it('keeps queued messages across a reconnect until auth succeeds', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    client.sendChat('session-1', 'queued');
+    expect((client as any).pendingMessages).toHaveLength(1);
+
+    client.connect();
+    expect((client as any).pendingMessages).toHaveLength(1);
+    socket.receive({ type: 'auth_ok' });
+    expect(socket.frames.at(-1)).toEqual(expect.objectContaining({ type: 'chat.send', message: 'queued' }));
+    client.disconnect();
+  });
+
   it('forwards session.created as a first-class adapter event', () => {
     const socket = installMockWebSocket();
     const client = new DirectGatewayClient({ onEvent, onStateChange });
@@ -161,6 +189,63 @@ describe('109-04: DirectGatewayClient', () => {
     socket.receive(cancelled);
 
     expect(onEvent).toHaveBeenCalledWith(cancelled);
+  });
+
+  it('keeps thinking events separate from answer deltas and preserves their order', async () => {
+    const host = {
+      chatRunId: 'run-1',
+      sessionKey: 'session-1',
+      chatThinkingText: '',
+      chatThinkingComplete: false,
+      chatStream: '',
+      chatMessages: [],
+      chatSending: true,
+      lastError: null,
+      settings: { lastActiveSessionKey: '' },
+      applySettings(next: Record<string, unknown>) {
+        this.settings = next;
+      },
+      refreshSessionsAfterChat: new Set<string>(),
+      chatToolMessages: [],
+      chatStreamSegments: [],
+      toolStreamById: new Map(),
+      toolStreamOrder: [],
+      toolStreamSyncTimer: null,
+    };
+    const events: Array<Record<string, unknown>> = [
+      { type: 'thinking_delta', delta: 'inspect ' },
+      { type: 'thinking_delta', delta: 'the target' },
+      { type: 'thinking_end' },
+      { type: 'text_delta', delta: 'Done.' },
+    ];
+
+    for (const event of events) {
+      (directGateway as any).handleDirectAdapterEvent(host, event);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(host.chatThinkingText).toBe('inspect the target');
+    expect(host.chatThinkingComplete).toBe(true);
+    expect(host.chatStream).toBe('Done.');
+    expect(host.chatMessages).toEqual([]);
+  });
+
+  it('coalesces rapid answer deltas and keeps the latest text', async () => {
+    const host = {
+      chatRunId: 'run-1', sessionKey: 'session-1', chatThinkingText: '', chatThinkingComplete: false,
+      chatStream: '', chatMessages: [], chatSending: true, lastError: null,
+      settings: { lastActiveSessionKey: '' }, applySettings(next: Record<string, unknown>) { this.settings = next; },
+      refreshSessionsAfterChat: new Set<string>(), chatToolMessages: [], chatStreamSegments: [],
+      toolStreamById: new Map(), toolStreamOrder: [], toolStreamSyncTimer: null,
+    };
+
+    (directGateway as any).handleDirectAdapterEvent(host, { type: 'text_delta', delta: '第一段' });
+    (directGateway as any).handleDirectAdapterEvent(host, { type: 'text_delta', delta: '第一段第二段' });
+    expect(host.chatStream).toBe('');
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(host.chatStream).toBe('第一段第二段');
   });
 
   it('adopts the server session key without resetting the active run and uses it next', async () => {

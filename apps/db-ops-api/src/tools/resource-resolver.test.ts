@@ -38,4 +38,11 @@ describe('Agent tool resource resolver', () => {
         databaseTarget: { host: 'db.internal', port: 5432 },
       });
   });
+
+  it('binds cross-resource tool arguments to the concrete resource subject', () => {
+    expect(resolveToolResourceFromArgs('diagnose_resource', { resourceType: 'network_device', resourceId: 17 }))
+      .toMatchObject({ type: 'network_device', networkDeviceId: 17 });
+    expect(resolveToolResourceFromArgs('diagnose_resource', { resourceType: 'server', resourceId: 0 }))
+      .toMatchObject({ type: 'none', error: 'RESOURCE_INVALID' });
+  });
 });

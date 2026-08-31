@@ -47,7 +47,7 @@ export const oracleAwrReportTool: AnyAgentTool = {
   handler: async (args) => {
     const typedArgs = args as unknown as AwrReportArgs;
 
-    if (!typedArgs.instance_id) {
+    if (!Number.isSafeInteger(typedArgs.instance_id) || typedArgs.instance_id <= 0) {
       return {
         success: false,
         error: '请提供实例 ID (instance_id)',
@@ -55,12 +55,16 @@ export const oracleAwrReportTool: AnyAgentTool = {
       };
     }
 
-    if (!typedArgs.begin_snap_id || !typedArgs.end_snap_id) {
+    if (!Number.isSafeInteger(typedArgs.begin_snap_id) || !Number.isSafeInteger(typedArgs.end_snap_id)
+      || typedArgs.begin_snap_id <= 0 || typedArgs.end_snap_id <= 0) {
       return {
         success: false,
         error: '请提供开始和结束快照 ID (begin_snap_id, end_snap_id)',
         errorCode: 'MISSING_ARGUMENTS',
       };
+    }
+    if (typedArgs.end_snap_id <= typedArgs.begin_snap_id) {
+      return { success: false, status: 'error', error: 'end_snap_id 必须大于 begin_snap_id', errorCode: 'INVALID_ARGUMENTS' };
     }
 
     try {
@@ -108,8 +112,10 @@ export const oracleAwrReportTool: AnyAgentTool = {
       if (lines.length === 0) {
         return {
           success: true,
+          status: 'warning',
           data: { html: '' },
           summary: 'AWR 报告生成完成，但内容为空（指定快照范围内可能没有数据）',
+          next_actions: ['确认快照范围有效且实例已生成 AWR 数据'],
         };
       }
 
@@ -117,6 +123,7 @@ export const oracleAwrReportTool: AnyAgentTool = {
 
       return {
         success: true,
+        status: 'success',
         data: {
           html: htmlContent,
           format: 'html',
@@ -136,12 +143,14 @@ export const oracleAwrReportTool: AnyAgentTool = {
       if (errMsg.includes('ORA-00942') || errMsg.includes('DBMS_WORKLOAD_REPOSITORY') || errMsg.includes('insufficient privileges')) {
         return {
           success: false,
+          status: 'error',
           error: 'AWR 报告需要 Oracle Enterprise Edition + Diagnostics Pack 许可证。请确认目标实例已安装 Diagnostics Pack，且当前用户有访问 DBMS_WORKLOAD_REPOSITORY 的权限。',
           errorCode: 'DIAGNOSTICS_PACK_REQUIRED',
         };
       }
       return {
         success: false,
+        status: 'error',
         error: `获取 AWR 报告失败：${errMsg}`,
         errorCode: 'AWR_REPORT_FAILED',
       };

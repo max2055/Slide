@@ -9,6 +9,7 @@ import type { LookupFunction } from 'node:net';
 import nodemailer from 'nodemailer';
 import { notificationDatabaseService } from './notification-database-service';
 import type { PendingAlert, NotificationChannel } from './notification-database-service';
+import { validateEmailChannelConfig } from './notification-channel-config.js';
 import { decryptData } from './db-connection';
 import { exchangeMicrosoftSmtpRefreshToken } from './smtp-oauth2.js';
 import { signFeishuWebhookPayload } from './feishu-webhook.js';
@@ -432,18 +433,7 @@ export class NotificationService {
   }
 
   private isValidEmailConfiguration(config: NotificationChannel['config']): boolean {
-    const passwordAuth = (typeof config.password === 'string' && config.password.length > 0)
-      || (typeof config.password_encrypted === 'string' && config.password_encrypted.length > 0);
-    const oauth2Auth = config.smtp_auth === 'oauth2'
-      && typeof config.oauth2_tenant === 'string' && config.oauth2_tenant.length > 0
-      && typeof config.oauth2_client_id === 'string' && config.oauth2_client_id.length > 0
-      && typeof config.oauth2_refresh_token_encrypted === 'string' && config.oauth2_refresh_token_encrypted.length > 0;
-    return typeof config.smtp_host === 'string' && config.smtp_host.length > 0
-      && Number.isInteger(Number(config.smtp_port)) && Number(config.smtp_port) > 0
-      && typeof config.smtp_username === 'string' && config.smtp_username.length > 0
-      && (passwordAuth || oauth2Auth)
-      && typeof config.from === 'string' && config.from.length > 0
-      && typeof config.to === 'string' && config.to.length > 0;
+    return validateEmailChannelConfig(config).valid;
   }
 
   private async sendEmail(
@@ -471,7 +461,7 @@ export class NotificationService {
       host: config.smtp_host!,
       port,
       secure: config.smtp_secure === true || port === 465,
-      requireTLS: port !== 465,
+      requireTLS: config.smtp_require_tls ?? port !== 465,
       auth,
       tls: { minVersion: 'TLSv1.2' },
     });

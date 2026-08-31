@@ -38,7 +38,7 @@ describe('system health and consistency page', () => {
   it('loads one merged overview and collapses normal checks by default', async () => {
     const element = await renderPage();
     expect(authFetch).toHaveBeenCalledWith('/api/health/overview');
-    expect(element.shadowRoot?.textContent).toContain('系统健康与一致性');
+    expect(element.shadowRoot?.textContent).toContain('系统自检');
     expect(element.shadowRoot?.textContent).toContain('显示正常检查（1）');
     expect(element.shadowRoot?.querySelector('.check-table')).toBeNull();
   });

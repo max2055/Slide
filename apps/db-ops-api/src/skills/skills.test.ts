@@ -312,4 +312,9 @@ describe('Skill code isolation', () => {
   it('does not include mutable home-directory skills in production defaults', () => {
     expect(PREDEFINED_SKILL_DIRS.some((dir) => dir.startsWith('~'))).toBe(false);
   });
+
+  it('packages the external bundled skills directory in the API image', () => {
+    const dockerfile = fs.readFileSync(new URL('../../Dockerfile', import.meta.url), 'utf8');
+    expect(dockerfile).toContain('COPY apps/db-ops-skills ./apps/db-ops-skills');
+  });
 });

@@ -22,6 +22,7 @@ export type { AgentsPanel } from "./agents.types.ts";
 import { renderAgentTools, renderAgentSkills } from "./agents-panels-tools-skills.ts";
 import { agentBadgeText, buildAgentContext, normalizeAgentLabel } from "./agents-utils.ts";
 import type { AgentsPanel } from "./agents.types.ts";
+import { copyTextToClipboard } from "../chat/copy-as-markdown.ts";
 
 export type ConfigState = {
   form: Record<string, unknown> | null;
@@ -188,7 +189,7 @@ export function renderAgents(props: AgentsProps) {
                   <button
                     type="button"
                     class="btn btn--sm btn--ghost"
-                    @click=${() => void navigator.clipboard.writeText(selectedAgent.id)}
+                    @click=${() => void copyTextToClipboard(selectedAgent.id)}
                     title="Copy agent ID to clipboard"
                   >
                     Copy ID

@@ -1,20 +1,23 @@
 /**
- * Server Collector
+ * Bounded SSH server metrics collector.
  *
- * Cron-based collection loop for SSH server metrics.
- * Runs on configurable interval (default 5 min), collects all enabled servers,
- * stores results in server_metrics KV table, and auto-transitions server status.
- *
- * Requirements: COL-05 (auto-transition to UNREACHABLE after 3 consecutive failures),
- *               COL-06 (configurable interval, default 5 min),
- *               COL-07 (collection_enabled=true collected; false skipped)
+ * Commands come exclusively from server-metric-provider. A host can return
+ * partial evidence, but an empty/failed collection is never promoted to
+ * healthy and all SSH sessions are released (or closed after fatal errors).
  */
 
-import sshSessionPool from './ssh-session-pool';
-import serverMetricProvider from './server-metric-provider';
-import { serverDatabaseService, ServerRow } from './server-database-service';
+import type { Client } from 'ssh2';
+import sshSessionPool, { type ExecCommandResult } from './ssh-session-pool';
+import serverMetricProvider, {
+  canonicalDimensions,
+  type MetricDefinition,
+  type MetricDimensions,
+  type MetricSample,
+} from './server-metric-provider';
+import { serverDatabaseService, type ServerRow } from './server-database-service';
 import { dbConnection } from './db-connection';
 import { isFatalSshCommandError, parseFilesystemEvidence } from './linux-host-evidence-service.js';
+import { isSupportedServerOs, normalizeServerOs } from './server-os-profile.js';
 
 export interface FilesystemMetricRow {
   metricName: 'disk_usage' | 'filesystem_size_bytes' | 'filesystem_used_bytes'
@@ -47,21 +50,70 @@ export function buildFilesystemMetricRows(
   });
 }
 
-// ── Config ─────────────────────────────────────────────────────────────────────
+export type CollectionFailureCategory = 'network' | 'authentication' | 'command' | 'unsupported_os';
 
-interface CollectorConfig {
+export interface ServerCollectionResult {
+  success: boolean;
+  metricsCount?: number;
+  error?: string;
+  category?: CollectionFailureCategory;
+  collectedAt?: string;
+}
+
+export interface CollectorConfig {
   collectionIntervalMs: number;
   commandTimeoutMs: number;
   maxFailuresBeforeUnreachable: number;
+  maxOutputBytes: number;
 }
 
 const DEFAULT_CONFIG: CollectorConfig = {
   collectionIntervalMs: Number(process.env.SERVER_COLLECTION_INTERVAL_MS) || 300000,
   commandTimeoutMs: 15000,
   maxFailuresBeforeUnreachable: 3,
+  maxOutputBytes: 512 * 1024,
 };
 
-// ── Collector implementation ───────────────────────────────────────────────────
+function stableErrorCode(error: unknown): string {
+  const value = error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string'
+    ? (error as { code: string }).code
+    : error instanceof Error ? error.message : String(error);
+  return /^[A-Z][A-Z0-9_]{2,80}$/.test(value) ? value : 'SSH_COMMAND_FAILED';
+}
+
+export function classifyCollectionFailure(error: unknown): CollectionFailureCategory {
+  const code = stableErrorCode(error);
+  const raw = error instanceof Error ? error.message : String(error);
+  if (code === 'HOST_OS_UNSUPPORTED') return 'unsupported_os';
+  if (/^(SSH_COMMAND_TIMEOUT|SSH_COMMAND_OUTPUT_LIMIT|SSH_COMMAND_PROTOCOL_ERROR)$/.test(code)
+    || code === 'NO_METRICS_DEFINED' || code === 'DATABASE_UNAVAILABLE') return 'command';
+  if (/AUTH|PERMISSION|CREDENTIAL|HOST_KEY|FINGERPRINT|USERAUTH/i.test(`${code} ${raw}`)) return 'authentication';
+  if (/ECONN|ENET|EHOST|ENOTFOUND|EAI_|NETWORK|UNREACHABLE|DNS|TIMED?\s*OUT/i.test(`${code} ${raw}`)) return 'network';
+  return 'command';
+}
+
+function resultBytes(result: Pick<ExecCommandResult, 'stdout' | 'stderr'>): number {
+  return Buffer.byteLength(result.stdout ?? '', 'utf8') + Buffer.byteLength(result.stderr ?? '', 'utf8');
+}
+
+function isFiniteMetric(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function failedResult(error: unknown): ServerCollectionResult {
+  const result: ServerCollectionResult = {
+    success: false,
+    error: stableErrorCode(error),
+  };
+  // Keep the historical JSON contract (`success` + `error`) while exposing
+  // the stable category to typed callers and diagnostics.
+  Object.defineProperty(result, 'category', {
+    value: classifyCollectionFailure(error),
+    enumerable: false,
+    configurable: true,
+  });
+  return result;
+}
 
 class ServerCollector {
   private collectionTimer: ReturnType<typeof setInterval> | null = null;
@@ -73,236 +125,221 @@ class ServerCollector {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
-  /**
-   * Start the collection loop.
-   */
   start(): void {
     if (this.running) {
       console.log('[ServerCollector] already running');
       return;
     }
-
     this.running = true;
     this.collectionTimer = setInterval(() => {
-      this._tick().catch((err) =>
-        console.error('[ServerCollector] tick error:', err)
-      );
+      this._tick().catch((err) => console.error('[ServerCollector] tick error:', err));
     }, this.config.collectionIntervalMs);
-
     console.log(`[ServerCollector] started (interval: ${this.config.collectionIntervalMs / 1000}s)`);
-
-    // Run first tick immediately
-    this._tick().catch((err) =>
-      console.error('[ServerCollector] initial tick error:', err)
-    );
+    this._tick().catch((err) => console.error('[ServerCollector] initial tick error:', err));
   }
 
-  /**
-   * Stop the collection loop and close all SSH connections.
-   */
   stop(): void {
-    if (this.collectionTimer) {
-      clearInterval(this.collectionTimer);
-      this.collectionTimer = null;
-    }
+    if (this.collectionTimer) clearInterval(this.collectionTimer);
+    this.collectionTimer = null;
     this.running = false;
     sshSessionPool.closeAll();
     this.failureCounts.clear();
     console.log('[ServerCollector] stopped');
   }
 
-  /**
-   * One-shot collection for a specific server.
-   * Returns the number of metrics collected, or null on failure.
-   */
-  async collectServer(serverId: number): Promise<{ success: boolean; metricsCount?: number; error?: string }> {
-    const server = await serverDatabaseService.getServerById(serverId);
-    if (!server) {
-      return { success: false, error: '服务器不存在' };
+  async collectServer(serverId: number): Promise<ServerCollectionResult> {
+    if (!Number.isSafeInteger(serverId) || serverId <= 0) {
+      return failedResult(new Error('SERVER_ID_INVALID'));
     }
-
+    const server = await serverDatabaseService.getServerById(serverId);
+    if (!server) return failedResult(new Error('SERVER_NOT_FOUND'));
     try {
-      return await this._collectOneServer(server);
-    } catch (error: any) {
-      console.error(`[ServerCollector] collectServer #${serverId} failed:`, error.message);
-      return { success: false, error: error.message };
+      const result = await this._collectOneServer(server);
+      this.failureCounts.delete(server.id);
+      return result;
+    } catch (error) {
+      const code = stableErrorCode(error);
+      return failedResult(new Error(code));
     }
   }
 
-  // ── Private ──────────────────────────────────────────────────────────────────
+  /** Exposed for diagnostic routes/tests without starting the interval timer. */
+  async collectServerWithFailureState(serverId: number): Promise<ServerCollectionResult> {
+    const result = await this.collectServer(serverId);
+    if (!result.success) await this.recordFailure(serverId, result);
+    return result;
+  }
 
   private async _tick(): Promise<void> {
     const servers = await serverDatabaseService.getCollectionEnabledServers();
-    if (servers.length === 0) return;
-
-    console.log(`[ServerCollector] tick: collecting ${servers.length} servers`);
-
     for (const server of servers) {
-      try {
-        const result = await this._collectOneServer(server);
-        if (!result.success) throw new Error(result.error || '服务器指标采集失败');
-      } catch (error: any) {
-        console.error(`[ServerCollector] collection failed for #${server.id} (${server.host}):`, error.message);
-
-        // Increment failure count
-        const failures = (this.failureCounts.get(server.id) || 0) + 1;
-        this.failureCounts.set(server.id, failures);
-
-        // Transition to unreachable after threshold
-        if (failures >= this.config.maxFailuresBeforeUnreachable) {
-          await serverDatabaseService.updateServerStatus(server.id, 'unreachable');
-          console.log(`[ServerCollector] server #${server.id} (${server.host}) marked unreachable after ${failures} failures`);
-        }
-      }
+      const result = await this.collectServer(server.id);
+      if (!result.success) await this.recordFailure(server.id, result);
     }
   }
 
-  private async _collectOneServer(
-    server: ServerRow
-  ): Promise<{ success: boolean; metricsCount?: number; error?: string }> {
-    // Get decrypted credentials
-    const creds = await serverDatabaseService.getDecryptedCredentials(server.id);
-    if (!creds) {
-      return { success: false, error: '无法解密凭据' };
+  private async recordFailure(serverId: number, result: ServerCollectionResult): Promise<void> {
+    const failures = (this.failureCounts.get(serverId) || 0) + 1;
+    this.failureCounts.set(serverId, failures);
+    if (failures >= this.config.maxFailuresBeforeUnreachable) {
+      await serverDatabaseService.updateServerStatus(serverId, 'unreachable');
     }
+  }
 
-    // Determine credential value based on type
+  private async _collectOneServer(server: ServerRow): Promise<ServerCollectionResult> {
+    // Validate the configured profile before decrypting credentials or opening
+    // a network connection. Unknown labels never fall through to generic Linux.
+    if (!isSupportedServerOs(server.os_type)) {
+      throw new Error('HOST_OS_UNSUPPORTED');
+    }
+    const canonicalOs = normalizeServerOs(server.os_type)!;
+    const credentials = await serverDatabaseService.getDecryptedCredentials(server.id);
+    if (!credentials) throw new Error('SERVER_CREDENTIALS_UNAVAILABLE');
     const credentialValue = server.credential_type === 'password'
-      ? (creds.password || '')
-      : (creds.privateKey || '');
+      ? credentials.password
+      : credentials.privateKey;
+    if (!credentialValue) throw new Error('SERVER_CREDENTIALS_UNAVAILABLE');
 
-    if (!credentialValue) {
-      return { success: false, error: '凭据值为空' };
-    }
-
-    // Get SSH connection from pool
-    const client = await sshSessionPool.getConnection(
-      server.host,
-      server.port,
-      creds.username,
-      server.credential_type,
-      credentialValue,
-      server.host_key_fingerprint
-    );
+    let client: Client | null = null;
+    let fatal = false;
+    let outputBytes = 0;
+    const execute = async (commands: string[], maxOutputBytes = this.config.maxOutputBytes): Promise<ExecCommandResult[]> => {
+      if (commands.length === 0) return [];
+      const remaining = this.config.maxOutputBytes - outputBytes;
+      if (remaining <= 0) throw new Error('SSH_COMMAND_OUTPUT_LIMIT');
+      const results = await sshSessionPool.execCommands(client!, commands, {
+        timeoutMs: this.config.commandTimeoutMs,
+        maxOutputBytes: Math.min(maxOutputBytes, remaining),
+      });
+      for (const result of results) {
+        if (result.truncated) throw new Error('SSH_COMMAND_OUTPUT_LIMIT');
+        outputBytes += resultBytes(result);
+        if (outputBytes > this.config.maxOutputBytes) throw new Error('SSH_COMMAND_OUTPUT_LIMIT');
+      }
+      return results;
+    };
 
     try {
-      const osResult = (await sshSessionPool.execCommands(
-        client,
-        ['LC_ALL=C LANG=C uname -s'],
-      ))[0];
-      if (osResult.exitCode !== 0 || osResult.stdout.trim() !== 'Linux') {
+      client = await sshSessionPool.getConnection(
+        server.host,
+        server.port,
+        credentials.username,
+        server.credential_type,
+        credentialValue,
+        server.host_key_fingerprint,
+      );
+
+      const osResult = (await execute(['LC_ALL=C LANG=C uname -s']))[0];
+      if (!osResult || osResult.exitCode !== 0 || osResult.stdout.trim() !== 'Linux') {
         throw new Error('HOST_OS_UNSUPPORTED');
       }
 
-      // Determine which commands to execute based on OS type
-      const definitions = serverMetricProvider.getDefinitions(server.os_type);
-      if (definitions.length === 0) {
-        sshSessionPool.releaseConnection(client);
-        return { success: false, error: `不支持的操作系统: ${server.os_type}` };
-      }
+      const definitions = serverMetricProvider.getDefinitions(canonicalOs)
+        .filter((definition) => definition.name !== 'disk_usage');
+      if (definitions.length === 0) throw new Error('NO_METRICS_DEFINED');
 
-      // Filter commands: skip disk_usage (use disk_detail instead)
-      const metricsToCollect = definitions.filter(
-        (def) => def.name !== 'disk_usage'
-      );
-
-      if (metricsToCollect.length === 0) {
-        sshSessionPool.releaseConnection(client);
-        return { success: false, error: '无可采集的指标' };
-      }
-
-      const commands = metricsToCollect.map((def) => def.command);
-      const results = await sshSessionPool.execCommands(client, commands);
-
-      const diskDetailIndex = metricsToCollect.findIndex((definition) => definition.name === 'disk_detail');
+      const batches = serverMetricProvider.getCollectionBatches(canonicalOs)
+        .filter((batch) => batch.definitions.some((definition) => definition.name !== 'disk_usage'));
+      const values: Array<{ name: string; value: number; dimensions: Record<string, string> | null }> = [];
+      let successfulCommands = 0;
+      let commandFailures = 0;
       let filesystemRows: FilesystemMetricRow[] = [];
-      if (diskDetailIndex >= 0 && results[diskDetailIndex]?.exitCode === 0) {
-        const [inodeResult, findmntResult] = await sshSessionPool.execCommands(client, [
-          'LC_ALL=C LANG=C df -Pi',
-          'LC_ALL=C LANG=C findmnt -rn -o SOURCE,TARGET,FSTYPE',
-        ]);
-        filesystemRows = buildFilesystemMetricRows(
-          results[diskDetailIndex].stdout,
-          inodeResult.exitCode === 0 ? inodeResult.stdout : '',
-          findmntResult.exitCode === 0 ? findmntResult.stdout : '',
-        );
-      }
 
-      // Build metric row inserts
-      const pool = dbConnection.getPool();
-      if (!pool) {
-        sshSessionPool.releaseConnection(client);
-        return { success: false, error: '数据库未连接' };
-      }
-
-      const now = new Date();
-      const rows: Array<[number, string, Record<string, string> | null, number, Date]> = [];
-      let metricsCount = 0;
-
-      for (let i = 0; i < metricsToCollect.length; i++) {
-        const def = metricsToCollect[i];
-        const result = results[i];
-        const stdout = result.stdout.trim();
-
-        // Handle disk_detail specially — parse per-mount-point rows
-        if (def.name === 'disk_detail') {
-          for (const filesystemRow of filesystemRows) {
-            rows.push([
-              server.id,
-              filesystemRow.metricName,
-              filesystemRow.dimensions,
-              filesystemRow.value,
-              now,
-            ]);
-            metricsCount++;
+      for (const batch of batches) {
+        const activeDefinitions = batch.definitions.filter((definition) => definition.name !== 'disk_usage');
+        try {
+          const result = (await execute([batch.command]))[0];
+          if (!result || result.exitCode !== 0) {
+            commandFailures++;
+            continue;
           }
-          continue;
+          successfulCommands++;
+          const rowSamples = activeDefinitions[0]?.parseRows?.(result.stdout) ?? [];
+          if (rowSamples.length > 0) {
+            const names = new Set(activeDefinitions.map((definition) => definition.name));
+            for (const sample of rowSamples) {
+              if (names.has(sample.name) && isFiniteMetric(sample.value)) {
+                values.push({ name: sample.name, value: sample.value, dimensions: canonicalDimensions(sample.dimensions) });
+              }
+            }
+          }
+          for (const definition of activeDefinitions) {
+            // Network/disk rows are fully represented by parseRows. Process
+            // definitions additionally expose a bounded scalar max for the
+            // metric table, so retain their scalar parser.
+            if (definition.parseRows && !definition.parseProcesses) continue;
+            const value = definition.parse(result.stdout.trim());
+            if (isFiniteMetric(value)) values.push({ name: definition.name, value, dimensions: null });
+          }
+
+          if (activeDefinitions.some((definition) => definition.name === 'disk_detail')) {
+            const [inodeResult, findmntResult] = await execute([
+              'LC_ALL=C LANG=C df -Pi',
+              'LC_ALL=C LANG=C findmnt -rn -o SOURCE,TARGET,FSTYPE',
+            ]);
+            filesystemRows = buildFilesystemMetricRows(
+              result.stdout,
+              inodeResult?.exitCode === 0 ? inodeResult.stdout : '',
+              findmntResult?.exitCode === 0 ? findmntResult.stdout : '',
+            );
+          }
+        } catch (error) {
+          if (isFatalSshCommandError(error)) fatal = true;
+          throw error;
         }
-
-        // Normal parse
-        const value = def.parse(stdout);
-        if (value === null) continue;
-
-        rows.push([server.id, def.name, null, value, now]);
-        metricsCount++;
       }
 
-      if (rows.length > 0) {
-        // Batch insert
-        const placeholders = rows.map(() => '(?, ?, ?, ?, ?)').join(', ');
-        const values: any[] = [];
-        for (const row of rows) {
-          values.push(row[0], row[1], row[2] ? JSON.stringify(row[2]) : null, row[3], row[4]);
-        }
+      // Filesystem evidence is dimensioned separately because df emits one
+      // row per mount and inode/findmnt are optional enrichments.
+      for (const filesystem of filesystemRows) {
+        values.push({
+          name: filesystem.metricName,
+          value: filesystem.value,
+          // Filesystem rows retain the historical fs_type field. Network and
+          // diskstats samples above are canonicalized to the bounded schema.
+          dimensions: filesystem.dimensions,
+        });
+      }
+      if (successfulCommands === 0 || (values.length === 0 && commandFailures > 0)) {
+        throw new Error('SSH_COMMAND_FAILED');
+      }
 
+      const pool = dbConnection.getPool();
+      if (!pool) throw new Error('DATABASE_UNAVAILABLE');
+      const now = new Date();
+      const rows = values.filter((value) => isFiniteMetric(value.value)).map((value) => [
+        server.id,
+        value.name,
+        value.dimensions ? JSON.stringify(value.dimensions) : null,
+        value.value,
+        now,
+      ] as const);
+      if (rows.length > 0) {
+        const placeholders = rows.map(() => '(?, ?, ?, ?, ?)').join(', ');
+        const params = rows.flatMap((row) => [...row]);
         await pool.execute(
           `INSERT INTO server_metrics (server_id, metric_name, dimensions, metric_value, recorded_at) VALUES ${placeholders}`,
-          values
+          params,
         );
       }
-
-      // Mark server online on success; also reset concurrent failures
       await serverDatabaseService.updateServerStatus(server.id, 'online');
-      this.failureCounts.delete(server.id);
-
-      sshSessionPool.releaseConnection(client);
-
-      console.log(`[ServerCollector] collected ${metricsCount} metrics for #${server.id} (${server.host})`);
-      return { success: true, metricsCount };
-    } catch (error: any) {
-      try {
-        if (isFatalSshCommandError(error)) sshSessionPool.closeConnection(client);
-        else sshSessionPool.releaseConnection(client);
-      } catch {
-        // Ignore
-      }
+      return { success: true, metricsCount: rows.length, collectedAt: now.toISOString() };
+    } catch (error) {
+      if (isFatalSshCommandError(error)) fatal = true;
       throw error;
+    } finally {
+      if (client) {
+        try {
+          if (fatal) sshSessionPool.closeConnection(client);
+          else sshSessionPool.releaseConnection(client);
+        } catch {
+          // Cleanup is best effort; the original collection error is retained.
+        }
+      }
     }
   }
-
 }
 
-// Singleton
 const serverCollector = new ServerCollector();
 export default serverCollector;
 export { ServerCollector };

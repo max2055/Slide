@@ -1,7 +1,7 @@
 /**
  * AgentRunner — LLM ↔ Tool execution loop.
  *
- * Direct port of nanobot/nanobot/agent/runner.py (1319 lines Python → ~700 lines TS).
+ * TypeScript implementation of the Slide AgentRunner runtime.
  *
  * Includes all 6 key mechanisms:
  *   1. Parallel tool execution (concurrent_safe tools batched via Kahn's algorithm)
@@ -99,7 +99,6 @@ export class AgentRunner {
     let stopReason = "completed";
     const toolEvents: ToolEvent[] = [];
     const externalLookupCounts: Record<string, number> = {};
-    const workspaceViolationCounts: Record<string, number> = {};
     let emptyContentRetries = 0;
     let lengthRecoveryCount = 0;
     let hadInjections = false;
@@ -179,6 +178,11 @@ export class AgentRunner {
         await hook.emitReasoningEnd();
         context.streamedReasoning = true;
       }
+      // Providers that stream reasoning through callbacks may not repeat it in
+      // the final response object. Close that channel before the next phase.
+      if (!response.reasoningContent && context.streamedReasoning) {
+        await hook.emitReasoningEnd();
+      }
 
       // ── Tool execution path ──
       if (response.shouldExecuteTools && response.toolCalls.length > 0) {
@@ -211,7 +215,7 @@ export class AgentRunner {
           spec,
           response.toolCalls,
           externalLookupCounts,
-          workspaceViolationCounts
+          iteration,
         );
         toolEvents.push(...events);
         context.toolResults = [...results];
@@ -231,6 +235,17 @@ export class AgentRunner {
         }
 
         if (fatalError) {
+          // Mark every returned tool result as completed before stopping. Leaving
+          // the pre-execution checkpoint intact would replay side-effecting tools
+          // when the session is restored after a fatal batch error.
+          await emitCheckpoint(spec, {
+            phase: "tools_completed",
+            iteration,
+            model: spec.model,
+            assistantMessage: assistantMsg,
+            completedToolResults,
+            pendingToolCalls: [],
+          });
           error = `Error: ${fatalError}`;
           finalContent = error;
           stopReason = "tool_error";
@@ -303,6 +318,18 @@ export class AgentRunner {
         const retryUsage = usageDict(retryResp.usage);
         accumulateUsage(usage, retryUsage);
         const retryClean = hook.finalizeContent(context, retryResp.content) || "";
+
+        if (retryResp.finishReason === "error") {
+          finalContent = retryResp.error || spec.errorMessage || DEFAULT_ERROR_MESSAGE;
+          stopReason = retryResp.errorKind === 'timeout' ? 'timed_out' : 'error';
+          error = finalContent;
+          appendModelErrorPlaceholder(messages);
+          context.finalContent = finalContent;
+          context.error = error;
+          context.stopReason = stopReason;
+          await hook.afterIteration(context);
+          break;
+        }
 
         if (isBlankText(retryClean)) {
           finalContent = EMPTY_FINAL_RESPONSE_MESSAGE;
@@ -482,32 +509,31 @@ export class AgentRunner {
     spec: AgentRunSpec,
     toolCall: ToolCallRequest,
     externalLookupCounts: Record<string, number>,
-    workspaceViolationCounts: Record<string, number>
+    /** @deprecated Retained for callers compiled against the pre-guard API. */
+    _workspaceViolationCounts?: Record<string, number>,
+    iteration?: number,
   ): Promise<{ result: unknown; event: ToolEvent; error: Error | null }> {
     const HINT = "\n\n[Analyze the error above and try a different approach.]";
 
-    // Repeated external lookup guard (simplified — full impl tracks per-tool)
+    // Repeated identical tool-call guard. Different arguments start a new sequence.
     const lookupError = repeatedExternalLookupError(
       toolCall.name,
-      externalLookupCounts
+      toolCall.arguments,
+      externalLookupCounts,
+      spec.loopGuardThreshold,
     );
     if (lookupError) {
+      console.warn('[AgentRunner] repeated tool call blocked', {
+        tool: toolCall.name,
+        signature: redactedToolCallSignature(toolCall.arguments),
+        count: lookupError.count,
+        threshold: lookupError.threshold,
+        iteration: iteration ?? null,
+      });
       return {
-        result: lookupError + HINT,
-        event: { name: toolCall.name, status: "error", detail: "repeated external lookup blocked" },
-        error: spec.failOnToolError ? new Error(lookupError) : null,
-      };
-    }
-
-    // Workspace violation guard
-    const workspaceError = repeatedWorkspaceViolationError(
-      toolCall.name,
-      workspaceViolationCounts
-    );
-    if (workspaceError) {
-      return {
-        result: workspaceError,
-        event: { name: toolCall.name, status: "error", detail: "workspace violation escalated" },
+        result: lookupError.message + HINT,
+        event: { name: toolCall.name, status: "error", detail: "repeated identical tool call blocked" },
+        // A guard hit is an expected, per-call safety result. It must not abort a batch.
         error: null,
       };
     }
@@ -524,6 +550,9 @@ export class AgentRunner {
       const result = await spec.tools.execute(toolCall.name, toolCall.arguments, {
         signal: spec.signal,
         sessionKey: spec.sessionKey,
+        idempotencyKey: spec.idempotencyKey,
+        progressCallback: spec.toolProgressCallback,
+        preserveErrors: true,
       });
       const detail = result === undefined || result === null
         ? "(empty)"
@@ -543,13 +572,12 @@ export class AgentRunner {
     }
   }
 
-  // ── Bidirectional checkpoint restore (ported from nanobot loop.py lines 1473-1552) ──
+  // ── Bidirectional checkpoint restore ──
 
   private static readonly _RUNTIME_CHECKPOINT_KEY = 'runtime_checkpoint';
 
   /**
    * Persist the latest in-flight turn state into session metadata.
-   * Pattern from nanobot loop.py lines 1473-1476.
    */
   _setRuntimeCheckpoint(session: { metadata: Record<string, unknown> }, payload: Record<string, unknown>): void {
     session.metadata[AgentRunner._RUNTIME_CHECKPOINT_KEY] = payload;
@@ -557,8 +585,7 @@ export class AgentRunner {
   }
 
   /**
-   * Remove checkpoint from session metadata.
-   * Pattern from nanobot loop.py lines 1484-1486.
+   * Remove the checkpoint after a turn completes or is abandoned.
    */
   _clearRuntimeCheckpoint(session: { metadata: Record<string, unknown> }): void {
     if (AgentRunner._RUNTIME_CHECKPOINT_KEY in session.metadata) {
@@ -567,8 +594,7 @@ export class AgentRunner {
   }
 
   /**
-   * Build a dedup key tuple from a session entry message.
-   * Pattern from nanobot loop.py lines 1489-1498.
+   * Build a stable deduplication key for checkpoint messages.
    */
   static _checkpointMessageKey(message: Record<string, unknown>): unknown[] {
     return [
@@ -584,7 +610,6 @@ export class AgentRunner {
 
   /**
    * Materialize an unfinished turn into session history before a new request.
-   * Pattern from nanobot loop.py lines 1500-1552.
    */
   _restoreRuntimeCheckpoint(session: {
     metadata: Record<string, unknown>;
@@ -690,7 +715,7 @@ async function executeTools(
   spec: AgentRunSpec,
   toolCalls: ToolCallRequest[],
   externalLookupCounts: Record<string, number>,
-  workspaceViolationCounts: Record<string, number>
+  iteration: number,
 ): Promise<{
   results: unknown[];
   events: ToolEvent[];
@@ -708,7 +733,7 @@ async function executeTools(
     if (spec.concurrentTools && batch.length > 1) {
       const batchResults = await Promise.all(
         batch.map((tc) =>
-          runner.runTool(spec, tc, externalLookupCounts, workspaceViolationCounts)
+          runner.runTool(spec, tc, externalLookupCounts, undefined, iteration)
         )
       );
       for (const r of batchResults) {
@@ -722,7 +747,8 @@ async function executeTools(
           spec,
           tc,
           externalLookupCounts,
-          workspaceViolationCounts
+          undefined,
+          iteration,
         );
         allResults.push(r.result);
         allEvents.push(r.event);
@@ -1115,26 +1141,68 @@ function accumulateUsage(
   }
 }
 
+const DEFAULT_LOOP_GUARD_THRESHOLD = 5;
+const MAX_LOOP_GUARD_THRESHOLD = 1000;
+const loopGuardStates = new WeakMap<object, { key: string; count: number }>();
+
+interface LoopGuardHit {
+  message: string;
+  count: number;
+  threshold: number;
+}
+
 function repeatedExternalLookupError(
   toolName: string,
-  counts: Record<string, number>
-): string | null {
-  counts[toolName] = (counts[toolName] || 0) + 1;
-  if (counts[toolName] > 5) {
-    return `Error: Tool '${toolName}' has been called ${counts[toolName]} times — possible loop detected. `;
+  arguments_: Record<string, unknown>,
+  counts: Record<string, number>,
+  configuredThreshold?: number,
+): LoopGuardHit | null {
+  const threshold = resolveLoopGuardThreshold(configuredThreshold);
+  const key = `${toolName}:${stableJson(arguments_, false)}`;
+  const previous = loopGuardStates.get(counts);
+  const count = previous?.key === key ? previous.count + 1 : 1;
+  loopGuardStates.set(counts, { key, count });
+  if (count > threshold) {
+    return {
+      message: `Error: Tool '${toolName}' has been called ${count} times with the same parameters — possible loop detected. Do not retry the same parameters.`,
+      count,
+      threshold,
+    };
   }
   return null;
 }
 
-function repeatedWorkspaceViolationError(
-  toolName: string,
-  counts: Record<string, number>
-): string | null {
-  counts[toolName] = (counts[toolName] || 0) + 1;
-  if (counts[toolName] > 3) {
-    return `[System: Tool '${toolName}' has repeatedly attempted to access paths outside the workspace. This is a hard boundary. Do not retry. Ask the user for the correct path or upload the file.]`;
+function resolveLoopGuardThreshold(configuredThreshold?: number): number {
+  const value = configuredThreshold ?? Number(process.env.AGENT_LOOP_THRESHOLD);
+  return Number.isSafeInteger(value) && value >= 1 && value <= MAX_LOOP_GUARD_THRESHOLD
+    ? value
+    : DEFAULT_LOOP_GUARD_THRESHOLD;
+}
+
+function stableRedactedJson(value: unknown): string {
+  return stableJson(value, true);
+}
+
+function stableJson(value: unknown, redactSensitive: boolean): string {
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item, redactSensitive)).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, child]) => {
+        const normalized = key.toLowerCase();
+        const redacted = redactSensitive && /(password|passwd|secret|credential|token|api[_-]?key|private[_-]?key)/i.test(normalized)
+          ? JSON.stringify('[REDACTED]')
+          : stableJson(child, redactSensitive);
+        return `${JSON.stringify(key)}:${redacted}`;
+      });
+    return `{${entries.join(',')}}`;
   }
-  return null;
+  return JSON.stringify(value);
+}
+
+function redactedToolCallSignature(arguments_: Record<string, unknown>): string {
+  const signature = stableRedactedJson(arguments_);
+  return signature.length > 512 ? `${signature.slice(0, 509)}...` : signature;
 }
 
 async function requestFinalizationRetry(
@@ -1151,10 +1219,33 @@ async function requestFinalizationRetry(
         "Please provide a substantive response to the user's request.]",
     },
   ];
-  return provider.chat(retryMessages, [], {
-    model: spec.model,
-    temperature: spec.temperature,
-  });
+  const timeoutS = spec.llmTimeoutS ?? parseFloat(process.env.NANOBOT_LLM_TIMEOUT_S || '300');
+  try {
+    return await withTimeout(
+      provider.chat(retryMessages, [], {
+        model: spec.model,
+        temperature: spec.temperature,
+        maxTokens: spec.maxTokens,
+        reasoningEffort: spec.reasoningEffort,
+        timeoutS,
+        signal: spec.signal,
+      }),
+      timeoutS,
+    );
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    const timedOut = error instanceof TimeoutError;
+    return {
+      content: null,
+      finishReason: 'error',
+      toolCalls: [],
+      usage: {},
+      shouldExecuteTools: false,
+      hasToolCalls: false,
+      errorKind: timedOut ? 'timeout' : 'provider_error',
+      error: message,
+    };
+  }
 }
 
 // ── Default hook ──

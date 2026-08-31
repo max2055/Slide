@@ -1,7 +1,9 @@
 /**
  * @slide/agent-core
  *
- * Production-grade TypeScript agent engine ported from nanobot (HKUDS/nanobot).
+ * Production-grade TypeScript agent engine rewritten for Slide from the
+ * original Python nanobot design; no original Python runtime or external
+ * agent platform is required by this package.
  *
  * Core architecture:
  *   AgentRunner — LLM ↔ Tool execution loop with 6 key mechanisms
@@ -44,7 +46,8 @@ export { SkillsLoader } from "./skills.js";
 export type { Skill, SkillMeta } from "./skills.js";
 export { MemoryStore } from "./memory.js";
 export { ContextBuilder } from "./context.js";
-export { OpenAIProvider } from "./openai-provider.js";
+export { OpenAIProvider, normalizeProviderError } from "./openai-provider.js";
+export type { NormalizedProviderError } from "./openai-provider.js";
 export type {
   // Core types
   LLMProvider,

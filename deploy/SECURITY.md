@@ -12,6 +12,28 @@ Slide's production topology requires Linux and a dedicated rootless Docker daemo
 
 Do not mount the repository, the rootful `/var/run/docker.sock`, or arbitrary host directories into the API or sandbox jobs.
 
+Oracle 11g requires node-oracledb Thick mode. If Oracle 11g support is needed,
+install a compatible Oracle Instant Client on the target host and use the
+documented `deploy/oracle-client.compose.example.yaml` override. Do not copy
+Oracle client binaries into the application image or repository.
+
+## Database network discovery
+
+Database discovery is exposed only through the `discover_database_endpoints`
+tool. The controller resolves its logical `database-network-scan` execution
+profile to the digest-pinned `slide-network-tools` image; callers cannot pass a
+command, port list, image, or Docker network. Keep the following values
+operator-managed and restrict them to approved IPv4 networks:
+
+```dotenv
+SANDBOX_EXECUTION_PROFILES={"database-network-scan":"slide-network-tools@sha256:<digest>"}
+```
+
+The profile image must contain `nmap` and run as the sandbox's unprivileged
+UID. The restricted network is intentionally separate from ordinary sandbox
+jobs; changing `SANDBOX_RESTRICTED_NETWORK` or the profile mapping requires a
+deployment review.
+
 ## Release checks
 
 Run static and unit security checks before deployment:

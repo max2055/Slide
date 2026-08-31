@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyExecuteCodeRisk } from './execute-code-risk.js';
+import { classifyExecuteCodeRisk, executeCodeRequiresNetwork } from './execute-code-risk.js';
 
 describe('execute_code risk policy', () => {
   it('auto-allows a single read-only shell command in the sandbox workspace', () => {
@@ -34,5 +34,12 @@ describe('execute_code risk policy', () => {
   it('does not auto-classify arbitrary Python or Node source as low risk', () => {
     expect(classifyExecuteCodeRisk({ runtime: 'python', code: 'print(1)' }).requiresApproval).toBe(true);
     expect(classifyExecuteCodeRisk({ runtime: 'node', code: 'console.log(1)' }).requiresApproval).toBe(true);
+  });
+
+  it('identifies network APIs across shell, Python, and Node runtimes', () => {
+    expect(executeCodeRequiresNetwork({ runtime: 'shell', code: 'nmap 10.0.0.0/24' })).toBe(true);
+    expect(executeCodeRequiresNetwork({ runtime: 'python', code: 'import socket' })).toBe(true);
+    expect(executeCodeRequiresNetwork({ runtime: 'node', code: 'fetch("http://10.0.0.1")' })).toBe(true);
+    expect(executeCodeRequiresNetwork({ runtime: 'node', code: 'console.log(1)' })).toBe(false);
   });
 });

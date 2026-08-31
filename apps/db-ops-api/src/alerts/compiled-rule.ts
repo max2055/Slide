@@ -1,4 +1,4 @@
-export type AlertTargetType = 'instance' | 'server';
+export type AlertTargetType = 'instance' | 'server' | 'network_device';
 export type AlertLevel = 'warning' | 'error' | 'critical';
 export type AlertOperator = '>' | '<' | '>=' | '<=' | '=' | '!=';
 

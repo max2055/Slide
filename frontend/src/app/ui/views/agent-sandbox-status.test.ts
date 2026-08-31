@@ -60,6 +60,8 @@ describe('Agent Sandbox global setting', () => {
     const toggle = page.shadowRoot?.querySelector<HTMLInputElement>('[data-action="sandbox-toggle"]');
 
     expect(mocks.get).toHaveBeenCalledWith('/agent/security/sandbox/config');
+    expect(page.shadowRoot?.textContent).toContain('Agent 沙箱代码执行');
+    expect(page.shadowRoot?.textContent).toContain('不会直接运行在宿主机');
     expect(toggle?.checked).toBe(false);
     expect(toggle?.disabled).toBe(false);
   });
@@ -104,6 +106,17 @@ describe('Agent Sandbox global setting', () => {
     await page.updateComplete;
     expect(toggle.checked).toBe(true);
     expect(mocks.toast).toHaveBeenCalledWith('更新 Agent Sandbox 设置失败', 'error');
+  });
+
+  it('explains controller readiness failures instead of hiding the 503 reason', async () => {
+    mocks.put.mockRejectedValue(new Error('HTTP 503: {"reasonCode":"SANDBOX_NOT_READY"}'));
+    const page = await render(false);
+    page.shadowRoot!.querySelector<HTMLInputElement>('[data-action="sandbox-toggle"]')!.click();
+    await page.updateComplete;
+    page.shadowRoot?.querySelector<HTMLButtonElement>('[data-action="confirm-enable"]')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await page.updateComplete;
+    expect(mocks.toast).toHaveBeenCalledWith('Sandbox Controller 未就绪，请检查 Controller 地址、rootless Docker 和运行时镜像', 'error');
   });
 
   it('does not expose or request the global control for non-administrators', async () => {

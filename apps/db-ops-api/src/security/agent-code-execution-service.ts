@@ -1,6 +1,8 @@
 import type { ToolResult } from '../tools/types.js';
 import { agentSandboxConfigService } from './agent-sandbox-config-service.js';
+import { agentExecutionConfigService } from './agent-execution-config-service.js';
 import { sandboxClient, type SandboxExecutionRequest } from './sandbox-client.js';
+import { executeCodeRequiresNetwork } from './execute-code-risk.js';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
 const MAX_FILES = 64;
@@ -27,6 +29,10 @@ interface SandboxExecutor {
   execute(request: SandboxExecutionRequest, signal?: AbortSignal): Promise<unknown>;
 }
 
+interface ExecutionConfigReader {
+  get(): Promise<{ restrictedNetworkEnabled: boolean; reasonCode: string }>;
+}
+
 const runtimeCommand: Record<AgentCodeRuntime, { file: string; command: string[] }> = {
   shell: { file: 'main.sh', command: ['sh', 'main.sh'] },
   python: { file: 'main.py', command: ['python3', 'main.py'] },
@@ -42,14 +48,15 @@ function validRelativePath(value: string): boolean {
     && !value.split('/').some((part) => part === '' || part === '.' || part === '..');
 }
 
-function readyForRuntime(status: unknown, runtime: AgentCodeRuntime): boolean {
+function readyForRuntime(status: unknown, runtime: AgentCodeRuntime, needsNetwork: boolean): boolean {
   if (!status || typeof status !== 'object') return false;
   const value = status as Record<string, any>;
   return value.status === 'ok'
     && value.daemon?.reachable === true
     && value.daemon?.rootless === true
     && Array.isArray(value.policy?.runtimes)
-    && value.policy.runtimes.includes(runtime);
+    && value.policy.runtimes.includes(runtime)
+    && (!needsNetwork || value.policy.network === 'restricted');
 }
 
 function validResult(value: unknown): value is Record<string, unknown> {
@@ -71,6 +78,7 @@ export class AgentCodeExecutionService {
   constructor(
     private readonly config: ConfigReader = agentSandboxConfigService,
     private readonly sandbox: SandboxExecutor = sandboxClient,
+    private readonly executionConfig: ExecutionConfigReader = agentExecutionConfigService,
   ) {}
 
   async execute(input: AgentCodeExecutionInput): Promise<ToolResult<Record<string, unknown>>> {
@@ -82,6 +90,11 @@ export class AgentCodeExecutionService {
     }
     const runtime = input.runtime as AgentCodeRuntime;
     const runtimeSpec = runtimeCommand[runtime];
+    const needsNetwork = executeCodeRequiresNetwork({ runtime, code: input.code });
+    if (needsNetwork) {
+      const executionConfig = await this.executionConfig.get();
+      if (!executionConfig.restrictedNetworkEnabled) return failure('SANDBOX_NETWORK_DISABLED');
+    }
     const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < MIN_TIMEOUT_MS || timeoutMs > MAX_TIMEOUT_MS
       || !Array.isArray(input.files ?? []) || (input.files?.length ?? 0) > MAX_FILES) {
@@ -106,10 +119,11 @@ export class AgentCodeExecutionService {
 
     try {
       const status = await this.sandbox.status(AbortSignal.timeout(4000));
-      if (!readyForRuntime(status, runtime)) return failure('SANDBOX_UNAVAILABLE');
+      if (!readyForRuntime(status, runtime, needsNetwork)) return failure('SANDBOX_UNAVAILABLE');
       const request: SandboxExecutionRequest = {
         runtime,
         command: runtimeSpec.command,
+        ...(needsNetwork ? { networkMode: 'restricted' as const } : {}),
         files: [
           { path: runtimeSpec.file, contentBase64: Buffer.from(input.code, 'utf8').toString('base64') },
           ...supportingFiles,

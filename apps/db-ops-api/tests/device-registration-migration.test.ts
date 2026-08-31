@@ -27,6 +27,15 @@ describe('device registration migration comments', () => {
     expect(isMigrationChecksumAccepted('067_device_registrations.sql', 'unexpected', 'new-checksum')).toBe(false);
   });
 
+  it('keeps the already-applied 072 execution-controls checksum compatible', () => {
+    expect(isMigrationChecksumAccepted(
+      '072_agent_execution_controls.sql',
+      'ddedfc2c11ce30af437a40867959a5e3dfc966e04bddae5ea3b4c2eaeab2335c',
+      'new-checksum',
+    )).toBe(true);
+    expect(isMigrationChecksumAccepted('072_agent_execution_controls.sql', 'unexpected', 'new-checksum')).toBe(false);
+  });
+
   it('ships a forward parity migration after 067', async () => {
     const migrations = await loadMigrations();
     const original = migrations.find((migration) => migration.id === '067_device_registrations.sql');

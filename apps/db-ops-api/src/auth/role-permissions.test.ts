@@ -66,6 +66,14 @@ describe('DEFAULT_ROLE_POLICIES', () => {
     expect(auditorPolicy?.policy.deny).toContain('modify_*');
     expect(auditorPolicy?.permissionLevel).toBe('audit');
   });
+
+  it('应该定义 network-operator 角色为受限的只读工具策略', () => {
+    const policy = DEFAULT_ROLE_POLICIES.find(p => p.roleName === 'network-operator');
+    expect(policy).toBeDefined();
+    expect(policy?.policy.allow).toContain('view_*');
+    expect(policy?.policy.allow).not.toContain('*');
+    expect(policy?.permissionLevel).toBe('write');
+  });
 });
 
 describe('DANGER_OPERATIONS', () => {

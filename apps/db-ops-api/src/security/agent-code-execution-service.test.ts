@@ -21,6 +21,17 @@ function controller(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function executionConfig(overrides: Record<string, unknown> = {}) {
+  return {
+    get: vi.fn().mockResolvedValue({
+      approvalEnabled: true,
+      restrictedNetworkEnabled: false,
+      reasonCode: 'EXECUTION_CONFIG_READY',
+      ...overrides,
+    }),
+  };
+}
+
 describe('AgentCodeExecutionService', () => {
   it.each([
     [false, 'SANDBOX_DISABLED'],
@@ -64,6 +75,28 @@ describe('AgentCodeExecutionService', () => {
       expect.objectContaining({ success: false, errorCode: 'SANDBOX_UNAVAILABLE' }),
     );
     expect(sandbox.execute).not.toHaveBeenCalled();
+  });
+
+  it('denies network code while the restricted network switch is disabled', async () => {
+    const sandbox = controller();
+    const service = new AgentCodeExecutionService(config(true) as any, sandbox as any, executionConfig() as any);
+
+    await expect(service.execute({ runtime: 'shell', code: 'nmap -p 3306 10.17.12.0/24' })).resolves.toEqual(
+      expect.objectContaining({ success: false, errorCode: 'SANDBOX_NETWORK_DISABLED' }),
+    );
+    expect(sandbox.status).not.toHaveBeenCalled();
+  });
+
+  it('requests the restricted network only when enabled and reported by the controller', async () => {
+    const sandbox = controller({
+      status: vi.fn().mockResolvedValue({
+        status: 'ok', daemon: { reachable: true, rootless: true }, policy: { runtimes: ['shell'], network: 'restricted' },
+      }),
+    });
+    const service = new AgentCodeExecutionService(config(true) as any, sandbox as any, executionConfig({ restrictedNetworkEnabled: true }) as any);
+
+    await expect(service.execute({ runtime: 'shell', code: 'nmap -p 3306 10.17.12.0/24' })).resolves.toEqual(expect.objectContaining({ success: true }));
+    expect(sandbox.execute.mock.calls[0][0]).toMatchObject({ networkMode: 'restricted' });
   });
 
   it('executes valid code exactly once with fixed command and no environment', async () => {

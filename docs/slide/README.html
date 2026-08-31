@@ -3,7 +3,7 @@
 <head><meta charset="UTF-8"><title>Slide 项目概述</title></head>
 <body>
 <h1>Slide 项目文档</h1>
-<p>Slide 是面向 DBA、SRE 和运维团队的 AI 原生数据库运维平台。它将数据库与服务器监控、告警事件、SQL 审核执行、定时任务、报表和 AI 助手集中到一个控制台，并对高风险操作保留权限、审批和审计边界。</p>
+<p>Slide v0.10 是面向 DBA、SRE 和运维团队的 AI 原生基础运维助手。它将数据库、Kylin/RHEL/CentOS 服务器和华为 VRP 网络设备的监控、告警、关系影响分析、只读诊断与加密配置备份集中到一个控制台，并对高风险操作保留权限、审批和审计边界。</p>
 <div class="doc-attachment">
   <img src="/docs/slide-platform-architecture.svg" alt="Slide 平台架构总览：用户、控制台、API、Agent、控制面、受管资源和 LLM 的关系图">
   <p class="doc-attachment__caption">附件 1：Slide 平台全景。REST 管理链路与 Agent 对话链路分离，所有受管资源操作均回到控制面策略。</p>
@@ -15,7 +15,8 @@
   <li>AI 引擎使用内置 <code>@slide/agent-core</code> 和 <code>DirectAdapter</code>，不依赖外部 OpenClaw Gateway。</li>
   <li>Agent WebSocket 默认监听 <code>ws://127.0.0.1:28888</code>；连接后必须先发送 JWT 认证帧。</li>
   <li>可纳管 MySQL、PostgreSQL、Oracle 和达梦数据库；MongoDB、Redis、Elasticsearch 不是可创建的数据库实例类型。</li>
-  <li>Agent 可结合告警、实例摘要、实时和历史指标、慢查询、服务器资源等上下文生成 RCA、TopSQL 分析和诊断建议。</li>
+  <li>Agent 可结合数据库、服务器和网络设备的告警、实时观测、关系和数据质量生成跨资源诊断建议。</li>
+  <li>网络设备仅支持华为 VRP 的 SNMPv3 只读观测和 SSH 加密配置备份；不提供任意 CLI、SNMP SET、配置下发或恢复。</li>
   <li>LLM 设置支持 Anthropic、OpenAI 兼容接口、阿里云百炼、DeepSeek、MiniMax、GLM 和 Ollama。</li>
 </ul>
 

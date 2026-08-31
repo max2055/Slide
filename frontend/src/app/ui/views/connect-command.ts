@@ -1,12 +1,8 @@
 import { html } from "lit";
-import { renderCopyButton } from "../chat/copy-as-markdown.ts";
+import { copyTextToClipboard, renderCopyButton } from "../chat/copy-as-markdown.ts";
 
 async function copyCommand(command: string) {
-  try {
-    await navigator.clipboard.writeText(command);
-  } catch {
-    // Best effort only; the explicit copy button provides visible feedback.
-  }
+  await copyTextToClipboard(command);
 }
 
 export function renderConnectCommand(command: string) {

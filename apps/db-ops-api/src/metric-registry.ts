@@ -25,7 +25,7 @@ export interface MetricDefinition {
   value_type?: 'gauge' | 'counter' | 'histogram';
   higher_is_worse?: boolean;
   threshold_template?: { warning: number; error: number; critical: number } | null;
-  target_type?: 'instance' | 'server';
+  target_type?: 'instance' | 'server' | 'network_device';
 }
 
 /**
@@ -135,11 +135,52 @@ export class MetricRegistry {
       threshold_template: row.threshold_template
         ? (typeof row.threshold_template === 'string' ? JSON.parse(row.threshold_template) : row.threshold_template)
         : null,
-      target_type: row.target_type === 'server' ? 'server' : row.target_type === 'instance' ? 'instance' : undefined,
+      target_type: row.target_type === 'server' ? 'server' : row.target_type === 'network_device' ? 'network_device' : row.target_type === 'instance' ? 'instance' : undefined,
     };
   }
 
   private _getPredefinedMetrics(): MetricDefinition[] {
+    // ServerCollector persists these OS-level samples directly. Keep their
+    // registry metadata in lockstep so alerting and resource APIs can resolve
+    // every emitted metric name (including dimensional counter samples).
+    const serverMetric = (
+      id: string,
+      name: string,
+      description: string,
+      unit: string,
+      options: Partial<Pick<MetricDefinition, 'aggregation' | 'value_type' | 'higher_is_worse' | 'threshold_template'>> = {},
+    ): MetricDefinition => ({
+      id,
+      name,
+      description,
+      unit,
+      db_types: [],
+      aggregation: options.aggregation ?? 'last',
+      default_interval: 300,
+      is_collected: true,
+      is_builtin: true,
+      category: 'server',
+      value_type: options.value_type ?? 'gauge',
+      higher_is_worse: options.higher_is_worse,
+      threshold_template: options.threshold_template ?? null,
+      target_type: 'server',
+    });
+
+    const emittedServerMetrics: MetricDefinition[] = [
+      serverMetric('network_rx_bytes', '网络接收字节数', '服务器网络接口接收字节累计值', 'bytes'),
+      serverMetric('network_tx_bytes', '网络发送字节数', '服务器网络接口发送字节累计值', 'bytes'),
+      serverMetric('network_rx_errors', '网络接收错误数', '服务器网络接口接收错误累计值', 'count', { value_type: 'counter', higher_is_worse: true }),
+      serverMetric('network_tx_errors', '网络发送错误数', '服务器网络接口发送错误累计值', 'count', { value_type: 'counter', higher_is_worse: true }),
+      serverMetric('network_rx_drops', '网络接收丢弃数', '服务器网络接口接收丢弃累计值', 'count', { value_type: 'counter', higher_is_worse: true }),
+      serverMetric('network_tx_drops', '网络发送丢弃数', '服务器网络接口发送丢弃累计值', 'count', { value_type: 'counter', higher_is_worse: true }),
+      serverMetric('disk_read_bytes', '磁盘读取字节数', '服务器块设备读取扇区转换后的累计字节数', 'bytes', { value_type: 'counter' }),
+      serverMetric('disk_write_bytes', '磁盘写入字节数', '服务器块设备写入扇区转换后的累计字节数', 'bytes', { value_type: 'counter' }),
+      serverMetric('disk_io_time_ms', '磁盘 I/O 时间', '服务器块设备累计执行 I/O 时间', 'ms', { value_type: 'counter', higher_is_worse: true }),
+      serverMetric('process_count', '进程数', '服务器当前进程数量', 'count', { higher_is_worse: true }),
+      serverMetric('top_processes_cpu', '最高进程 CPU 使用率', '服务器进程列表中的最高 CPU 使用率', '%', { aggregation: 'max', higher_is_worse: true, threshold_template: { warning: 80, error: 90, critical: 95 } }),
+      serverMetric('top_processes_memory', '最高进程内存使用率', '服务器进程列表中的最高内存使用率', '%', { aggregation: 'max', higher_is_worse: true, threshold_template: { warning: 80, error: 90, critical: 95 } }),
+    ];
+
     return [
       {
         id: 'cpu_usage',
@@ -671,6 +712,162 @@ export class MetricRegistry {
         category: 'server',
         target_type: 'server',
       },
+      ...emittedServerMetrics,
+      // ===== Huawei network-device metrics =====
+      {
+        id: 'device_reachability',
+        name: '设备可达性',
+        description: '设备最近一次 SNMPv3 采集是否可达（1=可达，0=不可达）',
+        unit: 'state',
+        db_types: [],
+        aggregation: 'last',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'network_device',
+        value_type: 'gauge',
+        higher_is_worse: false,
+        threshold_template: { warning: 0, error: 0, critical: 0 },
+        target_type: 'network_device',
+      },
+      {
+        id: 'device_uptime_seconds',
+        name: '设备运行时间',
+        description: '华为 VRP 设备 SNMPv3 sysUpTime（秒）',
+        unit: 'seconds',
+        db_types: [],
+        aggregation: 'last',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'network_device',
+        value_type: 'gauge',
+        target_type: 'network_device',
+      },
+      {
+        id: 'device_cpu_percent',
+        name: '设备 CPU 使用率',
+        description: '华为 VRP 设备 CPU 使用率',
+        unit: '%',
+        db_types: [],
+        aggregation: 'avg',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'network_device',
+        value_type: 'gauge',
+        higher_is_worse: true,
+        threshold_template: { warning: 80, error: 90, critical: 95 },
+        target_type: 'network_device',
+      },
+      {
+        id: 'device_memory_percent',
+        name: '设备内存使用率',
+        description: '华为 VRP 设备内存使用率',
+        unit: '%',
+        db_types: [],
+        aggregation: 'avg',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'network_device',
+        value_type: 'gauge',
+        higher_is_worse: true,
+        threshold_template: { warning: 80, error: 90, critical: 95 },
+        target_type: 'network_device',
+      },
+      {
+        id: 'device_temperature_celsius',
+        name: '设备温度',
+        description: '华为 VRP 设备温度',
+        unit: '°C',
+        db_types: [],
+        aggregation: 'avg',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'network_device',
+        value_type: 'gauge',
+        higher_is_worse: true,
+        threshold_template: { warning: 70, error: 80, critical: 90 },
+        target_type: 'network_device',
+      },
+      {
+        id: 'interface_oper_status',
+        name: '接口运行状态',
+        description: '接口 operStatus，1 表示 up，0 表示 down',
+        unit: 'state',
+        db_types: [],
+        aggregation: 'last',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'network_device',
+        value_type: 'gauge',
+        higher_is_worse: false,
+        threshold_template: { warning: 0, error: 0, critical: 0 },
+        target_type: 'network_device',
+      },
+      {
+        id: 'interface_error_rate',
+        name: '接口错误速率',
+        description: '接口入方向错误包速率',
+        unit: 'errors/s',
+        db_types: [],
+        aggregation: 'avg',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'network_device',
+        value_type: 'counter',
+        higher_is_worse: true,
+        threshold_template: { warning: 1, error: 10, critical: 100 },
+        target_type: 'network_device',
+      },
+      {
+        id: 'interface_drop_rate',
+        name: '接口丢弃速率',
+        description: '接口入方向丢弃包速率',
+        unit: 'drops/s',
+        db_types: [],
+        aggregation: 'avg',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'network_device',
+        value_type: 'counter',
+        higher_is_worse: true,
+        threshold_template: { warning: 1, error: 10, critical: 100 },
+        target_type: 'network_device',
+      },
+      {
+        id: 'interface_in_bps',
+        name: '接口入流量',
+        description: '接口入方向比特速率',
+        unit: 'bits/s',
+        db_types: [],
+        aggregation: 'avg',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'network_device',
+        value_type: 'counter',
+        target_type: 'network_device',
+      },
+      {
+        id: 'interface_out_bps',
+        name: '接口出流量',
+        description: '接口出方向比特速率',
+        unit: 'bits/s',
+        db_types: [],
+        aggregation: 'avg',
+        default_interval: 300,
+        is_collected: true,
+        is_builtin: true,
+        category: 'network_device',
+        value_type: 'counter',
+        target_type: 'network_device',
+      },
     ];
   }
 
@@ -683,7 +880,7 @@ export class MetricRegistry {
 
   /**
    * 获取所有已注册的指标定义
-   * @param targetType 可选 — 指定 target_type 过滤（'instance' 或 'server'），不传则返回全部
+   * @param targetType 可选 — 指定 target_type 过滤，不传则返回全部
    */
   getAll(targetType?: string): MetricDefinition[] {
     if (targetType) {
@@ -699,7 +896,7 @@ export class MetricRegistry {
    * @param id 指标 ID
    * @returns MetricDefinition 或 null
    */
-  getById(id: string, targetType: 'instance' | 'server' = 'instance'): MetricDefinition | null {
+  getById(id: string, targetType: 'instance' | 'server' | 'network_device' = 'instance'): MetricDefinition | null {
     return this.definitions.get(`${targetType}:${id}`) ?? null;
   }
 
@@ -726,7 +923,7 @@ export class MetricRegistry {
    * @param id 指标 ID
    * @returns 是否存在
    */
-  isValidMetric(id: string, targetType: 'instance' | 'server' = 'instance'): boolean {
+  isValidMetric(id: string, targetType: 'instance' | 'server' | 'network_device' = 'instance'): boolean {
     return this.definitions.has(`${targetType}:${id}`);
   }
 

@@ -79,16 +79,51 @@ export const testConnectionTool: AnyAgentTool = {
   handler: async (args, context) => {
     const typedArgs = args as unknown as TestConnectionArgs;
     if (Object.prototype.hasOwnProperty.call(args, 'password')) {
-      return { success: false, error: '禁止向 Agent Tool 传递明文凭据', errorCode: 'PLAINTEXT_CREDENTIAL_DENIED' };
+      return { success: false, status: 'error', error: '禁止向 Agent Tool 传递明文凭据', errorCode: 'PLAINTEXT_CREDENTIAL_DENIED', next_actions: ['使用服务端签发的 credential_ref 重试'] };
     }
 
-    // 参数验证
-    if (!typedArgs.instance_id && !typedArgs.instance_name && !typedArgs.host) {
+    const hasInstanceId = typedArgs.instance_id !== undefined;
+    const hasInstanceName = typeof typedArgs.instance_name === 'string' && typedArgs.instance_name.trim().length > 0;
+    const directFields = ['db_type', 'host', 'port', 'username', 'credential_ref', 'database'] as const;
+    const hasDirectFields = directFields.some((field) => typedArgs[field] !== undefined);
+    if (hasInstanceId && (!Number.isSafeInteger(typedArgs.instance_id) || typedArgs.instance_id! <= 0)) {
+      return { success: false, status: 'error', error: 'instance_id 必须为正整数', errorCode: 'INVALID_ARGUMENTS' };
+    }
+    if (typedArgs.instance_name !== undefined && !hasInstanceName) {
+      return { success: false, status: 'error', error: 'instance_name 不能为空', errorCode: 'INVALID_ARGUMENTS' };
+    }
+    if (hasInstanceId && hasInstanceName) {
+      return { success: false, status: 'error', error: 'instance_id 与 instance_name 只能二选一', errorCode: 'MUTUALLY_EXCLUSIVE_ARGUMENTS' };
+    }
+    if ((hasInstanceId || hasInstanceName) && hasDirectFields) {
+      return { success: false, status: 'error', error: '实例查询参数不能与直接连接参数混用', errorCode: 'MUTUALLY_EXCLUSIVE_ARGUMENTS' };
+    }
+    if (!hasInstanceId && !hasInstanceName && !hasDirectFields) {
       return {
         success: false,
+        status: 'error',
         error: '请提供实例 ID、实例名称或连接信息（host）',
         errorCode: 'MISSING_ARGUMENTS',
       };
+    }
+
+    if (!hasInstanceId && !hasInstanceName) {
+      const validTypes = ['mysql', 'postgresql', 'mongodb', 'redis', 'elasticsearch', 'dameng', 'oracle'];
+      if (typeof typedArgs.db_type !== 'string' || !validTypes.includes(typedArgs.db_type)) {
+        return { success: false, status: 'error', error: '直接连接测试必须提供有效的 db_type', errorCode: 'INVALID_ARGUMENTS' };
+      }
+      if (typeof typedArgs.host !== 'string' || typedArgs.host.trim().length === 0) {
+        return { success: false, status: 'error', error: '直接连接测试必须提供 host', errorCode: 'INVALID_ARGUMENTS' };
+      }
+      if (!Number.isSafeInteger(typedArgs.port) || typedArgs.port! < 1 || typedArgs.port! > 65535) {
+        return { success: false, status: 'error', error: 'port 必须为 1-65535 的整数', errorCode: 'INVALID_ARGUMENTS' };
+      }
+      if (typeof typedArgs.username !== 'string' || typedArgs.username.trim().length === 0) {
+        return { success: false, status: 'error', error: '直接连接测试必须提供 username', errorCode: 'INVALID_ARGUMENTS' };
+      }
+      if (typeof typedArgs.credential_ref !== 'string' || typedArgs.credential_ref.trim().length === 0) {
+        return { success: false, status: 'error', error: '直接连接测试需要凭据引用', errorCode: 'CREDENTIAL_REF_REQUIRED' };
+      }
     }
 
     try {
@@ -100,14 +135,16 @@ export const testConnectionTool: AnyAgentTool = {
         if (!instanceInfo) {
           return {
             success: false,
+            status: 'error',
             error: `未找到实例：${typedArgs.instance_id ? `ID=${typedArgs.instance_id}` : `"${typedArgs.instance_name}"`}`,
             errorCode: 'INSTANCE_NOT_FOUND',
+            next_actions: ['先调用 list_database_instances 确认实例 ID 或名称']
           };
         }
         connectionParams = instanceInfo;
       } else {
         if (!context?.actor || !typedArgs.credential_ref) {
-          return { success: false, error: '直接连接测试需要凭据引用', errorCode: 'CREDENTIAL_REF_REQUIRED' };
+          return { success: false, status: 'error', error: '直接连接测试需要凭据引用', errorCode: 'CREDENTIAL_REF_REQUIRED' };
         }
         const password = await credentialReferenceService.consume(
           typedArgs.credential_ref,
@@ -115,7 +152,7 @@ export const testConnectionTool: AnyAgentTool = {
           testConnectionTool.name,
         );
         if (!password) {
-          return { success: false, error: '凭据引用无效、已过期或已消费', errorCode: 'INVALID_CREDENTIAL_REF' };
+          return { success: false, status: 'error', error: '凭据引用无效、已过期或已消费', errorCode: 'INVALID_CREDENTIAL_REF', next_actions: ['重新申请一次性 credential_ref；不要重复使用该引用'] };
         }
         connectionParams = { ...typedArgs, password };
       }
@@ -129,6 +166,7 @@ export const testConnectionTool: AnyAgentTool = {
       if (testResult.success) {
         return {
           success: true,
+          status: 'success',
           data: {
             connected: true,
             responseTimeMs,
@@ -145,20 +183,24 @@ export const testConnectionTool: AnyAgentTool = {
       } else {
         return {
           success: false,
+          status: 'error',
           error: `连接失败：${testResult.error}`,
           errorCode: 'CONNECTION_FAILED',
           details: {
             success: false,
             connectionInfo: sanitizeConnectionInfo(connectionParams),
           },
+          next_actions: ['检查主机、端口、账号和网络策略后再使用新的凭据引用重试'],
         };
       }
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         success: false,
+        status: 'error',
         error: `连接测试失败：${errorMessage}`,
         errorCode: 'TEST_CONNECTION_FAILED',
+        next_actions: ['检查数据库实例状态和后端日志；确认故障消除后再重试'],
       };
     }
   },
@@ -189,6 +231,7 @@ async function getInstanceConnectionInfo(
   if (!decrypted) return null;
 
   return {
+    instance_id: instanceId,
     db_type: decrypted.db_type,
     host: decrypted.host,
     port: decrypted.port,
@@ -234,7 +277,7 @@ async function executeConnectionTest(
   const result = await instanceDatabaseService.testConnection({
     db_type: dbType,
     host: params.host || 'localhost',
-    port: params.port || 3306,
+    port: params.port ?? 3306,
     username: params.username || 'root',
     password: params.password || '',
     database: params.database,

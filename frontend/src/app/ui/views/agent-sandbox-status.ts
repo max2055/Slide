@@ -137,8 +137,11 @@ export class AgentSandboxStatusPage extends LitElement {
       this.config = await apiClient.put<SandboxConfigResponse>('/agent/security/sandbox/config', { enabled });
       this.confirmEnable = false;
       showToast(enabled ? 'Agent Sandbox 已启用' : 'Agent Sandbox 已禁用', 'success');
-    } catch {
-      showToast('更新 Agent Sandbox 设置失败', 'error');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '';
+      showToast(detail.includes('SANDBOX_NOT_READY')
+        ? 'Sandbox Controller 未就绪，请检查 Controller 地址、rootless Docker 和运行时镜像'
+        : '更新 Agent Sandbox 设置失败', 'error');
     } finally {
       this.saving = false;
     }
@@ -159,11 +162,11 @@ export class AgentSandboxStatusPage extends LitElement {
   override render() {
     const status = this.response?.status;
     return html`
-      <div class="page-header"><div><h1>Agent Sandbox</h1><p>只读展示 Controller 健康、rootless 资格、不可变隔离策略和近期作业元数据</p></div><button class="btn-icon" title="刷新" aria-label="刷新" @click=${this.load} .disabled=${this.loading}>${icons.refresh}</button></div>
+      <div class="page-header"><div><h1>Agent 沙箱</h1><p>只读展示 Controller 健康、rootless 资格、不可变隔离策略和近期作业元数据</p></div><button class="btn-icon" title="刷新" aria-label="刷新" @click=${this.load} .disabled=${this.loading}>${icons.refresh}</button></div>
       ${this.hasAdminAccess() ? html`<div class="layout">
         <app-card><span slot="header">系统全局设置</span><div class="config-row">
-          <div class="config-copy"><strong>Agent 任意代码执行</strong><span>仅允许经过审批的 Shell、Python 和 Node 代码通过隔离 Sandbox Controller 执行</span></div>
-          <label class="toggle" title=${this.config?.enabled ? '禁用 Agent Sandbox' : '启用 Agent Sandbox'}>
+          <div class="config-copy"><strong>Agent 沙箱代码执行</strong><span>Shell、Python 和 Node 代码只能通过隔离 Sandbox Controller 执行，不会直接运行在宿主机；是否需要审批由 Agent 安全策略控制</span></div>
+          <label class="toggle" title=${this.config?.enabled ? '禁用 Agent 沙箱代码执行' : '启用 Agent 沙箱代码执行'}>
             <input data-action="sandbox-toggle" type="checkbox" .checked=${this.config?.enabled === true} .disabled=${this.configLoading || this.saving || this.config === null} @change=${this.onToggle} aria-label="Agent Sandbox 全局开关">
             <span class="toggle-track"></span>
           </label>
@@ -188,8 +191,8 @@ export class AgentSandboxStatusPage extends LitElement {
           <app-card><span slot="header">近期作业</span><div class="table-wrap"><app-data-table .columns=${[{ key: 'createdAt', label: '时间' }, { key: 'jobId', label: '作业 ID' }, { key: 'runtime', label: 'Runtime' }, { key: 'status', label: '状态' }, { key: 'exitCode', label: '退出码' }, { key: 'duration', label: '耗时' }, { key: 'truncated', label: '输出截断' }]} .rows=${this.jobRows(status)} .loading=${false} .dense=${true} emptyMessage="暂无 Sandbox 作业"></app-data-table></div></app-card>
         </div>
       `}
-      ${this.confirmEnable ? html`<app-dialog .open=${true} size="sm" title="启用 Agent Sandbox" @app-dialog-close=${() => { this.confirmEnable = false; }}>
-        <p class="dialog-copy">启用后，Agent 可以在每次获得明确审批后执行 Shell、Python 和 Node 代码。所有执行必须经过隔离 Controller；Controller 不可用时将直接拒绝，不会在宿主机执行。</p>
+      ${this.confirmEnable ? html`<app-dialog .open=${true} size="sm" title="启用 Agent 沙箱代码执行" @app-dialog-close=${() => { this.confirmEnable = false; }}>
+        <p class="dialog-copy">启用后，Agent 可执行 Shell、Python 和 Node 代码，但所有执行必须经过隔离 Sandbox Controller，不会直接运行在宿主机。是否需要审批由 Agent 安全策略中的“执行审批”开关决定；Controller 不可用时将直接拒绝。</p>
         <div slot="footer"><button class="btn" @click=${() => { this.confirmEnable = false; }} .disabled=${this.saving}>取消</button><button class="btn-primary" data-action="confirm-enable" @click=${() => void this.saveConfig(true)} .disabled=${this.saving}>确认启用</button></div>
       </app-dialog>` : ''}
     `;

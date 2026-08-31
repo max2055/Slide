@@ -21,6 +21,15 @@ const HIGH_RISK_PATTERNS = [
   /\b(?:unlink|rmtree|writeFile|appendFile|chmod|chown)\b/i,
 ];
 
+const NETWORK_PATTERNS = [
+  /\b(?:nmap|nc|netcat|curl|wget|ssh|scp|telnet|ftp)\b/i,
+  /\b(?:fetch|XMLHttpRequest|https?\.request|net\.connect|socket|requests?\.|urllib|http\.client|paramiko|dns\.|tls\.)\b/i,
+];
+
+export function executeCodeRequiresNetwork(input: { runtime: string; code: string }): boolean {
+  return NETWORK_PATTERNS.some((pattern) => pattern.test(`${input.runtime}\n${input.code}`));
+}
+
 function classifyShell(code: string): ExecuteCodeRiskLevel {
   const source = code.trim();
   if (HIGH_RISK_PATTERNS.some((pattern) => pattern.test(source))) return 'high';

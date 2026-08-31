@@ -9,7 +9,7 @@
  *
  * Events:
  *   alert-select, alert-acknowledge, alert-rca, alert-create, alert-delete,
- *   alert-navigate-instance, alert-navigate-chat, alert-refresh,
+ *   alert-navigate-instance, alert-navigate-network-device, alert-navigate-chat, alert-refresh,
  *   alert-filter-severity, alert-search, alert-page-change, alert-list-tab-change
  */
 import { LitElement, html, css } from "lit";
@@ -21,7 +21,7 @@ import "../../../components/stat-card.js";
 
 interface Alert {
   id: number;
-  instance_id: number;
+  instance_id: number | null;
   instance_name?: string;
   alert_type: string;
   severity: "critical" | "warning" | "info";
@@ -37,6 +37,8 @@ interface Alert {
   server_id?: number;
   server_name?: string;
   target_type?: string;
+  network_device_id?: number | null;
+  network_device_name?: string;
 }
 
 @customElement("alert-list")
@@ -155,6 +157,7 @@ export class AlertList extends LitElement {
             <option value="">全部目标</option>
             <option value="instance" ?selected=${this.filterTargetType==='instance'}>实例</option>
             <option value="server" ?selected=${this.filterTargetType==='server'}>服务器</option>
+            <option value="network_device" ?selected=${this.filterTargetType==='network_device'}>网络设备</option>
           </select>
           ${this.filterTargetType === 'server' ? html`
             <select class="filter-btn" style="font-size:var(--text-sm);" @change=${(e: any) => this._emit('alert-filter-server-id', { value: e.target.value ? Number(e.target.value) : null })}>
@@ -213,10 +216,14 @@ export class AlertList extends LitElement {
           </div>
         </td>
         <td style="text-align:center;">
-          <span class="type-badge" style="font-size:10px;background:${alert.target_type === 'server' ? 'rgba(34,197,94,0.12);color:#16a34a' : 'rgba(59,130,246,0.12);color:var(--info)'}">${alert.target_type === 'server' ? '服务器' : alert.target_type === 'instance' ? '实例' : '—'}</span>
+          <span class="type-badge" style="font-size:10px;background:${alert.target_type === 'server' ? 'rgba(34,197,94,0.12);color:#16a34a' : alert.target_type === 'network_device' ? 'rgba(245,158,11,0.14);color:#b45309' : 'rgba(59,130,246,0.12);color:var(--info)'}">${alert.target_type === 'server' ? '服务器' : alert.target_type === 'network_device' ? '网络设备' : alert.target_type === 'instance' ? '实例' : '—'}</span>
         </td>
         <td style="text-align:center;">
-          ${alert.target_type === 'server'
+          ${alert.target_type === 'network_device'
+            ? (alert.network_device_name
+                ? html`<a href="#" class="instance-badge" @click=${(e: Event) => { e.preventDefault(); this._emit('alert-navigate-network-device', { id: alert.network_device_id }); }}>${alert.network_device_name}</a>`
+                : html`<span style="color:var(--muted);">设备 #${alert.network_device_id ?? '—'}</span>`)
+            : alert.target_type === 'server'
             ? (alert.server_name
                 ? html`<span class="instance-badge">${alert.server_name}</span>`
                 : html`<span style="color:var(--muted);">—</span>`)

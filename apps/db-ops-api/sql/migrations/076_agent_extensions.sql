@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS agent_extensions (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  kind ENUM('tool', 'skill') NOT NULL,
+  name VARCHAR(128) NOT NULL,
+  description VARCHAR(2000) NOT NULL DEFAULT '',
+  definition_json JSON NOT NULL,
+  source_text MEDIUMTEXT NULL,
+  status ENUM('draft', 'published', 'archived') NOT NULL DEFAULT 'draft',
+  version INT UNSIGNED NOT NULL DEFAULT 1,
+  digest CHAR(64) NOT NULL,
+  created_by INT UNSIGNED NOT NULL,
+  updated_by INT UNSIGNED NOT NULL,
+  published_by INT UNSIGNED NULL,
+  published_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_agent_extension_name_version (kind, name, version),
+  KEY idx_agent_extension_status (kind, status, updated_at),
+  CONSTRAINT fk_agent_extension_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_agent_extension_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_agent_extension_published_by FOREIGN KEY (published_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

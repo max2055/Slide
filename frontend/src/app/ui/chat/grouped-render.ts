@@ -108,33 +108,56 @@ export function renderStreamingGroup(
   onOpenSidebar?: (content: SidebarContent) => void,
   assistant?: AssistantIdentity,
   basePath?: string,
+  thinkingText?: string,
+  thinkingComplete = false,
 ) {
   const timestamp = new Date(startedAt).toLocaleTimeString([], {
     hour: "numeric",
     minute: "2-digit",
   });
   const name = assistant?.name ?? "Assistant";
+  const thinkingMarkdown = thinkingText?.trim()
+    ? formatReasoningMarkdown(thinkingText)
+    : "";
 
   return html`
     <div class="chat-group assistant">
       ${renderAvatar("assistant", assistant, basePath)}
       <div class="chat-group-messages">
-        ${renderGroupedMessage(
-          {
-            role: "assistant",
-            content: [{ type: "text", text }],
-            timestamp: startedAt,
-          },
-          `stream:${startedAt}`,
-          { isStreaming: true, showReasoning: false },
-          onOpenSidebar,
-        )}
+        ${thinkingMarkdown ? renderThinkingDisclosure(thinkingMarkdown, thinkingComplete) : nothing}
+        ${text.trim()
+          ? renderGroupedMessage(
+              {
+                role: "assistant",
+                content: [{ type: "text", text }],
+                timestamp: startedAt,
+              },
+              `stream:${startedAt}`,
+              { isStreaming: true, showReasoning: false },
+              onOpenSidebar,
+            )
+          : nothing}
         <div class="chat-group-footer">
           <span class="chat-sender-name">${name}</span>
           <span class="chat-group-timestamp">${timestamp}</span>
         </div>
       </div>
     </div>
+  `;
+}
+
+function renderThinkingDisclosure(markdown: string, complete: boolean) {
+  return html`
+    <details class="chat-thinking-disclosure" ?open=${!complete}>
+      <summary>
+        <span class="chat-thinking-disclosure__icon" aria-hidden="true">${icons['brain']}</span>
+        <span class="chat-thinking-disclosure__label">思考过程</span>
+        <span class="chat-thinking-disclosure__status">${complete ? "已完成" : "思考中..."}</span>
+      </summary>
+      <div class="chat-thinking-disclosure__body">
+        ${unsafeHTML(toSanitizedMarkdownHtml(markdown))}
+      </div>
+    </details>
   `;
 }
 
@@ -1111,11 +1134,7 @@ function renderGroupedMessage(
                         opts.assistantAttachmentAuthToken,
                         opts.onRequestUpdate,
                       )}
-                      ${reasoningMarkdown
-                        ? html`<div class="chat-thinking">
-                            ${unsafeHTML(toSanitizedMarkdownHtml(reasoningMarkdown))}
-                          </div>`
-                        : nothing}
+                      ${reasoningMarkdown ? renderThinkingDisclosure(reasoningMarkdown, true) : nothing}
                       ${jsonResult
                         ? html`<details
                             class="chat-json-collapse"
@@ -1167,11 +1186,7 @@ function renderGroupedMessage(
               opts.assistantAttachmentAuthToken,
               opts.onRequestUpdate,
             )}
-            ${reasoningMarkdown
-              ? html`<div class="chat-thinking">
-                  ${unsafeHTML(toSanitizedMarkdownHtml(reasoningMarkdown))}
-                </div>`
-              : nothing}
+            ${reasoningMarkdown ? renderThinkingDisclosure(reasoningMarkdown, true) : nothing}
             ${normalizedRole === "assistant" && assistantViewBlocks.length > 0
               ? html`${assistantViewBlocks.map(
                   (block) => html`${renderToolPreview(block.preview, "chat_message", {

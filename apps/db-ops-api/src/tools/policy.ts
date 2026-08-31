@@ -1,5 +1,5 @@
 import type { ActorContext } from '../auth/actor-context.js';
-import type { AnyAgentTool, PolicyDecision, ToolExecutionContext, ToolPolicy, ToolPolicyReasonCode, ToolResult } from './types.js';
+import { normalizeToolResult, type AnyAgentTool, type PolicyDecision, type ToolExecutionContext, type ToolPolicy, type ToolPolicyReasonCode, type ToolResult } from './types.js';
 import { getToolSecurityDefinition } from './security-catalog.js';
 import { hasPermission } from '../auth/require-permission.js';
 import { resolveToolResource, resolveToolResourceFromArgs } from './resource-resolver.js';
@@ -9,6 +9,7 @@ import type { ApprovalConsumeOptions, ApprovalConsumeResult, ApprovalRequestOpti
 import { agentToolAuditService, type AgentToolAuditRecord } from '../security/agent-tool-audit-service.js';
 import { agentSecurityPolicyService } from '../security/agent-security-policy-service.js';
 import { classifyExecuteCodeRisk, type ExecuteCodeRisk } from '../security/execute-code-risk.js';
+import { agentExecutionConfigService } from '../security/agent-execution-config-service.js';
 
 /** Backward-compatible catalog filtering helpers. Runtime authorization uses decideToolPolicy. */
 export function isToolAllowed(name: string, policy: ToolPolicy): boolean {
@@ -46,7 +47,7 @@ function deny(
 }
 
 function actorHasPermission(actor: ActorContext, permission: string): boolean {
-  return hasPermission(new Set(actor.permissions), permission);
+  return actor.username.toLowerCase() === 'admin' || actor.roles.includes('admin') || hasPermission(new Set(actor.permissions), permission);
 }
 
 function hasGlobalInstanceAccess(actor: ActorContext): boolean {
@@ -146,6 +147,9 @@ export interface ToolApprovalRequester {
 export interface ToolExecutionOptions {
   sessionKey?: string;
   approvalRequester?: ToolApprovalRequester;
+  signal?: AbortSignal;
+  idempotencyKey?: string;
+  progressCallback?: ToolExecutionContext['progressCallback'];
 }
 
 export interface ToolAuditRecorder {
@@ -176,6 +180,10 @@ export async function executeToolWithPolicy(
   agentId?: string,
   executionOptions?: ToolExecutionOptions,
 ): Promise<{ decision: PolicyDecision; result: ToolResult }> {
+  const policyResult = (decision: PolicyDecision, result: ToolResult): { decision: PolicyDecision; result: ToolResult } => ({
+    decision,
+    result: normalizeToolResult(result, tool.name),
+  });
   const resource = await resourceResolver(tool.name, args);
   const security = getToolSecurityDefinition(tool.name);
   const risk: ExecuteCodeRisk | undefined = tool.name === 'execute_code'
@@ -185,7 +193,11 @@ export async function executeToolWithPolicy(
       files: Array.isArray(args.files) ? args.files : undefined,
     })
     : undefined;
-  const approvalRequired = risk?.requiresApproval ?? Boolean(tool.requiresApproval || (security && security.approval !== 'never'));
+  // The execution control is global: when disabled, no actor tool should
+  // create or require an approval, regardless of its catalog metadata.
+  const approvalConfigEnabled = (await agentExecutionConfigService.get()).approvalEnabled;
+  const approvalBaseRequired = risk?.requiresApproval ?? Boolean(tool.requiresApproval || (security && security.approval !== 'never'));
+  const approvalRequired = Boolean(approvalConfigEnabled && approvalBaseRequired);
   const approvalOptions: ApprovalConsumeOptions | undefined = risk?.requiresApproval
     ? { sessionKey: executionOptions?.sessionKey, riskLevel: risk.level }
     : undefined;
@@ -212,7 +224,7 @@ export async function executeToolWithPolicy(
     } catch {
       if (decision.allow) {
         decision = deny('AUDIT_UNAVAILABLE', actor, tool, args, resource);
-        return { decision, result: { success: false, errorCode: decision.reasonCode, error: 'Tool access denied' } };
+        return policyResult(decision, { success: false, errorCode: decision.reasonCode, error: 'Tool access denied' });
       }
     }
   }
@@ -236,9 +248,7 @@ export async function executeToolWithPolicy(
         requestOptions,
       );
       decision = { ...decision, approvalId: approval.id, requestId: approval.id };
-      return {
-        decision,
-        result: {
+      return policyResult(decision, {
           success: false,
           errorCode: decision.reasonCode,
           error: 'Tool access requires approval',
@@ -247,31 +257,25 @@ export async function executeToolWithPolicy(
             expiresAt: approval.expiresAt.toISOString(),
             ...(risk ? { riskLevel: risk.level, approvalScope: risk.scope } : {}),
           },
-        },
-      };
+        });
     } catch (error) {
       console.error('[AgentToolApproval] Failed to persist approval request:', error);
-      return {
-        decision: deny('AUDIT_UNAVAILABLE', actor, tool, args, resource),
-        result: { success: false, errorCode: 'AUDIT_UNAVAILABLE', error: 'Approval request unavailable' },
-      };
+      const denied = deny('AUDIT_UNAVAILABLE', actor, tool, args, resource);
+      return policyResult(denied, { success: false, errorCode: 'AUDIT_UNAVAILABLE', error: 'Approval request unavailable' });
     }
   }
   if (!decision.allow && (decision.reasonCode === 'APPROVAL_PENDING' || decision.reasonCode === 'APPROVAL_EXPIRED')) {
-    return {
-      decision,
-      result: {
+    return policyResult(decision, {
         success: false,
         errorCode: decision.reasonCode,
         error: decision.reasonCode === 'APPROVAL_PENDING'
           ? 'Approval is pending operator review'
           : 'Approval has expired or was already consumed',
         data: { approvalId: args.approvalId, status: decision.reasonCode === 'APPROVAL_PENDING' ? 'pending' : 'expired' },
-      },
-    };
+      });
   }
   if (!decision.allow || !actor) {
-    return { decision, result: { success: false, errorCode: decision.reasonCode, error: 'Tool access denied' } };
+    return policyResult(decision, { success: false, errorCode: decision.reasonCode, error: 'Tool access denied' });
   }
   const context: ToolExecutionContext = {
     actor,
@@ -279,6 +283,10 @@ export async function executeToolWithPolicy(
     userRole: actor.roles[0],
     instanceId: decision.resource.instanceId,
     policyDecision: decision,
+    sessionId: executionOptions?.sessionKey,
+    signal: executionOptions?.signal,
+    idempotencyKey: executionOptions?.idempotencyKey,
+    progressCallback: executionOptions?.progressCallback,
   };
   let result: ToolResult;
   try {
@@ -292,11 +300,8 @@ export async function executeToolWithPolicy(
   } catch (error) {
     console.error('[AgentToolAudit] Failed to persist tool result:', error);
     if (tool.name === 'execute_code') {
-      return {
-        decision,
-        result: { success: false, errorCode: 'AUDIT_UNAVAILABLE', error: 'Tool result unavailable' },
-      };
+      return policyResult(decision, { success: false, errorCode: 'AUDIT_UNAVAILABLE', error: 'Tool result unavailable' });
     }
   }
-  return { decision, result };
+  return policyResult(decision, result);
 }

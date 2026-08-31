@@ -31,6 +31,8 @@ interface Alert {
   server_id?: number;
   server_name?: string;
   target_type?: string;
+  network_device_id?: number | null;
+  network_device_name?: string;
 }
 
 interface AlertRule {
@@ -837,7 +839,8 @@ export class AlertsPage extends LitElement {
         a.title.toLowerCase().includes(q) ||
         a.message.toLowerCase().includes(q) ||
         (a.instance_name || '').toLowerCase().includes(q) ||
-        (a.server_name || '').toLowerCase().includes(q)
+        (a.server_name || '').toLowerCase().includes(q) ||
+        (a.network_device_name || '').toLowerCase().includes(q)
       );
     }
     return result;
@@ -874,6 +877,7 @@ export class AlertsPage extends LitElement {
         @alert-acknowledge=${(e: CustomEvent) => { const a = this.alerts.find(x => x.id === e.detail.id); if (a) this._acknowledge(a); }}
         @alert-rca=${(e: CustomEvent) => { const a = this.alerts.find(x => x.id === e.detail.id); if (a) this._startRCA(a); }}
         @alert-navigate-instance=${(e: CustomEvent) => this._navigateToInstance(e.detail.id)}
+        @alert-navigate-network-device=${(e: CustomEvent) => this._navigateToNetworkDevice(e.detail.id)}
         @alert-navigate-chat=${(e: CustomEvent) => this._navigateToChat(e.detail.sessionKey)}
         @alert-create=${() => { this.activeAlertTab = 'rules'; this._openRuleModal(); }}
         @alert-filter-severity=${(e: CustomEvent) => { this.filterSeverity = e.detail.value; }}
@@ -960,6 +964,13 @@ export class AlertsPage extends LitElement {
   private _navigateToInstance(instanceId: number) {
     window.dispatchEvent(new CustomEvent("slide-navigate", {
       detail: { tab: "instance-detail", id: instanceId },
+    }));
+  }
+
+  private _navigateToNetworkDevice(deviceId: number) {
+    if (!Number.isSafeInteger(deviceId) || deviceId <= 0) return;
+    window.dispatchEvent(new CustomEvent("slide-navigate", {
+      detail: { tab: "network-device-detail", networkDeviceId: deviceId },
     }));
   }
 

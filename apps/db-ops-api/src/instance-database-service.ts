@@ -5,6 +5,9 @@ import mysql from 'mysql2/promise';
 import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
 import { assertCreatableDatabaseType } from './adapters/capability-matrix.js';
 import { authorizeDatabaseTarget } from './security/database-target-policy.js';
+import { ensureOracleClientReady, formatOracleConnectionError, initializeOracleClient } from './oracle-client.js';
+
+initializeOracleClient();
 
 export interface DatabaseInstance {
   id: number;
@@ -282,7 +285,11 @@ class InstanceDatabaseService {
 
       if (physicallyExists && physicallyExists.length > 0) {
         const dup = physicallyExists[0];
-        return { success: false, error: `该地址已被实例 "${dup.name}" (ID: ${dup.id}) 纳管，请勿重复添加` };
+        return {
+          success: false,
+          instanceId: Number(dup.id),
+          error: `该地址已被实例 "${dup.name}" (ID: ${dup.id}) 纳管，请勿重复添加`,
+        };
       }
 
       const encryptedPassword = encryptData(data.password);
@@ -494,6 +501,7 @@ class InstanceDatabaseService {
       }
 
       if (config.db_type === 'oracle') {
+        ensureOracleClientReady();
         // 动态导入 oracledb
         const oracledbMod = await import('oracledb');
         const oracledb = oracledbMod.default;
@@ -541,7 +549,8 @@ class InstanceDatabaseService {
       // 其他数据库类型暂不支持
       return { success: false, message: `暂不支持 ${config.db_type} 数据库的测试连接` };
     } catch (error: any) {
-      return { success: false, message: `连接失败：${error.message}` };
+      const message = config.db_type === 'oracle' ? formatOracleConnectionError(error) : error.message;
+      return { success: false, message: `连接失败：${message}` };
     }
   }
 

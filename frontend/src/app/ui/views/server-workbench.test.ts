@@ -1,0 +1,36 @@
+import fs from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import "./servers-page.js";
+import "./server-detail.js";
+
+describe("server workbench Phase 142 contract", () => {
+  it("offers only canonical Kylin, RHEL and CentOS OS choices", () => {
+    const source = fs.readFileSync(path.resolve(__dirname, "./servers-page.ts"), "utf8");
+    expect(source).toContain('value="kylin"');
+    expect(source).toContain('value="rhel"');
+    expect(source).toContain('value="centos"');
+    expect(source).not.toMatch(/value=["']Other["']/i);
+  });
+
+  it("exposes quality, freshness and evidence columns in the inventory", () => {
+    const page = document.createElement("servers-page") as any;
+    const columns = page._getColumns();
+    expect(columns.map((column: { key: string }) => column.key)).toEqual(
+      expect.arrayContaining(["quality", "freshness"]),
+    );
+
+    const source = fs.readFileSync(path.resolve(__dirname, "./servers-page.ts"), "utf8");
+    expect(source).toContain('aria-label="Environment filter"');
+    expect(source).toContain('aria-label="Database relation filter"');
+  });
+
+  it("has the diagnostic evidence endpoint and expanded server tabs", () => {
+    const source = fs.readFileSync(path.resolve(__dirname, "./server-detail.ts"), "utf8");
+    expect(source).toContain("/diagnostics");
+    expect(source).toContain("/collect-diagnostics");
+    for (const label of ["网络", "进程", "服务", "日志", "关联资源"]) {
+      expect(source).toContain(label);
+    }
+  });
+});

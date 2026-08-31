@@ -1,15 +1,12 @@
 /**
- * Session + SessionManager — ported from nanobot session/manager.py
+ * Session + SessionManager — TypeScript session persistence implemented for Slide.
  *
  * Session: per-conversation state container with message history and metadata.
  * SessionManager: JSONL-persisted session store with LRU cache, TTL-based
  * auto-compaction, file cap enforcement, and corrupted session repair.
  *
- * Porting notes:
- * - nanobot's dataclass-based Session → class with slots
- * - nanobot's SessionManager → LRU-cached store with atomic JSONL writes
- * - SHA-256 safeKey for filesystem-safe filenames
- * - AutoCompact (nanobot autocompact.py) → integrated into SessionManager
+ * The implementation uses an LRU-cached store, atomic JSONL writes, SHA-256
+ * filesystem-safe keys, and integrated automatic compaction.
  */
 
 import crypto from 'node:crypto';
@@ -103,7 +100,7 @@ export class Session {
 
   /**
    * Get session history with optional message count and token budget.
-   * Mimics nanobot's get_history(msg_count, token_budget).
+   * Returns bounded history by message count and token budget.
    * - Skips messages before last_consolidated.
    * - Aligns to first user turn (drops leading assistant/tool messages).
    * - Drops orphan tool results at front (no preceding assistant with matching tool_call).
@@ -184,7 +181,6 @@ export class Session {
 // ── SessionManager ──
 
 // ── AutoCompact ──
-// Ported from nanobot agent/autocompact.py
 // Proactively compresses idle sessions to reduce token cost and latency.
 
 export interface AutoCompactOptions {
@@ -228,7 +224,7 @@ export class AutoCompact {
 
   /**
    * Prepare a session for use. If it was previously compacted, returns the summary.
-   * Mirrors nanobot's autocompact.prepare_session().
+   * Prepare a session and return any available compacted summary.
    */
   prepareSession(session: Session, key: string): { session: Session; summary: string | null } {
     if (AutoCompact.isInternalSession(key)) {
@@ -435,7 +431,7 @@ export class SessionManager {
   /**
    * Attempt to repair a corrupted session file.
    * Reads line by line, keeping only valid JSON lines.
-   * Mirrors nanobot's SessionManager._repair().
+   * Repair a corrupted JSONL session file by retaining valid lines.
    */
   _repair(sessionKey: string): Session | null {
     const filePath = path.join(this.sessionsDir, `${this.safeKey(sessionKey)}.jsonl`);

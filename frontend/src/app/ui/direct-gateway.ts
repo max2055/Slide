@@ -18,9 +18,10 @@ export type AdapterTextDeltaEvent = { type: 'text_delta'; delta: string };
 export type AdapterToolStartEvent = { type: 'tool_start'; toolName: string; args: Record<string, unknown> };
 export type AdapterToolResultEvent = { type: 'tool_result'; toolName: string; result: unknown };
 export type AdapterToolErrorEvent = { type: 'tool_error'; toolName: string; error: string };
+export type AdapterToolProgressEvent = { type: 'tool_progress'; toolName: string; progress: Record<string, unknown> };
 export type AdapterThinkingDeltaEvent = { type: 'thinking_delta'; delta: string };
 export type AdapterThinkingEndEvent = { type: 'thinking_end' };
-export type AdapterCompleteEvent = { type: 'complete'; finalContent?: string; thinkingContent?: string };
+export type AdapterCompleteEvent = { type: 'complete'; finalContent?: string; thinkingContent?: string; messageSequence?: number };
 export type AdapterCancelledEvent = { type: 'cancelled'; runId?: string; sessionKey?: string };
 export type AdapterErrorEvent = { type: 'error'; error: string };
 export type AdapterSessionCreatedEvent = { type: 'session.created'; sessionKey: string };
@@ -36,6 +37,7 @@ export type AdapterChatEvent =
   | AdapterToolStartEvent
   | AdapterToolResultEvent
   | AdapterToolErrorEvent
+  | AdapterToolProgressEvent
   | AdapterThinkingDeltaEvent
   | AdapterThinkingEndEvent
   | AdapterCompleteEvent
@@ -99,7 +101,6 @@ export class DirectGatewayClient {
       return;
     }
     this.authenticated = false;
-    this.pendingMessages = [];
     this.onStateChange('connecting');
     this.ws = new WebSocket(this.url);
 
@@ -174,10 +175,13 @@ export class DirectGatewayClient {
         ? p.sessionKey.trim()
         : undefined;
       const message = (p?.message as string) || '';
-      this.sendChat(sessionKey, message, {
+      const accepted = this.sendChat(sessionKey, message, {
         idempotencyKey: typeof p?.idempotencyKey === 'string' ? p.idempotencyKey : undefined,
         attachments: Array.isArray(p?.attachments) ? p.attachments : undefined,
       });
+      if (!accepted) {
+        throw new Error('[DirectGatewayClient] chat.send could not be queued because the WebSocket is not connected');
+      }
       return undefined as T;
     }
     if (method === 'chat.history') {
@@ -203,11 +207,12 @@ export class DirectGatewayClient {
         headers['Authorization'] = `Bearer ${token}`;
       }
       return fetch(url, { headers }).then(async r => {
+        if (!r.ok) {
+          throw new Error(`[DirectGatewayClient] REST API error: ${r.status} ${r.statusText}`);
+        }
         const data = await r.json();
         const rawMessages = Array.isArray(data) ? data : (data?.messages ?? []);
         return { messages: rawMessages };
-      }).catch(() => {
-        return { messages: [] };
       }) as unknown as T;
     }
     if (method === 'agents.list') {
@@ -263,18 +268,19 @@ export class DirectGatewayClient {
     return response.json() as Promise<T>;
   }
 
-  sendChat(sessionKey: string | undefined, message: string, options?: { idempotencyKey?: string; attachments?: unknown[] }): void {
+  sendChat(sessionKey: string | undefined, message: string, options?: { idempotencyKey?: string; attachments?: unknown[] }): boolean {
     const frame = this.chatSendFrame(sessionKey, message, options);
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.warn('[DirectGatewayClient] cannot sendChat: not connected');
-      return;
+      return false;
     }
     // Queue messages until auth_ok is received to avoid race condition
     if (!this.authenticated) {
       this.pendingMessages.push(frame as { sessionKey?: string; message: string; messageId: string; idempotencyKey: string });
-      return;
+      return true;
     }
     this.ws.send(JSON.stringify(frame));
+    return true;
   }
 
   cancelChat(runId: string, sessionKey: string): void {
@@ -341,6 +347,7 @@ export class DirectGatewayClient {
       case 'tool_start':
       case 'tool_result':
       case 'tool_error':
+      case 'tool_progress':
       case 'complete':
       case 'cancelled':
       case 'error':
@@ -486,6 +493,57 @@ function isEventForDifferentActiveRun(
   return Boolean(activeRunId && payload && payload.runId !== activeRunId);
 }
 
+type PendingDirectStreamUpdate = {
+  thinkingText?: string;
+  thinkingComplete?: boolean;
+  textPayload?: ChatEventPayload;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+
+const pendingDirectStreamUpdates = new WeakMap<object, PendingDirectStreamUpdate>();
+
+function pendingStreamUpdateFor(host: Record<string, unknown>): PendingDirectStreamUpdate {
+  const key = host as object;
+  let pending = pendingDirectStreamUpdates.get(key);
+  if (!pending) {
+    pending = { timer: null };
+    pendingDirectStreamUpdates.set(key, pending);
+  }
+  return pending;
+}
+
+function flushDirectStreamUpdates(host: Record<string, unknown>): void {
+  const key = host as object;
+  const pending = pendingDirectStreamUpdates.get(key);
+  if (!pending) return;
+  if (pending.timer !== null) {
+    clearTimeout(pending.timer);
+  }
+  pending.timer = null;
+  if (pending.thinkingText !== undefined) {
+    host.chatThinkingText = pending.thinkingText;
+  }
+  if (pending.thinkingComplete !== undefined) {
+    host.chatThinkingComplete = pending.thinkingComplete;
+  }
+  const payload = pending.textPayload;
+  pending.thinkingText = undefined;
+  pending.thinkingComplete = undefined;
+  pending.textPayload = undefined;
+  if (payload) {
+    handleChatGatewayEvent(host, payload);
+  }
+  if (pending.timer === null && !pending.thinkingText && !pending.thinkingComplete && !pending.textPayload) {
+    pendingDirectStreamUpdates.delete(key);
+  }
+}
+
+function scheduleDirectStreamFlush(host: Record<string, unknown>): void {
+  const pending = pendingStreamUpdateFor(host);
+  if (pending.timer !== null) return;
+  pending.timer = setTimeout(() => flushDirectStreamUpdates(host), 16);
+}
+
 function handleTerminalChatEvent(
   host: Record<string, unknown>,
   payload: ChatEventPayload | undefined,
@@ -587,17 +645,30 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     }
     case 'thinking_delta':
       // Accumulate thinking text
-      host.chatThinkingText = ((host.chatThinkingText as string) || '') + event.delta;
-      host.chatThinkingComplete = false;
+      {
+        const pending = pendingStreamUpdateFor(host);
+        pending.thinkingText = (pending.thinkingText ?? (host.chatThinkingText as string) ?? '') + event.delta;
+        pending.thinkingComplete = false;
+        scheduleDirectStreamFlush(host);
+      }
       break;
     case 'thinking_end':
+      flushDirectStreamUpdates(host);
       host.chatThinkingComplete = true;
       break;
-    case 'text_delta':
+    case 'text_delta': {
+      const payload = mapAdapterChatEventToPayload(event, runId, sessionKey);
+      if (payload) {
+        pendingStreamUpdateFor(host).textPayload = payload;
+        scheduleDirectStreamFlush(host);
+      }
+      break;
+    }
     case 'complete':
     case 'cancelled':
     case 'protocol.error':
     case 'error': {
+      flushDirectStreamUpdates(host);
       const payload = mapAdapterChatEventToPayload(event, runId, sessionKey);
       if (payload) {
         handleChatGatewayEvent(host, payload);
@@ -607,9 +678,26 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     case 'tool_start':
     case 'tool_result':
     case 'tool_error': {
+      flushDirectStreamUpdates(host);
       const agentPayload: AgentEventPayload = {
         runId: runId ?? '',
         seq: 0,
+        stream: 'tool',
+        ts: Date.now(),
+        sessionKey,
+        data: event as unknown as Record<string, unknown>,
+      };
+      handleAgentEvent(
+        host as unknown as Parameters<typeof handleAgentEvent>[0],
+        agentPayload,
+      );
+      break;
+    }
+    case 'tool_progress': {
+      flushDirectStreamUpdates(host);
+      const agentPayload: AgentEventPayload = {
+        runId: runId ?? '',
+        seq: Number(event.progress.sequence ?? 0),
         stream: 'tool',
         ts: Date.now(),
         sessionKey,
@@ -681,6 +769,12 @@ export function initChatClient(host: Record<string, unknown>): void {
   });
 
   host.client = directClient;
+
+  // JWT authentication is the primary login path. Device registration is
+  // additive, so do not make the WebSocket connection wait for an optional
+  // dynamic module or its network requests.
+  directClient.connect();
+
   void import('./device-identity.ts').then(async ({ loadOrCreateDeviceIdentity }) => {
     try {
       const identity = await loadOrCreateDeviceIdentity();
@@ -708,6 +802,7 @@ export function initChatClient(host: Record<string, unknown>): void {
     } catch {
       // Device registration is additive; JWT login remains available if it fails.
     }
-    directClient.connect();
+  }).catch(() => {
+    // A stale Vite optimized dependency must not leave the user on the login gate.
   });
 }

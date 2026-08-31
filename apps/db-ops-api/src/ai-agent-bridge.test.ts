@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InstanceDiagnosticContext } from './instance-diagnostic-context-service.js';
+import type { ResourceDiagnosticPack } from './resources/resource-diagnostic-service.js';
 
 const { databaseService, invoke } = vi.hoisted(() => ({
   databaseService: {
@@ -42,6 +43,16 @@ function faultContext(instanceId = 7, logMessage = 'connection pressure'): Insta
     storage: [],
     hosts: [],
     gaps: [],
+  };
+}
+
+function resourceContext(): ResourceDiagnosticPack {
+  return {
+    schemaVersion: 1,
+    subject: { type: 'network_device', id: 17 },
+    collectedAt: '2026-08-10T00:00:00.000Z',
+    resource: { resource: { type: 'network_device', id: 17 }, label: 'edge-17', status: 'online', attributes: {} },
+    observations: [], relations: [], alerts: [], relatedEvidence: [], gaps: [], truncated: false,
   };
 }
 
@@ -154,5 +165,16 @@ describe('dispatchOrReuse', () => {
     await vi.waitFor(() => {
       expect(databaseService.failAnalysis).toHaveBeenCalledWith(42, '401 Authentication Fails');
     });
+  });
+
+  it('accepts a cross-resource diagnostic pack and keeps it in the untrusted user evidence channel', async () => {
+    await dispatchOrReuse({
+      type: 'resource_diagnosis', resourceType: 'network_device', resourceId: 17,
+      networkDeviceId: 17, cacheKey: 'resource:network_device:17', sessionKey: 'resource-diagnosis-17',
+      existingAnalysisId: 42, diagnosticContext: resourceContext(), userMessage: 'Analyze the related evidence.',
+    });
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    expect(invoke.mock.calls[0][1]).toContain(JSON.stringify(resourceContext()));
+    expect(invoke.mock.calls[0][1]).toContain('数据库、服务器和华为网络设备');
   });
 });

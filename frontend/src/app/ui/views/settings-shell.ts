@@ -25,21 +25,21 @@ type SettingsSubTab =
   | "agent-sandbox";
 
 const SUB_TABS: { id: SettingsSubTab; label: string; icon: string; requireAdmin?: boolean; requiredPermission?: string }[] = [
-  { id: "ai-settings", label: "AI 设置", icon: "sparkles" },
-  { id: "prompt-settings", label: "提示词管理", icon: "book" },
-  { id: "llm-config", label: "LLM 配置", icon: "brain" },
-  { id: "feishu-notification", label: "飞书通知", icon: "message-square", requireAdmin: true },
-  { id: "scoring-settings", label: "评分权重", icon: "bar-chart" },
-  { id: "appearance", label: "外观", icon: "spark" },
   { id: "branding", label: "品牌", icon: "palette" },
-  { id: "users", label: "用户管理", icon: "scroll-text", requireAdmin: true },
-  { id: "rbac", label: "权限管理", icon: "shield", requireAdmin: true },
+  { id: "appearance", label: "外观", icon: "spark" },
+  { id: "feishu-notification", label: "通知配置", icon: "message-square", requireAdmin: true },
+  { id: "scoring-settings", label: "评分权重", icon: "bar-chart" },
+  { id: "ai-settings", label: "自动分析", icon: "sparkles" },
+  { id: "llm-config", label: "模型配置", icon: "brain" },
+  { id: "prompt-settings", label: "提示词管理", icon: "book" },
   { id: "agent-sessions", label: "Agent 会话", icon: "message-square" },
-  { id: "agent-skills", label: "Agent Skills", icon: "book" },
-  { id: "agent-tools", label: "Agent Tools", icon: "wrench" },
-  { id: "agent-security-policy", label: "Agent 安全策略", icon: "shield", requiredPermission: "ai:view" },
-  { id: "agent-tool-audit", label: "Tool 审计", icon: "eye", requiredPermission: "audit:view" },
-  { id: "agent-sandbox", label: "Agent Sandbox", icon: "terminal", requiredPermission: "audit:view" },
+  { id: "agent-skills", label: "Agent 技能", icon: "book" },
+  { id: "agent-tools", label: "Agent 工具", icon: "wrench" },
+  { id: "agent-security-policy", label: "Agent 安全", icon: "shield", requiredPermission: "ai:view" },
+  { id: "agent-sandbox", label: "Agent 沙箱", icon: "terminal", requiredPermission: "audit:view" },
+  { id: "agent-tool-audit", label: "Agent 审计", icon: "eye", requiredPermission: "audit:view" },
+  { id: "rbac", label: "权限管理", icon: "shield", requireAdmin: true },
+  { id: "users", label: "用户管理", icon: "scroll-text", requireAdmin: true },
 ];
 
 @customElement("settings-shell")
@@ -122,6 +122,37 @@ export class SettingsShell extends LitElement {
       flex: 1;
       overflow-y: auto;
       padding: 20px 24px;
+    }
+    @media (max-width: 720px) {
+      :host {
+        display: block;
+        overflow: auto;
+      }
+      .settings-subnav {
+        display: flex;
+        width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+        padding: 8px;
+        overflow-x: auto;
+        overflow-y: hidden;
+      }
+      .settings-subnav__title {
+        display: none;
+      }
+      .settings-subtab {
+        width: auto;
+        flex: 0 0 auto;
+        white-space: nowrap;
+        padding: 8px 12px;
+      }
+      .settings-content {
+        min-width: 0;
+        overflow: visible;
+        padding: 16px;
+      }
     }
   `;
 
