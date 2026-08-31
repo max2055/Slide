@@ -93,6 +93,26 @@ describe('ResourceDiagnosticService', () => {
     expect(result.dataQuality).toBe('partial');
   });
 
+  it('does not treat expired or future observations as fresh', async () => {
+    const expiredRef = { type: 'server' as const, id: 31 };
+    const futureRef = { type: 'server' as const, id: 32 };
+    const now = new Date('2026-08-26T00:01:00.000Z');
+    const deps = dependencies({
+      list: vi.fn(async () => [detail(expiredRef), detail(futureRef)]),
+      observations: vi.fn(async (ref): Promise<Observation[]> => ref.id === expiredRef.id
+        ? [{ resource: ref, metricId: 'cpu_usage', value: 10, observedAt: new Date('2026-08-26T00:00:30.000Z'), validUntil: new Date('2026-08-26T00:00:45.000Z'), source: 'fixture', quality: 'good' }]
+        : [{ resource: ref, metricId: 'cpu_usage', value: 20, observedAt: new Date('2026-08-26T00:02:00.000Z'), validUntil: new Date('2026-08-26T00:10:00.000Z'), source: 'fixture', quality: 'good' }]),
+    });
+    const service = new ResourceDiagnosticService(deps);
+
+    const result = await service.overview(actor, now);
+
+    expect(result.items[0]).toMatchObject({ freshness: 'stale', observedAt: '2026-08-26T00:00:30.000Z' });
+    expect(result.items[0].gaps).toContain('OBSERVATIONS_EXPIRED');
+    expect(result.items[1]).toMatchObject({ freshness: 'missing', observedAt: null });
+    expect(result.items[1].gaps).toContain('OBSERVATIONS_FUTURE');
+  });
+
   it('orders bounded related evidence so an interface drop is visible beside database and host evidence', async () => {
     const subject = { type: 'instance' as const, id: 11 };
     const serverRef = { type: 'server' as const, id: 3 };

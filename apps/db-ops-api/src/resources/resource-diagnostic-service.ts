@@ -187,6 +187,23 @@ function finiteDateMs(value: Date | null | undefined): number | null {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
+function latestDatedObservation(
+  observations: Observation[],
+  nowMs: number,
+): { observation?: Observation; expired: boolean } {
+  const dated = observations
+    .filter((entry) => {
+      const observedAtMs = finiteDateMs(entry.observedAt);
+      return observedAtMs !== null && observedAtMs <= nowMs;
+    })
+    .sort((left, right) => finiteDateMs(right.observedAt)! - finiteDateMs(left.observedAt)!);
+  const observation = dated[0];
+  if (!observation) return { expired: false };
+  if (observation.validUntil === null || observation.validUntil === undefined) return { observation, expired: false };
+  const validUntilMs = finiteDateMs(observation.validUntil);
+  return { observation, expired: validUntilMs === null || validUntilMs <= nowMs };
+}
+
 /**
  * Only current, numeric observations are safe to put in a dashboard
  * aggregate. A null validUntil means the producer did not provide an
@@ -249,17 +266,19 @@ export class ResourceDiagnosticService {
       if (alertResult.error) gaps.push('ALERTS_UNAVAILABLE');
       if (relationResult.error) gaps.push('RELATIONS_UNAVAILABLE');
 
-      const observed = observationResult.value
-        .filter((entry) => entry.observedAt instanceof Date && !Number.isNaN(entry.observedAt.getTime()))
-        .sort((left, right) => right.observedAt!.getTime() - left.observedAt!.getTime())[0];
+      const { observation: observed, expired } = latestDatedObservation(observationResult.value, now.getTime());
       const observedAt = observed?.observedAt?.toISOString() ?? null;
       const freshness: ResourceFreshness = !observed
         ? 'missing'
-        : now.getTime() - observed.observedAt!.getTime() <= OBSERVATION_FRESHNESS_MS
+        : !expired && now.getTime() - observed.observedAt!.getTime() <= OBSERVATION_FRESHNESS_MS
           ? 'fresh'
           : 'stale';
       if (freshness === 'missing') gaps.push('OBSERVATIONS_EMPTY');
-      else if (freshness === 'stale') gaps.push('OBSERVATIONS_STALE');
+      else if (freshness === 'stale') gaps.push(expired ? 'OBSERVATIONS_EXPIRED' : 'OBSERVATIONS_STALE');
+      if (observationResult.value.some((entry) => {
+        const observedAtMs = finiteDateMs(entry.observedAt);
+        return observedAtMs !== null && observedAtMs > now.getTime();
+      })) gaps.push('OBSERVATIONS_FUTURE');
 
       const quality = observationResult.value.length === 0
         ? 'unknown' as const
