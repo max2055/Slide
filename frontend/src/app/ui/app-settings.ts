@@ -506,6 +506,12 @@ export function hasSlidePermission(
   if (!permissions) return false;
   // Wildcard matching
   if (permissions.has('*')) return true;
+  if (required === 'view_dashboard') {
+    return permissions.has('view_dashboard')
+      || permissions.has('instance:view')
+      || permissions.has('servers:view')
+      || permissions.has('network_devices:view');
+  }
   if (permissions.has(required)) return true;
   // Resource-level wildcard: instance:view matches permission set containing instance:*
   const colonIdx = required.indexOf(':');

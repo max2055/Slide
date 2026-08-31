@@ -78,6 +78,19 @@ export interface ResourceOverviewResult {
   items: ResourceOverviewItem[];
 }
 
+export interface ResourceMetricAggregate {
+  value: number | null;
+  resourceCount: number;
+  observedAt: string | null;
+}
+
+export interface ResourceMetricsSummaryResult {
+  schemaVersion: 1;
+  collectedAt: string;
+  dataQuality: 'complete' | 'partial' | 'empty';
+  scopes: Record<ResourceType, { metrics: Record<string, ResourceMetricAggregate> }>;
+}
+
 const MAX_LIST_ITEMS = 500;
 const MAX_OBSERVATIONS = 200;
 const MAX_ALERTS = 100;
@@ -289,6 +302,79 @@ export class ResourceDiagnosticService {
       metricIds,
       limit: Math.min(Math.max(options.limit ?? MAX_OBSERVATIONS, 1), MAX_OBSERVATIONS),
     })).slice(0, MAX_OBSERVATIONS);
+  }
+
+  async metricsSummary(actor: ActorContext, now = new Date()): Promise<ResourceMetricsSummaryResult> {
+    const resources = (await this.dependencies.list(actor)).slice(0, MAX_LIST_ITEMS);
+    const metricIdsByType: Record<ResourceType, string[]> = {
+      instance: ['cpu_usage', 'memory_usage', 'disk_usage', 'connections', 'qps'],
+      server: ['cpu_usage', 'memory_usage', 'disk_usage', 'load_1min'],
+      network_device: ['device_reachability', 'device_cpu_percent', 'device_memory_percent', 'device_temperature_celsius'],
+    };
+    const scopes = {
+      instance: { metrics: {} as Record<string, ResourceMetricAggregate> },
+      server: { metrics: {} as Record<string, ResourceMetricAggregate> },
+      network_device: { metrics: {} as Record<string, ResourceMetricAggregate> },
+    } satisfies ResourceMetricsSummaryResult['scopes'];
+    for (const type of Object.keys(scopes) as ResourceType[]) {
+      for (const metricId of metricIdsByType[type]) {
+        scopes[type].metrics[metricId] = { value: null, resourceCount: 0, observedAt: null };
+      }
+    }
+    let hadFailure = false;
+    let hadMissing = false;
+    await Promise.all(resources.map(async (resource) => {
+      let observations: Observation[];
+      try {
+        observations = await this.dependencies.observations(resource.resource, actor, { limit: 64 });
+      } catch {
+        hadFailure = true;
+        return;
+      }
+      const allowed = new Set(metricIdsByType[resource.resource.type]);
+      const latestByMetric = new Map<string, Observation>();
+      for (const observation of observations) {
+        if (!allowed.has(observation.metricId)) continue;
+        const previous = latestByMetric.get(observation.metricId);
+        if (!previous || (observation.observedAt?.getTime() ?? 0) > (previous.observedAt?.getTime() ?? 0)) {
+          latestByMetric.set(observation.metricId, observation);
+        }
+      }
+      for (const metricId of allowed) {
+        const observation = latestByMetric.get(metricId);
+        if (!observation || observation.value == null || observation.quality === 'invalid') {
+          hadMissing = true;
+          continue;
+        }
+        const current = scopes[resource.resource.type].metrics[metricId];
+        if (!current) {
+          scopes[resource.resource.type].metrics[metricId] = {
+            value: observation.value,
+            resourceCount: 1,
+            observedAt: observation.observedAt?.toISOString() ?? null,
+          };
+          continue;
+        }
+        const isCountMetric = metricId === 'connections' || metricId === 'qps';
+        const currentValue = current.value ?? 0;
+        current.value = isCountMetric
+          ? currentValue + observation.value
+          : ((currentValue * current.resourceCount) + observation.value) / (current.resourceCount + 1);
+        current.resourceCount += 1;
+        const observedAt = observation.observedAt?.toISOString() ?? null;
+        if (observedAt && (!current.observedAt || observedAt > current.observedAt)) current.observedAt = observedAt;
+      }
+      for (const metricId of metricIdsByType[resource.resource.type]) {
+        if (!scopes[resource.resource.type].metrics[metricId]) hadMissing = true;
+      }
+    }));
+    const hasValues = Object.values(scopes).some((scope) => Object.values(scope.metrics).some((metric) => metric.resourceCount > 0));
+    return {
+      schemaVersion: 1,
+      collectedAt: now.toISOString(),
+      dataQuality: !resources.length || !hasValues ? 'empty' : hadFailure || hadMissing ? 'partial' : 'complete',
+      scopes,
+    };
   }
 
   async getRelations(actor: ActorContext, ref: ResourceRef): Promise<ResourceRelation[]> {

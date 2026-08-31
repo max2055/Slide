@@ -45,6 +45,8 @@ export interface ResourceListItem { resource: ResourceRef; label: string; status
 export interface ResourceListResponse { items: ResourceListItem[]; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; }
 export interface ResourceOverviewItem { resource: ResourceRef; label: string; status: string; quality: 'good' | 'degraded' | 'invalid' | 'unknown' | 'partial'; freshness: 'fresh' | 'stale' | 'missing'; observedAt: string | null; unresolvedAlerts: number; relationCount: number; impactScope: ResourceRef[]; gaps: string[]; }
 export interface ResourceOverviewResponse { schemaVersion: 1; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; summary: { total: number; byType: Record<ResourceType, number>; byStatus: Record<string, number>; fresh: number; stale: number; missing: number; unresolvedAlerts: number; impactedResources: number; }; items: ResourceOverviewItem[]; }
+export interface ResourceMetricAggregate { value: number | null; resourceCount: number; observedAt: string | null; }
+export interface ResourceMetricsSummaryResponse { schemaVersion: 1; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; scopes: Record<ResourceType, { metrics: Record<string, ResourceMetricAggregate> }>; }
 export interface ResourceAgentDiagnosisResponse { success: boolean; analysisId?: number; status?: 'queued' | 'cached'; error?: string; }
 
 export interface HealthResponse {

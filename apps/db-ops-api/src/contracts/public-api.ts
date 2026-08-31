@@ -224,6 +224,20 @@ export const ResourceOverviewResponseSchema = Type.Object({
   }, { additionalProperties: false }),
   items: Type.Array(ResourceOverviewItemSchema, { maxItems: 500 }),
 }, { $id: 'ResourceOverviewResponse', additionalProperties: false });
+export const ResourceMetricAggregateSchema = Type.Object({
+  value: Type.Union([Type.Number(), Type.Null()]),
+  resourceCount: Type.Integer({ minimum: 0 }),
+  observedAt: Type.Union([Type.String(), Type.Null()]),
+}, { $id: 'ResourceMetricAggregate', additionalProperties: false });
+export const ResourceMetricsSummaryResponseSchema = Type.Object({
+  schemaVersion: Type.Literal(1), collectedAt: Type.String(),
+  dataQuality: Type.Union([Type.Literal('complete'), Type.Literal('partial'), Type.Literal('empty')]),
+  scopes: Type.Object({
+    instance: Type.Object({ metrics: Type.Record(Type.String(), ResourceMetricAggregateSchema) }, { additionalProperties: false }),
+    server: Type.Object({ metrics: Type.Record(Type.String(), ResourceMetricAggregateSchema) }, { additionalProperties: false }),
+    network_device: Type.Object({ metrics: Type.Record(Type.String(), ResourceMetricAggregateSchema) }, { additionalProperties: false }),
+  }, { additionalProperties: false }),
+}, { $id: 'ResourceMetricsSummaryResponse', additionalProperties: false });
 export const ResourceAgentDiagnosisResponseSchema = Type.Object({
   success: Type.Boolean(), analysisId: Type.Optional(Type.Integer({ minimum: 1 })),
   status: Type.Optional(Type.Union([Type.Literal('queued'), Type.Literal('cached')])),
@@ -606,6 +620,8 @@ export const PublicApiSchemas = {
   ResourceOverviewItem: ResourceOverviewItemSchema,
   ResourceListResponse: ResourceListResponseSchema,
   ResourceOverviewResponse: ResourceOverviewResponseSchema,
+  ResourceMetricAggregate: ResourceMetricAggregateSchema,
+  ResourceMetricsSummaryResponse: ResourceMetricsSummaryResponseSchema,
   ResourceAgentDiagnosisResponse: ResourceAgentDiagnosisResponseSchema,
   DatabaseInstance: DatabaseInstanceSchema,
   DatabaseInstancesResponse: DatabaseInstancesResponseSchema,
@@ -662,6 +678,8 @@ export type NetworkDeviceRelationsRequest = Static<typeof NetworkDeviceRelations
 export type NetworkDeviceRelationsResponse = Static<typeof NetworkDeviceRelationsResponseSchema>;
 export type ResourceOverviewItem = Static<typeof ResourceOverviewItemSchema>;
 export type ResourceOverviewResponse = Static<typeof ResourceOverviewResponseSchema>;
+export type ResourceMetricAggregate = Static<typeof ResourceMetricAggregateSchema>;
+export type ResourceMetricsSummaryResponse = Static<typeof ResourceMetricsSummaryResponseSchema>;
 export type ResourceAgentDiagnosisResponse = Static<typeof ResourceAgentDiagnosisResponseSchema>;
 export type DatabaseInstance = Static<typeof DatabaseInstanceSchema>;
 export type InstanceHostRole = Static<typeof InstanceHostRoleSchema>;

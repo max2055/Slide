@@ -118,7 +118,7 @@ export const TAB_REQUIRED_PERMISSIONS: Partial<Record<Tab, string>> = {
   'agent-sessions': 'ai:view',
   'agent-skills': 'ai:view',
   'agent-tools': 'ai:view',
-  'dashboard': 'instance:view',
+  'dashboard': 'view_dashboard',
   'instances-db': 'instance:view',
   'servers': 'servers:view',
   'network-devices': 'network_devices:view',

@@ -63,6 +63,7 @@ describe('generated public API contract', () => {
       '/api/resources/{type}/{id}/diagnose',
       '/api/resources/{type}/{id}/diagnose-agent',
       '/api/resources/{type}/{id}/observations',
+      '/api/resources/metrics/summary',
       '/api/resources/overview',
       '/api/servers/{id}/collect-diagnostics',
       '/api/servers/{id}/diagnostics',

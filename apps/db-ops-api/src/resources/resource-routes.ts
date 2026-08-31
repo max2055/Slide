@@ -49,6 +49,14 @@ export async function registerResourceRoutes(
     }
   });
 
+  fastify.get('/api/resources/metrics/summary', { preHandler }, async (request, reply) => {
+    try {
+      return reply.send(await service.metricsSummary(actor(request)));
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ error: error instanceof Error ? error.message : 'RESOURCE_METRICS_SUMMARY_FAILED' });
+    }
+  });
+
   fastify.get('/api/resources/:type/:id/observations', { preHandler }, async (request, reply) => {
     const ref = parseRef(request.params as Record<string, unknown>);
     if (!ref) return reply.code(400).send({ error: 'RESOURCE_REF_INVALID' });

@@ -38,6 +38,9 @@ export function buildOpenApiDocument() {
       '/api/resources/overview': {
         get: { operationId: 'getResourceOverview', security: [{ bearerAuth: [] }], responses: { '200': { description: 'Cross-resource state, freshness, alerts and impact scope', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ResourceOverviewResponse) } } } } },
       },
+      '/api/resources/metrics/summary': {
+        get: { operationId: 'getResourceMetricsSummary', security: [{ bearerAuth: [] }], responses: { '200': { description: 'Permission-filtered latest metric aggregates by resource type', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ResourceMetricsSummaryResponse) } } } } },
+      },
       '/api/resources/{type}/{id}/observations': {
         get: { operationId: 'getResourceObservations', security: [{ bearerAuth: [] }], parameters: [pathId('id'), { name: 'type', in: 'path', required: true, schema: { type: 'string', enum: ['instance', 'server', 'network_device'] } }, { name: 'metricIds', in: 'query', required: false, schema: { type: 'string' } }, { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 200 } }], responses: { '200': { description: 'Latest resource observations', content: { 'application/json': { schema: { type: 'object' } } } } } },
       },
@@ -253,6 +256,8 @@ export interface ResourceListItem { resource: ResourceRef; label: string; status
 export interface ResourceListResponse { items: ResourceListItem[]; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; }
 export interface ResourceOverviewItem { resource: ResourceRef; label: string; status: string; quality: 'good' | 'degraded' | 'invalid' | 'unknown' | 'partial'; freshness: 'fresh' | 'stale' | 'missing'; observedAt: string | null; unresolvedAlerts: number; relationCount: number; impactScope: ResourceRef[]; gaps: string[]; }
 export interface ResourceOverviewResponse { schemaVersion: 1; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; summary: { total: number; byType: Record<ResourceType, number>; byStatus: Record<string, number>; fresh: number; stale: number; missing: number; unresolvedAlerts: number; impactedResources: number; }; items: ResourceOverviewItem[]; }
+export interface ResourceMetricAggregate { value: number | null; resourceCount: number; observedAt: string | null; }
+export interface ResourceMetricsSummaryResponse { schemaVersion: 1; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; scopes: Record<ResourceType, { metrics: Record<string, ResourceMetricAggregate> }>; }
 export interface ResourceAgentDiagnosisResponse { success: boolean; analysisId?: number; status?: 'queued' | 'cached'; error?: string; }
 
 `;

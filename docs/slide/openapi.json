@@ -7230,6 +7230,239 @@
         ],
         "type": "object"
       },
+      "ResourceMetricAggregate": {
+        "$id": "ResourceMetricAggregate",
+        "additionalProperties": false,
+        "properties": {
+          "observedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resourceCount": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "resourceCount",
+          "observedAt"
+        ],
+        "type": "object"
+      },
+      "ResourceMetricsSummaryResponse": {
+        "$id": "ResourceMetricsSummaryResponse",
+        "additionalProperties": false,
+        "properties": {
+          "collectedAt": {
+            "type": "string"
+          },
+          "dataQuality": {
+            "anyOf": [
+              {
+                "const": "complete",
+                "type": "string"
+              },
+              {
+                "const": "partial",
+                "type": "string"
+              },
+              {
+                "const": "empty",
+                "type": "string"
+              }
+            ]
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "scopes": {
+            "additionalProperties": false,
+            "properties": {
+              "instance": {
+                "additionalProperties": false,
+                "properties": {
+                  "metrics": {
+                    "patternProperties": {
+                      "^(.*)$": {
+                        "$id": "ResourceMetricAggregate",
+                        "additionalProperties": false,
+                        "properties": {
+                          "observedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "resourceCount": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "value": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "resourceCount",
+                          "observedAt"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "metrics"
+                ],
+                "type": "object"
+              },
+              "network_device": {
+                "additionalProperties": false,
+                "properties": {
+                  "metrics": {
+                    "patternProperties": {
+                      "^(.*)$": {
+                        "$id": "ResourceMetricAggregate",
+                        "additionalProperties": false,
+                        "properties": {
+                          "observedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "resourceCount": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "value": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "resourceCount",
+                          "observedAt"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "metrics"
+                ],
+                "type": "object"
+              },
+              "server": {
+                "additionalProperties": false,
+                "properties": {
+                  "metrics": {
+                    "patternProperties": {
+                      "^(.*)$": {
+                        "$id": "ResourceMetricAggregate",
+                        "additionalProperties": false,
+                        "properties": {
+                          "observedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "resourceCount": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "value": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "resourceCount",
+                          "observedAt"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "metrics"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "instance",
+              "server",
+              "network_device"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "collectedAt",
+          "dataQuality",
+          "scopes"
+        ],
+        "type": "object"
+      },
       "ResourceOverviewItem": {
         "$id": "ResourceOverviewItem",
         "additionalProperties": false,
@@ -10241,6 +10474,28 @@
               }
             },
             "description": "Latest resource observations"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/resources/metrics/summary": {
+      "get": {
+        "operationId": "getResourceMetricsSummary",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceMetricsSummaryResponse"
+                }
+              }
+            },
+            "description": "Permission-filtered latest metric aggregates by resource type"
           }
         },
         "security": [

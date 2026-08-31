@@ -11,20 +11,6 @@ import "../../../components/stat-card.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
 
-interface InstanceSummary {
-  total: number;
-  healthy: number;
-  warning: number;
-  critical: number;
-}
-
-interface AlertSummary {
-  total: number;
-  unread: number;
-  critical: number;
-  warning: number;
-}
-
 type ResourceType = "instance" | "server" | "network_device";
 interface ResourceOverviewItem {
   resource: { type: ResourceType; id: number };
@@ -54,6 +40,17 @@ interface ResourceOverview {
   };
   items: ResourceOverviewItem[];
 }
+interface ResourceMetricAggregate {
+  value: number | null;
+  resourceCount: number;
+  observedAt: string | null;
+}
+interface ResourceMetricsSummary {
+  schemaVersion: 1;
+  collectedAt: string;
+  dataQuality: "complete" | "partial" | "empty";
+  scopes: Record<ResourceType, { metrics: Record<string, ResourceMetricAggregate> }>;
+}
 
 @customElement("dashboard-page")
 export class DashboardPage extends LitElement {
@@ -74,6 +71,59 @@ export class DashboardPage extends LitElement {
       padding: 0 0 var(--space-xl) 0;
       animation: fade-in 0.3s ease-out;
     }
+
+    .dashboard-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-md);
+      flex-wrap: wrap;
+    }
+
+    .scope-switch {
+      display: inline-flex;
+      gap: 2px;
+      padding: 3px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--bg-accent);
+    }
+
+    .scope-switch button {
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--muted);
+      padding: 7px 12px;
+      font-size: var(--text-sm);
+      cursor: pointer;
+      transition: background var(--duration-normal) var(--ease-out), color var(--duration-normal) var(--ease-out);
+    }
+
+    .scope-switch button.active {
+      background: var(--card);
+      color: var(--text-strong);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .dashboard-meta { color: var(--muted); font-size: var(--text-sm); display: flex; align-items: center; gap: var(--space-sm); }
+    .dashboard-notice { padding: var(--space-sm) var(--space-md); border: 1px solid var(--warn); border-radius: var(--radius-sm); color: var(--warn); background: var(--warn-subtle); font-size: var(--text-sm); }
+    .dashboard__stat-cards { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .dashboard__primary { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, 1fr); gap: var(--space-md); }
+    .dashboard-panel { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); padding: var(--space-lg); box-shadow: var(--shadow-sm); }
+    .dashboard-panel__header { display: flex; justify-content: space-between; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-md); }
+    .dashboard-panel__title { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--text-md); font-weight: 600; color: var(--text-strong); }
+    .health-distribution { display: grid; gap: var(--space-md); }
+    .health-row { display: grid; grid-template-columns: 82px 1fr 40px; gap: var(--space-sm); align-items: center; font-size: var(--text-sm); }
+    .health-track { height: 9px; display: flex; overflow: hidden; border-radius: var(--radius-sm); background: var(--bg-muted); }
+    .health-track span { height: 100%; }
+    .health-track .ok { background: var(--ok); } .health-track .warn { background: var(--warn); } .health-track .danger { background: var(--danger); } .health-track .muted { background: var(--muted); }
+    .health-count { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-strong); }
+    .metric-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-sm); }
+    .metric-row { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-sm); padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-accent); }
+    .metric-row__label { color: var(--muted); font-size: var(--text-sm); }
+    .metric-row__value { color: var(--text-strong); font-weight: 650; font-variant-numeric: tabular-nums; }
+    .metric-row__coverage { display: block; margin-top: 2px; color: var(--muted); font-size: var(--text-xs); }
 
     /* ---- Stat Cards Grid ---- */
     .dashboard__stat-cards {
@@ -354,23 +404,20 @@ export class DashboardPage extends LitElement {
       .dashboard__stat-cards {
         grid-template-columns: repeat(2, 1fr);
       }
+      .dashboard__primary { grid-template-columns: 1fr; }
     }
 
     @media (max-width: 480px) {
       .dashboard__stat-cards,
-      .dashboard__charts {
+      .dashboard__charts,
+      .metric-list {
         grid-template-columns: 1fr;
       }
     }
   `;
 
-  @state() private instanceSummary: InstanceSummary | null = null;
-  @state() private alertSummary: AlertSummary | null = null;
-  @state() private metricsSummary: { connections: number; qps: number } | null = null;
   @state() private dbTypeDistribution: Array<{ name: string; value: number }> = [];
   @state() private capacityTrend: { current_total_gb: number; trend: Array<{ time: string; total_size_gb: number }> } | null = null;
-  @state() private aiStats: { today_total: number; breakdown: Record<string, number> } | null = null;
-  @state() private recentAlerts: Array<{ id: number; title: string; severity: string; created_at: string }> = [];
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private selectedHours = 168;
@@ -380,6 +427,9 @@ export class DashboardPage extends LitElement {
   @state() private endDate = '';
   @state() private trendLoading = false;
   @state() private resourceOverview: ResourceOverview | null = null;
+  @state() private resourceMetrics: ResourceMetricsSummary | null = null;
+  @state() private resourceScope: "all" | ResourceType = "all";
+  @state() private moduleErrors: string[] = [];
 
   // ECharts instances for lifecycle management
   private _pieChart: EChartsType | null = null;
@@ -435,93 +485,46 @@ export class DashboardPage extends LitElement {
   }
 
   private async loadDashboardData() {
-    try {
-      const [instancesRes, alertsRes, capacityRes, aiRes, resourceOverviewRes] = await Promise.all([
-        authFetch("/api/database/instances"),
-        authFetch("/api/alerts"),
-        authFetch(`/api/dashboard/capacity-trend?hours=${this.selectedHours}`),
-        authFetch("/api/dashboard/ai-stats"),
-        authFetch("/api/resources/overview"),
-      ]);
+    const errors: string[] = [];
+    const [overviewResult, metricsResult, alertsResult, instancesResult, capacityResult] = await Promise.allSettled([
+      authFetch("/api/resources/overview"),
+      authFetch("/api/resources/metrics/summary"),
+      authFetch("/api/alerts"),
+      authFetch("/api/database/instances"),
+      authFetch(`/api/dashboard/capacity-trend?hours=${this.selectedHours}`),
+    ]);
 
-      if (!instancesRes.ok) throw new Error("加载实例数据失败");
-      if (!alertsRes.ok) throw new Error("加载告警数据失败");
-      if (!capacityRes.ok) throw new Error("加载容量趋势失败");
-      if (!aiRes.ok) throw new Error("加载 AI 分析数据失败");
-
-      const instances: Array<{ id: number; name: string; db_type: string; health_status: string | null; last_health_check_at: string | null }> = await instancesRes.json();
-      const alertsData = await alertsRes.json();
-      const alerts = alertsData.items ?? alertsData;
-      const capacityData = await capacityRes.json();
-      const aiData = await aiRes.json();
-      if (resourceOverviewRes.ok) {
-        this.resourceOverview = await resourceOverviewRes.json() as ResourceOverview;
-      } else {
-        this.resourceOverview = null;
-      }
-
-      // --- Health status computation ---
-      const healthy = instances.filter((i: any) => i.health_status === "healthy").length;
-      const warningCount = instances.filter((i: any) => i.health_status === "warning").length;
-      const critical = instances.filter((i: any) => i.health_status === "critical" || i.health_status === "unknown").length;
-
-      this.instanceSummary = { total: instances.length, healthy, warning: warningCount, critical };
-      this.instances = instances;
-
-      // --- DB type distribution (DASH-01 / D-02) ---
-      const typeMap: Record<string, number> = {};
-      for (const inst of instances) {
-        const t = inst.db_type || "unknown";
-        typeMap[t] = (typeMap[t] || 0) + 1;
-      }
-      this.dbTypeDistribution = Object.entries(typeMap).map(([name, value]) => ({ name, value }));
-
-      // --- Alerts ---
-      const totalAlerts = alerts.length;
-      const unreadAlerts = alerts.filter((a: any) => !a.acknowledged);
-      const unread = unreadAlerts.length;
-      const criticalAlerts = unreadAlerts.filter((a: any) => a.severity === "critical").length;
-      const warningAlerts = unreadAlerts.filter((a: any) => a.severity === "warning").length;
-      this.alertSummary = { total: totalAlerts, unread, critical: criticalAlerts, warning: warningAlerts };
-      this.recentAlerts = alerts
-        .filter((a: any) => !a.acknowledged)
-        .slice(0, 3)
-        .map((a: any) => ({ id: a.id, title: a.title, severity: a.severity, created_at: a.created_at }));
-
-      // --- Capacity trend (DASH-02) ---
-      this.capacityTrend = capacityData;
-
-      // --- AI stats ---
-      this.aiStats = aiData;
-
-      // Mark loading complete before async metrics fetch so Lit renders charts
-      // (dbTypeDistribution/capacityTrend changes must reach updated() while
-      // the chart containers exist in DOM, not while the loading spinner shows)
-      this.loading = false;
-
-      // --- Metrics summary: sum connections and QPS across healthy instances ---
-      const healthyInstances = instances.filter((i: any) => i.health_status === "healthy");
-      let totalConnections = 0;
-      let totalQps = 0;
+    const responseJson = async (result: PromiseSettledResult<Response>) => {
+      if (result.status !== "fulfilled" || !result.value.ok) return null;
       try {
-        const results = await Promise.allSettled(
-          healthyInstances.map((i: any) => authFetch(`/api/database/instances/${i.id}/metrics`))
-        );
-        for (const r of results) {
-          if (r.status === "fulfilled" && r.value.ok) {
-            const m = await r.value.json();
-            if (m && !m.error) {
-              totalConnections += m.connections || 0;
-              totalQps += m.qps || 0;
-            }
-          }
-        }
-      } catch (_) {}
-      this.metricsSummary = { connections: totalConnections, qps: totalQps };
-    } catch (err: any) {
-      this.error = err.message;
-      this.loading = false;
+        return await result.value.json();
+      } catch {
+        return null;
+      }
+    };
+    const [overview, metrics, alertsData, instances, capacity] = await Promise.all([
+      responseJson(overviewResult), responseJson(metricsResult), responseJson(alertsResult),
+      responseJson(instancesResult), responseJson(capacityResult),
+    ]);
+    if (overview) this.resourceOverview = overview as ResourceOverview;
+    else errors.push("资源总览暂不可用");
+    if (metrics) this.resourceMetrics = metrics as ResourceMetricsSummary;
+    else errors.push("统一指标暂不可用");
+    if (alertsData) {
+      const alerts = alertsData.items ?? alertsData;
+      const unreadAlerts = alerts.filter((a: any) => !a.acknowledged);
+    } else errors.push("告警暂不可用");
+    if (instances) {
+      const list = instances as Array<{ id: number; name: string; db_type: string; health_status: string | null; last_health_check_at: string | null }>;
+      this.instances = list;
+      const typeMap: Record<string, number> = {};
+      for (const inst of list) typeMap[inst.db_type || "unknown"] = (typeMap[inst.db_type || "unknown"] || 0) + 1;
+      this.dbTypeDistribution = Object.entries(typeMap).map(([name, value]) => ({ name, value }));
     }
+    if (capacity) this.capacityTrend = capacity;
+    this.moduleErrors = errors;
+    this.error = !this.resourceOverview && !this.resourceMetrics ? "统一资源总览暂不可用" : null;
+    this.loading = false;
   }
 
   private async reloadTrend(opts?: { hours?: number; instanceId?: number | null; startDate?: string; endDate?: string }) {
@@ -667,8 +670,54 @@ export class DashboardPage extends LitElement {
     return "ok";
   }
 
+  private _visibleResourceItems(): ResourceOverviewItem[] {
+    const items = this.resourceOverview?.items ?? [];
+    return this.resourceScope === "all" ? items : items.filter((item) => item.resource.type === this.resourceScope);
+  }
+
+  private _visibleResourceSummary() {
+    const items = this._visibleResourceItems();
+    const healthy = items.filter((item) => this._resourceStatusVariant(item) === "ok").length;
+    const degraded = items.filter((item) => this._resourceStatusVariant(item) === "warn").length;
+    const critical = items.filter((item) => this._resourceStatusVariant(item) === "danger" || item.freshness === "missing").length;
+    return {
+      total: items.length,
+      healthy,
+      degraded,
+      critical,
+      activeIncidents: items.reduce((total, item) => total + item.unresolvedAlerts, 0),
+      staleOrMissing: items.filter((item) => item.freshness !== "fresh").length,
+    };
+  }
+
+  private _scopeLabel(scope: "all" | ResourceType): string {
+    return scope === "all" ? "全部资源" : this._resourceTypeLabel(scope);
+  }
+
+  private _resourceMetricRows(): Array<{ label: string; value: string; coverage: string }> {
+    const scope = this.resourceScope === "all" ? null : this.resourceScope;
+    const scopes = scope ? [scope] : (["instance", "server", "network_device"] as ResourceType[]);
+    const labels: Record<string, string> = {
+      cpu_usage: "CPU 使用率", memory_usage: "内存使用率", disk_usage: "磁盘使用率",
+      connections: "活动连接", qps: "QPS", load_1min: "1 分钟负载",
+      device_reachability: "设备可达率", device_cpu_percent: "设备 CPU", device_memory_percent: "设备内存",
+      device_temperature_celsius: "设备温度",
+    };
+    const rows: Array<{ label: string; value: string; coverage: string }> = [];
+    for (const type of scopes) {
+      const metrics = this.resourceMetrics?.scopes[type]?.metrics ?? {};
+      for (const [metricId, metric] of Object.entries(metrics)) {
+        if (metric.value == null || !metric.resourceCount) continue;
+        const suffix = /percent|usage|reachability/.test(metricId) ? "%" : metricId.includes("temperature") ? " °C" : "";
+        const value = metric.value < 10 && suffix === "%" ? metric.value.toFixed(1) : Math.round(metric.value * 10) / 10;
+        rows.push({ label: `${this._resourceTypeLabel(type)} · ${labels[metricId] ?? metricId}`, value: `${value}${suffix}`, coverage: `${metric.resourceCount} 个资源` });
+      }
+    }
+    return rows.slice(0, 8);
+  }
+
   private _resourceRows(): Array<Record<string, unknown>> {
-    return (this.resourceOverview?.items ?? []).map((item) => ({
+    return this._visibleResourceItems().map((item) => ({
       resource: html`<span>${this._resourceTypeLabel(item.resource.type)} · ${item.label}</span>`,
       status: html`<app-badge variant=${this._resourceStatusVariant(item)}>${item.status || "unknown"}</app-badge>`,
       freshness: html`<app-badge variant=${item.freshness === "fresh" ? "ok" : item.freshness === "stale" ? "warn" : "muted"}>${item.freshness === "fresh" ? "新鲜" : item.freshness === "stale" ? "已过期" : "无数据"}</app-badge>`,
@@ -681,21 +730,11 @@ export class DashboardPage extends LitElement {
   private _renderResourceOverview() {
     const overview = this.resourceOverview;
     if (!overview) return nothing;
-    const summary = overview.summary;
     return html`
       <app-card class="resource-overview-card">
-        <span slot="header">基础运维总览</span>
-        <div class="resource-overview-summary">
-          <span>资源 ${summary.total}</span>
-          <span>数据库 ${summary.byType.instance ?? 0}</span>
-          <span>服务器 ${summary.byType.server ?? 0}</span>
-          <span>网络设备 ${summary.byType.network_device ?? 0}</span>
-          <span>新鲜 ${summary.fresh}</span>
-          <span>未解决告警 ${summary.unresolvedAlerts}</span>
-          <span>影响范围 ${summary.impactedResources}</span>
-          <app-badge variant=${overview.dataQuality === "complete" ? "ok" : overview.dataQuality === "partial" ? "warn" : "muted"}>数据${overview.dataQuality === "complete" ? "完整" : overview.dataQuality === "partial" ? "部分可用" : "为空"}</app-badge>
-        </div>
-        ${overview.items.length
+        <span slot="header">资源清单与影响范围</span>
+        <div class="resource-overview-summary"><span>当前范围：${this._scopeLabel(this.resourceScope)}</span><span>影响关系和采集缺口</span></div>
+        ${this._visibleResourceItems().length
           ? html`<div class="resource-overview-table"><app-data-table .columns=${[
             { key: "resource", label: "资源" },
             { key: "status", label: "状态" },
@@ -769,59 +808,68 @@ export class DashboardPage extends LitElement {
     }
 
     if (this.error) {
-      return html`<div class="loading" style="color: var(--danger);">${this.error}</div>`;
+      return html`<div class="dashboard-panel" style="color: var(--danger);">${this.error}</div>`;
     }
-
+    const summary = this._visibleResourceSummary();
+    const typeCounts = (['instance', 'server', 'network_device'] as ResourceType[]).map((type) => ({ type, count: this._visibleResourceItems().filter((item) => item.resource.type === type).length }));
+    const riskItems = this._visibleResourceItems().filter((item) => item.unresolvedAlerts > 0 || this._resourceStatusVariant(item) === 'danger').sort((a, b) => (b.unresolvedAlerts - a.unresolvedAlerts) || (this._resourceStatusVariant(a) === 'danger' ? -1 : 1)).slice(0, 5);
     return html`
       <div class="dashboard-grid">
-        <!-- Row 1: Stat Cards -->
+        <div class="dashboard-toolbar">
+          <div class="scope-switch" role="tablist" aria-label="资源范围">
+            ${(['all', 'instance', 'server', 'network_device'] as const).map((scope) => html`
+              <button class=${this.resourceScope === scope ? 'active' : ''} aria-selected=${this.resourceScope === scope} @click=${() => { this.resourceScope = scope; }}>${this._scopeLabel(scope)}</button>
+            `)}
+          </div>
+          <div class="dashboard-meta">
+            <span>采集于 ${this.resourceOverview?.collectedAt ? this._formatTime(this.resourceOverview.collectedAt) : '未知'}</span>
+            <app-badge variant=${this.resourceOverview?.dataQuality === 'complete' ? 'ok' : this.resourceOverview?.dataQuality === 'partial' ? 'warn' : 'muted'}>${this.resourceOverview?.dataQuality === 'complete' ? '数据完整' : this.resourceOverview?.dataQuality === 'partial' ? '部分可用' : '无数据'}</app-badge>
+            <button class="btn-ghost" @click=${() => this.loadDashboardData()}>刷新</button>
+          </div>
+        </div>
+        ${this.moduleErrors.length ? html`<div class="dashboard-notice">${this.moduleErrors.join(' · ')}</div>` : nothing}
+
         <div class="dashboard__stat-cards">
-          <stat-card
-            label="数据库实例"
-            value="${this.instanceSummary?.total ?? 0}"
-            .hint=${html`
-              <span style="display:flex;align-items:center;gap:4px;white-space:nowrap">
-                <span class="dot ok"></span>${this.instanceSummary?.healthy ?? 0} 健康
-                <span class="dot warn"></span>${this.instanceSummary?.warning ?? 0} 警告
-                <span class="dot danger"></span>${this.instanceSummary?.critical ?? 0} 异常
-              </span>
-            `}
-          ></stat-card>
-          <stat-card
-            label="数据总量"
-            value="${this.capacityTrend ? this._formatBytes(this.capacityTrend.current_total_gb) : '--'}"
-            hint="${this.capacityTrend ? `趋势图中 ${this.selectedHours / 24} 天数据` : '暂无数据'}"
-          ></stat-card>
-          <stat-card
-            label="活动会话数"
-            value="${this.metricsSummary?.connections ?? 0}"
-            hint="已连接实例实时汇总"
-          ></stat-card>
-          <stat-card
-            label="每秒查询数"
-            value="${this.metricsSummary?.qps ?? 0}"
-            hint="QPS · 过去 1 分钟"
-          ></stat-card>
-          <stat-card
-            label="活跃告警"
-            value="${this.alertSummary?.unread ?? 0}"
-            hint="严重 ${this.alertSummary?.critical ?? 0} · 警告 ${this.alertSummary?.warning ?? 0}"
-          ></stat-card>
-          <stat-card
-            label="AI 分析总数"
-            value="${this.aiStats?.today_total ?? 0}"
-            hint="今日汇总 · RCA/SQL 审核等"
-          ></stat-card>
+          <stat-card label="纳管资源" value=${summary.total} hint=${typeCounts.map(({ type, count }) => `${this._resourceTypeLabel(type)} ${count}`).join(' · ')}></stat-card>
+          <stat-card label="健康 / 在线" value=${summary.healthy} variant="ok" hint=${`占比 ${summary.total ? Math.round(summary.healthy / summary.total * 100) : 0}%`}></stat-card>
+          <stat-card label="降级" value=${summary.degraded} variant="warn" hint="需要关注的资源"></stat-card>
+          <stat-card label="严重 / 离线" value=${summary.critical} variant="danger" hint="优先处理"></stat-card>
+          <stat-card label="活跃事件" value=${summary.activeIncidents} variant=${summary.activeIncidents ? 'warn' : 'ok'} hint="未解决告警"></stat-card>
+          <stat-card label="过期 / 缺失数据" value=${summary.staleOrMissing} variant=${summary.staleOrMissing ? 'warn' : 'ok'} hint="采集质量"></stat-card>
         </div>
 
-        ${this._renderResourceOverview()}
+        <div class="dashboard__primary">
+          <section class="dashboard-panel">
+            <div class="dashboard-panel__header"><span class="dashboard-panel__title">${icons['triangle-alert']} 当前风险</span><button class="btn-ghost" @click=${() => this._navigateTo('alerts')}>查看告警</button></div>
+            ${riskItems.length ? html`<div class="status-list">${riskItems.map((item) => html`
+              <div class="status-item" @click=${() => this._navigateTo(item.resource.type === 'instance' ? 'instances-db' : item.resource.type === 'server' ? 'servers' : 'network-devices')}>
+                <div class="status-item__left"><div class="status-item__icon ${this._resourceStatusVariant(item)}">${icons['triangle-alert']}</div><span class="status-item__name">${this._resourceTypeLabel(item.resource.type)} · ${item.label}</span></div>
+                <span class="status-item__time">${item.unresolvedAlerts ? `${item.unresolvedAlerts} 个告警` : item.status}</span>
+              </div>` )}</div>` : html`<app-empty-state title="暂无高风险资源" description="当前纳管资源没有需要立即处理的风险"><div slot="icon">${icons['check-circle']}</div></app-empty-state>`}
+          </section>
+          <section class="dashboard-panel">
+            <div class="dashboard-panel__header"><span class="dashboard-panel__title">资源健康分布</span><span class="dashboard-meta">${this._scopeLabel(this.resourceScope)}</span></div>
+            <div class="health-distribution">${typeCounts.filter(({ count }) => count > 0).map(({ type, count }) => {
+              const items = this._visibleResourceItems().filter((item) => item.resource.type === type);
+              const ok = items.filter((item) => this._resourceStatusVariant(item) === 'ok').length;
+              const warn = items.filter((item) => this._resourceStatusVariant(item) === 'warn').length;
+              const danger = items.filter((item) => this._resourceStatusVariant(item) === 'danger').length;
+              const muted = Math.max(0, count - ok - warn - danger);
+              return html`<div class="health-row"><span>${this._resourceTypeLabel(type)}</span><div class="health-track"><span class="ok" style="width:${ok / count * 100}%"></span><span class="warn" style="width:${warn / count * 100}%"></span><span class="danger" style="width:${danger / count * 100}%"></span><span class="muted" style="width:${muted / count * 100}%"></span></div><span class="health-count">${count}</span></div>`;
+            })}</div>
+          </section>
+        </div>
 
-        <!-- Row 2: Charts -->
-        <div class="dashboard__charts">
+        <section class="dashboard-panel">
+          <div class="dashboard-panel__header"><span class="dashboard-panel__title">统一指标快照</span><span class="dashboard-meta">最新可用观测</span></div>
+          ${this._resourceMetricRows().length ? html`<div class="metric-list">${this._resourceMetricRows().map((metric) => html`<div class="metric-row"><div><span class="metric-row__label">${metric.label}</span><span class="metric-row__coverage">${metric.coverage}</span></div><span class="metric-row__value">${metric.value}</span></div>`)}</div>` : html`<app-empty-state title="暂无统一指标" description="请确认对应资源已启用采集"></app-empty-state>`}
+        </section>
+
+        ${this.resourceScope === 'all' || this.resourceScope === 'instance' ? html`<div class="dashboard__charts">
           <!-- DB Type Distribution Pie Chart -->
           <div class="chart-card">
             <div class="chart-card__header">
-              <span class="chart-card__title">${icons['database']} 数据库类型分布</span>
+              <span class="chart-card__title">${icons['database']} 数据库类型分布</span><span class="dashboard-meta">数据库专属</span>
             </div>
             ${this.dbTypeDistribution.length > 0
               ? html`<div class="chart-container pie-chart-container"></div>`
@@ -856,40 +904,9 @@ export class DashboardPage extends LitElement {
               : html`<div class="chart-empty-state">暂无容量数据，请确保监控采集已启用</div>`
             }
           </div>
-        </div>
+        </div>` : nothing}
 
-        <!-- Row 3: Alert Panel -->
-        <div class="dashboard__panels">
-          <div class="chart-card">
-            <div class="chart-card__header">
-              <span class="chart-card__title">${icons['triangle-alert']} 待处理告警</span>
-              <span style="font-size:var(--text-sm);color:var(--accent);cursor:pointer;" @click=${() => this._navigateTo("alerts")}>查看全部 →</span>
-            </div>
-            ${this.recentAlerts.length > 0
-              ? html`
-                  <div class="status-list">
-                    ${this.recentAlerts.map(alert => html`
-                      <div class="status-item" @click=${() => this._navigateTo("alerts")}>
-                        <div class="status-item__left">
-                          <div class="status-item__icon ${alert.severity === 'critical' ? 'danger' : alert.severity === 'warning' ? 'warn' : 'ok'}">
-                            ${alert.severity === 'critical' ? icons['alert-circle'] : alert.severity === 'warning' ? icons['triangle-alert'] : icons['info']}
-                          </div>
-                          <span class="status-item__name">${alert.title}</span>
-                        </div>
-                        <span class="status-item__time">${this._formatTime(alert.created_at)}</span>
-                      </div>
-                    `)}
-                  </div>
-                `
-              : html`
-                  <app-empty-state title="暂无未处理告警" description="系统运行正常">
-                    <div slot="icon">${icons['check-circle']}</div>
-                  </app-empty-state>
-                `
-            }
-          </div>
-
-        </div>
+        ${this._renderResourceOverview()}
       </div>
     `;
   }
