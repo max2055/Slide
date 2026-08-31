@@ -10,6 +10,8 @@ import { icons } from "../../../icons.js";
 import "../../../components/stat-card.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
+import { I18nController } from "../../i18n/lib/lit-controller.ts";
+import { t } from "../../i18n/index.ts";
 
 type ResourceType = "instance" | "server" | "network_device";
 interface ResourceOverviewItem {
@@ -50,6 +52,19 @@ interface ResourceMetricsSummary {
   collectedAt: string;
   dataQuality: "complete" | "partial" | "empty";
   scopes: Record<ResourceType, { metrics: Record<string, ResourceMetricAggregate> }>;
+}
+
+interface DashboardAiStats {
+  today_total: number;
+  breakdown: Record<string, number>;
+  last_updated?: string;
+}
+
+interface DashboardAlert {
+  id: number;
+  title: string;
+  severity: string;
+  created_at: string;
 }
 
 @customElement("dashboard-page")
@@ -108,7 +123,7 @@ export class DashboardPage extends LitElement {
 
     .dashboard-meta { color: var(--muted); font-size: var(--text-sm); display: flex; align-items: center; gap: var(--space-sm); }
     .dashboard-notice { padding: var(--space-sm) var(--space-md); border: 1px solid var(--warn); border-radius: var(--radius-sm); color: var(--warn); background: var(--warn-subtle); font-size: var(--text-sm); }
-    .dashboard__stat-cards { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .dashboard__stat-cards { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
     .dashboard__primary { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, 1fr); gap: var(--space-md); }
     .dashboard-panel { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); padding: var(--space-lg); box-shadow: var(--shadow-sm); }
     .dashboard-panel__header { display: flex; justify-content: space-between; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-md); }
@@ -128,7 +143,7 @@ export class DashboardPage extends LitElement {
     /* ---- Stat Cards Grid ---- */
     .dashboard__stat-cards {
       display: grid;
-      grid-template-columns: repeat(6, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
       gap: var(--space-md);
     }
 
@@ -380,6 +395,12 @@ export class DashboardPage extends LitElement {
       text-align: right;
     }
 
+    .status-item__time small {
+      color: var(--muted);
+      font-size: var(--text-xs);
+      white-space: nowrap;
+    }
+
 
 
     .loading {
@@ -428,40 +449,32 @@ export class DashboardPage extends LitElement {
   @state() private trendLoading = false;
   @state() private resourceOverview: ResourceOverview | null = null;
   @state() private resourceMetrics: ResourceMetricsSummary | null = null;
+  @state() private aiStats: DashboardAiStats | null = null;
+  @state() private recentAlerts: DashboardAlert[] = [];
   @state() private resourceScope: "all" | ResourceType = "all";
   @state() private moduleErrors: string[] = [];
+
+  private readonly _i18n = new I18nController(this);
 
   // ECharts instances for lifecycle management
   private _pieChart: EChartsType | null = null;
   private _pieRO: ResizeObserver | null = null;
   private _trendChart: EChartsType | null = null;
   private _trendRO: ResizeObserver | null = null;
+  private _pieContainer: HTMLDivElement | null = null;
+  private _trendContainer: HTMLDivElement | null = null;
 
   override firstUpdated() {
     this.loadDashboardData();
   }
 
   override updated(changedProperties: Map<string, unknown>) {
-    if (changedProperties.has('dbTypeDistribution') && this.dbTypeDistribution.length > 0) {
-      this._disposePieChart();
-      const container = this.renderRoot.querySelector('.pie-chart-container') as HTMLDivElement;
-      if (container) {
-        const { chart, ro } = this._initPieChart(container, this.dbTypeDistribution);
-        this._pieChart = chart;
-        this._pieRO = ro;
-      }
-    }
-    if (changedProperties.has('capacityTrend') && this.capacityTrend && this.capacityTrend.trend.length > 0) {
-      this._disposeTrendChart();
-      const container = this.renderRoot.querySelector('.trend-chart-container') as HTMLDivElement;
-      if (container) {
-        const times = this.capacityTrend.trend.map(t => t.time);
-        const values = this.capacityTrend.trend.map(t => t.total_size_gb);
-        const { chart, ro } = this._initTrendChart(container, { time: times, values });
-        this._trendChart = chart;
-        this._trendRO = ro;
-      }
-    }
+    const chartStateChanged = changedProperties.has('dbTypeDistribution')
+      || changedProperties.has('capacityTrend')
+      || changedProperties.has('resourceScope')
+      || changedProperties.has('loading');
+    this._syncPieChart(chartStateChanged);
+    this._syncTrendChart(chartStateChanged);
   }
 
   override disconnectedCallback() {
@@ -475,6 +488,7 @@ export class DashboardPage extends LitElement {
     this._pieChart?.dispose();
     this._pieChart = null;
     this._pieRO = null;
+    this._pieContainer = null;
   }
 
   private _disposeTrendChart() {
@@ -482,16 +496,52 @@ export class DashboardPage extends LitElement {
     this._trendChart?.dispose();
     this._trendChart = null;
     this._trendRO = null;
+    this._trendContainer = null;
+  }
+
+  private _databaseChartsVisible(): boolean {
+    return !this.loading && (this.resourceScope === 'all' || this.resourceScope === 'instance');
+  }
+
+  private _syncPieChart(force = false) {
+    const container = this.renderRoot.querySelector('.pie-chart-container') as HTMLDivElement | null;
+    if (!this._databaseChartsVisible() || !container || this.dbTypeDistribution.length === 0) {
+      this._disposePieChart();
+      return;
+    }
+    if (!force && this._pieChart && this._pieContainer === container) return;
+    this._disposePieChart();
+    const { chart, ro } = this._initPieChart(container, this.dbTypeDistribution);
+    this._pieChart = chart;
+    this._pieRO = ro;
+    this._pieContainer = container;
+  }
+
+  private _syncTrendChart(force = false) {
+    const container = this.renderRoot.querySelector('.trend-chart-container') as HTMLDivElement | null;
+    if (!this._databaseChartsVisible() || !container || !this.capacityTrend?.trend.length) {
+      this._disposeTrendChart();
+      return;
+    }
+    if (!force && this._trendChart && this._trendContainer === container) return;
+    this._disposeTrendChart();
+    const times = this.capacityTrend.trend.map((point) => point.time);
+    const values = this.capacityTrend.trend.map((point) => point.total_size_gb);
+    const { chart, ro } = this._initTrendChart(container, { time: times, values });
+    this._trendChart = chart;
+    this._trendRO = ro;
+    this._trendContainer = container;
   }
 
   private async loadDashboardData() {
     const errors: string[] = [];
-    const [overviewResult, metricsResult, alertsResult, instancesResult, capacityResult] = await Promise.allSettled([
+    const [overviewResult, metricsResult, alertsResult, instancesResult, capacityResult, aiStatsResult] = await Promise.allSettled([
       authFetch("/api/resources/overview"),
       authFetch("/api/resources/metrics/summary"),
       authFetch("/api/alerts"),
       authFetch("/api/database/instances"),
       authFetch(`/api/dashboard/capacity-trend?hours=${this.selectedHours}`),
+      authFetch("/api/dashboard/ai-stats"),
     ]);
 
     const responseJson = async (result: PromiseSettledResult<Response>) => {
@@ -502,28 +552,56 @@ export class DashboardPage extends LitElement {
         return null;
       }
     };
-    const [overview, metrics, alertsData, instances, capacity] = await Promise.all([
+    const [overview, metrics, alertsData, instances, capacity, aiStats] = await Promise.all([
       responseJson(overviewResult), responseJson(metricsResult), responseJson(alertsResult),
-      responseJson(instancesResult), responseJson(capacityResult),
+      responseJson(instancesResult), responseJson(capacityResult), responseJson(aiStatsResult),
     ]);
     if (overview) this.resourceOverview = overview as ResourceOverview;
-    else errors.push("资源总览暂不可用");
+    else {
+      this.resourceOverview = null;
+      errors.push(t("dashboard.overviewUnavailable"));
+    }
     if (metrics) this.resourceMetrics = metrics as ResourceMetricsSummary;
-    else errors.push("统一指标暂不可用");
+    else {
+      this.resourceMetrics = null;
+      errors.push(t("dashboard.metricsUnavailable"));
+    }
     if (alertsData) {
-      const alerts = alertsData.items ?? alertsData;
-      const unreadAlerts = alerts.filter((a: any) => !a.acknowledged);
-    } else errors.push("告警暂不可用");
+      const alerts = Array.isArray(alertsData)
+        ? alertsData
+        : alertsData && Array.isArray(alertsData.items) ? alertsData.items : [];
+      this.recentAlerts = alerts
+        .filter((alert: any) => !alert.acknowledged)
+        .slice(0, 3)
+        .map((alert: any) => ({
+          id: Number(alert.id),
+          title: String(alert.title ?? alert.message ?? t('dashboard.unknownAlert')),
+          severity: String(alert.severity ?? alert.level ?? 'info').toLowerCase(),
+          created_at: String(alert.created_at ?? alert.createdAt ?? new Date().toISOString()),
+        }));
+    } else {
+      this.recentAlerts = [];
+      errors.push(t("dashboard.alertsUnavailable"));
+    }
     if (instances) {
       const list = instances as Array<{ id: number; name: string; db_type: string; health_status: string | null; last_health_check_at: string | null }>;
       this.instances = list;
       const typeMap: Record<string, number> = {};
       for (const inst of list) typeMap[inst.db_type || "unknown"] = (typeMap[inst.db_type || "unknown"] || 0) + 1;
       this.dbTypeDistribution = Object.entries(typeMap).map(([name, value]) => ({ name, value }));
+    } else {
+      this.instances = [];
+      this.dbTypeDistribution = [];
     }
     if (capacity) this.capacityTrend = capacity;
+    else this.capacityTrend = null;
+    if (aiStats) this.aiStats = aiStats as DashboardAiStats;
+    else {
+      this.aiStats = null;
+      errors.push(t("dashboard.aiUnavailable"));
+    }
     this.moduleErrors = errors;
-    this.error = !this.resourceOverview && !this.resourceMetrics ? "统一资源总览暂不可用" : null;
+    this.error = !this.resourceOverview && !this.resourceMetrics ? t("dashboard.overviewUnavailable") : null;
     this.loading = false;
   }
 
@@ -550,7 +628,7 @@ export class DashboardPage extends LitElement {
       if (instanceId) qp.set('instance_id', String(instanceId));
 
       const res = await authFetch(`/api/dashboard/capacity-trend?${qp.toString()}`);
-      if (!res.ok) throw new Error("加载容量趋势失败");
+      if (!res.ok) throw new Error(t("dashboard.capacityLoadFailed"));
       const data = await res.json();
       this.capacityTrend = data;
     } catch (err: any) {
@@ -569,7 +647,7 @@ export class DashboardPage extends LitElement {
         trigger: "item",
         formatter: (params: any) => {
           const pct = ((params.value / total) * 100).toFixed(1);
-          return `${params.name}<br/>实例数: ${params.value}<br/>占比: ${pct}%`;
+          return `${params.name}<br/>${t("dashboard.instanceCount")}: ${params.value}<br/>${t("dashboard.shareLabel")}: ${pct}%`;
         },
       },
       legend: {
@@ -618,7 +696,7 @@ export class DashboardPage extends LitElement {
       tooltip: {
         trigger: "axis",
         formatter: (params: any) => {
-          return `${params[0].name}<br/>数据总量: ${params[0].value.toFixed(2)} GB`;
+          return `${params[0].name}<br/>${t("dashboard.dataTotal")}: ${params[0].value.toFixed(2)} GB`;
         },
       },
       grid: { left: 50, right: 20, top: 10, bottom: 30 },
@@ -660,13 +738,17 @@ export class DashboardPage extends LitElement {
   }
 
   private _resourceTypeLabel(type: ResourceType): string {
-    return type === "instance" ? "数据库" : type === "server" ? "服务器" : "网络设备";
+    return type === "instance" ? t("dashboard.database") : type === "server" ? t("dashboard.server") : t("dashboard.networkDevice");
   }
 
   private _resourceStatusVariant(item: ResourceOverviewItem): "ok" | "warn" | "danger" | "muted" {
-    if (item.freshness === "missing" || item.quality === "invalid") return "muted";
-    if (item.freshness === "stale" || item.quality === "degraded" || item.quality === "partial" || item.unresolvedAlerts > 0) return "warn";
+    // An explicit outage or missing collection evidence is actionable even
+    // when no alert has been emitted yet, so it must remain in the danger
+    // queue instead of being hidden as a muted/unknown state.
     if (["offline", "error", "critical", "unreachable", "down"].includes(item.status.toLowerCase())) return "danger";
+    if (item.freshness === "missing") return "danger";
+    if (item.quality === "invalid") return "danger";
+    if (item.freshness === "stale" || item.quality === "degraded" || item.quality === "partial" || item.unresolvedAlerts > 0) return "warn";
     return "ok";
   }
 
@@ -691,26 +773,32 @@ export class DashboardPage extends LitElement {
   }
 
   private _scopeLabel(scope: "all" | ResourceType): string {
-    return scope === "all" ? "全部资源" : this._resourceTypeLabel(scope);
+    return scope === "all" ? t("dashboard.allResources") : this._resourceTypeLabel(scope);
   }
 
   private _resourceMetricRows(): Array<{ label: string; value: string; coverage: string }> {
     const scope = this.resourceScope === "all" ? null : this.resourceScope;
     const scopes = scope ? [scope] : (["instance", "server", "network_device"] as ResourceType[]);
     const labels: Record<string, string> = {
-      cpu_usage: "CPU 使用率", memory_usage: "内存使用率", disk_usage: "磁盘使用率",
-      connections: "活动连接", qps: "QPS", load_1min: "1 分钟负载",
-      device_reachability: "设备可达率", device_cpu_percent: "设备 CPU", device_memory_percent: "设备内存",
-      device_temperature_celsius: "设备温度",
+      cpu_usage: t("dashboard.metrics.cpuUsage"), memory_usage: t("dashboard.metrics.memoryUsage"), disk_usage: t("dashboard.metrics.diskUsage"),
+      connections: t("dashboard.metrics.connections"), qps: "QPS", load_1min: t("dashboard.metrics.load1m"),
+      device_reachability: t("dashboard.metrics.deviceReachability"), device_cpu_percent: t("dashboard.metrics.deviceCpu"), device_memory_percent: t("dashboard.metrics.deviceMemory"),
+      device_temperature_celsius: t("dashboard.metrics.deviceTemperature"),
     };
     const rows: Array<{ label: string; value: string; coverage: string }> = [];
     for (const type of scopes) {
       const metrics = this.resourceMetrics?.scopes[type]?.metrics ?? {};
       for (const [metricId, metric] of Object.entries(metrics)) {
         if (metric.value == null || !metric.resourceCount) continue;
-        const suffix = /percent|usage|reachability/.test(metricId) ? "%" : metricId.includes("temperature") ? " °C" : "";
-        const value = metric.value < 10 && suffix === "%" ? metric.value.toFixed(1) : Math.round(metric.value * 10) / 10;
-        rows.push({ label: `${this._resourceTypeLabel(type)} · ${labels[metricId] ?? metricId}`, value: `${value}${suffix}`, coverage: `${metric.resourceCount} 个资源` });
+        let value: string;
+        if (metricId === "device_reachability") {
+          value = metric.value >= 1 ? t("dashboard.reachable") : t("dashboard.unreachable");
+        } else {
+          const suffix = /(?:percent|usage)$/.test(metricId) || metricId === "cpu_usage" ? "%" : metricId.includes("temperature") ? " °C" : "";
+          const numeric = metric.value < 10 && suffix === "%" ? metric.value.toFixed(1) : String(Math.round(metric.value * 10) / 10);
+          value = `${numeric}${suffix}`;
+        }
+        rows.push({ label: `${this._resourceTypeLabel(type)} · ${labels[metricId] ?? metricId}`, value, coverage: t("dashboard.resourceCoverage", { count: String(metric.resourceCount) }) });
       }
     }
     return rows.slice(0, 8);
@@ -720,11 +808,56 @@ export class DashboardPage extends LitElement {
     return this._visibleResourceItems().map((item) => ({
       resource: html`<span>${this._resourceTypeLabel(item.resource.type)} · ${item.label}</span>`,
       status: html`<app-badge variant=${this._resourceStatusVariant(item)}>${item.status || "unknown"}</app-badge>`,
-      freshness: html`<app-badge variant=${item.freshness === "fresh" ? "ok" : item.freshness === "stale" ? "warn" : "muted"}>${item.freshness === "fresh" ? "新鲜" : item.freshness === "stale" ? "已过期" : "无数据"}</app-badge>`,
+      freshness: html`<app-badge variant=${item.freshness === "fresh" ? "ok" : item.freshness === "stale" ? "warn" : "danger"}>${this._freshnessLabel(item.freshness)}</app-badge>`,
       alerts: item.unresolvedAlerts,
-      relations: `${item.relationCount} · 影响 ${item.impactScope.length}`,
+      relations: t("dashboard.relationsValue", { relations: String(item.relationCount), impact: String(item.impactScope.length) }),
       gaps: item.gaps.length ? item.gaps.join(", ") : "-",
     }));
+  }
+
+  private _freshnessLabel(freshness: ResourceOverviewItem["freshness"]): string {
+    return freshness === "fresh" ? t("dashboard.fresh") : freshness === "stale" ? t("dashboard.stale") : t("dashboard.missing");
+  }
+
+  private _combinedDataQuality(): ResourceOverview["dataQuality"] {
+    const overviewQuality = this.resourceOverview?.dataQuality;
+    const metricsQuality = this.resourceMetrics?.dataQuality;
+    if (!overviewQuality && !metricsQuality) return "empty";
+    if (!overviewQuality || !metricsQuality) return "partial";
+    if (overviewQuality === "empty" && metricsQuality === "empty") return "empty";
+    if (overviewQuality === "partial" || metricsQuality === "partial"
+      || overviewQuality === "empty" || metricsQuality === "empty") return "partial";
+    return "complete";
+  }
+
+  private _qualityLabel(quality: ResourceOverview["dataQuality"]): string {
+    return quality === "complete" ? t("dashboard.complete") : quality === "partial" ? t("dashboard.partial") : t("dashboard.empty");
+  }
+
+  private _riskPriority(item: ResourceOverviewItem): number {
+    const variant = this._resourceStatusVariant(item);
+    return variant === "danger" ? 2 : variant === "warn" ? 1 : 0;
+  }
+
+  private _renderRecentAlerts() {
+    return html`
+      <section class="dashboard-panel">
+        <div class="dashboard-panel__header">
+          <span class="dashboard-panel__title">${icons['triangle-alert']} ${t("dashboard.recentAlerts")}</span>
+          <button class="btn-ghost" @click=${() => this._navigateTo('alerts')}>${t("dashboard.viewAlerts")}</button>
+        </div>
+        ${this.recentAlerts.length ? html`<div class="status-list">${this.recentAlerts.map((alert) => html`
+          <div class="status-item" @click=${() => this._navigateTo('alerts')}>
+            <div class="status-item__left">
+              <div class="status-item__icon ${alert.severity === 'critical' || alert.severity === 'error' ? 'danger' : alert.severity === 'warning' || alert.severity === 'warn' ? 'warn' : 'ok'}">
+                ${alert.severity === 'critical' || alert.severity === 'error' ? icons['alert-circle'] : alert.severity === 'warning' || alert.severity === 'warn' ? icons['triangle-alert'] : icons['info']}
+              </div>
+              <span class="status-item__name">${alert.title}</span>
+            </div>
+            <span class="status-item__time">${this._formatTime(alert.created_at)}</span>
+          </div>`)} </div>` : html`<app-empty-state title=${t("dashboard.noRecentAlerts")} description=${t("dashboard.systemNormal")}><div slot="icon">${icons['check-circle']}</div></app-empty-state>`}
+      </section>
+    `;
   }
 
   private _renderResourceOverview() {
@@ -732,18 +865,18 @@ export class DashboardPage extends LitElement {
     if (!overview) return nothing;
     return html`
       <app-card class="resource-overview-card">
-        <span slot="header">资源清单与影响范围</span>
-        <div class="resource-overview-summary"><span>当前范围：${this._scopeLabel(this.resourceScope)}</span><span>影响关系和采集缺口</span></div>
+        <span slot="header">${t("dashboard.resourceInventory")}</span>
+        <div class="resource-overview-summary"><span>${t("dashboard.currentScope")}：${this._scopeLabel(this.resourceScope)}</span><span>${t("dashboard.relationsAndGaps")}</span></div>
         ${this._visibleResourceItems().length
           ? html`<div class="resource-overview-table"><app-data-table .columns=${[
-            { key: "resource", label: "资源" },
-            { key: "status", label: "状态" },
-            { key: "freshness", label: "数据新鲜度" },
-            { key: "alerts", label: "未解决告警", textAlign: "right" },
-            { key: "relations", label: "关系 / 影响范围" },
-            { key: "gaps", label: "缺口" },
-          ]} .rows=${this._resourceRows()} .dense=${true} emptyMessage="暂无资源"></app-data-table></div>`
-          : html`<app-empty-state title="暂无基础资源" description="请先纳管数据库、服务器或网络设备"></app-empty-state>`}
+            { key: "resource", label: t("dashboard.resource") },
+            { key: "status", label: t("dashboard.status") },
+            { key: "freshness", label: t("dashboard.freshness") },
+            { key: "alerts", label: t("dashboard.unresolvedAlerts"), textAlign: "right" },
+            { key: "relations", label: t("dashboard.relationsImpact") },
+            { key: "gaps", label: t("dashboard.gaps") },
+          ]} .rows=${this._resourceRows()} .dense=${true} emptyMessage=${t("dashboard.noResources")}></app-data-table></div>`
+          : html`<app-empty-state title=${t("dashboard.noResources")} description=${t("dashboard.addResources")}></app-empty-state>`}
       </app-card>
     `;
   }
@@ -758,10 +891,10 @@ export class DashboardPage extends LitElement {
     const diff = Date.now() - date.getTime();
     const minutes = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);
-    if (minutes < 1) return "刚刚";
-    if (minutes < 60) return `${minutes} 分钟前`;
-    if (hours < 24) return `${hours} 小时前`;
-    return "今天";
+    if (minutes < 1) return t("dashboard.justNow");
+    if (minutes < 60) return t("dashboard.minutesAgo", { count: String(minutes) });
+    if (hours < 24) return t("dashboard.hoursAgo", { count: String(hours) });
+    return t("dashboard.today");
   }
 
   private _onInstanceChange(e: Event) {
@@ -791,7 +924,7 @@ export class DashboardPage extends LitElement {
   override render() {
     if (this.loading) {
       return html`<div class="loading" style="flex-direction:column;gap:16px;padding:40px;">
-          <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:var(--space-md);">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--space-md);">
             <div class="skeleton-stat" style="width:100%;height:80px;"></div>
             <div class="skeleton-stat" style="width:100%;height:80px;"></div>
             <div class="skeleton-stat" style="width:100%;height:80px;"></div>
@@ -812,43 +945,55 @@ export class DashboardPage extends LitElement {
     }
     const summary = this._visibleResourceSummary();
     const typeCounts = (['instance', 'server', 'network_device'] as ResourceType[]).map((type) => ({ type, count: this._visibleResourceItems().filter((item) => item.resource.type === type).length }));
-    const riskItems = this._visibleResourceItems().filter((item) => item.unresolvedAlerts > 0 || this._resourceStatusVariant(item) === 'danger').sort((a, b) => (b.unresolvedAlerts - a.unresolvedAlerts) || (this._resourceStatusVariant(a) === 'danger' ? -1 : 1)).slice(0, 5);
+    const riskItems = this._visibleResourceItems()
+      .filter((item) => this._resourceStatusVariant(item) !== 'ok')
+      .sort((a, b) => this._riskPriority(b) - this._riskPriority(a)
+        || b.unresolvedAlerts - a.unresolvedAlerts
+        || b.impactScope.length - a.impactScope.length)
+      .slice(0, 5);
+    const freshnessCounts = {
+      fresh: this._visibleResourceItems().filter((item) => item.freshness === 'fresh').length,
+      stale: this._visibleResourceItems().filter((item) => item.freshness === 'stale').length,
+      missing: this._visibleResourceItems().filter((item) => item.freshness === 'missing').length,
+    };
+    const quality = this._combinedDataQuality();
     return html`
       <div class="dashboard-grid">
         <div class="dashboard-toolbar">
-          <div class="scope-switch" role="tablist" aria-label="资源范围">
+          <div class="scope-switch" role="tablist" aria-label=${t("dashboard.resourceScope")}>
             ${(['all', 'instance', 'server', 'network_device'] as const).map((scope) => html`
               <button class=${this.resourceScope === scope ? 'active' : ''} aria-selected=${this.resourceScope === scope} @click=${() => { this.resourceScope = scope; }}>${this._scopeLabel(scope)}</button>
             `)}
           </div>
           <div class="dashboard-meta">
-            <span>采集于 ${this.resourceOverview?.collectedAt ? this._formatTime(this.resourceOverview.collectedAt) : '未知'}</span>
-            <app-badge variant=${this.resourceOverview?.dataQuality === 'complete' ? 'ok' : this.resourceOverview?.dataQuality === 'partial' ? 'warn' : 'muted'}>${this.resourceOverview?.dataQuality === 'complete' ? '数据完整' : this.resourceOverview?.dataQuality === 'partial' ? '部分可用' : '无数据'}</app-badge>
-            <button class="btn-ghost" @click=${() => this.loadDashboardData()}>刷新</button>
+            <span>${t("dashboard.collectedAt")} ${this.resourceOverview?.collectedAt ? this._formatTime(this.resourceOverview.collectedAt) : t("dashboard.unknown")}</span>
+            <app-badge variant=${quality === 'complete' ? 'ok' : quality === 'partial' ? 'warn' : 'muted'}>${this._qualityLabel(quality)}</app-badge>
+            <button class="btn-ghost" @click=${() => this.loadDashboardData()}>${t("dashboard.refresh")}</button>
           </div>
         </div>
         ${this.moduleErrors.length ? html`<div class="dashboard-notice">${this.moduleErrors.join(' · ')}</div>` : nothing}
 
         <div class="dashboard__stat-cards">
-          <stat-card label="纳管资源" value=${summary.total} hint=${typeCounts.map(({ type, count }) => `${this._resourceTypeLabel(type)} ${count}`).join(' · ')}></stat-card>
-          <stat-card label="健康 / 在线" value=${summary.healthy} variant="ok" hint=${`占比 ${summary.total ? Math.round(summary.healthy / summary.total * 100) : 0}%`}></stat-card>
-          <stat-card label="降级" value=${summary.degraded} variant="warn" hint="需要关注的资源"></stat-card>
-          <stat-card label="严重 / 离线" value=${summary.critical} variant="danger" hint="优先处理"></stat-card>
-          <stat-card label="活跃事件" value=${summary.activeIncidents} variant=${summary.activeIncidents ? 'warn' : 'ok'} hint="未解决告警"></stat-card>
-          <stat-card label="过期 / 缺失数据" value=${summary.staleOrMissing} variant=${summary.staleOrMissing ? 'warn' : 'ok'} hint="采集质量"></stat-card>
+          <stat-card label=${t("dashboard.managedResources")} value=${summary.total} hint=${typeCounts.map(({ type, count }) => `${this._resourceTypeLabel(type)} ${count}`).join(' · ')}></stat-card>
+          <stat-card label=${t("dashboard.healthyOnline")} value=${summary.healthy} variant="ok" hint=${t("dashboard.share", { percent: String(summary.total ? Math.round(summary.healthy / summary.total * 100) : 0) })}></stat-card>
+          <stat-card label=${t("dashboard.degraded")} value=${summary.degraded} variant="warn" hint=${t("dashboard.needsAttention")}></stat-card>
+          <stat-card label=${t("dashboard.criticalOffline")} value=${summary.critical} variant="danger" hint=${t("dashboard.prioritize")}></stat-card>
+          <stat-card label=${t("dashboard.activeIncidents")} value=${summary.activeIncidents} variant=${summary.activeIncidents ? 'warn' : 'ok'} hint=${t("dashboard.unresolvedAlerts")}></stat-card>
+          <stat-card label=${t("dashboard.staleMissing")} value=${summary.staleOrMissing} variant=${summary.staleOrMissing ? 'warn' : 'ok'} hint=${t("dashboard.collectionQuality")}></stat-card>
+          <stat-card label=${t("dashboard.aiAnalyses")} value=${this.aiStats?.today_total ?? 0} hint=${t("dashboard.today")}></stat-card>
         </div>
 
         <div class="dashboard__primary">
           <section class="dashboard-panel">
-            <div class="dashboard-panel__header"><span class="dashboard-panel__title">${icons['triangle-alert']} 当前风险</span><button class="btn-ghost" @click=${() => this._navigateTo('alerts')}>查看告警</button></div>
+            <div class="dashboard-panel__header"><span class="dashboard-panel__title">${icons['triangle-alert']} ${t("dashboard.riskQueue")}</span><button class="btn-ghost" @click=${() => this._navigateTo('alerts')}>${t("dashboard.viewAlerts")}</button></div>
             ${riskItems.length ? html`<div class="status-list">${riskItems.map((item) => html`
               <div class="status-item" @click=${() => this._navigateTo(item.resource.type === 'instance' ? 'instances-db' : item.resource.type === 'server' ? 'servers' : 'network-devices')}>
                 <div class="status-item__left"><div class="status-item__icon ${this._resourceStatusVariant(item)}">${icons['triangle-alert']}</div><span class="status-item__name">${this._resourceTypeLabel(item.resource.type)} · ${item.label}</span></div>
-                <span class="status-item__time">${item.unresolvedAlerts ? `${item.unresolvedAlerts} 个告警` : item.status}</span>
-              </div>` )}</div>` : html`<app-empty-state title="暂无高风险资源" description="当前纳管资源没有需要立即处理的风险"><div slot="icon">${icons['check-circle']}</div></app-empty-state>`}
+                <span class="status-item__time">${item.unresolvedAlerts ? t("dashboard.alertCount", { count: String(item.unresolvedAlerts) }) : item.status}<br><small>${this._freshnessLabel(item.freshness)} · ${t("dashboard.impactCount", { count: String(item.impactScope.length) })}</small></span>
+              </div>` )}</div>` : html`<app-empty-state title=${t("dashboard.noRisks")} description=${t("dashboard.noRisksDescription")}><div slot="icon">${icons['check-circle']}</div></app-empty-state>`}
           </section>
           <section class="dashboard-panel">
-            <div class="dashboard-panel__header"><span class="dashboard-panel__title">资源健康分布</span><span class="dashboard-meta">${this._scopeLabel(this.resourceScope)}</span></div>
+            <div class="dashboard-panel__header"><span class="dashboard-panel__title">${t("dashboard.healthDistribution")}</span><span class="dashboard-meta">${this._scopeLabel(this.resourceScope)}</span></div>
             <div class="health-distribution">${typeCounts.filter(({ count }) => count > 0).map(({ type, count }) => {
               const items = this._visibleResourceItems().filter((item) => item.resource.type === type);
               const ok = items.filter((item) => this._resourceStatusVariant(item) === 'ok').length;
@@ -861,29 +1006,38 @@ export class DashboardPage extends LitElement {
         </div>
 
         <section class="dashboard-panel">
-          <div class="dashboard-panel__header"><span class="dashboard-panel__title">统一指标快照</span><span class="dashboard-meta">最新可用观测</span></div>
-          ${this._resourceMetricRows().length ? html`<div class="metric-list">${this._resourceMetricRows().map((metric) => html`<div class="metric-row"><div><span class="metric-row__label">${metric.label}</span><span class="metric-row__coverage">${metric.coverage}</span></div><span class="metric-row__value">${metric.value}</span></div>`)}</div>` : html`<app-empty-state title="暂无统一指标" description="请确认对应资源已启用采集"></app-empty-state>`}
+          <div class="dashboard-panel__header"><span class="dashboard-panel__title">${t("dashboard.collectionQuality")}</span><app-badge variant=${quality === 'complete' ? 'ok' : quality === 'partial' ? 'warn' : 'muted'}>${this._qualityLabel(quality)}</app-badge></div>
+          <div class="health-distribution">
+            ${(['fresh', 'stale', 'missing'] as const).map((freshness) => html`
+              <div class="health-row"><span>${this._freshnessLabel(freshness)}</span><div class="health-track"><span class=${freshness === 'fresh' ? 'ok' : freshness === 'stale' ? 'warn' : 'danger'} style="width:${summary.total ? freshnessCounts[freshness] / summary.total * 100 : 0}%"></span></div><span class="health-count">${freshnessCounts[freshness]}</span></div>
+            `)}
+          </div>
+        </section>
+
+        <section class="dashboard-panel">
+          <div class="dashboard-panel__header"><span class="dashboard-panel__title">${t("dashboard.metricSnapshot")}</span><span class="dashboard-meta">${t("dashboard.latestObservations")}</span></div>
+          ${this._resourceMetricRows().length ? html`<div class="metric-list">${this._resourceMetricRows().map((metric) => html`<div class="metric-row"><div><span class="metric-row__label">${metric.label}</span><span class="metric-row__coverage">${metric.coverage}</span></div><span class="metric-row__value">${metric.value}</span></div>`)}</div>` : html`<app-empty-state title=${t("dashboard.noMetrics")} description=${t("dashboard.enableCollection")}></app-empty-state>`}
         </section>
 
         ${this.resourceScope === 'all' || this.resourceScope === 'instance' ? html`<div class="dashboard__charts">
           <!-- DB Type Distribution Pie Chart -->
           <div class="chart-card">
             <div class="chart-card__header">
-              <span class="chart-card__title">${icons['database']} 数据库类型分布</span><span class="dashboard-meta">数据库专属</span>
+              <span class="chart-card__title">${icons['database']} ${t("dashboard.dbTypeDistribution")}</span><span class="dashboard-meta">${t("dashboard.databaseOnly")}</span>
             </div>
             ${this.dbTypeDistribution.length > 0
               ? html`<div class="chart-container pie-chart-container"></div>`
-              : html`<div class="chart-empty-state">暂无数据库实例</div>`
+              : html`<div class="chart-empty-state">${t("dashboard.noDatabaseInstances")}</div>`
             }
           </div>
 
           <!-- Data Volume Trend Line Chart -->
           <div class="chart-card">
             <div class="chart-card__header">
-              <span class="chart-card__title">${icons['bar-chart']} 数据容量趋势</span>
+              <span class="chart-card__title">${icons['bar-chart']} ${t("dashboard.capacityTrend")}</span>
               <div class="chart-card__controls">
                 <select class="instance-select" @change=${this._onInstanceChange}>
-                  <option value="">全库汇总</option>
+                  <option value="">${t("dashboard.allDatabases")}</option>
                   ${this._instanceOptions}
                 </select>
                 <button class="time-btn ${this.selectedHours === 24 ? 'active' : ''}" @click=${() => this.reloadTrend({ hours: 24, instanceId: this.selectedInstanceId })}>24h</button>
@@ -891,21 +1045,22 @@ export class DashboardPage extends LitElement {
                 <button class="time-btn ${this.selectedHours === 720 ? 'active' : ''}" @click=${() => this.reloadTrend({ hours: 720, instanceId: this.selectedInstanceId })}>30d</button>
                 <div class="date-picker-group">
                   <input type="date" class="date-picker" .value=${this.startDate} @change=${this._onStartDateChange}>
-                  <span class="date-separator">至</span>
+                  <span class="date-separator">${t("dashboard.to")}</span>
                   <input type="date" class="date-picker" .value=${this.endDate} @change=${this._onEndDateChange}>
                 </div>
               </div>
             </div>
             ${this.capacityTrend && this.capacityTrend.trend.length > 0
               ? html`
-                  <div class="chart-current-total">当前总量 <span class="total-badge">${this._formatBytes(this.capacityTrend.current_total_gb)}</span></div>
+                  <div class="chart-current-total">${t("dashboard.currentTotal")} <span class="total-badge">${this._formatBytes(this.capacityTrend.current_total_gb)}</span></div>
                   <div class="chart-container trend-chart-container"></div>
                 `
-              : html`<div class="chart-empty-state">暂无容量数据，请确保监控采集已启用</div>`
+              : html`<div class="chart-empty-state">${t("dashboard.noCapacityData")}</div>`
             }
           </div>
         </div>` : nothing}
 
+        ${this._renderRecentAlerts()}
         ${this._renderResourceOverview()}
       </div>
     `;

@@ -37,5 +37,9 @@ describe('UI-02: navigation contract', () => {
     expect(TAB_REQUIRED_PERMISSIONS.dashboard).toBe('view_dashboard');
     expect(hasSlidePermission(new Set(['servers:view']), TAB_REQUIRED_PERMISSIONS.dashboard)).toBe(true);
     expect(hasSlidePermission(new Set(['network_devices:view']), TAB_REQUIRED_PERMISSIONS.dashboard)).toBe(true);
+    expect(hasSlidePermission(new Set(['instance:*']), TAB_REQUIRED_PERMISSIONS.dashboard)).toBe(true);
+    expect(hasSlidePermission(new Set(['servers:*']), TAB_REQUIRED_PERMISSIONS.dashboard)).toBe(true);
+    expect(hasSlidePermission(new Set(['network_devices:*']), TAB_REQUIRED_PERMISSIONS.dashboard)).toBe(true);
+    expect(hasSlidePermission(new Set(['*:view']), TAB_REQUIRED_PERMISSIONS.dashboard)).toBe(true);
   });
 });

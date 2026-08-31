@@ -181,6 +181,33 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+function finiteDateMs(value: Date | null | undefined): number | null {
+  if (!(value instanceof Date)) return null;
+  const timestamp = value.getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+/**
+ * Only current, numeric observations are safe to put in a dashboard
+ * aggregate. A null validUntil means the producer did not provide an
+ * explicit expiry window; observedAt is still required so the result can be
+ * ordered and future-dated samples cannot masquerade as current state.
+ */
+function isUsableMetricObservation(
+  observation: Observation,
+  nowMs: number,
+): observation is Observation & { value: number; observedAt: Date } {
+  if (observation.quality !== 'good' && observation.quality !== 'degraded') return false;
+  if (observation.value == null || typeof observation.value !== 'number' || !Number.isFinite(observation.value)) return false;
+  const observedAtMs = finiteDateMs(observation.observedAt);
+  if (observedAtMs === null || observedAtMs > nowMs) return false;
+  if (observation.validUntil !== null && observation.validUntil !== undefined) {
+    const validUntilMs = finiteDateMs(observation.validUntil);
+    if (validUntilMs === null || validUntilMs <= nowMs) return false;
+  }
+  return true;
+}
+
 export class ResourceDiagnosticService {
   constructor(
     private readonly dependencies: ResourceDiagnosticDependencies,
@@ -321,58 +348,90 @@ export class ResourceDiagnosticService {
         scopes[type].metrics[metricId] = { value: null, resourceCount: 0, observedAt: null };
       }
     }
+
+    type ResourceMetricSnapshot = {
+      resource: ResourceDetail;
+      latestByMetric: Map<string, Observation>;
+      failed: boolean;
+      hasQualityGap: boolean;
+    };
+    const nowMs = now.getTime();
     let hadFailure = false;
     let hadMissing = false;
-    await Promise.all(resources.map(async (resource) => {
-      let observations: Observation[];
+
+    // Keep inventory fan-out bounded. Resolve each resource independently,
+    // then aggregate in inventory order so equal timestamps are deterministic.
+    const snapshots = await mapWithConcurrency(resources, OVERVIEW_CONCURRENCY, async (resource): Promise<ResourceMetricSnapshot> => {
       try {
-        observations = await this.dependencies.observations(resource.resource, actor, { limit: 64 });
-      } catch {
-        hadFailure = true;
-        return;
-      }
-      const allowed = new Set(metricIdsByType[resource.resource.type]);
-      const latestByMetric = new Map<string, Observation>();
-      for (const observation of observations) {
-        if (!allowed.has(observation.metricId)) continue;
-        const previous = latestByMetric.get(observation.metricId);
-        if (!previous || (observation.observedAt?.getTime() ?? 0) > (previous.observedAt?.getTime() ?? 0)) {
-          latestByMetric.set(observation.metricId, observation);
+        const result = await this.dependencies.observations(resource.resource, actor, { limit: 64 });
+        if (!Array.isArray(result)) return { resource, latestByMetric: new Map(), failed: true, hasQualityGap: true };
+        const allowed = new Set(metricIdsByType[resource.resource.type]);
+        const latestByMetric = new Map<string, Observation>();
+        let hasQualityGap = false;
+        for (const observation of result) {
+          if (!observation || !allowed.has(observation.metricId)) continue;
+          if (!isUsableMetricObservation(observation, nowMs)) {
+            hasQualityGap = true;
+            continue;
+          }
+          if (observation.quality === 'degraded') hasQualityGap = true;
+          const previous = latestByMetric.get(observation.metricId);
+          const observedAtMs = observation.observedAt.getTime();
+          if (!previous || observedAtMs > previous.observedAt!.getTime()) latestByMetric.set(observation.metricId, observation);
         }
+        return { resource, latestByMetric, failed: false, hasQualityGap };
+      } catch {
+        return { resource, latestByMetric: new Map(), failed: true, hasQualityGap: true };
       }
-      for (const metricId of allowed) {
-        const observation = latestByMetric.get(metricId);
-        if (!observation || observation.value == null || observation.quality === 'invalid') {
+    });
+
+    for (const snapshot of snapshots) {
+      const type = snapshot.resource.resource.type;
+      if (snapshot.failed) {
+        hadFailure = true;
+        hadMissing = true;
+        continue;
+      }
+      if (snapshot.hasQualityGap) hadMissing = true;
+      for (const metricId of metricIdsByType[type]) {
+        const observation = snapshot.latestByMetric.get(metricId);
+        if (!observation) {
           hadMissing = true;
           continue;
         }
-        const current = scopes[resource.resource.type].metrics[metricId];
-        if (!current) {
-          scopes[resource.resource.type].metrics[metricId] = {
-            value: observation.value,
-            resourceCount: 1,
-            observedAt: observation.observedAt?.toISOString() ?? null,
-          };
+        const current = scopes[type].metrics[metricId];
+        const observedAtMs = observation.observedAt!.getTime();
+        const observedAt = observation.observedAt!.toISOString();
+
+        // Reachability is a state signal. Averaging 0 and 1 across devices
+        // would produce a percentage that does not describe any actual state.
+        if (metricId === 'device_reachability') {
+          const currentObservedAtMs = current.observedAt ? Date.parse(current.observedAt) : null;
+          if (current.resourceCount === 0 || currentObservedAtMs === null || observedAtMs > currentObservedAtMs) {
+            current.value = observation.value;
+            current.observedAt = observedAt;
+          }
+          current.resourceCount += 1;
           continue;
         }
+
         const isCountMetric = metricId === 'connections' || metricId === 'qps';
-        const currentValue = current.value ?? 0;
-        current.value = isCountMetric
-          ? currentValue + observation.value
-          : ((currentValue * current.resourceCount) + observation.value) / (current.resourceCount + 1);
+        if (current.resourceCount === 0 || current.value === null) {
+          current.value = observation.value;
+        } else {
+          current.value = isCountMetric
+            ? current.value + observation.value
+            : ((current.value * current.resourceCount) + observation.value) / (current.resourceCount + 1);
+        }
         current.resourceCount += 1;
-        const observedAt = observation.observedAt?.toISOString() ?? null;
-        if (observedAt && (!current.observedAt || observedAt > current.observedAt)) current.observedAt = observedAt;
+        if (!current.observedAt || observedAtMs > Date.parse(current.observedAt)) current.observedAt = observedAt;
       }
-      for (const metricId of metricIdsByType[resource.resource.type]) {
-        if (!scopes[resource.resource.type].metrics[metricId]) hadMissing = true;
-      }
-    }));
+    }
     const hasValues = Object.values(scopes).some((scope) => Object.values(scope.metrics).some((metric) => metric.resourceCount > 0));
     return {
       schemaVersion: 1,
       collectedAt: now.toISOString(),
-      dataQuality: !resources.length || !hasValues ? 'empty' : hadFailure || hadMissing ? 'partial' : 'complete',
+      dataQuality: !resources.length ? 'empty' : !hasValues || hadFailure || hadMissing ? 'partial' : 'complete',
       scopes,
     };
   }
