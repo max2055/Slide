@@ -119,6 +119,21 @@ describe('NetworkDeviceCollector', () => {
     expect(persistence.updateStatus).toHaveBeenCalledWith(7, 'unreachable');
   });
 
+  it('re-reads stored credentials and recovers on the next collection', async () => {
+    let storedCredentials: typeof credentials | null = null;
+    const persistence = store({ getCredentials: vi.fn(async () => storedCredentials) });
+    const snmp = adapter();
+    const collector = new NetworkDeviceCollector(persistence, snmp as any);
+
+    await expect(collector.collectDevice(7)).resolves.toEqual({ success: false, error: 'SNMP_AUTH_FAILED' });
+    storedCredentials = credentials;
+    await expect(collector.collectDevice(7)).resolves.toMatchObject({ success: true });
+
+    expect(persistence.getCredentials).toHaveBeenCalledTimes(2);
+    expect(snmp.probe).toHaveBeenCalledTimes(1);
+    expect(persistence.updateStatus).toHaveBeenLastCalledWith(7, 'online');
+  });
+
   it('does not persist unknown observations as zeroes', async () => {
     const persistence = store();
     const snmp = adapter({ collectSystemMetrics: vi.fn(async () => [observation('device_temperature_celsius', null, 'unknown')]) });

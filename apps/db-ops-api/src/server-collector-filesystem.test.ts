@@ -104,6 +104,31 @@ describe('server collector Linux lifecycle', () => {
     });
   });
 
+  it('re-reads stored credentials and recovers on the next collection', async () => {
+    mocks.getDecryptedCredentials
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ username: 'ops', password: 'secret' });
+    mocks.execCommands.mockImplementation(async (_client: unknown, commands: string[]) => {
+      if (commands.length === 1 && commands[0] === 'LC_ALL=C LANG=C uname -s') return [ok('Linux\n')];
+      if (commands[0] === 'LC_ALL=C LANG=C df -Pi') {
+        return [failed(), ok('/dev/sda1 /var/lib/mysql xfs\n')];
+      }
+      return commands.map((command) => command === 'LC_ALL=C LANG=C df -P -B1'
+        ? ok('Filesystem 1-blocks Used Available Capacity Mounted on\n/dev/sda1 1000 400 600 40% /var/lib/mysql\n')
+        : ok('1\n'));
+    });
+    const collector = new ServerCollector();
+
+    await expect(collector.collectServer(9)).resolves.toEqual({
+      success: false, error: 'SERVER_CREDENTIALS_UNAVAILABLE',
+    });
+    await expect(collector.collectServer(9)).resolves.toMatchObject({ success: true });
+
+    expect(mocks.getDecryptedCredentials).toHaveBeenCalledTimes(2);
+    expect(mocks.getConnection).toHaveBeenCalledTimes(1);
+    expect(mocks.updateServerStatus).toHaveBeenLastCalledWith(9, 'online');
+  });
+
   it.each([
     'SSH_COMMAND_TIMEOUT',
     'SSH_COMMAND_OUTPUT_LIMIT',
