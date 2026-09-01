@@ -7,7 +7,7 @@ import {
 } from './network-device-database-service.js';
 import { HuaweiAdapter, type HuaweiInterfaceSnapshot, type HuaweiMetricObservation, type HuaweiSnmpTransport } from './huawei-adapter.js';
 import { SnmpClient } from './snmp-client.js';
-import type { SnmpV3Config } from './snmp-types.js';
+import type { SnmpConfig, SnmpV3Config } from './snmp-types.js';
 
 export interface NetworkDeviceCollectionTarget {
   id: number;
@@ -56,7 +56,11 @@ function stableError(error: unknown): string {
   return 'SNMP_RESPONSE_INVALID';
 }
 
-function toSnmpConfig(target: NetworkDeviceCollectionTarget, credentials: NetworkDeviceCredentials, authorizedHost = target.host): SnmpV3Config {
+function toSnmpConfig(target: NetworkDeviceCollectionTarget, credentials: NetworkDeviceCredentials, authorizedHost = target.host): SnmpConfig {
+  if (credentials.protocol === 'snmpv2c') {
+    if (!credentials.community) throw Object.assign(new Error('SNMP_AUTH_FAILED'), { code: 'SNMP_AUTH_FAILED' });
+    return { version: 2, host: authorizedHost, port: target.snmpPort, community: credentials.community };
+  }
   if (credentials.protocol !== 'snmpv3' || !credentials.username || !credentials.securityLevel) {
     throw Object.assign(new Error('SNMP_AUTH_FAILED'), { code: 'SNMP_AUTH_FAILED' });
   }
@@ -147,7 +151,7 @@ export class NetworkDeviceCollector {
       }
       const credentials = await this.store.getCredentials(id);
       if (!credentials) return this.recordFailure(id, 'SNMP_AUTH_FAILED');
-      let config: SnmpV3Config;
+      let config: SnmpConfig;
       try { config = toSnmpConfig(target, credentials, authorizedTarget.address); } catch (error) { return this.recordFailure(id, stableError(error)); }
 
       try {
@@ -201,7 +205,7 @@ export class MysqlNetworkDeviceCollectionStore implements NetworkDeviceCollectio
   }
 
   async getCredentials(id: number): Promise<NetworkDeviceCredentials | null> {
-    return networkDeviceDatabaseService.getCredentials(id, 'snmpv3');
+    return networkDeviceDatabaseService.getCredentials(id);
   }
 
   async updateStatus(id: number, status: 'online' | 'error' | 'unreachable'): Promise<void> {

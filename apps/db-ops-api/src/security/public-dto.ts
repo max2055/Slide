@@ -1,6 +1,91 @@
+import { decryptData } from '../db-connection.js';
+
+interface CredentialAssessment {
+  /** A secret is stored, even if it cannot currently be decrypted. */
+  hasCredential: boolean;
+  /** The secret can be used for a health check right now. */
+  usable: boolean;
+}
+
+function hasText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isV2Envelope(value: string): boolean {
+  const parts = value.split(':');
+  return parts.length === 5
+    && parts[0] === 'v2'
+    && /^[0-9a-f]{12}$/i.test(parts[1])
+    && /^[0-9a-f]{24}$/i.test(parts[2])
+    && /^[0-9a-f]{32}$/i.test(parts[3])
+    && /^[0-9a-f]*$/i.test(parts[4])
+    && parts[4].length % 2 === 0;
+}
+
+function isLegacyEnvelope(value: string): boolean {
+  const parts = value.split(':');
+  return parts.length === 2
+    && /^[0-9a-f]{32}$/i.test(parts[0])
+    && /^[0-9a-f]{32,}$/i.test(parts[1])
+    && parts[1].length % 2 === 0;
+}
+
+function assessCredential(instance: Record<string, unknown>, encrypted: unknown): CredentialAssessment {
+  // Internal callers may provide the already decrypted value. Never let that
+  // value pass through the public DTO, but use it to avoid guessing from a
+  // ciphertext whose plaintext may be empty.
+  if (Object.prototype.hasOwnProperty.call(instance, 'password')) {
+    const usable = hasText(instance.password);
+    return { hasCredential: usable, usable };
+  }
+
+  if (!hasText(encrypted)) return { hasCredential: false, usable: false };
+  const ciphertext = encrypted.trim();
+  const recognizable = isV2Envelope(ciphertext) || isLegacyEnvelope(ciphertext);
+  if (!recognizable) {
+    // Keep presence compatibility with callers that carry an opaque
+    // ciphertext, but do not treat it as health evidence we can verify.
+    return { hasCredential: true, usable: false };
+  }
+
+  try {
+    const usable = hasText(decryptData(ciphertext));
+    return { hasCredential: usable, usable };
+  } catch {
+    // The secret is stored, but an invalid/undecryptable envelope cannot back
+    // a health observation. Preserve presence while failing readiness closed.
+    return { hasCredential: true, usable: false };
+  }
+}
+
 export function publicInstanceDto(instance: Record<string, unknown>) {
-  const { password_encrypted, connection_string, ...publicFields } = instance;
-  return { ...publicFields, hasCredential: Boolean(password_encrypted), credentialVersion: password_encrypted ? 1 : 0 };
+  const { password_encrypted, connection_string, password: _password, ...publicFields } = instance;
+  const credential = assessCredential(instance, password_encrypted);
+  const hasCredential = credential.hasCredential;
+  const healthStatus = publicFields.health_status ?? 'unknown';
+  const instanceStatus = publicFields.status;
+  const hasUsername = hasText(publicFields.username);
+  const credentialsReady = credential.usable && hasUsername;
+  const publicHealthStatus = !credentialsReady
+    ? 'unknown'
+    : instanceStatus === 'error'
+      ? 'error'
+      : instanceStatus === 'pending_credentials' || instanceStatus === 'inactive'
+        ? 'unknown'
+        : healthStatus;
+  const readyForHealthScore = credentialsReady
+    && publicHealthStatus !== 'unknown'
+    && publicHealthStatus !== 'error'
+    && instanceStatus !== 'pending_credentials'
+    && instanceStatus !== 'inactive'
+    && instanceStatus !== 'error';
+  return {
+    ...publicFields,
+    health_status: publicHealthStatus,
+    health_score: readyForHealthScore ? publicFields.health_score : 0,
+    hasCredential,
+    credentialVersion: hasCredential ? 1 : 0,
+  };
 }
 
 export function publicServerDto(server: Record<string, unknown>) {

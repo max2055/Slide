@@ -39,6 +39,21 @@ describe('generated public API contract', () => {
     expect(dto).not.toHaveProperty('password_encrypted');
   });
 
+  it('accepts persisted error health status in the Fastify instance response contract', async () => {
+    const dto = publicInstanceDto({
+      id: 2, name: 'broken', db_type: 'mysql', host: '127.0.0.1', port: 3306,
+      database_name: 'slide', health_status: 'error', health_score: 0, status: 'error',
+      created_at: '2026-07-23T00:00:00.000Z', password_encrypted: 'ciphertext',
+    });
+    expect(Value.Check(DatabaseInstanceSchema, dto)).toBe(true);
+
+    const app = Fastify();
+    app.get('/', { schema: { response: { 200: DatabaseInstanceSchema } } }, async () => dto);
+    const response = await app.inject({ method: 'GET', url: '/' });
+    await app.close();
+    expect(response.statusCode).toBe(200);
+  });
+
   it('generates deterministic documented operations and frontend types', () => {
     const document = buildOpenApiDocument() as any;
     expect(Object.keys(document.paths)).toEqual([
@@ -70,6 +85,7 @@ describe('generated public API contract', () => {
       '/api/servers/{id}/instances',
     ]);
     expect(buildClientTypes()).toContain('export interface DatabaseInstance');
+    expect(buildClientTypes()).toContain("health_status: 'healthy' | 'warning' | 'critical' | 'unknown' | 'error';");
     expect(buildClientTypes()).toContain('export interface InstanceHostEvidenceResponse');
     expect(buildClientTypes()).toContain('export interface FilesystemEvidence');
     expect(buildClientTypes()).toContain('export interface JournalEvidence');

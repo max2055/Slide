@@ -75,11 +75,26 @@ export function calculateDimensionScores(
   // 为每个 check 添加 dimension 字段
   const checksWithDimension = checks.map((check) => {
     const dimension = dimensionMap[check.name] || null;
+    // Unknown/pending availability is lack of evidence, even if an older
+    // producer left a stale numeric score on the check object.
+    const score = dimension === 'availability'
+      && (check.status === 'unknown' || check.status === 'pending_credentials')
+      ? 0
+      : check.score;
     if (dimension && dimensionScores[dimension]) {
-      dimensionScores[dimension].push(check.score);
+      dimensionScores[dimension].push(score);
     }
-    return { ...check, dimension };
+    return { ...check, score, dimension };
   });
+
+  // An empty check set means the instance was not observable (for example,
+  // credentials are missing). There is no evidence to support a healthy
+  // score, so keep the result explicitly non-healthy instead of applying the
+  // neutral 100 defaults used for dimensions that are simply unsupported.
+  if (checks.length === 0) {
+    const dimensions = Object.fromEntries(DIMENSION_NAMES.map((dim) => [dim, 0]));
+    return { dimensions, total: 0, checks: checksWithDimension };
+  }
 
   // 计算结果中的检查列表包含 dimension 字段
 
@@ -92,15 +107,16 @@ export function calculateDimensionScores(
         scores.reduce((sum, s) => sum + s, 0) / scores.length,
       );
     } else {
-      // 该维度无对应检查项，赋中性值 100（RESEARCH.md Pitfall 1）
-      dimensions[dim] = 100;
+      // Missing availability evidence means the instance cannot be known to
+      // be reachable. Other unsupported dimensions retain their neutral value.
+      dimensions[dim] = dim === 'availability' ? 0 : 100;
     }
   }
 
   // 加权总分
   const total = Math.round(
     DIMENSION_NAMES.reduce((sum, dim) => {
-      return sum + (dimensions[dim] || 100) * (weights[dim] || 0);
+      return sum + (dimensions[dim] ?? 100) * (weights[dim] || 0);
     }, 0),
   );
 

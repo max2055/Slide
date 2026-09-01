@@ -9,6 +9,7 @@ import "../components/instance-host-field.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
+import { resolveHealthScoreState } from "./health-score-state.js";
 import type {
   DatabaseInstance,
   InstanceHostMapping,
@@ -38,6 +39,28 @@ export function buildTestConnectionPayload(formData: InstanceFormData) {
     database_name: formData.database_name,
     db_type: formData.db_type,
   };
+}
+
+/** Return a user-facing validation message before sending raw credentials. */
+export function validateTestConnectionForm(formData: Pick<InstanceFormData, "host" | "username" | "password">): string | null {
+  if (!String(formData.host ?? "").trim()) return "请输入主机地址";
+  if (!String(formData.username ?? "").trim()) return "请输入用户名";
+  if (!String(formData.password ?? "").trim()) return "请输入密码";
+  return null;
+}
+
+/** Hide driver-specific authentication wording behind one actionable message. */
+export function normalizeConnectionTestMessage(message: unknown): string {
+  const text = String(message ?? "").trim();
+  if (!text) return "未知错误";
+  if (/请输入用户名/i.test(text)) {
+    return "请输入用户名";
+  }
+  if (/(?:ora-(?:01017|24415|28000|28001)|missing\s+or\s+null\s+username|access denied for user[\s\S]*using password|password authentication failed|authentication failed|invalid (?:credentials|username\/?password)|\b(?:er_access_denied(?:_no_password)?_error|er_account_has_been_locked|er_user_access_denied_for_user_account_blocked_by_password_lock|28p0[12]|2800[01]|3118|3955|1698|1045)\b|(?:^|[^\d])-2501(?:\D|$)|用户名或密码错误|认证失败|登录失败)/i.test(text)) {
+    return "用户名或密码错误";
+  }
+  if (/请输入密码/i.test(text)) return "请输入密码";
+  return text;
 }
 
 function hasStoredPermission(required: string): boolean {
@@ -117,10 +140,16 @@ export class InstancesPage extends LitElement {
 
     .table {
       width: 100%;
+      min-width: 1200px;
+      table-layout: fixed;
       border-collapse: separate;
       border-spacing: 0;
       font-size: var(--text-base);
     }
+
+    .table col.instance-col { width: 15rem; }
+    .table col.version-col { width: 12rem; }
+    .table col.actions-col { width: 14.5rem; }
 
     .table th {
       position: sticky;
@@ -163,6 +192,7 @@ export class InstancesPage extends LitElement {
       color: var(--text);
       vertical-align: middle;
       text-align: center;
+      overflow: hidden;
     }
     .table td:first-child {
       text-align: left;
@@ -184,6 +214,16 @@ export class InstancesPage extends LitElement {
       font-weight: 600;
       color: var(--text-strong);
       font-size: var(--text-md);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .instance-version {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .instance-meta {
@@ -459,6 +499,7 @@ export class InstancesPage extends LitElement {
 
   @state() private instances: DatabaseInstance[] = [];
   @state() private loading = true;
+  @state() private refreshing = false;
   @state() private error: string | null = null;
   @state() private filter: "all" | "healthy" | "warning" | "critical" = "all";
   @state() private searchQuery = "";
@@ -534,6 +575,15 @@ export class InstancesPage extends LitElement {
     } catch (err: any) {
       this.error = err.message;
       this.loading = false;
+    }
+  }
+
+  private async refreshInstances() {
+    this.refreshing = true;
+    try {
+      await this.loadInstances();
+    } finally {
+      this.refreshing = false;
     }
   }
 
@@ -642,7 +692,10 @@ export class InstancesPage extends LitElement {
               ${this.activeFilterCount > 0
                 ? html`<button class="btn-ghost resource-filter-reset" @click=${this.resetFilters}>重置筛选</button>`
                 : nothing}
-              <button class="btn-primary" @click=${() => this._addInstance()}>
+              <button class="btn resource-action resource-action--refresh" type="button" .disabled=${this.refreshing} @click=${this.refreshInstances}>
+                ${icons['refresh']} 刷新
+              </button>
+              <button class="btn-primary resource-action resource-action--add" type="button" @click=${() => this._addInstance()}>
                 ${icons['plus']} 添加实例
               </button>
             </div>
@@ -657,12 +710,23 @@ export class InstancesPage extends LitElement {
 
           <div class="table-container">
             <table class="table">
+                    <colgroup>
+                      <col style="width:40px;">
+                      <col class="instance-col">
+                      <col style="width:72px;">
+                      <col class="version-col">
+                      <col style="width:90px;">
+                      <col style="width:200px;">
+                      <col style="width:82px;">
+                      <col style="width:80px;">
+                      <col class="actions-col">
+                    </colgroup>
                     <thead>
                       <tr>
                         <th style="width:40px;text-align:center;">#</th>
-                        <th class="sortable" style="max-width:200px;" @click=${() => this._toggleSort('name')}>实例 ${this._sortArrow('name')}</th>
+                        <th class="sortable" @click=${() => this._toggleSort('name')}>实例 ${this._sortArrow('name')}</th>
                         <th class="sortable" style="width: 60px; text-align:center;" @click=${() => this._toggleSort('db_type')}>类型 ${this._sortArrow('db_type')}</th>
-                        <th class="sortable" style="width: 72px; text-align:center;" @click=${() => this._toggleSort('db_version')}>版本 ${this._sortArrow('db_version')}</th>
+                        <th class="sortable" @click=${() => this._toggleSort('db_version')}>版本 ${this._sortArrow('db_version')}</th>
                         <th class="sortable" style="width: 72px; text-align:center;" @click=${() => this._toggleSort('data_size_gb')}>容量 ${this._sortArrow('data_size_gb')}</th>
                         <th class="sortable" style="width: 170px; text-align:center;" @click=${() => this._toggleSort('addr')}>连接地址 ${this._sortArrow('addr')}</th>
                         <th class="sortable" style="width: 72px; text-align:center;" @click=${() => this._toggleSort('health_status')}>状态 ${this._sortArrow('health_status')}</th>
@@ -674,12 +738,12 @@ export class InstancesPage extends LitElement {
                       ${filtered.length > 0 ? filtered.map((inst, idx) => html`
                         <tr class="instance-row">
                           <td style="text-align:center;font-size:var(--text-sm);color:var(--muted);">${idx + 1}</td>
-                          <td><div class="instance-name">${inst.name}</div></td>
+                          <td class="instance-col"><div class="instance-name" title=${inst.name}>${inst.name}</div></td>
                           <td style="text-align:center;">
                             <span class="type-tag">${inst.db_type.toUpperCase()}</span>
                           </td>
                           <td style="text-align:center;">
-                            <span style="font-size: var(--text-sm); color: var(--muted);">${inst.db_version || '—'}</span>
+                            <span class="instance-version" title=${inst.db_version || '—'} style="font-size: var(--text-sm); color: var(--muted);">${inst.db_version || '—'}</span>
                           </td>
                           <td style="text-align:center;">
                             <span style="font-size: var(--text-sm);">${inst.data_size_gb != null ? (inst.data_size_gb === 0 ? '0 GB' : inst.data_size_gb + ' GB') : '—'}</span>
@@ -691,7 +755,10 @@ export class InstancesPage extends LitElement {
                             ${this._renderStatusBadge(inst.health_status)}
                           </td>
                           <td style="text-align:center;">
-                            <span style="font-weight: 700; font-size: var(--text-md); color: ${this._getHealthColor(inst.health_score)};">${inst.health_score}</span>
+                            ${(() => {
+                              const score = resolveHealthScoreState(inst, inst.health_score);
+                              return html`<span style="font-weight: 700; font-size: var(--text-md); color: ${score.score === null ? 'var(--muted)' : this._getHealthColor(score.score)};">${score.score ?? '未知'}</span>`;
+                            })()}
                           </td>
                           <td style="text-align:center;">
                             <div class="actions">
@@ -847,9 +914,17 @@ export class InstancesPage extends LitElement {
     this.showTestDialog = true;
 
     // 如果实例已连接（healthy），直接显示状态，不要求输密码
-    if (inst.health_status === "healthy") {
+    if (inst.hasCredential === true && inst.health_status === "healthy") {
       this.listTestStatus = "success";
       this.listTestMessage = "连接正常";
+      return;
+    }
+
+    // A stale health value must not bypass credential entry for an instance
+    // whose credential is missing or was rejected by the backend.
+    if (inst.hasCredential !== true) {
+      this.listTestStatus = "idle";
+      this.listTestMessage = "";
       return;
     }
 
@@ -871,8 +946,15 @@ export class InstancesPage extends LitElement {
   private async _handleListTestConnection() {
     if (!this.testingInstance) return;
 
-    if (!this.testPassword) {
-      showToast("Please enter password", "warning");
+    const validationError = validateTestConnectionForm({
+      host: this.testingInstance.host,
+      username: this.testingInstance.username ?? "",
+      password: this.testPassword,
+    });
+    if (validationError) {
+      this.listTestStatus = "error";
+      this.listTestMessage = validationError;
+      showToast(validationError, "warning");
       return;
     }
 
@@ -896,7 +978,7 @@ export class InstancesPage extends LitElement {
       });
       const result = await res.json();
       this.listTestStatus = result.success ? "success" : "error";
-      this.listTestMessage = result.message || result.error || "未知错误";
+      this.listTestMessage = normalizeConnectionTestMessage(result.message || result.error);
 
       // 测试成功后自动保存密码并重载连接
       if (result.success) {
@@ -904,7 +986,7 @@ export class InstancesPage extends LitElement {
       }
     } catch (err: any) {
       this.listTestStatus = "error";
-      this.listTestMessage = err.message;
+      this.listTestMessage = normalizeConnectionTestMessage(err?.message);
     }
   }
 
@@ -1066,8 +1148,11 @@ export class InstancesPage extends LitElement {
   }
 
   private async _handleTestConnection() {
-    if (!this.formData.host || !this.formData.username) {
-      showToast("Please fill in host and username", "warning");
+    const validationError = validateTestConnectionForm(this.formData);
+    if (validationError) {
+      this.testStatus = "error";
+      this.testMessage = validationError;
+      showToast(validationError, "warning");
       return;
     }
 
@@ -1085,10 +1170,10 @@ export class InstancesPage extends LitElement {
       const result = await res.json();
 
       this.testStatus = result.success ? "success" : "error";
-      this.testMessage = result.message || result.error || "未知错误";
+      this.testMessage = normalizeConnectionTestMessage(result.message || result.error);
     } catch (err: any) {
       this.testStatus = "error";
-      this.testMessage = err.message;
+      this.testMessage = normalizeConnectionTestMessage(err?.message);
     }
   }
 

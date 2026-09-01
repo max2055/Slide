@@ -173,6 +173,18 @@ class MonitorCollector {
    * 采集单个实例的指标
    */
   private async collectInstanceMetrics(instance: any, dueMetricIds: readonly string[]): Promise<Record<string, boolean>> {
+    // A pending-credentials instance has no meaningful health observation.
+    // Guard before invoking checkHealth, which represents a missing connection
+    // as a synthetic critical result.
+    if (!(await this.hasUsableCredentials(instance))) {
+      collectionCapabilityTracker.clearInstance(instance.id);
+      for (const metricId of dueMetricIds) {
+        collectionCapabilityTracker.recordMetricAttempt(instance.id, metricId, false);
+      }
+      await instanceDatabaseService.updateHealthStatus(instance.id, 0, 'unknown');
+      return Object.fromEntries(dueMetricIds.map((metricId) => [metricId, false]));
+    }
+
     try {
       // Agent tools can create an active instance before its credential exists.
       // Retry from persisted configuration so adding the credential later is
@@ -224,10 +236,30 @@ class MonitorCollector {
         console.error(`❌ [${instance.name}] 恢复尝试失败:`, recoveryError);
       }
       // 仅在重连失败时才标记 critical
-      if (!recoverySucceeded) {
+      // Credentials may be removed or become undecryptable while collection
+      // and recovery are in flight. Missing credentials are unknown, not a
+      // database outage; re-check before persisting the terminal state.
+      const credentialsAvailable = await this.hasUsableCredentials(instance);
+      if (!credentialsAvailable) {
+        collectionCapabilityTracker.clearInstance(instance.id);
+        await instanceDatabaseService.updateHealthStatus(instance.id, 0, 'unknown');
+      } else if (!recoverySucceeded) {
         await instanceDatabaseService.updateHealthStatus(instance.id, 0, 'critical');
       }
       return Object.fromEntries(dueMetricIds.map((metricId) => [metricId, false]));
+    }
+  }
+
+  private async hasUsableCredentials(instance: any): Promise<boolean> {
+    if (!instance || typeof instance.id !== 'number') return false;
+    if (typeof instance.username !== 'string' || instance.username.trim().length === 0) return false;
+
+    try {
+      const password = await instanceDatabaseService.getInstancePassword(instance.id);
+      return typeof password === 'string' && password.trim().length > 0;
+    } catch (error) {
+      console.error(`读取实例 ${instance.id} 凭据失败:`, error);
+      return false;
     }
   }
 
@@ -241,7 +273,7 @@ class MonitorCollector {
 
     // 标准 reconnect 失败（可能连接 entry 不存在），用实例配置从头建连
     const password = await instanceDatabaseService.getInstancePassword(instance.id);
-    if (!password) {
+    if (typeof password !== 'string' || password.trim().length === 0) {
       console.error(`[${instance.name}] 无法获取解密密码，无法从零建连`);
       return false;
     }

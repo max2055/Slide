@@ -65,4 +65,22 @@ describe("network-devices-page", () => {
     expect(element.querySelector('app-form-field[label="主机密钥指纹"]')).toBeTruthy();
     expect(element.querySelector('.credential-section')).toBeTruthy();
   });
+
+  it("submits Cisco SNMPv2c enrollment without v3 fields", async () => {
+    authFetch.mockImplementation(async (url: string) => {
+      if (url === "/api/network-devices") return response([]);
+      if (url === "/api/network-devices/test-connection") return response({ success: true });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const element = document.createElement("network-devices-page") as any;
+    document.body.append(element);
+    await settle(element);
+    element.openCreate();
+    element.form = { ...element.form, host: "10.0.0.9", vendor: "cisco", snmpVersion: 2, community: "readonly" };
+    await element.testConnection();
+    const call = authFetch.mock.calls.find(([url]) => url === "/api/network-devices/test-connection");
+    const body = JSON.parse(call?.[1]?.body);
+    expect(body).toMatchObject({ vendor: "cisco", version: 2, snmpv2c: { version: 2, community: "readonly" } });
+    expect(body.snmpv3).toBeUndefined();
+  });
 });

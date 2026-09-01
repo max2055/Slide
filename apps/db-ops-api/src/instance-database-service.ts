@@ -24,7 +24,7 @@ export interface DatabaseInstance {
   connection_timeout_ms: number;
   status: 'active' | 'inactive' | 'error';
   health_score: number;
-  health_status: 'healthy' | 'warning' | 'critical' | 'unknown';
+  health_status: 'healthy' | 'warning' | 'critical' | 'unknown' | 'error';
   last_health_check_at: Date | null;
   tags: any;
   description: string | null;
@@ -35,6 +35,80 @@ export interface DatabaseInstance {
 
 export interface DecryptedInstance extends Omit<DatabaseInstance, 'password_encrypted'> {
   password: string;
+}
+
+export interface DatabaseConnectionTestConfig {
+  db_type: string;
+  host: string;
+  port: number;
+  username?: string | null;
+  password?: string | null;
+  database?: string;
+}
+
+const DATABASE_AUTH_ERROR_CODES = new Set([
+  'ER_ACCESS_DENIED_ERROR',
+  'ER_ACCESS_DENIED_NO_PASSWORD_ERROR',
+  'ER_ACCOUNT_HAS_BEEN_LOCKED',
+  'ER_USER_ACCESS_DENIED_FOR_USER_ACCOUNT_BLOCKED_BY_PASSWORD_LOCK',
+  '1045',
+  '1698',
+  '3118',
+  '3955',
+  '28P01',
+  '28P02',
+  '28000',
+  '28001',
+  'ORA-01017',
+  'ORA-28000',
+  'ORA-28001',
+  '-2501',
+  '2501',
+]);
+
+function normalizeConnectionErrorCode(value: unknown): string {
+  const code = String(value ?? '').trim().toUpperCase();
+  // node-oracledb exposes errorNum as a number while its message uses ORA-xxxxx.
+  return ['1017', '24415', '28000', '28001'].includes(code)
+    ? `ORA-${code.padStart(5, '0')}`
+    : code;
+}
+
+function getConnectionErrorText(error: unknown): { code: string; codes: string[]; message: string } {
+  if (error && typeof error === 'object') {
+    const record = error as Record<string, unknown>;
+    const codes = ['code', 'errCode', 'errorNum', 'errno', 'sqlState']
+      .map((field) => normalizeConnectionErrorCode(record[field]))
+      .filter(Boolean);
+    return {
+      code: codes[0] ?? '',
+      codes,
+      message: typeof record.message === 'string' ? record.message : String(error),
+    };
+  }
+  return { code: '', codes: [], message: String(error) };
+}
+
+function isMissingUsernameError(error: unknown): boolean {
+  const { codes, message } = getConnectionErrorText(error);
+  return codes.includes('ORA-24415') || /missing\s+or\s+null\s+username/i.test(message);
+}
+
+function isDatabaseAuthenticationError(error: unknown): boolean {
+  const { codes, message } = getConnectionErrorText(error);
+  if (codes.some((code) => DATABASE_AUTH_ERROR_CODES.has(code))) return true;
+  return /access\s+denied\s+for\s+user[\s\S]*using\s+password|password\s+authentication\s+failed|authentication\s+failed|invalid\s+(?:credentials|username\/password|user(?:name)?\s*\/\s*password)|(?:ora-(?:01017|28000|28001)|28p0[12]|er_access_denied(?:_no_password)?_error|er_account_has_been_locked|er_user_access_denied_for_user_account_blocked_by_password_lock|\b(?:3118|3955|1698|1045)\b)|用户名或密码错误|认证失败|登录失败/i.test(message)
+    || /(?:^|[^\d])-2501(?:\D|$)/i.test(message);
+}
+
+function isBlankStoredCredential(value: unknown): boolean {
+  return typeof value !== 'string' || value.trim().length === 0;
+}
+
+export function formatDatabaseConnectionError(error: unknown, dbType: string, hasUsername: boolean): string {
+  if (isMissingUsernameError(error)) return hasUsername ? '用户名或密码错误' : '请输入用户名';
+  if (isDatabaseAuthenticationError(error)) return '用户名或密码错误';
+  return dbType === 'oracle' ? formatOracleConnectionError(error) : getConnectionErrorText(error).message;
 }
 
 class InstanceDatabaseService {
@@ -201,6 +275,9 @@ class InstanceDatabaseService {
     if (!instance) {
       return null;
     }
+    if (isBlankStoredCredential(instance.password_encrypted)) {
+      return '';
+    }
     try {
       const password = decryptData(instance.password_encrypted);
       if (needsEncryptionMigration(instance.password_encrypted)) {
@@ -225,15 +302,21 @@ class InstanceDatabaseService {
       return null;
     }
 
+    const encryptedPassword = instance.password_encrypted;
+    if (isBlankStoredCredential(encryptedPassword)) {
+      const { password_encrypted: _ignored, ...rest } = instance;
+      return { ...rest, password: '' } as DecryptedInstance;
+    }
+
     try {
-      const password = decryptData(instance.password_encrypted);
+      const password = decryptData(encryptedPassword);
       if (needsEncryptionMigration(instance.password_encrypted)) {
         await this.getPool()?.execute(
           'UPDATE database_instances SET password_encrypted = ? WHERE id = ? AND password_encrypted = ?',
           [encryptData(password), id, instance.password_encrypted],
         );
       }
-      const { password_encrypted, ...rest } = instance;
+      const { password_encrypted: _ignored, ...rest } = instance;
       return { ...rest, password } as DecryptedInstance;
     } catch (error) {
       console.error('解密密码失败:', error);
@@ -251,7 +334,7 @@ class InstanceDatabaseService {
     host: string;
     port: number;
     username: string;
-    password: string;
+    password?: string | null;
     database_name?: string;
     max_connections?: number;
     connection_timeout_ms?: number;
@@ -292,13 +375,20 @@ class InstanceDatabaseService {
         };
       }
 
-      const encryptedPassword = encryptData(data.password);
+      // An empty password represents a pending-credentials instance. Do not
+      // encrypt it into a non-empty ciphertext, otherwise public DTOs would
+      // incorrectly report hasCredential=true.
+      const password = typeof data.password === 'string' ? data.password : '';
+      const encryptedPassword = password.trim().length > 0
+        ? encryptData(password)
+        : '';
 
       const [result] = await pool.execute(
         `INSERT INTO database_instances
          (name, environment, db_type, host, port, username, password_encrypted,
-          database_name, max_connections, connection_timeout_ms, tags, description, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          health_score, health_status, database_name, max_connections,
+          connection_timeout_ms, tags, description, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           data.name,
           data.environment,
@@ -307,6 +397,8 @@ class InstanceDatabaseService {
           data.port,
           data.username,
           encryptedPassword,
+          0,
+          'unknown',
           data.database_name || null,
           data.max_connections || 100,
           data.connection_timeout_ms || 30000,
@@ -333,7 +425,7 @@ class InstanceDatabaseService {
       host?: string;
       port?: number;
       username?: string;
-      password?: string;
+      password?: string | null;
       database_name?: string;
       max_connections?: number;
       connection_timeout_ms?: number;
@@ -377,7 +469,7 @@ class InstanceDatabaseService {
         values.push(data.username);
       }
       // 只在密码非空时更新密码
-      if (data.password !== undefined && data.password !== '') {
+      if (typeof data.password === 'string' && data.password.trim().length > 0) {
         updates.push('password_encrypted = ?');
         values.push(encryptData(data.password));
       }
@@ -447,15 +539,16 @@ class InstanceDatabaseService {
   /**
    * 测试数据库连接
    */
-  async testConnection(config: {
-    db_type: string;
-    host: string;
-    port: number;
-    username: string;
-    password: string;
-    database?: string;
-  }): Promise<{ success: boolean; message: string }> {
+  async testConnection(config: DatabaseConnectionTestConfig): Promise<{ success: boolean; message: string }> {
     assertCreatableDatabaseType(config.db_type);
+
+    if (typeof config.username !== 'string' || config.username.trim().length === 0) {
+      return { success: false, message: '请输入用户名' };
+    }
+    if (typeof config.password !== 'string' || config.password.trim().length === 0) {
+      return { success: false, message: '请输入密码' };
+    }
+
     try {
       const target = await authorizeDatabaseTarget({ host: config.host, port: config.port, dbType: config.db_type });
       const pinnedHost = target.address;
@@ -548,8 +641,12 @@ class InstanceDatabaseService {
 
       // 其他数据库类型暂不支持
       return { success: false, message: `暂不支持 ${config.db_type} 数据库的测试连接` };
-    } catch (error: any) {
-      const message = config.db_type === 'oracle' ? formatOracleConnectionError(error) : error.message;
+    } catch (error: unknown) {
+      const message = formatDatabaseConnectionError(
+        error,
+        config.db_type,
+        typeof config.username === 'string' && config.username.trim().length > 0,
+      );
       return { success: false, message: `连接失败：${message}` };
     }
   }
@@ -581,7 +678,7 @@ class InstanceDatabaseService {
   async updateHealthStatus(
     id: number,
     healthScore: number,
-    healthStatus: 'healthy' | 'warning' | 'critical' | 'unknown',
+    healthStatus: 'healthy' | 'warning' | 'critical' | 'unknown' | 'error',
     dbVersion?: string | null,
     dataSizeGB?: number | null,
   ): Promise<void> {

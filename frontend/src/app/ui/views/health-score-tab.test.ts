@@ -119,4 +119,31 @@ describe('health-score-tab stale score handling', () => {
     expect((element as any)._getLatestScore()).toBeNull();
     expect(element.shadowRoot?.textContent).not.toContain('100');
   });
+
+  it('does not show stale check scores when the current instance is unknown', async () => {
+    mockResponses({
+      '/health-history?days=7': response([{ health_score: 100, created_at: '2026-08-30T00:00:00.000Z' }]),
+      '/health-checks': response(healthyChecks),
+      '/collection-capabilities': response([]),
+      '/api/database/instances/7': response({
+        ...healthyInstance,
+        health_status: 'unknown',
+        health_score: 100,
+        hasCredential: false,
+      }),
+    });
+
+    const element = document.createElement('health-score-tab') as HTMLElement & {
+      instanceId: number;
+      updateComplete: Promise<unknown>;
+    };
+    element.instanceId = 7;
+    document.body.append(element);
+    await settle(element);
+
+    (element as any).expandedChecks = true;
+    await settle(element);
+    expect(element.shadowRoot?.querySelector('.score-number')?.textContent).toBe('未知');
+    expect(element.shadowRoot?.textContent).not.toContain('100');
+  });
 });

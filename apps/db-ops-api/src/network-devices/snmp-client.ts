@@ -6,6 +6,8 @@ import {
   type SnmpErrorCode,
   type SnmpPrivacyProtocol,
   type SnmpSecurityLevel,
+  type SnmpConfig,
+  type SnmpV2Config,
   type SnmpTableRow,
   type SnmpV3Config,
   type SnmpVarbind,
@@ -17,7 +19,7 @@ export interface SnmpSession {
   close(): void | Promise<void>;
 }
 
-export type SnmpSessionFactory = (config: SnmpV3Config) => SnmpSession | Promise<SnmpSession>;
+export type SnmpSessionFactory = (config: SnmpConfig) => SnmpSession | Promise<SnmpSession>;
 
 export interface SnmpClientOptions {
   allowedOidRoots?: string[];
@@ -78,7 +80,7 @@ function normalizeError(error: unknown): SnmpClientError {
     return new SnmpClientError('SNMP_TIMEOUT', 'SNMP request timed out', { cause: error });
   }
   if (lower.includes('auth') || lower.includes('usm') || lower.includes('security')) {
-    return new SnmpClientError('SNMP_AUTH_FAILED', 'SNMPv3 authentication failed', { cause: error });
+    return new SnmpClientError('SNMP_AUTH_FAILED', 'SNMP authentication failed', { cause: error });
   }
   return new SnmpClientError('SNMP_RESPONSE_INVALID', 'Invalid SNMP response', { cause: error });
 }
@@ -108,9 +110,9 @@ function validateVarbinds(value: unknown, maxResponseBytes: number): SnmpVarbind
   return varbinds;
 }
 
-function validateConfig(config: SnmpV3Config, options: Required<Pick<SnmpClientOptions, 'minSecretLength' | 'allowAuthNoPriv' | 'allowNoAuthNoPriv' | 'allowLegacyAlgorithms'>>): void {
-  if (!config || config.version !== undefined && config.version !== 3) {
-    throw new SnmpClientError('SNMP_UNSUPPORTED_SECURITY', 'Only SNMPv3 is supported');
+function validateConfig(config: SnmpConfig, options: Required<Pick<SnmpClientOptions, 'minSecretLength' | 'allowAuthNoPriv' | 'allowNoAuthNoPriv' | 'allowLegacyAlgorithms'>>): void {
+  if (!config || (config as any).version !== undefined && (config as any).version !== 2 && (config as any).version !== 3) {
+    throw new SnmpClientError('SNMP_UNSUPPORTED_SECURITY', 'SNMP version is unsupported');
   }
   if (typeof config.host !== 'string' || !config.host.trim() || /[\u0000-\u001f\u007f]/.test(config.host)) {
     throw new SnmpClientError('SNMP_TARGET_DENIED', 'SNMP target host is invalid');
@@ -118,31 +120,39 @@ function validateConfig(config: SnmpV3Config, options: Required<Pick<SnmpClientO
   if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65_535) {
     throw new SnmpClientError('SNMP_TARGET_DENIED', 'SNMP target port is invalid');
   }
-  if (!/^[A-Za-z0-9._-]{1,64}$/.test(config.username)) {
+  if ((config as any).version === 2) {
+    const community = (config as SnmpV2Config).community;
+    if (typeof community !== 'string' || community.length === 0 || community.length > 512 || /[\u0000-\u001f\u007f]/.test(community)) {
+      throw new SnmpClientError('SNMP_UNSUPPORTED_SECURITY', 'SNMPv2c community is invalid');
+    }
+    return;
+  }
+  const v3 = config as SnmpV3Config;
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(v3.username)) {
     throw new SnmpClientError('SNMP_UNSUPPORTED_SECURITY', 'SNMPv3 username is invalid');
   }
-  if (!['authPriv', 'authNoPriv', 'noAuthNoPriv'].includes(config.securityLevel)) {
+  if (!['authPriv', 'authNoPriv', 'noAuthNoPriv'].includes(v3.securityLevel)) {
     throw new SnmpClientError('SNMP_UNSUPPORTED_SECURITY', 'SNMPv3 security level is unsupported');
   }
-  if (config.securityLevel === 'noAuthNoPriv' && !options.allowNoAuthNoPriv) {
+  if (v3.securityLevel === 'noAuthNoPriv' && !options.allowNoAuthNoPriv) {
     throw new SnmpClientError('SNMP_UNSUPPORTED_SECURITY', 'Unauthenticated SNMPv3 is disabled');
   }
-  if (config.securityLevel === 'authNoPriv' && !options.allowAuthNoPriv) {
+  if (v3.securityLevel === 'authNoPriv' && !options.allowAuthNoPriv) {
     throw new SnmpClientError('SNMP_UNSUPPORTED_SECURITY', 'SNMPv3 authNoPriv is disabled');
   }
-  if (config.securityLevel !== 'noAuthNoPriv') {
-    if (!config.authProtocol || !config.authSecret || config.authSecret.length < options.minSecretLength) {
+  if (v3.securityLevel !== 'noAuthNoPriv') {
+    if (!v3.authProtocol || !v3.authSecret || v3.authSecret.length < options.minSecretLength) {
       throw new SnmpClientError('SNMP_UNSUPPORTED_SECURITY', 'SNMPv3 authentication material is incomplete');
     }
-    if (!options.allowLegacyAlgorithms && config.authProtocol !== 'SHA') {
+    if (!options.allowLegacyAlgorithms && v3.authProtocol !== 'SHA') {
       throw new SnmpClientError('SNMP_UNSUPPORTED_SECURITY', 'Legacy SNMP authentication is disabled');
     }
   }
-  if (config.securityLevel === 'authPriv') {
-    if (!config.privacyProtocol || !config.privacySecret || config.privacySecret.length < options.minSecretLength) {
+  if (v3.securityLevel === 'authPriv') {
+    if (!v3.privacyProtocol || !v3.privacySecret || v3.privacySecret.length < options.minSecretLength) {
       throw new SnmpClientError('SNMP_UNSUPPORTED_SECURITY', 'SNMPv3 privacy material is incomplete');
     }
-    if (!options.allowLegacyAlgorithms && config.privacyProtocol !== 'AES') {
+    if (!options.allowLegacyAlgorithms && v3.privacyProtocol !== 'AES') {
       throw new SnmpClientError('SNMP_UNSUPPORTED_SECURITY', 'Legacy SNMP privacy is disabled');
     }
   }
@@ -190,7 +200,7 @@ export class SnmpClient {
     }
   }
 
-  async get(config: SnmpV3Config, oids: string[]): Promise<SnmpVarbind[]> {
+  async get(config: SnmpConfig, oids: string[]): Promise<SnmpVarbind[]> {
     validateConfig(config, this.options);
     validateOids(oids, this.options.allowedOidRoots);
     return this.withSession(config, async (active) => {
@@ -199,7 +209,7 @@ export class SnmpClient {
     });
   }
 
-  async table(config: SnmpV3Config, rootOid: string): Promise<SnmpTableRow[]> {
+  async table(config: SnmpConfig, rootOid: string): Promise<SnmpTableRow[]> {
     validateConfig(config, this.options);
     validateOids([rootOid], this.options.allowedOidRoots);
     const maxRepetitions = config.maxRepetitions ?? DEFAULT_MAX_REPETITIONS;
@@ -220,7 +230,7 @@ export class SnmpClient {
     });
   }
 
-  private async withSession<T>(config: SnmpV3Config, operation: (session: SnmpSession) => Promise<T>): Promise<T> {
+  private async withSession<T>(config: SnmpConfig, operation: (session: SnmpSession) => Promise<T>): Promise<T> {
     let active: SnmpSession | null = null;
     try {
       active = await this.factory(config);
@@ -242,6 +252,19 @@ export class SnmpClient {
 export function createNetSnmpSessionFactory(): SnmpSessionFactory {
   return (config) => {
     try {
+      if (config.version === 2) {
+        const raw = netSnmp.createSession(config.host, config.community, {
+          version: netSnmp.Version2c,
+          port: config.port,
+          timeout: config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          retries: config.retries ?? DEFAULT_RETRIES,
+        });
+        return {
+          get: (oids: string[]) => new Promise((resolve, reject) => { raw.get(oids, (error, varbinds) => error ? reject(error) : resolve(varbinds)); }),
+          table: (rootOid: string, maxRepetitions: number) => new Promise((resolve, reject) => { raw.table(rootOid, maxRepetitions, (error, table) => error ? reject(error) : resolve(table)); }),
+          close: () => { raw.close(); },
+        } satisfies SnmpSession;
+      }
       const user: netSnmp.User = {
         name: config.username,
         level: mapSecurityLevel(config.securityLevel),
@@ -266,7 +289,7 @@ export function createNetSnmpSessionFactory(): SnmpSessionFactory {
         close: () => { raw.close(); },
       } satisfies SnmpSession;
     } catch (error) {
-      throw new SnmpClientError('SNMP_UNAVAILABLE', 'Unable to create SNMPv3 session', { cause: error });
+      throw new SnmpClientError('SNMP_UNAVAILABLE', 'Unable to create SNMP session', { cause: error });
     }
   };
 }

@@ -37,7 +37,7 @@ export const NetworkDeviceSchema = Type.Object({
   label: Type.Union([Type.String(), Type.Null()]),
   host: Type.String({ minLength: 1 }),
   site: Type.Union([Type.String(), Type.Null()]),
-  vendor: Type.Literal('huawei'),
+  vendor: Type.Union([Type.Literal('huawei'), Type.Literal('cisco')]),
   model: Type.Union([Type.String(), Type.Null()]),
   os_version: Type.Union([Type.String(), Type.Null()]),
   serial_number: Type.Union([Type.String(), Type.Null()]),
@@ -81,6 +81,11 @@ export const NetworkDeviceSnmpCredentialSchema = Type.Object({
   privacyProtocol: Type.Optional(Type.Union([Type.Literal('DES'), Type.Literal('AES')])),
   privacySecret: Type.Optional(Type.String({ minLength: 8 })),
 }, { $id: 'NetworkDeviceSnmpCredential', additionalProperties: false });
+export const NetworkDeviceSnmpV2CredentialSchema = Type.Object({
+  version: Type.Optional(Type.Literal(2)),
+  community: Type.String({ minLength: 1, maxLength: 512 }),
+}, { $id: 'NetworkDeviceSnmpV2Credential', additionalProperties: false });
+export const NetworkDeviceSnmpCredentialUnionSchema = Type.Union([NetworkDeviceSnmpCredentialSchema, NetworkDeviceSnmpV2CredentialSchema], { $id: 'NetworkDeviceSnmpCredentialUnion' });
 export const NetworkDeviceSshCredentialSchema = Type.Object({
   credentialType: Type.Union([Type.Literal('password'), Type.Literal('key')]),
   username: Type.String({ minLength: 1, maxLength: 255 }),
@@ -89,15 +94,17 @@ export const NetworkDeviceSshCredentialSchema = Type.Object({
 }, { $id: 'NetworkDeviceSshCredential', additionalProperties: false });
 export const NetworkDeviceTestConnectionRequestSchema = Type.Object({
   host: Type.String({ minLength: 1 }),
-  version: Type.Optional(Type.Literal(3)),
+  version: Type.Optional(Type.Union([Type.Literal(2), Type.Literal(3)])),
   snmpPort: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
   snmp_port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
   sshPort: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
   ssh_port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
   snmpv3: Type.Optional(NetworkDeviceSnmpCredentialSchema),
-  snmp: Type.Optional(NetworkDeviceSnmpCredentialSchema),
+  snmpv2c: Type.Optional(NetworkDeviceSnmpV2CredentialSchema),
+  snmpv2: Type.Optional(NetworkDeviceSnmpV2CredentialSchema),
+  snmp: Type.Optional(NetworkDeviceSnmpCredentialUnionSchema),
   ssh: Type.Optional(NetworkDeviceSshCredentialSchema),
-  vendor: Type.Optional(Type.Literal('huawei')),
+  vendor: Type.Optional(Type.Union([Type.Literal('huawei'), Type.Literal('cisco')])),
 }, { $id: 'NetworkDeviceTestConnectionRequest', additionalProperties: false });
 export const NetworkDeviceProbeResultSchema = Type.Object({
   reachable: Type.Boolean(),
@@ -279,7 +286,7 @@ export const DatabaseInstanceSchema = Type.Object({
   database_name: Type.String(),
   username: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   health_status: Type.Union([
-    Type.Literal('healthy'), Type.Literal('warning'), Type.Literal('critical'), Type.Literal('unknown'),
+    Type.Literal('healthy'), Type.Literal('warning'), Type.Literal('critical'), Type.Literal('unknown'), Type.Literal('error'),
   ]),
   health_score: Type.Number(),
   status: Type.String(),
@@ -598,6 +605,8 @@ export const PublicApiSchemas = {
   NetworkDeviceInterfacesResponse: NetworkDeviceInterfacesResponseSchema,
   NetworkDeviceSnmpSecurityLevel: NetworkDeviceSnmpSecurityLevelSchema,
   NetworkDeviceSnmpCredential: NetworkDeviceSnmpCredentialSchema,
+  NetworkDeviceSnmpV2Credential: NetworkDeviceSnmpV2CredentialSchema,
+  NetworkDeviceSnmpCredentialUnion: NetworkDeviceSnmpCredentialUnionSchema,
   NetworkDeviceSshCredential: NetworkDeviceSshCredentialSchema,
   NetworkDeviceTestConnectionRequest: NetworkDeviceTestConnectionRequestSchema,
   NetworkDeviceProbeResult: NetworkDeviceProbeResultSchema,

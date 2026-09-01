@@ -8,7 +8,7 @@ import { NetworkDeviceCollector, networkDeviceCollector, type NetworkDeviceColle
 import { ConfigBackupError, configBackupService, verifySshHostKey, type ConfigBackupAuditEvent, type ConfigBackupService } from './config-backup-service.js';
 import { HuaweiAdapter } from './huawei-adapter.js';
 import { SnmpClient, SnmpClientError } from './snmp-client.js';
-import { validateNetworkHost, validatePort, validateSnmpV3Credential, validateSshCredential } from '../resources/network-device-types.js';
+import { validateNetworkHost, validatePort, validateSnmpV2Credential, validateSnmpV3Credential, validateSshCredential } from '../resources/network-device-types.js';
 import { capabilityService } from '../resources/capability-service.js';
 import { resourceService } from '../resources/resource-service.js';
 import type { ActorContext } from '../auth/actor-context.js';
@@ -49,7 +49,7 @@ export async function registerNetworkDeviceRoutes(
     const code = error instanceof ConfigBackupError ? error.code : error instanceof SnmpClientError ? error.code : error instanceof Error ? error.message : '';
     if (code === 'NETWORK_DEVICE_NOT_FOUND' || code === 'CONFIG_BACKUP_NOT_FOUND') return { status: 404, error: code };
     if (code === 'RESOURCE_FORBIDDEN') return { status: 403, error: code };
-    if (/^(?:SNMP_|SSH_|CONFIG_|NETWORK_DEVICE_|RESOURCE_)[A-Z0-9_]*$/.test(code)) return { status: 400, error: code };
+    if (/^(?:SNMP(?:V2C|V3)?_|SSH_|CONFIG_|NETWORK_DEVICE_|RESOURCE_)[A-Z0-9_]*$/.test(code)) return { status: 400, error: code };
     return { status: 500, error: 'NETWORK_DEVICE_OPERATION_FAILED' };
   };
   const serializeCapabilityRow = (row: any) => ({
@@ -98,19 +98,19 @@ export async function registerNetworkDeviceRoutes(
   // it performs a second, command-free host-key handshake before returning.
   fastify.post('/api/network-devices/test-connection', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } }, preHandler: manage }, async (request, reply) => {
     try {
-      const check = strictBody(request.body as Record<string, unknown>, ['host', 'version', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'snmpv3', 'snmp', 'ssh', 'vendor'], 'POST /api/network-devices/test-connection');
+      const check = strictBody(request.body as Record<string, unknown>, ['host', 'version', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh', 'vendor'], 'POST /api/network-devices/test-connection');
       if (check.error) return reply.code(400).send(check.error);
       const body = check.body as Record<string, unknown>;
-      if (body.vendor !== undefined && body.vendor !== 'huawei') return reply.code(400).send({ success: false, error: 'NETWORK_DEVICE_VENDOR_UNSUPPORTED' });
-      if (body.version !== undefined && body.version !== 3) return reply.code(400).send({ success: false, error: 'SNMP_UNSUPPORTED_SECURITY' });
+      if (body.vendor !== undefined && body.vendor !== 'huawei' && body.vendor !== 'cisco') return reply.code(400).send({ success: false, error: 'NETWORK_DEVICE_VENDOR_UNSUPPORTED' });
+      if (body.version !== undefined && body.version !== 2 && body.version !== 3) return reply.code(400).send({ success: false, error: 'SNMP_UNSUPPORTED_SECURITY' });
       const host = validateNetworkHost(body.host);
       const port = validatePort(body.snmpPort ?? body.snmp_port, 'snmp_port', 161);
-      const credential = validateSnmpV3Credential(body.snmpv3 ?? body.snmp);
-      if (!['SHA', 'MD5', undefined].includes(credential.authProtocol as any) || !['AES', 'DES', undefined].includes(credential.privacyProtocol as any)) {
-        return reply.code(400).send({ success: false, error: 'SNMP_UNSUPPORTED_SECURITY' });
-      }
+      const version = body.version === 2 || body.snmpv2c !== undefined || body.snmpv2 !== undefined || (body.snmp && body.snmp !== null && typeof body.snmp === 'object' && ((body.snmp as any).version === 2 || 'community' in (body.snmp as any) || 'communityString' in (body.snmp as any))) ? 2 : 3;
+      const credential: any = version === 2 ? validateSnmpV2Credential(body.snmpv2c ?? body.snmpv2 ?? body.snmp) : validateSnmpV3Credential(body.snmpv3 ?? body.snmp);
       const target = await authorizeTarget({ host, port });
-      const probe = await snmpAdapter.probe({ host: target.address, port, username: credential.username, securityLevel: credential.securityLevel, authProtocol: credential.authProtocol as any, authSecret: credential.authSecret, privacyProtocol: credential.privacyProtocol as any, privacySecret: credential.privacySecret });
+      const probe = await snmpAdapter.probe(version === 2
+        ? { version: 2, host: target.address, port, community: credential.community }
+        : { host: target.address, port, username: credential.username, securityLevel: credential.securityLevel, authProtocol: credential.authProtocol as any, authSecret: credential.authSecret, privacyProtocol: credential.privacyProtocol as any, privacySecret: credential.privacySecret });
       let sshVerified = false;
       if (body.ssh !== undefined) {
         const ssh = validateSshCredential(body.ssh);
@@ -180,7 +180,7 @@ export async function registerNetworkDeviceRoutes(
 
   fastify.post('/api/network-devices', { preHandler: manage }, async (request, reply) => {
     try {
-      const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'snmpv3', 'snmp', 'ssh'], 'POST /api/network-devices');
+      const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh'], 'POST /api/network-devices');
       if (check.error) return reply.code(400).send(check.error);
       const result = await networkDeviceDatabaseService.createDevice(check.body);
       if (!result.success) return reply.code(result.error?.includes('已被纳管') ? 409 : 400).send({ error: result.error });
@@ -193,7 +193,7 @@ export async function registerNetworkDeviceRoutes(
     const id = routeId(request);
     if (id === null) return reply.code(400).send({ error: '资源 ID 无效' });
     try {
-      const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'snmpv3', 'snmp', 'ssh'], 'PUT /api/network-devices/:id');
+      const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh'], 'PUT /api/network-devices/:id');
       if (check.error) return reply.code(400).send(check.error);
       const result = await networkDeviceDatabaseService.updateDevice(id, check.body);
       if (!result.success) return reply.code(result.error === '网络设备不存在' ? 404 : 400).send({ error: result.error });

@@ -2258,6 +2258,10 @@
               {
                 "const": "unknown",
                 "type": "string"
+              },
+              {
+                "const": "error",
+                "type": "string"
               }
             ]
           },
@@ -2412,6 +2416,10 @@
                 },
                 {
                   "const": "unknown",
+                  "type": "string"
+                },
+                {
+                  "const": "error",
                   "type": "string"
                 }
               ]
@@ -5064,8 +5072,16 @@
             "type": "string"
           },
           "vendor": {
-            "const": "huawei",
-            "type": "string"
+            "anyOf": [
+              {
+                "const": "huawei",
+                "type": "string"
+              },
+              {
+                "const": "cisco",
+                "type": "string"
+              }
+            ]
           }
         },
         "required": [
@@ -6191,6 +6207,95 @@
         ],
         "type": "object"
       },
+      "NetworkDeviceSnmpCredentialUnion": {
+        "$id": "NetworkDeviceSnmpCredentialUnion",
+        "anyOf": [
+          {
+            "$id": "NetworkDeviceSnmpCredential",
+            "additionalProperties": false,
+            "properties": {
+              "authProtocol": {
+                "anyOf": [
+                  {
+                    "const": "MD5",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SHA",
+                    "type": "string"
+                  }
+                ]
+              },
+              "authSecret": {
+                "minLength": 8,
+                "type": "string"
+              },
+              "privacyProtocol": {
+                "anyOf": [
+                  {
+                    "const": "DES",
+                    "type": "string"
+                  },
+                  {
+                    "const": "AES",
+                    "type": "string"
+                  }
+                ]
+              },
+              "privacySecret": {
+                "minLength": 8,
+                "type": "string"
+              },
+              "securityLevel": {
+                "$id": "NetworkDeviceSnmpSecurityLevel",
+                "anyOf": [
+                  {
+                    "const": "noAuthNoPriv",
+                    "type": "string"
+                  },
+                  {
+                    "const": "authNoPriv",
+                    "type": "string"
+                  },
+                  {
+                    "const": "authPriv",
+                    "type": "string"
+                  }
+                ]
+              },
+              "username": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "username",
+              "securityLevel"
+            ],
+            "type": "object"
+          },
+          {
+            "$id": "NetworkDeviceSnmpV2Credential",
+            "additionalProperties": false,
+            "properties": {
+              "community": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "version": {
+                "const": 2,
+                "type": "number"
+              }
+            },
+            "required": [
+              "community"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "NetworkDeviceSnmpSecurityLevel": {
         "$id": "NetworkDeviceSnmpSecurityLevel",
         "anyOf": [
@@ -6207,6 +6312,25 @@
             "type": "string"
           }
         ]
+      },
+      "NetworkDeviceSnmpV2Credential": {
+        "$id": "NetworkDeviceSnmpV2Credential",
+        "additionalProperties": false,
+        "properties": {
+          "community": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "version": {
+            "const": 2,
+            "type": "number"
+          }
+        },
+        "required": [
+          "community"
+        ],
+        "type": "object"
       },
       "NetworkDevicesResponse": {
         "$id": "NetworkDevicesResponse",
@@ -6338,8 +6462,16 @@
               "type": "string"
             },
             "vendor": {
-              "const": "huawei",
-              "type": "string"
+              "anyOf": [
+                {
+                  "const": "huawei",
+                  "type": "string"
+                },
+                {
+                  "const": "cisco",
+                  "type": "string"
+                }
+              ]
             }
           },
           "required": [
@@ -6439,69 +6571,93 @@
             "type": "string"
           },
           "snmp": {
-            "$id": "NetworkDeviceSnmpCredential",
-            "additionalProperties": false,
-            "properties": {
-              "authProtocol": {
-                "anyOf": [
-                  {
-                    "const": "MD5",
+            "$id": "NetworkDeviceSnmpCredentialUnion",
+            "anyOf": [
+              {
+                "$id": "NetworkDeviceSnmpCredential",
+                "additionalProperties": false,
+                "properties": {
+                  "authProtocol": {
+                    "anyOf": [
+                      {
+                        "const": "MD5",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SHA",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "authSecret": {
+                    "minLength": 8,
                     "type": "string"
                   },
-                  {
-                    "const": "SHA",
+                  "privacyProtocol": {
+                    "anyOf": [
+                      {
+                        "const": "DES",
+                        "type": "string"
+                      },
+                      {
+                        "const": "AES",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "privacySecret": {
+                    "minLength": 8,
+                    "type": "string"
+                  },
+                  "securityLevel": {
+                    "$id": "NetworkDeviceSnmpSecurityLevel",
+                    "anyOf": [
+                      {
+                        "const": "noAuthNoPriv",
+                        "type": "string"
+                      },
+                      {
+                        "const": "authNoPriv",
+                        "type": "string"
+                      },
+                      {
+                        "const": "authPriv",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "username": {
+                    "maxLength": 64,
+                    "minLength": 1,
                     "type": "string"
                   }
-                ]
+                },
+                "required": [
+                  "username",
+                  "securityLevel"
+                ],
+                "type": "object"
               },
-              "authSecret": {
-                "minLength": 8,
-                "type": "string"
-              },
-              "privacyProtocol": {
-                "anyOf": [
-                  {
-                    "const": "DES",
+              {
+                "$id": "NetworkDeviceSnmpV2Credential",
+                "additionalProperties": false,
+                "properties": {
+                  "community": {
+                    "maxLength": 512,
+                    "minLength": 1,
                     "type": "string"
                   },
-                  {
-                    "const": "AES",
-                    "type": "string"
+                  "version": {
+                    "const": 2,
+                    "type": "number"
                   }
-                ]
-              },
-              "privacySecret": {
-                "minLength": 8,
-                "type": "string"
-              },
-              "securityLevel": {
-                "$id": "NetworkDeviceSnmpSecurityLevel",
-                "anyOf": [
-                  {
-                    "const": "noAuthNoPriv",
-                    "type": "string"
-                  },
-                  {
-                    "const": "authNoPriv",
-                    "type": "string"
-                  },
-                  {
-                    "const": "authPriv",
-                    "type": "string"
-                  }
-                ]
-              },
-              "username": {
-                "maxLength": 64,
-                "minLength": 1,
-                "type": "string"
+                },
+                "required": [
+                  "community"
+                ],
+                "type": "object"
               }
-            },
-            "required": [
-              "username",
-              "securityLevel"
-            ],
-            "type": "object"
+            ]
           },
           "snmp_port": {
             "maximum": 65535,
@@ -6512,6 +6668,44 @@
             "maximum": 65535,
             "minimum": 1,
             "type": "integer"
+          },
+          "snmpv2": {
+            "$id": "NetworkDeviceSnmpV2Credential",
+            "additionalProperties": false,
+            "properties": {
+              "community": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "version": {
+                "const": 2,
+                "type": "number"
+              }
+            },
+            "required": [
+              "community"
+            ],
+            "type": "object"
+          },
+          "snmpv2c": {
+            "$id": "NetworkDeviceSnmpV2Credential",
+            "additionalProperties": false,
+            "properties": {
+              "community": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "version": {
+                "const": 2,
+                "type": "number"
+              }
+            },
+            "required": [
+              "community"
+            ],
+            "type": "object"
           },
           "snmpv3": {
             "$id": "NetworkDeviceSnmpCredential",
@@ -6628,12 +6822,28 @@
             "type": "integer"
           },
           "vendor": {
-            "const": "huawei",
-            "type": "string"
+            "anyOf": [
+              {
+                "const": "huawei",
+                "type": "string"
+              },
+              {
+                "const": "cisco",
+                "type": "string"
+              }
+            ]
           },
           "version": {
-            "const": 3,
-            "type": "number"
+            "anyOf": [
+              {
+                "const": 2,
+                "type": "number"
+              },
+              {
+                "const": 3,
+                "type": "number"
+              }
+            ]
           }
         },
         "required": [
@@ -10235,7 +10445,7 @@
                 }
               }
             },
-            "description": "Validated read-only SNMPv3 probe result"
+            "description": "Validated read-only SNMPv2c or SNMPv3 probe result"
           },
           "400": {
             "content": {
@@ -10245,7 +10455,7 @@
                 }
               }
             },
-            "description": "Invalid or unsupported SNMPv3 payload"
+            "description": "Invalid or unsupported SNMP payload"
           },
           "401": {
             "content": {

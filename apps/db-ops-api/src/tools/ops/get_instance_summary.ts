@@ -8,6 +8,7 @@ import type { AnyAgentTool } from '../types.js';
 import { toolCatalog } from '../catalog.js';
 import { instanceDatabaseService } from '../../instance-database-service.js';
 import { RbacService } from '../../auth/rbac-service.js';
+import { publicInstanceDto } from '../../security/public-dto.js';
 
 const rbacService = new RbacService();
 
@@ -50,6 +51,7 @@ export const getInstanceSummaryTool: AnyAgentTool = {
           return { success: false, status: 'error', error: `未找到实例 ID=${typedArgs.instance_id}`, errorCode: 'INSTANCE_NOT_FOUND', next_actions: ['先调用 list_database_instances 获取有效实例 ID'] };
         }
 
+        const publicInstance = publicInstanceDto(instance as unknown as Record<string, unknown>);
         const summary: Record<string, any> = {
           id: instance.id,
           name: instance.name,
@@ -57,8 +59,8 @@ export const getInstanceSummaryTool: AnyAgentTool = {
           status: instance.status,
           host: instance.host,
           port: instance.port,
-          health_score: instance.health_score,
-          health_status: instance.health_status,
+          health_score: publicInstance.health_score,
+          health_status: publicInstance.health_status,
         };
 
         return {
@@ -81,16 +83,19 @@ export const getInstanceSummaryTool: AnyAgentTool = {
         instances = instances.filter((inst: any) => allowedIds.has(inst.id));
       }
 
-      const summaries = instances.map((inst: any) => ({
-        id: inst.id,
-        name: inst.name,
-        db_type: inst.db_type,
-        status: inst.status,
-        host: inst.host,
-        port: inst.port,
-        health_score: inst.health_score,
-        health_status: inst.health_status,
-      }));
+      const summaries = instances.map((inst: any) => {
+        const publicInstance = publicInstanceDto(inst as Record<string, unknown>);
+        return {
+          id: inst.id,
+          name: inst.name,
+          db_type: inst.db_type,
+          status: inst.status,
+          host: inst.host,
+          port: inst.port,
+          health_score: publicInstance.health_score,
+          health_status: publicInstance.health_status,
+        };
+      });
 
       return {
         success: true,

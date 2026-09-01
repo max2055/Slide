@@ -1,11 +1,17 @@
 import { isIP } from 'node:net';
 import { SNMP_AUTH_PROTOCOLS, SNMP_PRIVACY_PROTOCOLS } from '../network-devices/snmp-types.js';
 
-export type NetworkDeviceVendor = 'huawei';
+export type NetworkDeviceVendor = 'huawei' | 'cisco';
 export type NetworkDeviceStatus = 'unknown' | 'online' | 'offline' | 'error' | 'unreachable';
 export type SnmpV3SecurityLevel = 'noAuthNoPriv' | 'authNoPriv' | 'authPriv';
 export type InterfaceStatus = 'up' | 'down' | 'testing' | 'unknown';
-export type NetworkDeviceCredentialProtocol = 'snmpv3' | 'ssh';
+export type NetworkDeviceCredentialProtocol = 'snmpv2c' | 'snmpv3' | 'ssh';
+
+export interface SnmpV2CredentialInput {
+  protocol?: 'snmpv2c';
+  version?: 2;
+  community: string;
+}
 
 export interface SnmpV3CredentialInput {
   protocol?: 'snmpv3';
@@ -38,7 +44,8 @@ export interface NetworkDeviceCreateInput {
   snmpPort?: number;
   sshPort?: number;
   collectionEnabled?: boolean;
-  snmpv3: SnmpV3CredentialInput;
+  snmpv3?: SnmpV3CredentialInput;
+  snmpv2c?: SnmpV2CredentialInput;
   ssh?: SshCredentialInput;
   createdBy?: number | null;
 }
@@ -56,6 +63,7 @@ export interface NetworkDeviceUpdateInput {
   sshPort?: number;
   collectionEnabled?: boolean;
   snmpv3?: SnmpV3CredentialInput;
+  snmpv2c?: SnmpV2CredentialInput;
   ssh?: SshCredentialInput;
 }
 
@@ -160,6 +168,17 @@ export function validateSnmpV3Credential(input: unknown): SnmpV3CredentialInput 
   };
 }
 
+export function validateSnmpV2Credential(input: unknown): SnmpV2CredentialInput {
+  if (!input || typeof input !== 'object') throw new Error('SNMPV2C_CREDENTIAL_REQUIRED');
+  const value = input as Record<string, unknown>;
+  if (value.version !== undefined && value.version !== 2) throw new Error('SNMP_UNSUPPORTED_SECURITY');
+  const community = value.community ?? value.communityString;
+  if (typeof community !== 'string' || community.trim().length === 0 || community.length > MAX_SECRET || /[\u0000-\u001f\u007f]/.test(community)) {
+    throw new Error('SNMPV2C_COMMUNITY_INVALID');
+  }
+  return { protocol: 'snmpv2c', version: 2, community: community.trim() };
+}
+
 export function validateSshCredential(input: unknown): SshCredentialInput {
   if (!input || typeof input !== 'object') throw new Error('SSH_CREDENTIAL_REQUIRED');
   const value = input as Record<string, unknown>;
@@ -175,18 +194,22 @@ export function parseNetworkDeviceCreateInput(input: unknown): NetworkDeviceCrea
   if (!input || typeof input !== 'object') throw new Error('NETWORK_DEVICE_INPUT_INVALID');
   const value = input as Record<string, unknown>;
   const vendor = value.vendor ?? 'huawei';
-  if (vendor !== 'huawei') throw new Error('NETWORK_DEVICE_VENDOR_UNSUPPORTED');
-  const snmpv3 = validateSnmpV3Credential(value.snmpv3 ?? value.snmp);
+  if (vendor !== 'huawei' && vendor !== 'cisco') throw new Error('NETWORK_DEVICE_VENDOR_UNSUPPORTED');
+  const rawSnmp = value.snmpv2c ?? value.snmpv2 ?? (value.snmpv3 ?? value.snmp);
+  const snmpv2c = (rawSnmp && typeof rawSnmp === 'object' && ((rawSnmp as any).version === 2 || 'community' in (rawSnmp as any) || 'communityString' in (rawSnmp as any))) || value.snmpv2c !== undefined || value.snmpv2 !== undefined
+    ? validateSnmpV2Credential(rawSnmp)
+    : undefined;
+  const snmpv3 = snmpv2c ? undefined : validateSnmpV3Credential(rawSnmp);
   const ssh = value.ssh == null ? undefined : validateSshCredential(value.ssh);
   return {
     name: text(value.name, 'name', true)!, label: nullableText(value.label, 'label'), host: validateNetworkHost(value.host),
-    site: nullableText(value.site, 'site'), vendor: 'huawei', model: nullableText(value.model, 'model'),
+    site: nullableText(value.site, 'site'), vendor: vendor as NetworkDeviceVendor, model: nullableText(value.model, 'model'),
     osVersion: nullableText(value.osVersion ?? value.os_version, 'os_version'), serialNumber: nullableText(value.serialNumber ?? value.serial_number, 'serial_number'),
     snmpPort: validatePort(value.snmpPort ?? value.snmp_port, 'snmp_port', 161), sshPort: validatePort(value.sshPort ?? value.ssh_port, 'ssh_port', 22),
     collectionEnabled: value.collectionEnabled == null ? true : (() => {
       if (typeof value.collectionEnabled !== 'boolean') throw new Error('COLLECTION_ENABLED_INVALID');
       return value.collectionEnabled;
-    })(), snmpv3, ssh,
+    })(), snmpv3, snmpv2c, ssh,
     createdBy: value.createdBy == null ? null : Number(value.createdBy),
   };
 }
@@ -200,11 +223,12 @@ export function parseNetworkDeviceUpdateInput(input: unknown): NetworkDeviceUpda
     if (value[key] !== undefined || value[field] !== undefined) (result as any)[key] = nullableText(value[key] ?? value[field], field);
   }
   if (value.host !== undefined) result.host = validateNetworkHost(value.host);
-  if (value.vendor !== undefined) { if (value.vendor !== 'huawei') throw new Error('NETWORK_DEVICE_VENDOR_UNSUPPORTED'); result.vendor = 'huawei'; }
+  if (value.vendor !== undefined) { if (value.vendor !== 'huawei' && value.vendor !== 'cisco') throw new Error('NETWORK_DEVICE_VENDOR_UNSUPPORTED'); result.vendor = value.vendor; }
   if (value.snmpPort !== undefined || value.snmp_port !== undefined) result.snmpPort = validatePort(value.snmpPort ?? value.snmp_port, 'snmp_port', 161);
   if (value.sshPort !== undefined || value.ssh_port !== undefined) result.sshPort = validatePort(value.sshPort ?? value.ssh_port, 'ssh_port', 22);
   if (value.collectionEnabled !== undefined) { if (typeof value.collectionEnabled !== 'boolean') throw new Error('COLLECTION_ENABLED_INVALID'); result.collectionEnabled = value.collectionEnabled; }
-  if (value.snmpv3 !== undefined || value.snmp !== undefined) result.snmpv3 = validateSnmpV3Credential(value.snmpv3 ?? value.snmp);
+  if (value.snmpv2c !== undefined || value.snmpv2 !== undefined || (value.snmp === undefined && value.snmpv3 === undefined && value.version === 2)) result.snmpv2c = validateSnmpV2Credential(value.snmpv2c ?? value.snmpv2 ?? value.snmp);
+  else if (value.snmpv3 !== undefined || value.snmp !== undefined) result.snmpv3 = validateSnmpV3Credential(value.snmpv3 ?? value.snmp);
   if (value.ssh !== undefined) result.ssh = validateSshCredential(value.ssh);
   return result;
 }

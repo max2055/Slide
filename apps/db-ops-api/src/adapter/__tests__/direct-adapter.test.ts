@@ -88,6 +88,28 @@ class ThinkingStreamingProvider extends MockLLMProvider {
   }
 }
 
+class CapturingMessagesProvider extends MockLLMProvider {
+  seenMessages: Message[] = [];
+
+  override async chatStream(
+    messages: Message[],
+    _tools: ToolSchema[],
+    callbacks: StreamCallbacks,
+    _options?: LLMCallOptions,
+  ): Promise<LLMResponse> {
+    this.seenMessages = messages;
+    await callbacks.onContentDelta('single user context');
+    return {
+      content: 'single user context',
+      finishReason: 'stop',
+      toolCalls: [],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+      shouldExecuteTools: false,
+      hasToolCalls: false,
+    };
+  }
+}
+
 class ToolCallingProvider extends MockLLMProvider {
   private calls = 0;
   override async chat(): Promise<LLMResponse> {
@@ -565,6 +587,22 @@ describe('DirectAdapter', () => {
         { type: 'thinking_delta', delta: 'first reason' },
         { type: 'thinking_delta', delta: ' second reason' },
       ]);
+    });
+
+    it('passes the current user message to the model only once', async () => {
+      const provider = new CapturingMessagesProvider();
+      const adapter = new DirectAdapter({
+        tools: new ToolRegistry(),
+        llmProvider: provider,
+      });
+      adaptersToCleanup.push(adapter);
+
+      const question = `single-context-${Date.now()}-${Math.random()}`;
+      await adapter.chat(`test-session-${question}`, question, () => {});
+
+      const userMessages = provider.seenMessages.filter((message) => message.role === 'user');
+      expect(userMessages).toHaveLength(1);
+      expect(userMessages[0]?.content).toContain(question);
     });
 
     it('binds an authenticated actor to a dangerous tool call and denies the handler', async () => {

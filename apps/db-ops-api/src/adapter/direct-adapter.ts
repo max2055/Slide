@@ -665,7 +665,10 @@ export class DirectAdapter implements IAgentEngine {
       this.runner._restoreRuntimeCheckpoint(session as any);
     }
 
-    // Push user message
+    // Capture history before adding this turn. ContextBuilder appends the
+    // current user message itself, so including the just-added entry would
+    // send the same question to the model twice.
+    const historyBeforeCurrentMessage = [...session.getHistory(120)] as any[];
     session.addMessage('user', message);
 
     // Read session settings (model, thinkingLevel) from DB metadata.
@@ -680,7 +683,7 @@ export class DirectAdapter implements IAgentEngine {
     // Build messages with ContextBuilder (D-12)
     const skillNames = this.skillsLoader.listSkills().map(s => s.name);
     const contextMessages = await this.contextBuilder.buildMessages(
-      session.getHistory(120) as any[],
+      historyBeforeCurrentMessage,
       message,
       skillNames,
     );

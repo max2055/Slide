@@ -9,6 +9,7 @@ import type { AnyAgentTool } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
 import { instanceDatabaseService } from '../../../instance-database-service.js';
 import { canReadResource } from '../../../resources/resource-service.js';
+import { publicInstanceDto } from '../../../security/public-dto.js';
 
 export const listDatabaseInstancesTool: AnyAgentTool = {
   name: 'list_database_instances',
@@ -43,16 +44,19 @@ export const listDatabaseInstancesTool: AnyAgentTool = {
         ? actorVisible.filter(inst => inst.db_type === dbTypeFilter)
         : actorVisible;
 
-      const items = filtered.map(inst => ({
-        id: inst.id,
-        name: inst.name,
-        db_type: inst.db_type,
-        host: inst.host,
-        port: inst.port,
-        health_status: inst.health_status,
-        environment: inst.environment,
-        status: inst.status,
-      }));
+      const items = filtered.map(inst => {
+        const publicInstance = publicInstanceDto(inst as unknown as Record<string, unknown>);
+        return {
+          id: inst.id,
+          name: inst.name,
+          db_type: inst.db_type,
+          host: inst.host,
+          port: inst.port,
+          health_status: publicInstance.health_status,
+          environment: inst.environment,
+          status: inst.status,
+        };
+      });
 
       return {
         success: true,

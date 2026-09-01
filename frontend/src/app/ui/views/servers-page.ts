@@ -111,9 +111,6 @@ export class ServersPage extends LitElement {
       overflow: hidden;
     }
 
-    .empty-toolbar {
-      justify-content: flex-end;
-    }
     /* Form styles */
     .form-input,
     .form-select,
@@ -736,10 +733,15 @@ export class ServersPage extends LitElement {
       return html`
         <div class="page">
           <div class="card">
-            <div class="toolbar resource-toolbar empty-toolbar">
-              <button class="btn-primary" @click=${this._openAddDialog}>
-                ${icons['plus']} 添加服务器
-              </button>
+            <div class="toolbar resource-toolbar">
+              <div class="toolbar-actions">
+                <button class="btn resource-action resource-action--refresh" type="button" .disabled=${this._loading} @click=${this._loadServers}>
+                  ${icons['refresh']} 刷新
+                </button>
+                <button class="btn-primary resource-action resource-action--add" type="button" @click=${this._openAddDialog}>
+                  ${icons['plus']} 添加服务器
+                </button>
+              </div>
             </div>
             <app-empty-state
               title="暂无服务器"
@@ -799,7 +801,10 @@ export class ServersPage extends LitElement {
               ${this._activeFilterCount > 0
                 ? html`<button class="btn-ghost resource-filter-reset" @click=${this._resetFilters}>重置筛选</button>`
                 : nothing}
-              <button class="btn-primary" @click=${this._openAddDialog}>
+              <button class="btn resource-action resource-action--refresh" type="button" .disabled=${this._loading} @click=${this._loadServers}>
+                ${icons['refresh']} 刷新
+              </button>
+              <button class="btn-primary resource-action resource-action--add" type="button" @click=${this._openAddDialog}>
                 ${icons['plus']} 添加服务器
               </button>
             </div>
