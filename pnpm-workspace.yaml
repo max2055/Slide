@@ -15,7 +15,7 @@ overrides:
 
 allowBuilds:
   bcrypt: true
-  cpu-features: true
+  cpu-features: false
   esbuild: true
   oracledb: true
-  ssh2: true
+  ssh2: false
