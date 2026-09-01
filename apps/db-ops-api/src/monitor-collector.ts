@@ -174,6 +174,19 @@ class MonitorCollector {
    */
   private async collectInstanceMetrics(instance: any, dueMetricIds: readonly string[]): Promise<Record<string, boolean>> {
     try {
+      // Agent tools can create an active instance before its credential exists.
+      // Retry from persisted configuration so adding the credential later is
+      // enough to make the instance collectible without restarting the API.
+      if (!databaseService.getConnection(instance.id)) {
+        const reconnected = await this.tryReconnect(instance);
+        if (!reconnected) {
+          for (const metricId of dueMetricIds) {
+            collectionCapabilityTracker.recordMetricAttempt(instance.id, metricId, false);
+          }
+          return Object.fromEntries(dueMetricIds.map((metricId) => [metricId, false]));
+        }
+      }
+
       const results = await unifiedCollector.collectInstance(instance, dueMetricIds);
       for (const metricId of dueMetricIds) {
         collectionCapabilityTracker.recordMetricAttempt(instance.id, metricId, Boolean(results[metricId]));
