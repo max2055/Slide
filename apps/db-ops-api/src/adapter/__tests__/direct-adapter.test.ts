@@ -382,6 +382,53 @@ describe('DirectAdapter', () => {
       });
     }, 10000);
 
+    it('closes with 4001 when a revoked access token fails authentication', async () => {
+      const port = 28995;
+      const previousPort = process.env.AGENT_WS_PORT;
+      const previousSecret = process.env.JWT_SECRET_KEY;
+      process.env.AGENT_WS_PORT = String(port);
+      process.env.JWT_SECRET_KEY = 'test-websocket-secret-that-is-long-enough';
+      const authenticateAccessToken = vi.fn().mockRejectedValue(new Error('Session revoked'));
+      const adapter = new DirectAdapter({
+        tools: new ToolRegistry(),
+        llmProvider: new MockLLMProvider(),
+        actorContextService: {
+          authenticateAccessToken,
+          revalidateActor: vi.fn(),
+        },
+      });
+      adaptersToCleanup.push(adapter);
+
+      try {
+        await adapter.start();
+        const close = await new Promise<{ code: number; reason: string }>((resolve, reject) => {
+          const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+          const timeout = setTimeout(() => reject(new Error('WebSocket revoked-token test timed out')), 5_000);
+          ws.on('open', () => ws.send(JSON.stringify({ type: 'auth', token: 'revoked-token' })));
+          ws.on('close', (code, reason) => {
+            clearTimeout(timeout);
+            resolve({ code, reason: reason.toString() });
+          });
+          ws.on('error', (error) => {
+            clearTimeout(timeout);
+            reject(error);
+          });
+        });
+
+        expect(authenticateAccessToken).toHaveBeenCalledWith(
+          'revoked-token',
+          process.env.JWT_SECRET_KEY,
+          expect.any(String),
+        );
+        expect(close).toEqual({ code: 4001, reason: 'Unauthorized' });
+      } finally {
+        if (previousPort === undefined) delete process.env.AGENT_WS_PORT;
+        else process.env.AGENT_WS_PORT = previousPort;
+        if (previousSecret === undefined) delete process.env.JWT_SECRET_KEY;
+        else process.env.JWT_SECRET_KEY = previousSecret;
+      }
+    }, 10_000);
+
     it('denies a production-catalog sensitive tool over the authenticated WebSocket transport', async () => {
       const port = 28993;
       const previousPort = process.env.AGENT_WS_PORT;
