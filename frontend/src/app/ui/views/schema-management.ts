@@ -6,6 +6,7 @@ import "../components/app-empty-state.js";
 import "../components/app-badge.js";
 import { icons } from "../../../icons.js";
 import "../../../components/stat-card.js";
+import { authFetch } from '../../../api/index.js';
 
 interface DatabaseInstance {
   id: number;
@@ -321,7 +322,7 @@ export class SchemaManagementPage extends LitElement {
       if (this.instanceId) {
         this.selectedInstance = this.instanceId;
       }
-      const res = await fetch("/api/database/instances", {
+      const res = await authFetch("/api/database/instances", {
         headers: this._authHeaders(),
       });
       if (!res.ok) throw new Error("Failed to load instances");
@@ -353,7 +354,7 @@ export class SchemaManagementPage extends LitElement {
   private async loadSnapshotTimes() {
     if (!this._activeInstanceId) return;
     try {
-      const res = await fetch(`/api/schema/snapshots/${this._activeInstanceId}`, {
+      const res = await authFetch(`/api/schema/snapshots/${this._activeInstanceId}`, {
         headers: this._authHeaders(),
       });
       if (res.ok) {
@@ -369,7 +370,7 @@ export class SchemaManagementPage extends LitElement {
   private async loadTableList() {
     if (!this._activeInstanceId) return;
     try {
-      const res = await fetch(`/api/schema/snapshot/${this._activeInstanceId}`, {
+      const res = await authFetch(`/api/schema/snapshot/${this._activeInstanceId}`, {
         headers: this._authHeaders(),
       });
       if (res.ok) {
@@ -388,7 +389,7 @@ export class SchemaManagementPage extends LitElement {
   private async loadChanges() {
     if (!this._activeInstanceId) return;
     try {
-      const res = await fetch(`/api/schema/changes/${this._activeInstanceId}`, {
+      const res = await authFetch(`/api/schema/changes/${this._activeInstanceId}`, {
         headers: this._authHeaders(),
       });
       if (res.ok) {
@@ -411,7 +412,7 @@ export class SchemaManagementPage extends LitElement {
     this.collecting = true;
     this.collectResult = null;
     try {
-      const res = await fetch(`/api/schema/collect/${this._activeInstanceId}`, {
+      const res = await authFetch(`/api/schema/collect/${this._activeInstanceId}`, {
         method: "POST",
         headers: { ...this._authHeaders(), "Content-Type": "application/json" },
         body: "{}",
@@ -438,7 +439,7 @@ export class SchemaManagementPage extends LitElement {
     if (!this._activeInstanceId) return;
     this.detecting = true;
     try {
-      const res = await fetch(`/api/schema/changes/${this._activeInstanceId}`, {
+      const res = await authFetch(`/api/schema/changes/${this._activeInstanceId}`, {
         method: "POST",
         headers: { ...this._authHeaders(), "Content-Type": "application/json" },
         body: "{}",
@@ -473,7 +474,7 @@ export class SchemaManagementPage extends LitElement {
     this.expandedTable = tableName;
     if (!this._activeInstanceId) return;
     try {
-      const res = await fetch(`/api/schema/table/${this._activeInstanceId}/${tableName}`, {
+      const res = await authFetch(`/api/schema/table/${this._activeInstanceId}/${tableName}`, {
         headers: this._authHeaders(),
       });
       if (res.ok) {

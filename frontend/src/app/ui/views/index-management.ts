@@ -2,6 +2,7 @@ import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state, property } from "lit/decorators.js";
 import { showToast } from "../components/app-toast-container.js";
+import { authFetch } from '../../../api/index.js';
 
 interface DatabaseInstance {
   id: number;
@@ -400,7 +401,7 @@ export class IndexManagementPage extends LitElement {
 
   private async loadInstances() {
     try {
-      const res = await fetch("/api/database/instances", {
+      const res = await authFetch("/api/database/instances", {
         headers: this.authHeaders(),
       });
       if (res.ok) {
@@ -421,7 +422,7 @@ export class IndexManagementPage extends LitElement {
     this.requestUpdate();
 
     try {
-      const res = await fetch(`/api/indexes/${this.selectedInstanceId}`, {
+      const res = await authFetch(`/api/indexes/${this.selectedInstanceId}`, {
         headers: this.authHeaders(),
       });
       if (res.ok) {
@@ -437,7 +438,7 @@ export class IndexManagementPage extends LitElement {
 
     // 加载冗余报告
     try {
-      const res = await fetch(`/api/indexes/${this.selectedInstanceId}/redundancy`, {
+      const res = await authFetch(`/api/indexes/${this.selectedInstanceId}/redundancy`, {
         headers: this.authHeaders(),
       });
       if (res.ok) {
@@ -449,7 +450,7 @@ export class IndexManagementPage extends LitElement {
 
     // 加载未使用索引
     try {
-      const res = await fetch(`/api/indexes/${this.selectedInstanceId}/unused`, {
+      const res = await authFetch(`/api/indexes/${this.selectedInstanceId}/unused`, {
         headers: this.authHeaders(),
       });
       if (res.ok) {
@@ -470,7 +471,7 @@ export class IndexManagementPage extends LitElement {
     this.requestUpdate();
 
     try {
-      const res = await fetch(`/api/index/collect/${this.selectedInstanceId}`, {
+      const res = await authFetch(`/api/index/collect/${this.selectedInstanceId}`, {
         method: "POST",
         headers: { ...this.authHeaders(), "Content-Type": "application/json" },
         body: "{}",
@@ -500,7 +501,7 @@ export class IndexManagementPage extends LitElement {
     this.requestUpdate();
 
     try {
-      const res = await fetch(`/api/index/detect/${this.selectedInstanceId}`, {
+      const res = await authFetch(`/api/index/detect/${this.selectedInstanceId}`, {
         method: "POST",
         headers: { ...this.authHeaders(), "Content-Type": "application/json" },
       });

@@ -28,6 +28,8 @@ import {
 } from './src/auth/require-instance-access.js';
 import { RbacService } from './src/auth/rbac-service.js';
 import { rbacApiRoutes } from './src/auth/rbac-api.js';
+import { registerAuthSessionConfigRoutes } from './src/auth/session-config-routes.js';
+import { authSessionConfigService } from './src/auth/session-config.js';
 import { strictBody, warnUnknown } from './src/utils/strict-body.js';
 import { instanceDatabaseService } from './src/instance-database-service.js';
 import { llmDatabaseService } from './src/llm-database-service.js';
@@ -336,6 +338,7 @@ async function start() {
 
   // 注册 RBAC 管理 API
   await fastify.register(rbacApiRoutes);
+  await registerAuthSessionConfigRoutes(fastify, verifyToken);
   await registerAgentToolApprovalRoutes(fastify, verifyToken);
   await registerAgentSecurityRoutes(fastify, verifyToken);
   await registerDeviceAuthRoutes(fastify, verifyToken);
@@ -448,7 +451,11 @@ async function start() {
         String(request.id),
       );
       const token = signAccessToken(actor, JWT_SECRET, JWT_EXPIRES_IN);
-      const refreshToken = await actorContextService.issueRefreshToken(actor);
+      const sessionConfig = await authSessionConfigService.get();
+      const refreshToken = await actorContextService.issueRefreshToken(
+        actor,
+        authSessionConfigService.expiresAt(sessionConfig),
+      );
 
       reply.send({
         token,
@@ -472,9 +479,11 @@ async function start() {
     if (!refreshToken) return reply.code(400).send({ error: '缺少 refreshToken' });
 
     try {
+      const sessionConfig = await authSessionConfigService.get();
       const rotated = await actorContextService.rotateRefreshToken(
         refreshToken,
         String(request.id),
+        authSessionConfigService.expiresAt(sessionConfig),
       );
       const newAccessToken = signAccessToken(rotated.actor, JWT_SECRET, JWT_EXPIRES_IN);
       reply.send({

@@ -7,6 +7,7 @@
  */
 import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { isSessionExpiryInProgress } from "../../../api/index.js";
 
 export type ToastType = "success" | "error" | "warning" | "info";
 
@@ -153,6 +154,7 @@ export class ToastContainer extends LitElement {
 }
 
 export function showToast(message: string, type: ToastType = "info"): void {
+  if (type === "error" && isSessionExpiryInProgress()) return;
   if (_instance) {
     _instance.addToast(message, type);
   } else {

@@ -855,6 +855,7 @@ INSERT INTO `system_config` (`config_key`, `config_value`, `value_type`, `descri
 ('system.name', '数据库智能运维系统', 'string', '系统名称'),
 ('system.version', '1.0.0', 'string', '系统版本'),
 ('auth.jwt_expiration_minutes', '1440', 'number', 'JWT 令牌过期时间（分钟）'),
+('auth.session_idle_timeout_minutes', '10080', 'number', '登录会话无操作超时时间（分钟）；每次刷新令牌轮换后重新计时'),
 ('monitor.collect_interval_seconds', '30', 'number', '监控采集间隔'),
 ('monitor.history_retention_days', '30', 'number', '监控历史保留天数'),
 ('alert.enabled', 'true', 'boolean', '是否启用告警'),

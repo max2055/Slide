@@ -185,6 +185,7 @@ describe('actor context security boundary', () => {
 
   it('refresh consumes and rotates the token before returning a current actor', async () => {
     const operations: string[] = [];
+    const rotatedExpiresAt = new Date('2030-01-02T00:00:00Z');
     const connection = {
       beginTransaction: vi.fn(async () => { operations.push('begin'); }),
       execute: vi.fn(async (sql: string) => {
@@ -220,7 +221,7 @@ describe('actor context security boundary', () => {
       getConnection: vi.fn().mockResolvedValue(connection),
     } as any));
 
-    const result = await service.rotateRefreshToken('raw-refresh-token', 'refresh-request');
+    const result = await service.rotateRefreshToken('raw-refresh-token', 'refresh-request', rotatedExpiresAt);
 
     expect(result.actor.userId).toBe(7);
     expect(result.actor.sessionVersion).toBe(4);
@@ -228,6 +229,10 @@ describe('actor context security boundary', () => {
     expect(operations).toEqual([
       'begin', 'select-refresh', 'select-actor', 'consume', 'insert', 'commit',
     ]);
+    expect(connection.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO refresh_tokens'),
+      [expect.any(String), 7, 4, rotatedExpiresAt],
+    );
   });
 
   it('refresh never rotates a token for an inactive user', async () => {

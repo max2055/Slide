@@ -1,5 +1,6 @@
 import type { DirectGatewayClient } from "../direct-gateway.ts";
 import type { AgentsListResult } from "../types.ts";
+import { authFetch } from '../../../api/index.js';
 
 export type AgentsState = {
   client: DirectGatewayClient | null;
@@ -19,7 +20,7 @@ export async function loadAgents(state: AgentsState) {
   state.agentsError = null;
   try {
     const token = (window as any).__apiClient?.getToken?.() || '';
-    const res = await fetch('/api/agents', {
+    const res = await authFetch('/api/agents', {
       headers: token ? { 'Authorization': `Bearer ${token}` } : {},
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

@@ -3,6 +3,23 @@
  */
 
 const BASE_URL = '/api'; // 使用 Vite 代理到后端
+export const SESSION_EXPIRED_EVENT = 'slide-session-expired';
+
+let sessionExpiryInProgress = false;
+
+export function isSessionExpiryInProgress(): boolean {
+  return sessionExpiryInProgress;
+}
+
+export function notifySessionExpired(): void {
+  if (sessionExpiryInProgress) return;
+  sessionExpiryInProgress = true;
+  localStorage.removeItem('token');
+  localStorage.removeItem('refreshToken');
+  localStorage.removeItem('permissions');
+  localStorage.removeItem('user');
+  window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
+}
 
 interface RequestConfig extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
@@ -23,6 +40,7 @@ class ApiClient {
 
   setToken(token: string | null) {
     if (token) {
+      sessionExpiryInProgress = false;
       localStorage.setItem('token', token);
     } else {
       localStorage.removeItem('token');
@@ -37,6 +55,7 @@ class ApiClient {
 
   /** Try to log in directly via REST API */
   async directLogin(username: string, password: string): Promise<string | null> {
+    sessionExpiryInProgress = false;
     try {
       const data = await new Promise<any>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -142,8 +161,7 @@ class ApiClient {
 
       if (!response.ok) {
         // Refresh failed — clear everything, user must re-login
-        this.setToken(null);
-        this.setRefreshToken(null);
+        notifySessionExpired();
         return null;
       }
 
@@ -157,7 +175,7 @@ class ApiClient {
     }
   }
 
-  private async fetchWithAuth<T>(url: string, options: RequestInit): Promise<T> {
+  async fetchResponseWithAuth(url: string, options: RequestInit = {}): Promise<Response> {
     const executeFetch = (token: string | null) => {
       const headers = new Headers(options.headers || {});
       const method = (options.method || 'GET').toUpperCase();
@@ -171,6 +189,8 @@ class ApiClient {
       return fetch(url, { ...options, headers, method });
     };
 
+    const hadAccessToken = Boolean(this.getToken());
+    const hadRefreshToken = Boolean(this.getRefreshToken());
     let response = await executeFetch(this.getToken());
 
     if (response.status === 401) {
@@ -183,9 +203,17 @@ class ApiClient {
       const newToken = await this.refreshPromise;
       if (newToken) {
         response = await executeFetch(newToken);
+        if (response.status === 401) notifySessionExpired();
+      } else if (!hadRefreshToken && hadAccessToken) {
+        notifySessionExpired();
       }
     }
 
+    return response;
+  }
+
+  private async fetchWithAuth<T>(url: string, options: RequestInit): Promise<T> {
+    const response = await this.fetchResponseWithAuth(url, options);
     return this.parseResponse<T>(response);
   }
 
@@ -229,10 +257,7 @@ class ApiClient {
 // Shared auth-aware fetch — injects JWT token from localStorage.
 // For components that use raw fetch() instead of ApiClient.
 export async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
-  const token = apiClient.getToken();
-  const headers = new Headers(options.headers);
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-  return fetch(url, { ...options, headers });
+  return apiClient.fetchResponseWithAuth(url, options);
 }
 
 // 导出单例

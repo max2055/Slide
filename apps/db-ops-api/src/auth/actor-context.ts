@@ -235,6 +235,7 @@ export class ActorContextService {
   async rotateRefreshToken(
     refreshToken: string,
     requestId: string = randomUUID(),
+    rotatedExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
   ): Promise<{ actor: ActorContext; refreshToken: string }> {
     const pool = this.poolProvider();
     if (!pool?.getConnection) throw new ActorAuthenticationError();
@@ -298,7 +299,7 @@ export class ActorContextService {
           rotatedHash,
           currentActor.userId,
           currentActor.sessionVersion,
-          new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          rotatedExpiresAt,
         ],
       );
       await connection.commit();

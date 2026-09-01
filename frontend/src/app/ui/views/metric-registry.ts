@@ -5,6 +5,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
+import { authFetch } from '../../../api/index.js';
 
 const API_BASE = "/api";
 
@@ -98,7 +99,7 @@ export class MetricRegistryViewer extends LitElement {
     this.loading = true; this.error = null;
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${API_BASE}/metrics/registry`, {
+      const res = await authFetch(`${API_BASE}/metrics/registry`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -137,7 +138,7 @@ export class MetricRegistryViewer extends LitElement {
     this.saving = true; this.formMsg = null;
     try {
       const isEdit = !!this.editing;
-      const res = await fetch(`${API_BASE}/metrics/registry${isEdit ? `/${this.editing!.id}` : ''}`, {
+      const res = await authFetch(`${API_BASE}/metrics/registry${isEdit ? `/${this.editing!.id}` : ''}`, {
         method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("token")}` },
         body: JSON.stringify(this.form),
@@ -150,7 +151,7 @@ export class MetricRegistryViewer extends LitElement {
 
   private async _delete(m: MetricDefinition) {
     try {
-      await fetch(`${API_BASE}/metrics/registry/${m.id}`, {
+      await authFetch(`${API_BASE}/metrics/registry/${m.id}`, {
         method: "DELETE", headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` },
       });
       this.showDeleteConfirm = null; await this._load();

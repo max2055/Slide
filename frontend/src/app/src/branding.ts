@@ -12,6 +12,8 @@
 // Types
 // ---------------------------------------------------------------------------
 
+import { authFetch } from '../../api/index.js';
+
 /** Shape returned by GET /api/branding/config */
 export interface BrandingConfig {
   cli_name: string;
@@ -43,7 +45,7 @@ let _cache: BrandingConfig | null = null;
 
 async function _loadFromApi(): Promise<void> {
   try {
-    const resp = await fetch("/api/branding/config");
+    const resp = await authFetch("/api/branding/config");
     if (resp.ok) {
       _cache = (await resp.json()) as BrandingConfig;
     }
