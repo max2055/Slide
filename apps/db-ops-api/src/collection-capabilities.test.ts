@@ -95,4 +95,20 @@ describe('CollectionCapabilityTracker', () => {
     expect(instance1Caps[0].available).toBe(true);
     expect(instance2Caps[0].available).toBe(false);
   });
+
+  it('should clear historical successes when an instance loses credentials', () => {
+    (metricRegistry.getByDbType as any).mockReturnValue([
+      { id: 'cpu_usage', name: 'CPU 使用率（估算）', db_types: ['mysql'] },
+    ]);
+
+    collectionCapabilityTracker.recordMetricAttempt(1001, 'CPU 使用率（估算）', true);
+    expect(collectionCapabilityTracker.getCapabilities(1001, 'mysql')[0].available).toBe(true);
+
+    collectionCapabilityTracker.clearInstance(1001);
+
+    expect(collectionCapabilityTracker.getCapabilities(1001, 'mysql')[0]).toMatchObject({
+      available: false,
+      lastAttempt: undefined,
+    });
+  });
 });

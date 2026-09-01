@@ -92,6 +92,14 @@ describe('NetworkDeviceCollector', () => {
     expect(persistence.updateStatus).toHaveBeenLastCalledWith(7, 'online');
   });
 
+  it('collects an SNMPv2c device using its community credential', async () => {
+    const persistence = store({ getCredentials: vi.fn(async () => ({ protocol: 'snmpv2c' as const, username: '', community: 'readonly' })) });
+    const snmp = adapter();
+    const collector = new NetworkDeviceCollector(persistence, snmp as any);
+    await expect(collector.collectDevice(7)).resolves.toMatchObject({ success: true });
+    expect(snmp.probe).toHaveBeenCalledWith(expect.objectContaining({ version: 2, community: 'readonly' }));
+  });
+
   it('serializes concurrent polls for one device', async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });

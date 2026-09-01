@@ -2,7 +2,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { authFetch } from "../../../api/index.js";
 import { icons } from "../../../icons.js";
-import type { NetworkDevice, NetworkDeviceStatus, NetworkDeviceSnmpCredential } from "../../../api/generated/public-api.js";
+import type { NetworkDevice, NetworkDeviceStatus, NetworkDeviceSnmpCredential, NetworkDeviceSnmpV2Credential, NetworkDeviceVendor } from "../../../api/generated/public-api.js";
 import { showToast } from "../components/app-toast-container.js";
 import { sharedResourceToolbarCssText } from "../../styles/shared-resource-toolbar-styles.ts";
 import "../components/app-badge.js";
@@ -23,7 +23,10 @@ type DeviceForm = {
   snmpPort: number;
   sshPort: number;
   collectionEnabled: boolean;
+  vendor: NetworkDeviceVendor;
+  snmpVersion: 2 | 3;
   username: string;
+  community: string;
   securityLevel: NetworkDeviceSnmpCredential["securityLevel"];
   authProtocol: "SHA" | "MD5";
   authSecret: string;
@@ -37,7 +40,7 @@ type DeviceForm = {
 
 const EMPTY_FORM: DeviceForm = {
   name: "", label: "", host: "", site: "", model: "", osVersion: "", serialNumber: "",
-  snmpPort: 161, sshPort: 22, collectionEnabled: true, username: "", securityLevel: "authPriv",
+  snmpPort: 161, sshPort: 22, collectionEnabled: true, vendor: "huawei", snmpVersion: 3, username: "", community: "", securityLevel: "authPriv",
   authProtocol: "SHA", authSecret: "", privacyProtocol: "AES", privacySecret: "", sshCredentialType: "password",
   sshUsername: "", sshCredentialValue: "", hostKeyFingerprint: "",
 };
@@ -138,6 +141,7 @@ export class NetworkDevicesPage extends LitElement {
       snmpPort: device.snmp_port,
       sshPort: device.ssh_port,
       collectionEnabled: device.collection_enabled,
+      vendor: device.vendor === "cisco" ? "cisco" : "huawei",
     };
     this.formError = null;
     this.showDialog = true;
@@ -151,7 +155,11 @@ export class NetworkDevicesPage extends LitElement {
     this.form = { ...this.form, [key]: value };
   }
 
-  private credentialPayload(): NetworkDeviceSnmpCredential | undefined {
+  private credentialPayload(): NetworkDeviceSnmpCredential | NetworkDeviceSnmpV2Credential | undefined {
+    if (this.form.snmpVersion === 2) {
+      if (!this.form.community.trim()) return undefined;
+      return { version: 2, community: this.form.community.trim() };
+    }
     if (!this.form.username.trim()) return undefined;
     const credential: NetworkDeviceSnmpCredential = {
       username: this.form.username.trim(),
@@ -181,10 +189,10 @@ export class NetworkDevicesPage extends LitElement {
     const ssh = this.sshPayload();
     return {
       name: this.form.name.trim(), label: this.form.label.trim() || null, host: this.form.host.trim(),
-      site: this.form.site.trim() || null, vendor: "huawei", model: this.form.model.trim() || null,
+      site: this.form.site.trim() || null, vendor: this.form.vendor, model: this.form.model.trim() || null,
       osVersion: this.form.osVersion.trim() || null, serialNumber: this.form.serialNumber.trim() || null,
       snmpPort: Number(this.form.snmpPort), sshPort: Number(this.form.sshPort),
-      collectionEnabled: this.form.collectionEnabled, ...(credential ? { snmpv3: credential } : {}), ...(ssh ? { ssh } : {}),
+      collectionEnabled: this.form.collectionEnabled, ...(credential ? (this.form.snmpVersion === 2 ? { snmpv2c: credential } : { snmpv3: credential }) : {}), ...(ssh ? { ssh } : {}),
     };
   }
 
@@ -195,7 +203,7 @@ export class NetworkDevicesPage extends LitElement {
       return;
     }
     if (!this.editingId && !this.credentialPayload()) {
-      this.formError = "请配置 SNMPv3 凭据";
+      this.formError = `请配置 SNMPv${this.form.snmpVersion === 2 ? "2c" : "3"} 凭据`;
       return;
     }
     const ssh = this.sshPayload();
@@ -228,7 +236,7 @@ export class NetworkDevicesPage extends LitElement {
   private async testConnection() {
     if (this.testing) return;
     if (!this.form.host.trim() || !this.credentialPayload()) {
-      this.formError = "探测需要填写主机和 SNMPv3 凭据";
+      this.formError = `探测需要填写主机和 SNMPv${this.form.snmpVersion === 2 ? "2c" : "3"} 凭据`;
       return;
     }
     this.testing = true;
@@ -241,11 +249,11 @@ export class NetworkDevicesPage extends LitElement {
       }
       const response = await authFetch("/api/network-devices/test-connection", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ host: this.form.host.trim(), vendor: "huawei", version: 3, snmpPort: Number(this.form.snmpPort), snmpv3: this.credentialPayload(), ...(ssh ? { ssh } : {}) }),
+        body: JSON.stringify({ host: this.form.host.trim(), vendor: this.form.vendor, version: this.form.snmpVersion, snmpPort: Number(this.form.snmpPort), ...(this.form.snmpVersion === 2 ? { snmpv2c: this.credentialPayload() } : { snmpv3: this.credentialPayload() }), ...(ssh ? { ssh } : {}) }),
       });
       const body = await responseBody(response);
       if (!response.ok || body.success === false) throw new Error(String(body.error || "探测失败"));
-      showToast("SNMPv3 探测成功", "success");
+      showToast(`SNMPv${this.form.snmpVersion === 2 ? "2c" : "3"} 探测成功`, "success");
     } catch (error) {
       this.formError = error instanceof Error ? error.message : "探测失败";
     } finally {
@@ -299,30 +307,48 @@ export class NetworkDevicesPage extends LitElement {
 
   private renderDialog() {
     if (!this.showDialog) return nothing;
-    return html`<app-dialog .open=${true} size="lg" title=${this.editingId ? "编辑网络设备" : "添加网络设备"} .closeOnOverlay=${false} @app-dialog-close=${this.closeDialog}>
-      <div class="form-grid">
-        <div class="form-row"><app-form-field label="名称" required><input class="field" .value=${this.form.name} @input=${(e: Event) => this.updateForm("name", (e.target as HTMLInputElement).value)}></app-form-field>
+    return html`<app-dialog .open=${true} size="xl" title=${this.editingId ? "编辑网络设备" : "添加网络设备"} .closeOnOverlay=${false} @app-dialog-close=${this.closeDialog}>
+      <div class="device-form">
+        <section class="device-form-section">
+          <div class="section-heading">
+            <h3>基本信息</h3>
+            <span>用于识别和定位网络设备</span>
+          </div>
+          <div class="device-form-row"><app-form-field label="名称" required><input class="field" .value=${this.form.name} @input=${(e: Event) => this.updateForm("name", (e.target as HTMLInputElement).value)}></app-form-field>
           <app-form-field label="主机" required><input class="field" .value=${this.form.host} @input=${(e: Event) => this.updateForm("host", (e.target as HTMLInputElement).value)}></app-form-field></div>
-        <div class="form-row"><app-form-field label="标签"><input class="field" .value=${this.form.label} @input=${(e: Event) => this.updateForm("label", (e.target as HTMLInputElement).value)}></app-form-field>
+          <div class="device-form-row"><app-form-field label="标签"><input class="field" .value=${this.form.label} @input=${(e: Event) => this.updateForm("label", (e.target as HTMLInputElement).value)}></app-form-field>
           <app-form-field label="站点"><input class="field" .value=${this.form.site} @input=${(e: Event) => this.updateForm("site", (e.target as HTMLInputElement).value)}></app-form-field></div>
-        <div class="form-row"><app-form-field label="型号"><input class="field" .value=${this.form.model} @input=${(e: Event) => this.updateForm("model", (e.target as HTMLInputElement).value)}></app-form-field>
-          <app-form-field label="VRP 版本"><input class="field" .value=${this.form.osVersion} @input=${(e: Event) => this.updateForm("osVersion", (e.target as HTMLInputElement).value)}></app-form-field></div>
-        <div class="form-row"><app-form-field label="SNMP 端口"><input class="field" type="number" .value=${String(this.form.snmpPort)} @input=${(e: Event) => this.updateForm("snmpPort", Number((e.target as HTMLInputElement).value) || 161)}></app-form-field>
+          <div class="device-form-row"><app-form-field label="厂商"><select class="field" .value=${this.form.vendor} @change=${(e: Event) => this.updateForm("vendor", (e.target as HTMLSelectElement).value as NetworkDeviceVendor)}><option value="huawei">Huawei</option><option value="cisco">Cisco</option></select></app-form-field>
+          <app-form-field label="型号"><input class="field" .value=${this.form.model} @input=${(e: Event) => this.updateForm("model", (e.target as HTMLInputElement).value)}></app-form-field></div>
+          <div class="device-form-row"><app-form-field label="OS 版本"><input class="field" .value=${this.form.osVersion} @input=${(e: Event) => this.updateForm("osVersion", (e.target as HTMLInputElement).value)}></app-form-field></div>
+          <div class="device-form-row"><app-form-field label="SNMP 端口"><input class="field" type="number" .value=${String(this.form.snmpPort)} @input=${(e: Event) => this.updateForm("snmpPort", Number((e.target as HTMLInputElement).value) || 161)}></app-form-field>
           <app-form-field label="SSH 端口"><input class="field" type="number" .value=${String(this.form.sshPort)} @input=${(e: Event) => this.updateForm("sshPort", Number((e.target as HTMLInputElement).value) || 22)}></app-form-field></div>
-        <app-form-field label="SNMPv3 用户名" required><input class="field" autocomplete="off" .value=${this.form.username} @input=${(e: Event) => this.updateForm("username", (e.target as HTMLInputElement).value)}></app-form-field>
-        <div class="form-row"><app-form-field label="安全级别"><select class="field" .value=${this.form.securityLevel} @change=${(e: Event) => this.updateForm("securityLevel", (e.target as HTMLSelectElement).value as DeviceForm["securityLevel"])}><option value="authPriv">authPriv</option><option value="authNoPriv">authNoPriv</option><option value="noAuthNoPriv">noAuthNoPriv</option></select></app-form-field>
+        </section>
+        <section class="device-form-section">
+          <div class="section-heading">
+            <h3>SNMP 监控</h3>
+            <span>协议版本与厂商无关，用于只读指标采集</span>
+          </div>
+          <div class="device-form-row"><app-form-field label="SNMP 版本"><select class="field" .value=${String(this.form.snmpVersion)} @change=${(e: Event) => this.updateForm("snmpVersion", Number((e.target as HTMLSelectElement).value) as 2 | 3)}><option value="3">SNMPv3</option><option value="2">SNMPv2c</option></select></app-form-field>
+          ${this.form.snmpVersion === 2 ? html`<app-form-field label="Community" required><input class="field" autocomplete="off" type="password" .value=${this.form.community} @input=${(e: Event) => this.updateForm("community", (e.target as HTMLInputElement).value)}></app-form-field>` : html`<app-form-field label="SNMPv3 用户名" required><input class="field" autocomplete="off" .value=${this.form.username} @input=${(e: Event) => this.updateForm("username", (e.target as HTMLInputElement).value)}></app-form-field>`}</div>
+          ${this.form.snmpVersion === 3 ? html`<div class="device-form-row"><app-form-field label="安全级别"><select class="field" .value=${this.form.securityLevel} @change=${(e: Event) => this.updateForm("securityLevel", (e.target as HTMLSelectElement).value as DeviceForm["securityLevel"])}><option value="authPriv">authPriv</option><option value="authNoPriv">authNoPriv</option><option value="noAuthNoPriv">noAuthNoPriv</option></select></app-form-field>
           <app-form-field label="认证协议"><select class="field" .value=${this.form.authProtocol} @change=${(e: Event) => this.updateForm("authProtocol", (e.target as HTMLSelectElement).value as DeviceForm["authProtocol"])}><option value="SHA">SHA</option><option value="MD5">MD5</option></select></app-form-field></div>
-        <div class="form-row"><app-form-field label="认证密钥"><input class="field" type="password" autocomplete="new-password" .value=${this.form.authSecret} @input=${(e: Event) => this.updateForm("authSecret", (e.target as HTMLInputElement).value)}></app-form-field>
-          <app-form-field label="隐私密钥"><input class="field" type="password" autocomplete="new-password" .value=${this.form.privacySecret} @input=${(e: Event) => this.updateForm("privacySecret", (e.target as HTMLInputElement).value)}></app-form-field></div>
-        <div class="credential-section"><div class="section-title">SSH 凭据 <span class="section-hint">监控可选；加密配置备份需要填写。</span></div>
-          <div class="form-row"><app-form-field label="SSH 凭据类型"><select class="field" .value=${this.form.sshCredentialType} @change=${(e: Event) => this.updateForm("sshCredentialType", (e.target as HTMLSelectElement).value as DeviceForm["sshCredentialType"])}><option value="password">密码</option><option value="key">私钥</option></select></app-form-field>
-            <app-form-field label="SSH 用户名"><input class="field" autocomplete="off" .value=${this.form.sshUsername} @input=${(e: Event) => this.updateForm("sshUsername", (e.target as HTMLInputElement).value)}></app-form-field></div>
-          <div class="form-row"><app-form-field label=${this.form.sshCredentialType === "key" ? "SSH 私钥" : "SSH 密码"}><input class="field" type=${this.form.sshCredentialType === "key" ? "text" : "password"} autocomplete="new-password" .value=${this.form.sshCredentialValue} @input=${(e: Event) => this.updateForm("sshCredentialValue", (e.target as HTMLInputElement).value)}></app-form-field>
-            <app-form-field label="主机密钥指纹"><input class="field" placeholder="SHA256:..." autocomplete="off" .value=${this.form.hostKeyFingerprint} @input=${(e: Event) => this.updateForm("hostKeyFingerprint", (e.target as HTMLInputElement).value)}></app-form-field></div>
-        </div>
+          <div class="device-form-row"><app-form-field label="认证密钥"><input class="field" type="password" autocomplete="new-password" .value=${this.form.authSecret} @input=${(e: Event) => this.updateForm("authSecret", (e.target as HTMLInputElement).value)}></app-form-field>
+          <app-form-field label="隐私密钥"><input class="field" type="password" autocomplete="new-password" .value=${this.form.privacySecret} @input=${(e: Event) => this.updateForm("privacySecret", (e.target as HTMLInputElement).value)}></app-form-field></div>` : nothing}
+        </section>
+        <section class="device-form-section device-form-section--ssh credential-section">
+          <div class="section-heading">
+            <h3>SSH 凭据</h3>
+            <span>监控可选；加密配置备份需要填写</span>
+          </div>
+          <div class="device-form-row"><app-form-field label="SSH 凭据类型"><select class="field" .value=${this.form.sshCredentialType} @change=${(e: Event) => this.updateForm("sshCredentialType", (e.target as HTMLSelectElement).value as DeviceForm["sshCredentialType"])}><option value="password">密码</option><option value="key">私钥</option></select></app-form-field>
+          <app-form-field label="SSH 用户名"><input class="field" autocomplete="off" .value=${this.form.sshUsername} @input=${(e: Event) => this.updateForm("sshUsername", (e.target as HTMLInputElement).value)}></app-form-field></div>
+          <div class="device-form-row"><app-form-field label=${this.form.sshCredentialType === "key" ? "SSH 私钥" : "SSH 密码"}><input class="field" type=${this.form.sshCredentialType === "key" ? "text" : "password"} autocomplete="new-password" .value=${this.form.sshCredentialValue} @input=${(e: Event) => this.updateForm("sshCredentialValue", (e.target as HTMLInputElement).value)}></app-form-field>
+          <app-form-field label="主机密钥指纹"><input class="field" placeholder="SHA256:..." autocomplete="off" .value=${this.form.hostKeyFingerprint} @input=${(e: Event) => this.updateForm("hostKeyFingerprint", (e.target as HTMLInputElement).value)}></app-form-field></div>
+        </section>
         ${this.formError ? html`<div class="form-error" role="alert">${this.formError}</div>` : nothing}
       </div>
-      <div slot="footer" class="dialog-actions"><button class="btn" type="button" @click=${this.testConnection} .disabled=${this.testing}>${this.testing ? "探测中…" : "测试 SNMPv3"}</button><span></span><button class="btn" type="button" @click=${this.closeDialog}>取消</button><button class="btn-primary" type="button" @click=${this.saveDevice} .disabled=${this.saving}>${this.saving ? "保存中…" : "保存"}</button></div>
+      <div slot="footer" class="dialog-actions"><button class="btn" type="button" @click=${this.testConnection} .disabled=${this.testing}>${this.testing ? "探测中…" : `测试 SNMPv${this.form.snmpVersion === 2 ? "2c" : "3"}`}</button><span class="dialog-spacer" aria-hidden="true"></span><button class="btn" type="button" @click=${this.closeDialog}>取消</button><button class="btn-primary" type="button" @click=${this.saveDevice} .disabled=${this.saving}>${this.saving ? "保存中…" : "保存"}</button></div>
     </app-dialog>`;
   }
 
@@ -338,15 +364,32 @@ export class NetworkDevicesPage extends LitElement {
       .link-button { border:0; padding:0; color:var(--accent); background:transparent; cursor:pointer; font:inherit; text-align:left; }
       .loading, .error { padding:var(--space-xl); color:var(--muted); text-align:center; }
       .error { color:var(--danger); }
-      .form-grid { display:grid; gap:var(--space-md); }
-      .form-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-md); }
+      .device-form { display:grid; gap:var(--space-lg); max-width:760px; margin:0 auto; }
+      .device-form-section { display:grid; gap:var(--space-md); padding:var(--space-md); border:1px solid var(--border); border-radius:var(--radius-md); background:var(--bg-elevated); }
+      .device-form-section--ssh { background:color-mix(in srgb, var(--bg-elevated) 72%, var(--accent-subtle)); }
+      .section-heading { display:flex; align-items:baseline; justify-content:space-between; gap:var(--space-md); padding-bottom:var(--space-sm); border-bottom:1px solid var(--border); }
+      .section-heading h3 { margin:0; color:var(--text-strong); font-size:var(--text-md); font-weight:600; }
+      .section-heading span { color:var(--muted); font-size:var(--text-xs); text-align:right; }
+      .device-form-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-lg); min-width:0; }
+      .device-form-row--single { grid-template-columns:minmax(0,1fr); }
+      .device-form-row app-form-field { min-width:0; margin-bottom:0; }
+      .device-form-row .field { width:100%; min-width:0; }
       .dialog-actions { display:flex; align-items:center; justify-content:flex-end; gap:var(--space-sm); }
-      .dialog-actions > span { flex:1; }
+      .dialog-actions > .dialog-spacer { flex:1; }
+      .dialog-actions .btn,
+      .dialog-actions .btn-primary { min-height:40px; }
+      .dialog-actions .btn-primary { min-width:88px; }
       .form-error { color:var(--danger); font-size:var(--text-sm); overflow-wrap:anywhere; }
-      .credential-section { border-top:1px solid var(--border); padding-top:var(--space-md); display:grid; gap:var(--space-sm); }
-      .section-title { color:var(--text-strong); font-weight:600; }
-      .section-hint { color:var(--muted); font-size:var(--text-sm); font-weight:400; }
-      @media (max-width:600px) { .form-row { grid-template-columns:minmax(0,1fr); } }
+      @media (max-width:680px) {
+        .device-form { gap:var(--space-md); }
+        .device-form-section { padding:var(--space-sm); }
+        .device-form-row { grid-template-columns:minmax(0,1fr); gap:var(--space-sm); }
+        .section-heading { align-items:flex-start; flex-direction:column; gap:var(--space-xs); }
+        .section-heading span { text-align:left; }
+        .dialog-actions { flex-wrap:wrap; }
+        .dialog-actions > .dialog-spacer { display:none; }
+        .dialog-actions .btn:first-child { width:100%; }
+      }
     </style>
     ${this.loading ? html`<div class="loading" role="status">正在加载网络设备…</div>` : this.error ? html`<app-card><div class="error" role="alert">${this.error}<br><button class="btn" type="button" @click=${this.loadDevices}>重试</button></div></app-card>` : html`
       <app-card .compact=${true}>
@@ -359,8 +402,8 @@ export class NetworkDevicesPage extends LitElement {
           <select class="resource-filter" aria-label="状态筛选" .value=${this.statusFilter} @change=${(e: Event) => (this.statusFilter = (e.target as HTMLSelectElement).value)}><option value="all">全部状态</option><option value="online">在线</option><option value="offline">离线</option><option value="unreachable">不可达</option><option value="error">异常</option></select>
           <div class="toolbar-actions">
             ${this.activeFilterCount > 0 ? html`<button class="btn-ghost resource-filter-reset" type="button" @click=${this.resetFilters}>重置筛选</button>` : nothing}
-            <button class="btn" type="button" @click=${this.loadDevices}>${icons.refresh} 刷新</button>
-            <button class="btn-primary" type="button" @click=${this.openCreate}>${icons.plus} 添加设备</button>
+            <button class="btn resource-action resource-action--refresh" type="button" .disabled=${this.loading} @click=${this.loadDevices}>${icons.refresh} 刷新</button>
+            <button class="btn-primary resource-action resource-action--add" type="button" @click=${this.openCreate}>${icons.plus} 添加设备</button>
           </div>
         </div>
         <div class="resource-toolbar-meta" aria-live="polite">

@@ -7,6 +7,7 @@ import {
   type NetworkDevicePublicDto,
   type NetworkDeviceRow,
   type NetworkDeviceUpdateInput,
+  type SnmpV2CredentialInput,
   type SnmpV3CredentialInput,
   type SshCredentialInput,
 } from '../resources/network-device-types.js';
@@ -37,6 +38,7 @@ export interface NetworkDeviceCredentials {
   credentialType?: SshCredentialInput['credentialType'];
   credentialValue?: string;
   hostKeyFingerprint?: string;
+  community?: string;
 }
 
 const DEVICE_COLUMNS = `d.id, d.name, d.label, d.host, d.site, d.vendor, d.model, d.os_version, d.serial_number,
@@ -49,7 +51,7 @@ export class NetworkDeviceDatabaseService {
     const pool = this.pool();
     const [rows] = await pool.execute<Array<any>>(
       `SELECT ${DEVICE_COLUMNS},
-              EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol = 'snmpv3') AS has_snmp_credential,
+              EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol IN ('snmpv2c','snmpv3')) AS has_snmp_credential,
               EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol = 'ssh') AS has_ssh_credential
        FROM network_devices d ORDER BY d.host, d.id`,
     );
@@ -60,7 +62,7 @@ export class NetworkDeviceDatabaseService {
     const pool = this.pool();
     const [rows] = await pool.execute<Array<any>>(
       `SELECT ${DEVICE_COLUMNS},
-              EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol = 'snmpv3') AS has_snmp_credential,
+              EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol IN ('snmpv2c','snmpv3')) AS has_snmp_credential,
               EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol = 'ssh') AS has_ssh_credential
        FROM network_devices d WHERE d.id = ? LIMIT 1`, [id],
     );
@@ -75,7 +77,7 @@ export class NetworkDeviceDatabaseService {
     if (protocol) values.push(protocol);
     const [rows] = await pool.execute<Array<any>>(
       `SELECT protocol, username, security_level, auth_protocol, privacy_protocol,
-              auth_secret_encrypted, privacy_secret_encrypted, credential_type,
+              auth_secret_encrypted, privacy_secret_encrypted, community_encrypted, credential_type,
               credential_encrypted, host_key_fingerprint
        FROM network_device_credentials WHERE device_id = ?${where} ORDER BY protocol`, values,
     );
@@ -88,6 +90,9 @@ export class NetworkDeviceDatabaseService {
         authSecret: row.auth_secret_encrypted ? this.decryptSecret(row.auth_secret_encrypted) : undefined,
         privacySecret: row.privacy_secret_encrypted ? this.decryptSecret(row.privacy_secret_encrypted) : undefined,
       };
+    }
+    if (row.protocol === 'snmpv2c') {
+      return { protocol: 'snmpv2c', username: '', community: row.community_encrypted ? this.decryptSecret(row.community_encrypted) : undefined };
     }
     const encrypted = row.credential_encrypted;
     const value = encrypted ? this.decryptSecret(encrypted) : undefined;
@@ -112,7 +117,8 @@ export class NetworkDeviceDatabaseService {
           input.osVersion ?? null, input.serialNumber ?? null, input.snmpPort, input.sshPort, input.collectionEnabled === false ? 0 : 1],
       );
       const id = Number(result.insertId);
-      await this.saveSnmpCredentials(executor, id, input.snmpv3);
+      if (input.snmpv3) await this.saveSnmpCredentials(executor, id, input.snmpv3);
+      if (input.snmpv2c) await this.saveSnmpV2Credentials(executor, id, input.snmpv2c);
       if (input.ssh) await this.saveSshCredentials(executor, id, input.ssh);
       if (connection) await connection.commit();
       return { success: true, deviceId: id };
@@ -155,6 +161,7 @@ export class NetworkDeviceDatabaseService {
         }
       }
       if (input.snmpv3) await this.saveSnmpCredentials(executor, id, input.snmpv3);
+      if (input.snmpv2c) await this.saveSnmpV2Credentials(executor, id, input.snmpv2c);
       if (input.ssh) await this.saveSshCredentials(executor, id, input.ssh);
       if (connection) await connection.commit();
       return { success: true };
@@ -206,6 +213,17 @@ export class NetworkDeviceDatabaseService {
          privacy_protocol = VALUES(privacy_protocol), auth_secret_encrypted = VALUES(auth_secret_encrypted), privacy_secret_encrypted = VALUES(privacy_secret_encrypted)`,
       [id, input.securityLevel, input.username, input.authProtocol ?? null, input.privacyProtocol ?? null,
         input.authSecret ? encryptData(input.authSecret) : null, input.privacySecret ? encryptData(input.privacySecret) : null],
+    );
+  }
+
+  private async saveSnmpV2Credentials(pool: SqlExecutor, id: number, input: SnmpV2CredentialInput): Promise<void> {
+    await pool.execute(
+      `INSERT INTO network_device_credentials
+       (device_id, protocol, username, community_encrypted)
+       VALUES (?, 'snmpv2c', '', ?)
+       ON DUPLICATE KEY UPDATE username = VALUES(username), community_encrypted = VALUES(community_encrypted),
+         security_level = NULL, auth_protocol = NULL, privacy_protocol = NULL, auth_secret_encrypted = NULL, privacy_secret_encrypted = NULL`,
+      [id, encryptData(input.community)],
     );
   }
 

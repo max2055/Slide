@@ -116,27 +116,26 @@ export function renderStreamingGroup(
     minute: "2-digit",
   });
   const name = assistant?.name ?? "Assistant";
-  const thinkingMarkdown = thinkingText?.trim()
-    ? formatReasoningMarkdown(thinkingText)
-    : "";
 
   return html`
     <div class="chat-group assistant">
       ${renderAvatar("assistant", assistant, basePath)}
       <div class="chat-group-messages">
-        ${thinkingMarkdown ? renderThinkingDisclosure(thinkingMarkdown, thinkingComplete) : nothing}
-        ${text.trim()
-          ? renderGroupedMessage(
-              {
-                role: "assistant",
-                content: [{ type: "text", text }],
-                timestamp: startedAt,
-              },
-              `stream:${startedAt}`,
-              { isStreaming: true, showReasoning: false },
-              onOpenSidebar,
-            )
-          : nothing}
+        ${renderGroupedMessage(
+          {
+            role: "assistant",
+            content: text.trim() ? [{ type: "text", text }] : [],
+            timestamp: startedAt,
+          },
+          `stream:${startedAt}`,
+          {
+            isStreaming: true,
+            showReasoning: false,
+            thinkingText,
+            thinkingComplete,
+          },
+          onOpenSidebar,
+        )}
         <div class="chat-group-footer">
           <span class="chat-sender-name">${name}</span>
           <span class="chat-group-timestamp">${timestamp}</span>
@@ -997,6 +996,8 @@ function renderGroupedMessage(
   opts: {
     isStreaming: boolean;
     showReasoning: boolean;
+    thinkingText?: string;
+    thinkingComplete?: boolean;
     showToolCalls?: boolean;
     autoExpandToolCalls?: boolean;
     isToolMessageExpanded?: (messageId: string) => boolean;
@@ -1049,6 +1050,13 @@ function renderGroupedMessage(
     opts.showReasoning && role === "assistant" ? extractThinkingCached(message) : null;
   const markdownBase = extractedText?.trim() ? extractedText : null;
   const reasoningMarkdown = extractedThinking ? formatReasoningMarkdown(extractedThinking) : null;
+  const streamingThinkingMarkdown = opts.thinkingText?.trim()
+    ? formatReasoningMarkdown(opts.thinkingText)
+    : null;
+  const thinkingDisclosureMarkdown = streamingThinkingMarkdown ?? reasoningMarkdown;
+  const thinkingDisclosureComplete = streamingThinkingMarkdown
+    ? opts.thinkingComplete ?? false
+    : true;
   const markdown = markdownBase;
   const canCopyMarkdown = role === "assistant" && Boolean(markdown?.trim());
   const canExpand = role === "assistant" && Boolean(onOpenSidebar && markdown?.trim());
@@ -1068,7 +1076,8 @@ function renderGroupedMessage(
     !hasImages &&
     assistantAttachments.length === 0 &&
     assistantViewBlocks.length === 0 &&
-    !normalizedMessage.replyTarget
+    !normalizedMessage.replyTarget &&
+    !thinkingDisclosureMarkdown
   ) {
     return nothing;
   }
@@ -1134,7 +1143,9 @@ function renderGroupedMessage(
                         opts.assistantAttachmentAuthToken,
                         opts.onRequestUpdate,
                       )}
-                      ${reasoningMarkdown ? renderThinkingDisclosure(reasoningMarkdown, true) : nothing}
+                      ${thinkingDisclosureMarkdown
+                        ? renderThinkingDisclosure(thinkingDisclosureMarkdown, thinkingDisclosureComplete)
+                        : nothing}
                       ${jsonResult
                         ? html`<details
                             class="chat-json-collapse"
@@ -1186,7 +1197,9 @@ function renderGroupedMessage(
               opts.assistantAttachmentAuthToken,
               opts.onRequestUpdate,
             )}
-            ${reasoningMarkdown ? renderThinkingDisclosure(reasoningMarkdown, true) : nothing}
+            ${thinkingDisclosureMarkdown
+              ? renderThinkingDisclosure(thinkingDisclosureMarkdown, thinkingDisclosureComplete)
+              : nothing}
             ${normalizedRole === "assistant" && assistantViewBlocks.length > 0
               ? html`${assistantViewBlocks.map(
                   (block) => html`${renderToolPreview(block.preview, "chat_message", {

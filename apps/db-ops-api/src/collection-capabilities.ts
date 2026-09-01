@@ -64,6 +64,17 @@ class CollectionCapabilityTracker {
   }
 
   /**
+   * Clear all cached observations for an instance.
+   *
+   * A credential loss is a state transition, rather than a transient metric
+   * failure. Forget successful observations so the capability response cannot
+   * claim that a metric is still available without usable credentials.
+   */
+  clearInstance(instanceId: number): void {
+    this.store.delete(instanceId);
+  }
+
+  /**
    * 获取指定实例的采集能力状态
    *
    * 将 metric_registry 中的预期指标（按 db_type 过滤）与实际采集状态合并。

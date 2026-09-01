@@ -543,6 +543,7 @@ export class HealthScoreTab extends LitElement {
   }
 
   private _renderCheckDetails() {
+    const scoreAvailable = this._getLatestScore() !== null;
     return html`
       <button
         class="collapsible-toggle ${this.expandedChecks ? "expanded" : ""}"
@@ -554,7 +555,7 @@ export class HealthScoreTab extends LitElement {
 
       ${this.expandedChecks ? html`
         <div class="collapsible-content">
-          ${this.latestChecks.length === 0 ? html`
+          ${!scoreAvailable || this.latestChecks.length === 0 ? html`
             <div style="padding: var(--space-xl); text-align: center; color: var(--muted);">
               暂无健康检查数据
             </div>

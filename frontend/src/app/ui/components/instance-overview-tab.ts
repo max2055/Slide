@@ -5,6 +5,7 @@ import "./app-card.js";
 import "./app-badge.js";
 import "./metric-chart.js";
 import "./instance-host-summary.js";
+import { resolveHealthScoreState } from "../views/health-score-state.js";
 
 interface InstanceDetail {
   id: number;
@@ -16,8 +17,9 @@ interface InstanceDetail {
   username: string;
   environment: string;
   description: string;
-  health_status: "healthy" | "warning" | "critical" | "unknown";
+  health_status: "healthy" | "warning" | "critical" | "unknown" | "error";
   health_score: number;
+  hasCredential?: boolean;
   status: string;
   created_at: string;
 }
@@ -242,6 +244,7 @@ export class InstanceOverviewTab extends LitElement {
     if (!inst) {
       return html`<style>${InstanceOverviewTab.stylesText}</style><div class="loading loading-pulse">加载中...</div>`;
     }
+    const scoreState = resolveHealthScoreState(inst, inst.health_score);
 
     const envLabels: Record<string, string> = {
       development: "开发环境", testing: "测试环境",
@@ -294,8 +297,8 @@ export class InstanceOverviewTab extends LitElement {
           </div>
           <div class="overview-item">
             <span class="overview-label">健康评分</span>
-            <span class="overview-value ${inst.health_score >= 80 ? "ok" : inst.health_score >= 60 ? "warn" : "danger"}">
-              ${inst.health_score} / 100
+            <span class="overview-value ${scoreState.score === null ? "" : scoreState.score >= 80 ? "ok" : scoreState.score >= 60 ? "warn" : "danger"}">
+              ${scoreState.score === null ? "未知" : `${scoreState.score} / 100`}
             </span>
           </div>
           <div class="overview-item">

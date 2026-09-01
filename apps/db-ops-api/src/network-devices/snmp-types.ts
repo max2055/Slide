@@ -10,6 +10,7 @@ export const SNMP_ERROR_CODES = [
 ] as const;
 
 export type SnmpErrorCode = typeof SNMP_ERROR_CODES[number];
+export type SnmpVersion = 2 | 3;
 export type SnmpSecurityLevel = 'authPriv' | 'authNoPriv' | 'noAuthNoPriv';
 /** Algorithms supported by the current net-snmp adapter. */
 export const SNMP_AUTH_PROTOCOLS = ['SHA', 'MD5'] as const;
@@ -32,6 +33,18 @@ export interface SnmpV3Config {
   /** Kept for defensive validation when a caller forwards an untyped payload. */
   version?: 3;
 }
+
+export interface SnmpV2Config {
+  version: 2;
+  host: string;
+  port: number;
+  community: string;
+  timeoutMs?: number;
+  retries?: number;
+  maxRepetitions?: number;
+}
+
+export type SnmpConfig = SnmpV2Config | SnmpV3Config;
 
 export interface SnmpVarbind {
   oid: string;

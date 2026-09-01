@@ -5,7 +5,7 @@ import {
   SnmpClientError,
   type SnmpSession,
 } from './snmp-client.js';
-import type { SnmpV3Config } from './snmp-types.js';
+import type { SnmpV3Config, SnmpV2Config } from './snmp-types.js';
 
 const baseConfig: SnmpV3Config = {
   host: '192.0.2.10',
@@ -52,6 +52,19 @@ describe('SnmpClient', () => {
     await expect(client.get({ ...baseConfig, version: 2 } as any, ['1.3.6.1.2.1.1.3.0']))
       .rejects.toMatchObject({ code: 'SNMP_UNSUPPORTED_SECURITY' });
     expect(factory).not.toHaveBeenCalled();
+  });
+
+  it('opens a version 2c session with a community credential', async () => {
+    const active = session();
+    const factory = vi.fn(async (config: SnmpV2Config) => {
+      expect(config.version).toBe(2);
+      expect(config.community).toBe('readonly');
+      return active;
+    });
+    const client = new SnmpClient(factory as any);
+    await expect(client.get({ version: 2, host: baseConfig.host, port: 161, community: 'readonly' }, ['1.3.6.1.2.1.1.3.0']))
+      .resolves.toHaveLength(1);
+    expect(active.get).toHaveBeenCalled();
   });
 
   it('rejects OIDs outside the configured read allowlist', async () => {

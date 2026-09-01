@@ -11,8 +11,14 @@ describe('network device input contracts', () => {
   });
 
   it('rejects unsupported vendors and weak SNMPv3 credentials', () => {
-    expect(() => parseNetworkDeviceCreateInput({ name: 'x', host: '192.0.2.10', vendor: 'cisco', snmpv3: snmp })).toThrow('NETWORK_DEVICE_VENDOR_UNSUPPORTED');
+    expect(() => parseNetworkDeviceCreateInput({ name: 'x', host: '192.0.2.10', vendor: 'juniper', snmpv3: snmp })).toThrow('NETWORK_DEVICE_VENDOR_UNSUPPORTED');
     expect(() => validateSnmpV3Credential({ username: 'm', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: 'short', privacyProtocol: 'AES', privacySecret: 'long-enough' })).toThrow('SNMPV3_AUTH_SECRET_INVALID');
+  });
+
+  it('accepts Cisco devices with SNMPv2c community credentials', () => {
+    const value = parseNetworkDeviceCreateInput({ name: 'cisco-edge', host: '192.0.2.11', vendor: 'cisco', snmpv2c: { community: 'readonly' } });
+    expect(value.vendor).toBe('cisco');
+    expect(value.snmpv2c).toMatchObject({ protocol: 'snmpv2c', community: 'readonly' });
   });
 
   it.each([

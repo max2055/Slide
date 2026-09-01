@@ -7,7 +7,10 @@
 import type { AnyAgentTool, ToolResult } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
 import { databaseService } from '../../../database-service.js';
-import { instanceDatabaseService } from '../../../instance-database-service.js';
+import {
+  formatDatabaseConnectionError,
+  instanceDatabaseService,
+} from '../../../instance-database-service.js';
 import { credentialReferenceService } from '../../../security/credential-reference-service.js';
 
 /**
@@ -252,7 +255,11 @@ async function executeConnectionTest(
   // 如果实例已通过 databaseService 连接，使用现有连接池测试
   if (params.instance_id) {
     const conn = databaseService.getConnection(params.instance_id);
-    if (conn && conn.connected) {
+    const hasCredentials = typeof params.username === 'string'
+      && params.username.trim().length > 0
+      && typeof params.password === 'string'
+      && params.password.trim().length > 0;
+    if (conn && conn.connected && hasCredentials) {
       try {
         if (conn.pool) {
           await conn.pool.query('SELECT 1');
@@ -268,7 +275,14 @@ async function executeConnectionTest(
           return { success: true };
         }
       } catch (e: any) {
-        return { success: false, error: e.message };
+        return {
+          success: false,
+          error: formatDatabaseConnectionError(
+            e,
+            dbType,
+            typeof params.username === 'string' && params.username.trim().length > 0,
+          ),
+        };
       }
     }
   }
@@ -278,7 +292,7 @@ async function executeConnectionTest(
     db_type: dbType,
     host: params.host || 'localhost',
     port: params.port ?? 3306,
-    username: params.username || 'root',
+    username: params.username,
     password: params.password || '',
     database: params.database,
   });

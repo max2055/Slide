@@ -6,11 +6,11 @@ import {
   type HuaweiOidDefinition,
 } from './huawei-mib-catalog.js';
 import type { SnmpClient } from './snmp-client.js';
-import type { SnmpTableRow, SnmpV3Config, SnmpVarbind } from './snmp-types.js';
+import type { SnmpConfig, SnmpTableRow, SnmpVarbind } from './snmp-types.js';
 
 export interface HuaweiSnmpTransport {
-  get(config: SnmpV3Config, oids: string[]): Promise<SnmpVarbind[]>;
-  table(config: SnmpV3Config, rootOid: string): Promise<SnmpTableRow[]>;
+  get(config: SnmpConfig, oids: string[]): Promise<SnmpVarbind[]>;
+  table(config: SnmpConfig, rootOid: string): Promise<SnmpTableRow[]>;
 }
 
 export interface HuaweiMetricObservation {
@@ -19,7 +19,7 @@ export interface HuaweiMetricObservation {
   dimensions?: Record<string, string>;
   observedAt: Date;
   quality: ObservationQuality;
-  source: 'snmpv3';
+  source: 'snmpv2c' | 'snmpv3';
   reason?: string;
   rawValue?: number;
 }
@@ -137,7 +137,7 @@ export class HuaweiAdapter {
     private readonly clock: Clock = () => new Date(),
   ) {}
 
-  async probe(config: SnmpV3Config): Promise<HuaweiProbeResult> {
+  async probe(config: SnmpConfig): Promise<HuaweiProbeResult> {
     const observedAt = this.clock();
     const varbinds = await this.client.get(config, [
       this.catalog.scalars.sysUpTime.oid,
@@ -157,7 +157,7 @@ export class HuaweiAdapter {
     };
   }
 
-  async collectSystemMetrics(config: SnmpV3Config, firmware?: string): Promise<HuaweiMetricObservation[]> {
+  async collectSystemMetrics(config: SnmpConfig, firmware?: string): Promise<HuaweiMetricObservation[]> {
     const catalog = firmware ? getHuaweiMibCatalog(firmware, [this.catalog]) : this.catalog;
     const definitions: Array<[string, HuaweiOidDefinition | undefined]> = [
       ['device_uptime_seconds', catalog.scalars.sysUpTime],
@@ -189,10 +189,11 @@ export class HuaweiAdapter {
       }
       observations.push(this.metric(metricId, value, observedAt, qualityFor(value, reason), reason, numeric ?? undefined));
     }
-    return observations;
+    const source = config.version === 2 ? 'snmpv2c' : 'snmpv3';
+    return observations.map((observation) => ({ ...observation, source }));
   }
 
-  async collectInterfaces(config: SnmpV3Config): Promise<HuaweiInterfaceCollection> {
+  async collectInterfaces(config: SnmpConfig): Promise<HuaweiInterfaceCollection> {
     const observedAt = this.clock();
     const rows = await this.client.table(config, this.catalog.interfaces.tableOid);
     if (!Array.isArray(rows) || rows.length > 2_000) throw new Error('SNMP_TABLE_LIMIT');
@@ -227,7 +228,8 @@ export class HuaweiAdapter {
         observations.push(this.metric(counter.metricId, counter.metricId.endsWith('_bps') && result.value != null ? result.value * 8 : result.value, observedAt, result.quality, result.reason, counter.current == null || counter.current > BigInt(Number.MAX_SAFE_INTEGER) ? undefined : Number(counter.current), dimensions));
       }
     }
-    return { interfaces, observations, observedAt };
+    const source = config.version === 2 ? 'snmpv2c' : 'snmpv3';
+    return { interfaces, observations: observations.map((observation) => ({ ...observation, source })), observedAt };
   }
 
   private counterValue(row: SnmpTableRow, preferred: HuaweiOidDefinition, fallback: HuaweiOidDefinition, preferredColumn: number, fallbackColumn: number, names: string[]): [bigint | null, 32 | 64] {

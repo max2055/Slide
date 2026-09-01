@@ -113,6 +113,20 @@ export const sharedResourceToolbarStyles = css`
     margin-left: auto;
   }
 
+  .resource-toolbar .resource-action {
+    min-height: 40px;
+    box-sizing: border-box;
+    justify-content: center;
+  }
+
+  .resource-toolbar .resource-action--refresh {
+    min-width: 88px;
+  }
+
+  .resource-toolbar .resource-action--add {
+    min-width: 128px;
+  }
+
   .resource-toolbar-meta {
     display: flex;
     align-items: center;

@@ -18,7 +18,7 @@ import "./query-analysis-tab.js";
 import "./health-score-tab.js";
 import { authFetch } from "../../../api/index.js";
 
-interface InstanceDetail { id: number; name: string; db_type: string; host: string; port: number; database_name: string; username: string; environment: string; description: string; health_status: "healthy"|"warning"|"critical"|"unknown"; health_score: number; status: string; created_at: string; updated_at: string; }
+interface InstanceDetail { id: number; name: string; db_type: string; host: string; port: number; database_name: string; username: string; environment: string; description: string; health_status: "healthy"|"warning"|"critical"|"unknown"|"error"; health_score: number; status: string; created_at: string; updated_at: string; }
 interface MetricsData { cpu_usage: number; memory_usage: number; disk_usage: number; connections: number; max_connections?: number; qps: number; tps: number; active_transactions: number; slow_queries: number; version?: string; uptime_seconds?: number; innodb_buffer_pool_hit_rate?: number; replication_lag?: number; sga_size_mb?: number; pga_size_mb?: number; tablespace_usage_percent?: number; library_cache_hit_rate?: number; active_sessions?: number; enqueue_deadlocks?: number; metrics_data?: Record<string, number>; }
 interface SlowQuery { id: string; sql_text: string; avg_time_ms: number; max_time_ms: number; execution_count: number; first_seen: string; last_seen: string; }
 interface Session { id: number; user: string; host: string; database: string; command: string; time_seconds: number; state: string; query: string | null; }
@@ -353,7 +353,7 @@ export class InstanceDetailPage extends LitElement {
 
   private _healthBadge() {
     const s = this.instance?.health_status;
-    const m: Record<string, { variant: string; label: string }> = { healthy: { variant: "ok", label: "健康" }, warning: { variant: "warn", label: "警告" }, critical: { variant: "danger", label: "异常" }, unknown: { variant: "warn", label: "未知" } };
+    const m: Record<string, { variant: string; label: string }> = { healthy: { variant: "ok", label: "健康" }, warning: { variant: "warn", label: "警告" }, critical: { variant: "danger", label: "异常" }, unknown: { variant: "warn", label: "未知" }, error: { variant: "danger", label: "错误" } };
     const b = m[s || ""] || { variant: "warn", label: s || "未知" };
     return html`<app-badge variant=${b.variant}>${b.label}</app-badge>`;
   }

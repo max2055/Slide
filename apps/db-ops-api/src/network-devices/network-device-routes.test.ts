@@ -102,6 +102,9 @@ describe('network-device routes', () => {
     expect(withSsh.statusCode).toBe(200);
     expect(withSsh.json()).toMatchObject({ success: true, ssh: { verified: true } });
     expect(sshProbe).toHaveBeenCalledWith(expect.objectContaining({ host: '192.0.2.10', port: 22, username: 'readonly', credentialType: 'password', hostKeyFingerprint: `SHA256:${'A'.repeat(43)}` }));
+    const v2 = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { host: '192.0.2.10', vendor: 'cisco', version: 2, snmpv2c: { community: 'readonly' } } });
+    expect(v2.statusCode).toBe(200);
+    expect(probe).toHaveBeenLastCalledWith(expect.objectContaining({ version: 2, community: 'readonly' }));
     await app.close();
   });
 

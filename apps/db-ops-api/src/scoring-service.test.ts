@@ -99,6 +99,50 @@ describe('calculateDimensionScores', () => {
     expect(result.dimensions.security).toBe(100);
   });
 
+  it('should not treat an empty check set as a healthy score', () => {
+    const result = calculateDimensionScores([], 'dameng', {
+      availability: 1,
+      performance: 0,
+      capacity: 0,
+      security: 0,
+    });
+
+    expect(result.dimensions.availability).toBe(0);
+    expect(result.total).toBe(0);
+  });
+
+  it('should mark availability as unavailable when no connection evidence exists', () => {
+    const result = calculateDimensionScores(
+      [{ name: '慢查询', status: 'ok', score: 100 }],
+      'dameng',
+      { availability: 1, performance: 0, capacity: 0, security: 0 },
+    );
+
+    expect(result.dimensions.availability).toBe(0);
+    expect(result.total).toBe(0);
+  });
+
+  it.each(['unknown', 'pending_credentials'])('should not treat %s availability evidence as healthy', (status) => {
+    const result = calculateDimensionScores(
+      [{ name: '连接状态', status, score: 100 }],
+      'dameng',
+      { availability: 1, performance: 0, capacity: 0, security: 0 },
+    );
+
+    expect(result.dimensions.availability).toBe(0);
+    expect(result.total).toBe(0);
+  });
+
+  it.each(['unknown', 'pending_credentials'])('should expose %s availability checks as zero-scored', (status) => {
+    const result = calculateDimensionScores(
+      [{ name: '连接状态', status, score: 100 }],
+      'dameng',
+      { availability: 1, performance: 0, capacity: 0, security: 0 },
+    );
+
+    expect(result.checks[0].score).toBe(0);
+  });
+
   it('should handle PostgreSQL checks correctly with security dimension', () => {
     const checks = [
       { name: '连接状态', status: 'ok', score: 100 },

@@ -42,4 +42,29 @@ describe('Agent collection resource filtering', () => {
 
     expect(result.data).toEqual([]);
   });
+
+  it('does not expose a stale healthy status for an instance without credentials', async () => {
+    vi.spyOn(instanceDatabaseService, 'getAllInstances').mockResolvedValue([
+      {
+        id: 3,
+        name: 'pending-dameng',
+        db_type: 'dameng',
+        host: 'db-3',
+        port: 5236,
+        username: 'monquery',
+        password_encrypted: '',
+        health_status: 'healthy',
+        health_score: 100,
+        environment: 'testing',
+        status: 'active',
+      },
+    ] as any);
+
+    const result = await listDatabaseInstancesTool.handler({}, { actor: actor({ 3: 'read-only' }) });
+
+    expect(result).toMatchObject({
+      success: true,
+      data: [{ id: 3, health_status: 'unknown' }],
+    });
+  });
 });
