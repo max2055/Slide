@@ -15,6 +15,7 @@ import { ensureOracleClientReady, formatOracleConnectionError, initializeOracleC
 initializeOracleClient();
 
 const EXPLAIN_TIMEOUT_MS = 15_000;
+const ORACLE_METRICS_QUERY_TIMEOUT_MS = 5_000;
 
 export interface DatabaseConfig {
   host: string;
@@ -864,27 +865,32 @@ class DatabaseService {
   private async getOracleMetrics(conn: DatabaseConnection, id: number): Promise<RealtimeMetrics | null> {
     if (!conn.oracleConnection) return null;
 
+    const connection = conn.oracleConnection;
+    const previousCallTimeout = connection.callTimeout;
     try {
+      // callTimeout applies independently to every Oracle database round-trip.
+      connection.callTimeout = ORACLE_METRICS_QUERY_TIMEOUT_MS;
+
       // 获取连接数
-      const connResult = await conn.oracleConnection.execute(
+      const connResult = await connection.execute(
         'SELECT COUNT(*) as count FROM V$SESSION'
       );
       const connections = connResult.rows[0]?.[0] as number || 0;
 
       // 获取最大连接数
-      const maxConnResult = await conn.oracleConnection.execute(
+      const maxConnResult = await connection.execute(
         "SELECT VALUE FROM V$PARAMETER WHERE NAME = 'processes'"
       );
       const maxConnections = maxConnResult.rows[0]?.[0] as number || 300;
 
       // 获取活动会话数
-      const activeResult = await conn.oracleConnection.execute(
+      const activeResult = await connection.execute(
         'SELECT COUNT(*) as count FROM V$SESSION WHERE STATUS = \'ACTIVE\''
       );
       const activeSessions = activeResult.rows[0]?.[0] as number || 0;
 
       // 获取系统统计
-      const statResult = await conn.oracleConnection.execute(`
+      const statResult = await connection.execute(`
         SELECT
           SUM(CASE WHEN NAME = 'parse count (hard)' THEN VALUE ELSE 0 END) as hard_parses,
           SUM(CASE WHEN NAME = 'parse count (total)' THEN VALUE ELSE 0 END) as total_parses,
@@ -916,14 +922,14 @@ class DatabaseService {
       conn.oracleDeltaCounter = { executes, commits, timestamp: now };
 
       // 缓存命中率 (Library Cache Hit Ratio)
-      const libraryCacheResult = await conn.oracleConnection.execute(`
+      const libraryCacheResult = await connection.execute(`
         SELECT ROUND(SUM(pinhits) / SUM(pins) * 100, 2) as hit_rate
         FROM V$LIBRARYCACHE
       `);
       const libraryCacheHitRate = libraryCacheResult.rows[0]?.[0] as number || 100;
 
       // PGA 缓存命中率
-      const pgaResult = await conn.oracleConnection.execute(`
+      const pgaResult = await connection.execute(`
         SELECT ROUND((1 - (SELECT SUM(value) FROM V$SYSSTAT WHERE name = 'physical reads') /
           ((SELECT SUM(value) FROM V$SYSSTAT WHERE name = 'session pga memory') +
           (SELECT SUM(value) FROM V$SYSSTAT WHERE name = 'physical reads'))) * 100, 2) as hit_rate
@@ -934,7 +940,7 @@ class DatabaseService {
       // 缓冲区命中率 (Buffer Cache Hit Ratio via V$SYSSTAT)
       let sharedPoolHitRate = 100;
       try {
-        const bufResult = await conn.oracleConnection.execute(`
+        const bufResult = await connection.execute(`
           SELECT ROUND((1 - (SUM(DECODE(NAME, 'physical reads', VALUE, 0)) /
             NULLIF(SUM(DECODE(NAME, 'db block gets', VALUE, 0)) + SUM(DECODE(NAME, 'consistent gets', VALUE, 0)), 0))) * 100, 2)
           FROM V$SYSSTAT
@@ -947,7 +953,7 @@ class DatabaseService {
       // 表空间使用率 (Pitfall 3: DBA 权限不足时降级)
       let tablespaceUsagePercent = null;
       try {
-        const tablespaceResult = await conn.oracleConnection.execute(`
+        const tablespaceResult = await connection.execute(`
           SELECT MAX(usage_percent) FROM (
             SELECT ROUND((1 - NVL(fs.free_bytes, 0) / NULLIF(SUM(df.bytes), 0)) * 100, 2) as usage_percent
             FROM DBA_DATA_FILES df
@@ -966,7 +972,7 @@ class DatabaseService {
       }
 
       // 死锁数量
-      const deadlockResult = await conn.oracleConnection.execute(
+      const deadlockResult = await connection.execute(
         "SELECT COUNT(*) as count FROM V$LOCK WHERE BLOCK = 1"
       );
       const enqueueDeadlocks = deadlockResult.rows[0]?.[0] as number || 0;
@@ -982,7 +988,7 @@ class DatabaseService {
       // 获取版本号
       let version = '';
       try {
-        const versionResult = await conn.oracleConnection.execute(
+        const versionResult = await connection.execute(
           "SELECT VERSION FROM V$INSTANCE"
         );
         version = versionResult.rows[0]?.[0] as string || '';
@@ -991,7 +997,7 @@ class DatabaseService {
       // SGA 大小 (D-08 实例详情展示)
       let sgaSizeMb = 0;
       try {
-        const sgaResult = await conn.oracleConnection.execute(
+        const sgaResult = await connection.execute(
           'SELECT ROUND(SUM(bytes)/1024/1024, 2) FROM V$SGA'
         );
         sgaSizeMb = sgaResult.rows[0]?.[0] as number || 0;
@@ -1002,7 +1008,7 @@ class DatabaseService {
       // PGA 大小 (D-08 实例详情展示)
       let pgaSizeMb = 0;
       try {
-        const pgaResult = await conn.oracleConnection.execute(
+        const pgaResult = await connection.execute(
           "SELECT ROUND(value/1024/1024, 2) FROM V$PGASTAT WHERE NAME = 'total PGA allocated'"
         );
         pgaSizeMb = pgaResult.rows[0]?.[0] as number || 0;
@@ -1034,6 +1040,8 @@ class DatabaseService {
     } catch (error) {
       console.error(`获取 Oracle 实时指标失败：${id}`, error);
       return null;
+    } finally {
+      connection.callTimeout = previousCallTimeout;
     }
   }
 
@@ -1316,19 +1324,20 @@ class DatabaseService {
     try {
       // 从 V$SQLAREA 获取慢查询
       const result = await conn.oracleConnection.execute(`
-        SELECT
-          sql_id,
-          sql_text,
-          elapsed_time / executions / 1000 as avg_time_ms,
-          elapsed_time / 1000 as total_time_ms,
-          executions,
-          first_load_time,
-          last_load_time
-        FROM V$SQLAREA
-        WHERE executions > 0
-          AND elapsed_time / executions > 1000000  -- 平均执行时间 > 1 秒 (微秒)
-        ORDER BY elapsed_time DESC
-        FETCH FIRST :limit ROWS ONLY
+        SELECT * FROM (
+          SELECT
+            sql_id,
+            sql_text,
+            elapsed_time / executions / 1000 as avg_time_ms,
+            elapsed_time / 1000 as total_time_ms,
+            executions,
+            first_load_time,
+            last_load_time
+          FROM V$SQLAREA
+          WHERE executions > 0
+            AND elapsed_time / executions > 1000000  -- 平均执行时间 > 1 秒 (微秒)
+          ORDER BY elapsed_time DESC
+        ) WHERE ROWNUM <= :limit
       `, { limit });
 
       return result.rows.map((row: any) => ({
