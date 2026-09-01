@@ -124,7 +124,13 @@ export async function loadChatHistory(state: ChatState) {
   if (!state.client || !state.connected) {
     return;
   }
-  const sessionKey = state.sessionKey;
+  const sessionKey = state.sessionKey.trim();
+  if (!sessionKey) {
+    state.chatMessages = [];
+    state.chatThinkingLevel = null;
+    state.chatLoading = false;
+    return;
+  }
   const requestVersion = beginChatHistoryRequest(state);
   const startedAt = Date.now();
   state.chatLoading = true;

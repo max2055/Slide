@@ -8,7 +8,7 @@ import {
 } from "./app-chat.ts";
 import { DEFAULT_CRON_FORM } from "./app-defaults.ts";
 import type { EventLogEntry } from "./app-events.ts";
-import { initChatClient } from "./direct-gateway.ts";
+import { clearExpiredChatState, initChatClient } from "./direct-gateway.ts";
 import {
   handleConnected,
   handleDisconnected,
@@ -567,7 +567,7 @@ export class SlideApp extends LitElement {
       this.client.disconnect();
       this.client = null;
     }
-    this.connected = false;
+    clearExpiredChatState(this as unknown as Record<string, unknown>);
     this.sessionToken = null;
     this.hello = null;
     localStorage.removeItem('token');

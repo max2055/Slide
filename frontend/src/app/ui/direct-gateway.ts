@@ -67,6 +67,13 @@ export const defaultAdapterUrl = () => {
 export const MAX_RECONNECT_ATTEMPTS = 10;
 const INITIAL_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
+const SESSION_EXPIRED_MESSAGE = '登录已失效，请重新登录。';
+
+type PendingChatMessage = {
+  frame: Record<string, unknown>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+};
 
 export class DirectGatewayClient {
   private ws: WebSocket | null = null;
@@ -78,7 +85,7 @@ export class DirectGatewayClient {
   private maxReconnectAttempts = MAX_RECONNECT_ATTEMPTS;
   private closed = false;
   private authenticated = false;
-  private pendingMessages: Array<{ sessionKey?: string; message: string; messageId: string; idempotencyKey: string }> = [];
+  private pendingMessages: PendingChatMessage[] = [];
   private deviceIdentity: DeviceIdentity | null = null;
   private deviceAuth: { deviceId: string; publicKey: string; signature: string; timestamp: number; nonce: string } | null = null;
 
@@ -102,21 +109,23 @@ export class DirectGatewayClient {
     }
     this.authenticated = false;
     this.onStateChange('connecting');
-    this.ws = new WebSocket(this.url);
+    const socket = new WebSocket(this.url);
+    this.ws = socket;
 
-    this.ws.onopen = () => {
+    socket.onopen = () => {
+      if (this.ws !== socket) return;
       this.reconnectAttempts = 0;
-      this.onStateChange('connected');
       const token = typeof window !== 'undefined'
         ? (window as any).__apiClient?.getToken?.()
         : null;
       if (token) {
-        this.ws!.send(JSON.stringify({ type: 'auth', token, deviceIdentity: this.deviceIdentity, deviceAuth: this.deviceAuth }));
+        socket.send(JSON.stringify({ type: 'auth', token, deviceIdentity: this.deviceIdentity, deviceAuth: this.deviceAuth }));
       }
     };
 
 
-    this.ws.onmessage = (ev: MessageEvent<string>) => {
+    socket.onmessage = (ev: MessageEvent<string>) => {
+      if (this.ws !== socket) return;
       let parsed: unknown;
       try {
         parsed = JSON.parse(ev.data);
@@ -126,15 +135,17 @@ export class DirectGatewayClient {
       this.dispatchEvent(parsed);
     };
 
-    this.ws.onclose = (ev: CloseEvent) => {
+    socket.onclose = (ev: CloseEvent) => {
+      if (this.ws !== socket) return;
       this.ws = null;
+      this.authenticated = false;
       if (ev.code === 4001) {
+        this.rejectPendingMessages(new Error(SESSION_EXPIRED_MESSAGE));
         this.onStateChange('auth_failed');
         return; // Don't schedule reconnect — permanent auth failure
       }
       if (ev.code === 4002) {
         // Unauthenticated message sent before auth_ok — retryable (WR-01)
-        this.authenticated = false;
       }
       this.onStateChange('disconnected');
       if (!this.closed) {
@@ -143,7 +154,7 @@ export class DirectGatewayClient {
     };
 
 
-    this.ws.onerror = () => {
+    socket.onerror = () => {
       // onclose will fire after onerror
     };
   }
@@ -151,7 +162,7 @@ export class DirectGatewayClient {
   disconnect(): void {
     this.closed = true;
     this.authenticated = false;
-    this.pendingMessages = [];
+    this.rejectPendingMessages(new Error('[DirectGatewayClient] disconnected before the message was sent'));
     this.clearReconnectTimer();
     if (this.ws) {
       this.ws.onclose = null; // Prevent auto-reconnect on intentional close
@@ -175,19 +186,19 @@ export class DirectGatewayClient {
         ? p.sessionKey.trim()
         : undefined;
       const message = (p?.message as string) || '';
-      const accepted = this.sendChat(sessionKey, message, {
+      await this.sendChat(sessionKey, message, {
         idempotencyKey: typeof p?.idempotencyKey === 'string' ? p.idempotencyKey : undefined,
         attachments: Array.isArray(p?.attachments) ? p.attachments : undefined,
       });
-      if (!accepted) {
-        throw new Error('[DirectGatewayClient] chat.send could not be queued because the WebSocket is not connected');
-      }
       return undefined as T;
     }
     if (method === 'chat.history') {
       // Fetch from REST API; API returns array, wrap as {messages: [...]} for chat controller
       const p = params as Record<string, unknown> | undefined;
-      const rawSessionKey = (p?.sessionKey as string) || '';
+      const rawSessionKey = typeof p?.sessionKey === 'string' ? p.sessionKey.trim() : '';
+      if (!rawSessionKey) {
+        return { messages: [] } as T;
+      }
       // Parse session key (agent format): agent:<agentId>:<actualKey> → actualKey
       let sessionKey = rawSessionKey;
       if (rawSessionKey.startsWith('agent:')) {
@@ -208,7 +219,7 @@ export class DirectGatewayClient {
       }
       return apiClient.fetchResponseWithAuth(url, { headers }).then(async r => {
         if (!r.ok) {
-          throw new Error(`[DirectGatewayClient] REST API error: ${r.status} ${r.statusText}`);
+          throw await this._responseError(r, '[DirectGatewayClient] REST API error');
         }
         const data = await r.json();
         const rawMessages = Array.isArray(data) ? data : (data?.messages ?? []);
@@ -263,24 +274,32 @@ export class DirectGatewayClient {
     }
     const response = await apiClient.fetchResponseWithAuth(url, { ...options, headers });
     if (!response.ok) {
-      throw new Error(`[DirectGatewayClient] REST API error: ${response.status} ${response.statusText}`);
+      throw await this._responseError(response, '[DirectGatewayClient] REST API error');
     }
     return response.json() as Promise<T>;
   }
 
-  sendChat(sessionKey: string | undefined, message: string, options?: { idempotencyKey?: string; attachments?: unknown[] }): boolean {
+  private async _responseError(response: Response, prefix: string): Promise<Error> {
+    const body = (await response.text()).trim();
+    const status = `${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
+    const sessionExpired = response.status === 401 && isSessionExpiryInProgress()
+      ? `${SESSION_EXPIRED_MESSAGE} `
+      : '';
+    return new Error(`${sessionExpired}${prefix}: ${status}${body ? `: ${body}` : ''}`);
+  }
+
+  sendChat(sessionKey: string | undefined, message: string, options?: { idempotencyKey?: string; attachments?: unknown[] }): Promise<void> {
     const frame = this.chatSendFrame(sessionKey, message, options);
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn('[DirectGatewayClient] cannot sendChat: not connected');
-      return false;
+      return Promise.reject(new Error('[DirectGatewayClient] chat.send could not be queued because the WebSocket is not connected'));
     }
-    // Queue messages until auth_ok is received to avoid race condition
     if (!this.authenticated) {
-      this.pendingMessages.push(frame as { sessionKey?: string; message: string; messageId: string; idempotencyKey: string });
-      return true;
+      return new Promise<void>((resolve, reject) => {
+        this.pendingMessages.push({ frame, resolve, reject });
+      });
     }
     this.ws.send(JSON.stringify(frame));
-    return true;
+    return Promise.resolve();
   }
 
   cancelChat(runId: string, sessionKey: string): void {
@@ -306,7 +325,7 @@ export class DirectGatewayClient {
   }
 
   isConnected(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
+    return this.ws?.readyState === WebSocket.OPEN && this.authenticated;
   }
 
   /** Manual reconnect — resets retry counter. Used after exhausted state. */
@@ -327,12 +346,17 @@ export class DirectGatewayClient {
     // Handle auth_ok to flush pending messages (CR-04 race condition fix)
     if (type === 'auth_ok') {
       this.authenticated = true;
-      // Flush queued messages
       const pending = this.pendingMessages;
       this.pendingMessages = [];
       for (const pendingMsg of pending) {
-        this.ws?.send(JSON.stringify(pendingMsg));
+        try {
+          this.ws?.send(JSON.stringify(pendingMsg.frame));
+          pendingMsg.resolve();
+        } catch (error) {
+          pendingMsg.reject(error instanceof Error ? error : new Error(String(error)));
+        }
       }
+      this.onStateChange('connected');
       return;
     }
 
@@ -376,6 +400,7 @@ export class DirectGatewayClient {
       return;
     }
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      this.rejectPendingMessages(new Error('[DirectGatewayClient] WebSocket reconnect attempts exhausted'));
       this.onStateChange('exhausted');
       return;
     }
@@ -397,6 +422,14 @@ export class DirectGatewayClient {
       this.reconnectTimer = null;
     }
   }
+
+  private rejectPendingMessages(error: Error): void {
+    const pending = this.pendingMessages;
+    this.pendingMessages = [];
+    for (const pendingMessage of pending) {
+      pendingMessage.reject(error);
+    }
+  }
 }
 
 // ─── initChatClient — initialization orchestration ───────────────────────
@@ -404,7 +437,11 @@ export class DirectGatewayClient {
 // Maps DirectAdapter ChatEvent types to frontend ChatEventPayload and
 // wires a DirectGatewayClient to the app host component.
 
-import { apiClient } from "../../api/index.ts";
+import {
+  apiClient,
+  isSessionExpiryInProgress,
+  notifySessionExpired,
+} from "../../api/index.ts";
 import {
   CHAT_SESSIONS_ACTIVE_MINUTES,
   clearPendingQueueItemsForRun,
@@ -759,8 +796,9 @@ export function initChatClient(host: Record<string, unknown>): void {
       } else if (state === 'disconnected') {
         host.connected = false;
       } else if (state === 'auth_failed') {
-        host.connected = false;
-        host.lastError = '认证失败，请重新登录';
+        clearExpiredChatState(host);
+        notifySessionExpired();
+        host.lastError = SESSION_EXPIRED_MESSAGE;
       } else if (state === 'exhausted') {
         host.connected = false;
         host.lastError = '连接失败，请点击重试';
@@ -805,4 +843,26 @@ export function initChatClient(host: Record<string, unknown>): void {
   }).catch(() => {
     // A stale Vite optimized dependency must not leave the user on the login gate.
   });
+}
+
+export function clearExpiredChatState(host: Record<string, unknown>): void {
+  const pendingStream = pendingDirectStreamUpdates.get(host);
+  if (pendingStream?.timer !== null && pendingStream?.timer !== undefined) {
+    clearTimeout(pendingStream.timer);
+  }
+  pendingDirectStreamUpdates.delete(host);
+  host.connected = false;
+  host.chatLoading = false;
+  host.chatSending = false;
+  host.chatRunId = null;
+  host.chatStream = null;
+  host.chatStreamStartedAt = null;
+  host.chatThinkingText = '';
+  host.chatThinkingComplete = false;
+  host.chatQueue = [];
+  (host.refreshSessionsAfterChat as Set<string> | undefined)?.clear();
+  const toolHost = host as unknown as Partial<Parameters<typeof resetToolStream>[0]>;
+  if (toolHost.toolStreamById instanceof Map) {
+    resetToolStream(toolHost as Parameters<typeof resetToolStream>[0]);
+  }
 }

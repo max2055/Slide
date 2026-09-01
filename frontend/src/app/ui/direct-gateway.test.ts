@@ -58,9 +58,9 @@ describe('109-04: DirectGatewayClient', () => {
     expect(typeof client.isConnected).toBe('function');
   });
 
-  it('sendChat does not throw', () => {
+  it('rejects sendChat when no WebSocket is available', async () => {
     const client = new DirectGatewayClient({ onEvent, onStateChange });
-    expect(() => client.sendChat('test-session', 'hello world')).not.toThrow();
+    await expect(client.sendChat('test-session', 'hello world')).rejects.toThrow(/not connected/);
   });
 
   it('reports chat.send as rejected when no WebSocket is available', async () => {
@@ -82,10 +82,46 @@ describe('109-04: DirectGatewayClient', () => {
       .rejects.toThrow('network down');
   });
 
+  it('returns empty history without a REST request when sessionKey is blank', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+
+    await expect(client.request('chat.history', { sessionKey: '   ' }))
+      .resolves.toEqual({ messages: [] });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('includes the REST response body in errors', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ error: 'sessionKey parameter is required' }),
+      { status: 400, statusText: 'Bad Request' },
+    )));
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+
+    await expect(client.request('chat.history', { sessionKey: 'session-1' }))
+      .rejects.toThrow(/sessionKey parameter is required/);
+  });
+
   it('connect calls onStateChange with connecting state', () => {
     const client = new DirectGatewayClient({ onEvent, onStateChange });
     client.connect();
     expect(onStateChange).toHaveBeenCalledWith('connecting');
+    client.disconnect();
+  });
+
+  it('does not report connected until auth_ok is received', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+
+    await Promise.resolve();
+    expect(onStateChange).not.toHaveBeenCalledWith('connected');
+    expect(client.isConnected()).toBe(false);
+
+    socket.receive({ type: 'auth_ok' });
+    expect(onStateChange).toHaveBeenCalledWith('connected');
+    expect(client.isConnected()).toBe(true);
     client.disconnect();
   });
 
@@ -156,14 +192,33 @@ describe('109-04: DirectGatewayClient', () => {
     const socket = installMockWebSocket();
     const client = new DirectGatewayClient({ onEvent, onStateChange });
     client.connect();
-    client.sendChat('session-1', 'queued');
+    const sent = client.sendChat('session-1', 'queued');
     expect((client as any).pendingMessages).toHaveLength(1);
 
     client.connect();
     expect((client as any).pendingMessages).toHaveLength(1);
     socket.receive({ type: 'auth_ok' });
+    await sent;
     expect(socket.frames.at(-1)).toEqual(expect.objectContaining({ type: 'chat.send', message: 'queued' }));
     client.disconnect();
+  });
+
+  it('keeps chat.send pending during authentication and rejects it on 4001', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    const request = client.request('chat.send', { sessionKey: 'session-1', message: 'queued' });
+    let settled = false;
+    void request.then(() => { settled = true; }, () => { settled = true; });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(socket.frames.some((frame) => frame.type === 'chat.send')).toBe(false);
+
+    socket.closeWith(4001, 'Unauthorized');
+    await expect(request).rejects.toThrow('登录已失效，请重新登录。');
+    expect((client as any).pendingMessages).toHaveLength(0);
+    expect(onStateChange).toHaveBeenCalledWith('auth_failed');
   });
 
   it('forwards session.created as a first-class adapter event', () => {
@@ -248,6 +303,27 @@ describe('109-04: DirectGatewayClient', () => {
     expect(host.chatStream).toBe('第一段第二段');
   });
 
+  it('cancels pending stream updates when an expired session is cleared', async () => {
+    const host = {
+      connected: true, chatLoading: true, chatSending: true, chatRunId: 'run-1',
+      sessionKey: 'session-1', chatThinkingText: '', chatThinkingComplete: false,
+      chatStream: '', chatStreamStartedAt: Date.now(), chatQueue: [{ id: 'queued' }],
+      refreshSessionsAfterChat: new Set(['run-1']), chatToolMessages: [], chatStreamSegments: [],
+      toolStreamById: new Map(), toolStreamOrder: [], toolStreamSyncTimer: null,
+      chatMessages: [], lastError: null,
+      settings: { lastActiveSessionKey: '' }, applySettings() {},
+    };
+
+    (directGateway as any).handleDirectAdapterEvent(host, { type: 'text_delta', delta: 'stale' });
+    directGateway.clearExpiredChatState(host);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(host.chatStream).toBeNull();
+    expect(host.chatRunId).toBeNull();
+    expect(host.chatLoading).toBe(false);
+    expect(host.chatSending).toBe(false);
+  });
+
   it('adopts the server session key without resetting the active run and uses it next', async () => {
     const socket = installMockWebSocket();
     const client = new DirectGatewayClient({ onEvent, onStateChange });
@@ -302,6 +378,10 @@ class MockWebSocket {
 
   receive(frame: Record<string, unknown>): void {
     this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent<string>);
+  }
+
+  closeWith(code: number, reason: string): void {
+    this.onclose?.({ code, reason } as CloseEvent);
   }
 }
 
