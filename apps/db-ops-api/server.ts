@@ -1675,15 +1675,21 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         }
       }
 
+      const historyLimit = 30_000;
       const [rows] = await pool.execute(
-        `SELECT id, server_id, metric_name, dimensions, metric_value, recorded_at
-         FROM server_metrics
-         ${whereClause}
+        `SELECT recent.* FROM (
+           SELECT id, server_id, metric_name, dimensions, metric_value, recorded_at
+           FROM server_metrics
+           ${whereClause}
+           ORDER BY recorded_at DESC, id DESC
+           LIMIT ${historyLimit + 1}
+         ) AS recent
          ORDER BY recorded_at ASC, id ASC`,
         params
       ) as any;
 
-      reply.send({ server_id: Number(id), metrics: rows, range });
+      const truncated = rows.length > historyLimit;
+      reply.send({ server_id: Number(id), metrics: truncated ? rows.slice(1) : rows, range, truncated });
     } catch (error: any) {
       reply.code(500).send({ error: '获取服务器指标历史失败：' + error.message });
     }

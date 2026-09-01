@@ -33,10 +33,10 @@ class CollectionCapabilityTracker {
    * 记录一次指标采集尝试
    *
    * @param instanceId - 实例 ID
-   * @param metricName - 指标名称（metric_registry 中的 name 字段）
+   * @param metricId - 指标 ID（metric_registry 中的 id 字段）
    * @param success - 采集是否成功
    */
-  recordMetricAttempt(instanceId: number, metricName: string, success: boolean): void {
+  recordMetricAttempt(instanceId: number, metricId: string, success: boolean): void {
     let instanceMap = this.store.get(instanceId);
     if (!instanceMap) {
       instanceMap = new Map();
@@ -44,7 +44,7 @@ class CollectionCapabilityTracker {
     }
 
     const now = Date.now();
-    const existing = instanceMap.get(metricName);
+    const existing = instanceMap.get(metricId);
 
     const record: AttemptRecord = {
       available: success,
@@ -60,7 +60,7 @@ class CollectionCapabilityTracker {
       record.lastSuccess = existing.lastSuccess;
     }
 
-    instanceMap.set(metricName, record);
+    instanceMap.set(metricId, record);
   }
 
   /**
@@ -92,7 +92,7 @@ class CollectionCapabilityTracker {
 
     return expectedMetrics.map((metric) => {
       const name = metric.name;
-      const record = instanceMap?.get(name);
+      const record = instanceMap?.get(metric.id);
 
       return {
         metricId: metric.id,

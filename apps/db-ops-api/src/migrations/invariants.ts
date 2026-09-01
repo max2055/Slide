@@ -67,6 +67,7 @@ const networkRequiredIndexes: Array<[string, string]> = [
   ['network_device_credentials', 'uq_network_device_credential_protocol'],
   ['network_device_interfaces', 'uq_network_device_interface'],
   ['network_device_observations', 'idx_network_device_observation_latest'],
+  ['network_device_observations', 'idx_network_device_observation_time'],
   ['network_device_config_backups', 'uq_network_device_backup_version'],
   ['network_device_config_backups', 'uq_network_device_backup_hash'],
   ['alert_rules', 'idx_alert_rule_network_device'],

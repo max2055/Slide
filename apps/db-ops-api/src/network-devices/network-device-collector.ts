@@ -110,8 +110,10 @@ export class NetworkDeviceCollector {
 
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => { this.tick().catch(() => undefined); }, this.options.collectionIntervalMs);
-    this.tick().catch(() => undefined);
+    this.timer = setInterval(() => {
+      this.tick().catch((error) => console.error('[NetworkDeviceCollector] tick failed:', stableError(error)));
+    }, this.options.collectionIntervalMs);
+    this.tick().catch((error) => console.error('[NetworkDeviceCollector] initial tick failed:', stableError(error)));
   }
 
   stop(): void {
@@ -152,7 +154,12 @@ export class NetworkDeviceCollector {
       const credentials = await this.store.getCredentials(id);
       if (!credentials) return this.recordFailure(id, 'SNMP_AUTH_FAILED');
       let config: SnmpConfig;
-      try { config = toSnmpConfig(target, credentials, authorizedTarget.address); } catch (error) { return this.recordFailure(id, stableError(error)); }
+      try {
+        config = {
+          ...toSnmpConfig(target, credentials, authorizedTarget.address),
+          timeoutMs: this.options.commandTimeoutMs,
+        };
+      } catch (error) { return this.recordFailure(id, stableError(error)); }
 
       try {
         const probe = await this.adapter.probe(config);

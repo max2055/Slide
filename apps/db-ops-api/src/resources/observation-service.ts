@@ -68,7 +68,7 @@ export class MysqlObservationStore implements ObservationStore {
   constructor(private readonly poolProvider: () => SqlPool | null = () => dbConnection.getPool() as unknown as SqlPool | null) {}
   async latestInstanceMetric(id: number, metricId: string): Promise<ObservationRow | null> {
     if (!INSTANCE_METRICS.has(metricId)) throw new Error('METRIC_ID_UNSUPPORTED');
-    const [rows] = await this.pool().execute<Array<any>>(`SELECT ${metricId} AS value, recorded_at AS observedAt FROM metrics_history WHERE instance_id = ? ORDER BY recorded_at DESC LIMIT 1`, [id]);
+    const [rows] = await this.pool().execute<Array<any>>(`SELECT ${metricId} AS value, recorded_at AS observedAt FROM metrics_history WHERE instance_id = ? AND ${metricId} IS NOT NULL ORDER BY recorded_at DESC, id DESC LIMIT 1`, [id]);
     return rows[0] ? { value: rows[0].value == null ? null : Number(rows[0].value), observedAt: rows[0].observedAt ? new Date(rows[0].observedAt) : null } : null;
   }
   async latestServerMetric(id: number, metricId: string): Promise<ObservationRow | null> {
@@ -78,7 +78,7 @@ export class MysqlObservationStore implements ObservationStore {
   }
   async rangeInstanceMetric(id: number, metricId: string, from: Date, to: Date, limit: number): Promise<ObservationRow[]> {
     if (!INSTANCE_METRICS.has(metricId)) throw new Error('METRIC_ID_UNSUPPORTED');
-    const [rows] = await this.pool().execute<Array<any>>(`SELECT ${metricId} AS value, recorded_at AS observedAt FROM metrics_history WHERE instance_id = ? AND recorded_at >= ? AND recorded_at <= ? ORDER BY recorded_at DESC LIMIT ${limit}`, [id, from, to]);
+    const [rows] = await this.pool().execute<Array<any>>(`SELECT ${metricId} AS value, recorded_at AS observedAt FROM metrics_history WHERE instance_id = ? AND ${metricId} IS NOT NULL AND recorded_at >= ? AND recorded_at <= ? ORDER BY recorded_at DESC, id DESC LIMIT ${limit}`, [id, from, to]);
     return rows.map((row) => ({ value: row.value == null ? null : Number(row.value), observedAt: row.observedAt ? new Date(row.observedAt) : null }));
   }
   async rangeServerMetric(id: number, metricId: string, from: Date, to: Date, limit: number): Promise<ObservationRow[]> {

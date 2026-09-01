@@ -49,4 +49,14 @@ describe('UnifiedCollector due-only boundary', () => {
     expect(mocks.recordMetrics).toHaveBeenCalledWith({ instance_id: 9, metrics_data: { slow: 42 } });
     expect(result).toEqual({ slow: true });
   });
+
+  it('reports selected metrics as failed when persistence fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mocks.recordMetrics.mockResolvedValue({ success: false, error: 'write failed' });
+
+    await expect(unifiedCollector.collectInstance(
+      { id: 9, db_type: 'mysql' } as any,
+      ['slow'],
+    )).resolves.toEqual({ slow: false });
+  });
 });

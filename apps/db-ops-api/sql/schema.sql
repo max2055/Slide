@@ -119,22 +119,22 @@ CREATE TABLE IF NOT EXISTS `instance_pool_stats` (
 CREATE TABLE IF NOT EXISTS `metrics_history` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `instance_id` INT UNSIGNED NOT NULL,
-  `cpu_usage` DECIMAL(5,2) DEFAULT 0 COMMENT 'CPU 使用率 %',
-  `memory_usage` DECIMAL(5,2) DEFAULT 0 COMMENT '内存使用率 %',
-  `disk_usage` DECIMAL(5,2) DEFAULT 0 COMMENT '磁盘使用率 %',
-  `connections` INT DEFAULT 0 COMMENT '连接数',
-  `qps` DECIMAL(10,2) DEFAULT 0 COMMENT '每秒查询数',
-  `tps` DECIMAL(10,2) DEFAULT 0 COMMENT '每秒事务数',
-  `active_transactions` INT DEFAULT 0,
-  `slow_queries` INT DEFAULT 0,
-  `buffer_pool_hit_rate` DECIMAL(5,2) DEFAULT 0 COMMENT '缓冲池命中率 %',
-  `threads_running` INT DEFAULT 0,
-  `threads_connected` INT DEFAULT 0,
-  `bytes_received` BIGINT DEFAULT 0,
-  `bytes_sent` BIGINT DEFAULT 0,
-  `queries_total` BIGINT DEFAULT 0,
-  `commits_total` BIGINT DEFAULT 0,
-  `rollbacks_total` BIGINT DEFAULT 0,
+  `cpu_usage` DECIMAL(5,2) DEFAULT NULL COMMENT 'CPU 使用率 %',
+  `memory_usage` DECIMAL(5,2) DEFAULT NULL COMMENT '内存使用率 %',
+  `disk_usage` DECIMAL(5,2) DEFAULT NULL COMMENT '磁盘使用率 %',
+  `connections` INT DEFAULT NULL COMMENT '连接数',
+  `qps` DECIMAL(10,2) DEFAULT NULL COMMENT '每秒查询数',
+  `tps` DECIMAL(10,2) DEFAULT NULL COMMENT '每秒事务数',
+  `active_transactions` INT DEFAULT NULL,
+  `slow_queries` INT DEFAULT NULL,
+  `buffer_pool_hit_rate` DECIMAL(5,2) DEFAULT NULL COMMENT '缓冲池命中率 %',
+  `threads_running` INT DEFAULT NULL,
+  `threads_connected` INT DEFAULT NULL,
+  `bytes_received` BIGINT DEFAULT NULL,
+  `bytes_sent` BIGINT DEFAULT NULL,
+  `queries_total` BIGINT DEFAULT NULL,
+  `commits_total` BIGINT DEFAULT NULL,
+  `rollbacks_total` BIGINT DEFAULT NULL,
   `table_open_cache_hit_rate` DECIMAL(5,2) DEFAULT NULL COMMENT 'MySQL 表缓存命中率 %',
   `handler_read_rnd_next` BIGINT DEFAULT NULL COMMENT 'MySQL 全表扫计数器（累计）',
   `handler_read_rnd_next_rate` DECIMAL(10,2) DEFAULT NULL COMMENT 'MySQL 全表扫速率（次/秒）',
@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS `metrics_history` (
   PRIMARY KEY (`id`),
   INDEX `idx_instance_id` (`instance_id`),
   INDEX `idx_recorded_at` (`recorded_at`),
-  INDEX `idx_instance_time` (`instance_id`, `recorded_at`)
+  INDEX `idx_instance_time` (`instance_id`, `recorded_at`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 健康检查历史表
@@ -311,7 +311,7 @@ INSERT IGNORE INTO `metric_definitions` (`id`, `name`, `description`, `unit`, `d
 ('tps', '每秒事务数', '数据库每秒处理的事务数量（delta 计算）', 'ops/s', '["mysql", "postgresql"]', 'avg', 30, '{"warning": 500, "error": 2000, "critical": 5000}', TRUE, TRUE),
 ('slow_queries', '慢查询数', '统计周期内的慢查询数量', 'count', '["mysql", "postgresql"]', 'sum', 300, '{"warning": 10, "error": 50, "critical": 100}', TRUE, TRUE),
 ('buffer_pool_hit_rate', '缓冲池命中率', 'InnoDB 缓冲池命中率（越高越好，仅 MySQL）', '%', '["mysql"]', 'avg', 30, '{"warning": 95, "error": 90, "critical": 80}', TRUE, TRUE),
-('health_score', '健康评分', '数据库实例综合健康评分（越高越好）', 'score', '["mysql", "postgresql"]', 'last', 60, '{"warning": 70, "error": 50, "critical": 30}', TRUE, TRUE),
+('health_score', '健康评分', '数据库实例综合健康评分（越高越好）', 'score', '["mysql", "postgresql"]', 'last', 60, '{"warning": 70, "error": 50, "critical": 30}', FALSE, TRUE),
 -- MySQL 扩增指标
 ('table_open_cache_hit_rate', '表缓存命中率', 'MySQL Table_open_cache 命中率（越高越好）', '%', '["mysql"]', 'avg', 30, '{"warning": 95, "error": 90, "critical": 80}', TRUE, TRUE),
 ('handler_read_rnd_next', '全表扫次数', 'MySQL Handler_read_rnd_next 累计值，高值提示大量全表扫', 'count', '["mysql"]', 'sum', 60, '{"warning": 100000, "error": 500000, "critical": 1000000}', TRUE, TRUE),
@@ -1490,6 +1490,7 @@ CREATE TABLE IF NOT EXISTS `network_device_observations` (
   `reason` VARCHAR(512) DEFAULT NULL COMMENT '质量说明',
   PRIMARY KEY (`id`),
   KEY `idx_network_device_observation_latest` (`device_id`, `metric_id`, `observed_at`),
+  KEY `idx_network_device_observation_time` (`device_id`, `observed_at`, `id`),
   CONSTRAINT `fk_network_device_observations_device` FOREIGN KEY (`device_id`) REFERENCES `network_devices` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='网络设备观测数据';
 

@@ -40,6 +40,9 @@ describe('server metrics API dimension contract', () => {
   it('history returns dimensions in deterministic order and uses a valid fixed interval', () => {
     expect(historyRoute).toContain('dimensions');
     expect(historyRoute).toContain('ORDER BY recorded_at ASC, id ASC');
+    expect(historyRoute).toContain('ORDER BY recorded_at DESC, id DESC');
+    expect(historyRoute).toContain('const historyLimit = 30_000');
+    expect(historyRoute).toContain('truncated');
     expect(historyRoute).toContain('DATE_SUB(NOW(), INTERVAL ? HOUR)');
     expect(historyRoute).toContain("'1h': 1");
     expect(historyRoute).toContain("'30d': 720");

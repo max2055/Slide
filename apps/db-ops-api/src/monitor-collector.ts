@@ -37,6 +37,7 @@ class MonitorCollector {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private slowQueryTimer: ReturnType<typeof setInterval> | null = null;
   private capacityTimer: ReturnType<typeof setInterval> | null = null;
+  private tickInFlight = false;
   private running = false;
   private config: MonitorConfig = {
     heartbeatMs: 10000, // 10s 心跳，减少 MySQL 负载
@@ -146,26 +147,33 @@ class MonitorCollector {
    * 心跳：检查哪些实例到期，采集它们
    */
   private async _tick() {
-    const now = Date.now();
-    const instances = await instanceDatabaseService.getAllInstances();
-    if (instances.length === 0) return;
+    if (this.tickInFlight) return;
+    this.tickInFlight = true;
+    try {
+      const now = Date.now();
+      const instances = await instanceDatabaseService.getAllInstances();
+      if (instances.length === 0) return;
 
-    for (const inst of instances) {
-      if (inst.status !== 'active') continue;
+      for (const inst of instances) {
+        if (inst.status !== 'active') continue;
 
-      const definitions = metricRegistry.getByDbType(inst.db_type).filter((metric) => metric.is_collected);
-      const dueIds = await dueStoredMetricIds(this.scheduleStore, 'instance', inst.id, 'unified', definitions, now);
-      const due = definitions.filter((metric) => dueIds.includes(metric.id));
-      if (due.length === 0) continue;
-      const results = await this.collectInstanceMetrics(inst, dueIds);
-      const collectedAt = Date.now();
-      const status = this.schedule.get(inst.id) ?? { lastSuccessByMetric: new Map<string, number>() };
-      this.schedule.set(inst.id, status);
-      for (const metric of due) {
-        const succeeded = Boolean(results[metric.id]);
-        await this.scheduleStore.record('instance', inst.id, 'unified', metric, collectedAt, succeeded);
-        if (succeeded) status.lastSuccessByMetric.set(metric.id, collectedAt);
+        const definitions = metricRegistry.getByDbType(inst.db_type)
+          .filter((metric) => metric.is_collected && metric.id !== 'health_score');
+        const dueIds = await dueStoredMetricIds(this.scheduleStore, 'instance', inst.id, 'unified', definitions, now);
+        const due = definitions.filter((metric) => dueIds.includes(metric.id));
+        if (due.length === 0) continue;
+        const results = await this.collectInstanceMetrics(inst, dueIds);
+        const collectedAt = Date.now();
+        const status = this.schedule.get(inst.id) ?? { lastSuccessByMetric: new Map<string, number>() };
+        this.schedule.set(inst.id, status);
+        for (const metric of due) {
+          const succeeded = Boolean(results[metric.id]);
+          await this.scheduleStore.record('instance', inst.id, 'unified', metric, collectedAt, succeeded);
+          if (succeeded) status.lastSuccessByMetric.set(metric.id, collectedAt);
+        }
       }
+    } finally {
+      this.tickInFlight = false;
     }
   }
 
@@ -194,6 +202,12 @@ class MonitorCollector {
         if (!reconnected) {
           for (const metricId of dueMetricIds) {
             collectionCapabilityTracker.recordMetricAttempt(instance.id, metricId, false);
+          }
+          if (await this.hasUsableCredentials(instance)) {
+            await instanceDatabaseService.updateHealthStatus(instance.id, 0, 'critical');
+          } else {
+            collectionCapabilityTracker.clearInstance(instance.id);
+            await instanceDatabaseService.updateHealthStatus(instance.id, 0, 'unknown');
           }
           return Object.fromEntries(dueMetricIds.map((metricId) => [metricId, false]));
         }

@@ -2,9 +2,9 @@
  * DamengProvider — extracts Dameng metric queries from getDamengMetrics
  *
  * Each collect() call handles ONE metric by metricDef.id.
- * Dameng has no delta counter — QPS/TPS use current process sampling.
+ * QPS/TPS use metric-specific counter baselines on the connection.
  */
-import { BaseMetricProvider } from './base-provider.js';
+import { BaseMetricProvider, calculateCounterRate } from './base-provider.js';
 import type { DatabaseConnection } from '../database-service.js';
 import type { MetricDefinition } from '../metric-registry.js';
 
@@ -70,7 +70,7 @@ export class DamengProvider extends BaseMetricProvider {
             WHERE NAME IN ('sql executed count')
           `);
           const executes = scalar(statResult.rows) ?? 0;
-          return Math.floor(executes / 100);
+          return calculateCounterRate(instance, 'qps', executes);
         }
 
         case 'tps': {
@@ -81,7 +81,7 @@ export class DamengProvider extends BaseMetricProvider {
             WHERE NAME IN ('transaction commit count')
           `);
           const commits = scalar(statResult.rows) ?? 0;
-          return Math.floor(commits / 10);
+          return calculateCounterRate(instance, 'tps', commits);
         }
 
         case 'slow_queries':

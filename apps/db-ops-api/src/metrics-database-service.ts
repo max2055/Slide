@@ -4,6 +4,18 @@
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection';
 
+const STORED_METRIC_COLUMNS = [
+  'cpu_usage', 'memory_usage', 'disk_usage', 'connections', 'qps', 'tps',
+  'active_transactions', 'slow_queries', 'buffer_pool_hit_rate',
+  'threads_running', 'threads_connected', 'bytes_received', 'bytes_sent',
+  'queries_total', 'commits_total', 'rollbacks_total',
+  'table_open_cache_hit_rate', 'handler_read_rnd_next', 'handler_read_rnd_next_rate',
+  'key_blocks_usage', 'open_files', 'aborted_connects', 'aborted_connects_rate',
+  'idx_scan_ratio', 'dead_tuples', 'cache_hit_ratio', 'connections_used',
+  'connections_max', 'vacuum_count', 'autovacuum_count',
+  'replication_lag_seconds', 'data_size_gb',
+] as const;
+
 export interface MetricsRecord {
   id: number;
   instance_id: number;
@@ -155,22 +167,22 @@ class MetricsDatabaseService {
                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           data.instance_id,
-          data.cpu_usage ?? 0,
-          data.memory_usage ?? 0,
-          data.disk_usage ?? 0,
-          data.connections ?? 0,
-          data.qps ?? 0,
-          data.tps ?? 0,
-          data.active_transactions ?? 0,
-          data.slow_queries ?? 0,
-          data.buffer_pool_hit_rate ?? 0,
-          data.threads_running ?? 0,
-          data.threads_connected ?? 0,
-          data.bytes_received ?? 0,
-          data.bytes_sent ?? 0,
-          data.queries_total ?? 0,
-          data.commits_total ?? 0,
-          data.rollbacks_total ?? 0,
+          data.cpu_usage ?? null,
+          data.memory_usage ?? null,
+          data.disk_usage ?? null,
+          data.connections ?? null,
+          data.qps ?? null,
+          data.tps ?? null,
+          data.active_transactions ?? null,
+          data.slow_queries ?? null,
+          data.buffer_pool_hit_rate ?? null,
+          data.threads_running ?? null,
+          data.threads_connected ?? null,
+          data.bytes_received ?? null,
+          data.bytes_sent ?? null,
+          data.queries_total ?? null,
+          data.commits_total ?? null,
+          data.rollbacks_total ?? null,
           data.table_open_cache_hit_rate ?? null,
           data.handler_read_rnd_next ?? null,
           data.handler_read_rnd_next_rate ?? null,
@@ -214,20 +226,37 @@ class MetricsDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, instance_id, cpu_usage, memory_usage, disk_usage,
-                connections, qps, tps, active_transactions, slow_queries,
-                buffer_pool_hit_rate, threads_running, threads_connected,
-                bytes_received, bytes_sent, queries_total, commits_total,
-                rollbacks_total, metrics_data, recorded_at
+        `SELECT id, instance_id, ${STORED_METRIC_COLUMNS.join(', ')}, metrics_data, recorded_at
          FROM metrics_history
          WHERE instance_id = ?
-         ORDER BY recorded_at DESC
-         LIMIT 1`,
+         ORDER BY recorded_at DESC, id DESC
+         LIMIT 1000`,
         [instanceId]
       ) as any;
 
       if (Array.isArray(rows) && rows.length > 0) {
-        return rows[0] as MetricsRecord;
+        const latest = rows[0] as Record<string, any>;
+        const merged: Record<string, any> = {
+          id: latest.id,
+          instance_id: latest.instance_id,
+          recorded_at: latest.recorded_at,
+          metrics_data: {},
+        };
+        for (const row of rows as Array<Record<string, any>>) {
+          for (const column of STORED_METRIC_COLUMNS) {
+            if (merged[column] == null && row[column] != null) merged[column] = row[column];
+          }
+          let dynamic = row.metrics_data;
+          if (typeof dynamic === 'string') {
+            try { dynamic = JSON.parse(dynamic); } catch { dynamic = null; }
+          }
+          if (dynamic && typeof dynamic === 'object' && !Array.isArray(dynamic)) {
+            for (const [metricId, value] of Object.entries(dynamic)) {
+              if (!(metricId in merged.metrics_data)) merged.metrics_data[metricId] = value;
+            }
+          }
+        }
+        return merged as MetricsRecord;
       }
       return null;
     } catch (error) {
@@ -340,7 +369,7 @@ class MetricsDatabaseService {
     interval: '1m' | '5m' | '15m' | '1h',
     metricIds?: string[],
     options: StrictReadOptions = {},
-  ): Promise<{ time: string[]; metrics: Record<string, number[]> }> {
+  ): Promise<{ time: string[]; metrics: Record<string, Array<number | null>> }> {
     const pool = this.getPool();
     if (!pool) {
       if (options.strict) throw new Error('METRICS_STORAGE_UNAVAILABLE');
@@ -393,22 +422,25 @@ class MetricsDatabaseService {
         });
 
         const [rows] = await pool.execute(
-          `SELECT ${selectParts.join(', ')}
-           FROM metrics_history
-           WHERE instance_id = ? AND recorded_at BETWEEN ? AND ?
-           ORDER BY recorded_at ASC
-           LIMIT 1000`,
+          `SELECT recent.* FROM (
+             SELECT id, ${selectParts.join(', ')}
+             FROM metrics_history
+             WHERE instance_id = ? AND recorded_at BETWEEN ? AND ?
+             ORDER BY recorded_at DESC, id DESC
+             LIMIT 1000
+           ) AS recent
+           ORDER BY recorded_at ASC, id ASC`,
           [instanceId, startTime, endTime]
         ) as any;
 
         const time: string[] = [];
-        const metrics: Record<string, number[]> = {};
+        const metrics: Record<string, Array<number | null>> = {};
         activeMetricIds.forEach(k => { metrics[k] = []; });
 
         for (const row of rows) {
           time.push(this._formatRecordedAt(row.recorded_at));
           activeMetricIds.forEach(k => {
-            metrics[k].push(Number(row[k]) || 0);
+            metrics[k].push(row[k] == null ? null : Number(row[k]));
           });
         }
 
@@ -445,13 +477,13 @@ class MetricsDatabaseService {
       ) as any;
 
       const time: string[] = [];
-      const metrics: Record<string, number[]> = {};
+      const metrics: Record<string, Array<number | null>> = {};
       activeMetricIds.forEach(k => { metrics[k] = []; });
 
       for (const row of rows) {
         time.push(row.time_str);
         activeMetricIds.forEach(k => {
-          metrics[k].push(Number(row[k]) || 0);
+          metrics[k].push(row[k] == null ? null : Number(row[k]));
         });
       }
 
@@ -468,7 +500,7 @@ class MetricsDatabaseService {
     period: '1h' | '6h' | '24h' | '7d',
     interval: '1m' | '5m' | '15m' | '1h',
     metricIds?: string[],
-  ): Promise<MetricsReadStatus<{ time: string[]; metrics: Record<string, number[]> }>> {
+  ): Promise<MetricsReadStatus<{ time: string[]; metrics: Record<string, Array<number | null>> }>> {
     if (!this.getPool()) return { available: false, data: null, errorCode: 'METRICS_STORAGE_UNAVAILABLE' };
     try {
       const data = await this.getHistoricalMetricsWithRange(instanceId, period, interval, metricIds, { strict: true });

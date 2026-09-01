@@ -126,8 +126,8 @@ describe('MonitorCollector credential-aware health state', () => {
       password_encrypted: 'ciphertext',
     });
 
-    expect(result).toEqual({});
-    expect(mocks.checkHealth).toHaveBeenCalledWith(103);
+    expect(result).toEqual({ cpu_usage: false });
+    expect(mocks.checkHealth).not.toHaveBeenCalled();
     expect(mocks.updateHealthStatus).toHaveBeenCalledWith(103, 0, 'critical');
   });
 
