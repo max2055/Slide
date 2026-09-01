@@ -206,7 +206,7 @@ export class DirectGatewayClient {
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
-      return fetch(url, { headers }).then(async r => {
+      return apiClient.fetchResponseWithAuth(url, { headers }).then(async r => {
         if (!r.ok) {
           throw new Error(`[DirectGatewayClient] REST API error: ${r.status} ${r.statusText}`);
         }
@@ -226,7 +226,7 @@ export class DirectGatewayClient {
       const token = this._getToken();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
-      return fetch(`/api/sessions/${encodeURIComponent(p.key)}`, {
+      return apiClient.fetchResponseWithAuth(`/api/sessions/${encodeURIComponent(p.key)}`, {
         method: 'PATCH',
         headers,
         body: JSON.stringify({ model: p.model, thinkingLevel: p.thinkingLevel }),
@@ -261,7 +261,7 @@ export class DirectGatewayClient {
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
-    const response = await fetch(url, { ...options, headers });
+    const response = await apiClient.fetchResponseWithAuth(url, { ...options, headers });
     if (!response.ok) {
       throw new Error(`[DirectGatewayClient] REST API error: ${response.status} ${response.statusText}`);
     }
@@ -746,7 +746,7 @@ export function initChatClient(host: Record<string, unknown>): void {
           } catch { /* best-effort */ }
           const token = apiClient.getToken();
           if (token && !localStorage.getItem('permissions')) {
-            fetch('/api/auth/permissions', {
+            apiClient.fetchResponseWithAuth('/api/auth/permissions', {
               headers: { 'Authorization': `Bearer ${token}` }
             }).then(r => r.json()).then((perms: string[]) => {
               localStorage.setItem('permissions', JSON.stringify(perms));
@@ -781,12 +781,12 @@ export function initChatClient(host: Record<string, unknown>): void {
       directClient.setDeviceIdentity(identity);
       const token = apiClient.getToken();
       if (token) {
-        await fetch('/api/device/register', {
+        await apiClient.fetchResponseWithAuth('/api/device/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ deviceId: identity.deviceId, publicKey: identity.publicKey }),
         });
-        const challengeResponse = await fetch('/api/device/challenge', {
+        const challengeResponse = await apiClient.fetchResponseWithAuth('/api/device/challenge', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ deviceId: identity.deviceId }),

@@ -2,6 +2,7 @@ import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, property, state } from "lit/decorators.js";
 import { showToast } from "../components/app-toast-container.js";
+import { authFetch } from '../../../api/index.js';
 
 const API_BASE = "";
 
@@ -352,7 +353,7 @@ export class SqlAuditTab extends LitElement {
     this.historyLoading = true;
     try {
       const token = getToken();
-      const res = await fetch(`${API_BASE}/api/sql/audit/instance/${this.instanceId}?limit=20`, {
+      const res = await authFetch(`${API_BASE}/api/sql/audit/instance/${this.instanceId}?limit=20`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (res.ok) {
@@ -376,7 +377,7 @@ export class SqlAuditTab extends LitElement {
 
     try {
       const token = getToken();
-      const res = await fetch(`${API_BASE}/api/sql/audit`, {
+      const res = await authFetch(`${API_BASE}/api/sql/audit`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -419,7 +420,7 @@ export class SqlAuditTab extends LitElement {
     this.pollTimer = setInterval(async () => {
       try {
         const token = getToken();
-        const res = await fetch(`${API_BASE}/api/sql/audit/${analysisId}/status`, {
+        const res = await authFetch(`${API_BASE}/api/sql/audit/${analysisId}/status`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (!res.ok) return;
@@ -430,7 +431,7 @@ export class SqlAuditTab extends LitElement {
           this._stopPolling();
           this.loading = false;
           // Fetch full result
-          const fullRes = await fetch(`${API_BASE}/api/sql/audit/${analysisId}`, {
+          const fullRes = await authFetch(`${API_BASE}/api/sql/audit/${analysisId}`, {
             headers: token ? { Authorization: `Bearer ${token}` } : {},
           });
           if (fullRes.ok) {
@@ -459,7 +460,7 @@ export class SqlAuditTab extends LitElement {
     const timer = setInterval(async () => {
       try {
         const token = getToken();
-        const res = await fetch(`${API_BASE}/api/sql/audit/${analysisId}/status`, {
+        const res = await authFetch(`${API_BASE}/api/sql/audit/${analysisId}/status`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (!res.ok) return;
@@ -470,7 +471,7 @@ export class SqlAuditTab extends LitElement {
           this.historyPollTimers.delete(analysisId);
           this.expandedHistoryStatus = "completed";
           // Fetch full result
-          const fullRes = await fetch(`${API_BASE}/api/sql/audit/${analysisId}`, {
+          const fullRes = await authFetch(`${API_BASE}/api/sql/audit/${analysisId}`, {
             headers: token ? { Authorization: `Bearer ${token}` } : {},
           });
           if (fullRes.ok) {
@@ -518,7 +519,7 @@ export class SqlAuditTab extends LitElement {
 
   private async _fetchHistoryResult(analysisId: number) {
     const token = getToken();
-    const res = await fetch(`${API_BASE}/api/sql/audit/${analysisId}`, {
+    const res = await authFetch(`${API_BASE}/api/sql/audit/${analysisId}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (res.ok) {

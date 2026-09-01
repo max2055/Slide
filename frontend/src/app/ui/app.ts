@@ -68,6 +68,8 @@ import type {
 import { type ChatAttachment, type ChatQueueItem, type CronFormState } from "./ui-types.ts";
 import { generateUUID } from "./uuid.ts";
 import { buildNavigationUrl } from "./app-navigation.ts";
+import { SESSION_EXPIRED_EVENT, isSessionExpiryInProgress } from "../../api/index.ts";
+import { showToast } from "./components/app-toast-container.ts";
 
 declare global {
   interface Window {
@@ -123,6 +125,11 @@ export class SlideApp extends LitElement {
   private toolStreamSyncTimer: number | null = null;
   private sidebarCloseTimer: number | null = null;
   private globalKeydownHandler: ((e: KeyboardEvent) => void) | null = null;
+  private readonly sessionExpiredHandler = () => {
+    this.logout();
+    this.lastError = '登录已超时，请重新登录。';
+    showToast('登录已超时，请重新登录', 'warning');
+  };
 
   @state() assistantName = bootAssistantIdentity.name;
   @state() assistantAvatar = bootAssistantIdentity.avatar;
@@ -402,6 +409,8 @@ export class SlideApp extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    window.addEventListener(SESSION_EXPIRED_EVENT, this.sessionExpiredHandler);
+    if (isSessionExpiryInProgress()) this.lastError = '登录已超时，请重新登录。';
 
     // Auto-reconnect: try to restore session if we have a JWT token.
     // Don't set connected=true optimistically — the WebSocket connection
@@ -541,6 +550,7 @@ export class SlideApp extends LitElement {
 
   disconnectedCallback() {
     document.removeEventListener("keydown", this.globalKeydownHandler);
+    window.removeEventListener(SESSION_EXPIRED_EVENT, this.sessionExpiredHandler);
     if (this._beforeUnload) {
       window.removeEventListener('beforeunload', this._beforeUnload);
     }
@@ -561,6 +571,8 @@ export class SlideApp extends LitElement {
     this.sessionToken = null;
     this.hello = null;
     localStorage.removeItem('token');
+    localStorage.removeItem('refreshToken');
+    localStorage.removeItem('permissions');
     localStorage.removeItem('user');
     localStorage.removeItem('slide.control.session_token.v1');
   }

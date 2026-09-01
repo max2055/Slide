@@ -6,6 +6,7 @@ import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
 import { refreshBrandingCache } from "../../src/branding.js";
+import { authFetch } from "../../../api/index.js";
 import "../components/app-card.js";
 
 const CLI_NAME_REGEX = /^[a-z][a-z0-9-]*$/;
@@ -76,7 +77,7 @@ export class BrandingSettings extends LitElement {
 
   private async _loadFromApi() {
     try {
-      const resp = await fetch("/api/branding/config", {
+      const resp = await authFetch("/api/branding/config", {
         headers: this._getAuthHeaders(),
       });
       if (resp.ok) {
@@ -117,7 +118,7 @@ export class BrandingSettings extends LitElement {
     this.message = "";
 
     try {
-      const resp = await fetch("/api/branding/config", {
+      const resp = await authFetch("/api/branding/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...this._getAuthHeaders() },
         body: JSON.stringify({

@@ -3,6 +3,7 @@ import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, property, state } from "lit/decorators.js";
 import { nothing } from "lit-html";
 import "./ai-analysis-result.js";
+import { authFetch } from '../../../api/index.js';
 
 const API_BASE = "";
 
@@ -381,7 +382,7 @@ export class DatabaseLogTab extends LitElement {
         params.set("startTime", timeRange.startTime);
         params.set("endTime", timeRange.endTime);
       }
-      const res = await fetch(`${API_BASE}/api/logs?${params.toString()}`, {
+      const res = await authFetch(`${API_BASE}/api/logs?${params.toString()}`, {
         headers: this._authHeaders(),
       });
       if (!res.ok) throw new Error(`Failed to load logs: HTTP ${res.status}`);
@@ -399,7 +400,7 @@ export class DatabaseLogTab extends LitElement {
     if (!this.instanceId) return;
     try {
       const hours = this._getTimeRangeHours(this.filterTimeRange);
-      const res = await fetch(`${API_BASE}/api/logs/stats?instanceId=${this.instanceId}&hours=${hours}`, {
+      const res = await authFetch(`${API_BASE}/api/logs/stats?instanceId=${this.instanceId}&hours=${hours}`, {
         headers: this._authHeaders(),
       });
       if (res.ok) {
@@ -493,7 +494,7 @@ export class DatabaseLogTab extends LitElement {
 
     try {
       const token = getToken();
-      const res = await fetch(`${API_BASE}/api/logs/analyze`, {
+      const res = await authFetch(`${API_BASE}/api/logs/analyze`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -524,7 +525,7 @@ export class DatabaseLogTab extends LitElement {
     this.pollTimer = setInterval(async () => {
       try {
         const token = getToken();
-        const res = await fetch(`${API_BASE}/api/logs/analysis/${id}`, {
+        const res = await authFetch(`${API_BASE}/api/logs/analysis/${id}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (!res.ok) return;

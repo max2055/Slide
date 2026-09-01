@@ -3,6 +3,7 @@ import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state, property } from "lit/decorators.js";
 import { renderIcon } from "../../../icons.js";
 import { showToast } from "../components/app-toast-container.js";
+import { authFetch } from '../../../api/index.js';
 
 interface QanRow {
   fingerprint: string;
@@ -135,7 +136,7 @@ export class QueryAnalysisTab extends LitElement {
     if (!this.instanceId) return;
     this.loading = true;
     try {
-      const res = await fetch(`/api/database/instances/${this.instanceId}/qan?limit=50`, {
+      const res = await authFetch(`/api/database/instances/${this.instanceId}/qan?limit=50`, {
         headers: this._authHeaders(),
       });
       if (res.ok) this.qanData = await res.json();
@@ -146,7 +147,7 @@ export class QueryAnalysisTab extends LitElement {
   private async loadExplain(sql: string) {
     this.explainLoading = true;
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `/api/database/instances/${this.instanceId}/explain?sql=${encodeURIComponent(sql)}`,
         { headers: this._authHeaders() }
       );

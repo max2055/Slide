@@ -22,7 +22,8 @@ type SettingsSubTab =
   | "agent-tools"
   | "agent-security-policy"
   | "agent-tool-audit"
-  | "agent-sandbox";
+  | "agent-sandbox"
+  | "session-security";
 
 const SUB_TABS: { id: SettingsSubTab; label: string; icon: string; requireAdmin?: boolean; requiredPermission?: string }[] = [
   { id: "branding", label: "品牌", icon: "palette" },
@@ -40,6 +41,7 @@ const SUB_TABS: { id: SettingsSubTab; label: string; icon: string; requireAdmin?
   { id: "agent-tool-audit", label: "Agent 审计", icon: "eye", requiredPermission: "audit:view" },
   { id: "rbac", label: "权限管理", icon: "shield", requireAdmin: true },
   { id: "users", label: "用户管理", icon: "scroll-text", requireAdmin: true },
+  { id: "session-security", label: "登录安全", icon: "lock", requireAdmin: true },
 ];
 
 @customElement("settings-shell")
@@ -211,6 +213,8 @@ export class SettingsShell extends LitElement {
         return html`<agent-tool-audit-page></agent-tool-audit-page>`;
       case "agent-sandbox":
         return html`<agent-sandbox-status-page></agent-sandbox-status-page>`;
+      case "session-security":
+        return html`<session-settings-page></session-settings-page>`;
       default:
         return html``;
     }

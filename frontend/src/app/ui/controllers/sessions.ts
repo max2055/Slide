@@ -1,6 +1,7 @@
 import { toNumber } from "../format.ts";
 import type { DirectGatewayClient } from "../direct-gateway.ts";
 import type { SessionsListResult } from "../types.ts";
+import { authFetch } from '../../../api/index.js';
 
 export type SessionsState = {
   client: DirectGatewayClient | null;
@@ -32,7 +33,7 @@ export async function loadSessions(
     const activeMinutes = overrides?.activeMinutes ?? toNumber(state.sessionsFilterActive, 0);
     if (activeMinutes > 0) params.set('activeMinutes', String(activeMinutes));
     const url = `/api/sessions?${params.toString()}`;
-    const res = await fetch(url, {
+    const res = await authFetch(url, {
       headers: token ? { 'Authorization': `Bearer ${token}` } : {},
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

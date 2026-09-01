@@ -9,6 +9,7 @@ import { sql, MySQL, SQLDialect } from "@codemirror/lang-sql";
 import { autocompletion, CompletionContext, Completion } from "@codemirror/autocomplete";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { icons } from "../../../icons.js";
+import { authFetch } from '../../../api/index.js';
 
 // Dameng DM8 SQL dialect for CodeMirror
 const DamengDialect = SQLDialect.define({
@@ -673,7 +674,7 @@ export class SqlConsolePage extends LitElement {
         offset: String(this.historyOffset),
         search: this.historySearch,
       });
-      const res = await fetch(`/api/database/instances/${instanceFilter}/query-history?${params}`, {
+      const res = await authFetch(`/api/database/instances/${instanceFilter}/query-history?${params}`, {
         headers: this._headers(),
       });
       if (!res.ok) throw new Error('加载失败');
@@ -714,7 +715,7 @@ export class SqlConsolePage extends LitElement {
 
   private async loadInstances() {
     try {
-      const res = await fetch("/api/database/instances", { headers: this._headers() });
+      const res = await authFetch("/api/database/instances", { headers: this._headers() });
       if (res.ok) this.instances = await res.json();
     } catch { /* */ }
   }
@@ -728,7 +729,7 @@ export class SqlConsolePage extends LitElement {
     this.objectsLoading = true;
     this._loadDatabases();
     try {
-      const res = await fetch(`/api/database/instances/${id}/schema-objects`, { headers: this._headers() });
+      const res = await authFetch(`/api/database/instances/${id}/schema-objects`, { headers: this._headers() });
       if (res.ok) {
         this.schemas = await res.json();
         this.expandedSchemas = new Set(this.schemas.map(s => s.schema));
@@ -740,7 +741,7 @@ export class SqlConsolePage extends LitElement {
   private async _loadDatabases() {
     if (!this.selectedId) return;
     try {
-      const res = await fetch(`/api/database/instances/${this.selectedId}/databases`, { headers: this._headers() });
+      const res = await authFetch(`/api/database/instances/${this.selectedId}/databases`, { headers: this._headers() });
       if (res.ok) this.databases = await res.json();
     } catch (_) { this.databases = []; }
   }
@@ -795,7 +796,7 @@ export class SqlConsolePage extends LitElement {
 
   private async _directExecute(sql: string) {
     try {
-      const res = await fetch(`/api/database/instances/${this.selectedId}/execute`, {
+      const res = await authFetch(`/api/database/instances/${this.selectedId}/execute`, {
         method: "POST", headers: this._headers(), body: JSON.stringify({ sql, database: this.selectedDatabase || undefined }),
       });
       const data = await res.json();
@@ -811,7 +812,7 @@ export class SqlConsolePage extends LitElement {
 
   private async _submitApproval(sql: string) {
     try {
-      const res = await fetch("/api/approval/submit", {
+      const res = await authFetch("/api/approval/submit", {
         method: "POST", headers: this._headers(),
         body: JSON.stringify({ instance_id: this.selectedId, sql_text: sql, database_name: this.selectedDatabase || undefined }),
       });
@@ -1126,7 +1127,7 @@ export class SqlConsolePage extends LitElement {
     this.explainError = null;
     this.explainData = null;
     try {
-      const res = await fetch(`/api/database/instances/${this.selectedId}/explain?sql=${encodeURIComponent(sql)}`, {
+      const res = await authFetch(`/api/database/instances/${this.selectedId}/explain?sql=${encodeURIComponent(sql)}`, {
         headers: this._headers(),
       });
       if (!res.ok) {
