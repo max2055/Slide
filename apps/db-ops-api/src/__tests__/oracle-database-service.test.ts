@@ -1,5 +1,5 @@
 /**
- * Oracle Database Service -- source structure tests (GAP-05 / WR-01, GAP-06 / WR-02, GAP-07 / D-14)
+ * Oracle Database Service -- source structure tests
  *
  * GAP-05: Verify getOracleMetrics() uses 'user commits' (not 'commit workcount')
  * GAP-06: Verify checkOracleHealth() has try/catch DBA fallback
@@ -75,5 +75,34 @@ describe('GAP-07 / D-14: Oracle pool management', () => {
 
   it('removeConnection 应包含 oraclePool.close', () => {
     expect(source).toContain('oraclePool.close');
+  });
+});
+
+describe('Oracle realtime metrics query timeout', () => {
+  const methodSource = source.match(
+    /private async getOracleMetrics[\s\S]*?\n  \}\n\n  \/\*\*\n   \* 获取达梦/
+  )?.[0] || '';
+
+  it('sets a per-round-trip timeout for all metric queries', () => {
+    expect(source).toContain('const ORACLE_METRICS_QUERY_TIMEOUT_MS = 5_000;');
+    expect(methodSource).toContain('connection.callTimeout = ORACLE_METRICS_QUERY_TIMEOUT_MS;');
+    expect(methodSource).not.toContain('conn.oracleConnection.execute');
+  });
+
+  it('restores the connection timeout even when a query fails', () => {
+    expect(methodSource).toContain('const previousCallTimeout = connection.callTimeout;');
+    expect(methodSource).toMatch(/finally\s*\{\s*connection\.callTimeout = previousCallTimeout;/);
+  });
+});
+
+describe('Oracle 11g slow query compatibility', () => {
+  const methodSource = source.match(
+    /private async getOracleSlowQueries[\s\S]*?\n  \}\n\n  \/\*\*\n   \* 获取达梦数据库慢查询/
+  )?.[0] || '';
+
+  it('limits the ordered subquery with ROWNUM instead of FETCH FIRST', () => {
+    expect(methodSource).toContain('ORDER BY elapsed_time DESC');
+    expect(methodSource).toContain(') WHERE ROWNUM <= :limit');
+    expect(methodSource).not.toContain('FETCH FIRST');
   });
 });
