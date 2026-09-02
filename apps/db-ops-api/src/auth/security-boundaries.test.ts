@@ -12,6 +12,7 @@ import {
 } from './actor-context.js';
 import { createVerifyToken } from '../auth-middleware.js';
 import { DirectAdapter } from '../adapter/direct-adapter.js';
+import { agentRunService } from '../adapter/agent-run-service.js';
 import { authDatabaseService } from '../auth-database-service.js';
 import { RbacService } from './rbac-service.js';
 import { dbConnection } from '../db-connection.js';
@@ -86,6 +87,25 @@ function waitForMessage(ws: WebSocket): Promise<Record<string, unknown>> {
       clearTimeout(timeout);
       resolve(JSON.parse(raw.toString()));
     });
+  });
+}
+
+function waitForMessages(ws: WebSocket, count: number): Promise<Array<Record<string, unknown>>> {
+  return new Promise((resolve, reject) => {
+    const messages: Array<Record<string, unknown>> = [];
+    const timeout = setTimeout(() => {
+      ws.off('message', onMessage);
+      reject(new Error('websocket messages timeout'));
+    }, 2_000);
+    const onMessage = (raw: WebSocket.RawData) => {
+      messages.push(JSON.parse(raw.toString()));
+      if (messages.length === count) {
+        clearTimeout(timeout);
+        ws.off('message', onMessage);
+        resolve(messages);
+      }
+    };
+    ws.on('message', onMessage);
   });
 }
 
@@ -993,6 +1013,18 @@ describe('websocket actor boundary', () => {
 
   it('websocket creates and announces a server session key before using it', async () => {
     const currentActor = actor('ws-new-session');
+    vi.spyOn(agentRunService, 'claim').mockResolvedValue({
+      created: true,
+      run: {
+        id: 'server-run',
+        actorId: currentActor.userId,
+        sessionId: 'server-generated-session',
+        messageId: 'message-new-session',
+        idempotencyKey: 'idempotency-new-session',
+        state: 'running',
+      },
+    });
+    vi.spyOn(agentRunService, 'finish').mockResolvedValue(true);
     const adapter = new DirectAdapter({
       tools: new ToolRegistry(),
       llmProvider: {} as any,
@@ -1019,11 +1051,26 @@ describe('websocket actor boundary', () => {
     ws.send(JSON.stringify({ type: 'auth', token: 'ws-access-token' }));
     expect(await waitForMessage(ws)).toEqual({ type: 'auth_ok' });
 
-    ws.send(JSON.stringify({ type: 'chat.send', message: 'hello', sessionKey: '', userId: 999 }));
-    expect(await waitForMessage(ws)).toEqual({
+    const announcements = waitForMessages(ws, 2);
+    ws.send(JSON.stringify({
+      type: 'chat.send',
+      protocolVersion: 2,
+      message: 'hello',
+      messageId: 'message-new-session',
+      idempotencyKey: 'idempotency-new-session',
+      sessionKey: '',
+      userId: 999,
+    }));
+    expect(await announcements).toEqual([{
       type: 'session.created',
       sessionKey: 'server-generated-session',
-    });
+      messageId: 'message-new-session',
+    }, {
+      type: 'run.started',
+      runId: 'server-run',
+      sessionKey: 'server-generated-session',
+      messageId: 'message-new-session',
+    }]);
     await vi.waitFor(() => expect(chat).toHaveBeenCalled());
 
     expect(chatDatabaseService.createSession).toHaveBeenCalledWith(currentActor, { title: '新会话' });

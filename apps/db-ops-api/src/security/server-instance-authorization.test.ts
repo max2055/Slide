@@ -30,6 +30,16 @@ describe('server instance authorization coverage', () => {
     expect(route.block).toContain('filterByInstanceAccess((request as any).user, instances');
   });
 
+  it('activates a reloaded instance before collecting and returns the first collection result', () => {
+    const [route] = routeBlocks('/api/database/instances/:id/reload');
+    const activeAt = route.block.indexOf('instanceDatabaseService.markInstanceActive(Number(id))');
+    const collectAt = route.block.indexOf('monitorCollector.collectInstanceNow(Number(id))');
+
+    expect(activeAt).toBeGreaterThan(-1);
+    expect(collectAt).toBeGreaterThan(activeAt);
+    expect(route.block).toContain("message: '连接已建立，首次采集已完成', collection");
+  });
+
   it('protects alternate instance parameter routes', () => {
     for (const path of [
       '/api/metrics/:instanceId',

@@ -1382,7 +1382,17 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       });
       if (added) {
         await instanceDatabaseService.markInstanceActive(Number(id));
-        reply.send({ success: true, message: '连接已建立' });
+        try {
+          const collection = await monitorCollector.collectInstanceNow(Number(id));
+          reply.send({ success: true, message: '连接已建立，首次采集已完成', collection });
+        } catch (collectionError) {
+          console.error(`实例 ${id} 重载后首次采集失败:`, collectionError);
+          reply.send({
+            success: true,
+            message: '连接已建立，首次采集失败，将由调度器重试',
+            collection: { instanceId: Number(id), error: 'INITIAL_COLLECTION_FAILED' },
+          });
+        }
       } else {
         reply.code(500).send({ success: false, error: '连接建立失败' });
       }

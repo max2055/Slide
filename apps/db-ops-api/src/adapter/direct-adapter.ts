@@ -463,7 +463,7 @@ export class DirectAdapter implements IAgentEngine {
               if (!sessionKey) {
                 const created = await chatDatabaseService.createSession(messageActor, { title: '新会话' });
                 sessionKey = created.session_id;
-                ws.send(JSON.stringify({ type: 'session.created', sessionKey }));
+                ws.send(JSON.stringify({ type: 'session.created', sessionKey, messageId }));
               } else {
                 await chatDatabaseService.authorizeSession(messageActor, sessionKey, 'append');
               }
@@ -472,12 +472,12 @@ export class DirectAdapter implements IAgentEngine {
                 ? await agentRunService.claim(messageActor.userId, sessionKey, messageId, idempotencyKey)
                 : undefined;
               if (persistentRun && !persistentRun.created) {
-                ws.send(JSON.stringify({ type: 'run.snapshot', run: persistentRun.run }));
+                ws.send(JSON.stringify({ type: 'run.snapshot', run: persistentRun.run, messageId }));
                 return;
               }
               if (persistentRun) {
                 this.activeRuns.set(persistentRun.run.id, { actorId: messageActor.userId, sessionId: sessionKey, controller });
-                ws.send(JSON.stringify({ type: 'run.started', runId: persistentRun.run.id, sessionKey }));
+                ws.send(JSON.stringify({ type: 'run.started', runId: persistentRun.run.id, sessionKey, messageId }));
               }
 
               await chatDatabaseService.addMessage(messageActor, sessionKey, {

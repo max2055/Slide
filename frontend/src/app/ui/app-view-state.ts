@@ -39,7 +39,6 @@ import type { SessionLogEntry } from "./views/usageTypes.ts";
 export type AppViewState = {
   settings: UiSettings;
   password: string;
-  sessionToken: string | null;
   loginShowGatewayPassword: boolean;
   userPermissions?: Set<string>;
   tab: Tab;

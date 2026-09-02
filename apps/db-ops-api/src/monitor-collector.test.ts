@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   getPool: vi.fn(),
   scheduleList: vi.fn(),
   scheduleRecord: vi.fn(),
+  getInstanceById: vi.fn(),
+  getByDbType: vi.fn(() => []),
 }));
 
 vi.mock('./database-service.js', () => ({
@@ -31,6 +33,7 @@ vi.mock('./instance-database-service.js', () => ({
     updateHealthStatus: mocks.updateHealthStatus,
     recordHealthCheck: mocks.recordHealthCheck,
     getAllInstances: vi.fn(),
+    getInstanceById: mocks.getInstanceById,
   },
 }));
 
@@ -39,7 +42,7 @@ vi.mock('./collector.js', () => ({
 }));
 
 vi.mock('./metric-registry.js', () => ({
-  metricRegistry: { getByDbType: vi.fn(() => []) },
+  metricRegistry: { getByDbType: mocks.getByDbType },
 }));
 
 vi.mock('./collection-capabilities.js', () => ({
@@ -81,6 +84,8 @@ describe('MonitorCollector credential-aware health state', () => {
     mocks.getInstancePassword.mockResolvedValue(null);
     mocks.updateHealthStatus.mockResolvedValue(undefined);
     mocks.recordHealthCheck.mockResolvedValue(undefined);
+    mocks.scheduleRecord.mockResolvedValue(undefined);
+    mocks.getByDbType.mockReturnValue([]);
   });
 
   it('keeps an instance without credentials at unknown when no connection exists', async () => {
@@ -148,5 +153,37 @@ describe('MonitorCollector credential-aware health state', () => {
     expect(mocks.clearInstance).toHaveBeenCalledWith(104);
     expect(mocks.updateHealthStatus).toHaveBeenLastCalledWith(104, 0, 'unknown');
     expect(mocks.updateHealthStatus).not.toHaveBeenCalledWith(104, 0, 'critical');
+  });
+
+  it('collects an active instance immediately and advances its schedule', async () => {
+    const instance = {
+      id: 105,
+      name: 'dm-ready',
+      status: 'active',
+      db_type: 'dameng',
+      username: 'SYSDBA',
+    };
+    mocks.getInstanceById.mockResolvedValue(instance);
+    mocks.getByDbType.mockReturnValue([
+      { id: 'cpu_usage', default_interval: 30, is_collected: true },
+      { id: 'health_score', default_interval: 30, is_collected: true },
+    ]);
+    mocks.getInstancePassword.mockResolvedValue('secret');
+    mocks.getConnection.mockReturnValue({ connected: true });
+    mocks.collectInstance.mockResolvedValue({ cpu_usage: true });
+    mocks.checkHealth.mockResolvedValue({ health_score: 96, status: 'healthy', checks: [] });
+
+    const result = await monitorCollector.collectInstanceNow(105);
+
+    expect(mocks.collectInstance).toHaveBeenCalledWith(instance, ['cpu_usage']);
+    expect(mocks.updateHealthStatus).toHaveBeenCalledWith(105, 96, 'healthy', undefined, undefined);
+    expect(mocks.scheduleRecord).toHaveBeenCalledWith(
+      'instance', 105, 'unified', expect.objectContaining({ id: 'cpu_usage' }), expect.any(Number), true,
+    );
+    expect(result).toMatchObject({
+      instanceId: 105,
+      attemptedMetricIds: ['cpu_usage'],
+      succeededMetricIds: ['cpu_usage'],
+    });
   });
 });

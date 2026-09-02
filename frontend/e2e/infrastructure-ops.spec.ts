@@ -152,7 +152,7 @@ async function fulfill(route: Route, body: unknown, status = 200): Promise<void>
   });
 }
 
-async function installWebSocketStub(page: Page): Promise<void> {
+async function installWebSocketStub(page: Page, respondToChat = false): Promise<void> {
   await page.route('**/src/app/ui/device-identity.ts', async (route) => {
     await route.fulfill({
       status: 200,
@@ -163,7 +163,7 @@ async function installWebSocketStub(page: Page): Promise<void> {
       ].join('\n'),
     });
   });
-  await page.addInitScript(() => {
+  await page.addInitScript(({ respondToChat }) => {
     class FixtureWebSocket {
       static readonly CONNECTING = 0;
       static readonly OPEN = 1;
@@ -190,8 +190,29 @@ async function installWebSocketStub(page: Page): Promise<void> {
         }, 0);
       }
 
-      send(_data: unknown): void {
-        // The operational pages under test do not need a chat response.
+      send(data: unknown): void {
+        if (!respondToChat) return;
+        let frame: Record<string, unknown>;
+        try {
+          frame = JSON.parse(String(data)) as Record<string, unknown>;
+        } catch {
+          return;
+        }
+        const emit = (message: Record<string, unknown>, delay = 0) => setTimeout(() => {
+          this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(message) }));
+        }, delay);
+        if (frame.type === 'auth') {
+          emit({ type: 'auth_ok' });
+          return;
+        }
+        if (frame.type === 'chat.send') {
+          const sessionKey = String(frame.sessionKey || 'fixture-chat-session');
+          const messageId = String(frame.messageId || 'fixture-message');
+          if (!frame.sessionKey) emit({ type: 'session.created', sessionKey, messageId });
+          emit({ type: 'run.started', runId: 'fixture-run', sessionKey, messageId }, 5);
+          emit({ type: 'text_delta', delta: 'Fixture Agent response' }, 20);
+          emit({ type: 'complete', finalContent: 'Fixture Agent response' }, 250);
+        }
       }
 
       addEventListener(_type: string, _listener: EventListener): void {
@@ -214,11 +235,11 @@ async function installWebSocketStub(page: Page): Promise<void> {
       writable: true,
       value: FixtureWebSocket,
     });
-  });
+  }, { respondToChat });
 }
 
-async function installAuth(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+async function installAuth(page: Page, settings: JsonObject = {}): Promise<void> {
+  await page.addInitScript(({ settings }) => {
     const token = 'fixture-infrastructure-jwt';
     const permissions = [
       '*',
@@ -240,8 +261,9 @@ async function installAuth(page: Page): Promise<void> {
       locale: 'zh-CN',
       defaultTab: 'instances-db',
       theme: 'light',
+      ...settings,
     }));
-  });
+  }, { settings });
 }
 
 async function installApiFixtures(page: Page, state: FixtureState, calls: Call[]): Promise<void> {
@@ -264,6 +286,12 @@ async function installApiFixtures(page: Page, state: FixtureState, calls: Call[]
     if (path === '/api/device/challenge' && method === 'POST') return fulfill(route, { nonce: 'fixture-device-nonce' });
     if (path === '/api/agents' && method === 'GET') return fulfill(route, { agents: [{ id: 'fixture-agent', name: 'Fixture Agent' }], defaultId: 'fixture-agent' });
     if (path === '/api/sessions' && method === 'GET') return fulfill(route, { ok: true, sessions: [], defaults: {} });
+    if (path === '/api/chat/history' && method === 'GET') {
+      return fulfill(route, { messages: [
+        { role: 'user', content: 'First fixture message', timestamp: FIXTURE_TIME },
+        { role: 'assistant', content: 'Fixture Agent response', timestamp: FIXTURE_TIME },
+      ] });
+    }
 
     if (path === '/api/servers' && method === 'GET') {
       return fulfill(route, state.serverCreated ? [serverFixture(state)] : []);
@@ -401,6 +429,53 @@ async function waitForCall(calls: Call[], predicate: (call: Call) => boolean): P
   await expect.poll(() => calls.find(predicate)).toBeTruthy();
   return calls.find(predicate)!;
 }
+
+test('persisted auth, first chat send, and appearance survive a deep-route refresh', async ({ page }) => {
+  const state = newFixtureState();
+  const calls: Call[] = [];
+  await installWebSocketStub(page, true);
+  await installAuth(page, {
+    defaultTab: 'chat',
+    accentColor: '#14b8a6',
+    btnPalette: { primaryBg: '#0f766e', primaryColor: '#ffffff' },
+  });
+  await installApiFixtures(page, state, calls);
+  await page.addInitScript(() => {
+    (window as Window & { __loginGateObserved?: boolean }).__loginGateObserved = false;
+    new MutationObserver(() => {
+      if (document.querySelector('.login-gate')) {
+        (window as Window & { __loginGateObserved?: boolean }).__loginGateObserved = true;
+      }
+    }).observe(document, { childList: true, subtree: true });
+  });
+
+  await page.goto('/chat');
+  const input = page.locator('.agent-chat__input textarea');
+  await expect(input).toBeEnabled({ timeout: 10_000 });
+  await input.fill('First fixture message');
+  await page.getByRole('button', { name: 'Send message' }).click();
+
+  await expect.poll(() => page.evaluate(() => {
+    const app = document.querySelector('slide-app') as HTMLElement & { chatMessages?: Array<{ role?: string }> };
+    return app?.chatMessages?.some((message) => message.role === 'user') ?? false;
+  })).toBe(true);
+  await expect(page.getByText('First fixture message', { exact: true })).toBeVisible();
+  await expect(page.getByText('Fixture Agent response', { exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => {
+    const app = document.querySelector('slide-app') as HTMLElement & { chatRunId?: string | null; chatSending?: boolean };
+    return { runId: app?.chatRunId ?? null, sending: app?.chatSending ?? false };
+  })).toEqual({ runId: null, sending: false });
+  await expect(page).toHaveURL(/\/chat\?session=fixture-chat-session$/);
+
+  await page.reload();
+  await expect(page).toHaveURL(/\/chat\?session=fixture-chat-session$/);
+  await expect(page.locator('.login-gate')).toHaveCount(0);
+  expect(await page.evaluate(() => (window as Window & { __loginGateObserved?: boolean }).__loginGateObserved)).toBe(false);
+  expect(await page.evaluate(() => ({
+    accent: document.documentElement.style.getPropertyValue('--accent'),
+    primaryButton: document.documentElement.style.getPropertyValue('--btn-primary-bg'),
+  }))).toEqual({ accent: '#14b8a6', primaryButton: '#0f766e' });
+});
 
 for (const viewport of VIEWPORTS) {
   test(`fixture-backed infrastructure operations render and remain usable at ${viewport.name}`, async ({ page }) => {

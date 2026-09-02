@@ -16,6 +16,7 @@ import { unifiedCollector } from './collector';
 import serverCollector from './server-collector';
 import { dbConnection } from './db-connection';
 import { dueStoredMetricIds, MysqlCollectionScheduleStore } from './collection-scheduler';
+import type { MetricDefinition } from './metric-registry';
 
 interface InstanceSchedule {
   lastSuccessByMetric: Map<string, number>;
@@ -32,6 +33,13 @@ interface MonitorConfig {
   };
 }
 
+export interface InstanceCollectionResult {
+  instanceId: number;
+  attemptedMetricIds: string[];
+  succeededMetricIds: string[];
+  collectedAt: string;
+}
+
 class MonitorCollector {
   private schedule: Map<number, InstanceSchedule> = new Map();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -39,6 +47,7 @@ class MonitorCollector {
   private capacityTimer: ReturnType<typeof setInterval> | null = null;
   private tickInFlight = false;
   private running = false;
+  private readonly instanceCollections = new Map<number, Promise<InstanceCollectionResult>>();
   private config: MonitorConfig = {
     heartbeatMs: 10000, // 10s 心跳，减少 MySQL 负载
     alertThresholds: {
@@ -125,6 +134,17 @@ class MonitorCollector {
     this._rebuildSchedule().catch(e => console.error('刷新采集计划失败:', e));
   }
 
+  /** Immediately collect one active instance and advance its normal schedule. */
+  async collectInstanceNow(instanceId: number): Promise<InstanceCollectionResult> {
+    const instance = await instanceDatabaseService.getInstanceById(instanceId);
+    if (!instance || instance.status !== 'active') {
+      throw new Error('INSTANCE_NOT_ACTIVE');
+    }
+    const definitions = metricRegistry.getByDbType(instance.db_type)
+      .filter((metric) => metric.is_collected && metric.id !== 'health_score');
+    return this.collectAndRecord(instance, definitions);
+  }
+
   // ================== private ==================
 
   /**
@@ -162,18 +182,43 @@ class MonitorCollector {
         const dueIds = await dueStoredMetricIds(this.scheduleStore, 'instance', inst.id, 'unified', definitions, now);
         const due = definitions.filter((metric) => dueIds.includes(metric.id));
         if (due.length === 0) continue;
-        const results = await this.collectInstanceMetrics(inst, dueIds);
-        const collectedAt = Date.now();
-        const status = this.schedule.get(inst.id) ?? { lastSuccessByMetric: new Map<string, number>() };
-        this.schedule.set(inst.id, status);
-        for (const metric of due) {
-          const succeeded = Boolean(results[metric.id]);
-          await this.scheduleStore.record('instance', inst.id, 'unified', metric, collectedAt, succeeded);
-          if (succeeded) status.lastSuccessByMetric.set(metric.id, collectedAt);
-        }
+        await this.collectAndRecord(inst, due);
       }
     } finally {
       this.tickInFlight = false;
+    }
+  }
+
+  private async collectAndRecord(instance: any, definitions: readonly MetricDefinition[]): Promise<InstanceCollectionResult> {
+    const existing = this.instanceCollections.get(instance.id);
+    if (existing) return existing;
+
+    const collection = (async () => {
+      const metricIds = definitions.map((metric) => metric.id);
+      const results = await this.collectInstanceMetrics(instance, metricIds);
+      const collectedAt = Date.now();
+      const status = this.schedule.get(instance.id) ?? { lastSuccessByMetric: new Map<string, number>() };
+      this.schedule.set(instance.id, status);
+      for (const metric of definitions) {
+        const succeeded = Boolean(results[metric.id]);
+        await this.scheduleStore.record('instance', instance.id, 'unified', metric, collectedAt, succeeded);
+        if (succeeded) status.lastSuccessByMetric.set(metric.id, collectedAt);
+      }
+      return {
+        instanceId: instance.id,
+        attemptedMetricIds: metricIds,
+        succeededMetricIds: metricIds.filter((metricId) => Boolean(results[metricId])),
+        collectedAt: new Date(collectedAt).toISOString(),
+      };
+    })();
+
+    this.instanceCollections.set(instance.id, collection);
+    try {
+      return await collection;
+    } finally {
+      if (this.instanceCollections.get(instance.id) === collection) {
+        this.instanceCollections.delete(instance.id);
+      }
     }
   }
 
