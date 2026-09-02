@@ -39,7 +39,7 @@ describe('CollectionCapabilityTracker', () => {
       { id: 'cpu_usage', name: 'CPU 使用率（估算）', db_types: ['mysql'] },
     ]);
 
-    collectionCapabilityTracker.recordMetricAttempt(1, 'CPU 使用率（估算）', true);
+    collectionCapabilityTracker.recordMetricAttempt(1, 'cpu_usage', true);
 
     const capabilities = collectionCapabilityTracker.getCapabilities(1, 'mysql');
     expect(capabilities).toHaveLength(1);
@@ -52,7 +52,7 @@ describe('CollectionCapabilityTracker', () => {
       { id: 'cpu_usage', name: 'CPU 使用率（估算）', db_types: ['mysql'] },
     ]);
 
-    collectionCapabilityTracker.recordMetricAttempt(99, 'CPU 使用率（估算）', false);
+    collectionCapabilityTracker.recordMetricAttempt(99, 'cpu_usage', false);
 
     const capabilities = collectionCapabilityTracker.getCapabilities(99, 'mysql');
     expect(capabilities).toHaveLength(1);
@@ -86,8 +86,8 @@ describe('CollectionCapabilityTracker', () => {
       { id: 'cpu_usage', name: 'CPU 使用率（估算）', db_types: ['mysql'] },
     ]);
 
-    collectionCapabilityTracker.recordMetricAttempt(1, 'CPU 使用率（估算）', true);
-    collectionCapabilityTracker.recordMetricAttempt(2, 'CPU 使用率（估算）', false);
+    collectionCapabilityTracker.recordMetricAttempt(1, 'cpu_usage', true);
+    collectionCapabilityTracker.recordMetricAttempt(2, 'cpu_usage', false);
 
     const instance1Caps = collectionCapabilityTracker.getCapabilities(1, 'mysql');
     const instance2Caps = collectionCapabilityTracker.getCapabilities(2, 'mysql');
@@ -101,7 +101,7 @@ describe('CollectionCapabilityTracker', () => {
       { id: 'cpu_usage', name: 'CPU 使用率（估算）', db_types: ['mysql'] },
     ]);
 
-    collectionCapabilityTracker.recordMetricAttempt(1001, 'CPU 使用率（估算）', true);
+    collectionCapabilityTracker.recordMetricAttempt(1001, 'cpu_usage', true);
     expect(collectionCapabilityTracker.getCapabilities(1001, 'mysql')[0].available).toBe(true);
 
     collectionCapabilityTracker.clearInstance(1001);

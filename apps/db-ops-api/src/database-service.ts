@@ -62,6 +62,7 @@ export interface DatabaseConnection {
     commits: number;
     timestamp: number;
   };
+  collectorDeltaCounters?: Record<string, { value: number; timestamp: number }>;
 }
 
 export interface RealtimeMetrics {

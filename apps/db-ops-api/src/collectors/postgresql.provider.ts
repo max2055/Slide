@@ -2,9 +2,9 @@
  * PostgreSQLProvider — extracts PostgreSQL metric queries from getPostgreSQLMetrics
  *
  * Each collect() call handles ONE metric by metricDef.id.
- * Delta counters use conn.pgDeltaCounter.
+ * Delta counters use metric-specific baselines on the connection.
  */
-import { BaseMetricProvider } from './base-provider.js';
+import { BaseMetricProvider, calculateCounterRate } from './base-provider.js';
 import type { DatabaseConnection } from '../database-service.js';
 import type { MetricDefinition } from '../metric-registry.js';
 
@@ -59,17 +59,7 @@ export class PostgreSQLProvider extends BaseMetricProvider {
             `SELECT COALESCE(SUM(xact_commit), 0) as xact_commit FROM pg_stat_database WHERE datname = current_database()`
           );
           const xactCommit = parseInt(dbStatsResult.rows[0]?.xact_commit || '0');
-          const now = Date.now();
-          if (!instance.pgDeltaCounter) {
-            instance.pgDeltaCounter = { xactCommit, xactRollback: 0, blksRead: 0, blksHit: 0, timestamp: now };
-            return 0;
-          }
-          const elapsed = (now - instance.pgDeltaCounter.timestamp) / 1000;
-          if (elapsed <= 0) return 0;
-          const rate = Math.round((xactCommit - instance.pgDeltaCounter.xactCommit) / elapsed);
-          instance.pgDeltaCounter.xactCommit = xactCommit;
-          instance.pgDeltaCounter.timestamp = now;
-          return rate;
+          return calculateCounterRate(instance, 'qps', xactCommit);
         }
 
         case 'tps': {
@@ -78,18 +68,7 @@ export class PostgreSQLProvider extends BaseMetricProvider {
           );
           const xactCommit = parseInt(dbStatsResult.rows[0]?.xact_commit || '0');
           const xactRollback = parseInt(dbStatsResult.rows[0]?.xact_rollback || '0');
-          const now = Date.now();
-          if (!instance.pgDeltaCounter) {
-            instance.pgDeltaCounter = { xactCommit, xactRollback, blksRead: 0, blksHit: 0, timestamp: now };
-            return 0;
-          }
-          const elapsed = (now - instance.pgDeltaCounter.timestamp) / 1000;
-          if (elapsed <= 0) return 0;
-          const rate = Math.round(((xactCommit + xactRollback) - (instance.pgDeltaCounter.xactCommit + instance.pgDeltaCounter.xactRollback)) / elapsed);
-          instance.pgDeltaCounter.xactCommit = xactCommit;
-          instance.pgDeltaCounter.xactRollback = xactRollback;
-          instance.pgDeltaCounter.timestamp = now;
-          return rate;
+          return calculateCounterRate(instance, 'tps', xactCommit + xactRollback);
         }
 
         case 'slow_queries':

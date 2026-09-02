@@ -32,3 +32,18 @@ export abstract class BaseMetricProvider implements MetricProvider {
     this.consecutiveFailures = 0;
   }
 }
+
+export function calculateCounterRate(
+  instance: DatabaseConnection,
+  metricId: string,
+  currentValue: number,
+  now: number = Date.now(),
+  precision: number = 0,
+): number {
+  const counters = instance.collectorDeltaCounters ??= {};
+  const previous = counters[metricId];
+  counters[metricId] = { value: currentValue, timestamp: now };
+  if (!previous || currentValue < previous.value || now <= previous.timestamp) return 0;
+  const factor = 10 ** precision;
+  return Math.max(0, Math.round((currentValue - previous.value) / ((now - previous.timestamp) / 1000) * factor) / factor);
+}

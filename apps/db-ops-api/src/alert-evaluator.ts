@@ -171,12 +171,20 @@ export async function checkDuration(
     }
 
     // 所有历史数据点都满足阈值条件才返回 true
+    let anyValid = false;
     for (const record of history) {
       const value = getMetricValue(rule.metric_name, record);
       if (value === null) continue; // 缺失数据点跳过
+      anyValid = true;
       if (!evaluateRule(rule, value)) {
         return false;
       }
+    }
+    if (!anyValid) {
+      const metrics = await metricsDatabaseService.getRealtimeMetrics(instanceId);
+      if (!metrics) return false;
+      const current = getMetricValue(rule.metric_name, metrics);
+      return current !== null && evaluateRule(rule, current);
     }
     return true;
   } catch (error) {

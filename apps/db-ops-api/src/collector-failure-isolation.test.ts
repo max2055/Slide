@@ -17,19 +17,21 @@ describe('UnifiedCollector provider failure isolation', () => {
     recordMetrics.mockResolvedValue({ success: true });
   });
 
-  it('disables only the failing instance scope after three consecutive failures', async () => {
+  it('disables only the failing instance scope after three failed collection rounds', async () => {
     const collect = vi.fn().mockRejectedValue(new Error('provider unavailable'));
     const provider = { name: 'qualification-three-failures', supportedDbTypes: ['qualification'], collect };
     collectorRegistry.register(provider as any);
     state.definitions = ['a', 'b', 'c'].map((id) => ({ id, name: id, is_collected: true }));
 
     await unifiedCollector.collectInstance({ id: 10, db_type: 'qualification' } as any);
+    await unifiedCollector.collectInstance({ id: 10, db_type: 'qualification' } as any);
+    await unifiedCollector.collectInstance({ id: 10, db_type: 'qualification' } as any);
 
-    expect(collect).toHaveBeenCalledTimes(3);
+    expect(collect).toHaveBeenCalledTimes(9);
     expect(collectorRegistry.isEnabled(provider.name, 'instance:10')).toBe(false);
     expect(collectorRegistry.isEnabled(provider.name, 'instance:11')).toBe(true);
     await unifiedCollector.collectInstance({ id: 10, db_type: 'qualification' } as any);
-    expect(collect).toHaveBeenCalledTimes(3);
+    expect(collect).toHaveBeenCalledTimes(9);
   });
 
   it('resets the consecutive failure count after a successful collection', async () => {

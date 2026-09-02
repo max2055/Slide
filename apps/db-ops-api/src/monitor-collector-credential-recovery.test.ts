@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   reconnect: vi.fn(),
   recordMetricAttempt: vi.fn(),
   updateHealthStatus: vi.fn(),
+  clearInstance: vi.fn(),
 }));
 
 vi.mock('./database-service', () => ({
@@ -27,7 +28,7 @@ vi.mock('./instance-database-service', () => ({
 }));
 vi.mock('./metric-registry', () => ({ metricRegistry: { getByDbType: vi.fn() } }));
 vi.mock('./collection-capabilities', () => ({
-  collectionCapabilityTracker: { recordMetricAttempt: mocks.recordMetricAttempt },
+  collectionCapabilityTracker: { recordMetricAttempt: mocks.recordMetricAttempt, clearInstance: mocks.clearInstance },
 }));
 vi.mock('./collector', () => ({ unifiedCollector: { collectInstance: mocks.collectInstance } }));
 vi.mock('./server-collector', () => ({ default: { start: vi.fn(), stop: vi.fn() } }));

@@ -64,12 +64,13 @@ describe('NetworkDeviceCollector', () => {
     const persistence = store();
     const snmp = adapter();
     const collector = new NetworkDeviceCollector(persistence, snmp as any, {
+      commandTimeoutMs: 12_000,
       targetPolicy: { production: true, allowedPorts: [161] },
     });
 
     await expect(collector.collectDevice(7)).resolves.toMatchObject({ success: true });
     expect(persistence.getCredentials).toHaveBeenCalledWith(7);
-    expect(snmp.probe).toHaveBeenCalledWith(expect.objectContaining({ host: target.host, port: target.snmpPort }));
+    expect(snmp.probe).toHaveBeenCalledWith(expect.objectContaining({ host: target.host, port: target.snmpPort, timeoutMs: 12_000 }));
   });
 
   it('collects system and interface evidence, then marks the device online', async () => {
