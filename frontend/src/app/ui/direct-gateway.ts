@@ -25,7 +25,7 @@ export type AdapterCompleteEvent = { type: 'complete'; finalContent?: string; th
 export type AdapterCancelledEvent = { type: 'cancelled'; runId?: string; sessionKey?: string };
 export type AdapterErrorEvent = { type: 'error'; error: string };
 export type AdapterSessionCreatedEvent = { type: 'session.created'; sessionKey: string };
-export type AdapterRunStartedEvent = { type: 'run.started'; runId: string; sessionKey: string };
+export type AdapterRunStartedEvent = { type: 'run.started'; runId: string; sessionKey: string; messageId?: string };
 export type AdapterProtocolErrorEvent = { type: 'protocol.error'; code: string };
 
 /** ChatEvent discriminated union — mirrors apps/db-ops-api/src/adapter/types.ts */
@@ -68,11 +68,18 @@ export const MAX_RECONNECT_ATTEMPTS = 10;
 const INITIAL_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const SESSION_EXPIRED_MESSAGE = '登录已失效，请重新登录。';
+const CHAT_ACCEPT_TIMEOUT_MS = 15_000;
 
 type PendingChatMessage = {
   frame: Record<string, unknown>;
   resolve: () => void;
   reject: (error: Error) => void;
+};
+
+type PendingChatAcknowledgement = {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
 };
 
 export class DirectGatewayClient {
@@ -86,6 +93,7 @@ export class DirectGatewayClient {
   private closed = false;
   private authenticated = false;
   private pendingMessages: PendingChatMessage[] = [];
+  private pendingChatAcknowledgements = new Map<string, PendingChatAcknowledgement>();
   private deviceIdentity: DeviceIdentity | null = null;
   private deviceAuth: { deviceId: string; publicKey: string; signature: string; timestamp: number; nonce: string } | null = null;
 
@@ -139,6 +147,9 @@ export class DirectGatewayClient {
       if (this.ws !== socket) return;
       this.ws = null;
       this.authenticated = false;
+      this.rejectPendingChatAcknowledgements(
+        new Error('[DirectGatewayClient] connection closed before the message was accepted'),
+      );
       if (ev.code === 4001) {
         this.rejectPendingMessages(new Error(SESSION_EXPIRED_MESSAGE));
         this.onStateChange('auth_failed');
@@ -163,6 +174,9 @@ export class DirectGatewayClient {
     this.closed = true;
     this.authenticated = false;
     this.rejectPendingMessages(new Error('[DirectGatewayClient] disconnected before the message was sent'));
+    this.rejectPendingChatAcknowledgements(
+      new Error('[DirectGatewayClient] disconnected before the message was accepted'),
+    );
     this.clearReconnectTimer();
     if (this.ws) {
       this.ws.onclose = null; // Prevent auto-reconnect on intentional close
@@ -298,8 +312,7 @@ export class DirectGatewayClient {
         this.pendingMessages.push({ frame, resolve, reject });
       });
     }
-    this.ws.send(JSON.stringify(frame));
-    return Promise.resolve();
+    return this.sendAuthenticatedChat(frame);
   }
 
   cancelChat(runId: string, sessionKey: string): void {
@@ -349,15 +362,34 @@ export class DirectGatewayClient {
       const pending = this.pendingMessages;
       this.pendingMessages = [];
       for (const pendingMsg of pending) {
-        try {
-          this.ws?.send(JSON.stringify(pendingMsg.frame));
-          pendingMsg.resolve();
-        } catch (error) {
-          pendingMsg.reject(error instanceof Error ? error : new Error(String(error)));
-        }
+        void this.sendAuthenticatedChat(pendingMsg.frame).then(
+          pendingMsg.resolve,
+          pendingMsg.reject,
+        );
       }
       this.onStateChange('connected');
       return;
+    }
+
+    if (type === 'run.started') {
+      const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
+      if (messageId) this.resolveChatAcknowledgement(messageId);
+    }
+
+    if (type === 'run.snapshot') {
+      const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
+      if (messageId) {
+        this.rejectChatAcknowledgement(
+          messageId,
+          new Error('[DirectGatewayClient] message was already accepted by an existing run'),
+        );
+      }
+      return;
+    }
+
+    if (type === 'protocol.error' || type === 'error') {
+      const message = type === 'protocol.error' ? String(msg.code ?? 'protocol error') : String(msg.error ?? 'chat error');
+      this.rejectPendingChatAcknowledgements(new Error(message));
     }
 
     // Forward known AdapterChatEvent shapes
@@ -395,12 +427,62 @@ export class DirectGatewayClient {
     };
   }
 
+  private sendAuthenticatedChat(frame: Record<string, unknown>): Promise<void> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.authenticated) {
+      return Promise.reject(new Error('[DirectGatewayClient] chat.send could not be queued because the WebSocket is not connected'));
+    }
+    const messageId = String(frame.messageId ?? '');
+    if (!messageId) {
+      return Promise.reject(new Error('[DirectGatewayClient] chat.send is missing messageId'));
+    }
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingChatAcknowledgements.delete(messageId);
+        reject(new Error('[DirectGatewayClient] message acceptance timed out'));
+      }, CHAT_ACCEPT_TIMEOUT_MS);
+      this.pendingChatAcknowledgements.set(messageId, { resolve, reject, timer });
+      try {
+        this.ws!.send(JSON.stringify(frame));
+      } catch (error) {
+        clearTimeout(timer);
+        this.pendingChatAcknowledgements.delete(messageId);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  private resolveChatAcknowledgement(messageId: string): void {
+    const pending = this.pendingChatAcknowledgements.get(messageId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingChatAcknowledgements.delete(messageId);
+    pending.resolve();
+  }
+
+  private rejectChatAcknowledgement(messageId: string, error: Error): void {
+    const pending = this.pendingChatAcknowledgements.get(messageId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingChatAcknowledgements.delete(messageId);
+    pending.reject(error);
+  }
+
+  private rejectPendingChatAcknowledgements(error: Error): void {
+    const pending = [...this.pendingChatAcknowledgements.values()];
+    this.pendingChatAcknowledgements.clear();
+    for (const acknowledgement of pending) {
+      clearTimeout(acknowledgement.timer);
+      acknowledgement.reject(error);
+    }
+  }
+
   private scheduleReconnect(): void {
     if (this.closed) {
       return;
     }
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       this.rejectPendingMessages(new Error('[DirectGatewayClient] WebSocket reconnect attempts exhausted'));
+      this.rejectPendingChatAcknowledgements(new Error('[DirectGatewayClient] WebSocket reconnect attempts exhausted'));
       this.onStateChange('exhausted');
       return;
     }

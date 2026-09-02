@@ -164,7 +164,9 @@ describe('109-04: DirectGatewayClient', () => {
     client.connect();
     socket.receive({ type: 'auth_ok' });
 
-    await client.request('chat.send', { sessionKey: '', message: 'hello' });
+    const sent = client.request('chat.send', { sessionKey: '', message: 'hello' });
+    acknowledgeLastChat(socket);
+    await sent;
 
     expect(socket.frames.at(-1)).toEqual(expect.objectContaining({
       type: 'chat.send', protocolVersion: 2, message: 'hello',
@@ -179,9 +181,11 @@ describe('109-04: DirectGatewayClient', () => {
     socket.receive({ type: 'auth_ok' });
     const attachments = [{ type: 'image', mimeType: 'image/png', content: 'AA==' }];
 
-    await client.request('chat.send', {
+    const sent = client.request('chat.send', {
       sessionKey: 'session-1', message: 'inspect image', idempotencyKey: '1234567890abcdef', attachments,
     });
+    acknowledgeLastChat(socket);
+    await sent;
 
     expect(socket.frames.at(-1)).toEqual(expect.objectContaining({
       type: 'chat.send', idempotencyKey: '1234567890abcdef', attachments,
@@ -198,6 +202,7 @@ describe('109-04: DirectGatewayClient', () => {
     client.connect();
     expect((client as any).pendingMessages).toHaveLength(1);
     socket.receive({ type: 'auth_ok' });
+    acknowledgeLastChat(socket);
     await sent;
     expect(socket.frames.at(-1)).toEqual(expect.objectContaining({ type: 'chat.send', message: 'queued' }));
     client.disconnect();
@@ -219,6 +224,36 @@ describe('109-04: DirectGatewayClient', () => {
     await expect(request).rejects.toThrow('登录已失效，请重新登录。');
     expect((client as any).pendingMessages).toHaveLength(0);
     expect(onStateChange).toHaveBeenCalledWith('auth_failed');
+  });
+
+  it('rejects an unacknowledged chat when the socket disconnects', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+
+    const request = client.request('chat.send', { sessionKey: '', message: 'first message' });
+    socket.closeWith(1006, 'network lost');
+
+    await expect(request).rejects.toThrow(/before the message was accepted/);
+  });
+
+  it('rejects a duplicate chat snapshot instead of leaving the send pending', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+
+    const request = client.request('chat.send', { sessionKey: 'session-1', message: 'duplicate' });
+    const frame = socket.frames.at(-1);
+    socket.receive({
+      type: 'run.snapshot',
+      messageId: frame?.messageId,
+      run: { id: 'existing-run', state: 'running' },
+    });
+
+    await expect(request).rejects.toThrow(/already accepted by an existing run/);
+    expect(onEvent).not.toHaveBeenCalled();
   });
 
   it('forwards session.created as a first-class adapter event', () => {
@@ -345,7 +380,9 @@ describe('109-04: DirectGatewayClient', () => {
       type: 'session.created',
       sessionKey: 'server-session',
     });
-    await client.request('chat.send', { sessionKey: host.sessionKey, message: 'follow-up' });
+    const sent = client.request('chat.send', { sessionKey: host.sessionKey, message: 'follow-up' });
+    acknowledgeLastChat(socket);
+    await sent;
 
     expect(host.sessionKey).toBe('server-session');
     expect(host.chatRunId).toBe('run-1');
@@ -360,6 +397,16 @@ describe('109-04: DirectGatewayClient', () => {
     }));
   });
 });
+
+function acknowledgeLastChat(socket: MockWebSocket): void {
+  const frame = socket.frames.at(-1);
+  socket.receive({
+    type: 'run.started',
+    runId: 'server-run',
+    sessionKey: String(frame?.sessionKey ?? 'server-session'),
+    messageId: frame?.messageId,
+  });
+}
 
 class MockWebSocket {
   static readonly OPEN = 1;

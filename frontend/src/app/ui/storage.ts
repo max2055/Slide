@@ -262,6 +262,10 @@ export function loadSettings(): UiSettings {
       notificationEnabled: typeof (parsed as any).notificationEnabled === "boolean" ? (parsed as any).notificationEnabled : defaults.notificationEnabled,
       notifySeverity: Array.isArray((parsed as any).notifySeverity) ? (parsed as any).notifySeverity : defaults.notifySeverity,
       defaultModel: typeof (parsed as any).defaultModel === "string" ? (parsed as any).defaultModel : defaults.defaultModel,
+      btnPalette:
+        typeof parsed.btnPalette === "object" && parsed.btnPalette !== null
+          ? parsed.btnPalette
+          : undefined,
     };
   } catch {
     return defaults;
@@ -308,6 +312,7 @@ function persistSettings(next: UiSettings) {
     notificationEnabled: next.notificationEnabled,
     notifySeverity: next.notifySeverity,
     defaultModel: next.defaultModel,
+    ...(next.btnPalette ? { btnPalette: next.btnPalette } : {}),
   };
   const serialized = JSON.stringify(persisted);
   try {
@@ -347,6 +352,7 @@ function buildServerPrefsPayload(settings: UiSettings): Record<string, unknown> 
     notificationEnabled: settings.notificationEnabled,
     notifySeverity: settings.notifySeverity,
     defaultModel: settings.defaultModel,
+    ...(settings.btnPalette ? { btnPalette: settings.btnPalette } : {}),
   };
 }
 
@@ -392,6 +398,10 @@ export async function syncPreferencesFromServer(currentSettings: UiSettings): Pr
         notificationEnabled: typeof server.notificationEnabled === 'boolean' ? server.notificationEnabled : currentSettings.notificationEnabled,
         notifySeverity: Array.isArray(server.notifySeverity) ? server.notifySeverity as string[] : currentSettings.notifySeverity,
         defaultModel: typeof server.defaultModel === 'string' ? server.defaultModel : currentSettings.defaultModel,
+        btnPalette:
+          typeof server.btnPalette === 'object' && server.btnPalette !== null
+            ? server.btnPalette as Record<string, string>
+            : currentSettings.btnPalette,
       };
     }
     // Server has no preferences yet — upload current local settings (migration)

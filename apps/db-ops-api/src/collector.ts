@@ -103,7 +103,7 @@ class UnifiedCollector {
       for (const def of definitions) {
         collectionCapabilityTracker.recordMetricAttempt(
           instance.id,
-          def.name,
+          def.id,
           results[def.id] !== undefined
         );
       }

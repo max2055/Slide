@@ -41,6 +41,7 @@ export interface UserPreferences {
   theme: string;
   themeMode: string;
   locale: string;
+  btnPalette?: Record<string, string>;
 }
 
 export const DEFAULT_PREFERENCES: UserPreferences = {
@@ -85,16 +86,15 @@ class UserPreferenceService {
   /**
    * 获取用户偏好
    *
-   * 从 user_preferences 表读取，与 DEFAULT_PREFERENCES 合并。
-   * 存储值覆盖默认值，默认值填充缺失键。
+   * 从 user_preferences 表读取已显式保存的值。
    *
    * @param userId - 用户ID
-   * @returns 合并后的偏好对象
+   * @returns 已保存的偏好对象；未保存或存储不可用时返回 null
    */
-  async getPreferences(userId: number): Promise<UserPreferences> {
+  async getPreferences(userId: number): Promise<Partial<UserPreferences> | null> {
     const pool = this.getPool();
     if (!pool) {
-      return { ...DEFAULT_PREFERENCES };
+      return null;
     }
 
     try {
@@ -107,13 +107,13 @@ class UserPreferenceService {
         const prefs = typeof rows[0].preferences === 'string'
           ? JSON.parse(rows[0].preferences)
           : rows[0].preferences;
-        return { ...DEFAULT_PREFERENCES, ...prefs };
+        return prefs && typeof prefs === 'object' ? prefs : null;
       }
 
-      return { ...DEFAULT_PREFERENCES };
+      return null;
     } catch (error) {
       console.error('获取用户偏好失败:', error);
-      return { ...DEFAULT_PREFERENCES };
+      return null;
     }
   }
 
@@ -136,7 +136,7 @@ class UserPreferenceService {
     try {
       // 先获取现有偏好，与新偏好合并
       const existing = await this.getPreferences(userId);
-      const merged = { ...existing, ...preferences };
+      const merged = { ...DEFAULT_PREFERENCES, ...(existing ?? {}), ...preferences };
 
       await pool.execute(
         `INSERT INTO user_preferences (user_id, preferences)

@@ -45,7 +45,7 @@ import type { DirectGatewayClient } from "./direct-gateway.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import type { Tab } from "./navigation.ts";
 import type { SidebarContent } from "./sidebar-content.ts";
-import { loadSettings, type UiSettings, loadSessionToken, persistSessionToken } from "./storage.ts";
+import { loadSettings, type UiSettings } from "./storage.ts";
 import { VALID_THEME_NAMES, type ResolvedTheme, type ThemeMode, type ThemeName } from "./theme.ts";
 import type {
   AgentsListResult,
@@ -68,7 +68,7 @@ import type {
 import { type ChatAttachment, type ChatQueueItem, type CronFormState } from "./ui-types.ts";
 import { generateUUID } from "./uuid.ts";
 import { buildNavigationUrl } from "./app-navigation.ts";
-import { SESSION_EXPIRED_EVENT, isSessionExpiryInProgress } from "../../api/index.ts";
+import { SESSION_EXPIRED_EVENT, apiClient, isSessionExpiryInProgress } from "../../api/index.ts";
 import { showToast } from "./components/app-toast-container.ts";
 
 declare global {
@@ -108,7 +108,6 @@ export class SlideApp extends LitElement {
   @state() password = "";
   @state() loginShowGatewayPassword = false;
   userPermissions: Set<string> | null = null;
-  @state() sessionToken: string | null = loadSessionToken();
   @state() tab: Tab = "chat";
   @state() onboarding = resolveOnboardingMode();
   // Start disconnected - let gateway connection determine state
@@ -168,7 +167,6 @@ export class SlideApp extends LitElement {
   @state() navDrawerOpen = false;
 
   onSlashAction?: (action: string) => void;
-  private _beforeUnload?: () => void;
 
   // Sidebar state for tool output viewing
   @state() sidebarOpen = false;
@@ -412,25 +410,14 @@ export class SlideApp extends LitElement {
     window.addEventListener(SESSION_EXPIRED_EVENT, this.sessionExpiredHandler);
     if (isSessionExpiryInProgress()) this.lastError = '登录已超时，请重新登录。';
 
-    // Auto-reconnect: try to restore session if we have a JWT token.
-    // Don't set connected=true optimistically — the WebSocket connection
-    // result determines the state. This prevents refresh-bypass on the
-    // login page when stale tokens exist in localStorage.
-    const hasJwt = !!(typeof window !== 'undefined' && localStorage.getItem('token'));
-    if (this.sessionToken && hasJwt) {
+    // DirectAdapter authenticates with the persisted JWT. The legacy control
+    // session token is no longer issued and must not block refresh recovery.
+    const hasJwt = Boolean(apiClient.getToken());
+    if (hasJwt) {
       this.connect();
-    } else if (this.sessionToken && !hasJwt) {
+    } else {
       localStorage.removeItem('slide.control.session_token.v1');
-      this.sessionToken = null;
     }
-
-    // Session tokens are session-only — clear on every page unload.
-    // Re-login is required after a full page refresh.
-    this._beforeUnload = () => {
-      localStorage.removeItem('slide.control.session_token.v1');
-      localStorage.removeItem('_creds');
-    };
-    window.addEventListener('beforeunload', this._beforeUnload);
 
     this.onSlashAction = (action: string) => {
       switch (action) {
@@ -551,9 +538,6 @@ export class SlideApp extends LitElement {
   disconnectedCallback() {
     document.removeEventListener("keydown", this.globalKeydownHandler);
     window.removeEventListener(SESSION_EXPIRED_EVENT, this.sessionExpiredHandler);
-    if (this._beforeUnload) {
-      window.removeEventListener('beforeunload', this._beforeUnload);
-    }
     handleDisconnected(this as unknown as Parameters<typeof handleDisconnected>[0]);
     super.disconnectedCallback();
   }
@@ -568,7 +552,6 @@ export class SlideApp extends LitElement {
       this.client = null;
     }
     clearExpiredChatState(this as unknown as Record<string, unknown>);
-    this.sessionToken = null;
     this.hello = null;
     localStorage.removeItem('token');
     localStorage.removeItem('refreshToken');

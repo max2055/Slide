@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { loadSettings } from "./storage.ts";
+import { loadSettings, saveSettings } from "./storage.ts";
 
 const SETTINGS_KEY = "slide.control.settings.v1:default";
 
@@ -31,5 +31,18 @@ describe("loadSettings chat session migration", () => {
 
     expect(settings.sessionKey).toBe("");
     expect(settings.lastActiveSessionKey).toBe("");
+  });
+
+  it("round-trips accent and button palette choices", () => {
+    const settings = loadSettings();
+    settings.accentColor = "#14b8a6";
+    settings.btnPalette = { primaryBg: "#14b8a6", primaryColor: "#ffffff" };
+
+    saveSettings(settings);
+
+    expect(loadSettings()).toMatchObject({
+      accentColor: "#14b8a6",
+      btnPalette: { primaryBg: "#14b8a6", primaryColor: "#ffffff" },
+    });
   });
 });

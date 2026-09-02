@@ -7,6 +7,7 @@ import {
 import { t } from "../i18n/index.ts";
 import { getSafeLocalStorage } from "./local-storage.ts";
 import { refreshChatAvatar } from "./app-chat.ts";
+import { shouldRenderLoginGate } from "./auth-gate.ts";
 
 function runUpdate(_state: unknown) { /* noop */ }
 import { renderChatControls, renderChatMobileToggle, renderChatSessionSelect } from "./app-render.helpers.ts";
@@ -207,9 +208,10 @@ export function renderApp(state: AppViewState) {
       : undefined;
   _pendingUpdate = requestHostUpdate;
 
-  // Gate: require successful gateway connection before showing the dashboard.
-  // The gateway URL confirmation overlay is always rendered so URL-param flows still work.
-  if (!state.connected) {
+  // Transport startup/reconnect is not an authentication failure. Keep the
+  // current route mounted while a stored JWT is being authenticated.
+  const authToken = getSafeLocalStorage()?.getItem('token');
+  if (shouldRenderLoginGate(state.connected, authToken)) {
     return html` ${renderLoginGate(state)} ${renderGatewayUrlConfirmation(state)} `;
   }
 
