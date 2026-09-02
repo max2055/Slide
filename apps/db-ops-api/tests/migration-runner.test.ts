@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { MigrationError, MigrationRunner, splitSqlStatements, statementsForExecution } from '../src/migrations/runner.js';
+import { loadMigrations, MigrationError, MigrationRunner, splitSqlStatements, statementsForExecution } from '../src/migrations/runner.js';
 
 class FakePool {
   entries = new Map<string, any>();
@@ -86,6 +86,19 @@ async function migrationDirectory(files: Record<string, string>) {
 afterEach(async () => { await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))); });
 
 describe('MigrationRunner', () => {
+  it('keeps historical migrations immutable and applies later changes forward', async () => {
+    const migrations = await loadMigrations();
+    const baseline = migrations.find((migration) => migration.id === '000_schema_baseline.sql');
+    const networkFoundation = migrations.find((migration) => migration.id === '070_network_device_resource_foundation.sql');
+    const sessionTimeout = migrations.find((migration) => migration.id === '082_auth_session_idle_timeout.sql');
+
+    expect(baseline?.checksum).toBe('729ec2cce91657443417503a6cf0a1852cb6002885fc6f9f9af5755560cdc2b9');
+    expect(baseline?.sql).not.toContain('auth.session_idle_timeout_minutes');
+    expect(networkFoundation?.checksum).toBe('5ca1ec5c8f2c2d40a09cb5e5375eb4ab98851dc7a30eefef077011091ae4cc1b');
+    expect(sessionTimeout?.sql).toContain('auth.session_idle_timeout_minutes');
+    expect(sessionTimeout?.sql).toContain('INSERT IGNORE');
+  });
+
   it('preserves semicolons inside quoted migration SQL', () => {
     expect(splitSqlStatements("INSERT INTO t VALUES ('a;b'); -- ignored;\nSELECT 1;")).toEqual([
       "INSERT INTO t VALUES ('a;b')",
