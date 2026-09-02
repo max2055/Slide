@@ -8,7 +8,7 @@
  * - getProvidersByDbType filtering works
  * - BaseMetricProvider abstract class structure
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Registry } from '../../collectors/registry';
 
 interface TestProvider {
@@ -118,5 +118,19 @@ describe('Registry<T>', () => {
     registry.register(p);
     registry.disable('mysql_only');
     expect(registry.getProvidersByDbType('mysql')).toEqual([]);
+  });
+
+  it('automatically retries a scoped provider after its cooldown', () => {
+    const registry = new Registry<TestProvider>();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-01T00:00:00Z'));
+    const p = createProvider('cooldown_collector');
+    registry.register(p);
+    registry.disable(p.name, 'instance:7', 1_000);
+
+    expect(registry.isEnabled(p.name, 'instance:7')).toBe(false);
+    vi.advanceTimersByTime(1_001);
+    expect(registry.isEnabled(p.name, 'instance:7')).toBe(true);
+    vi.useRealTimers();
   });
 });

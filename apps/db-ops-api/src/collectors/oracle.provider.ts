@@ -2,9 +2,9 @@
  * OracleProvider — extracts Oracle metric queries from getOracleMetrics
  *
  * Each collect() call handles ONE metric by metricDef.id.
- * Delta counters use conn.oracleDeltaCounter.
+ * Delta counters use metric-specific baselines on the connection.
  */
-import { BaseMetricProvider } from './base-provider.js';
+import { BaseMetricProvider, calculateCounterRate } from './base-provider.js';
 import type { DatabaseConnection } from '../database-service.js';
 import type { MetricDefinition } from '../metric-registry.js';
 
@@ -98,18 +98,7 @@ export class OracleProvider extends BaseMetricProvider {
             WHERE NAME IN ('execute count', 'user commits')
           `);
           const executes = (statResult.rows?.[0]?.[0] as number) || 0;
-          const now = Date.now();
-          if (!instance.oracleDeltaCounter) {
-            instance.oracleDeltaCounter = { executes, commits: 0, timestamp: now };
-            return 0;
-          }
-          const elapsed = (now - instance.oracleDeltaCounter.timestamp) / 1000;
-          if (elapsed <= 0) return 0;
-          const delta = executes - instance.oracleDeltaCounter.executes;
-          const rate = Math.max(0, Math.round(delta / elapsed));
-          instance.oracleDeltaCounter.executes = executes;
-          instance.oracleDeltaCounter.timestamp = now;
-          return rate;
+          return calculateCounterRate(instance, 'qps', executes);
         }
 
         case 'tps': {
@@ -120,18 +109,7 @@ export class OracleProvider extends BaseMetricProvider {
             WHERE NAME IN ('user commits')
           `);
           const commits = (statResult.rows?.[0]?.[0] as number) || 0;
-          const now = Date.now();
-          if (!instance.oracleDeltaCounter) {
-            instance.oracleDeltaCounter = { executes: 0, commits, timestamp: now };
-            return 0;
-          }
-          const elapsed = (now - instance.oracleDeltaCounter.timestamp) / 1000;
-          if (elapsed <= 0) return 0;
-          const delta = commits - instance.oracleDeltaCounter.commits;
-          const rate = Math.max(0, Math.round(delta / elapsed));
-          instance.oracleDeltaCounter.commits = commits;
-          instance.oracleDeltaCounter.timestamp = now;
-          return rate;
+          return calculateCounterRate(instance, 'tps', commits);
         }
 
         case 'slow_queries':

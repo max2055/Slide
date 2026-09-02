@@ -286,7 +286,7 @@ export class MetricRegistry {
         db_types: ['mysql', 'postgresql', 'dameng', 'oracle'],
         aggregation: 'last',
         default_interval: 60,
-        is_collected: true,
+        is_collected: false,
         is_builtin: true,
         threshold_template: { warning: 70, error: 50, critical: 30 },
       },

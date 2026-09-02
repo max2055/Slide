@@ -129,6 +129,27 @@ describe('server collector Linux lifecycle', () => {
     expect(mocks.updateServerStatus).toHaveBeenLastCalledWith(9, 'online');
   });
 
+  it('serializes concurrent collections for the same server', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    mocks.getServerById.mockImplementationOnce(async () => {
+      await gate;
+      return {
+        id: 9, host: 'db.internal', port: 22, credential_type: 'password',
+        host_key_fingerprint: 'SHA256:test', os_type: 'RHEL 8',
+      };
+    });
+    mocks.execCommands.mockRejectedValue(new Error('SSH_COMMAND_FAILED'));
+    const collector = new ServerCollector();
+
+    const first = collector.collectServer(9);
+    await expect(collector.collectServer(9)).resolves.toEqual({ success: false, error: 'COLLECTION_IN_PROGRESS' });
+    release();
+    await first;
+
+    expect(mocks.getServerById).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     'SSH_COMMAND_TIMEOUT',
     'SSH_COMMAND_OUTPUT_LIMIT',

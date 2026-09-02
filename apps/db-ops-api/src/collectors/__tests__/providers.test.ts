@@ -64,6 +64,38 @@ describe('MySQLProvider', () => {
     await expect(provider.collect(instance, { id: 'handler_read_rnd_next_rate' } as any)).resolves.toBe(2);
     now.mockRestore();
   });
+
+  it('keeps QPS and TPS rate baselines independent', async () => {
+    const { MySQLProvider } = await import('../mysql.provider.js');
+    const provider = new MySQLProvider();
+    let queries = 1_000;
+    let commits = 2_000;
+    let rollbacks = 100;
+    const instance = {
+      pool: {
+        query: vi.fn(async (sql: string) => sql.includes("'Queries'")
+          ? [[{ Variable_name: 'Queries', Value: String(queries) }]]
+          : [[
+              { Variable_name: 'Com_commit', Value: String(commits) },
+              { Variable_name: 'Com_rollback', Value: String(rollbacks) },
+            ]]),
+      },
+    } as any;
+    const now = vi.spyOn(Date, 'now');
+
+    now.mockReturnValue(1_000);
+    await expect(provider.collect(instance, { id: 'qps' } as any)).resolves.toBe(0);
+    now.mockReturnValue(1_001);
+    await expect(provider.collect(instance, { id: 'tps' } as any)).resolves.toBe(0);
+    queries += 60;
+    commits += 100;
+    rollbacks += 20;
+    now.mockReturnValue(61_000);
+    await expect(provider.collect(instance, { id: 'qps' } as any)).resolves.toBe(1);
+    now.mockReturnValue(61_001);
+    await expect(provider.collect(instance, { id: 'tps' } as any)).resolves.toBe(2);
+    now.mockRestore();
+  });
 });
 
 describe('PostgreSQLProvider', () => {

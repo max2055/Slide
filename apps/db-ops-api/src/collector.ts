@@ -10,7 +10,6 @@ import { collectorRegistry } from './collectors/registry.js';
 import { databaseService } from './database-service.js';
 import { metricsDatabaseService } from './metrics-database-service.js';
 import { metricRegistry } from './metric-registry.js';
-import { collectionCapabilityTracker } from './collection-capabilities.js';
 import type { MetricDefinition } from './metric-registry.js';
 import type { DatabaseConnection } from './database-service.js';
 import type { DatabaseInstance } from './instance-database-service.js';
@@ -55,6 +54,7 @@ class UnifiedCollector {
     for (const provider of providers) {
       if (!collectorRegistry.isEnabled(provider.name, scope)) continue;
       let providerSucceeded = false;
+      let providerFailed = false;
 
       for (const def of definitions) {
         try {
@@ -64,15 +64,19 @@ class UnifiedCollector {
             providerSucceeded = true;
           }
         } catch (e: any) {
-          const failures = collectorRegistry.recordFailure(provider.name, scope);
+          providerFailed = true;
           console.error(`[Collector] ${provider.name} ${def.id} 采集异常:`, e.message);
-          if (failures >= 3) {
-            collectorRegistry.disable(provider.name, scope);
-            console.error(`[Collector] Provider ${provider.name} 在 ${scope} 连续失败 ${failures} 次，已自动禁用`);
-          }
         }
       }
-      if (providerSucceeded) collectorRegistry.resetFailures(provider.name, scope);
+      if (providerSucceeded) {
+        collectorRegistry.resetFailures(provider.name, scope);
+      } else if (providerFailed) {
+        const failures = collectorRegistry.recordFailure(provider.name, scope);
+        if (failures >= 3) {
+          collectorRegistry.disable(provider.name, scope);
+          console.error(`[Collector] Provider ${provider.name} 在 ${scope} 连续失败 ${failures} 轮，已暂时禁用`);
+        }
+      }
     }
 
     // 记录到 metrics_history
@@ -97,15 +101,10 @@ class UnifiedCollector {
         recordPayload.metrics_data = dynamicData;
       }
 
-      await metricsDatabaseService.recordMetrics(recordPayload as any);
-
-      // 更新采集能力追踪
-      for (const def of definitions) {
-        collectionCapabilityTracker.recordMetricAttempt(
-          instance.id,
-          def.id,
-          results[def.id] !== undefined
-        );
+      const persisted = await metricsDatabaseService.recordMetrics(recordPayload as any);
+      if (!persisted.success) {
+        console.error(`[Collector] 实例 ${instance.id} 指标落库失败: ${persisted.error ?? 'METRICS_PERSIST_FAILED'}`);
+        return Object.fromEntries(definitions.map((definition) => [definition.id, false]));
       }
     }
     return Object.fromEntries(definitions.map((definition) => [definition.id, results[definition.id] !== undefined]));

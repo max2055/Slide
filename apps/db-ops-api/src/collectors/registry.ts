@@ -12,10 +12,10 @@ export interface RegistryItem<T> {
 }
 
 export class Registry<T extends { readonly name: string; readonly supportedDbTypes: string[] }> {
-  private items = new Map<string, { provider: T; enabled: boolean; consecutiveFailures: number; failuresByScope: Map<string, number>; disabledScopes: Set<string> }>();
+  private items = new Map<string, { provider: T; enabled: boolean; consecutiveFailures: number; failuresByScope: Map<string, number>; disabledScopes: Map<string, number> }>();
 
   register(provider: T): void {
-    this.items.set(provider.name, { provider, enabled: true, consecutiveFailures: 0, failuresByScope: new Map(), disabledScopes: new Set() });
+    this.items.set(provider.name, { provider, enabled: true, consecutiveFailures: 0, failuresByScope: new Map(), disabledScopes: new Map() });
   }
 
   enable(name: string): void {
@@ -26,11 +26,11 @@ export class Registry<T extends { readonly name: string; readonly supportedDbTyp
     }
   }
 
-  disable(name: string, scope?: string): void {
+  disable(name: string, scope?: string, retryAfterMs: number = 60_000): void {
     const item = this.items.get(name);
     if (item) {
       if (scope) {
-        item.disabledScopes.add(scope);
+        item.disabledScopes.set(scope, Date.now() + retryAfterMs);
         item.failuresByScope.delete(scope);
         item.consecutiveFailures = Math.max(0, ...item.failuresByScope.values());
         return;
@@ -43,7 +43,13 @@ export class Registry<T extends { readonly name: string; readonly supportedDbTyp
 
   isEnabled(name: string, scope?: string): boolean {
     const item = this.items.get(name);
-    return Boolean(item?.enabled && (!scope || !item.disabledScopes.has(scope)));
+    if (!item?.enabled) return false;
+    if (!scope) return true;
+    const disabledUntil = item.disabledScopes.get(scope);
+    if (disabledUntil === undefined) return true;
+    if (disabledUntil > Date.now()) return false;
+    item.disabledScopes.delete(scope);
+    return true;
   }
 
   get(name: string): T | undefined {

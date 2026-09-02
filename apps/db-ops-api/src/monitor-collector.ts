@@ -45,6 +45,7 @@ class MonitorCollector {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private slowQueryTimer: ReturnType<typeof setInterval> | null = null;
   private capacityTimer: ReturnType<typeof setInterval> | null = null;
+  private tickInFlight = false;
   private running = false;
   private readonly instanceCollections = new Map<number, Promise<InstanceCollectionResult>>();
   private config: MonitorConfig = {
@@ -166,19 +167,25 @@ class MonitorCollector {
    * 心跳：检查哪些实例到期，采集它们
    */
   private async _tick() {
-    const now = Date.now();
-    const instances = await instanceDatabaseService.getAllInstances();
-    if (instances.length === 0) return;
+    if (this.tickInFlight) return;
+    this.tickInFlight = true;
+    try {
+      const now = Date.now();
+      const instances = await instanceDatabaseService.getAllInstances();
+      if (instances.length === 0) return;
 
-    for (const inst of instances) {
-      if (inst.status !== 'active') continue;
+      for (const inst of instances) {
+        if (inst.status !== 'active') continue;
 
-      const definitions = metricRegistry.getByDbType(inst.db_type)
-        .filter((metric) => metric.is_collected && metric.id !== 'health_score');
-      const dueIds = await dueStoredMetricIds(this.scheduleStore, 'instance', inst.id, 'unified', definitions, now);
-      const due = definitions.filter((metric) => dueIds.includes(metric.id));
-      if (due.length === 0) continue;
-      await this.collectAndRecord(inst, due);
+        const definitions = metricRegistry.getByDbType(inst.db_type)
+          .filter((metric) => metric.is_collected && metric.id !== 'health_score');
+        const dueIds = await dueStoredMetricIds(this.scheduleStore, 'instance', inst.id, 'unified', definitions, now);
+        const due = definitions.filter((metric) => dueIds.includes(metric.id));
+        if (due.length === 0) continue;
+        await this.collectAndRecord(inst, due);
+      }
+    } finally {
+      this.tickInFlight = false;
     }
   }
 

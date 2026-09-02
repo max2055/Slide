@@ -35,6 +35,10 @@ describe('MetricRegistry Oracle support', () => {
       expect(bp).not.toBeNull();
       expect(bp!.db_types).not.toContain('oracle');
     });
+
+    it('health_score is computed outside metric providers', () => {
+      expect(metricRegistry.getById('health_score')).toMatchObject({ is_collected: false });
+    });
   });
 
   describe('D-02: 3 new Oracle-specific metrics', () => {

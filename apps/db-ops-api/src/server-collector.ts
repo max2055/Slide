@@ -119,6 +119,7 @@ class ServerCollector {
   private collectionTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private failureCounts: Map<number, number> = new Map();
+  private inFlight = new Set<number>();
   private config: CollectorConfig;
 
   constructor(config?: Partial<CollectorConfig>) {
@@ -151,22 +152,26 @@ class ServerCollector {
     if (!Number.isSafeInteger(serverId) || serverId <= 0) {
       return failedResult(new Error('SERVER_ID_INVALID'));
     }
-    const server = await serverDatabaseService.getServerById(serverId);
-    if (!server) return failedResult(new Error('SERVER_NOT_FOUND'));
+    if (this.inFlight.has(serverId)) return failedResult(new Error('COLLECTION_IN_PROGRESS'));
+    this.inFlight.add(serverId);
     try {
+      const server = await serverDatabaseService.getServerById(serverId);
+      if (!server) return failedResult(new Error('SERVER_NOT_FOUND'));
       const result = await this._collectOneServer(server);
       this.failureCounts.delete(server.id);
       return result;
     } catch (error) {
       const code = stableErrorCode(error);
       return failedResult(new Error(code));
+    } finally {
+      this.inFlight.delete(serverId);
     }
   }
 
   /** Exposed for diagnostic routes/tests without starting the interval timer. */
   async collectServerWithFailureState(serverId: number): Promise<ServerCollectionResult> {
     const result = await this.collectServer(serverId);
-    if (!result.success) await this.recordFailure(serverId, result);
+    if (!result.success && result.error !== 'COLLECTION_IN_PROGRESS') await this.recordFailure(serverId, result);
     return result;
   }
 
@@ -174,7 +179,7 @@ class ServerCollector {
     const servers = await serverDatabaseService.getCollectionEnabledServers();
     for (const server of servers) {
       const result = await this.collectServer(server.id);
-      if (!result.success) await this.recordFailure(server.id, result);
+      if (!result.success && result.error !== 'COLLECTION_IN_PROGRESS') await this.recordFailure(server.id, result);
     }
   }
 

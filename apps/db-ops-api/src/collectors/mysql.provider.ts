@@ -2,10 +2,9 @@
  * MySQLProvider — extracts MySQL metric queries from database-service.ts getMySQLMetrics
  *
  * Each collect() call handles ONE metric by metricDef.id, returns a single scalar.
- * Delta counters (qps, tps, handler_read_rnd_next_rate, aborted_connects_rate)
- * are stored on conn.deltaCounter.
+ * Delta counters use metric-specific baselines on the connection.
  */
-import { BaseMetricProvider } from './base-provider.js';
+import { BaseMetricProvider, calculateCounterRate } from './base-provider.js';
 import type { DatabaseConnection } from '../database-service.js';
 import type { MetricDefinition } from '../metric-registry.js';
 import type { RowDataPacket } from 'mysql2/promise';
@@ -67,21 +66,7 @@ export class MySQLProvider extends BaseMetricProvider {
             "SHOW GLOBAL STATUS WHERE Variable_name IN ('Queries', 'Uptime')"
           );
           const queries = Number(statusResult.find((r: any) => r.Variable_name === 'Queries')?.Value) || 0;
-          const now = Date.now();
-          if (!instance.deltaCounter) {
-            instance.deltaCounter = {
-              queries, commits: 0, rollbacks: 0,
-              bytesReceived: 0, bytesSent: 0, slowQueries: 0,
-              timestamp: now, abortedConnects: 0, handlerReadRndNext: 0,
-            };
-            return 0;
-          }
-          const elapsed = (now - instance.deltaCounter.timestamp) / 1000;
-          if (elapsed <= 0) return 0;
-          const rate = Math.round((queries - instance.deltaCounter.queries) / elapsed);
-          instance.deltaCounter.queries = queries;
-          instance.deltaCounter.timestamp = now;
-          return rate;
+          return calculateCounterRate(instance, 'qps', queries);
         }
 
         case 'tps': {
@@ -90,22 +75,7 @@ export class MySQLProvider extends BaseMetricProvider {
           );
           const commits = Number(statusResult.find((r: any) => r.Variable_name === 'Com_commit')?.Value) || 0;
           const rollbacks = Number(statusResult.find((r: any) => r.Variable_name === 'Com_rollback')?.Value) || 0;
-          const now = Date.now();
-          if (!instance.deltaCounter) {
-            instance.deltaCounter = {
-              queries: 0, commits, rollbacks,
-              bytesReceived: 0, bytesSent: 0, slowQueries: 0,
-              timestamp: now, abortedConnects: 0, handlerReadRndNext: 0,
-            };
-            return 0;
-          }
-          const elapsed = (now - instance.deltaCounter.timestamp) / 1000;
-          if (elapsed <= 0) return 0;
-          const rate = Math.round(((commits + rollbacks) - (instance.deltaCounter.commits + instance.deltaCounter.rollbacks)) / elapsed);
-          instance.deltaCounter.commits = commits;
-          instance.deltaCounter.rollbacks = rollbacks;
-          instance.deltaCounter.timestamp = now;
-          return rate;
+          return calculateCounterRate(instance, 'tps', commits + rollbacks);
         }
 
         case 'slow_queries': {
@@ -196,32 +166,7 @@ export class MySQLProvider extends BaseMetricProvider {
             "SHOW GLOBAL STATUS WHERE Variable_name = 'Handler_read_rnd_next'"
           );
           const current = Number(result[0]?.Value) || 0;
-          const now = Date.now();
-          if (!instance.deltaCounter) {
-            instance.deltaCounter = {
-              queries: 0, commits: 0, rollbacks: 0,
-              bytesReceived: 0, bytesSent: 0, slowQueries: 0,
-              timestamp: now, abortedConnects: 0, handlerReadRndNext: current,
-            };
-            return 0;
-          }
-          const previousTimestamp = instance.deltaCounter.handlerReadRndNextTimestamp;
-          const handlerElapsed = previousTimestamp === undefined ? 0 : (now - previousTimestamp) / 1000;
-          if (handlerElapsed <= 0) {
-            instance.deltaCounter.handlerReadRndNext = current;
-            instance.deltaCounter.handlerReadRndNextTimestamp = now;
-            return 0;
-          }
-          if (current < instance.deltaCounter.handlerReadRndNext) {
-            // Counter reset (server restart)
-            instance.deltaCounter.handlerReadRndNext = current;
-            instance.deltaCounter.handlerReadRndNextTimestamp = now;
-            return 0;
-          }
-          const rate = Math.round((current - instance.deltaCounter.handlerReadRndNext) / handlerElapsed * 100) / 100;
-          instance.deltaCounter.handlerReadRndNext = current;
-          instance.deltaCounter.handlerReadRndNextTimestamp = now;
-          return rate;
+          return calculateCounterRate(instance, 'handler_read_rnd_next_rate', current, Date.now(), 2);
         }
 
         case 'key_blocks_usage': {
@@ -253,31 +198,7 @@ export class MySQLProvider extends BaseMetricProvider {
             "SHOW GLOBAL STATUS WHERE Variable_name = 'Aborted_connects'"
           );
           const current = Number(result[0]?.Value) || 0;
-          const now = Date.now();
-          if (!instance.deltaCounter) {
-            instance.deltaCounter = {
-              queries: 0, commits: 0, rollbacks: 0,
-              bytesReceived: 0, bytesSent: 0, slowQueries: 0,
-              timestamp: now, abortedConnects: current, handlerReadRndNext: 0,
-            };
-            return 0;
-          }
-          const previousTimestamp = instance.deltaCounter.abortedConnectsTimestamp;
-          const elapsed = previousTimestamp === undefined ? 0 : (now - previousTimestamp) / 1000;
-          if (elapsed <= 0) {
-            instance.deltaCounter.abortedConnects = current;
-            instance.deltaCounter.abortedConnectsTimestamp = now;
-            return 0;
-          }
-          if (current < instance.deltaCounter.abortedConnects) {
-            instance.deltaCounter.abortedConnects = current;
-            instance.deltaCounter.abortedConnectsTimestamp = now;
-            return 0;
-          }
-          const rate = Math.round((current - instance.deltaCounter.abortedConnects) / elapsed * 100) / 100;
-          instance.deltaCounter.abortedConnects = current;
-          instance.deltaCounter.abortedConnectsTimestamp = now;
-          return rate;
+          return calculateCounterRate(instance, 'aborted_connects_rate', current, Date.now(), 2);
         }
 
         default:
