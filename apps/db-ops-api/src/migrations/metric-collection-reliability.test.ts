@@ -17,6 +17,19 @@ describe('metric collection reliability migration', () => {
     expect(migration).toContain('idx_server_metric_time (server_id, metric_name, recorded_at, id)');
     expect(migration).toContain('idx_network_device_observation_time (device_id, observed_at, id)');
     expect(migration).toMatch(/SET is_collected = FALSE\s+WHERE target_type = 'instance' AND id = 'health_score'/);
+    for (const column of [
+      'active_transactions',
+      'slow_queries',
+      'threads_running',
+      'threads_connected',
+      'bytes_received',
+      'bytes_sent',
+      'queries_total',
+      'commits_total',
+      'rollbacks_total',
+    ]) {
+      expect(migration).toMatch(new RegExp(`MODIFY COLUMN ${column} [^,]+ COMMENT '[^']+'`));
+    }
     expect(splitSqlStatements(migration)).toHaveLength(4);
   });
 });
