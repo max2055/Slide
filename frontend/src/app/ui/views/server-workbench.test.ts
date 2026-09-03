@@ -33,4 +33,13 @@ describe("server workbench Phase 142 contract", () => {
       expect(source).toContain(label);
     }
   });
+
+  it("exposes the same four row actions as database and network inventories", () => {
+    const source = fs.readFileSync(path.resolve(__dirname, "./servers-page.ts"), "utf8");
+    expect(source).toContain("_testServer");
+    expect(source).toMatch(/_navigateToDetail\(srv\.id\)[\s\S]*>详情/);
+    expect(source).toMatch(/_openEditDialog\(srv\)[\s\S]*>编辑/);
+    expect(source).toMatch(/_testServer\(srv\)[\s\S]*>\$\{this\._testingServerId/);
+    expect(source).toMatch(/_confirmDelete\(srv\)[\s\S]*>删除/);
+  });
 });

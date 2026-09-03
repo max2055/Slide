@@ -285,38 +285,6 @@ export class InstancesPage extends LitElement {
       gap: var(--space-sm);
     }
 
-    .action-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: var(--space-xs) var(--space-md);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      font-size: var(--text-xs);
-      font-weight: 500;
-      color: var(--text);
-      background: var(--secondary);
-      cursor: pointer;
-      white-space: nowrap;
-      transition: all var(--duration-normal) var(--ease-out);
-    }
-
-    .action-btn:hover {
-      background: var(--accent);
-      color: var(--accent-foreground);
-      border-color: var(--accent);
-    }
-
-    .action-btn.danger {
-      color: var(--danger);
-      border-color: var(--danger);
-    }
-    .action-btn.danger:hover {
-      background: var(--danger);
-      color: var(--danger-foreground);
-      border-color: var(--danger);
-    }
-
     /* 加载和空状态 */
     .loading, .empty {
       display: flex;
@@ -762,10 +730,10 @@ export class InstancesPage extends LitElement {
                           </td>
                           <td style="text-align:center;">
                             <div class="actions">
-                              <button class="action-btn" @click=${() => this._viewDetail(inst)}>详情</button>
-                              <button class="action-btn" @click=${() => this._editInstance(inst)}>编辑</button>
-                              <button class="action-btn" @click=${() => this._testConnection(inst)}>测试</button>
-                              <button class="action-btn danger" @click=${() => this._deleteInstance(inst)}>删除</button>
+                              <button class="btn-sm" @click=${() => this._viewDetail(inst)}>详情</button>
+                              <button class="btn-sm" @click=${() => this._editInstance(inst)}>编辑</button>
+                              <button class="btn-sm" @click=${() => this._testConnection(inst)}>测试</button>
+                              <button class="btn-sm danger" @click=${() => this._deleteInstance(inst)}>删除</button>
                             </div>
                           </td>
                         </tr>

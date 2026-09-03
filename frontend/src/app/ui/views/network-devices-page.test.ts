@@ -36,6 +36,47 @@ describe("network-devices-page", () => {
     expect(element.querySelector('[role="alert"]')).toBeTruthy();
   });
 
+  it("uses the shared four-action order and explains scheduled collection", async () => {
+    authFetch.mockResolvedValue(response([{
+      id: 7,
+      name: "switch-01",
+      label: "核心交换机",
+      host: "10.0.0.7",
+      site: "机房",
+      model: "S5735",
+      status: "online",
+      collection_enabled: true,
+      last_check_at: null,
+    }]));
+    const element = document.createElement("network-devices-page") as any;
+    document.body.append(element);
+    await settle(element);
+    expect([...element.querySelectorAll("app-data-table .btn-sm")].map((button: HTMLButtonElement) => button.textContent?.trim())).toEqual(["详情", "编辑", "测试", "删除"]);
+    expect(element.textContent).toContain("指标由后台按计划自动采集");
+  });
+
+  it("confirms and deletes a managed device through the existing API", async () => {
+    const device = {
+      id: 7, name: "switch-01", label: "核心交换机", host: "10.0.0.7", site: "机房",
+      model: "S5735", status: "online", collection_enabled: true, last_check_at: null,
+    };
+    authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "/api/network-devices" && !init) return response([device]);
+      if (url === "/api/network-devices/7" && init?.method === "DELETE") return response({ ok: true });
+      if (url === "/api/network-devices" && init === undefined) return response([]);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const element = document.createElement("network-devices-page") as any;
+    document.body.append(element);
+    await settle(element);
+    element.confirmDelete(device);
+    await element.updateComplete;
+    expect(element.querySelector('app-dialog[title="确认删除网络设备"]')).toBeTruthy();
+    await element.deleteDevice();
+    expect(authFetch).toHaveBeenCalledWith("/api/network-devices/7", { method: "DELETE" });
+    expect(showToast).toHaveBeenCalledWith("网络设备已删除", "success");
+  });
+
   it("uses POST for a read-only SNMPv3 probe and never exposes a write command", async () => {
     authFetch.mockImplementation(async (url: string) => {
       if (url === "/api/network-devices") return response([]);

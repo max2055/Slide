@@ -149,68 +149,10 @@ export class ServersPage extends LitElement {
       transition: background-color 5000s ease-in-out 0s;
     }
 
-    /* Actions */
     .actions {
       display: flex;
       gap: var(--space-sm);
       justify-content: center;
-    }
-
-    .action-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: var(--space-xs) var(--space-md);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      font-size: var(--text-xs);
-      font-weight: 500;
-      color: var(--text);
-      background: var(--secondary);
-      cursor: pointer;
-      white-space: nowrap;
-      transition: all var(--duration-normal) var(--ease-out);
-    }
-
-    .action-btn:hover {
-      background: var(--accent);
-      color: var(--accent-foreground);
-      border-color: var(--accent);
-    }
-
-    .action-btn.danger {
-      color: var(--danger);
-      border-color: var(--danger);
-    }
-
-    .action-btn.danger:hover {
-      background: var(--danger);
-      color: var(--danger-foreground);
-      border-color: var(--danger);
-    }
-
-    .action-btn.icon-btn {
-      padding: var(--space-xs);
-      border: none;
-      background: none;
-      color: var(--muted);
-      cursor: pointer;
-    }
-
-    .action-btn.icon-btn:hover {
-      color: var(--text-strong);
-      background: var(--bg-hover);
-      border-radius: var(--radius-sm);
-    }
-
-    .action-btn.icon-btn.danger:hover {
-      color: var(--danger);
-    }
-
-    .action-btn.icon-btn svg {
-      width: 16px;
-      height: 16px;
-      display: block;
     }
 
     /* Loading state */
@@ -310,6 +252,7 @@ export class ServersPage extends LitElement {
   @state() private _editingId: number | null = null;
   @state() private _showDeleteDialog = false;
   @state() private _deletingServer: ServerRow | null = null;
+  @state() private _testingServerId: number | null = null;
   @state() private _testingConnection = false;
   @state() private _isSubmitting = false;
   @state() private _form: ServerFormData = {
@@ -485,6 +428,24 @@ export class ServersPage extends LitElement {
       showToast("服务器已删除", "success");
     } catch (err: any) {
       showToast(`删除失败: ${err.message}`, "error");
+    }
+  }
+
+  private async _testServer(server: ServerRow) {
+    if (this._testingServerId !== null) return;
+    this._testingServerId = server.id;
+    try {
+      const res = await authFetch(`/api/servers/${server.id}/collect`, { method: "POST" });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok || result.success === false) {
+        throw new Error(result.error || "测试失败");
+      }
+      showToast("连接测试成功，指标已刷新", "success");
+      await this._loadServers();
+    } catch (err: any) {
+      showToast(err?.message || "测试失败", "error");
+    } finally {
+      this._testingServerId = null;
     }
   }
 
@@ -690,13 +651,10 @@ export class ServersPage extends LitElement {
         last_collection: html`<span style="font-size:var(--text-sm);color:var(--muted);">${this._formatLastCheck(srv.last_check_at)}</span>`,
         actions: html`
           <div class="actions">
-            <button class="action-btn" @click=${() => this._navigateToDetail(srv.id)}>详情</button>
-            <button class="action-btn icon-btn" @click=${() => this._openEditDialog(srv)} title="编辑">
-              ${icons['edit']}
-            </button>
-            <button class="action-btn icon-btn danger" @click=${() => this._confirmDelete(srv)} title="删除">
-              ${icons['trash']}
-            </button>
+            <button class="btn-sm" @click=${() => this._navigateToDetail(srv.id)}>详情</button>
+            <button class="btn-sm" @click=${() => this._openEditDialog(srv)}>编辑</button>
+            <button class="btn-sm" @click=${() => this._testServer(srv)} .disabled=${this._testingServerId === srv.id}>${this._testingServerId === srv.id ? "测试中…" : "测试"}</button>
+            <button class="btn-sm danger" @click=${() => this._confirmDelete(srv)}>删除</button>
           </div>`,
       };
     });
