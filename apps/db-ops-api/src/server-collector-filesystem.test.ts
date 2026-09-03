@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   getServerById: vi.fn(),
+  getCollectionEnabledServers: vi.fn(),
   getDecryptedCredentials: vi.fn(),
   updateServerStatus: vi.fn(),
   getConnection: vi.fn(),
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('./server-database-service', () => ({
   serverDatabaseService: {
     getServerById: mocks.getServerById,
+    getCollectionEnabledServers: mocks.getCollectionEnabledServers,
     getDecryptedCredentials: mocks.getDecryptedCredentials,
     updateServerStatus: mocks.updateServerStatus,
   },
@@ -69,6 +71,7 @@ describe('server collector Linux lifecycle', () => {
       host_key_fingerprint: 'SHA256:test', os_type: 'RHEL 8',
     });
     mocks.getDecryptedCredentials.mockResolvedValue({ username: 'ops', password: 'secret' });
+    mocks.getCollectionEnabledServers.mockResolvedValue([]);
     mocks.getConnection.mockResolvedValue(client);
     mocks.updateServerStatus.mockResolvedValue(undefined);
     mocks.execute.mockResolvedValue([{}]);
@@ -203,6 +206,44 @@ describe('server collector Linux lifecycle', () => {
     });
     expect(mocks.getDecryptedCredentials).not.toHaveBeenCalled();
     expect(mocks.getConnection).not.toHaveBeenCalled();
+  });
+
+  it('collects and records only server metrics that are due', async () => {
+    const server = {
+      id: 9, host: 'db.internal', port: 22, credential_type: 'password',
+      host_key_fingerprint: 'SHA256:test', os_type: 'RHEL 8',
+    };
+    mocks.getCollectionEnabledServers.mockResolvedValue([server]);
+    mocks.execCommands.mockImplementation(async (_client: unknown, commands: string[]) => {
+      if (commands[0] === 'LC_ALL=C LANG=C uname -s') return [ok('Linux\n')];
+      return commands.map(() => ok('12.5\n'));
+    });
+    const definitions = [
+      { id: 'cpu_usage', default_interval: 30, is_collected: true },
+      { id: 'disk_usage', default_interval: 300, is_collected: true },
+    ];
+    const registry = vi.spyOn(metricRegistry, 'getByTargetType').mockReturnValue(definitions as any);
+    const list = vi.fn(async () => [{
+      metricId: 'disk_usage',
+      lastSuccessMs: 0,
+      nextDueMs: 300_000,
+      lastResult: 'success' as const,
+    }]);
+    const record = vi.fn(async () => undefined);
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const collector = new ServerCollector({}, { list, record });
+
+    try {
+      await collector.tick();
+    } finally {
+      registry.mockRestore();
+      now.mockRestore();
+    }
+
+    const commands = mocks.execCommands.mock.calls.flatMap((call) => call[1] as string[]);
+    expect(commands).toContain('LC_ALL=C LANG=C top -bn1 | grep "Cpu(s)" | awk \'{print $2+$4}\'');
+    expect(commands.some((command) => command.includes('df -P'))).toBe(false);
+    expect(record).toHaveBeenCalledWith('server', 9, 'ssh', definitions[0], 1_000, true);
   });
 });
 

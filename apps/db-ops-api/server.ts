@@ -74,7 +74,7 @@ import { alertRCAService } from './src/alert-rca-service.js';
 import { faultDiagnosisService } from './src/fault-diagnosis-service.js';
 import { parseFaultDiagnosisInstanceId } from './src/fault-diagnosis-route-input.js';
 import { metricRegistry } from './src/metric-registry.js';
-import { metricDatabaseService } from './src/metric-database-service.js';
+import { metricDatabaseService, type MetricTargetType } from './src/metric-database-service.js';
 import { baselineCalculator } from './src/baseline-calculator.js';
 import { alertEscalationService } from './src/alert-escalation-service.js';
 import { alertSilenceService } from './src/alert-silence-service.js';
@@ -4729,6 +4729,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // ========================================
 
   // --- 指标注册表 (4 条) ---
+  const metricTargetType = (value: unknown): MetricTargetType | null => {
+    const normalized = value ?? 'instance';
+    return normalized === 'instance' || normalized === 'server' || normalized === 'network_device'
+      ? normalized
+      : null;
+  };
+
   fastify.get('/api/metrics/registry', { preHandler: [verifyToken, requirePermission('metric:view')] }, async (request, reply) => {
     try {
       const { target_type } = request.query as { target_type?: string };
@@ -4744,7 +4751,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.get('/api/metrics/registry/:id', { preHandler: [verifyToken, requirePermission('metric:view')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const metric = metricRegistry.getById(id);
+      const targetType = metricTargetType((request.query as { target_type?: string }).target_type);
+      if (!targetType) return reply.code(400).send({ error: '无效的指标目标类型' });
+      const metric = metricRegistry.getById(id, targetType);
       if (!metric) {
         reply.code(404).send({ error: `指标 ${id} 未找到` });
         return;
@@ -4769,6 +4778,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/metrics/registry', { preHandler: [verifyToken, requirePermission('metric:write')] }, async (request, reply) => {
     try {
       const body = request.body as any;
+      const targetType = metricTargetType(body.target_type);
+      if (!targetType) {
+        reply.code(400).send({ error: '无效的指标目标类型' });
+        return;
+      }
       // 验证必填字段
       if (!body.id || !body.name || !body.unit || !body.db_types || !body.aggregation || body.default_interval === undefined) {
         reply.code(400).send({ error: '缺少必填字段: id, name, unit, db_types, aggregation, default_interval' });
@@ -4785,7 +4799,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           }
         }
       }
-      const result = await metricDatabaseService.createMetric(body);
+      const result = await metricDatabaseService.createMetric({ ...body, target_type: targetType });
       if (!result.success) {
         reply.code(400).send(result);
         return;
@@ -4802,6 +4816,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const body = request.body as any;
+      const targetType = metricTargetType((request.query as { target_type?: string }).target_type ?? body.target_type);
+      if (!targetType) return reply.code(400).send({ error: '无效的指标目标类型' });
       // SQL 白名单校验 (D-12) — validate each DB type's SQL
       if (body.collection_sqls) {
         const { validateSqlIsSelectOnly } = await import('./src/sql-validator.js');
@@ -4813,7 +4829,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           }
         }
       }
-      const result = await metricDatabaseService.updateMetric(id, body);
+      const result = await metricDatabaseService.updateMetric(id, body, targetType);
       if (!result.success) {
         reply.code(400).send(result);
         return;
@@ -4829,7 +4845,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.delete('/api/metrics/registry/:id', { preHandler: [verifyToken, requirePermission('metric:write')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const result = await metricDatabaseService.deleteMetricWithRefCheck(id);
+      const targetType = metricTargetType((request.query as { target_type?: string }).target_type);
+      if (!targetType) return reply.code(400).send({ error: '无效的指标目标类型' });
+      const result = await metricDatabaseService.deleteMetricWithRefCheck(id, targetType);
       if (!result.success) {
         if (result.reason === 'builtin') {
           reply.code(403).send({ error: '预定义指标不可删除' });

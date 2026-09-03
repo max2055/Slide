@@ -31,4 +31,41 @@ describe('due-only collection scheduler', () => {
     await expect(dueStoredMetricIds(store, 'instance', 9, 'unified', definitions, 30_000)).resolves.toEqual(['connections', 'disk_usage']);
     expect(calls).toEqual([]);
   });
+
+  it('recomputes due time from the current metric interval after configuration changes', async () => {
+    const store = {
+      list: async () => [{
+        metricId: 'cpu_usage',
+        lastSuccessMs: 1_000,
+        nextDueMs: 301_000,
+        lastResult: 'success' as const,
+      }],
+      record: async () => undefined,
+    };
+    await expect(dueStoredMetricIds(
+      store,
+      'server',
+      9,
+      'ssh',
+      [{ id: 'cpu_usage', default_interval: 30 }],
+      31_000,
+    )).resolves.toEqual(['cpu_usage']);
+  });
+
+  it('supports persisted schedules for network devices', async () => {
+    const calls: unknown[][] = [];
+    const store = {
+      list: async (...args: unknown[]) => { calls.push(args); return []; },
+      record: async () => undefined,
+    };
+    await expect(dueStoredMetricIds(
+      store,
+      'network_device',
+      7,
+      'huawei-snmp',
+      [{ id: 'device_cpu_percent', default_interval: 60 }],
+      1_000,
+    )).resolves.toEqual(['device_cpu_percent']);
+    expect(calls).toEqual([['network_device', 7, 'huawei-snmp']]);
+  });
 });

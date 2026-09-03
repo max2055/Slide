@@ -4,6 +4,8 @@
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection';
 
+export type MetricTargetType = 'instance' | 'server' | 'network_device';
+
 export interface MetricDefinitionRow {
   id: string;
   target_type?: string;
@@ -63,7 +65,7 @@ class MetricDatabaseService {
   /**
    * 根据 ID 获取指标定义
    */
-  async getMetricById(id: string): Promise<MetricDefinitionRow | null> {
+  async getMetricById(id: string, targetType: MetricTargetType = 'instance'): Promise<MetricDefinitionRow | null> {
     const pool = this.getPool();
     if (!pool) {
       return null;
@@ -71,8 +73,8 @@ class MetricDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        'SELECT * FROM metric_definitions WHERE id = ?',
-        [id]
+        'SELECT * FROM metric_definitions WHERE target_type = ? AND id = ?',
+        [targetType, id]
       ) as any;
       return rows.length > 0 ? rows[0] as MetricDefinitionRow : null;
     } catch (error) {
@@ -105,7 +107,7 @@ class MetricDatabaseService {
   /**
    * 检查指标是否为预定义指标
    */
-  async isBuiltin(id: string): Promise<boolean> {
+  async isBuiltin(id: string, targetType: MetricTargetType = 'instance'): Promise<boolean> {
     const pool = this.getPool();
     if (!pool) {
       return false;
@@ -113,8 +115,8 @@ class MetricDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        'SELECT is_builtin FROM metric_definitions WHERE id = ?',
-        [id]
+        'SELECT is_builtin FROM metric_definitions WHERE target_type = ? AND id = ?',
+        [targetType, id]
       ) as any;
       return rows.length > 0 ? !!rows[0].is_builtin : false;
     } catch (error) {
@@ -139,7 +141,7 @@ class MetricDatabaseService {
     compute_expr?: string;
     value_type?: string;
     category?: string;
-    target_type?: string;
+    target_type?: MetricTargetType;
   }): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
     if (!pool) {
@@ -196,7 +198,8 @@ class MetricDatabaseService {
       value_type?: string;
       category?: string;
       updated_by?: number;
-    }
+    },
+    targetType: MetricTargetType = 'instance',
   ): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
     if (!pool) {
@@ -222,17 +225,22 @@ class MetricDatabaseService {
 
       if (updates.length === 0) return { success: true };
 
-      values.push(id);
-      const sql = `UPDATE metric_definitions SET ${updates.join(', ')} WHERE id = ?`;
+      values.push(targetType, id);
+      const sql = `UPDATE metric_definitions SET ${updates.join(', ')} WHERE target_type = ? AND id = ?`;
       const [result] = await pool.execute(sql, values) as any;
       if (result?.affectedRows === 0) {
-        await pool.execute(
-          `INSERT INTO metric_definitions (id, name, unit, db_types, aggregation, default_interval, is_builtin)
-           VALUES (?, ?, ?, ?, ?, ?, TRUE)
-           ON DUPLICATE KEY UPDATE name = VALUES(name)`,
-          [id, id, '', '[]', 'avg', data.default_interval ?? 60]
-        );
-        await pool.execute(sql, values);
+        const [existing] = await pool.execute(
+          'SELECT 1 FROM metric_definitions WHERE target_type = ? AND id = ? LIMIT 1',
+          [targetType, id],
+        ) as any;
+        if (existing.length === 0) {
+          await pool.execute(
+            `INSERT INTO metric_definitions (id, target_type, name, unit, db_types, aggregation, default_interval, is_builtin)
+             VALUES (?, ?, ?, ?, ?, ?, ?, TRUE)`,
+            [id, targetType, id, '', '[]', 'avg', data.default_interval ?? 60]
+          );
+          await pool.execute(sql, values);
+        }
       }
 
       return { success: true };
@@ -245,7 +253,7 @@ class MetricDatabaseService {
   /**
    * 删除指标定义（预定义指标不可删除）
    */
-  async deleteMetric(id: string): Promise<{ success: boolean; reason?: string; error?: string }> {
+  async deleteMetric(id: string, targetType: MetricTargetType = 'instance'): Promise<{ success: boolean; reason?: string; error?: string }> {
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
@@ -253,15 +261,15 @@ class MetricDatabaseService {
 
     try {
       const [result] = await pool.execute(
-        'DELETE FROM metric_definitions WHERE id = ? AND is_builtin = FALSE',
-        [id]
+        'DELETE FROM metric_definitions WHERE target_type = ? AND id = ? AND is_builtin = FALSE',
+        [targetType, id]
       ) as any;
 
       if (result.affectedRows === 0) {
         // 检查是否存在（如果是 builtin 则返回 403，否则 404）
         const [rows] = await pool.execute(
-          'SELECT is_builtin FROM metric_definitions WHERE id = ?',
-          [id]
+          'SELECT is_builtin FROM metric_definitions WHERE target_type = ? AND id = ?',
+          [targetType, id]
         ) as any;
         if (rows.length > 0 && rows[0].is_builtin) {
           return { success: false, reason: 'builtin' };
@@ -281,7 +289,7 @@ class MetricDatabaseService {
    * @returns {success:boolean, reason?:string, referencedBy?:any[], error?:string}
    *   reason='has_alerts' 时 referencedBy 包含引用的告警规则
    */
-  async deleteMetricWithRefCheck(id: string): Promise<{
+  async deleteMetricWithRefCheck(id: string, targetType: MetricTargetType = 'instance'): Promise<{
     success: boolean;
     reason?: string;
     referencedBy?: Array<{ id: number; name: string }>;
@@ -293,14 +301,14 @@ class MetricDatabaseService {
     try {
       // 检查是否为内置指标
       const [rows] = await pool.execute(
-        'SELECT is_builtin FROM metric_definitions WHERE id = ?', [id]
+        'SELECT is_builtin FROM metric_definitions WHERE target_type = ? AND id = ?', [targetType, id]
       ) as any;
       if (rows.length === 0) return { success: false, reason: 'not_found' };
       if (rows[0].is_builtin) return { success: false, reason: 'builtin' };
 
       // 检查告警规则引用
       const [alertRules] = await pool.execute(
-        'SELECT id, name FROM alert_rules WHERE metric_name = ?', [id]
+        'SELECT id, name FROM alert_rules WHERE target_type = ? AND metric_name = ?', [targetType, id]
       ) as any;
       if (alertRules && alertRules.length > 0) {
         return {
@@ -312,7 +320,7 @@ class MetricDatabaseService {
 
       // 无引用，执行删除
       await pool.execute(
-        'DELETE FROM metric_definitions WHERE id = ? AND is_builtin = FALSE', [id]
+        'DELETE FROM metric_definitions WHERE target_type = ? AND id = ? AND is_builtin = FALSE', [targetType, id]
       );
       return { success: true };
     } catch (error: any) {

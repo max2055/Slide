@@ -47,6 +47,23 @@ describe('HuaweiAdapter', () => {
     expect(result.find((metric) => metric.metricId === 'device_cpu_percent')).toMatchObject({ value: null, quality: 'unknown' });
   });
 
+  it('requests only OIDs for due system metrics', async () => {
+    const requestedOids: string[][] = [];
+    const client = {
+      get: async (_config: SnmpV3Config, oids: string[]) => {
+        requestedOids.push(oids);
+        return [vb(fixture.vendorMetrics.cpu!.oid, 42)];
+      },
+      table: async () => [],
+    };
+    const adapter = new HuaweiAdapter(client, fixture);
+
+    const result = await adapter.collectSystemMetrics(config, 'V8R21C00', ['device_cpu_percent']);
+
+    expect(requestedOids).toEqual([[fixture.vendorMetrics.cpu!.oid]]);
+    expect(result.map((metric) => metric.metricId)).toEqual(['device_cpu_percent']);
+  });
+
   it('maps interface statuses and computes 64-bit counter rates with 32-bit fallback', async () => {
     const rows = [
       { index: '1', values: { '2': 'GigabitEthernet0/0/1', '5': 1_000_000_000, '7': 1, '8': 1, '6': 100, '10': 200, '14': 2, '20': 3, '13': 4, '19': 5 } },

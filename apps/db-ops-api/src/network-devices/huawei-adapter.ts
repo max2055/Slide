@@ -157,14 +157,17 @@ export class HuaweiAdapter {
     };
   }
 
-  async collectSystemMetrics(config: SnmpConfig, firmware?: string): Promise<HuaweiMetricObservation[]> {
+  async collectSystemMetrics(config: SnmpConfig, firmware?: string, metricIds?: readonly string[]): Promise<HuaweiMetricObservation[]> {
     const catalog = firmware ? getHuaweiMibCatalog(firmware, [this.catalog]) : this.catalog;
-    const definitions: Array<[string, HuaweiOidDefinition | undefined]> = [
+    const requested = metricIds ? new Set(metricIds) : null;
+    const availableDefinitions: Array<[string, HuaweiOidDefinition | undefined]> = [
       ['device_uptime_seconds', catalog.scalars.sysUpTime],
       ['device_cpu_percent', catalog.vendorMetrics.cpu],
       ['device_memory_percent', catalog.vendorMetrics.memory],
       ['device_temperature_celsius', catalog.vendorMetrics.temperature],
     ];
+    const definitions = availableDefinitions.filter(([metricId]) => !requested || requested.has(metricId));
+    if (definitions.length === 0) return [];
     const oids = definitions.flatMap(([, definition]) => definition ? [definition.oid] : []);
     const values = byOid(await this.client.get(config, oids));
     const observedAt = this.clock();
@@ -193,8 +196,9 @@ export class HuaweiAdapter {
     return observations.map((observation) => ({ ...observation, source }));
   }
 
-  async collectInterfaces(config: SnmpConfig): Promise<HuaweiInterfaceCollection> {
+  async collectInterfaces(config: SnmpConfig, metricIds?: readonly string[]): Promise<HuaweiInterfaceCollection> {
     const observedAt = this.clock();
+    const requested = metricIds ? new Set(metricIds) : null;
     const rows = await this.client.table(config, this.catalog.interfaces.tableOid);
     if (!Array.isArray(rows) || rows.length > 2_000) throw new Error('SNMP_TABLE_LIMIT');
     const interfaces: HuaweiInterfaceSnapshot[] = [];
@@ -209,7 +213,9 @@ export class HuaweiAdapter {
       const operStatus = mapStatus(rowValue(row, this.catalog.interfaces.ifOperStatus, 8, ['ifOperStatus']));
       interfaces.push({ ifIndex, name, alias, speedBps: speed, adminStatus, operStatus });
       const baseDimensions = { interface: name, if_index: String(ifIndex) };
-      observations.push(this.metric('interface_oper_status', operStatus === 'up' ? 1 : operStatus === 'down' ? 0 : null, observedAt, operStatus === 'unknown' ? 'unknown' : 'good', operStatus === 'unknown' ? 'status_unknown' : undefined, undefined, baseDimensions));
+      if (!requested || requested.has('interface_oper_status')) {
+        observations.push(this.metric('interface_oper_status', operStatus === 'up' ? 1 : operStatus === 'down' ? 0 : null, observedAt, operStatus === 'unknown' ? 'unknown' : 'good', operStatus === 'unknown' ? 'status_unknown' : undefined, undefined, baseDimensions));
+      }
       const counter = (metricId: string, direction: 'in' | 'out', preferred: HuaweiOidDefinition, fallback: HuaweiOidDefinition, preferredColumn: number, fallbackColumn: number, names: string[]) => {
         const [current, bits] = this.counterValue(row, preferred, fallback, preferredColumn, fallbackColumn, names);
         return { metricId, direction, current, bits };
@@ -223,6 +229,7 @@ export class HuaweiAdapter {
         counter('interface_drop_rate', 'out', this.catalog.interfaces.ifOutDiscards, this.catalog.interfaces.ifOutDiscards, 19, 19, ['ifOutDiscards']),
       ];
       for (const counter of counters) {
+        if (requested && !requested.has(counter.metricId)) continue;
         const result = this.rate(`${ifIndex}:${counter.metricId}:${counter.direction}`, counter.current, counter.bits, observedAt.getTime());
         const dimensions = { ...baseDimensions, direction: counter.direction };
         observations.push(this.metric(counter.metricId, counter.metricId.endsWith('_bps') && result.value != null ? result.value * 8 : result.value, observedAt, result.quality, result.reason, counter.current == null || counter.current > BigInt(Number.MAX_SAFE_INTEGER) ? undefined : Number(counter.current), dimensions));

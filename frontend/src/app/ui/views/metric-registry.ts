@@ -11,6 +11,7 @@ const API_BASE = "/api";
 
 interface MetricDefinition {
   id: string; name: string; description: string; unit: string;
+  target_type?: 'instance' | 'server' | 'network_device';
   db_types: string[]; aggregation: string; default_interval: number;
   is_collected: boolean; is_builtin: boolean;
   collection_sqls?: Record<string, string>; compute_expr?: string;
@@ -20,6 +21,7 @@ interface MetricDefinition {
 const AGG_LABELS: Record<string, string> = { avg: "平均值", max: "最大值", min: "最小值", sum: "求和", count: "计数", last: "最新值" };
 const VALUE_TYPE_LABELS: Record<string, string> = { gauge: "Gauge (瞬时值)", counter: "Counter (累计值)", histogram: "Histogram (分布)" };
 const DB_TYPE_OPTIONS = ["mysql", "postgresql", "oracle", "dameng"];
+const TARGET_TYPE_LABELS: Record<string, string> = { instance: "数据库实例", server: "服务器", network_device: "网络设备" };
 const CATEGORY_ICONS: Record<string, string> = { performance: "⚡", capacity: "💾", connection: "🔗", cache: "🗄️", security: "🔒", availability: "🟢" };
 
 @customElement("metric-registry-viewer")
@@ -28,6 +30,7 @@ export class MetricRegistryViewer extends LitElement {
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private filterDbType = "all";
+  @state() private filterTargetType = "all";
   @state() private expandedId: string | null = null;
   @state() private showModal = false;
   @state() private editing: MetricDefinition | null = null;
@@ -57,6 +60,7 @@ export class MetricRegistryViewer extends LitElement {
     .col-id { width: 140px; }
     .col-name { width: auto; }
     .col-db { width: 130px; }
+    .col-target { width: 90px; }
     .col-unit { width: 60px; }
     .col-agg { width: 70px; }
     .col-int { width: 60px; }
@@ -111,14 +115,20 @@ export class MetricRegistryViewer extends LitElement {
 
   _allDbTypes() { return [...new Set(this.metrics.flatMap(m => m.db_types))].sort(); }
   _filtered() {
-    if (this.filterDbType === "all") return this.metrics;
-    return this.metrics.filter(m => m.db_types.includes(this.filterDbType));
+    return this.metrics.filter((metric) => {
+      const targetMatches = this.filterTargetType === "all" || (metric.target_type || "instance") === this.filterTargetType;
+      const dbMatches = this.filterDbType === "all" || metric.db_types.includes(this.filterDbType);
+      return targetMatches && dbMatches;
+    });
   }
+
+  _metricKey(metric: MetricDefinition) { return `${metric.target_type || "instance"}:${metric.id}`; }
 
   _openCreate() {
     this.editing = null;
     this.form = {
       is_collected: true, aggregation: "avg", default_interval: 30,
+      target_type: "instance",
       value_type: "gauge", db_types: [],
       collection_sqls: {},
     };
@@ -138,7 +148,8 @@ export class MetricRegistryViewer extends LitElement {
     this.saving = true; this.formMsg = null;
     try {
       const isEdit = !!this.editing;
-      const res = await authFetch(`${API_BASE}/metrics/registry${isEdit ? `/${this.editing!.id}` : ''}`, {
+      const targetType = this.editing?.target_type || this.form.target_type || 'instance';
+      const res = await authFetch(`${API_BASE}/metrics/registry${isEdit ? `/${this.editing!.id}?target_type=${encodeURIComponent(targetType)}` : ''}`, {
         method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("token")}` },
         body: JSON.stringify(this.form),
@@ -151,11 +162,11 @@ export class MetricRegistryViewer extends LitElement {
 
   private async _delete(m: MetricDefinition) {
     try {
-      await authFetch(`${API_BASE}/metrics/registry/${m.id}`, {
+      await authFetch(`${API_BASE}/metrics/registry/${m.id}?target_type=${encodeURIComponent(m.target_type || 'instance')}`, {
         method: "DELETE", headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` },
       });
       this.showDeleteConfirm = null; await this._load();
-    } catch (_) {}
+    } catch {}
   }
 
   override render() {
@@ -167,6 +178,10 @@ export class MetricRegistryViewer extends LitElement {
       <div class="table-wrap">
         <div class="toolbar">
           <span class="count">${filtered.length} 个指标</span>
+          <select class="filter-select" @change=${(e: Event) => { this.filterTargetType = (e.target as HTMLSelectElement).value; }}>
+            <option value="all">全部资源</option>
+            ${Object.entries(TARGET_TYPE_LABELS).map(([value, label]) => html`<option value=${value}>${label}</option>`)}
+          </select>
           <select class="filter-select" @change=${(e: Event) => { this.filterDbType = (e.target as HTMLSelectElement).value; }}>
             <option value="all">全部类型</option>
             ${this._allDbTypes().map(t => html`<option value=${t}>${t.toUpperCase()}</option>`)}
@@ -179,6 +194,7 @@ export class MetricRegistryViewer extends LitElement {
             <tr>
               <th class="col-id">指标 ID</th>
               <th class="col-name">名称</th>
+              <th class="col-target">资源类型</th>
               <th class="col-db">数据库类型</th>
               <th class="col-unit">单位</th>
               <th class="col-agg">聚合</th>
@@ -189,13 +205,14 @@ export class MetricRegistryViewer extends LitElement {
           </thead>
           <tbody>
             ${filtered.map(m => html`
-            <tr class="${this.expandedId === m.id ? 'row-expanded' : ''}" @click=${() => this.expandedId = this.expandedId === m.id ? null : m.id} style="cursor:pointer;">
+            <tr class="${this.expandedId === this._metricKey(m) ? 'row-expanded' : ''}" @click=${() => this.expandedId = this.expandedId === this._metricKey(m) ? null : this._metricKey(m)} style="cursor:pointer;">
               <td class="col-id"><code>${m.id}</code></td>
               <td class="col-name">
                 <div class="name-cell">${CATEGORY_ICONS[m.category || ''] || ''} ${m.name}</div>
                 ${m.description ? html`<small>${m.description}</small>` : ''}
               </td>
-              <td class="col-db">${m.db_types.map(t => html`<span>${t}</span>`)}</td>
+              <td class="col-target">${TARGET_TYPE_LABELS[m.target_type || 'instance']}</td>
+              <td class="col-db">${m.db_types.length ? m.db_types.map(t => html`<span>${t}</span>`) : html`<span class="text-muted">—</span>`}</td>
               <td class="col-unit"><span class="text-muted">${m.unit || '-'}</span></td>
               <td class="col-agg"><span class="text-muted">${AGG_LABELS[m.aggregation] || m.aggregation}</span></td>
               <td class="col-int"><span class="text-mono">${m.default_interval}s</span></td>
@@ -205,8 +222,8 @@ export class MetricRegistryViewer extends LitElement {
                 <button class="btn-sm danger" ?disabled=${m.is_builtin} @click=${() => { this.showDeleteConfirm = m; }}>删除</button>
               </td>
             </tr>
-            ${this.expandedId === m.id ? html`
-            <tr class="expand-row"><td colspan="8">
+            ${this.expandedId === this._metricKey(m) ? html`
+            <tr class="expand-row"><td colspan="9">
               <div class="expand-inner">
                 <dl><dt>值类型</dt><dd>${m.value_type || 'gauge'}</dd></dl>
                 <dl><dt>分类</dt><dd>${m.category || '-'}</dd></dl>
