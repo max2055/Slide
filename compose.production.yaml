@@ -35,6 +35,7 @@ services:
       PORT: "3000"
       AGENT_WS_PORT: "28888"
       AGENT_WORKSPACE: /var/lib/slide-agent
+      PROMPT_VERSIONS_DIR: /var/lib/slide-agent/prompts
       PROMPT_HOT_RELOAD: "false"
       DB_HOST: mysql
       DB_PORT: "3306"

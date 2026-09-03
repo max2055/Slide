@@ -13,7 +13,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSIONS_DIR = path.resolve(__dirname, 'versions');
+const BUNDLED_VERSIONS_DIR = path.resolve(__dirname, 'versions');
 
 interface PromptVersion {
   version: number;
@@ -28,11 +28,24 @@ interface PromptTypeInfo {
   activeVersion: number;
 }
 
-class PromptManager {
+interface PromptManagerOptions {
+  versionsDir?: string;
+  bundledVersionsDir?: string;
+}
+
+export class PromptManager {
   private prompts: Map<string, PromptVersion[]> = new Map();
   private activeVersion: number = 2;
   private abTest = false;
   private watcher: fs.FSWatcher | null = null;
+  private readonly versionsDir: string;
+  private readonly bundledVersionsDir: string;
+
+  constructor(options: PromptManagerOptions = {}) {
+    const configuredVersionsDir = options.versionsDir ?? process.env.PROMPT_VERSIONS_DIR?.trim();
+    this.versionsDir = configuredVersionsDir || BUNDLED_VERSIONS_DIR;
+    this.bundledVersionsDir = options.bundledVersionsDir ?? BUNDLED_VERSIONS_DIR;
+  }
 
   /**
    * 初始化：加载 prompts/versions/ 目录下的所有 .md 文件
@@ -47,10 +60,7 @@ class PromptManager {
     }
     this.abTest = process.env.PROMPT_AB_TEST === 'true';
 
-    if (!fs.existsSync(VERSIONS_DIR)) {
-      console.warn(`[PromptManager] 提示词目录不存在：${VERSIONS_DIR}`);
-      return;
-    }
+    await this.prepareVersionsDirectory();
 
     await this.reloadAll();
     console.log(`[PromptManager] 已加载 ${this.countEntries()} 个提示词文件，${this.prompts.size} 种类型，当前版本：v${this.activeVersion}${this.abTest ? '（A/B 测试模式）' : ''}`);
@@ -61,7 +71,14 @@ class PromptManager {
    */
   private async reloadAll(): Promise<void> {
     this.prompts.clear();
-    const files = await fs.promises.readdir(VERSIONS_DIR);
+    await this.loadDirectory(this.bundledVersionsDir);
+    if (this.versionsDir !== this.bundledVersionsDir) {
+      await this.loadDirectory(this.versionsDir);
+    }
+  }
+
+  private async loadDirectory(directory: string): Promise<void> {
+    const files = await fs.promises.readdir(directory);
 
     for (const file of files) {
       if (!file.endsWith('.md')) continue;
@@ -73,15 +90,34 @@ class PromptManager {
       const version = parseInt(match[2], 10);
 
       try {
-        const content = await fs.promises.readFile(path.join(VERSIONS_DIR, file), 'utf-8');
+        const content = await fs.promises.readFile(path.join(directory, file), 'utf-8');
         if (!this.prompts.has(type)) {
           this.prompts.set(type, []);
         }
-        this.prompts.get(type)!.push({ version, content, length: content.length, fileName: file });
+        const versions = this.prompts.get(type)!;
+        const existingIndex = versions.findIndex(entry => entry.version === version);
+        const entry = { version, content, length: content.length, fileName: file };
+        if (existingIndex === -1) {
+          versions.push(entry);
+        } else {
+          versions[existingIndex] = entry;
+        }
       } catch (err) {
         console.warn(`[PromptManager] 读取失败：${file}`, err);
       }
     }
+  }
+
+  private async prepareVersionsDirectory(): Promise<void> {
+    if (this.versionsDir === this.bundledVersionsDir) {
+      if (!fs.existsSync(this.versionsDir)) {
+        console.warn(`[PromptManager] 提示词目录不存在：${this.versionsDir}`);
+        await fs.promises.mkdir(this.versionsDir, { recursive: true });
+      }
+      return;
+    }
+
+    await fs.promises.mkdir(this.versionsDir, { recursive: true });
   }
 
   private countEntries(): number {
@@ -159,7 +195,7 @@ class PromptManager {
   }
 
   getActiveVersion(): number { return this.activeVersion; }
-  getVersionsDir(): string { return VERSIONS_DIR; }
+  getVersionsDir(): string { return this.versionsDir; }
 
   // ══════════════ 运行时更新方法 ══════════════
 
@@ -182,13 +218,11 @@ class PromptManager {
     const entry = versions.find(e => e.version === version);
     if (!entry) return false;
 
-    // 更新内存
-    entry.content = content;
-    entry.length = content.length;
-
     // 写回文件
     try {
-      await fs.promises.writeFile(path.join(VERSIONS_DIR, entry.fileName), content, 'utf-8');
+      await fs.promises.writeFile(path.join(this.versionsDir, entry.fileName), content, 'utf-8');
+      entry.content = content;
+      entry.length = content.length;
       console.log(`[PromptManager] 已保存 ${entry.fileName} (${content.length} chars)`);
       return true;
     } catch (err) {
@@ -206,7 +240,7 @@ class PromptManager {
     const newVersion = maxVersion + 1;
     const fileName = `${type}-v${newVersion}.md`;
 
-    const fullPath = path.join(VERSIONS_DIR, fileName);
+    const fullPath = path.join(this.versionsDir, fileName);
     try {
       await fs.promises.writeFile(fullPath, content, 'utf-8');
       const entry: PromptVersion = { version: newVersion, content, length: content.length, fileName };
@@ -231,7 +265,7 @@ class PromptManager {
     if (this.watcher) return;
 
     try {
-      this.watcher = fs.watch(VERSIONS_DIR, (eventType, fileName) => {
+      this.watcher = fs.watch(this.versionsDir, (eventType, fileName) => {
         if (!fileName || !fileName.endsWith('.md')) return;
         // 延迟一小段等文件写入完成
         setTimeout(async () => {
@@ -243,7 +277,7 @@ class PromptManager {
           }
         }, 200);
       });
-      console.log(`[PromptManager] 文件监听已启动：${VERSIONS_DIR}`);
+      console.log(`[PromptManager] 文件监听已启动：${this.versionsDir}`);
     } catch (err) {
       console.warn(`[PromptManager] 文件监听启动失败：`, err);
     }
