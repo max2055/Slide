@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadMigrations, MigrationError, MigrationRunner, splitSqlStatements, statementsForExecution } from '../src/migrations/runner.js';
+import { isMigrationChecksumAccepted, loadMigrations, MigrationError, MigrationRunner, splitSqlStatements, statementsForExecution } from '../src/migrations/runner.js';
 
 class FakePool {
   entries = new Map<string, any>();
@@ -93,8 +93,18 @@ describe('MigrationRunner', () => {
     const sessionTimeout = migrations.find((migration) => migration.id === '082_auth_session_idle_timeout.sql');
 
     expect(baseline?.checksum).toBe('729ec2cce91657443417503a6cf0a1852cb6002885fc6f9f9af5755560cdc2b9');
+    expect(isMigrationChecksumAccepted(
+      '000_schema_baseline.sql',
+      'ba0ea57599e766dc9c9605746cdd9fa221cc05464fe45ed640b33a668fbcbbb8',
+      baseline?.checksum ?? '',
+    )).toBe(true);
     expect(baseline?.sql).not.toContain('auth.session_idle_timeout_minutes');
     expect(networkFoundation?.checksum).toBe('5ca1ec5c8f2c2d40a09cb5e5375eb4ab98851dc7a30eefef077011091ae4cc1b');
+    expect(isMigrationChecksumAccepted(
+      '070_network_device_resource_foundation.sql',
+      'b8e1da4a29ff2a47b0703ab4d95746e41812b4bf4d5f46ca293292f816c10583',
+      networkFoundation?.checksum ?? '',
+    )).toBe(true);
     expect(sessionTimeout?.sql).toContain('auth.session_idle_timeout_minutes');
     expect(sessionTimeout?.sql).toContain('INSERT IGNORE');
   });
