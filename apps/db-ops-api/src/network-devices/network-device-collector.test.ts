@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { NetworkDeviceCollector, type NetworkDeviceCollectionStore } from './network-device-collector.js';
 import type { HuaweiInterfaceCollection, HuaweiMetricObservation, HuaweiProbeResult } from './huawei-adapter.js';
 import type { SnmpV3Config } from './snmp-types.js';
+import { metricRegistry } from '../metric-registry.js';
 
 const target = { id: 7, host: '10.20.30.40', snmpPort: 161, collectionEnabled: true };
 const credentials = {
@@ -150,5 +151,42 @@ describe('NetworkDeviceCollector', () => {
     await collector.collectDevice(7);
     const rows = (persistence.insertObservations as ReturnType<typeof vi.fn>).mock.calls[0][1];
     expect(rows[0]).toMatchObject({ value: null, quality: 'unknown' });
+  });
+
+  it('collects only due metrics and records their network-device schedules', async () => {
+    const persistence = store({ getCollectionEnabledDevices: vi.fn(async () => [target]) });
+    const snmp = adapter({
+      collectSystemMetrics: vi.fn(async () => [observation('device_cpu_percent', 10)]),
+      collectInterfaces: vi.fn(async () => ({ interfaces: [], observations: [], observedAt: new Date() })),
+    });
+    const list = vi.fn(async () => [{
+      metricId: 'interface_oper_status',
+      lastSuccessMs: 0,
+      nextDueMs: 300_000,
+      lastResult: 'success' as const,
+    }]);
+    const record = vi.fn(async () => undefined);
+    const definitions = [
+      { id: 'device_cpu_percent', default_interval: 30, is_collected: true },
+      { id: 'interface_oper_status', default_interval: 300, is_collected: true },
+    ];
+    const registry = vi.spyOn(metricRegistry, 'getByTargetType').mockReturnValue(definitions as any);
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const collector = new NetworkDeviceCollector(persistence, snmp as any, {
+      scheduleStore: { list, record },
+    });
+
+    try {
+      await collector.tick();
+    } finally {
+      registry.mockRestore();
+      now.mockRestore();
+    }
+
+    expect(snmp.collectSystemMetrics).toHaveBeenCalledWith(expect.anything(), undefined, ['device_cpu_percent']);
+    expect(snmp.collectInterfaces).not.toHaveBeenCalled();
+    expect(record).toHaveBeenCalledWith(
+      'network_device', 7, 'huawei-snmp', definitions[0], 1_000, true,
+    );
   });
 });

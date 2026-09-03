@@ -1,14 +1,23 @@
 export type SchedulableMetric = { id: string; default_interval: number };
 export type CollectionScheduleEntry = { metricId: string; lastSuccessMs?: number; nextDueMs: number; lastResult?: 'success' | 'failure' | 'skipped' };
+export type CollectionResourceType = 'instance' | 'server' | 'network_device';
 
 export interface CollectionScheduleStore {
-  list(resourceType: 'instance' | 'server', resourceId: number, providerId: string): Promise<CollectionScheduleEntry[]>;
-  record(resourceType: 'instance' | 'server', resourceId: number, providerId: string, metric: SchedulableMetric, nowMs: number, succeeded: boolean): Promise<void>;
+  list(resourceType: CollectionResourceType, resourceId: number, providerId: string): Promise<CollectionScheduleEntry[]>;
+  record(resourceType: CollectionResourceType, resourceId: number, providerId: string, metric: SchedulableMetric, nowMs: number, succeeded: boolean): Promise<void>;
 }
 
-export async function dueStoredMetricIds(store: CollectionScheduleStore, resourceType: 'instance' | 'server', resourceId: number, providerId: string, definitions: readonly SchedulableMetric[], nowMs: number): Promise<string[]> {
+export async function dueStoredMetricIds(store: CollectionScheduleStore, resourceType: CollectionResourceType, resourceId: number, providerId: string, definitions: readonly SchedulableMetric[], nowMs: number): Promise<string[]> {
   const existing = new Map((await store.list(resourceType, resourceId, providerId)).map((entry) => [entry.metricId, entry]));
-  return definitions.filter((definition) => (existing.get(definition.id)?.nextDueMs ?? 0) <= nowMs).map((definition) => definition.id);
+  return definitions.filter((definition) => {
+    const entry = existing.get(definition.id);
+    if (!entry) return true;
+    if (entry.lastResult === 'failure') return entry.nextDueMs <= nowMs;
+    const nextDueMs = entry.lastSuccessMs === undefined
+      ? entry.nextDueMs
+      : entry.lastSuccessMs + definition.default_interval * 1000;
+    return nextDueMs <= nowMs;
+  }).map((definition) => definition.id);
 }
 
 interface SqlPool { execute<T = unknown>(sql: string, values?: unknown[]): Promise<[T, unknown?]>; }
@@ -16,7 +25,7 @@ interface SqlPool { execute<T = unknown>(sql: string, values?: unknown[]): Promi
 export class MysqlCollectionScheduleStore implements CollectionScheduleStore {
   constructor(private readonly poolProvider: () => SqlPool | null) {}
 
-  async list(resourceType: 'instance' | 'server', resourceId: number, providerId: string): Promise<CollectionScheduleEntry[]> {
+  async list(resourceType: CollectionResourceType, resourceId: number, providerId: string): Promise<CollectionScheduleEntry[]> {
     const [rows] = await this.pool().execute<Array<any>>(
       'SELECT metric_id AS metricId, last_success_at AS lastSuccessAt, next_due_at AS nextDueAt, last_result AS lastResult FROM collection_schedule_state WHERE resource_type = ? AND resource_id = ? AND provider_id = ?',
       [resourceType, resourceId, providerId],
@@ -24,7 +33,7 @@ export class MysqlCollectionScheduleStore implements CollectionScheduleStore {
     return rows.map((row) => ({ metricId: row.metricId, lastSuccessMs: row.lastSuccessAt ? new Date(row.lastSuccessAt).getTime() : undefined, nextDueMs: new Date(row.nextDueAt).getTime(), lastResult: row.lastResult ?? undefined }));
   }
 
-  async record(resourceType: 'instance' | 'server', resourceId: number, providerId: string, metric: SchedulableMetric, nowMs: number, succeeded: boolean): Promise<void> {
+  async record(resourceType: CollectionResourceType, resourceId: number, providerId: string, metric: SchedulableMetric, nowMs: number, succeeded: boolean): Promise<void> {
     const now = new Date(nowMs);
     const nextDue = succeeded ? new Date(nowMs + metric.default_interval * 1000) : now;
     await this.pool().execute(

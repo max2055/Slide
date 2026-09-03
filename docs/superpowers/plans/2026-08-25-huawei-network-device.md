@@ -98,7 +98,7 @@
 
 ## Task 4: 采集 uptime、系统和接口指标
 
-- [ ] 在 `network-device-collector.ts` 实现可停止的定时采集器，默认 5 分钟，可由 `NETWORK_DEVICE_COLLECTION_INTERVAL_MS` 配置，单设备任务互斥。
+- [ ] 在 `network-device-collector.ts` 实现可停止的定时采集器；按指标定义的采集频率调度，单设备任务互斥。
 - [ ] 每轮先做 sysUpTime/身份 probe，再采集 CPU、内存、温度；系统指标写入 `network_device_observations`。
 - [ ] 使用 IF-MIB table 发现和 upsert 接口快照，写入 `network_device_interfaces`；随后采集入出流量、errors、discards，写入带 `if_index` 和 `direction` dimensions 的 observation。
 - [ ] 记录 `source=snmpv3`, `quality=good|degraded|unknown`、raw counter timestamp；单设备响应和 table 行数有上限。

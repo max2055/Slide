@@ -10,14 +10,23 @@ import type { Client } from 'ssh2';
 import sshSessionPool, { type ExecCommandResult } from './ssh-session-pool';
 import serverMetricProvider, {
   canonicalDimensions,
-  type MetricDefinition,
-  type MetricDimensions,
-  type MetricSample,
 } from './server-metric-provider';
 import { serverDatabaseService, type ServerRow } from './server-database-service';
 import { dbConnection } from './db-connection';
 import { isFatalSshCommandError, parseFilesystemEvidence } from './linux-host-evidence-service.js';
 import { isSupportedServerOs, normalizeServerOs } from './server-os-profile.js';
+import { metricRegistry, type MetricDefinition as RegistryMetricDefinition } from './metric-registry.js';
+import { dueStoredMetricIds, MysqlCollectionScheduleStore, type CollectionScheduleStore } from './collection-scheduler.js';
+
+const SERVER_COLLECTION_HEARTBEAT_MS = 10_000;
+const SERVER_PROVIDER_ID = 'ssh';
+const FILESYSTEM_METRIC_IDS = new Set([
+  'disk_usage',
+  'filesystem_size_bytes',
+  'filesystem_used_bytes',
+  'filesystem_available_bytes',
+  'filesystem_inode_usage',
+]);
 
 export interface FilesystemMetricRow {
   metricName: 'disk_usage' | 'filesystem_size_bytes' | 'filesystem_used_bytes'
@@ -55,20 +64,21 @@ export type CollectionFailureCategory = 'network' | 'authentication' | 'command'
 export interface ServerCollectionResult {
   success: boolean;
   metricsCount?: number;
+  succeededMetricIds?: string[];
   error?: string;
   category?: CollectionFailureCategory;
   collectedAt?: string;
 }
 
 export interface CollectorConfig {
-  collectionIntervalMs: number;
+  heartbeatMs: number;
   commandTimeoutMs: number;
   maxFailuresBeforeUnreachable: number;
   maxOutputBytes: number;
 }
 
 const DEFAULT_CONFIG: CollectorConfig = {
-  collectionIntervalMs: Number(process.env.SERVER_COLLECTION_INTERVAL_MS) || 300000,
+  heartbeatMs: SERVER_COLLECTION_HEARTBEAT_MS,
   commandTimeoutMs: 15000,
   maxFailuresBeforeUnreachable: 3,
   maxOutputBytes: 512 * 1024,
@@ -122,7 +132,10 @@ class ServerCollector {
   private inFlight = new Set<number>();
   private config: CollectorConfig;
 
-  constructor(config?: Partial<CollectorConfig>) {
+  constructor(
+    config?: Partial<CollectorConfig>,
+    private readonly scheduleStore: CollectionScheduleStore = new MysqlCollectionScheduleStore(() => dbConnection.getPool() as any),
+  ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
@@ -134,8 +147,8 @@ class ServerCollector {
     this.running = true;
     this.collectionTimer = setInterval(() => {
       this._tick().catch((err) => console.error('[ServerCollector] tick error:', err));
-    }, this.config.collectionIntervalMs);
-    console.log(`[ServerCollector] started (interval: ${this.config.collectionIntervalMs / 1000}s)`);
+    }, this.config.heartbeatMs);
+    console.log(`[ServerCollector] started (scheduler heartbeat: ${this.config.heartbeatMs / 1000}s)`);
     this._tick().catch((err) => console.error('[ServerCollector] initial tick error:', err));
   }
 
@@ -148,7 +161,7 @@ class ServerCollector {
     console.log('[ServerCollector] stopped');
   }
 
-  async collectServer(serverId: number): Promise<ServerCollectionResult> {
+  async collectServer(serverId: number, requestedMetricIds?: readonly string[]): Promise<ServerCollectionResult> {
     if (!Number.isSafeInteger(serverId) || serverId <= 0) {
       return failedResult(new Error('SERVER_ID_INVALID'));
     }
@@ -157,7 +170,10 @@ class ServerCollector {
     try {
       const server = await serverDatabaseService.getServerById(serverId);
       if (!server) return failedResult(new Error('SERVER_NOT_FOUND'));
-      const result = await this._collectOneServer(server);
+      if (!isSupportedServerOs(server.os_type)) return failedResult(new Error('HOST_OS_UNSUPPORTED'));
+      const metricIds = requestedMetricIds ?? this.getSchedulableDefinitions(server.os_type).map((definition) => definition.id);
+      if (metricIds.length === 0) return failedResult(new Error('NO_METRICS_DEFINED'));
+      const result = await this._collectOneServer(server, metricIds);
       this.failureCounts.delete(server.id);
       return result;
     } catch (error) {
@@ -175,15 +191,34 @@ class ServerCollector {
     return result;
   }
 
-  private async _tick(): Promise<void> {
+  async tick(): Promise<void> {
     const servers = await serverDatabaseService.getCollectionEnabledServers();
     for (const server of servers) {
-      const result = await this.collectServer(server.id);
+      const definitions = this.getSchedulableDefinitions(server.os_type);
+      const now = Date.now();
+      const dueMetricIds = await dueStoredMetricIds(
+        this.scheduleStore,
+        'server',
+        server.id,
+        SERVER_PROVIDER_ID,
+        definitions,
+        now,
+      );
+      if (dueMetricIds.length === 0) continue;
+      const result = await this.collectServer(server.id, dueMetricIds);
+      const succeeded = new Set(result.succeededMetricIds ?? []);
+      for (const definition of definitions.filter((candidate) => dueMetricIds.includes(candidate.id))) {
+        await this.scheduleStore.record('server', server.id, SERVER_PROVIDER_ID, definition, now, succeeded.has(definition.id));
+      }
       if (!result.success && result.error !== 'COLLECTION_IN_PROGRESS') await this.recordFailure(server.id, result);
     }
   }
 
-  private async recordFailure(serverId: number, result: ServerCollectionResult): Promise<void> {
+  private async _tick(): Promise<void> {
+    return this.tick();
+  }
+
+  private async recordFailure(serverId: number, _result: ServerCollectionResult): Promise<void> {
     const failures = (this.failureCounts.get(serverId) || 0) + 1;
     this.failureCounts.set(serverId, failures);
     if (failures >= this.config.maxFailuresBeforeUnreachable) {
@@ -191,7 +226,20 @@ class ServerCollector {
     }
   }
 
-  private async _collectOneServer(server: ServerRow): Promise<ServerCollectionResult> {
+  private getSchedulableDefinitions(osType: string): RegistryMetricDefinition[] {
+    const canonicalOs = normalizeServerOs(osType);
+    if (!canonicalOs) return [];
+    const supported = new Set(
+      serverMetricProvider.getDefinitions(canonicalOs)
+        .filter((definition) => definition.name !== 'disk_detail')
+        .map((definition) => definition.name),
+    );
+    for (const metricId of FILESYSTEM_METRIC_IDS) supported.add(metricId);
+    return metricRegistry.getByTargetType('server')
+      .filter((definition) => definition.is_collected && supported.has(definition.id));
+  }
+
+  private async _collectOneServer(server: ServerRow, requestedMetricIds: readonly string[]): Promise<ServerCollectionResult> {
     // Validate the configured profile before decrypting credentials or opening
     // a network connection. Unknown labels never fall through to generic Linux.
     if (!isSupportedServerOs(server.os_type)) {
@@ -239,12 +287,19 @@ class ServerCollector {
         throw new Error('HOST_OS_UNSUPPORTED');
       }
 
-      const definitions = serverMetricProvider.getDefinitions(canonicalOs)
-        .filter((definition) => definition.name !== 'disk_usage');
-      if (definitions.length === 0) throw new Error('NO_METRICS_DEFINED');
-
+      const requested = new Set(requestedMetricIds);
+      const collectFilesystem = requestedMetricIds.some((metricId) => FILESYSTEM_METRIC_IDS.has(metricId));
       const batches = serverMetricProvider.getCollectionBatches(canonicalOs)
-        .filter((batch) => batch.definitions.some((definition) => definition.name !== 'disk_usage'));
+        .map((batch) => ({
+          command: batch.command,
+          definitions: batch.definitions.filter((definition) => {
+            if (definition.name === 'disk_usage') return false;
+            if (definition.name === 'disk_detail') return collectFilesystem;
+            return requested.has(definition.name);
+          }),
+        }))
+        .filter((batch) => batch.definitions.length > 0);
+      if (batches.length === 0) throw new Error('NO_METRICS_DEFINED');
       const values: Array<{ name: string; value: number; dimensions: Record<string, string> | null }> = [];
       let successfulCommands = 0;
       let commandFailures = 0;
@@ -297,6 +352,7 @@ class ServerCollector {
       // Filesystem evidence is dimensioned separately because df emits one
       // row per mount and inode/findmnt are optional enrichments.
       for (const filesystem of filesystemRows) {
+        if (!requested.has(filesystem.metricName)) continue;
         values.push({
           name: filesystem.metricName,
           value: filesystem.value,
@@ -328,7 +384,9 @@ class ServerCollector {
         );
       }
       await serverDatabaseService.updateServerStatus(server.id, 'online');
-      return { success: true, metricsCount: rows.length, collectedAt: now.toISOString() };
+      const succeededMetricIds = [...new Set(values.map((value) => value.name))]
+        .filter((metricId) => requested.has(metricId));
+      return { success: true, metricsCount: rows.length, succeededMetricIds, collectedAt: now.toISOString() };
     } catch (error) {
       if (isFatalSshCommandError(error)) fatal = true;
       throw error;

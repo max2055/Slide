@@ -5,9 +5,32 @@ import {
   networkDeviceDatabaseService,
   type NetworkDeviceCredentials,
 } from './network-device-database-service.js';
-import { HuaweiAdapter, type HuaweiInterfaceSnapshot, type HuaweiMetricObservation, type HuaweiSnmpTransport } from './huawei-adapter.js';
+import { HuaweiAdapter, type HuaweiInterfaceSnapshot, type HuaweiMetricObservation } from './huawei-adapter.js';
 import { SnmpClient } from './snmp-client.js';
 import type { SnmpConfig, SnmpV3Config } from './snmp-types.js';
+import { metricRegistry, type MetricDefinition } from '../metric-registry.js';
+import { dueStoredMetricIds, MysqlCollectionScheduleStore, type CollectionScheduleStore } from '../collection-scheduler.js';
+
+const NETWORK_DEVICE_COLLECTION_HEARTBEAT_MS = 10_000;
+const NETWORK_DEVICE_PROVIDER_ID = 'huawei-snmp';
+const SYSTEM_METRIC_IDS = new Set([
+  'device_uptime_seconds',
+  'device_cpu_percent',
+  'device_memory_percent',
+  'device_temperature_celsius',
+]);
+const INTERFACE_METRIC_IDS = new Set([
+  'interface_oper_status',
+  'interface_error_rate',
+  'interface_drop_rate',
+  'interface_in_bps',
+  'interface_out_bps',
+]);
+const SUPPORTED_METRIC_IDS = new Set([
+  'device_reachability',
+  ...SYSTEM_METRIC_IDS,
+  ...INTERFACE_METRIC_IDS,
+]);
 
 export interface NetworkDeviceCollectionTarget {
   id: number;
@@ -32,9 +55,10 @@ interface SqlPool {
 }
 
 export interface NetworkDeviceCollectorOptions {
-  collectionIntervalMs?: number;
+  heartbeatMs?: number;
   maxFailuresBeforeUnreachable?: number;
   commandTimeoutMs?: number;
+  scheduleStore?: CollectionScheduleStore;
   authorizeTarget?: typeof authorizeNetworkDeviceTarget;
   targetPolicy?: {
     allowedCidrs?: string;
@@ -86,8 +110,9 @@ export class NetworkDeviceCollector {
   private readonly failures = new Map<number, number>();
   private readonly inFlight = new Set<number>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly scheduleStore: CollectionScheduleStore;
   private readonly options: {
-    collectionIntervalMs: number;
+    heartbeatMs: number;
     maxFailuresBeforeUnreachable: number;
     commandTimeoutMs: number;
     authorizeTarget: typeof authorizeNetworkDeviceTarget;
@@ -99,8 +124,10 @@ export class NetworkDeviceCollector {
     private readonly adapter: Pick<HuaweiAdapter, 'probe' | 'collectSystemMetrics' | 'collectInterfaces'>,
     options: NetworkDeviceCollectorOptions = {},
   ) {
+    this.scheduleStore = options.scheduleStore
+      ?? new MysqlCollectionScheduleStore(() => dbConnection.getPool() as unknown as SqlPool | null);
     this.options = {
-      collectionIntervalMs: options.collectionIntervalMs ?? (Number(process.env.NETWORK_DEVICE_COLLECTION_INTERVAL_MS) || 300_000),
+      heartbeatMs: options.heartbeatMs ?? NETWORK_DEVICE_COLLECTION_HEARTBEAT_MS,
       maxFailuresBeforeUnreachable: options.maxFailuresBeforeUnreachable ?? 3,
       commandTimeoutMs: options.commandTimeoutMs ?? 15_000,
       authorizeTarget: options.authorizeTarget ?? authorizeNetworkDeviceTarget,
@@ -112,7 +139,7 @@ export class NetworkDeviceCollector {
     if (this.timer) return;
     this.timer = setInterval(() => {
       this.tick().catch((error) => console.error('[NetworkDeviceCollector] tick failed:', stableError(error)));
-    }, this.options.collectionIntervalMs);
+    }, this.options.heartbeatMs);
     this.tick().catch((error) => console.error('[NetworkDeviceCollector] initial tick failed:', stableError(error)));
   }
 
@@ -125,18 +152,42 @@ export class NetworkDeviceCollector {
 
   async tick(): Promise<void> {
     const targets = await this.store.getCollectionEnabledDevices?.() ?? [];
+    const definitions = this.getSchedulableDefinitions();
     for (const target of targets) {
-      await this.collectDevice(target.id);
+      const now = Date.now();
+      const dueMetricIds = await dueStoredMetricIds(
+        this.scheduleStore,
+        'network_device',
+        target.id,
+        NETWORK_DEVICE_PROVIDER_ID,
+        definitions,
+        now,
+      );
+      if (dueMetricIds.length === 0) continue;
+      const result = await this.collectDevice(target.id, dueMetricIds);
+      for (const definition of definitions.filter((candidate) => dueMetricIds.includes(candidate.id))) {
+        await this.scheduleStore.record(
+          'network_device',
+          target.id,
+          NETWORK_DEVICE_PROVIDER_ID,
+          definition,
+          now,
+          result.success,
+        );
+      }
     }
   }
 
-  async collectDevice(id: number): Promise<{ success: boolean; observations?: number; interfaces?: number; error?: string }> {
+  async collectDevice(id: number, requestedMetricIds?: readonly string[]): Promise<{ success: boolean; observations?: number; interfaces?: number; error?: string }> {
     if (this.inFlight.has(id)) return { success: false, error: 'COLLECTION_IN_PROGRESS' };
     this.inFlight.add(id);
     try {
       const target = await this.store.getDevice(id);
       if (!target) return { success: false, error: 'NETWORK_DEVICE_NOT_FOUND' };
       if (!target.collectionEnabled) return { success: false, error: 'COLLECTION_DISABLED' };
+      const metricIds = requestedMetricIds ?? this.getSchedulableDefinitions().map((definition) => definition.id);
+      const requested = new Set(metricIds);
+      if (requested.size === 0) return { success: false, error: 'NO_METRICS_DEFINED' };
       let authorizedTarget: { address: string; port: number };
       try {
         authorizedTarget = await this.options.authorizeTarget(
@@ -164,10 +215,17 @@ export class NetworkDeviceCollector {
       try {
         const probe = await this.adapter.probe(config);
         if (!probe.reachable) return this.recordFailure(id, 'SNMP_RESPONSE_INVALID');
-        const system = await this.adapter.collectSystemMetrics(config, target.osVersion ?? undefined);
-        const interfaces = await this.adapter.collectInterfaces(config);
+        const systemMetricIds = metricIds.filter((metricId) => SYSTEM_METRIC_IDS.has(metricId));
+        const interfaceMetricIds = metricIds.filter((metricId) => INTERFACE_METRIC_IDS.has(metricId));
+        const system = systemMetricIds.length > 0
+          ? await this.adapter.collectSystemMetrics(config, target.osVersion ?? undefined, systemMetricIds)
+          : [];
+        const interfaces = interfaceMetricIds.length > 0
+          ? await this.adapter.collectInterfaces(config, interfaceMetricIds)
+          : { interfaces: [], observations: [], observedAt: probe.observedAt };
         for (const snapshot of interfaces.interfaces) await this.store.upsertInterface(id, snapshot, interfaces.observedAt);
-        const observations = [...system, ...interfaces.observations];
+        const observations = [...system, ...interfaces.observations]
+          .filter((observation) => requested.has(observation.metricId));
         await this.store.insertObservations(id, observations);
         await this.store.updateStatus(id, 'online');
         this.failures.delete(id);
@@ -178,6 +236,11 @@ export class NetworkDeviceCollector {
     } finally {
       this.inFlight.delete(id);
     }
+  }
+
+  private getSchedulableDefinitions(): MetricDefinition[] {
+    return metricRegistry.getByTargetType('network_device')
+      .filter((definition) => definition.is_collected && SUPPORTED_METRIC_IDS.has(definition.id));
   }
 
   private async recordFailure(id: number, error: string): Promise<{ success: false; error: string }> {
