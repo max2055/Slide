@@ -188,7 +188,7 @@ class ServerDatabaseService {
     credential_type: 'password' | 'key';
     credential_username: string;
     credential_value: string;
-    host_key_fingerprint: string;
+    host_key_fingerprint?: string | null;
     created_by?: number;
   }): Promise<{ success: boolean; serverId?: number; error?: string }> {
     const pool = this.getPool();
@@ -200,7 +200,9 @@ class ServerDatabaseService {
       const canonicalOs = normalizeServerOs(data.os_type);
       if (!canonicalOs) return { success: false, error: 'HOST_OS_UNSUPPORTED' };
       const target = await authorizeServerTarget({ host: data.host, port: data.port || 22 });
-      const hostKeyFingerprint = normalizeSshHostKeyFingerprint(data.host_key_fingerprint);
+      const hostKeyFingerprint = data.host_key_fingerprint?.trim()
+        ? normalizeSshHostKeyFingerprint(data.host_key_fingerprint.trim())
+        : null;
       // Check for duplicate host+port
       const [existing] = await pool.execute(
         'SELECT id, host, label FROM servers WHERE host = ? AND port = ?',
@@ -266,7 +268,7 @@ class ServerDatabaseService {
       credential_username?: string;
       credential_value?: string;
       collection_enabled?: number;
-      host_key_fingerprint?: string;
+      host_key_fingerprint?: string | null;
     }
   ): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
@@ -351,7 +353,9 @@ class ServerDatabaseService {
       }
       if (data.host_key_fingerprint !== undefined) {
         updates.push('host_key_fingerprint = ?');
-        values.push(normalizeSshHostKeyFingerprint(data.host_key_fingerprint));
+        values.push(data.host_key_fingerprint?.trim()
+          ? normalizeSshHostKeyFingerprint(data.host_key_fingerprint.trim())
+          : null);
       }
 
       if (updates.length === 0) {

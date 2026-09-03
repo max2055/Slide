@@ -114,6 +114,7 @@ export async function registerNetworkDeviceRoutes(
       let sshVerified = false;
       if (body.ssh !== undefined) {
         const ssh = validateSshCredential(body.ssh);
+        if (!ssh.hostKeyFingerprint) throw new Error('SSH_HOST_KEY_FINGERPRINT_REQUIRED');
         const sshPort = validatePort(body.sshPort ?? body.ssh_port, 'ssh_port', 22);
         await sshProbe({
           host,
@@ -237,7 +238,13 @@ export async function registerNetworkDeviceRoutes(
     if (id === null) return reply.code(400).send({ error: '资源 ID 无效' });
     try {
       const result = await backups.capture!(id, Number((request as any).user?.userId ?? 0) || null);
-      if (!result.success) return reply.code(502).send({ error: result.error ?? 'CONFIG_BACKUP_FAILED' });
+      if (!result.success) {
+        const error = result.error ?? 'CONFIG_BACKUP_FAILED';
+        const status = error === 'NETWORK_DEVICE_NOT_FOUND'
+          ? 404
+          : ['SSH_CREDENTIAL_REQUIRED', 'SSH_HOST_KEY_FINGERPRINT_REQUIRED'].includes(error) ? 400 : 502;
+        return reply.code(status).send({ error });
+      }
       // A successful capture may create a new version (or return an existing
       // hash-deduplicated version), and both are represented as a resource.
       return reply.code(201).send(serializeBackup(result.backup ?? result, 'detail'));

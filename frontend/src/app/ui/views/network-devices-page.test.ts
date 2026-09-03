@@ -62,8 +62,33 @@ describe("network-devices-page", () => {
     element.openCreate();
     await settle(element);
     expect(element.querySelector('app-form-field[label="SSH 用户名"]')).toBeTruthy();
-    expect(element.querySelector('app-form-field[label="主机密钥指纹"]')).toBeTruthy();
+    expect(element.querySelector('app-form-field[label="主机密钥指纹 (可选)"]')).toBeTruthy();
     expect(element.querySelector('.credential-section')).toBeTruthy();
+  });
+
+  it("submits SSH credentials without requiring a host-key fingerprint", async () => {
+    authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "/api/network-devices" && init?.method === "POST") return response({ id: 7 }, true, 201);
+      if (url === "/api/network-devices") return response([]);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const element = document.createElement("network-devices-page") as any;
+    document.body.append(element);
+    await settle(element);
+    element.openCreate();
+    element.form = {
+      ...element.form,
+      name: "edge-1", host: "10.0.0.8", username: "monitor",
+      securityLevel: "noAuthNoPriv", sshUsername: "ops", sshCredentialValue: "secret",
+    };
+
+    await element.saveDevice();
+
+    const call = authFetch.mock.calls.find(([url, init]) => url === "/api/network-devices" && init?.method === "POST");
+    expect(call).toBeTruthy();
+    expect(JSON.parse(call?.[1]?.body).ssh).toEqual({
+      protocol: "ssh", credentialType: "password", username: "ops", credentialValue: "secret",
+    });
   });
 
   it("submits Cisco SNMPv2c enrollment without v3 fields", async () => {

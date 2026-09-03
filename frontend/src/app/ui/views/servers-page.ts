@@ -419,8 +419,8 @@ export class ServersPage extends LitElement {
   private async _handleSubmit() {
     if (this._isSubmitting) return;
 
-    if (!this._form.host || !this._form.credential_username || !this._form.host_key_fingerprint) {
-      showToast("请填写主机地址、SSH用户名和主机密钥指纹", "warning");
+    if (!this._form.host || !this._form.credential_username) {
+      showToast("请填写主机地址和SSH用户名", "warning");
       return;
     }
     if (!this._editingId && !this._form.credential_value) {
@@ -891,7 +891,7 @@ export class ServersPage extends LitElement {
               placeholder="root" />
           </app-form-field>
 
-          <app-form-field label="SSH主机密钥指纹" required>
+          <app-form-field label="SSH主机密钥指纹 (可选)">
             <input class="form-input" type="text" .value=${this._form.host_key_fingerprint}
               @input=${(e: any) => this._updateForm("host_key_fingerprint", e.target.value)}
               placeholder="SHA256:..." />

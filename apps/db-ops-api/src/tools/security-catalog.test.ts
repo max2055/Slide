@@ -35,6 +35,11 @@ describe('agent tool security catalog', () => {
       permissions: ['instance:create'], approval: 'always',
       network: 'registered-database', credentials: 'use',
     });
+    expect(getToolSecurityDefinition('slide_add_network_device')).toEqual({
+      audience: 'actor', effect: 'write', resource: 'network_device',
+      permissions: ['network_devices:manage'], approval: 'always',
+      network: 'none', credentials: 'none',
+    });
   });
 
   it('keeps completion internal and gates delegation with operator permission', () => {

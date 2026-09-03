@@ -180,7 +180,7 @@ export class NetworkDevicesPage extends LitElement {
       credentialType: this.form.sshCredentialType,
       username: this.form.sshUsername.trim(),
       credentialValue: this.form.sshCredentialValue,
-      hostKeyFingerprint: this.form.hostKeyFingerprint.trim(),
+      ...(this.form.hostKeyFingerprint.trim() ? { hostKeyFingerprint: this.form.hostKeyFingerprint.trim() } : {}),
     };
   }
 
@@ -207,8 +207,8 @@ export class NetworkDevicesPage extends LitElement {
       return;
     }
     const ssh = this.sshPayload();
-    if (ssh && (!ssh.username || !ssh.credentialValue || !ssh.hostKeyFingerprint)) {
-      this.formError = "请完整填写 SSH 凭据和主机密钥指纹，或全部留空";
+    if (ssh && (!ssh.username || !ssh.credentialValue)) {
+      this.formError = "请完整填写 SSH 用户名和凭据，或全部留空";
       return;
     }
     this.saving = true;
@@ -344,7 +344,7 @@ export class NetworkDevicesPage extends LitElement {
           <div class="device-form-row"><app-form-field label="SSH 凭据类型"><select class="field" .value=${this.form.sshCredentialType} @change=${(e: Event) => this.updateForm("sshCredentialType", (e.target as HTMLSelectElement).value as DeviceForm["sshCredentialType"])}><option value="password">密码</option><option value="key">私钥</option></select></app-form-field>
           <app-form-field label="SSH 用户名"><input class="field" autocomplete="off" .value=${this.form.sshUsername} @input=${(e: Event) => this.updateForm("sshUsername", (e.target as HTMLInputElement).value)}></app-form-field></div>
           <div class="device-form-row"><app-form-field label=${this.form.sshCredentialType === "key" ? "SSH 私钥" : "SSH 密码"}><input class="field" type=${this.form.sshCredentialType === "key" ? "text" : "password"} autocomplete="new-password" .value=${this.form.sshCredentialValue} @input=${(e: Event) => this.updateForm("sshCredentialValue", (e.target as HTMLInputElement).value)}></app-form-field>
-          <app-form-field label="主机密钥指纹"><input class="field" placeholder="SHA256:..." autocomplete="off" .value=${this.form.hostKeyFingerprint} @input=${(e: Event) => this.updateForm("hostKeyFingerprint", (e.target as HTMLInputElement).value)}></app-form-field></div>
+          <app-form-field label="主机密钥指纹 (可选)"><input class="field" placeholder="SHA256:..." autocomplete="off" .value=${this.form.hostKeyFingerprint} @input=${(e: Event) => this.updateForm("hostKeyFingerprint", (e.target as HTMLInputElement).value)}></app-form-field></div>
         </section>
         ${this.formError ? html`<div class="form-error" role="alert">${this.formError}</div>` : nothing}
       </div>

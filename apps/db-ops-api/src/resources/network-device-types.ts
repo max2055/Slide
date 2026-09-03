@@ -29,7 +29,7 @@ export interface SshCredentialInput {
   credentialType: 'password' | 'key';
   username: string;
   credentialValue: string;
-  hostKeyFingerprint: string;
+  hostKeyFingerprint?: string;
 }
 
 export interface NetworkDeviceCreateInput {
@@ -185,8 +185,11 @@ export function validateSshCredential(input: unknown): SshCredentialInput {
   if (value.credentialType !== 'password' && value.credentialType !== 'key') throw new Error('SSH_CREDENTIAL_TYPE_INVALID');
   const username = text(value.username, 'ssh_username', true)!;
   if (typeof value.credentialValue !== 'string' || value.credentialValue.length === 0 || value.credentialValue.length > MAX_SECRET) throw new Error('SSH_CREDENTIAL_VALUE_INVALID');
-  const fingerprint = text(value.hostKeyFingerprint, 'ssh_host_key_fingerprint', true)!;
-  if (!/^SHA256:[A-Za-z0-9+/]{43}$/.test(fingerprint.replace(/=+$/, ''))) throw new Error('SSH_HOST_KEY_FINGERPRINT_REQUIRED');
+  const rawFingerprint = typeof value.hostKeyFingerprint === 'string' && !value.hostKeyFingerprint.trim()
+    ? undefined
+    : value.hostKeyFingerprint;
+  const fingerprint = text(rawFingerprint, 'ssh_host_key_fingerprint');
+  if (fingerprint !== undefined && !/^SHA256:[A-Za-z0-9+/]{43}$/.test(fingerprint.replace(/=+$/, ''))) throw new Error('SSH_HOST_KEY_FINGERPRINT_REQUIRED');
   return { protocol: 'ssh', credentialType: value.credentialType, username, credentialValue: value.credentialValue, hostKeyFingerprint: fingerprint };
 }
 
@@ -199,7 +202,7 @@ export function parseNetworkDeviceCreateInput(input: unknown): NetworkDeviceCrea
   const snmpv2c = (rawSnmp && typeof rawSnmp === 'object' && ((rawSnmp as any).version === 2 || 'community' in (rawSnmp as any) || 'communityString' in (rawSnmp as any))) || value.snmpv2c !== undefined || value.snmpv2 !== undefined
     ? validateSnmpV2Credential(rawSnmp)
     : undefined;
-  const snmpv3 = snmpv2c ? undefined : validateSnmpV3Credential(rawSnmp);
+  const snmpv3 = snmpv2c || rawSnmp == null ? undefined : validateSnmpV3Credential(rawSnmp);
   const ssh = value.ssh == null ? undefined : validateSshCredential(value.ssh);
   return {
     name: text(value.name, 'name', true)!, label: nullableText(value.label, 'label'), host: validateNetworkHost(value.host),

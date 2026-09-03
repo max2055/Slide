@@ -7,6 +7,7 @@
 export { checkStatusTool } from './check_status.js';
 export { addDatabaseTool } from './add_database.js';
 export { addDatabaseBatchTool } from './add_database_batch.js';
+export { addNetworkDeviceTool } from './add_network_device.js';
 export { testConnectionTool } from './test_connection.js';
 export { updateDbConfigTool } from './update_db_config.js';
 export { completeAnalysisTool } from './complete_analysis.js';
@@ -23,6 +24,7 @@ export { listResourcesTool, getResourceObservationsTool, getResourceRelationsToo
 import { checkStatusTool } from './check_status.js';
 import { addDatabaseTool } from './add_database.js';
 import { addDatabaseBatchTool } from './add_database_batch.js';
+import { addNetworkDeviceTool } from './add_network_device.js';
 import { testConnectionTool } from './test_connection.js';
 import { updateDbConfigTool } from './update_db_config.js';
 import { completeAnalysisTool } from './complete_analysis.js';
@@ -39,6 +41,7 @@ export const slideSelfMgmtTools = [
   checkStatusTool,
   addDatabaseTool,
   addDatabaseBatchTool,
+  addNetworkDeviceTool,
   testConnectionTool,
   updateDbConfigTool,
   completeAnalysisTool,

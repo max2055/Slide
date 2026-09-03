@@ -83,6 +83,26 @@ describe('network-device routes', () => {
     await app.close();
   });
 
+  it.each([
+    ['SSH_CREDENTIAL_REQUIRED', 'SSH_CREDENTIAL_REQUIRED'],
+    ['SSH_HOST_KEY_FINGERPRINT_REQUIRED', 'SSH_HOST_KEY_FINGERPRINT_REQUIRED'],
+  ])('returns an actionable client error when backup setup is incomplete: %s', async (_label, error) => {
+    const backupService = {
+      capture: vi.fn(async () => ({ success: false, error })),
+      list: vi.fn(), get: vi.fn(), diff: vi.fn(),
+    };
+    const app = await appWith({ backupService });
+
+    const response = await app.inject({
+      method: 'POST', url: '/api/network-devices/7/config-backups',
+      headers: { authorization: 'Bearer backup' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error });
+    await app.close();
+  });
+
   it('rejects unknown test-connection fields and probes only validated SNMPv3 payloads', async () => {
     const probe = vi.fn(async () => ({ reachable: true, observedAt: new Date(), quality: 'good' as const }));
     const sshProbe = vi.fn(async () => undefined);

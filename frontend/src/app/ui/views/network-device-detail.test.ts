@@ -79,6 +79,32 @@ describe("network-device-detail", () => {
     expect(element.textContent).toContain("username <redacted>");
   });
 
+  it("explains how to configure SSH credentials when backup capture is unavailable", async () => {
+    authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "/api/network-devices/4") return response(device);
+      if (url.endsWith("/metrics")) return response({ deviceId: 4, metrics: [] });
+      if (url.endsWith("/interfaces")) return response({ interfaces: [] });
+      if (url.endsWith("/capabilities")) return response({ capabilities: [] });
+      if (url.endsWith("/relations")) return response({ relations: [] });
+      if (url.endsWith("/config-backups") && init?.method === "POST") {
+        return response({ error: "SSH_CREDENTIAL_REQUIRED" }, false, 400);
+      }
+      if (url.endsWith("/config-backups")) return response({ backups: [] });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const element = document.createElement("network-device-detail") as any;
+    element.deviceId = 4;
+    document.body.append(element);
+    await settle(element);
+
+    const button = Array.from(element.querySelectorAll("button") as NodeListOf<HTMLButtonElement>)
+      .find((item) => item.textContent?.trim() === "Capture backup");
+    button?.click();
+    await settle(element);
+
+    expect(showToast).toHaveBeenCalledWith("请先编辑网络设备并配置 SSH 用户名和密码或私钥", "error");
+  });
+
   it("shows per-interface traffic, errors, and drops from dimensioned observations", async () => {
     const element = document.createElement("network-device-detail") as any;
     element.deviceId = 4;
