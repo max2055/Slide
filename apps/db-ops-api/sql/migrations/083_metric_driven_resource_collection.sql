@@ -2,4 +2,4 @@
 -- The heartbeat only scans due work; metric_definitions.default_interval is
 -- the sole collection-frequency setting.
 ALTER TABLE collection_schedule_state
-  MODIFY COLUMN resource_type ENUM('instance','server','network_device') NOT NULL;
+  MODIFY COLUMN resource_type ENUM('instance','server','network_device') NOT NULL COMMENT '资源类型';
