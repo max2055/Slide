@@ -14,6 +14,10 @@ const snapshotId = '000_schema_baseline.sql';
 // comments. The corrected migration is intentionally accepted only for that
 // exact historical checksum; migration 069 repairs the live schema forward.
 export const LEGACY_MIGRATION_CHECKSUMS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  // 000 was baselined by deployments running the auth idle-timeout release.
+  '000_schema_baseline.sql': Object.freeze([
+    'ba0ea57599e766dc9c9605746cdd9fa221cc05464fe45ed640b33a668fbcbbb8',
+  ]),
   // 071_v010 was deployed once with a harmless trailing-whitespace variant.
   // Accept that recorded checksum so later forward migrations can run.
   '071_v010_infrastructure_assistant.sql': Object.freeze([
@@ -21,6 +25,10 @@ export const LEGACY_MIGRATION_CHECKSUMS: Readonly<Record<string, readonly string
   ]),
   '067_device_registrations.sql': Object.freeze([
     '94403810bcae74f546a719b6d2f062e1699c18440e2ad76a5c787fa3f2c10ebb',
+  ]),
+  // 070 was applied before its network-device contract was narrowed.
+  '070_network_device_resource_foundation.sql': Object.freeze([
+    'b8e1da4a29ff2a47b0703ab4d95746e41812b4bf4d5f46ca293292f816c10583',
   ]),
   // 072 only changed its human-readable description after early deployments.
   // Accept the already-applied checksum so forward migrations can continue.
