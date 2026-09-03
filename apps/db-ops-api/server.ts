@@ -1471,7 +1471,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (!data.credential_type) return reply.code(400).send({ error: '缺少必填字段：credential_type' });
       if (!data.credential_username) return reply.code(400).send({ error: '缺少必填字段：credential_username' });
       if (!data.credential_value) return reply.code(400).send({ error: '缺少必填字段：credential_value' });
-      if (!data.host_key_fingerprint) return reply.code(400).send({ error: '缺少必填字段：host_key_fingerprint' });
       const result = await serverDatabaseService.createServer(data);
       if (result.success) {
         reply.send({ id: result.serverId, message: '创建成功' });

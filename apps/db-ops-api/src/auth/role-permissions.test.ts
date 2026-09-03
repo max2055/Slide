@@ -85,6 +85,7 @@ describe('DANGER_OPERATIONS', () => {
   it('应该为安全目录中需要审批的真实工具名定义危险等级', () => {
     expect(DANGER_OPERATIONS['slide_update_db_config']).toBe(3);
     expect(DANGER_OPERATIONS['slide_add_database']).toBe(3);
+    expect(DANGER_OPERATIONS['slide_add_network_device']).toBe(3);
     expect(DANGER_OPERATIONS['slide_test_connection']).toBe(2);
     expect(DANGER_OPERATIONS['get_instance_connection']).toBe(4);
     expect(DANGER_OPERATIONS['slide_check_status']).toBe(2);

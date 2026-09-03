@@ -32,6 +32,7 @@ vi.mock('ssh2', () => ({
   },
 }));
 
+import { dbConnection } from './db-connection.js';
 import { serverDatabaseService } from './server-database-service.js';
 
 describe('ServerDatabaseService SSH security', () => {
@@ -70,5 +71,25 @@ describe('ServerDatabaseService SSH security', () => {
 
     expect(result.success).toBe(false);
     expect(mocks.connectConfigs).toHaveLength(0);
+  });
+
+  it('stores a server with a null host-key fingerprint during enrollment', async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([{ insertId: 9 }, []]);
+    vi.mocked(dbConnection.getPool).mockReturnValue({ execute } as any);
+
+    const result = await serverDatabaseService.createServer({
+      host: 'ssh.internal.example',
+      os_type: 'centos',
+      credential_type: 'password',
+      credential_username: 'operator',
+      credential_value: 'secret',
+    });
+
+    expect(result).toEqual({ success: true, serverId: 9 });
+    expect(execute.mock.calls[1][1]).toEqual([
+      'ssh.internal.example', 22, null, 'centos', 'password', expect.any(String), null,
+    ]);
   });
 });

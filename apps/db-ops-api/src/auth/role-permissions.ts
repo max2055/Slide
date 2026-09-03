@@ -172,6 +172,7 @@ export const DANGER_OPERATIONS: Record<string, DangerLevel> = {
 
   // 实例管理
   slide_add_database: 3,
+  slide_add_network_device: 3,
   slide_test_connection: 2,
   get_instance_connection: 4,
   slide_delete_instance: 3,

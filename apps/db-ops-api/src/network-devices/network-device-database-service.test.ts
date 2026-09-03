@@ -56,6 +56,32 @@ describe('NetworkDeviceDatabaseService', () => {
     expect(JSON.stringify(execute.mock.calls)).not.toContain('auth-secret');
   });
 
+  it('stores SSH credentials without requiring a host-key fingerprint during enrollment', async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce([{ insertId: 7 }, []])
+      .mockResolvedValueOnce([{}, []])
+      .mockResolvedValueOnce([{}, []]);
+    const service = new NetworkDeviceDatabaseService(() => poolFor(execute));
+
+    await expect(service.createDevice({
+      name: 'edge-1', host: '192.0.2.10',
+      snmpv3: { username: 'monitor', securityLevel: 'noAuthNoPriv' },
+      ssh: { credentialType: 'password', username: 'ops', credentialValue: 'secret' },
+    })).resolves.toEqual({ success: true, deviceId: 7 });
+
+    const sshInsert = execute.mock.calls.find(([sql]) => String(sql).includes("VALUES (?, 'ssh'"));
+    expect(sshInsert?.[1]).toEqual([7, 'password', 'ops', expect.any(String), null]);
+  });
+
+  it('allows inventory enrollment before SNMP credentials are available', async () => {
+    const execute = vi.fn().mockResolvedValueOnce([{ insertId: 8 }, []]);
+    const service = new NetworkDeviceDatabaseService(() => poolFor(execute));
+
+    await expect(service.createDevice({ name: 'edge-2', host: '192.0.2.11' }))
+      .resolves.toEqual({ success: true, deviceId: 8 });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
   it('maps duplicate host/port failures to a stable conflict result', async () => {
     const duplicate = Object.assign(new Error('duplicate'), { code: 'ER_DUP_ENTRY' });
     const execute = vi.fn().mockRejectedValue(duplicate);

@@ -840,6 +840,7 @@ describe('DirectAdapter', () => {
       expect(result).toContain('ACTOR_CONTEXT_REQUIRED');
       expect(registry.toolNames).not.toContain('slide_complete_analysis');
       expect(registry.toolNames).toContain('spawn_subagent');
+      expect(registry.toolNames).toContain('slide_add_network_device');
     });
 
     it('gives Cron only read tools and its internal completion tool', async () => {
@@ -847,6 +848,7 @@ describe('DirectAdapter', () => {
       expect(registry.toolNames).toContain('slide_complete_cron');
       expect(registry.toolNames).toContain('list_database_instances');
       expect(registry.toolNames).not.toContain('slide_add_database');
+      expect(registry.toolNames).not.toContain('slide_add_network_device');
       expect(registry.toolNames).not.toContain('slide_update_db_config');
       expect(registry.toolNames).not.toContain('get_instance_connection');
       expect(registry.toolNames).not.toContain('spawn_subagent');

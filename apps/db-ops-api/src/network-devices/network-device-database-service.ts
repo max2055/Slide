@@ -228,7 +228,9 @@ export class NetworkDeviceDatabaseService {
   }
 
   private async saveSshCredentials(pool: SqlExecutor, id: number, input: SshCredentialInput): Promise<void> {
-    const fingerprint = normalizeSshHostKeyFingerprint(input.hostKeyFingerprint);
+    const fingerprint = input.hostKeyFingerprint
+      ? normalizeSshHostKeyFingerprint(input.hostKeyFingerprint)
+      : null;
     await pool.execute(
       `INSERT INTO network_device_credentials
        (device_id, protocol, credential_type, username, credential_encrypted, host_key_fingerprint)

@@ -165,7 +165,13 @@ export class NetworkDeviceDetail extends LitElement {
       showToast(`Backup v${body.versionNo ?? "?"} captured`, "success");
       await this.loadContext();
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Backup failed", "error");
+      const code = error instanceof Error ? error.message : "";
+      const message = code === "SSH_CREDENTIAL_REQUIRED"
+        ? "请先编辑网络设备并配置 SSH 用户名和密码或私钥"
+        : code === "SSH_HOST_KEY_FINGERPRINT_REQUIRED"
+          ? "请先编辑网络设备并配置 SSH 主机密钥指纹"
+          : code || "Backup failed";
+      showToast(message, "error");
     } finally {
       this.backupLoading = false;
     }
