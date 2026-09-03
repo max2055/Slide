@@ -50,6 +50,7 @@ import "./views/rbac-page.ts";
 import "./views/docs-viewer.ts";
 import "./views/settings-shell.ts";
 import "./views/session-settings.ts";
+import "./views/collection-settings.ts";
 import "./views/appearance-settings.ts";
 import "./views/branding-settings.ts";
 import { icons } from "../../icons.js";

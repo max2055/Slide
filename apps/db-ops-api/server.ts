@@ -29,6 +29,8 @@ import {
 import { RbacService } from './src/auth/rbac-service.js';
 import { rbacApiRoutes } from './src/auth/rbac-api.js';
 import { registerAuthSessionConfigRoutes } from './src/auth/session-config-routes.js';
+import { registerCollectionConfigRoutes } from './src/collection-config-routes.js';
+import { collectionConfigService, type CollectionConfig } from './src/collection-config.js';
 import { authSessionConfigService } from './src/auth/session-config.js';
 import { strictBody, warnUnknown } from './src/utils/strict-body.js';
 import { instanceDatabaseService } from './src/instance-database-service.js';
@@ -152,6 +154,11 @@ const operationService = new PersistentOperationService(() => dbConnection.getPo
 const workflowWorkerId = randomUUID();
 // Set only after the control-plane database and worker registry are ready.
 let notificationWorkflowStore: MysqlWorkflowStore | undefined;
+
+function applyCollectionConfig(config: CollectionConfig): void {
+  serverCollector.setCollectionIntervalMs(config.serverIntervalSeconds * 1000);
+  networkDeviceCollector.setCollectionIntervalMs(config.networkDeviceIntervalSeconds * 1000);
+}
 
 function approvalOperationLifecycle(actorId: number) {
   return {
@@ -339,6 +346,7 @@ async function start() {
   // 注册 RBAC 管理 API
   await fastify.register(rbacApiRoutes);
   await registerAuthSessionConfigRoutes(fastify, verifyToken);
+  await registerCollectionConfigRoutes(fastify, verifyToken, applyCollectionConfig);
   await registerAgentToolApprovalRoutes(fastify, verifyToken);
   await registerAgentSecurityRoutes(fastify, verifyToken);
   await registerDeviceAuthRoutes(fastify, verifyToken);
@@ -5509,6 +5517,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   await workflowStore.enqueue(createCapacityConsistencyJob());
   workflowTimer = setInterval(() => { void workflowRuntime.runOnce((job) => workflowRegistry.execute(job)).catch((error) => console.error('Workflow worker failed:', error)); }, 1_000);
 
+  // 采集周期来自可持久化的系统设置，管理员更新后会立即重置定时器。
+  applyCollectionConfig(await collectionConfigService.get());
   // 启动监控采集
   monitorCollector.start();
   // 网络设备采集器只执行 SNMPv3 只读轮询；未纳管或未启用采集的设备不会

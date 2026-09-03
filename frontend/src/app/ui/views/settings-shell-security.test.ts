@@ -22,6 +22,7 @@ describe('settings security navigation', () => {
     expect(text).not.toContain('Agent 审计');
     expect(text).not.toContain('Agent 沙箱');
     expect(text).not.toContain('登录安全');
+    expect(text).not.toContain('采集设置');
   });
 
   it('shows all security views to a wildcard administrator', async () => {
@@ -31,5 +32,6 @@ describe('settings security navigation', () => {
     expect(text).toContain('Agent 审计');
     expect(text).toContain('Agent 沙箱');
     expect(text).toContain('登录安全');
+    expect(text).toContain('采集设置');
   });
 });

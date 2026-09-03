@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   getServerById: vi.fn(),
+  getCollectionEnabledServers: vi.fn(),
   getDecryptedCredentials: vi.fn(),
   updateServerStatus: vi.fn(),
   getConnection: vi.fn(),
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('./server-database-service', () => ({
   serverDatabaseService: {
     getServerById: mocks.getServerById,
+    getCollectionEnabledServers: mocks.getCollectionEnabledServers,
     getDecryptedCredentials: mocks.getDecryptedCredentials,
     updateServerStatus: mocks.updateServerStatus,
   },
@@ -36,6 +38,22 @@ vi.mock('./db-connection', () => ({
 import { buildFilesystemMetricRows, ServerCollector } from './server-collector.js';
 import { ServerMetricProvider, isSupportedLinuxOsType } from './server-metric-provider.js';
 import { metricRegistry } from './metric-registry.js';
+
+describe('server collector schedule', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('re-arms a running collector when its persisted interval changes', () => {
+    vi.useFakeTimers();
+    mocks.getCollectionEnabledServers.mockResolvedValue([]);
+    const interval = vi.spyOn(globalThis, 'setInterval');
+    const collector = new ServerCollector({ collectionIntervalMs: 300_000 });
+    collector.start();
+    collector.setCollectionIntervalMs(120_000);
+
+    expect(interval).toHaveBeenLastCalledWith(expect.any(Function), 120_000);
+    collector.stop();
+  });
+});
 
 describe('server collector filesystem rows', () => {
   it('persists legacy usage plus byte and inode metrics with filesystem dimensions', () => {

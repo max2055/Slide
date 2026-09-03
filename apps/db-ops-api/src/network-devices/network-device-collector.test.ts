@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { NetworkDeviceCollector, type NetworkDeviceCollectionStore } from './network-device-collector.js';
 import type { HuaweiInterfaceCollection, HuaweiMetricObservation, HuaweiProbeResult } from './huawei-adapter.js';
@@ -39,6 +39,19 @@ function adapter(overrides: Partial<{
 }
 
 describe('NetworkDeviceCollector', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('re-arms a running collector when its persisted interval changes', () => {
+    vi.useFakeTimers();
+    const interval = vi.spyOn(globalThis, 'setInterval');
+    const collector = new NetworkDeviceCollector(store(), adapter() as any, { collectionIntervalMs: 300_000 });
+    collector.start();
+    collector.setCollectionIntervalMs(120_000);
+
+    expect(interval).toHaveBeenLastCalledWith(expect.any(Function), 120_000);
+    collector.stop();
+  });
+
   it('fails closed on a denied target before reading credentials or opening SNMP', async () => {
     const persistence = store();
     const snmp = adapter();

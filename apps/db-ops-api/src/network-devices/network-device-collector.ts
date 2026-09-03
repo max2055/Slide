@@ -100,7 +100,7 @@ export class NetworkDeviceCollector {
     options: NetworkDeviceCollectorOptions = {},
   ) {
     this.options = {
-      collectionIntervalMs: options.collectionIntervalMs ?? (Number(process.env.NETWORK_DEVICE_COLLECTION_INTERVAL_MS) || 300_000),
+      collectionIntervalMs: options.collectionIntervalMs ?? 300_000,
       maxFailuresBeforeUnreachable: options.maxFailuresBeforeUnreachable ?? 3,
       commandTimeoutMs: options.commandTimeoutMs ?? 15_000,
       authorizeTarget: options.authorizeTarget ?? authorizeNetworkDeviceTarget,
@@ -114,6 +114,18 @@ export class NetworkDeviceCollector {
       this.tick().catch((error) => console.error('[NetworkDeviceCollector] tick failed:', stableError(error)));
     }, this.options.collectionIntervalMs);
     this.tick().catch((error) => console.error('[NetworkDeviceCollector] initial tick failed:', stableError(error)));
+  }
+
+  setCollectionIntervalMs(collectionIntervalMs: number): void {
+    if (!Number.isSafeInteger(collectionIntervalMs) || collectionIntervalMs <= 0) {
+      throw new Error('NETWORK_DEVICE_COLLECTION_INTERVAL_INVALID');
+    }
+    this.options.collectionIntervalMs = collectionIntervalMs;
+    if (!this.timer) return;
+    clearInterval(this.timer);
+    this.timer = setInterval(() => {
+      this.tick().catch((error) => console.error('[NetworkDeviceCollector] tick failed:', stableError(error)));
+    }, this.options.collectionIntervalMs);
   }
 
   stop(): void {

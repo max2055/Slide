@@ -68,7 +68,7 @@ export interface CollectorConfig {
 }
 
 const DEFAULT_CONFIG: CollectorConfig = {
-  collectionIntervalMs: Number(process.env.SERVER_COLLECTION_INTERVAL_MS) || 300000,
+  collectionIntervalMs: 300_000,
   commandTimeoutMs: 15000,
   maxFailuresBeforeUnreachable: 3,
   maxOutputBytes: 512 * 1024,
@@ -137,6 +137,19 @@ class ServerCollector {
     }, this.config.collectionIntervalMs);
     console.log(`[ServerCollector] started (interval: ${this.config.collectionIntervalMs / 1000}s)`);
     this._tick().catch((err) => console.error('[ServerCollector] initial tick error:', err));
+  }
+
+  setCollectionIntervalMs(collectionIntervalMs: number): void {
+    if (!Number.isSafeInteger(collectionIntervalMs) || collectionIntervalMs <= 0) {
+      throw new Error('SERVER_COLLECTION_INTERVAL_INVALID');
+    }
+    this.config.collectionIntervalMs = collectionIntervalMs;
+    if (!this.running) return;
+    if (this.collectionTimer) clearInterval(this.collectionTimer);
+    this.collectionTimer = setInterval(() => {
+      this._tick().catch((err) => console.error('[ServerCollector] tick error:', err));
+    }, this.config.collectionIntervalMs);
+    console.log(`[ServerCollector] interval updated (${this.config.collectionIntervalMs / 1000}s)`);
   }
 
   stop(): void {
