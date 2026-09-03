@@ -311,6 +311,7 @@ async function installApiFixtures(page: Page, state: FixtureState, calls: Call[]
       });
     }
     if (path === `/api/servers/${IDS.server}` && method === 'GET') return fulfill(route, serverFixture(state));
+    if (path === `/api/servers/${IDS.server}/collect` && method === 'POST') return fulfill(route, { success: true, metrics_count: 8 });
     if (path === '/api/servers' && method === 'POST') {
       state.serverCreated = true;
       return fulfill(route, { ...serverFixture(state), ...(body ?? {}) });
@@ -531,12 +532,17 @@ for (const viewport of VIEWPORTS) {
     const relationPut = await waitForCall(calls, (call) => call.method === 'PUT' && call.path === `/api/database/instances/${IDS.instance}/hosts`);
     expect(relationPut.body).toEqual({ hosts: [{ serverId: IDS.server, role: 'primary' }] });
     await expect(page.getByText(instanceFixture.name, { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(instancesPage.locator('.instance-row .actions button')).toHaveText(['详情', '编辑', '测试', '删除']);
 
     // The server relation is reflected in the server workbench filter.
     await page.goto('/servers');
     await expect(page.locator('servers-page')).toBeVisible({ timeout: 15_000 });
     await page.locator('servers-page select[aria-label="Database relation filter"]').selectOption('linked');
     await expect(page.getByText(serverFixture(state).label, { exact: true })).toBeVisible();
+    const serverActions = page.locator('servers-page app-data-table .actions');
+    await expect(serverActions.locator('button')).toHaveText(['详情', '编辑', '测试', '删除']);
+    await serverActions.getByRole('button', { name: '测试', exact: true }).click();
+    await waitForCall(calls, (call) => call.method === 'POST' && call.path === `/api/servers/${IDS.server}/collect`);
 
     // Huawei network-device onboarding, including an SNMPv3 probe contract.
     await page.goto('/network-devices');
@@ -550,7 +556,7 @@ for (const viewport of VIEWPORTS) {
     await deviceDialog.locator('app-form-field[label="标签"] input').fill(networkDeviceFixture.label);
     await deviceDialog.locator('app-form-field[label="站点"] input').fill(networkDeviceFixture.site);
     await deviceDialog.locator('app-form-field[label="型号"] input').fill(networkDeviceFixture.model);
-    await deviceDialog.locator('app-form-field[label="VRP 版本"] input').fill(networkDeviceFixture.os_version);
+    await deviceDialog.locator('app-form-field[label="OS 版本"] input').fill(networkDeviceFixture.os_version);
     await deviceDialog.locator('app-form-field[label="SNMPv3 用户名"] input').fill('fixture-snmp-reader');
     await deviceDialog.locator('app-form-field[label="认证密钥"] input').fill(FIXTURE_SECRET);
     await deviceDialog.locator('app-form-field[label="隐私密钥"] input').fill('fixture-privacy-secret');
@@ -563,6 +569,10 @@ for (const viewport of VIEWPORTS) {
     expect(JSON.stringify(devicePost.body)).toContain(FIXTURE_SECRET);
     await expect(page.getByText(networkDeviceFixture.label, { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('body')).not.toContainText(FIXTURE_SECRET);
+    const networkDeviceActions = devicesPage.locator('app-data-table .actions');
+    await expect(networkDeviceActions.locator('button')).toHaveText(['详情', '编辑', '测试', '删除']);
+    await networkDeviceActions.getByRole('button', { name: '测试', exact: true }).click();
+    await waitForCall(calls, (call) => call.method === 'POST' && call.path === `/api/network-devices/${IDS.networkDevice}/probe`);
 
     // Detail view proves relation observations and redacted, read-only backup viewing.
     await page.getByRole('button', { name: networkDeviceFixture.label, exact: true }).click();

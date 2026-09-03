@@ -4533,6 +4533,7 @@ details[open] > .ov-expandable-toggle::after {
 }
 .btn-sm:hover { background: var(--accent); color: var(--accent-foreground, #fff); border-color: var(--accent); box-shadow: 0 2px 4px var(--accent-subtle); transform: translateY(-1px); }
 .btn-sm:active { transform: translateY(0); }
+.btn-sm:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; transform: none; }
 .btn-sm.danger { color: var(--danger); border-color: var(--danger); }
 .btn-sm.danger:hover { background: var(--danger); color: #fff; box-shadow: 0 2px 4px var(--danger-subtle); }
 

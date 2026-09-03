@@ -63,7 +63,9 @@ export class NetworkDevicesPage extends LitElement {
   @state() private editingId: number | null = null;
   @state() private saving = false;
   @state() private testing = false;
-  @state() private probingId: number | null = null;
+  @state() private testingDeviceId: number | null = null;
+  @state() private deletingDevice: NetworkDevice | null = null;
+  @state() private deleting = false;
   @state() private form: DeviceForm = { ...EMPTY_FORM };
   @state() private formError: string | null = null;
 
@@ -261,19 +263,45 @@ export class NetworkDevicesPage extends LitElement {
     }
   }
 
-  private async probe(device: NetworkDevice) {
-    if (this.probingId !== null) return;
-    this.probingId = device.id;
+  private async testDevice(device: NetworkDevice) {
+    if (this.testingDeviceId !== null) return;
+    this.testingDeviceId = device.id;
     try {
       const response = await authFetch(`/api/network-devices/${device.id}/probe`, { method: "POST" });
       const body = await responseBody(response);
-      if (!response.ok || body.success === false) throw new Error(String(body.error || "采集失败"));
-      showToast("已开始采集", "success");
+      if (!response.ok || body.success === false) throw new Error(String(body.error || "测试失败"));
+      showToast("连接测试成功，指标已刷新", "success");
       await this.loadDevices();
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "采集失败", "error");
+      showToast(error instanceof Error ? error.message : "测试失败", "error");
     } finally {
-      this.probingId = null;
+      this.testingDeviceId = null;
+    }
+  }
+
+  private confirmDelete(device: NetworkDevice) {
+    this.deletingDevice = device;
+  }
+
+  private closeDeleteDialog() {
+    if (!this.deleting) this.deletingDevice = null;
+  }
+
+  private async deleteDevice() {
+    const device = this.deletingDevice;
+    if (!device || this.deleting) return;
+    this.deleting = true;
+    try {
+      const response = await authFetch(`/api/network-devices/${device.id}`, { method: "DELETE" });
+      const body = await responseBody(response);
+      if (!response.ok) throw new Error(String(body.error || "删除失败"));
+      this.deletingDevice = null;
+      await this.loadDevices();
+      showToast("网络设备已删除", "success");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "删除失败", "error");
+    } finally {
+      this.deleting = false;
     }
   }
 
@@ -298,9 +326,10 @@ export class NetworkDevicesPage extends LitElement {
       collection: html`<app-badge variant=${device.collection_enabled ? "ok" : "muted"}>${device.collection_enabled ? "已启用" : "已停用"}</app-badge>`,
       lastCheck: device.last_check_at ? new Date(device.last_check_at).toLocaleString("zh-CN") : "--",
       actions: html`<div class="actions">
-        <button class="btn-ghost" type="button" title="查看详情" aria-label="查看 ${device.name} 详情" @click=${() => this.navigate(device.id)}>${icons["chevron-right"]}</button>
-        <button class="btn" type="button" @click=${() => this.probe(device)} .disabled=${this.probingId === device.id}>${this.probingId === device.id ? "…" : "采集"}</button>
-        <button class="btn" type="button" @click=${() => this.openEdit(device)}>编辑</button>
+        <button class="btn-sm" type="button" @click=${() => this.navigate(device.id)}>详情</button>
+        <button class="btn-sm" type="button" @click=${() => this.openEdit(device)}>编辑</button>
+        <button class="btn-sm" type="button" @click=${() => this.testDevice(device)} .disabled=${this.testingDeviceId === device.id}>${this.testingDeviceId === device.id ? "测试中…" : "测试"}</button>
+        <button class="btn-sm danger" type="button" @click=${() => this.confirmDelete(device)}>删除</button>
       </div>`,
     }));
   }
@@ -352,6 +381,18 @@ export class NetworkDevicesPage extends LitElement {
     </app-dialog>`;
   }
 
+  private renderDeleteDialog() {
+    const device = this.deletingDevice;
+    if (!device) return nothing;
+    return html`<app-dialog .open=${true} size="sm" title="确认删除网络设备" .closeOnOverlay=${false} @app-dialog-close=${this.closeDeleteDialog}>
+      <p>确定删除“${device.label || device.name}”吗？此操作不可撤销。</p>
+      <div slot="footer" class="dialog-actions">
+        <button class="btn" type="button" @click=${this.closeDeleteDialog} .disabled=${this.deleting}>取消</button>
+        <button class="btn-primary btn-danger" type="button" @click=${this.deleteDevice} .disabled=${this.deleting}>${this.deleting ? "删除中…" : "确认删除"}</button>
+      </div>
+    </app-dialog>`;
+  }
+
   render() {
     const sites = [...new Set(this.devices.map((device) => device.site).filter((site): site is string => Boolean(site)))].sort();
     const filtered = this.filteredDevices();
@@ -381,6 +422,11 @@ export class NetworkDevicesPage extends LitElement {
       .dialog-actions .btn-primary { min-width:88px; }
       .form-error { color:var(--danger); font-size:var(--text-sm); overflow-wrap:anywhere; }
       @media (max-width:680px) {
+        .network-device-table .data-table th:nth-child(2),
+        .network-device-table .data-table td:nth-child(2) { display:none; }
+        .network-device-table .data-table th:nth-child(7),
+        .network-device-table .data-table td:nth-child(7) { display:table-cell; }
+        .network-device-table .actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
         .device-form { gap:var(--space-md); }
         .device-form-section { padding:var(--space-sm); }
         .device-form-row { grid-template-columns:minmax(0,1fr); gap:var(--space-sm); }
@@ -408,10 +454,11 @@ export class NetworkDevicesPage extends LitElement {
         </div>
         <div class="resource-toolbar-meta" aria-live="polite">
           <span class="resource-result-count">共 ${filtered.length} 台网络设备</span>
-          ${this.activeFilterCount > 0 ? html`<span class="resource-filter-state">已启用 ${this.activeFilterCount} 项筛选</span>` : html`<span>未启用筛选</span>`}
+          ${this.activeFilterCount > 0 ? html`<span class="resource-filter-state">已启用 ${this.activeFilterCount} 项筛选</span>` : html`<span>指标由后台按计划自动采集</span>`}
         </div>
-        ${filtered.length ? html`<app-data-table .columns=${this.columns()} .rows=${this.rows()}></app-data-table>` : html`<app-empty-state title="暂无网络设备" description="添加网络设备以开始只读采集。" icon="globe"></app-empty-state>`}
+        ${filtered.length ? html`<app-data-table class="network-device-table" .columns=${this.columns()} .rows=${this.rows()}></app-data-table>` : html`<app-empty-state title="暂无网络设备" description="添加网络设备以开始只读采集。" icon="globe"></app-empty-state>`}
       </app-card>`}
-    ${this.renderDialog()}`;
+    ${this.renderDialog()}
+    ${this.renderDeleteDialog()}`;
   }
 }
