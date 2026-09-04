@@ -28,6 +28,7 @@ export type AuditEventType =
   | 'instance_change'
   | 'config_backup_access'
   | 'permission_denied'
+  | 'system_operation'
   | 'sql_execution';
 
 /**
@@ -156,11 +157,11 @@ export class MemoryAuditLogStore implements AuditLogHandler {
       filtered = filtered.filter(log => log.resourceId === params.resourceId);
     }
 
-    if (params.startTime) {
+    if (params.startTime !== undefined) {
       filtered = filtered.filter(log => log.timestamp >= params.startTime);
     }
 
-    if (params.endTime) {
+    if (params.endTime !== undefined) {
       filtered = filtered.filter(log => log.timestamp <= params.endTime);
     }
 
@@ -170,9 +171,17 @@ export class MemoryAuditLogStore implements AuditLogHandler {
 
     if (params.search) {
       const lowerSearch = params.search.toLowerCase();
-      filtered = filtered.filter(log =>
-        log.details?.sql && String(log.details.sql).toLowerCase().includes(lowerSearch)
-      );
+      filtered = filtered.filter(log => [
+        log.eventType,
+        log.username,
+        log.userId,
+        log.action,
+        log.resourceType,
+        log.resourceId,
+        log.clientIp,
+        log.errorMessage,
+        log.details === undefined ? undefined : JSON.stringify(log.details),
+      ].some(value => String(value ?? '').toLowerCase().includes(lowerSearch)));
     }
 
     filtered.sort((a, b) => b.timestamp - a.timestamp);
@@ -208,8 +217,7 @@ export class MemoryAuditLogStore implements AuditLogHandler {
 // ============== 数据库审计日志存储 ==============
 
 /**
- * 数据库审计日志存储 — 持久化写入 MySQL 的 sql_execution_history 表
- * 专为 SQL 执行历史设计，实现了 AuditLogHandler 接口
+ * 数据库审计日志存储 — 持久化写入通用审计表和 SQL 执行历史表
  */
 export class DatabaseAuditLogStore implements AuditLogHandler {
   private pool: mysql.Pool;
@@ -288,11 +296,11 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
       conditions.push('h.instance_id = ?');
       params.push(Number(filter.resourceId));
     }
-    if (filter.startTime) {
+    if (filter.startTime !== undefined) {
       conditions.push('h.created_at >= FROM_UNIXTIME(?)');
       params.push(Math.floor(filter.startTime / 1000));
     }
-    if (filter.endTime) {
+    if (filter.endTime !== undefined) {
       conditions.push('h.created_at <= FROM_UNIXTIME(?)');
       params.push(Math.floor(filter.endTime / 1000));
     }
@@ -373,10 +381,17 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
     if (filter.resourceType) add('resource_type = ?', filter.resourceType);
     if (filter.resourceId) add('resource_id = ?', filter.resourceId);
     if (filter.result) add('result = ?', filter.result);
-    if (filter.startTime) add('timestamp_ms >= ?', filter.startTime);
-    if (filter.endTime) add('timestamp_ms <= ?', filter.endTime);
-    if (filter.search) add('(action LIKE ? OR resource_id LIKE ? OR details_json LIKE ?)', `%${filter.search}%`);
-    if (filter.search) params.push(`%${filter.search}%`, `%${filter.search}%`);
+    if (filter.startTime !== undefined) add('timestamp_ms >= ?', filter.startTime);
+    if (filter.endTime !== undefined) add('timestamp_ms <= ?', filter.endTime);
+    if (filter.search) {
+      const search = `%${filter.search}%`;
+      conditions.push(`(
+        event_type LIKE ? OR username LIKE ? OR user_id LIKE ? OR action LIKE ?
+        OR resource_type LIKE ? OR resource_id LIKE ? OR details_json LIKE ?
+        OR client_ip LIKE ? OR error_message LIKE ?
+      )`);
+      params.push(search, search, search, search, search, search, search, search, search);
+    }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200);
     const offset = Math.max(filter.offset ?? 0, 0);
@@ -454,7 +469,7 @@ export class AuditLogManager {
       timestamp: Date.now(),
     };
 
-    await this.handler.write(entry);
+    await this.write(entry);
     this.events.emit('log:tool_call', entry);
   }
 
@@ -476,7 +491,7 @@ export class AuditLogManager {
       timestamp: Date.now(),
     };
 
-    await this.handler.write(entry);
+    await this.write(entry);
     this.events.emit('log:approval_request', entry);
   }
 
@@ -501,7 +516,7 @@ export class AuditLogManager {
       timestamp: Date.now(),
     };
 
-    await this.handler.write(entry);
+    await this.write(entry);
     this.events.emit('log:approval_approved', entry);
   }
 
@@ -527,7 +542,7 @@ export class AuditLogManager {
       timestamp: Date.now(),
     };
 
-    await this.handler.write(entry);
+    await this.write(entry);
     this.events.emit('log:approval_rejected', entry);
   }
 
@@ -550,7 +565,7 @@ export class AuditLogManager {
       timestamp: Date.now(),
     };
 
-    await this.handler.write(entry);
+    await this.write(entry);
     this.events.emit('log:approval_expired', entry);
   }
 
@@ -580,7 +595,7 @@ export class AuditLogManager {
       timestamp: Date.now(),
     };
 
-    await this.handler.write(entry);
+    await this.write(entry);
     this.events.emit('log:permission_denied', entry);
   }
 
@@ -618,8 +633,7 @@ export class AuditLogManager {
       timestamp: Date.now(),
     };
 
-    await this.handler.write(entry);
-    if (this.persistentStore) await this.persistentStore.write(entry);
+    await this.write(entry);
     this.events.emit('log:config_change', entry);
   }
 
@@ -656,8 +670,7 @@ export class AuditLogManager {
       timestamp: Date.now(),
     };
 
-    await this.handler.write(entry);
-    if (this.persistentStore) await this.persistentStore.write(entry);
+    await this.write(entry);
     this.events.emit('log:config_backup_access', entry);
   }
 
@@ -689,7 +702,7 @@ export class AuditLogManager {
       timestamp: Date.now(),
     };
 
-    await this.handler.write(entry);
+    await this.write(entry);
     this.events.emit('log:user_change', entry);
   }
 
@@ -721,7 +734,7 @@ export class AuditLogManager {
       timestamp: Date.now(),
     };
 
-    await this.handler.write(entry);
+    await this.write(entry);
     this.events.emit('log:instance_change', entry);
   }
 
@@ -729,7 +742,7 @@ export class AuditLogManager {
    * 记录登录事件
    */
   async logLogin(params: {
-    userId: string;
+    userId?: string;
     username: string;
     userRole?: SystemRole;
     success: boolean;
@@ -752,7 +765,7 @@ export class AuditLogManager {
       timestamp: Date.now(),
     };
 
-    await this.handler.write(entry);
+    await this.write(entry);
     this.events.emit('log:login', entry);
   }
 
@@ -776,8 +789,48 @@ export class AuditLogManager {
       timestamp: Date.now(),
     };
 
-    await this.handler.write(entry);
+    await this.write(entry);
     this.events.emit('log:logout', entry);
+  }
+
+  /** Record an authenticated state-changing HTTP request without its body. */
+  async logSystemOperation(params: {
+    userId: string;
+    username: string;
+    method: string;
+    route: string;
+    statusCode: number;
+    resourceType?: string;
+    resourceId?: string;
+    requestId?: string;
+    clientIp?: string;
+    userAgent?: string;
+  }): Promise<void> {
+    const failed = params.statusCode >= 400;
+    const entry: AuditLogEntry = {
+      id: this.generateId(),
+      eventType: 'system_operation',
+      level: params.statusCode >= 500 ? 'error' : failed ? 'warning' : 'info',
+      userId: params.userId,
+      username: params.username,
+      action: `${params.method.toUpperCase()} ${params.route}`,
+      resourceType: params.resourceType,
+      resourceId: params.resourceId,
+      details: {
+        method: params.method.toUpperCase(),
+        route: params.route,
+        statusCode: params.statusCode,
+        ...(params.requestId ? { requestId: params.requestId } : {}),
+      },
+      result: failed ? 'failure' : 'success',
+      errorMessage: failed ? `HTTP_${params.statusCode}` : undefined,
+      clientIp: params.clientIp,
+      userAgent: params.userAgent,
+      timestamp: Date.now(),
+    };
+
+    await this.write(entry);
+    this.events.emit('log:system_operation', entry);
   }
 
   /**
@@ -868,13 +921,7 @@ export class AuditLogManager {
       timestamp: Date.now(),
       result: params.status === 'success' ? 'success' : 'failure',
     };
-    await this.handler.write(entry);
-    // 双写：同时持久化到数据库
-    if (this.persistentStore) {
-      await this.persistentStore.write(entry).catch(err => {
-        console.error('[AuditLogManager] 持久化 SQL 历史失败:', err);
-      });
-    }
+    await this.write(entry);
   }
 
   /**
@@ -882,6 +929,13 @@ export class AuditLogManager {
    */
   setPersistentStore(store: AuditLogHandler): void {
     this.persistentStore = store;
+  }
+
+  private async write(entry: AuditLogEntry): Promise<void> {
+    await this.handler.write(entry);
+    if (this.persistentStore && this.persistentStore !== this.handler) {
+      await this.persistentStore.write(entry);
+    }
   }
 
   /**

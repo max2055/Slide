@@ -154,6 +154,27 @@ describe('MemoryAuditLogStore', () => {
       const result2 = await store.query({ limit: 2, offset: 2 });
       expect(result2.entries).toHaveLength(1);
     });
+
+    it('应该在通用审计字段中搜索关键字', async () => {
+      await store.write({
+        id: 'audit_004',
+        eventType: 'system_operation',
+        level: 'info',
+        userId: 'user3',
+        username: 'alice',
+        action: 'PATCH /api/users/:id',
+        resourceType: 'users',
+        resourceId: '42',
+        details: { route: '/api/users/:id' },
+        clientIp: '127.0.0.1',
+        result: 'success',
+        timestamp: Date.now(),
+      });
+
+      expect((await store.query({ search: 'alice' })).entries).toHaveLength(1);
+      expect((await store.query({ search: 'users/:id' })).entries).toHaveLength(1);
+      expect((await store.query({ search: '127.0.0.1' })).entries).toHaveLength(1);
+    });
   });
 
   describe('export', () => {
@@ -478,6 +499,34 @@ describe('AuditLogManager', () => {
       expect(logs).toHaveLength(1);
       expect(logs[0].resourceId).toBe('user456');
       expect(logs[0].details).toEqual({ oldRole: 'viewer', newRole: 'dba' });
+    });
+  });
+
+  describe('logSystemOperation', () => {
+    it('persists only bounded request metadata in the authoritative store', async () => {
+      const persistentStore = new MemoryAuditLogStore();
+      manager = new AuditLogManager(store, persistentStore);
+
+      await manager.logSystemOperation({
+        userId: '7',
+        username: 'alice',
+        method: 'patch',
+        route: '/api/users/:id',
+        statusCode: 403,
+        resourceType: 'users',
+        resourceId: '42',
+        requestId: 'request-1',
+        clientIp: '127.0.0.1',
+      });
+
+      const result = await manager.query({ eventType: 'system_operation' });
+      expect(result.entries).toEqual([expect.objectContaining({
+        action: 'PATCH /api/users/:id',
+        resourceId: '42',
+        result: 'failure',
+        errorMessage: 'HTTP_403',
+        details: { method: 'PATCH', route: '/api/users/:id', statusCode: 403, requestId: 'request-1' },
+      })]);
     });
   });
 

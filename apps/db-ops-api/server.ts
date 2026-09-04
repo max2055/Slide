@@ -100,6 +100,7 @@ import { registerInstanceHostRoutes } from './src/instance-host-routes.js';
 import { instanceDiagnosticContextService } from './src/instance-diagnostic-context-service.js';
 import { sqlAuditService } from './src/sql-audit-service.js';
 import { queryAuditLogs, auditLogManager, DatabaseAuditLogStore } from './src/audit/audit-log.js';
+import { registerSystemAuditRoutes } from './src/audit/system-audit-routes.js';
 import { sqlExecutor } from './src/sql-executor.js';
 import { classifySql } from './src/sql-validator.js';
 import { PersistentOperationService } from './src/operations/operation-service.js';
@@ -283,6 +284,7 @@ async function start() {
   };
 
   await registerHttpSecurity(fastify);
+  await registerSystemAuditRoutes(fastify, verifyToken);
 
   // 健康检查
   fastify.get('/api/health', { schema: { response: { 200: HealthResponseSchema } } }, async (request, reply) => {
@@ -439,11 +441,26 @@ async function start() {
       // 验证用户
       const user = await authDatabaseService.getUserByUsername(username);
       if (!user) {
+        await auditLogManager.logLogin({
+          username,
+          success: false,
+          errorMessage: 'INVALID_CREDENTIALS',
+          clientIp: request.ip,
+          userAgent: request.headers['user-agent'],
+        }).catch(error => console.error('记录登录审计失败:', error));
         return reply.code(401).send({ error: '用户名或密码错误' });
       }
 
       const passwordValid = await authDatabaseService.verifyPassword(username, password);
       if (!passwordValid) {
+        await auditLogManager.logLogin({
+          userId: String(user.id),
+          username,
+          success: false,
+          errorMessage: 'INVALID_CREDENTIALS',
+          clientIp: request.ip,
+          userAgent: request.headers['user-agent'],
+        }).catch(error => console.error('记录登录审计失败:', error));
         return reply.code(401).send({ error: '用户名或密码错误' });
       }
 
@@ -458,6 +475,14 @@ async function start() {
         actor,
         authSessionConfigService.expiresAt(sessionConfig),
       );
+
+      await auditLogManager.logLogin({
+        userId: String(actor.userId),
+        username: actor.username,
+        success: true,
+        clientIp: request.ip,
+        userAgent: request.headers['user-agent'],
+      }).catch(error => console.error('记录登录审计失败:', error));
 
       reply.send({
         token,
