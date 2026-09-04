@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { TAB_GROUPS, TAB_REQUIRED_PERMISSIONS, UTILITY_TABS, inferBasePathFromPathname, pathForTab, tabFromPath } from '../../navigation.ts';
+import { icons } from '../../../../icons.ts';
+import { TAB_GROUPS, TAB_REQUIRED_PERMISSIONS, UTILITY_TABS, iconForTab, inferBasePathFromPathname, pathForTab, tabFromPath } from '../../navigation.ts';
 import { hasSlidePermission } from '../../app-settings.ts';
 import { SETTINGS_ITEMS } from '../../settings-navigation.ts';
+import { agentLogoUrl } from '../agents-utils.ts';
 
 describe('UI-02: navigation contract', () => {
   it('round-trips every visible navigation tab through its route', () => {
@@ -38,6 +40,22 @@ describe('UI-02: navigation contract', () => {
     expect(tabFromPath('/health')).toBe('health-center');
     expect(TAB_REQUIRED_PERMISSIONS['health-center']).toBe('config:view');
     expect(TAB_REQUIRED_PERMISSIONS['audit-center']).toBe('audit:view');
+  });
+
+  it('uses valid, distinct icons for every visible primary and settings entry', () => {
+    const visibleTabs = [...TAB_GROUPS.flatMap((group) => group.tabs), ...UTILITY_TABS];
+    const iconNames = [
+      ...visibleTabs.map((tab) => iconForTab(tab)),
+      ...SETTINGS_ITEMS.map((item) => item.icon),
+    ];
+
+    for (const iconName of iconNames) expect(icons[iconName]).toBeDefined();
+    expect(new Set(iconNames).size).toBe(iconNames.length);
+  });
+
+  it('resolves the product logo from the app root and an optional base path', () => {
+    expect(agentLogoUrl('')).toBe('/favicon.svg');
+    expect(agentLogoUrl('/control/')).toBe('/control/favicon.svg');
   });
 
   it('round-trips network-device inventory and context routes independently', () => {
