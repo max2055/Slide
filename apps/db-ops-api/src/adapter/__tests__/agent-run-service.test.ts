@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { AgentRunService } from '../agent-run-service.js';
 
@@ -23,10 +24,28 @@ describe('AgentRunService', () => {
     const pool = new Pool();
     const service = new AgentRunService(() => pool as any);
     const first = await service.claim(7, 'session', 'message', '1234567890abcdef');
-    const replay = await service.claim(7, 'session', 'message', '1234567890abcdef');
+    const replay = await service.claim(7, 'different-session', 'message', '1234567890abcdef');
     expect(first.created).toBe(true);
     expect(replay).toMatchObject({ created: false, run: { id: first.run.id, state: 'running' } });
     expect(await service.finish(first.run.id, 'cancelled')).toBe(true);
     expect(await service.finish(first.run.id, 'completed')).toBe(false);
+  });
+
+  it('finds a run by actor and idempotency key before a new session is created', async () => {
+    const pool = new Pool();
+    const service = new AgentRunService(() => pool as any);
+    const first = await service.claim(7, 'server-session', 'message', '1234567890abcdef');
+
+    await expect(service.findByIdempotencyKey(7, '1234567890abcdef'))
+      .resolves.toMatchObject({ id: first.run.id, sessionId: 'server-session' });
+  });
+
+  it('migrates websocket run idempotency to actor scope', async () => {
+    const sql = await readFile(
+      new URL('../../../sql/migrations/086_agent_run_global_idempotency.sql', import.meta.url),
+      'utf8',
+    );
+    expect(sql).toContain('DROP INDEX `uq_agent_runs_actor_session_idempotency`');
+    expect(sql).toContain('UNIQUE KEY `uq_agent_runs_actor_idempotency` (`actor_id`, `idempotency_key`)');
   });
 });

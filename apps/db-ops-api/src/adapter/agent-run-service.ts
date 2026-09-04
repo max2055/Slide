@@ -19,12 +19,20 @@ export class AgentRunService {
       [id, actorId, sessionId, messageId, idempotencyKey],
     );
     const [rows] = await pool.query<any[]>(
-      'SELECT * FROM agent_runs WHERE actor_id = ? AND session_id = ? AND idempotency_key = ?',
-      [actorId, sessionId, idempotencyKey],
+      'SELECT * FROM agent_runs WHERE actor_id = ? AND idempotency_key = ?',
+      [actorId, idempotencyKey],
     );
     const row = rows[0];
     if (!row) throw new Error('Agent run claim failed');
     return { created: row.id === id, run: this.map(row) };
+  }
+
+  async findByIdempotencyKey(actorId: number, idempotencyKey: string): Promise<AgentRun | null> {
+    const [rows] = await this.requirePool().query<any[]>(
+      'SELECT * FROM agent_runs WHERE actor_id = ? AND idempotency_key = ?',
+      [actorId, idempotencyKey],
+    );
+    return rows[0] ? this.map(rows[0]) : null;
   }
 
   async finish(id: string, state: Exclude<AgentRunState, 'running'>, result?: unknown, error?: unknown): Promise<boolean> {

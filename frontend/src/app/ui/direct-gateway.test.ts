@@ -26,6 +26,7 @@ describe('109-04: DirectGatewayClient', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -226,19 +227,61 @@ describe('109-04: DirectGatewayClient', () => {
     expect(onStateChange).toHaveBeenCalledWith('auth_failed');
   });
 
-  it('rejects an unacknowledged chat when the socket disconnects', async () => {
+  it.each([
+    [1006, 'network lost', 'network_interrupted'],
+    [1012, 'service restart', 'service_restarting'],
+  ] as const)('reconciles an unacknowledged chat after close code %s', async (code, reason, state) => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(1);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
     const socket = installMockWebSocket();
     const client = new DirectGatewayClient({ onEvent, onStateChange });
     client.connect();
     socket.receive({ type: 'auth_ok' });
 
     const request = client.request('chat.send', { sessionKey: '', message: 'first message' });
-    socket.closeWith(1006, 'network lost');
+    const originalFrame = socket.frames.at(-1)!;
+    socket.receive({
+      type: 'session.created',
+      sessionKey: 'server-session',
+      messageId: originalFrame.messageId,
+    });
+    socket.closeWith(code, reason, false);
+    expect(onStateChange).toHaveBeenCalledWith(state);
 
-    await expect(request).rejects.toThrow(/before the message was accepted/);
+    let settled = false;
+    void request.then(() => { settled = true; }, () => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    socket.receive({ type: 'auth_ok' });
+    const replayedFrame = socket.frames.at(-1)!;
+    expect(replayedFrame).toMatchObject({
+      type: 'chat.send',
+      messageId: originalFrame.messageId,
+      idempotencyKey: originalFrame.idempotencyKey,
+      sessionKey: 'server-session',
+    });
+
+    const snapshot = {
+      type: 'run.snapshot',
+      messageId: replayedFrame.messageId,
+      run: {
+        id: 'existing-run',
+        sessionId: 'server-session',
+        messageId: replayedFrame.messageId,
+        idempotencyKey: replayedFrame.idempotencyKey,
+        state: 'running',
+      },
+    };
+    socket.receive(snapshot);
+
+    await expect(request).resolves.toBeUndefined();
+    expect(onEvent).toHaveBeenCalledWith(snapshot);
   });
 
-  it('rejects a duplicate chat snapshot instead of leaving the send pending', async () => {
+  it('treats a duplicate chat snapshot as durable acceptance', async () => {
     const socket = installMockWebSocket();
     const client = new DirectGatewayClient({ onEvent, onStateChange });
     client.connect();
@@ -246,14 +289,35 @@ describe('109-04: DirectGatewayClient', () => {
 
     const request = client.request('chat.send', { sessionKey: 'session-1', message: 'duplicate' });
     const frame = socket.frames.at(-1);
-    socket.receive({
+    const snapshot = {
       type: 'run.snapshot',
       messageId: frame?.messageId,
-      run: { id: 'existing-run', state: 'running' },
-    });
+      run: {
+        id: 'existing-run', sessionId: 'session-1', state: 'running',
+        messageId: frame?.messageId, idempotencyKey: frame?.idempotencyKey,
+      },
+    };
+    socket.receive(snapshot);
 
-    await expect(request).rejects.toThrow(/already accepted by an existing run/);
-    expect(onEvent).not.toHaveBeenCalled();
+    await expect(request).resolves.toBeUndefined();
+    expect(onEvent).toHaveBeenCalledWith(snapshot);
+  });
+
+  it.each([
+    [4001, 'Unauthorized', '登录已失效，请重新登录。', 'auth_failed'],
+    [4008, 'Rate limit exceeded', '请求过于频繁，请稍后再试。', 'rate_limited'],
+  ] as const)('rejects an unacknowledged chat with close-specific error %s', async (code, reason, error, state) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+
+    const request = client.request('chat.send', { sessionKey: 'session-1', message: 'hello' });
+    socket.closeWith(code, reason, true);
+
+    await expect(request).rejects.toThrow(error);
+    expect(onStateChange).toHaveBeenCalledWith(state);
   });
 
   it('forwards session.created as a first-class adapter event', () => {
@@ -427,8 +491,8 @@ class MockWebSocket {
     this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent<string>);
   }
 
-  closeWith(code: number, reason: string): void {
-    this.onclose?.({ code, reason } as CloseEvent);
+  closeWith(code: number, reason: string, wasClean = code !== 1006): void {
+    this.onclose?.({ code, reason, wasClean } as CloseEvent);
   }
 }
 

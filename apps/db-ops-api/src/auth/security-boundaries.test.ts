@@ -874,6 +874,7 @@ describe('websocket actor boundary', () => {
   beforeEach(() => {
     process.env.JWT_SECRET_KEY = 'test-ws-secret';
     vi.clearAllMocks();
+    vi.spyOn(agentRunService, 'findByIdempotencyKey').mockResolvedValue(null);
     vi.mocked(chatDatabaseService.addMessage).mockResolvedValue(undefined);
     vi.mocked(chatDatabaseService.createSession).mockResolvedValue({ session_id: 'server-generated-session' } as any);
     vi.mocked(chatDatabaseService.authorizeSession).mockResolvedValue({ session_id: 'authorized-session' } as any);
@@ -887,6 +888,7 @@ describe('websocket actor boundary', () => {
     sockets.length = 0;
     for (const adapter of adapters) await adapter.dispose();
     adapters.length = 0;
+    vi.restoreAllMocks();
   });
 
   it('websocket authenticates through ActorContextService and ignores client userId', async () => {
@@ -1081,6 +1083,70 @@ describe('websocket actor boundary', () => {
     );
     expect(chat.mock.calls[0][0]).toBe('server-generated-session');
     expect(chat.mock.calls[0][3]).toBe(currentActor);
+  });
+
+  it('websocket replay returns the durable run without creating or executing again', async () => {
+    const currentActor = actor('ws-replay');
+    vi.mocked(agentRunService.findByIdempotencyKey).mockResolvedValueOnce({
+      id: 'existing-run',
+      actorId: currentActor.userId,
+      sessionId: 'original-session',
+      messageId: 'original-message',
+      idempotencyKey: 'original-idempotency-key',
+      state: 'running',
+    });
+    const adapter = new DirectAdapter({
+      tools: new ToolRegistry(),
+      llmProvider: {} as any,
+      actorContextService: {
+        authenticateAccessToken: vi.fn().mockResolvedValue(currentActor),
+        revalidateActor: vi.fn().mockResolvedValue(currentActor),
+      } as any,
+      heartbeatIntervalMs: 30_000,
+    });
+    adapters.push(adapter);
+    const chat = vi.spyOn(adapter, 'chat');
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.AGENT_WS_PORT = String(nextPort++);
+    await adapter.start();
+
+    const ws = new WebSocket(`ws://127.0.0.1:${process.env.AGENT_WS_PORT}`);
+    sockets.push(ws);
+    await new Promise<void>((resolve, reject) => {
+      ws.once('open', resolve);
+      ws.once('error', reject);
+    });
+    ws.send(JSON.stringify({ type: 'auth', token: 'ws-access-token' }));
+    expect(await waitForMessage(ws)).toEqual({ type: 'auth_ok' });
+
+    ws.send(JSON.stringify({
+      type: 'chat.send',
+      protocolVersion: 2,
+      message: 'replay me',
+      messageId: 'original-message',
+      idempotencyKey: 'original-idempotency-key',
+    }));
+
+    expect(await waitForMessage(ws)).toMatchObject({
+      type: 'run.snapshot',
+      messageId: 'original-message',
+      sessionKey: 'original-session',
+      run: { id: 'existing-run', state: 'running' },
+    });
+    expect(chatDatabaseService.authorizeSession)
+      .toHaveBeenCalledWith(currentActor, 'original-session', 'append');
+    expect(chatDatabaseService.createSession).not.toHaveBeenCalled();
+    expect(chat).not.toHaveBeenCalled();
+
+    ws.close();
+    await vi.waitFor(() => expect(warning).toHaveBeenCalledWith(
+      '[DirectAdapter] WebSocket closed',
+      expect.stringContaining('"messageId":"original-message"'),
+    ));
+    expect(warning).toHaveBeenCalledWith(
+      '[DirectAdapter] WebSocket closed',
+      expect.stringContaining(`"userId":${currentActor.userId}`),
+    );
   });
 
   it('websocket periodically revalidates its actor and closes on revocation', async () => {
