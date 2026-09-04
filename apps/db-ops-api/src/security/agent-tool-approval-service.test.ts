@@ -21,6 +21,12 @@ const tool: AnyAgentTool = {
 };
 
 const resource: ToolPolicyResource = { type: 'instance', instanceId: 12 };
+const checkStatusTool: AnyAgentTool = {
+  name: 'slide_check_status',
+  description: 'test',
+  parameters: { type: 'object', properties: {} },
+  handler: async () => ({ success: true }),
+};
 
 describe('persistent Agent tool approvals', () => {
   it('binds approval to canonical args, resource, actor snapshot, and operator policy', () => {
@@ -34,11 +40,38 @@ describe('persistent Agent tool approvals', () => {
     expect(left.policySnapshot).toMatchObject({ actorId: 7, sessionVersion: 3, toolName: tool.name });
   });
 
+  it('reuses an on-risk approval across argument changes for the same actor, tool, and resource', () => {
+    const statusResource: ToolPolicyResource = { type: 'none' };
+    const basic = buildApprovalBinding('test-hmac-key', actor, checkStatusTool, {
+      include_details: true,
+    }, statusResource);
+    const expanded = buildApprovalBinding('test-hmac-key', actor, checkStatusTool, {
+      include_details: true,
+      test_db_connections: true,
+      test_llm: true,
+    }, statusResource);
+
+    expect(expanded.bindingHash).toBe(basic.bindingHash);
+    expect(expanded.redactedArgs).toMatchObject({ test_db_connections: true, test_llm: true });
+  });
+
   it('atomically consumes an approved binding exactly once', async () => {
     const bindingHash = 'a'.repeat(64);
     let available = true;
     const executor = {
-      execute: async (_sql: string, values: unknown[]) => {
+      execute: async (sql: string, values: unknown[]) => {
+        if (sql.includes('SELECT binding_hash')) {
+          return [[{
+            binding_hash: bindingHash,
+            status: available ? 'approved' : 'consumed',
+            scope: 'once',
+            session_key: null,
+            risk_level: 'high',
+            used_count: available ? 0 : 1,
+            max_uses: 1,
+            expires_at: new Date(Date.now() + 60_000),
+          }]] as [unknown];
+        }
         const expectedHash = values[0];
         const affectedRows = available && expectedHash === bindingHash ? 1 : 0;
         if (affectedRows) available = false;
@@ -185,5 +218,42 @@ describe('persistent Agent tool approvals', () => {
 
     await expect(service.consumeApprovedDetailed('44', 'c'.repeat(64), 7, { riskLevel: 'high' }))
       .resolves.toEqual({ approved: false, failure: 'APPROVAL_PENDING' });
+  });
+
+  it.each([
+    ['rejected', 'APPROVAL_REJECTED'],
+    ['expired', 'APPROVAL_EXPIRED'],
+    ['consumed', 'APPROVAL_CONSUMED'],
+  ] as const)('reports a %s approval with a distinct reason code', async (status, failure) => {
+    const executor = {
+      execute: async () => [[{
+        binding_hash: 'c'.repeat(64), status, scope: 'once', session_key: null,
+        risk_level: 'high', used_count: status === 'consumed' ? 1 : 0, max_uses: 1,
+        expires_at: new Date(Date.now() + 60_000),
+      }]] as [unknown],
+    };
+    const service = new AgentToolApprovalService(() => executor as any, 'test-hmac-key');
+
+    await expect(service.consumeApprovedDetailed('44', 'c'.repeat(64), 7))
+      .resolves.toEqual({ approved: false, failure });
+  });
+
+  it('reviews all pending requests for one tool in a single batch', async () => {
+    const reviewedIds: string[] = [];
+    const executor = {
+      execute: async (sql: string, values?: unknown[]) => {
+        if (sql.includes('SELECT id FROM agent_tool_approvals')) return [[{ id: 41 }, { id: 42 }]] as [unknown];
+        if (sql.includes('UPDATE agent_tool_approvals')) {
+          reviewedIds.push(String(values?.at(-1)));
+          return [{ affectedRows: 1 }] as [unknown];
+        }
+        return [[]] as [unknown];
+      },
+    };
+    const service = new AgentToolApprovalService(() => executor as any, 'test-hmac-key');
+
+    await expect(service.reviewPendingByTool('slide_check_status', 9, 'approve', undefined, 'once'))
+      .resolves.toEqual(['41', '42']);
+    expect(reviewedIds).toEqual(['41', '42']);
   });
 });

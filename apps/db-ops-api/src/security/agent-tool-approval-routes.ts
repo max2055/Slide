@@ -131,4 +131,31 @@ export async function registerAgentToolApprovalRoutes(
       ? reply.send({ success: true, approvalId: id, status: body.action === 'approve' ? 'approved' : 'rejected' })
       : reply.code(409).send({ reasonCode: 'AGENT_APPROVAL_NOT_PENDING' });
   });
+
+  fastify.post('/api/agent/approvals/batch-review', {
+    preHandler: [verifyToken, requirePermission('approval:approve')],
+  }, async (request, reply) => {
+    const actor = (request as any).user as ActorContext;
+    const body = request.body as { toolName?: unknown; action?: unknown; note?: unknown; scope?: unknown };
+    if (typeof body?.toolName !== 'string' || !body.toolName || body.toolName.length > 128
+      || (body.action !== 'approve' && body.action !== 'reject')) {
+      return reply.code(400).send({ reasonCode: 'AGENT_APPROVAL_BATCH_REVIEW_INVALID' });
+    }
+    const approvalIds = await getAgentToolApprovalService().reviewPendingByTool(
+      body.toolName,
+      actor.userId,
+      body.action,
+      typeof body.note === 'string' ? body.note : undefined,
+      body.scope === 'once' || body.scope === 'window' || body.scope === 'session' ? body.scope : undefined,
+    );
+    return approvalIds.length > 0
+      ? reply.send({
+        success: true,
+        toolName: body.toolName,
+        status: body.action === 'approve' ? 'approved' : 'rejected',
+        approvalIds,
+        count: approvalIds.length,
+      })
+      : reply.code(409).send({ reasonCode: 'AGENT_APPROVAL_NOT_PENDING' });
+  });
 }

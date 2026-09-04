@@ -56,4 +56,37 @@ describe('approval dashboard visibility', () => {
     expect(subject.shadowRoot?.textContent).toContain('discover_database_endpoints');
     expect(subject.shadowRoot?.textContent).toContain('SELECT 1');
   });
+
+  it('batch approves pending requests for the same Agent tool', async () => {
+    const pending = {
+      tool_name: 'slide_check_status',
+      requester_id: 9,
+      args_redacted: { include_details: true },
+      resource_json: { type: 'none' },
+      status: 'pending',
+      risk_level: 'high',
+      created_at: '2026-08-28T00:00:00.000Z',
+      expires_at: '2026-08-28T00:30:00.000Z',
+      kind: 'agent',
+    };
+    authFetch
+      .mockResolvedValueOnce(response({ items: [{ ...pending, id: 'agent-1' }, { ...pending, id: 'agent-2' }] }))
+      .mockResolvedValueOnce(response({ success: true, count: 2 }))
+      .mockResolvedValueOnce(response({ items: [] }));
+
+    const subject = document.createElement('approval-dashboard');
+    document.body.append(subject);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await (subject as any).updateComplete;
+
+    const button = subject.shadowRoot?.querySelector<HTMLButtonElement>('.agent-batch-approve');
+    expect(button?.textContent).toContain('同工具全部通过 (2)');
+    button?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(authFetch).toHaveBeenNthCalledWith(2, '/api/agent/approvals/batch-review', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ toolName: 'slide_check_status', action: 'approve', scope: 'once' }),
+    }));
+  });
 });
