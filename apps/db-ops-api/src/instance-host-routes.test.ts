@@ -456,5 +456,12 @@ describe('instance-host public contract', () => {
     );
     expect(deletionRoute).toContain("result.error === 'SERVER_HAS_INSTANCE_RELATIONS'");
     expect(deletionRoute).toContain('reply.code(409)');
+
+    const testConnectionRoute = serverSource.slice(
+      serverSource.indexOf("fastify.post('/api/servers/test-connection'"),
+      serverSource.indexOf("fastify.post('/api/servers/:id/rotate-key'"),
+    );
+    expect(testConnectionRoute).not.toContain('if (!host_key_fingerprint)');
+    expect(testConnectionRoute).toContain('host_key_fingerprint?: string');
   });
 });

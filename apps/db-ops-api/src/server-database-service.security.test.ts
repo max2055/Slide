@@ -64,13 +64,14 @@ describe('ServerDatabaseService SSH security', () => {
     expect(mocks.connectConfigs[0].hostVerifier(Buffer.from('wrong-key'))).toBe(false);
   });
 
-  it('never opens a socket without a valid host key fingerprint', async () => {
+  it('connects without installing a host verifier when the fingerprint is omitted', async () => {
     const result = await serverDatabaseService.testConnection(
       'ssh.internal.example', 22, 'password', 'secret', 'operator', '',
     );
 
-    expect(result.success).toBe(false);
-    expect(mocks.connectConfigs).toHaveLength(0);
+    expect(result.success).toBe(true);
+    expect(mocks.connectConfigs).toHaveLength(1);
+    expect(mocks.connectConfigs[0]).not.toHaveProperty('hostVerifier');
   });
 
   it('stores a server with a null host-key fingerprint during enrollment', async () => {

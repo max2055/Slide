@@ -131,11 +131,24 @@ describe('ConfigBackupService', () => {
     expect(config.store!.insert).not.toHaveBeenCalled();
   });
 
-  it('fails closed when the host key fingerprint is missing', async () => {
+  it('collects without a host-key verifier when the fingerprint is missing', async () => {
     const active = connection();
     const config = options({ deviceService: { getDeviceById: vi.fn(async () => target), getCredentials: vi.fn(async () => ({ ...credentials, hostKeyFingerprint: '' })) } }, active);
     const service = new ConfigBackupService(config);
+    await expect(service.collect(7)).resolves.toMatchObject({ summary: { deviceId: 7 } });
+    expect((config.transport!.connect as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.objectContaining({ hostKeyFingerprint: undefined }),
+    );
+    expect(active.commands).toEqual([...CONFIG_BACKUP_COMMANDS]);
+  });
+
+  it('rejects a malformed non-empty host-key fingerprint', async () => {
+    const active = connection();
+    const config = options({ deviceService: { getDeviceById: vi.fn(async () => target), getCredentials: vi.fn(async () => ({ ...credentials, hostKeyFingerprint: 'SHA256:invalid' })) } }, active);
+    const service = new ConfigBackupService(config);
+
     await expect(service.collect(7)).rejects.toMatchObject({ code: 'SSH_HOST_KEY_FINGERPRINT_REQUIRED' });
+    expect(config.transport!.connect).not.toHaveBeenCalled();
     expect(active.commands).toEqual([]);
   });
 

@@ -13,6 +13,11 @@ export function normalizeSshHostKeyFingerprint(value: unknown): string {
   return `${PREFIX}${encoded}`;
 }
 
+export function normalizeOptionalSshHostKeyFingerprint(value: unknown): string | undefined {
+  if (value == null || (typeof value === 'string' && value.trim() === '')) return undefined;
+  return normalizeSshHostKeyFingerprint(value);
+}
+
 export function fingerprintSshHostKey(key: Buffer): string {
   return `${PREFIX}${createHash('sha256').update(key).digest('base64').replace(/=+$/, '')}`;
 }
@@ -28,4 +33,9 @@ export function createSshHostVerifier(expectedFingerprint: unknown) {
     }
     return verified;
   };
+}
+
+export function createOptionalSshHostVerifier(expectedFingerprint: unknown) {
+  const normalized = normalizeOptionalSshHostKeyFingerprint(expectedFingerprint);
+  return normalized ? createSshHostVerifier(normalized) : undefined;
 }

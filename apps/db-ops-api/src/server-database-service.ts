@@ -10,7 +10,7 @@ import mysql from 'mysql2/promise';
 import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
 import { Client } from 'ssh2';
 import { authorizeServerTarget } from './security/server-target-policy.js';
-import { createSshHostVerifier, normalizeSshHostKeyFingerprint } from './security/ssh-host-key.js';
+import { createOptionalSshHostVerifier, normalizeOptionalSshHostKeyFingerprint } from './security/ssh-host-key.js';
 import { normalizeServerOs } from './server-os-profile.js';
 
 export interface ServerRow {
@@ -200,9 +200,7 @@ class ServerDatabaseService {
       const canonicalOs = normalizeServerOs(data.os_type);
       if (!canonicalOs) return { success: false, error: 'HOST_OS_UNSUPPORTED' };
       const target = await authorizeServerTarget({ host: data.host, port: data.port || 22 });
-      const hostKeyFingerprint = data.host_key_fingerprint?.trim()
-        ? normalizeSshHostKeyFingerprint(data.host_key_fingerprint.trim())
-        : null;
+      const hostKeyFingerprint = normalizeOptionalSshHostKeyFingerprint(data.host_key_fingerprint) ?? null;
       // Check for duplicate host+port
       const [existing] = await pool.execute(
         'SELECT id, host, label FROM servers WHERE host = ? AND port = ?',
@@ -353,9 +351,7 @@ class ServerDatabaseService {
       }
       if (data.host_key_fingerprint !== undefined) {
         updates.push('host_key_fingerprint = ?');
-        values.push(data.host_key_fingerprint?.trim()
-          ? normalizeSshHostKeyFingerprint(data.host_key_fingerprint.trim())
-          : null);
+        values.push(normalizeOptionalSshHostKeyFingerprint(data.host_key_fingerprint) ?? null);
       }
 
       if (updates.length === 0) {
@@ -433,11 +429,11 @@ class ServerDatabaseService {
     credentialType: string,
     credentialValue: string,
     username: string,
-    hostKeyFingerprint: string,
+    hostKeyFingerprint?: string | null,
   ): Promise<{ success: boolean; error?: string; message?: string }> {
     try {
       const target = await authorizeServerTarget({ host, port });
-      const hostVerifier = createSshHostVerifier(hostKeyFingerprint);
+      const hostVerifier = createOptionalSshHostVerifier(hostKeyFingerprint);
       return new Promise((resolve) => {
         const client = new Client();
 
@@ -456,7 +452,7 @@ class ServerDatabaseService {
           port: target.port,
           username,
           readyTimeout: 10000,
-          hostVerifier,
+          ...(hostVerifier ? { hostVerifier } : {}),
         };
 
         if (credentialType === 'password') {

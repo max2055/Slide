@@ -40,7 +40,7 @@ describe('SSH session pool target and identity controls', () => {
 
   afterEach(() => sshSessionPool.closeAll());
 
-  it('authorizes every acquisition, pins the socket address, and requires the stored host key', async () => {
+  it('authorizes every acquisition, pins the socket address, and verifies a stored host key', async () => {
     const key = Buffer.from('known-host-key');
     await sshSessionPool.getConnection(
       'ssh.internal.example', 22, 'operator', 'password', 'secret', fingerprintSshHostKey(key),
@@ -52,10 +52,11 @@ describe('SSH session pool target and identity controls', () => {
     expect(mocks.connectConfigs[0].hostVerifier(Buffer.from('wrong-key'))).toBe(false);
   });
 
-  it('rejects legacy managed servers that have no trusted fingerprint', async () => {
-    await expect(sshSessionPool.getConnection(
+  it('connects without installing a host verifier when the stored fingerprint is absent', async () => {
+    await sshSessionPool.getConnection(
       'ssh.internal.example', 22, 'operator', 'password', 'secret', null,
-    )).rejects.toThrow('SSH_HOST_KEY_FINGERPRINT_REQUIRED');
-    expect(mocks.connectConfigs).toHaveLength(0);
+    );
+    expect(mocks.connectConfigs).toHaveLength(1);
+    expect(mocks.connectConfigs[0]).not.toHaveProperty('hostVerifier');
   });
 });

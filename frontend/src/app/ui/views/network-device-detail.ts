@@ -169,7 +169,7 @@ export class NetworkDeviceDetail extends LitElement {
       const message = code === "SSH_CREDENTIAL_REQUIRED"
         ? "请先编辑网络设备并配置 SSH 用户名和密码或私钥"
         : code === "SSH_HOST_KEY_FINGERPRINT_REQUIRED"
-          ? "请先编辑网络设备并配置 SSH 主机密钥指纹"
+          ? "SSH 主机密钥指纹格式无效，请修正或留空"
           : code || "Backup failed";
       showToast(message, "error");
     } finally {
