@@ -1,3 +1,5 @@
+import type { IconName } from "../../icons.js";
+
 export type SettingsView = {
   id: string;
   label: string;
@@ -8,7 +10,7 @@ export type SettingsItem = {
   id: SettingsPageId;
   label: string;
   path: string;
-  icon: string;
+  icon: IconName;
   requiredPermission?: string;
   views?: readonly SettingsView[];
 };
@@ -39,7 +41,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     items: [
       { id: "branding", label: "品牌", path: "/settings/platform/branding", icon: "palette" },
       { id: "appearance", label: "外观", path: "/settings/platform/appearance", icon: "spark" },
-      { id: "notifications", label: "通知通道", path: "/settings/platform/notifications", icon: "message-square", requiredPermission: "admin:*" },
+      { id: "notifications", label: "通知通道", path: "/settings/platform/notifications", icon: "bell", requiredPermission: "admin:*" },
     ],
   },
   {

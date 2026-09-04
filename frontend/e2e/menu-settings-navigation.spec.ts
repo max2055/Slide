@@ -1,6 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 
 async function installFixtures(page: Page) {
+  await page.routeWebSocket("**/agent-ws", (socket) => {
+    socket.onMessage((message) => {
+      const frame = JSON.parse(String(message)) as { type?: string };
+      if (frame.type === "auth") socket.send(JSON.stringify({ type: "auth_ok" }));
+    });
+  });
   await page.addInitScript(() => {
     localStorage.setItem("token", "fixture-navigation-token");
     localStorage.setItem("refreshToken", "fixture-refresh-token");
@@ -29,6 +35,9 @@ test.beforeEach(async ({ page }) => {
 test("desktop navigation uses the new groups and fixed utility entries", async ({ page }) => {
   await page.goto("/dashboard");
   await expect(page.locator(".sidebar-nav")).toBeVisible();
+  const logo = page.locator(".sidebar-brand__logo");
+  await expect(logo).toBeVisible();
+  expect(await logo.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
 
   await expect(page.locator(".nav-section__label-text")).toHaveText([
     "工作台", "资源管理", "运维中心", "安全与治理",
@@ -45,6 +54,7 @@ test("desktop navigation uses the new groups and fixed utility entries", async (
   await expect(page.locator("settings-shell .settings-group__label")).toHaveText([
     "平台设置", "监控与分析", "AI 与 Agent", "用户与权限",
   ]);
+  await expect(page.locator("settings-shell .settings-item__icon svg")).toHaveCount(11);
 });
 
 test("legacy routes preserve query parameters and merged views restore through history", async ({ page }) => {

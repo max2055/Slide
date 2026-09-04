@@ -296,7 +296,7 @@ export class SettingsShell extends LitElement {
                 aria-current=${this.activePage === item.id ? "page" : nothing}
                 @click=${() => this.navigateTo(item)}
               >
-                <span class="settings-item__icon" aria-hidden="true">${icons[item.icon as keyof typeof icons] ?? nothing}</span>
+                <span class="settings-item__icon" aria-hidden="true">${icons[item.icon]}</span>
                 <span>${item.label}</span>
               </button>
             `)}

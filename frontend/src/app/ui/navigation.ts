@@ -238,7 +238,7 @@ export function iconForTab(tab: Tab): IconName {
     case "health-center":
       return "activity";
     case "dashboard":
-      return "bar-chart";
+      return "layout-dashboard";
     case "docs":
       return "book";
     case "instances-db":
