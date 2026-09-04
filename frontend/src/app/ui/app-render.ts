@@ -39,6 +39,7 @@ import "./views/agent-sandbox-status.ts";
 import "./views/prompt-settings.ts";
 import "./views/scoring-settings.ts";
 import "./views/health-center.ts";
+import "./views/feedback-page.ts";
 import "./views/alerts.ts";
 import "./views/schema-management.ts";
 import "./views/index-management.ts";
@@ -759,6 +760,9 @@ export function renderApp(state: AppViewState) {
           : nothing}
         ${state.tab === "health-center"
           ? html`<platform-status-page></platform-status-page>`
+          : nothing}
+        ${state.tab === "feedback"
+          ? html`<feedback-page></feedback-page>`
           : nothing}
         ${state.tab === "sql-console"
           ? html`<sql-console-page></sql-console-page>`

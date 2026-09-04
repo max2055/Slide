@@ -454,7 +454,7 @@ export class SlideApp extends LitElement {
     // Check URL params for tab navigation
     const urlParams = new URLSearchParams(window.location.search);
     const tabParam = urlParams.get("tab");
-    if (tabParam && ["dashboard", "instances-db", "instance-detail", "alerts", "reports", "metric-registry", "events", "llm-config", "health-center", "servers", "server-detail", "network-devices", "network-device-detail"].includes(tabParam)) {
+    if (tabParam && ["dashboard", "instances-db", "instance-detail", "alerts", "reports", "metric-registry", "events", "llm-config", "health-center", "feedback", "servers", "server-detail", "network-devices", "network-device-detail"].includes(tabParam)) {
       const initialId = urlParams.get("id");
       const initialNetworkId = urlParams.get("networkDeviceId") ?? (tabParam === "network-device-detail" ? initialId : null);
       if (tabParam === "server-detail" && initialId) (this as any).serverId = Number(initialId);
@@ -511,7 +511,7 @@ export class SlideApp extends LitElement {
     window.addEventListener("popstate", () => {
       const urlParams = new URLSearchParams(window.location.search);
       const tabParam = urlParams.get("tab");
-      if (tabParam && ["dashboard", "instances-db", "instance-detail", "alerts", "reports", "metric-registry", "events", "llm-config", "docs", "health-center", "servers", "server-detail", "network-devices", "network-device-detail"].includes(tabParam)) {
+      if (tabParam && ["dashboard", "instances-db", "instance-detail", "alerts", "reports", "metric-registry", "events", "llm-config", "docs", "health-center", "feedback", "servers", "server-detail", "network-devices", "network-device-detail"].includes(tabParam)) {
         const id = urlParams.get("id");
         const networkId = urlParams.get("networkDeviceId") ?? (tabParam === "network-device-detail" ? id : null);
         if (tabParam === "server-detail") (this as any).serverId = id ? Number(id) : undefined;

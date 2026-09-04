@@ -22,7 +22,7 @@ export const TAB_GROUPS = [
   },
 ] as const;
 
-export const UTILITY_TABS = ["health-center", "settings"] as const;
+export const UTILITY_TABS = ["health-center", "feedback", "settings"] as const;
 
 export type Tab =
   | "agents"
@@ -36,6 +36,7 @@ export type Tab =
   | "config"
   | "cron-jobs"
   | "health-center"
+  | "feedback"
   | "dashboard"
   | "docs"
   | "instances-db"
@@ -77,6 +78,7 @@ const TAB_PATHS: Record<Tab, string> = {
   config: "/config",
   "cron-jobs": "/cron-jobs",
   "health-center": "/health",
+  feedback: "/feedback",
   dashboard: "/dashboard",
   docs: "/docs",
   "instances-db": "/instances-db",
@@ -109,7 +111,7 @@ const PATH_TO_TAB = new Map<string, Tab>([
 /** Tabs suitable as a default landing page (excludes context-dependent tabs). */
 export const DEFAULT_TAB_OPTIONS: Tab[] = [
   "chat", "dashboard", "instances-db", "servers", "network-devices", "sql-console",
-  "reports", "events", "approval", "audit-center", "cron-jobs", "health-center", "settings",
+  "reports", "events", "approval", "audit-center", "cron-jobs", "health-center", "feedback", "settings",
 ];
 
 export const TAB_REQUIRED_PERMISSIONS: Partial<Record<Tab, string>> = {
@@ -237,6 +239,8 @@ export function iconForTab(tab: Tab): IconName {
       return "loader";
     case "health-center":
       return "activity";
+    case "feedback":
+      return "bug";
     case "dashboard":
       return "layout-dashboard";
     case "docs":
