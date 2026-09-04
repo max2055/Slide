@@ -34,7 +34,7 @@ import "./views/agent-sessions.ts";
 import "./views/agent-skills.ts";
 import "./views/agent-tools.ts";
 import "./views/agent-security-policy.ts";
-import "./views/agent-tool-audit.ts";
+import "./views/audit-center.ts";
 import "./views/agent-sandbox-status.ts";
 import "./views/prompt-settings.ts";
 import "./views/scoring-settings.ts";
@@ -780,7 +780,7 @@ export function renderApp(state: AppViewState) {
           ? html`<event-center-page></event-center-page>`
           : nothing}
         ${state.tab === "audit-center"
-          ? html`<agent-tool-audit-page></agent-tool-audit-page>`
+          ? html`<audit-center-page></audit-center-page>`
           : nothing}
         ${state.tab === "docs"
           ? html`<docs-viewer-page></docs-viewer-page>`
