@@ -429,6 +429,39 @@ describe('DirectAdapter', () => {
       }
     }, 10_000);
 
+    it('closes connected clients with 1012 during a graceful service restart', async () => {
+      const port = 28996;
+      const previousPort = process.env.AGENT_WS_PORT;
+      process.env.AGENT_WS_PORT = String(port);
+      const adapter = createMockAdapter();
+      adaptersToCleanup.push(adapter);
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      try {
+        await adapter.start();
+        const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+        await new Promise<void>((resolve, reject) => {
+          ws.once('open', resolve);
+          ws.once('error', reject);
+        });
+        const close = new Promise<{ code: number; reason: string }>((resolve) => {
+          ws.once('close', (code, reason) => resolve({ code, reason: reason.toString() }));
+        });
+
+        await adapter.dispose();
+
+        await expect(close).resolves.toEqual({ code: 1012, reason: 'Service restart' });
+        await vi.waitFor(() => expect(warning).toHaveBeenCalledWith(
+          '[DirectAdapter] WebSocket closed',
+          expect.stringContaining('"code":1012'),
+        ));
+      } finally {
+        warning.mockRestore();
+        if (previousPort === undefined) delete process.env.AGENT_WS_PORT;
+        else process.env.AGENT_WS_PORT = previousPort;
+      }
+    }, 10_000);
+
     it('denies a production-catalog sensitive tool over the authenticated WebSocket transport', async () => {
       const port = 28993;
       const previousPort = process.env.AGENT_WS_PORT;
@@ -522,6 +555,7 @@ describe('DirectAdapter', () => {
       const metadata = vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
       const createSession = vi.spyOn(chatDatabaseService, 'createSession').mockResolvedValue({ session_id: 'ws-provider-failure-session' } as any);
       const addMessage = vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
+      const findByIdempotencyKey = vi.spyOn(agentRunService, 'findByIdempotencyKey').mockResolvedValue(null);
       const claim = vi.spyOn(agentRunService, 'claim').mockResolvedValue({
         created: true,
         run: { id: 'provider-failure-run', actorId: actor.userId, sessionId: 'ws-provider-failure-session', messageId: 'failure-message', idempotencyKey: 'failure-key', state: 'running' },
@@ -571,6 +605,7 @@ describe('DirectAdapter', () => {
         metadata.mockRestore();
         createSession.mockRestore();
         addMessage.mockRestore();
+        findByIdempotencyKey.mockRestore();
         claim.mockRestore();
         finish.mockRestore();
         if (previousPort === undefined) delete process.env.AGENT_WS_PORT;

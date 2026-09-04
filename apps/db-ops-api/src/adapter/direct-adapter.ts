@@ -40,7 +40,7 @@ import {
   type ActorContextService,
 } from '../auth/actor-context.js';
 import { validateChatSendV2 } from './protocol-v2.js';
-import { agentRunService } from './agent-run-service.js';
+import { agentRunService, type AgentRun } from './agent-run-service.js';
 import { getDeviceAuthService } from '../security/device-auth-service.js';
 import { completeAnalysisTool } from '../tools/generated/slide-self-mgmt/complete_analysis.js';
 import { normalizeToolResult } from '../tools/types.js';
@@ -243,13 +243,21 @@ export class DirectAdapter implements IAgentEngine {
       });
     }
 
-    this.wsServer.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
-      console.log('[DirectAdapter] WS client connected');
+    this.wsServer.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+      const connectionId = randomUUID();
+      const connectedAt = new Date().toISOString();
+      const pendingMessages = new Map<string, string>();
+      console.log('[DirectAdapter] WS client connected', JSON.stringify({
+        connectionId,
+        connectedAt,
+        remoteAddress: req.socket.remoteAddress,
+      }));
       (ws as any)._isAlive = true;
       type ConnectionAuthState = 'unauthenticated' | 'authenticating' | 'authenticated' | 'closed';
       let authState: ConnectionAuthState = 'unauthenticated';
       let authGeneration = 0;
       let connectionActor: ActorContext | undefined;
+      let authenticatedUserId: number | null = null;
       let revalidationInFlight = false;
       const frameLimiter = new FixedWindowRateLimiter(
         this.runtimeLimits.wsFramesPerWindow,
@@ -260,6 +268,21 @@ export class DirectAdapter implements IAgentEngine {
       }, this.runtimeLimits.authTimeoutMs);
       (ws as any)._authState = authState;
       (ws as any)._actorContext = undefined;
+
+      const subscribeToSession = (sessionKey: string) => {
+        if (!this.sessionSubscribers.has(sessionKey)) {
+          this.sessionSubscribers.set(sessionKey, new Set());
+        }
+        this.sessionSubscribers.get(sessionKey)!.add(ws);
+      };
+
+      const sendToSession = (sessionKey: string, payload: Record<string, unknown>) => {
+        const serialized = JSON.stringify(payload);
+        for (const subscriber of this.sessionSubscribers.get(sessionKey) ?? []) {
+          if (subscriber.readyState !== WebSocket.OPEN) continue;
+          try { subscriber.send(serialized); } catch { /* close logging captures the transport failure */ }
+        }
+      };
 
       const clearAuthentication = () => {
         authGeneration += 1;
@@ -321,7 +344,18 @@ export class DirectAdapter implements IAgentEngine {
         (ws as any)._isAlive = true;
       });
 
-      ws.on('close', () => {
+      ws.on('close', (code, reasonBuffer) => {
+        const reason = reasonBuffer.toString();
+        console.warn('[DirectAdapter] WebSocket closed', JSON.stringify({
+          timestamp: new Date().toISOString(),
+          connectionId,
+          connectedAt,
+          code,
+          reason,
+          wasClean: code !== 1006,
+          userId: authenticatedUserId,
+          pendingMessages: [...pendingMessages].map(([messageId, idempotencyKey]) => ({ messageId, idempotencyKey })),
+        }));
         clearTimeout(authTimer);
         clearInterval(heartbeatTimer);
         clearAuthentication();
@@ -381,6 +415,7 @@ export class DirectAdapter implements IAgentEngine {
               && authState === 'authenticating'
               && authGeneration === authenticationGeneration) {
               connectionActor = authenticatedActor;
+              authenticatedUserId = authenticatedActor.userId;
               authState = 'authenticated';
               (ws as any)._actorContext = authenticatedActor;
               (ws as any)._authState = authState;
@@ -448,17 +483,47 @@ export class DirectAdapter implements IAgentEngine {
               return;
             }
 
+            const idempotencyKey = msg.idempotencyKey as string | undefined;
+            const messageId = msg.messageId as string | undefined;
+            if (idempotencyKey && messageId) {
+              pendingMessages.set(messageId, idempotencyKey);
+              try {
+                const existingRun = await agentRunService.findByIdempotencyKey(
+                  messageActor.userId,
+                  idempotencyKey,
+                );
+                if (existingRun) {
+                  if (existingRun.messageId !== messageId
+                    || (rawSessionKey && existingRun.sessionId !== sessionKey)) {
+                    ws.send(JSON.stringify({ type: 'protocol.error', code: 'IDEMPOTENCY_CONFLICT' }));
+                    return;
+                  }
+                  await chatDatabaseService.authorizeSession(messageActor, existingRun.sessionId, 'append');
+                  subscribeToSession(existingRun.sessionId);
+                  ws.send(JSON.stringify({
+                    type: 'run.snapshot',
+                    run: existingRun,
+                    messageId,
+                    sessionKey: existingRun.sessionId,
+                  }));
+                  return;
+                }
+              } catch (err) {
+                const errorMsg = err instanceof Error ? err.message : String(err);
+                ws.send(JSON.stringify({ type: 'error', error: errorMsg }));
+                return;
+              }
+            }
+
             if (!this.runLimiter.acquire(messageActor.userId)) {
               ws.send(JSON.stringify({ type: 'protocol.error', code: 'RUN_CONCURRENCY_LIMIT' }));
               return;
             }
 
-            const idempotencyKey = msg.idempotencyKey as string | undefined;
-            const messageId = msg.messageId as string | undefined;
             const controller = new AbortController();
             const runTimeout = setTimeout(() => controller.abort(), this.runtimeLimits.runTimeoutMs);
 
-            let persistentRun: { run: { id: string }; created: boolean } | undefined;
+            let persistentRun: { run: AgentRun; created: boolean } | undefined;
             try {
               if (!sessionKey) {
                 const created = await chatDatabaseService.createSession(messageActor, { title: '新会话' });
@@ -472,11 +537,23 @@ export class DirectAdapter implements IAgentEngine {
                 ? await agentRunService.claim(messageActor.userId, sessionKey, messageId, idempotencyKey)
                 : undefined;
               if (persistentRun && !persistentRun.created) {
-                ws.send(JSON.stringify({ type: 'run.snapshot', run: persistentRun.run, messageId }));
+                if (persistentRun.run.messageId !== messageId) {
+                  ws.send(JSON.stringify({ type: 'protocol.error', code: 'IDEMPOTENCY_CONFLICT' }));
+                  return;
+                }
+                sessionKey = persistentRun.run.sessionId;
+                subscribeToSession(sessionKey);
+                ws.send(JSON.stringify({
+                  type: 'run.snapshot',
+                  run: persistentRun.run,
+                  messageId,
+                  sessionKey,
+                }));
                 return;
               }
               if (persistentRun) {
                 this.activeRuns.set(persistentRun.run.id, { actorId: messageActor.userId, sessionId: sessionKey, controller });
+                subscribeToSession(sessionKey);
                 ws.send(JSON.stringify({ type: 'run.started', runId: persistentRun.run.id, sessionKey, messageId }));
               }
 
@@ -487,10 +564,7 @@ export class DirectAdapter implements IAgentEngine {
               });
 
               // Authorization succeeds before the connection joins broadcasts.
-              if (!this.sessionSubscribers.has(sessionKey)) {
-                this.sessionSubscribers.set(sessionKey, new Set());
-              }
-              this.sessionSubscribers.get(sessionKey)!.add(ws);
+              subscribeToSession(sessionKey);
 
               const chatResult = await this.chat(sessionKey, userMessage, async (event) => {
                 // Persist assistant's final response BEFORE sending to client,
@@ -514,10 +588,10 @@ export class DirectAdapter implements IAgentEngine {
                     console.error('[DirectAdapter] Failed to persist assistant message:', dbErr instanceof Error ? dbErr.message : String(dbErr));
                   }
                 }
-                ws.send(JSON.stringify({
+                sendToSession(sessionKey, {
                   ...outgoingEvent,
                   ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
-                }));
+                });
                 }, messageActor, controller.signal, idempotencyKey);
               if (persistentRun) {
                 const terminal = chatResult.stopReason === 'completed'
@@ -542,6 +616,7 @@ export class DirectAdapter implements IAgentEngine {
             } finally {
               clearTimeout(runTimeout);
               this.runLimiter.release(messageActor.userId);
+              if (messageId) pendingMessages.delete(messageId);
             }
             break;
           }
@@ -933,6 +1008,9 @@ ${result.finalContent || ''}`
    */
   async dispose(): Promise<void> {
     if (this.wsServer) {
+      for (const ws of this.wsServer.clients) {
+        if (ws.readyState === WebSocket.OPEN) ws.close(1012, 'Service restart');
+      }
       this.wsServer.close();
       this.wsServer = null;
     }
