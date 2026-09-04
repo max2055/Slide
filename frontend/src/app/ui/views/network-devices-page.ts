@@ -245,8 +245,8 @@ export class NetworkDevicesPage extends LitElement {
     this.formError = null;
     try {
       const ssh = this.sshPayload();
-      if (ssh && (!ssh.username || !ssh.credentialValue || !ssh.hostKeyFingerprint)) {
-        this.formError = "请完整填写 SSH 凭据和主机密钥指纹，或全部留空";
+      if (ssh && (!ssh.username || !ssh.credentialValue)) {
+        this.formError = "请完整填写 SSH 用户名和凭据，或全部留空";
         return;
       }
       const response = await authFetch("/api/network-devices/test-connection", {

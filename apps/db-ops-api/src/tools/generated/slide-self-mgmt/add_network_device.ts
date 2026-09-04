@@ -102,7 +102,7 @@ export const addNetworkDeviceTool: AnyAgentTool = {
         artifacts: { networkDeviceId: created.deviceId },
         summary: `已将网络设备 "${input.name.trim()}" 登记到资源列表，等待配置凭据`,
         details: { networkDeviceId: created.deviceId, host, snmpPort, terminal: false, retryable: false },
-        next_actions: ['在网络设备页面配置 SNMP 凭据；需要配置备份时再配置 SSH 凭据和主机密钥指纹'],
+        next_actions: ['在网络设备页面配置 SNMP 凭据；需要配置备份时再配置 SSH 凭据（主机密钥指纹可选）'],
       };
     } catch {
       return {

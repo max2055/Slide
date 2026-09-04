@@ -114,7 +114,11 @@ describe('network-device routes', () => {
     const unknown = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { host: '192.0.2.10', snmpv3: { username: 'm', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: '12345678', privacyProtocol: 'AES', privacySecret: '12345678' }, command: 'display current-configuration' } });
     expect(unknown.statusCode).toBe(400);
     const sshWithoutFingerprint = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { host: '192.0.2.10', snmpv3: { username: 'm', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: '12345678', privacyProtocol: 'AES', privacySecret: '12345678' }, ssh: { username: 'readonly', credentialType: 'password', credentialValue: 'secret' } } });
-    expect(sshWithoutFingerprint.statusCode).toBe(400);
+    expect(sshWithoutFingerprint.statusCode).toBe(200);
+    expect(sshProbe).toHaveBeenCalledWith(expect.objectContaining({
+      host: '192.0.2.10', username: 'readonly', credentialType: 'password',
+      hostKeyFingerprint: undefined,
+    }));
     const valid = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { host: '192.0.2.10', version: 3, snmpPort: 161, snmpv3: { username: 'm', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: '12345678', privacyProtocol: 'AES', privacySecret: '12345678' } } });
     expect(valid.statusCode).toBe(200);
     expect(probe).toHaveBeenCalledTimes(2);

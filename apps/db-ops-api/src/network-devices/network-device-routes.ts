@@ -94,8 +94,8 @@ export async function registerNetworkDeviceRoutes(
   });
 
   // Keep the static probe endpoint before /:id. The enrollment probe is
-  // SNMP-first; when an SSH credential is supplied,
-  // it performs a second, command-free host-key handshake before returning.
+  // SNMP-first; when an SSH credential is supplied, it performs a second,
+  // command-free SSH handshake and verifies the host key when one is pinned.
   fastify.post('/api/network-devices/test-connection', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } }, preHandler: manage }, async (request, reply) => {
     try {
       const check = strictBody(request.body as Record<string, unknown>, ['host', 'version', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh', 'vendor'], 'POST /api/network-devices/test-connection');
@@ -114,7 +114,6 @@ export async function registerNetworkDeviceRoutes(
       let sshVerified = false;
       if (body.ssh !== undefined) {
         const ssh = validateSshCredential(body.ssh);
-        if (!ssh.hostKeyFingerprint) throw new Error('SSH_HOST_KEY_FINGERPRINT_REQUIRED');
         const sshPort = validatePort(body.sshPort ?? body.ssh_port, 'ssh_port', 22);
         await sshProbe({
           host,

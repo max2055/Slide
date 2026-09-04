@@ -10,7 +10,7 @@
 
 import { Client, ClientChannel, ConnectConfig } from 'ssh2';
 import { authorizeServerTarget } from './security/server-target-policy.js';
-import { createSshHostVerifier, normalizeSshHostKeyFingerprint } from './security/ssh-host-key.js';
+import { createOptionalSshHostVerifier, normalizeOptionalSshHostKeyFingerprint } from './security/ssh-host-key.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -20,7 +20,7 @@ interface SshSession {
   port: number;
   lastUsed: number;
   inUse: boolean;
-  hostKeyFingerprint: string;
+  hostKeyFingerprint?: string;
 }
 
 interface PoolStats {
@@ -86,7 +86,7 @@ class SshSessionPool {
     hostKeyFingerprint?: string | null
   ): Promise<Client> {
     const target = await authorizeServerTarget({ host, port });
-    const normalizedFingerprint = normalizeSshHostKeyFingerprint(hostKeyFingerprint);
+    const normalizedFingerprint = normalizeOptionalSshHostKeyFingerprint(hostKeyFingerprint);
     // Look for an existing idle connection to this host
     const existing = this._findIdle(target.hostname, target.port, normalizedFingerprint);
     if (existing) {
@@ -203,7 +203,7 @@ class SshSessionPool {
 
   // ── Private helpers ──────────────────────────────────────────────────────────
 
-  private _findIdle(host: string, port: number, hostKeyFingerprint: string): SshSession | undefined {
+  private _findIdle(host: string, port: number, hostKeyFingerprint?: string): SshSession | undefined {
     return this.sessions.find(
       (s) => s.host === host && s.port === port && s.hostKeyFingerprint === hostKeyFingerprint && !s.inUse
     );
@@ -224,11 +224,12 @@ class SshSessionPool {
     username: string,
     credentialType: string,
     credentialValue: string,
-    hostKeyFingerprint: string,
+    hostKeyFingerprint?: string,
   ): Promise<Client> {
     return new Promise((resolve, reject) => {
       const client = new Client();
 
+      const hostVerifier = createOptionalSshHostVerifier(hostKeyFingerprint);
       const connectConfig: ConnectConfig = {
         host: address,
         port,
@@ -236,7 +237,7 @@ class SshSessionPool {
         readyTimeout: this.config.readyTimeoutMs,
         keepaliveInterval: this.config.keepaliveIntervalMs,
         keepaliveCountMax: this.config.keepaliveCountMax,
-        hostVerifier: createSshHostVerifier(hostKeyFingerprint),
+        ...(hostVerifier ? { hostVerifier } : {}),
       };
 
       // Build credential payload based on credential type

@@ -450,8 +450,8 @@ export class ServersPage extends LitElement {
   }
 
   private async _handleTestConnection() {
-    if (!this._form.host || !this._form.credential_username || !this._form.host_key_fingerprint) {
-      showToast("请先填写主机地址、SSH用户名和主机密钥指纹", "warning");
+    if (!this._form.host || !this._form.credential_username) {
+      showToast("请先填写主机地址和SSH用户名", "warning");
       return;
     }
 
@@ -469,7 +469,9 @@ export class ServersPage extends LitElement {
           credential_type: this._form.credential_type,
           credential_username: this._form.credential_username,
           credential_value: this._form.credential_value,
-          host_key_fingerprint: this._form.host_key_fingerprint,
+          ...(this._form.host_key_fingerprint.trim()
+            ? { host_key_fingerprint: this._form.host_key_fingerprint.trim() }
+            : {}),
         }),
       });
       const result = await res.json();

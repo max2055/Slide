@@ -95,6 +95,31 @@ describe("network-devices-page", () => {
     expect(element.textContent).not.toMatch(/restore|config push|SNMP SET|任意命令/i);
   });
 
+  it("tests SSH credentials without requiring a host-key fingerprint", async () => {
+    authFetch.mockImplementation(async (url: string) => {
+      if (url === "/api/network-devices") return response([]);
+      if (url === "/api/network-devices/test-connection") return response({ success: true });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const element = document.createElement("network-devices-page") as any;
+    document.body.append(element);
+    await settle(element);
+    element.openCreate();
+    element.form = {
+      ...element.form,
+      host: "10.0.0.8", username: "readonly", securityLevel: "noAuthNoPriv",
+      sshUsername: "ops", sshCredentialValue: "secret",
+    };
+
+    await element.testConnection();
+
+    const call = authFetch.mock.calls.find(([url]) => url === "/api/network-devices/test-connection");
+    expect(JSON.parse(call?.[1]?.body).ssh).toEqual({
+      protocol: "ssh", credentialType: "password", username: "ops", credentialValue: "secret",
+    });
+    expect(element.formError).toBeNull();
+  });
+
   it("renders SSH credential and host-key fields for backup enrollment", async () => {
     authFetch.mockResolvedValue(response([]));
     const element = document.createElement("network-devices-page") as any;

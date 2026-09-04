@@ -1551,11 +1551,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   }, async (request, reply) => {
     try {
       const check = strictBody(request.body as Record<string, unknown>,
-          ['host', 'port', 'credential_type', 'credential_username', 'credential_value', 'host_key_fingerprint'], 'POST /api/servers/test-connection');
-        if (check.error) return reply.code(400).send(check.error);
-        const { host, port, credential_type, credential_username, credential_value, host_key_fingerprint } = check.body as { host: string; port: number; credential_type: string; credential_username: string; credential_value: string; host_key_fingerprint: string };
-      if (!host_key_fingerprint) return reply.code(400).send({ error: '缺少必填字段：host_key_fingerprint' });
-      const result = await serverDatabaseService.testConnection(String(host), Number(port), String(credential_type), String(credential_value), String(credential_username), String(host_key_fingerprint));
+        ['host', 'port', 'credential_type', 'credential_username', 'credential_value', 'host_key_fingerprint'], 'POST /api/servers/test-connection');
+      if (check.error) return reply.code(400).send(check.error);
+      const { host, port, credential_type, credential_username, credential_value, host_key_fingerprint } = check.body as { host: string; port: number; credential_type: string; credential_username: string; credential_value: string; host_key_fingerprint?: string };
+      const result = await serverDatabaseService.testConnection(String(host), Number(port), String(credential_type), String(credential_value), String(credential_username), host_key_fingerprint);
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: '测试连接失败：' + error.message });
