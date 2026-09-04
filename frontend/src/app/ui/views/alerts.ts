@@ -1,6 +1,6 @@
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
-import { customElement, state } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
@@ -79,6 +79,7 @@ interface NotificationDeadLetter {
 
 @customElement("alerts-page")
 export class AlertsPage extends LitElement {
+  @property() mode: "active" | "rules" | "notifications" = "active";
   static styles = [sharedBtnStyles, css`
     :host {
       display: block;
@@ -628,6 +629,7 @@ export class AlertsPage extends LitElement {
 
   override firstUpdated() {
     this.loadAlerts();
+    this._applyMode();
     // Check URL params for auto-filtering from server-detail navigation
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get("tab");
@@ -649,14 +651,13 @@ export class AlertsPage extends LitElement {
   // ==================== Tab Navigation ====================
 
   private _renderTabs() {
+    if (this.mode !== "rules") return nothing;
     const tabs: Array<{ key: string; label: string; badge?: number }> = [
-      { key: 'alerts' as const, label: '告警列表' },
       { key: 'rules' as const, label: '告警规则' },
       { key: 'escalation' as const, label: '升级规则' },
       { key: 'maintenance' as const, label: '维护窗口' },
       { key: 'silence' as const, label: '静默期' },
       { key: 'baselines' as const, label: '基线' },
-      { key: 'notifications' as const, label: '通知恢复' },
     ];
 
     return html`
@@ -674,25 +675,35 @@ export class AlertsPage extends LitElement {
     `;
   }
 
+  protected override willUpdate(changed: Map<PropertyKey, unknown>) {
+    if (changed.has("mode")) this._applyMode();
+  }
+
+  private _applyMode() {
+    const next = this.mode === "notifications" ? "notifications" : this.mode === "rules" ? "rules" : "alerts";
+    if (this.activeAlertTab !== next) this.activeAlertTab = next;
+    this._onTabSwitch(next);
+  }
+
   private _onTabSwitch(tab: string) {
     switch (tab) {
       case 'rules':
-        if (this.rules.length === 0) this.loadRules();
+        if (this.rules.length === 0 && !this.rulesLoading) this.loadRules();
         break;
       case 'escalation':
-        if (this.escalationRules.length === 0) this.loadEscalationRules();
+        if (this.escalationRules.length === 0 && !this.escalationLoading) this.loadEscalationRules();
         break;
       case 'maintenance':
-        if (this.maintenanceWindows.length === 0) this.loadMaintenanceWindows();
+        if (this.maintenanceWindows.length === 0 && !this.maintenanceLoading) this.loadMaintenanceWindows();
         break;
       case 'silence':
-        if (this.silencePeriods.length === 0) this.loadSilencePeriods();
+        if (this.silencePeriods.length === 0 && !this.silenceLoading) this.loadSilencePeriods();
         break;
       case 'baselines':
-        if (this.baselines.length === 0) this.loadBaselines();
+        if (this.baselines.length === 0 && !this.baselinesLoading) this.loadBaselines();
         break;
       case 'notifications':
-        void this.loadNotificationDeadLetters();
+        if (!this.notificationDeadLettersLoading) void this.loadNotificationDeadLetters();
         break;
     }
   }
@@ -879,7 +890,18 @@ export class AlertsPage extends LitElement {
         @alert-navigate-instance=${(e: CustomEvent) => this._navigateToInstance(e.detail.id)}
         @alert-navigate-network-device=${(e: CustomEvent) => this._navigateToNetworkDevice(e.detail.id)}
         @alert-navigate-chat=${(e: CustomEvent) => this._navigateToChat(e.detail.sessionKey)}
-        @alert-create=${() => { this.activeAlertTab = 'rules'; this._openRuleModal(); }}
+        @alert-create=${() => {
+          if (this.mode === "active") {
+            this.dispatchEvent(new CustomEvent("event-center-view", {
+              detail: { view: "rules", action: "create-rule" },
+              bubbles: true,
+              composed: true,
+            }));
+          } else {
+            this.activeAlertTab = "rules";
+            this._openRuleModal();
+          }
+        }}
         @alert-filter-severity=${(e: CustomEvent) => { this.filterSeverity = e.detail.value; }}
         @alert-filter-target-type=${(e: CustomEvent) => { this.filterTargetType = e.detail.value; this.filterServerId = null; }}
         @alert-filter-server-id=${(e: CustomEvent) => { this.filterServerId = e.detail.value; }}
@@ -1180,6 +1202,12 @@ export class AlertsPage extends LitElement {
     } finally {
       this.rulesLoading = false;
     }
+  }
+
+  openRuleEditor() {
+    this.activeAlertTab = "rules";
+    this._onTabSwitch("rules");
+    this._openRuleModal();
   }
 
   private _openRuleModal(rule?: AlertRule) {

@@ -10,6 +10,7 @@ import { customElement, state } from "lit/decorators.js";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.js";
 import { authFetch } from "../../../api/index.js";
 import { icons } from "../../../icons.js";
+import { inferBasePathFromPathname } from "../navigation.ts";
 import "../components/app-card.js";
 import "../components/app-badge.js";
 import "../components/app-empty-state.js";
@@ -216,15 +217,18 @@ export class HealthCenterPage extends LitElement {
   private _sl(status: string) { return { pass:'通过',warn:'警告',fail:'失败',deferred:'推迟' }[status] || '?'; }
 
   private _navigateTo(target: string) {
-    const tabMap: Record<string, string> = {
-      '#/database-instances': 'instances',
-      '#/settings/llm-config': 'llm-config',
-      '#/settings/cron-jobs': 'cron-jobs',
+    const routeMap: Record<string, string> = {
+      '#/database-instances': '/instances-db',
+      '#/settings/llm-config': '/settings/ai/models',
+      '#/settings/cron-jobs': '/cron-jobs',
+      '#/settings/rbac': '/settings/access/users?view=roles',
+      '#/settings/notifications': '/settings/platform/notifications',
+      '#/alerts': '/events?view=active',
     };
-    const tab = tabMap[target] || 'settings';
-    window.dispatchEvent(new CustomEvent("slide-navigate", {
-      detail: { tab, settingsTab: target }
-    }));
+    const targetRoute = routeMap[target] ?? '/settings';
+    const basePath = inferBasePathFromPathname(window.location.pathname);
+    window.history.pushState({}, '', new URL(`${basePath}${targetRoute}`, window.location.origin));
+    window.dispatchEvent(new PopStateEvent('popstate'));
   }
 
   private _readinessItems(): ReadinessItem[] {

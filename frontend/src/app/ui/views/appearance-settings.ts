@@ -9,11 +9,11 @@ import { t } from "../../i18n/index.ts";
 import { applyAccentColor, applyBorderRadius, applyNavWidth } from "../app-settings.ts";
 import { applyButtonPalette, type ButtonPalette } from "../btn-palette.ts";
 import { applyDensity, type Density } from "../density.ts";
-import { DEFAULT_TAB_OPTIONS, TAB_GROUPS } from "../navigation.ts";
+import { DEFAULT_TAB_OPTIONS, TAB_GROUPS, UTILITY_TABS } from "../navigation.ts";
 import type { Locale } from "../../i18n/lib/types.ts";
 import "../components/app-card.js";
 
-const ALL_TABS = TAB_GROUPS.flatMap((g) => [...g.tabs]);
+const ALL_TABS = [...TAB_GROUPS.flatMap((g) => [...g.tabs]), ...UTILITY_TABS];
 
 const TIMEZONES = [
   "UTC", "Asia/Shanghai", "Asia/Tokyo", "Asia/Singapore",

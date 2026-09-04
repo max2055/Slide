@@ -7,6 +7,7 @@ import "../components/app-badge.js";
 import "../components/app-empty-state.js";
 import { apiClient } from '../../../api/index.js';
 import { showToast } from "../components/app-toast-container.js";
+import { settingsBasePath } from "../settings-navigation.ts";
 
 interface UserInfo {
   id: number;
@@ -346,11 +347,12 @@ export class UsersManagement extends LitElement {
   }
 
   private _navigateToRbac(userId: number) {
-    window.dispatchEvent(new CustomEvent("slide-navigate", {
-      detail: { tab: "rbac", id: userId },
-      bubbles: true,
-      composed: true,
-    }));
+    const url = new URL(window.location.href);
+    url.pathname = `${settingsBasePath(window.location.pathname)}/settings/access/users`;
+    url.searchParams.set("view", "roles");
+    url.searchParams.set("userId", String(userId));
+    window.history.pushState({}, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
   }
 
   // Modal handling

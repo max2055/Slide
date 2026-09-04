@@ -1,6 +1,6 @@
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
-import { customElement, state } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { apiClient } from '../../../api/index.js';
 import "../components/app-dialog.js";
 import "../components/app-card.js";
@@ -38,7 +38,8 @@ type RbacSubTab = "roles" | "permissions";
 
 @customElement("rbac-admin-page")
 export class RbacAdminPage extends LitElement {
-  @state() private activeSubTab: RbacSubTab = "roles";
+  @property({ attribute: "active-sub-tab" }) activeSubTab: RbacSubTab = "roles";
+  @property({ type: Boolean }) embedded = false;
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private hasAccess = false;
@@ -175,18 +176,20 @@ export class RbacAdminPage extends LitElement {
         <div class="page-header">
           <h1>权限管理</h1>
         </div>
-        <div class="sub-tabs">
-          ${subTabs.map(
-            (st) => html`
-              <button
-                class="sub-tab ${st.key === this.activeSubTab ? "sub-tab--active" : ""}"
-                @click=${() => this._switchSubTab(st.key)}
-              >
-                ${st.label}
-              </button>
-            `
-          )}
-        </div>
+        ${this.embedded ? nothing : html`
+          <div class="sub-tabs">
+            ${subTabs.map(
+              (st) => html`
+                <button
+                  class="sub-tab ${st.key === this.activeSubTab ? "sub-tab--active" : ""}"
+                  @click=${() => this._switchSubTab(st.key)}
+                >
+                  ${st.label}
+                </button>
+              `
+            )}
+          </div>
+        `}
 
         ${this.activeSubTab === "roles"
           ? html`<role-management-tab></role-management-tab>`

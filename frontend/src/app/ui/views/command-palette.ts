@@ -60,7 +60,7 @@ function getPaletteBaseItems(): PaletteItem[] {
       label: "Settings",
       icon: "settings",
       category: "navigation",
-      action: "nav:config",
+      action: "nav:settings",
     },
     {
       id: "nav-agents",

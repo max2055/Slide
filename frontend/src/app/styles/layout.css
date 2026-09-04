@@ -162,7 +162,8 @@
   white-space: nowrap;
 }
 
-.topnav-shell__logout-btn {
+.topnav-shell__logout-btn,
+.topnav-shell__docs-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -174,6 +175,22 @@
   border-radius: var(--radius-sm);
   opacity: 0.6;
   transition: opacity 0.15s, color 0.15s;
+}
+
+.topnav-shell__docs-btn:hover {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.topnav-shell__docs-btn:focus-visible,
+.topnav-shell__logout-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.topnav-shell__docs-btn svg {
+  width: var(--space-lg);
+  height: var(--space-lg);
 }
 
 .topnav-shell__logout-btn:hover {
@@ -588,8 +605,7 @@
 .nav-section__label-text {
   font-size: var(--text-sm);
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .nav-section__chevron {
