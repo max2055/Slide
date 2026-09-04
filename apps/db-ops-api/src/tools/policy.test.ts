@@ -351,6 +351,26 @@ describe('actor tool policy', () => {
     });
   });
 
+  it.each([
+    ['APPROVAL_REJECTED', 'rejected'],
+    ['APPROVAL_EXPIRED', 'expired'],
+    ['APPROVAL_CONSUMED', 'consumed'],
+  ] as const)('returns %s with an actionable approval status', async (failure, status) => {
+    const result = await executeToolWithPolicy(
+      actor(['admin'], ['ai:execute']),
+      tool({ name: 'execute_code', requiredPermissions: ['ai:execute'], requiresApproval: true }),
+      { runtime: 'shell', code: 'echo report > report.txt', approvalId: '73' },
+      undefined,
+      { consume: vi.fn(async () => ({ approved: false, failure })) },
+      { record: vi.fn().mockResolvedValue(undefined) },
+    );
+
+    expect(result).toMatchObject({
+      decision: { reasonCode: failure, approvalId: '73' },
+      result: { errorCode: failure, data: { approvalId: '73', status } },
+    });
+  });
+
   it('fails closed before a side effect when the persistent audit store is unavailable', async () => {
     const handler = vi.fn().mockResolvedValue({ success: true });
     const writeTool = tool({ name: 'slide_update_db_config', handler });

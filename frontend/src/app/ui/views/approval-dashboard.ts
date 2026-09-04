@@ -126,6 +126,7 @@ export class ApprovalDashboard extends LitElement {
   @state() private requests: ApprovalRequest[] = [];
   @state() private agentApprovals: AgentApproval[] = [];
   @state() private agentApprovalsError: string | null = null;
+  @state() private reviewingAgentTools: Set<string> = new Set();
   @state() private filter: "pending" | "processed" = "pending";
   @state() private selectedIds: Set<number> = new Set();
   @state() private executeAfterApprove: Record<number, boolean> = {};
@@ -195,6 +196,26 @@ export class ApprovalDashboard extends LitElement {
       await this.loadRequests();
     } catch {
       this.detailError = 'Agent 审批处理失败，请重试';
+    }
+  }
+
+  private async reviewPendingAgentTool(toolName: string) {
+    this.reviewingAgentTools = new Set(this.reviewingAgentTools).add(toolName);
+    this.agentApprovalsError = null;
+    try {
+      const response = await authFetch('/api/agent/approvals/batch-review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toolName, action: 'approve', scope: 'once' }),
+      });
+      if (!response.ok) throw new Error('batch review failed');
+      await this.loadRequests();
+    } catch {
+      this.agentApprovalsError = `批量审批 ${toolName} 失败，请刷新后重试`;
+    } finally {
+      const reviewing = new Set(this.reviewingAgentTools);
+      reviewing.delete(toolName);
+      this.reviewingAgentTools = reviewing;
     }
   }
 
@@ -453,6 +474,16 @@ export class ApprovalDashboard extends LitElement {
   private renderList() {
     const agentItems = this.agentApprovals;
     const sqlItems = this.requests;
+    const pendingAgentToolCounts = new Map<string, number>();
+    const firstPendingAgentApproval = new Map<string, string>();
+    for (const approval of agentItems) {
+      if (approval.status === 'pending') {
+        pendingAgentToolCounts.set(approval.tool_name, (pendingAgentToolCounts.get(approval.tool_name) ?? 0) + 1);
+        if (!firstPendingAgentApproval.has(approval.tool_name)) {
+          firstPendingAgentApproval.set(approval.tool_name, String(approval.id));
+        }
+      }
+    }
     return html`
       <div class="tabs">
         <button class="tab ${this.filter === 'pending' ? 'active' : ''}" @click=${() => { this.filter = 'pending'; this.clearSelection(); this.loadRequests(); }}>待审批</button>
@@ -470,6 +501,14 @@ export class ApprovalDashboard extends LitElement {
               <span class="ai-badge">风险：${approval.risk_level || 'high'} / ${approval.scope || 'once'}</span>
               <button class="btn btn-approve" @click=${() => this.reviewAgentApproval(approval.id, 'approve', approval.risk_level === 'high' ? 'once' : approval.scope || 'window')}>通过</button>
               ${approval.risk_level !== 'high' ? html`<button class="btn btn-approve" @click=${() => this.reviewAgentApproval(approval.id, 'approve', 'window')}>允许 5 分钟</button>` : nothing}
+              ${(pendingAgentToolCounts.get(approval.tool_name) ?? 0) > 1
+                && firstPendingAgentApproval.get(approval.tool_name) === String(approval.id) ? html`
+                <button
+                  class="btn btn-approve agent-batch-approve"
+                  .disabled=${this.reviewingAgentTools.has(approval.tool_name)}
+                  @click=${() => this.reviewPendingAgentTool(approval.tool_name)}
+                >同工具全部通过 (${pendingAgentToolCounts.get(approval.tool_name)})</button>
+              ` : nothing}
               <button class="btn btn-reject" @click=${() => this.reviewAgentApproval(approval.id, 'reject')}>驳回</button>
             </div>
             ` : nothing}

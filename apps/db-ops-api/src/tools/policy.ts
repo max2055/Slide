@@ -264,14 +264,25 @@ export async function executeToolWithPolicy(
       return policyResult(denied, { success: false, errorCode: 'AUDIT_UNAVAILABLE', error: 'Approval request unavailable' });
     }
   }
-  if (!decision.allow && (decision.reasonCode === 'APPROVAL_PENDING' || decision.reasonCode === 'APPROVAL_EXPIRED')) {
+  const approvalFailureStatus = {
+    APPROVAL_PENDING: 'pending',
+    APPROVAL_REJECTED: 'rejected',
+    APPROVAL_EXPIRED: 'expired',
+    APPROVAL_CONSUMED: 'consumed',
+  } as const;
+  if (!decision.allow && decision.reasonCode in approvalFailureStatus) {
+    const status = approvalFailureStatus[decision.reasonCode as keyof typeof approvalFailureStatus];
+    const messages = {
+      pending: 'Approval is pending operator review',
+      rejected: 'Approval was rejected by an operator',
+      expired: 'Approval has expired',
+      consumed: 'Approval has already been consumed',
+    } as const;
     return policyResult(decision, {
         success: false,
         errorCode: decision.reasonCode,
-        error: decision.reasonCode === 'APPROVAL_PENDING'
-          ? 'Approval is pending operator review'
-          : 'Approval has expired or was already consumed',
-        data: { approvalId: args.approvalId, status: decision.reasonCode === 'APPROVAL_PENDING' ? 'pending' : 'expired' },
+        error: messages[status],
+        data: { approvalId: args.approvalId, status },
       });
   }
   if (!decision.allow || !actor) {

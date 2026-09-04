@@ -40,7 +40,12 @@ export interface ApprovalConsumeOptions {
   riskLevel?: ExecuteCodeRiskLevel;
 }
 
-export type ApprovalConsumeFailure = 'APPROVAL_PENDING' | 'APPROVAL_EXPIRED' | 'INVALID_APPROVAL';
+export type ApprovalConsumeFailure =
+  | 'APPROVAL_PENDING'
+  | 'APPROVAL_REJECTED'
+  | 'APPROVAL_EXPIRED'
+  | 'APPROVAL_CONSUMED'
+  | 'INVALID_APPROVAL';
 export interface ApprovalConsumeResult {
   approved: boolean;
   failure?: ApprovalConsumeFailure;
@@ -88,8 +93,12 @@ export function buildApprovalBinding(
     ].sort()),
     security,
   });
+  // `on-risk` approvals authorize the reviewed tool/resource for this actor.
+  // Keep the submitted arguments for operator visibility, but do not let an
+  // Agent retry with expanded diagnostic flags create a second approval.
+  const bindingArgs = security.approval === 'on-risk' ? {} : rawArgs;
   const bindingHash = createHmac('sha256', hmacKey)
-    .update(stableJson({ toolName: tool.name, args: rawArgs, resource, policySnapshot }))
+    .update(stableJson({ toolName: tool.name, args: bindingArgs, resource, policySnapshot }))
     .digest('hex');
 
   return {
@@ -211,6 +220,30 @@ export class AgentToolApprovalService {
     return Number(result?.affectedRows) === 1;
   }
 
+  async reviewPendingByTool(
+    toolName: string,
+    reviewerId: number,
+    action: 'approve' | 'reject',
+    note?: string,
+    scope?: Exclude<ExecuteCodeApprovalScope, 'none'>,
+  ): Promise<string[]> {
+    if (!toolName || toolName.length > 128 || !Number.isSafeInteger(reviewerId) || reviewerId <= 0) return [];
+    const [rows] = await this.executor().execute(
+      `SELECT id FROM agent_tool_approvals
+       WHERE tool_name = ? AND status = 'pending' AND expires_at > NOW()
+       ORDER BY id ASC LIMIT 100`,
+      [toolName],
+    );
+    const ids = Array.isArray(rows)
+      ? rows.map((row) => String(row.id)).filter((id) => /^\d+$/.test(id))
+      : [];
+    const reviewed: string[] = [];
+    for (const id of ids) {
+      if (await this.review(id, reviewerId, action, note, scope)) reviewed.push(id);
+    }
+    return reviewed;
+  }
+
   async consumeApproved(
     id: string,
     bindingHash: string,
@@ -229,18 +262,24 @@ export class AgentToolApprovalService {
     if (!/^\d+$/.test(id) || !/^[a-f0-9]{64}$/.test(bindingHash) || !Number.isSafeInteger(requesterId)) {
       return { approved: false, failure: 'INVALID_APPROVAL' };
     }
+    const [rows] = await this.executor().execute(
+      `SELECT binding_hash, status, scope, session_key, risk_level, used_count, max_uses, expires_at
+       FROM agent_tool_approvals WHERE id = ? AND requester_id = ? LIMIT 1`,
+      [id, requesterId],
+    );
+    const row = Array.isArray(rows) ? rows[0] : undefined;
+    if (!row) return { approved: false, failure: 'INVALID_APPROVAL' };
+    if (row.status === 'pending') return { approved: false, failure: 'APPROVAL_PENDING' };
+    if (row.status === 'rejected') return { approved: false, failure: 'APPROVAL_REJECTED' };
+    if (row.status === 'consumed' || Number(row.used_count ?? 0) >= Number(row.max_uses ?? 1)) {
+      return { approved: false, failure: 'APPROVAL_CONSUMED' };
+    }
+    if (row.status === 'expired' || new Date(row.expires_at).getTime() <= Date.now()) {
+      return { approved: false, failure: 'APPROVAL_EXPIRED' };
+    }
+    if (row.status !== 'approved') return { approved: false, failure: 'INVALID_APPROVAL' };
+
     if (options) {
-      const [rows] = await this.executor().execute(
-        `SELECT binding_hash, status, scope, session_key, risk_level, used_count, max_uses, expires_at
-         FROM agent_tool_approvals WHERE id = ? AND requester_id = ? LIMIT 1`,
-        [id, requesterId],
-      );
-      const row = Array.isArray(rows) ? rows[0] : undefined;
-      if (!row) return { approved: false, failure: 'INVALID_APPROVAL' };
-      if (row.status === 'pending') return { approved: false, failure: 'APPROVAL_PENDING' };
-      if (row.status !== 'approved' || new Date(row.expires_at).getTime() <= Date.now()) {
-        return { approved: false, failure: 'APPROVAL_EXPIRED' };
-      }
       const riskRank: Record<ExecuteCodeRiskLevel, number> = { low: 1, medium: 2, high: 3 };
       const storedRisk = riskRank[row.risk_level as ExecuteCodeRiskLevel] ?? 3;
       const requestedRisk = riskRank[options.riskLevel ?? 'high'] ?? 3;
@@ -270,7 +309,10 @@ export class AgentToolApprovalService {
       );
       return Number(result?.affectedRows) === 1
         ? { approved: true }
-        : { approved: false, failure: 'INVALID_APPROVAL' };
+        : { approved: false, failure: 'APPROVAL_CONSUMED' };
+    }
+    if (row.scope !== 'once' || row.binding_hash !== bindingHash) {
+      return { approved: false, failure: 'INVALID_APPROVAL' };
     }
     const [result] = await this.executor().execute(
       `UPDATE agent_tool_approvals
@@ -281,7 +323,7 @@ export class AgentToolApprovalService {
     );
     return Number(result?.affectedRows) === 1
       ? { approved: true }
-      : { approved: false, failure: 'INVALID_APPROVAL' };
+      : { approved: false, failure: 'APPROVAL_CONSUMED' };
   }
 
   async list(status: 'pending' | 'processed' = 'pending', limit = 100): Promise<unknown[]> {
