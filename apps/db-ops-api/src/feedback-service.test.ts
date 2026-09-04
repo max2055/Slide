@@ -21,6 +21,7 @@ function row(id = 3) {
     title: '连接页报错',
     description: '用户在连接页保存配置时看到错误提示。',
     source: 'manual',
+    status: 'pending',
     created_by: 7,
     created_by_username: 'alice',
     created_at: new Date('2026-09-04T00:00:00Z'),
@@ -70,7 +71,7 @@ describe('FeedbackService', () => {
     const execute = vi.fn()
       .mockResolvedValueOnce([[row()], []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])
-      .mockResolvedValueOnce([[{ ...row(), title: '更新后的标题' }], []])
+      .mockResolvedValueOnce([[{ ...row(), title: '更新后的标题', status: 'accepted' }], []])
       .mockResolvedValueOnce([[row()], []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     const service = new FeedbackService(() => ({ execute } as any));
@@ -78,7 +79,16 @@ describe('FeedbackService', () => {
     await expect(service.update(actor(), 3, {
       title: '更新后的标题',
       description: '用户在连接页保存配置时仍然看到错误提示。',
-    })).resolves.toMatchObject({ title: '更新后的标题' });
+      status: 'accepted',
+    })).resolves.toMatchObject({ title: '更新后的标题', status: 'accepted' });
+    expect(execute.mock.calls[1][1]).toEqual([
+      '更新后的标题',
+      '用户在连接页保存配置时仍然看到错误提示。',
+      'accepted',
+      7,
+      3,
+      7,
+    ]);
     await expect(service.delete(actor(), 3)).resolves.toBeUndefined();
     expect(execute.mock.calls[0][1]).toEqual([3, 7]);
     expect(execute.mock.calls[3][1]).toEqual([3, 7]);
@@ -91,6 +101,11 @@ describe('FeedbackService', () => {
       .rejects.toThrow('FEEDBACK_PAYLOAD_INVALID');
     await expect(service.create(actor(), { title: '标题', description: 'x'.repeat(5001), source: 'manual' }))
       .rejects.toThrow('FEEDBACK_PAYLOAD_INVALID');
+    await expect(service.update(actor(), 3, {
+      title: '标题',
+      description: '描述',
+      status: 'unknown' as any,
+    })).rejects.toThrow('FEEDBACK_PAYLOAD_INVALID');
     expect(execute).not.toHaveBeenCalled();
   });
 });

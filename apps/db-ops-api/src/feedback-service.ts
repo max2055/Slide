@@ -3,12 +3,14 @@ import type { ActorContext } from './auth/actor-context.js';
 import { dbConnection } from './db-connection.js';
 
 export type FeedbackSource = 'manual' | 'agent';
+export type FeedbackStatus = 'pending' | 'accepted' | 'resolved';
 
 export interface FeedbackItem {
   id: number;
   title: string;
   description: string;
   source: FeedbackSource;
+  status: FeedbackStatus;
   createdBy: number | null;
   createdByUsername: string | null;
   createdAt: Date;
@@ -19,6 +21,7 @@ export interface FeedbackInput {
   title: string;
   description: string;
   source: FeedbackSource;
+  status?: FeedbackStatus;
   idempotencyKey?: string;
 }
 
@@ -27,6 +30,7 @@ interface FeedbackRow extends RowDataPacket {
   title: string;
   description: string;
   source: FeedbackSource;
+  status: FeedbackStatus;
   created_by: number | null;
   created_by_username: string | null;
   created_at: Date;
@@ -38,7 +42,7 @@ interface FeedbackExecutor {
 }
 
 const FEEDBACK_SELECT = `
-  SELECT f.id, f.title, f.description, f.source, f.created_by,
+  SELECT f.id, f.title, f.description, f.source, f.status, f.created_by,
          u.username AS created_by_username, f.created_at, f.updated_at
   FROM problem_feedback f
   LEFT JOIN users u ON u.id = f.created_by`;
@@ -59,6 +63,9 @@ function normalizeInput(input: FeedbackInput): FeedbackInput {
   if (input.source !== 'manual' && input.source !== 'agent') {
     throw new Error('FEEDBACK_PAYLOAD_INVALID');
   }
+  if (input.status !== undefined && !['pending', 'accepted', 'resolved'].includes(input.status)) {
+    throw new Error('FEEDBACK_PAYLOAD_INVALID');
+  }
   if (input.idempotencyKey && !/^[a-f0-9]{64}$/.test(input.idempotencyKey)) {
     throw new Error('FEEDBACK_PAYLOAD_INVALID');
   }
@@ -71,6 +78,7 @@ function toFeedbackItem(row: FeedbackRow): FeedbackItem {
     title: row.title,
     description: row.description,
     source: row.source,
+    status: row.status,
     createdBy: row.created_by == null ? null : Number(row.created_by),
     createdByUsername: row.created_by_username,
     createdAt: new Date(row.created_at),
@@ -109,16 +117,17 @@ export class FeedbackService {
   async update(
     actor: ActorContext,
     id: number,
-    rawInput: Pick<FeedbackInput, 'title' | 'description'>,
+    rawInput: Pick<FeedbackInput, 'title' | 'description' | 'status'>,
   ): Promise<FeedbackItem> {
     const input = normalizeInput({ ...rawInput, source: 'manual' });
-    await this.requireVisible(actor, id);
+    const existing = await this.requireVisible(actor, id);
+    const status = input.status ?? existing.status;
     const scoped = !isAdmin(actor);
     await this.pool().execute<ResultSetHeader>(
-      `UPDATE problem_feedback SET title = ?, description = ?, updated_by = ? WHERE id = ?${scoped ? ' AND created_by = ?' : ''}`,
+      `UPDATE problem_feedback SET title = ?, description = ?, status = ?, updated_by = ? WHERE id = ?${scoped ? ' AND created_by = ?' : ''}`,
       scoped
-        ? [input.title, input.description, actor.userId, id, actor.userId]
-        : [input.title, input.description, actor.userId, id],
+        ? [input.title, input.description, status, actor.userId, id, actor.userId]
+        : [input.title, input.description, status, actor.userId, id],
     );
     return this.requireVisible(actor, id);
   }

@@ -18,6 +18,7 @@ const item = {
   title: '连接页报错',
   description: '用户在连接页保存配置时看到错误提示。',
   source: 'manual' as const,
+  status: 'pending' as const,
   createdBy: 7,
   createdByUsername: 'alice',
   createdAt: new Date('2026-09-04T00:00:00Z'),
@@ -45,7 +46,7 @@ describe('feedback routes', () => {
     const service = {
       list: vi.fn(),
       create: vi.fn().mockResolvedValue(item),
-      update: vi.fn().mockResolvedValue({ ...item, title: '更新后的标题' }),
+      update: vi.fn().mockResolvedValue({ ...item, title: '更新后的标题', status: 'accepted' }),
       delete: vi.fn().mockResolvedValue(undefined),
     };
     const app = await appWith(service);
@@ -61,10 +62,13 @@ describe('feedback routes', () => {
     const updated = await app.inject({
       method: 'PUT',
       url: '/api/feedback/3',
-      payload: { title: '更新后的标题', description: '用户仍然看到错误提示。' },
+      payload: { title: '更新后的标题', description: '用户仍然看到错误提示。', status: 'accepted' },
     });
     expect(updated.statusCode).toBe(200);
-    expect(service.update).toHaveBeenCalledWith(testActor, 3, expect.objectContaining({ title: '更新后的标题' }));
+    expect(service.update).toHaveBeenCalledWith(testActor, 3, expect.objectContaining({
+      title: '更新后的标题',
+      status: 'accepted',
+    }));
 
     const deleted = await app.inject({ method: 'DELETE', url: '/api/feedback/3' });
     expect(deleted.statusCode).toBe(200);
@@ -77,6 +81,14 @@ describe('feedback routes', () => {
     });
     expect(invalid.statusCode).toBe(400);
     expect(service.create).toHaveBeenCalledTimes(1);
+
+    const invalidStatus = await app.inject({
+      method: 'PUT',
+      url: '/api/feedback/3',
+      payload: { title: '标题', description: '描述', status: 'unknown' },
+    });
+    expect(invalidStatus.statusCode).toBe(400);
+    expect(service.update).toHaveBeenCalledTimes(1);
     await app.close();
   });
 

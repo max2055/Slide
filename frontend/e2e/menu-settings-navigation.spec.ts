@@ -137,16 +137,30 @@ test("permission updates hide inaccessible groups and merged views", async ({ pa
 });
 
 test("feedback history is usable on desktop and mobile", async ({ page }, testInfo) => {
-  await page.route("**/api/feedback", async (route) => {
+  const description = "用户在连接页保存配置后看到请求失败提示，重新加载后配置仍未保存，并且连续重试会重复出现相同错误，需要开发者检查保存接口和请求日志。";
+  let status = "pending";
+  await page.route("**/api/feedback**", async (route) => {
+    if (route.request().method() === "PUT") status = "accepted";
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        feedback: [{
+        feedback: route.request().method() === "PUT" ? {
           id: 3,
           title: "连接页保存失败",
-          description: "用户在连接页保存配置后看到请求失败提示，重新加载后配置仍未保存。",
+          description,
           source: "agent",
+          status,
+          createdBy: 7,
+          createdByUsername: "alice",
+          createdAt: "2026-09-04T00:00:00.000Z",
+          updatedAt: "2026-09-04T01:00:00.000Z",
+        } : [{
+          id: 3,
+          title: "连接页保存失败",
+          description,
+          source: "agent",
+          status,
           createdBy: 7,
           createdByUsername: "alice",
           createdAt: "2026-09-04T00:00:00.000Z",
@@ -159,6 +173,28 @@ test("feedback history is usable on desktop and mobile", async ({ page }, testIn
   await page.goto("/feedback");
   await expect(page.locator("feedback-page")).toBeVisible();
   await expect(page.getByText("连接页保存失败")).toBeVisible();
+  await expect(page.locator("feedback-page .serial")).toHaveText("3");
+  const statusSelect = page.getByRole("combobox", { name: "更新 连接页保存失败 的状态" });
+  await expect(statusSelect).toHaveValue("pending");
+
+  const descriptionText = page.locator("feedback-page .feedback-description__text");
+  const collapsedHeight = (await descriptionText.boundingBox())?.height ?? 0;
+  await page.getByRole("button", { name: "展开 连接页保存失败 的问题描述" }).click();
+  await expect(page.getByRole("button", { name: "收起 连接页保存失败 的问题描述" })).toBeVisible();
+  const expandedHeight = (await descriptionText.boundingBox())?.height ?? 0;
+  expect(expandedHeight).toBeGreaterThan(collapsedHeight);
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text: string) => { localStorage.setItem("feedback-copy", text); } },
+    });
+  });
+  await page.getByRole("button", { name: "复制 连接页保存失败 的问题描述" }).click();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("feedback-copy"))).toBe(description);
+
+  await statusSelect.selectOption("accepted");
+  await expect(statusSelect).toHaveValue("accepted");
   await expect(page.getByRole("button", { name: "编辑 连接页保存失败" })).toBeVisible();
   await expect(page.getByRole("button", { name: "删除 连接页保存失败" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -167,6 +203,9 @@ test("feedback history is usable on desktop and mobile", async ({ page }, testIn
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await expect(page.getByRole("button", { name: "新增反馈" })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "更新 连接页保存失败 的状态" })).toHaveValue("accepted");
+  await page.getByRole("button", { name: "展开 连接页保存失败 的问题描述" }).click();
+  await expect(page.getByRole("button", { name: "收起 连接页保存失败 的问题描述" })).toBeVisible();
   await expect(page.getByRole("button", { name: "编辑 连接页保存失败" })).toBeVisible();
   await expect(page.getByRole("button", { name: "删除 连接页保存失败" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

@@ -9,4 +9,10 @@ describe('problem feedback migration', () => {
     expect(sql).toContain('UNIQUE KEY `uq_problem_feedback_idempotency`');
     expect(sql).toContain('ON DELETE SET NULL');
   });
+
+  it('adds the feedback workflow status without rewriting the applied table migration', async () => {
+    const sql = await readFile(new URL('../../sql/migrations/085_problem_feedback_status.sql', import.meta.url), 'utf8');
+    expect(sql).toContain("ENUM('pending','accepted','resolved')");
+    expect(sql).toContain("DEFAULT 'pending'");
+  });
 });

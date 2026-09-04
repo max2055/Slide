@@ -1544,6 +1544,7 @@ CREATE TABLE IF NOT EXISTS `problem_feedback` (
   `title` VARCHAR(160) NOT NULL COMMENT '问题标题',
   `description` TEXT NOT NULL COMMENT '面向开发者的问题描述',
   `source` ENUM('manual','agent') NOT NULL DEFAULT 'manual' COMMENT '记录来源',
+  `status` ENUM('pending','accepted','resolved') NOT NULL DEFAULT 'pending' COMMENT '处理状态',
   `created_by` INT UNSIGNED DEFAULT NULL COMMENT '创建人用户 ID',
   `updated_by` INT UNSIGNED DEFAULT NULL COMMENT '最后修改人用户 ID',
   `idempotency_key` CHAR(64) DEFAULT NULL COMMENT 'Agent 工具幂等键摘要',

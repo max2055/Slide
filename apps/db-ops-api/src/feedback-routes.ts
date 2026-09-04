@@ -1,6 +1,11 @@
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import type { ActorContext } from './auth/actor-context.js';
-import { feedbackService, type FeedbackItem, type FeedbackService } from './feedback-service.js';
+import {
+  feedbackService,
+  type FeedbackItem,
+  type FeedbackService,
+  type FeedbackStatus,
+} from './feedback-service.js';
 
 type FeedbackRouteService = Pick<FeedbackService, 'list' | 'create' | 'update' | 'delete'>;
 
@@ -15,15 +20,24 @@ function parseId(value: unknown): number | null {
   return Number.isSafeInteger(id) ? id : null;
 }
 
-function parseBody(body: unknown): { title: string; description: string } | null {
+function parseBody(
+  body: unknown,
+  allowStatus = false,
+): { title: string; description: string; status?: FeedbackStatus } | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
   const record = body as Record<string, unknown>;
-  if (Object.keys(record).some((key) => key !== 'title' && key !== 'description')) return null;
+  const allowedKeys = allowStatus ? ['title', 'description', 'status'] : ['title', 'description'];
+  if (Object.keys(record).some((key) => !allowedKeys.includes(key))) return null;
   if (typeof record.title !== 'string' || typeof record.description !== 'string') return null;
   const title = record.title.trim();
   const description = record.description.trim();
   if (!title || title.length > 160 || !description || description.length > 5000) return null;
-  return { title, description };
+  if (record.status !== undefined && !['pending', 'accepted', 'resolved'].includes(String(record.status))) return null;
+  return {
+    title,
+    description,
+    ...(record.status === undefined ? {} : { status: record.status as FeedbackStatus }),
+  };
 }
 
 function serialize(item: FeedbackItem) {
@@ -68,7 +82,7 @@ export async function registerFeedbackRoutes(
 
   fastify.put('/api/feedback/:id', { preHandler: [verifyToken] }, async (request, reply) => {
     const id = parseId((request.params as { id?: string }).id);
-    const body = parseBody(request.body);
+    const body = parseBody(request.body, true);
     if (id === null || !body) return reply.code(400).send({ error: 'FEEDBACK_PAYLOAD_INVALID' });
     try {
       const item = await service.update(actorFrom(request as any), id, body);
