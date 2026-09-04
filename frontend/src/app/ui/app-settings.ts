@@ -21,6 +21,7 @@ import { resolveTheme, type ResolvedTheme, type ThemeMode, type ThemeName } from
 import type { AgentsListResult, AttentionItem } from "./types.ts";
 import { resetChatViewState } from "./views/chat.ts";
 import { i18n, isSupportedLocale } from "../i18n/index.ts";
+import { isSettingsLocation } from "./settings-navigation.ts";
 
 export { setLastActiveSessionKey } from "./app-last-active-session.ts";
 
@@ -460,7 +461,8 @@ export function syncUrlWithTab(host: SettingsHost, tab: Tab, replace: boolean) {
     url.searchParams.delete("session");
   }
 
-  if (currentPath !== targetPath) {
+  const keepSettingsChildPath = tab === "settings" && isSettingsLocation(currentPath);
+  if (currentPath !== targetPath && !keepSettingsChildPath) {
     url.pathname = targetPath;
   }
 

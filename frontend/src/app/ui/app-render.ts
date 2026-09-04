@@ -52,8 +52,10 @@ import "./views/settings-shell.ts";
 import "./views/session-settings.ts";
 import "./views/appearance-settings.ts";
 import "./views/branding-settings.ts";
+import "./views/event-center.ts";
+import "./views/platform-status.ts";
 import { icons } from "../../icons.js";
-import { normalizeBasePath, TAB_GROUPS, TAB_REQUIRED_PERMISSIONS, subtitleForTab, titleForTab } from "./navigation.ts";
+import { normalizeBasePath, TAB_GROUPS, TAB_REQUIRED_PERMISSIONS, UTILITY_TABS, subtitleForTab, titleForTab } from "./navigation.ts";
 import { agentLogoUrl } from "./views/agents-utils.ts";
 import { renderChat } from "./views/chat.ts";
 import { renderCommandPalette } from "./views/command-palette.ts";
@@ -235,6 +237,14 @@ export function renderApp(state: AppViewState) {
   const toolsPanelUsesActiveSession = Boolean(
     resolvedAgentId && activeSessionAgentId && resolvedAgentId === activeSessionAgentId,
   );
+  const isNavigationTabVisible = (tab: import("./navigation.ts").Tab) => {
+    const visibleTabs = state.settings.visibleTabs;
+    if (visibleTabs && visibleTabs.length > 0 && !visibleTabs.includes(tab)) return false;
+    const required = TAB_REQUIRED_PERMISSIONS[tab];
+    if (!required) return true;
+    const permissions = state.userPermissions || loadPermissionsFromStorage();
+    return hasSlidePermission(permissions, required);
+  };
   const getCurrentConfigValue = () =>
     state.configForm ?? (state.configSnapshot?.config as Record<string, unknown> | null);
   const resolveAgentToolsPath = (_agentId: string, _ensure: boolean) => null;
@@ -352,6 +362,13 @@ export function renderApp(state: AppViewState) {
             </button>
             <div class="topbar-status">
               ${isChat ? renderChatMobileToggle(state) : nothing}
+              <button
+                type="button"
+                class="topnav-shell__docs-btn"
+                @click=${() => state.setTab("docs")}
+                title=${t("common.docs")}
+                aria-label=${t("common.docs")}
+              >${icons['book']}</button>
               <div class="topnav-shell__user">
                 <span class="topnav-shell__user-badge">${(state.settings.username || 'A').charAt(0).toUpperCase()}</span>
                 <span class="topnav-shell__user-name">${state.settings.username || 'Admin'}</span>
@@ -410,8 +427,10 @@ export function renderApp(state: AppViewState) {
             <div class="sidebar-shell__body">
               <nav class="sidebar-nav">
                 ${TAB_GROUPS.map((group) => {
+                  const visibleGroupTabs = group.tabs.filter((tab) => isNavigationTabVisible(tab));
+                  if (visibleGroupTabs.length === 0) return nothing;
                   const isGroupCollapsed = state.settings.navGroupsCollapsed[group.label] ?? false;
-                  const hasActiveTab = group.tabs.some((tab) => tab === state.tab);
+                  const hasActiveTab = visibleGroupTabs.some((tab) => tab === state.tab);
                   const showItems = navCollapsed || hasActiveTab || !isGroupCollapsed;
 
                   return html`
@@ -438,18 +457,7 @@ export function renderApp(state: AppViewState) {
                           `
                         : nothing}
                       <div class="nav-section__items">
-                        ${group.tabs.filter((tab) => {
-                          // User-configured tab visibility: empty = show all, non-empty = only show listed
-                          const visibleTabs = state.settings.visibleTabs;
-                          if (visibleTabs && visibleTabs.length > 0 && !visibleTabs.includes(tab)) {
-                            return false;
-                          }
-                          const required = TAB_REQUIRED_PERMISSIONS[tab];
-                          if (!required) return true; // No requirement = always visible
-                          // Get permissions from state or localStorage
-                          const perms = state.userPermissions || loadPermissionsFromStorage();
-                          return hasSlidePermission(perms, required);
-                        }).map((tab) =>
+                        ${visibleGroupTabs.map((tab) =>
                           renderTab(state, tab, { collapsed: navCollapsed }),
                         )}
                       </div>
@@ -460,20 +468,9 @@ export function renderApp(state: AppViewState) {
             </div>
             <div class="sidebar-shell__footer">
               <div class="sidebar-utility-group">
-                <button
-                  class="nav-item sidebar-utility-link"
-                  @click=${() => {
-                    window.dispatchEvent(new CustomEvent("slide-navigate", {
-                      detail: { tab: "docs" }
-                    }));
-                  }}
-                  title="${t("common.docs")}"
-                >
-                  <span class="nav-item__icon" aria-hidden="true">${icons['book']}</span>
-                  ${!navCollapsed
-                    ? html`<span class="nav-item__text">${t("common.docs")}</span>`
-                    : nothing}
-                </button>
+                ${UTILITY_TABS.filter((tab) => isNavigationTabVisible(tab)).map((tab) =>
+                  renderTab(state, tab, { collapsed: navCollapsed }),
+                )}
               </div>
             </div>
           </div>
@@ -761,7 +758,7 @@ export function renderApp(state: AppViewState) {
           ? html`<cron-jobs-settings></cron-jobs-settings>`
           : nothing}
         ${state.tab === "health-center"
-          ? html`<health-center-page></health-center-page>`
+          ? html`<platform-status-page></platform-status-page>`
           : nothing}
         ${state.tab === "sql-console"
           ? html`<sql-console-page></sql-console-page>`
@@ -776,7 +773,10 @@ export function renderApp(state: AppViewState) {
           ? html`<metric-registry-viewer></metric-registry-viewer>`
           : nothing}
         ${state.tab === "events"
-          ? html`<event-management-page></event-management-page>`
+          ? html`<event-center-page></event-center-page>`
+          : nothing}
+        ${state.tab === "audit-center"
+          ? html`<agent-tool-audit-page></agent-tool-audit-page>`
           : nothing}
         ${state.tab === "docs"
           ? html`<docs-viewer-page></docs-viewer-page>`

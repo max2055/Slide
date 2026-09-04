@@ -15,14 +15,17 @@ test('qualification login authenticates through REST and enters the application'
   await expect(page.locator('.nav-item').first()).toBeVisible({ timeout: 15_000 });
 });
 
-test('removed legacy routes resolve to the current chat workspace', async ({ page }) => {
-  for (const legacyPath of ['/system', '/appearance']) {
+test('legacy settings routes redirect to stable settings pages', async ({ page }) => {
+  for (const [legacyPath, targetPath] of [
+    ['/system', '/settings/platform/branding'],
+    ['/appearance', '/settings/platform/appearance'],
+  ]) {
     await page.goto(legacyPath);
     await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
     await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
     await page.locator('.login-gate__connect').click();
-    await expect(page).toHaveURL(/\/chat$/);
-    await expect(page.locator('.content--chat')).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`${targetPath}$`));
+    await expect(page.locator('settings-shell')).toBeVisible();
     await page.evaluate(() => localStorage.clear());
   }
 });
@@ -269,10 +272,7 @@ test('notification recovery is reachable through the protected alerts workspace'
     expect.objectContaining({ lastError: 'qualification delivery failure' }),
   ]));
 
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'alerts' } })));
-  const notificationTab = page.getByRole('button', { name: '通知恢复' });
-  await expect(notificationTab).toBeVisible({ timeout: 15_000 });
-  await notificationTab.click();
+  await page.goto('/events?view=notifications');
   await expect(page.getByText('通知死信队列')).toBeVisible();
   await expect(page.getByText('qualification delivery failure')).toBeVisible();
   await page.getByRole('button', { name: '重放' }).click();
@@ -290,7 +290,7 @@ test('Feishu settings saves a disabled channel without exposing its credentials'
   await page.locator('.login-gate__connect').click();
   await expect(page.locator('settings-shell')).toBeVisible({ timeout: 15_000 });
 
-  await page.getByRole('button', { name: '飞书通知' }).click();
+  await page.getByRole('button', { name: '通知通道' }).click();
   const settings = page.locator('feishu-notification-settings');
   await expect(settings.getByText('Webhook 未配置')).toBeVisible();
   await expect(settings.getByText('签名密钥未配置')).toBeVisible();

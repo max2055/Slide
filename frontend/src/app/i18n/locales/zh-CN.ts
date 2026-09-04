@@ -5,6 +5,10 @@ export const zh_CN: TranslationMap = {
   nav: {
     // 菜单组
     slide: "运维",
+    workspace: "工作台",
+    resources: "资源管理",
+    operations: "运维中心",
+    securityGovernance: "安全与治理",
     chat: "聊天",
     platform: "平台管理",
     settings: "设置",
@@ -240,24 +244,25 @@ export const zh_CN: TranslationMap = {
   },
   tabs: {
     // Slide 菜单组
-    dashboard: "仪表盘",
+    dashboard: "运维总览",
     docs: "文档",
-    "instances-db": "数据库管理",
-    servers: "服务器管理",
+    "instances-db": "数据库",
+    servers: "服务器",
     "server-detail": "服务器详情",
     "network-devices": "网络设备",
     "network-device-detail": "网络设备详情",
     "instance-detail": "实例详情",
-    alerts: "告警中心",
+    alerts: "活动告警",
     schema: "表结构管理",
     indexes: "索引管理",
     reports: "报表中心",
     "metric-registry": "指标定义",
-    events: "告警事件",
-    "sql-console": "SQL 控制台",
-    "approval": "审批管理",
+    events: "事件中心",
+    "sql-console": "SQL 工作台",
+    "approval": "审批中心",
+    "audit-center": "审计中心",
     // Chat 菜单组
-    chat: "对话",
+    chat: "AI 助手",
     // 导航菜单组
     sessions: "会话",
     agents: "智能体",
@@ -270,8 +275,8 @@ export const zh_CN: TranslationMap = {
     "ai-settings": "AI 设置",
     "prompt-settings": "提示词管理",
     "scoring-settings": "评分权重配置",
-    "cron-jobs": "定时任务",
-    "health-center": "系统自检",
+    "cron-jobs": "自动化任务",
+    "health-center": "平台状态",
     rbac: "权限管理",
     // 其他（保留）
     channels: "频道",
@@ -303,6 +308,7 @@ export const zh_CN: TranslationMap = {
     events: "告警聚合事件全生命周期管理",
     "sql-console": "交互式 SQL 查询控制台",
     approval: "审批工作流管理",
+    "audit-center": "查看 Agent 工具发现、执行决策和脱敏结果",
     // Chat 菜单组
     chat: "与 AI 助手交互",
     // 导航菜单组

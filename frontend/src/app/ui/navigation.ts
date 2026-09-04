@@ -1,17 +1,28 @@
 import { t } from "../i18n/index.ts";
 import type { IconName } from "../../icons.js";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.ts";
+import { isSettingsPath } from "./settings-navigation.ts";
 
 export const TAB_GROUPS = [
   {
-    label: "slide",
-    tabs: ["chat", "dashboard", "servers", "network-devices", "instances-db", "sql-console", "approval", "alerts", "metric-registry", "reports", "events", "cron-jobs", "health-center"],
+    label: "workspace",
+    tabs: ["chat", "dashboard"],
   },
   {
-    label: "settings",
-    tabs: ["settings"],
+    label: "resources",
+    tabs: ["instances-db", "servers", "network-devices"],
+  },
+  {
+    label: "operations",
+    tabs: ["events", "sql-console", "cron-jobs", "reports"],
+  },
+  {
+    label: "securityGovernance",
+    tabs: ["approval", "audit-center"],
   },
 ] as const;
+
+export const UTILITY_TABS = ["health-center", "settings"] as const;
 
 export type Tab =
   | "agents"
@@ -45,6 +56,7 @@ export type Tab =
   | "rbac"
   | "sql-console"
   | "approval"
+  | "audit-center"
   | "instance-detail"
   | "scoring-settings"
   | "settings";
@@ -82,6 +94,7 @@ const TAB_PATHS: Record<Tab, string> = {
   "rbac": "/rbac",
   "sql-console": "/sql-console",
   "approval": "/approval",
+  "audit-center": "/audit",
   "instance-detail": "/instance-detail",
   settings: "/settings",
 };
@@ -89,8 +102,6 @@ const TAB_PATHS: Record<Tab, string> = {
 const PATH_TO_TAB = new Map<string, Tab>([
   ...Object.entries(TAB_PATHS).map(([tab, path]) => [path, tab as Tab] as const),
 ]);
-const REMOVED_LEGACY_PATHS = new Set(['/system', '/appearance']);
-
 /** Slide permission codes required for each tab.
  * Tabs not listed remain always visible (controlled by Gateway scopes, not Slide permissions).
  * Tabs with a required permission are fully hidden when the permission is absent.
@@ -98,11 +109,7 @@ const REMOVED_LEGACY_PATHS = new Set(['/system', '/appearance']);
 /** Tabs suitable as a default landing page (excludes context-dependent tabs). */
 export const DEFAULT_TAB_OPTIONS: Tab[] = [
   "chat", "dashboard", "instances-db", "servers", "network-devices", "sql-console",
-  "alerts", "metric-registry", "reports",
-  "events", "approval", "cron-jobs", "health-center", "sessions",
-  "schema", "indexes", "settings", "ai-settings",
-  "llm-config", "scoring-settings",
-  "agent-sessions", "agent-skills", "agent-tools",
+  "reports", "events", "approval", "audit-center", "cron-jobs", "health-center", "settings",
 ];
 
 export const TAB_REQUIRED_PERMISSIONS: Partial<Record<Tab, string>> = {
@@ -126,6 +133,7 @@ export const TAB_REQUIRED_PERMISSIONS: Partial<Record<Tab, string>> = {
   'sql-console': 'instance:query',
   'schema': 'schema:view',
   'approval': 'approval:view',
+  'audit-center': 'audit:view',
   'cron-jobs': 'cron:view',
   'health-center': 'config:view',
   'scoring-settings': 'scoring:view',
@@ -185,6 +193,9 @@ export function tabFromPath(pathname: string, basePath = ""): Tab | null {
   if (normalized === "/") {
     return "dashboard";
   }
+  if (isSettingsPath(normalized)) {
+    return "settings";
+  }
   return PATH_TO_TAB.get(normalized) ?? null;
 }
 
@@ -196,16 +207,13 @@ export function inferBasePathFromPathname(pathname: string): string {
   if (normalized === "/") {
     return "";
   }
-  if (REMOVED_LEGACY_PATHS.has(normalized)) {
-    return "";
-  }
   const segments = normalized.split("/").filter(Boolean);
   if (segments.length === 0) {
     return "";
   }
   for (let i = 0; i < segments.length; i++) {
     const candidate = normalizeLowercaseStringOrEmpty(`/${segments.slice(i).join("/")}`);
-    if (PATH_TO_TAB.has(candidate)) {
+    if (tabFromPath(candidate)) {
       const prefix = segments.slice(0, i);
       return prefix.length ? `/${prefix.join("/")}` : "";
     }
@@ -266,6 +274,8 @@ export function iconForTab(tab: Tab): IconName {
       return "terminal";
     case "approval":
       return "check";
+    case "audit-center":
+      return "eye";
     case "instance-detail":
       return "database";
     case "settings":

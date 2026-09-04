@@ -90,9 +90,9 @@ test.describe.serial("Navigation click-through", () => {
   });
 
   const NAV_TABS = [
-    "Dashboard", "Instances", "Alerts", "Reports",
-    "SQL Console", "Approval", "Metric Registry", "Events", "Cron Jobs",
-    "Settings", "Docs",
+    "AI Assistant", "Operations Overview", "Databases", "Servers", "Network Devices",
+    "Event Center", "SQL Workbench", "Automation Tasks", "Reports",
+    "Approval Center", "Audit Center", "Platform Status", "Settings",
   ];
 
   for (const tab of NAV_TABS) {
@@ -192,6 +192,8 @@ test.describe("User CRUD smoke", () => {
     // Users is now under Settings
     await clickNav(page, "Settings");
     await page.waitForTimeout(1500);
+    await page.locator("settings-shell .settings-item", { hasText: "用户与权限" }).click();
+    await page.waitForTimeout(500);
 
     // Check if we see user management UI
     const newUserBtn = page.locator('button:has-text("新建"), button:has-text("New"), button:has-text("Create")').first();
@@ -254,10 +256,10 @@ test.describe("User CRUD smoke", () => {
 
 test.describe("Data loading check", () => {
   const PAGES_WITH_DATA = [
-    { tab: "Alerts", check: 'tr:has(td), [class*="empty"], [class*="no-data"]' },
-    { tab: "Instances", check: 'tr:has(td), [class*="empty"], [class*="no-data"]' },
+    { tab: "Event Center", check: 'tr:has(td), [class*="empty"], [class*="no-data"]' },
+    { tab: "Databases", check: 'tr:has(td), [class*="empty"], [class*="no-data"]' },
     { tab: "Reports", check: 'tr:has(td), [class*="empty"], [class*="no-data"]' },
-    { tab: "Events", check: 'tr:has(td), [class*="empty"], [class*="no-data"]' },
+    { tab: "Platform Status", check: 'tr:has(td), [class*="empty"], [class*="no-data"]' },
     { tab: "Settings", check: 'tr:has(td), [class*="empty"], [class*="no-data"]' },
   ];
 

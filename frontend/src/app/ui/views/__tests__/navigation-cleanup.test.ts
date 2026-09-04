@@ -1,28 +1,43 @@
 import { describe, expect, it } from 'vitest';
-import { TAB_GROUPS, TAB_REQUIRED_PERMISSIONS, inferBasePathFromPathname, pathForTab, tabFromPath } from '../../navigation.ts';
+import { TAB_GROUPS, TAB_REQUIRED_PERMISSIONS, UTILITY_TABS, inferBasePathFromPathname, pathForTab, tabFromPath } from '../../navigation.ts';
 import { hasSlidePermission } from '../../app-settings.ts';
+import { SETTINGS_ITEMS } from '../../settings-navigation.ts';
 
 describe('UI-02: navigation contract', () => {
   it('round-trips every visible navigation tab through its route', () => {
-    const visibleTabs = TAB_GROUPS.flatMap((group) => group.tabs);
+    const visibleTabs = [...TAB_GROUPS.flatMap((group) => group.tabs), ...UTILITY_TABS];
     for (const tab of visibleTabs) {
       expect(tabFromPath(pathForTab(tab))).toBe(tab);
     }
   });
 
-  it('does not resolve removed legacy routes', () => {
-    expect(tabFromPath('/system')).toBeNull();
-    expect(tabFromPath('/appearance')).toBeNull();
+  it('resolves legacy setting routes through the settings shell', () => {
+    expect(tabFromPath('/system')).toBe('settings');
+    expect(tabFromPath('/appearance')).toBe('settings');
     expect(inferBasePathFromPathname('/system')).toBe('');
     expect(inferBasePathFromPathname('/appearance')).toBe('');
   });
 
-  it('exposes system health under operations with config:view protection', () => {
-    const operations = TAB_GROUPS.find((group) => group.label === 'slide');
-    expect(operations?.tabs).toContain('health-center');
+  it('recognizes every stable settings child route with and without a base path', () => {
+    for (const item of SETTINGS_ITEMS) {
+      expect(tabFromPath(item.path)).toBe('settings');
+      expect(tabFromPath(`/control${item.path}`, '/control')).toBe('settings');
+      expect(inferBasePathFromPathname(`/control${item.path}`)).toBe('/control');
+    }
+  });
+
+  it('uses the specified primary navigation groups and fixed utility entries', () => {
+    expect(TAB_GROUPS.map((group) => [group.label, [...group.tabs]])).toEqual([
+      ['workspace', ['chat', 'dashboard']],
+      ['resources', ['instances-db', 'servers', 'network-devices']],
+      ['operations', ['events', 'sql-console', 'cron-jobs', 'reports']],
+      ['securityGovernance', ['approval', 'audit-center']],
+    ]);
+    expect(UTILITY_TABS).toEqual(['health-center', 'settings']);
     expect(pathForTab('health-center')).toBe('/health');
     expect(tabFromPath('/health')).toBe('health-center');
     expect(TAB_REQUIRED_PERMISSIONS['health-center']).toBe('config:view');
+    expect(TAB_REQUIRED_PERMISSIONS['audit-center']).toBe('audit:view');
   });
 
   it('round-trips network-device inventory and context routes independently', () => {

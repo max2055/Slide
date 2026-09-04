@@ -56,7 +56,7 @@ test('persisted locale switches live navigation copy', async ({ page }) => {
     });
     expect(switched.ok()).toBe(true);
     await page.goto('/dashboard');
-    await expect(page.getByText('仪表盘', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('运维总览', { exact: true }).first()).toBeVisible();
   } finally {
     await page.request.put('/api/user/preferences', {
       headers,
