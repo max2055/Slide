@@ -70,4 +70,11 @@ describe('agent tool security catalog', () => {
       approval: 'always', network: 'restricted', credentials: 'none',
     });
   });
+
+  it('allows authenticated feedback recording without network, credentials, or approval', () => {
+    expect(getToolSecurityDefinition('slide_record_feedback')).toEqual({
+      audience: 'actor', effect: 'write', resource: 'none', permissions: [],
+      approval: 'never', network: 'none', credentials: 'none',
+    });
+  });
 });

@@ -28,6 +28,7 @@ const TOOL_SECURITY_CATALOG: Readonly<Record<string, ToolSecurityDefinition>> = 
   slide_add_network_device: definition('actor', 'write', 'network_device', ['network_devices:manage'], 'always', 'none', 'none'),
   slide_test_connection: definition('actor', 'execute', 'database-target', ['instance:view'], 'always', 'registered-database', 'use'),
   slide_update_db_config: definition('actor', 'write', 'instance', ['instance:update'], 'always', 'registered-database', 'use'),
+  slide_record_feedback: definition('actor', 'write', 'none', [], 'never', 'none', 'none'),
   slide_complete_analysis: definition('internal', 'write', 'analysis', [], 'never', 'none', 'none'),
   list_database_instances: definition('actor', 'read', 'instance', ['instance:view'], 'never', 'none', 'none'),
   get_instance_connection: definition('actor', 'secret', 'instance', ['instance:view'], 'always', 'none', 'use'),

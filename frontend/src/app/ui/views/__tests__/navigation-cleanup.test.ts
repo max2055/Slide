@@ -33,9 +33,11 @@ describe('UI-02: navigation contract', () => {
       ['operations', ['events', 'sql-console', 'cron-jobs', 'reports']],
       ['securityGovernance', ['approval', 'audit-center']],
     ]);
-    expect(UTILITY_TABS).toEqual(['health-center', 'settings']);
+    expect(UTILITY_TABS).toEqual(['health-center', 'feedback', 'settings']);
     expect(pathForTab('health-center')).toBe('/health');
     expect(tabFromPath('/health')).toBe('health-center');
+    expect(pathForTab('feedback')).toBe('/feedback');
+    expect(tabFromPath('/feedback')).toBe('feedback');
     expect(TAB_REQUIRED_PERMISSIONS['health-center']).toBe('config:view');
     expect(TAB_REQUIRED_PERMISSIONS['audit-center']).toBe('audit:view');
   });

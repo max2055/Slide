@@ -277,6 +277,7 @@ export const zh_CN: TranslationMap = {
     "scoring-settings": "评分权重配置",
     "cron-jobs": "自动化任务",
     "health-center": "平台状态",
+    feedback: "问题反馈",
     rbac: "权限管理",
     // 其他（保留）
     channels: "频道",
@@ -323,6 +324,7 @@ export const zh_CN: TranslationMap = {
     "llm-config": "管理 AI 模型提供商和 API Key",
     "cron-jobs": "管理定时采集和分析任务",
     "health-center": "系统数据一致性、资源健康与通知闭环",
+    feedback: "提交、编辑和查看历史问题反馈",
     // 其他（保留）
     channels: "频道和设置。",
     "llm-usage": "LLM 用量统计和成本。",

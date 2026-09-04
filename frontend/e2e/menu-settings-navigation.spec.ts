@@ -2,6 +2,50 @@ import { expect, test, type Page } from "@playwright/test";
 
 async function installFixtures(page: Page) {
   await page.addInitScript(() => {
+    class FixtureWebSocket {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSING = 2;
+      static readonly CLOSED = 3;
+
+      readonly url: string;
+      readyState = FixtureWebSocket.CONNECTING;
+      bufferedAmount = 0;
+      protocol = '';
+      extensions = '';
+      binaryType = 'blob';
+      onopen: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+
+      constructor(url: string) {
+        this.url = url;
+        setTimeout(() => {
+          if (this.readyState !== FixtureWebSocket.CONNECTING) return;
+          this.readyState = FixtureWebSocket.OPEN;
+          this.onopen?.(new Event('open'));
+        }, 0);
+      }
+
+      send(): void {}
+      addEventListener(): void {}
+      removeEventListener(): void {}
+
+      close(code = 1000, reason = ''): void {
+        if (this.readyState === FixtureWebSocket.CLOSED) return;
+        this.readyState = FixtureWebSocket.CLOSED;
+        this.onclose?.(new CloseEvent('close', { code, reason }));
+      }
+    }
+
+    Object.defineProperty(window, 'WebSocket', {
+      configurable: true,
+      writable: true,
+      value: FixtureWebSocket,
+    });
+  });
+  await page.addInitScript(() => {
     localStorage.setItem("token", "fixture-navigation-token");
     localStorage.setItem("refreshToken", "fixture-refresh-token");
     localStorage.setItem("permissions", JSON.stringify(["*"]));
@@ -34,9 +78,13 @@ test("desktop navigation uses the new groups and fixed utility entries", async (
     "工作台", "资源管理", "运维中心", "安全与治理",
   ]);
   await expect(page.locator(".sidebar-utility-group .nav-item__text")).toHaveText([
-    "平台状态", "设置",
+    "平台状态", "问题反馈", "设置",
   ]);
   await expect(page.locator('.topnav-shell__docs-btn')).toBeVisible();
+
+  await page.locator('.sidebar-utility-group a[href="/feedback"]').click();
+  await expect(page).toHaveURL(/\/feedback(?:\?|$)/);
+  await expect(page.locator('feedback-page')).toBeVisible();
 
   await page.locator('.sidebar-utility-group a[href="/settings"]').click();
   await expect(page).toHaveURL(/\/settings\/platform\/branding(?:\?|$)/);
@@ -86,4 +134,41 @@ test("permission updates hide inaccessible groups and merged views", async ({ pa
   await expect(page.locator("settings-shell .content-tab", { hasText: "沙箱配置" })).toHaveCount(0);
   await expect(page.locator("settings-shell .settings-group__label", { hasText: "用户与权限" })).toHaveCount(0);
   await expect(page.locator("settings-shell agent-security-policy-page")).toBeVisible();
+});
+
+test("feedback history is usable on desktop and mobile", async ({ page }, testInfo) => {
+  await page.route("**/api/feedback", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        feedback: [{
+          id: 3,
+          title: "连接页保存失败",
+          description: "用户在连接页保存配置后看到请求失败提示，重新加载后配置仍未保存。",
+          source: "agent",
+          createdBy: 7,
+          createdByUsername: "alice",
+          createdAt: "2026-09-04T00:00:00.000Z",
+          updatedAt: "2026-09-04T01:00:00.000Z",
+        }],
+      }),
+    });
+  });
+
+  await page.goto("/feedback");
+  await expect(page.locator("feedback-page")).toBeVisible();
+  await expect(page.getByText("连接页保存失败")).toBeVisible();
+  await expect(page.getByRole("button", { name: "编辑 连接页保存失败" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "删除 连接页保存失败" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("feedback-desktop.png"), fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await expect(page.getByRole("button", { name: "新增反馈" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "编辑 连接页保存失败" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "删除 连接页保存失败" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("feedback-mobile.png"), fullPage: true });
 });

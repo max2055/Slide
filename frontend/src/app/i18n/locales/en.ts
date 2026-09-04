@@ -282,6 +282,7 @@ export const en: TranslationMap = {
     "scoring-settings": "Scoring Weights",
     "cron-jobs": "Automation Tasks",
     "health-center": "Platform Status",
+    feedback: "Feedback",
   },
   subtitles: {
     agents: "Workspaces, tools, identities.",
@@ -322,6 +323,7 @@ export const en: TranslationMap = {
     dreams: "Memory dreaming, consolidation, and reflection.",
     "cron-jobs": "Manage scheduled collection and analysis tasks.",
     "health-center": "System consistency, managed resource health, and notification closure.",
+    feedback: "Submit, edit, and review issue feedback.",
   },
   serverWorkbench: {
     quality: "Collection quality",

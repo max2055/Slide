@@ -29,6 +29,7 @@ import {
 import { RbacService } from './src/auth/rbac-service.js';
 import { rbacApiRoutes } from './src/auth/rbac-api.js';
 import { registerAuthSessionConfigRoutes } from './src/auth/session-config-routes.js';
+import { registerFeedbackRoutes } from './src/feedback-routes.js';
 import { authSessionConfigService } from './src/auth/session-config.js';
 import { strictBody, warnUnknown } from './src/utils/strict-body.js';
 import { instanceDatabaseService } from './src/instance-database-service.js';
@@ -339,6 +340,7 @@ async function start() {
   // 注册 RBAC 管理 API
   await fastify.register(rbacApiRoutes);
   await registerAuthSessionConfigRoutes(fastify, verifyToken);
+  await registerFeedbackRoutes(fastify, verifyToken);
   await registerAgentToolApprovalRoutes(fastify, verifyToken);
   await registerAgentSecurityRoutes(fastify, verifyToken);
   await registerDeviceAuthRoutes(fastify, verifyToken);
