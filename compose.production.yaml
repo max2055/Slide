@@ -1,6 +1,28 @@
 name: slide
 
 services:
+  prompt-storage-init:
+    build:
+      context: .
+      dockerfile: apps/db-ops-api/Dockerfile
+    restart: "no"
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    network_mode: none
+    entrypoint: [/bin/sh, -c]
+    command:
+      - >-
+        mkdir -p /var/lib/slide-agent/prompts &&
+        chown 10001:10001 /var/lib/slide-agent &&
+        chmod u+rwx /var/lib/slide-agent &&
+        chown -R 10001:10001 /var/lib/slide-agent/prompts &&
+        chmod -R u+rwX,go-rwx /var/lib/slide-agent/prompts
+    volumes:
+      - agent-state:/var/lib/slide-agent
+
   frontend:
     build:
       context: .
@@ -26,6 +48,8 @@ services:
       dockerfile: apps/db-ops-api/Dockerfile
     restart: unless-stopped
     depends_on:
+      prompt-storage-init:
+        condition: service_completed_successfully
       mysql:
         condition: service_healthy
       sandbox-controller:

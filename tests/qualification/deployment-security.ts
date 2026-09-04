@@ -32,11 +32,12 @@ function volumeSources(service: Record<string, any>): string[] {
   return list(service.volumes).map((volume) => volume.split(':', 1)[0]);
 }
 
-for (const required of ['frontend', 'api', 'sandbox-controller', 'mysql']) {
+for (const required of ['frontend', 'api', 'prompt-storage-init', 'sandbox-controller', 'mysql']) {
   requireInvariant(Boolean(services[required]), `missing service ${required}`);
 }
 
 const api = services.api ?? {};
+const promptStorageInit = services['prompt-storage-init'] ?? {};
 const controller = services['sandbox-controller'] ?? {};
 const frontend = services.frontend ?? {};
 const declaredVolumes = new Set(Object.keys(compose.volumes ?? {}));
@@ -57,6 +58,22 @@ requireInvariant(!controller.ports, 'sandbox-controller must not publish a host 
 requireInvariant(!api.ports, 'api and raw Agent WebSocket ports must remain internal');
 requireInvariant(Boolean(frontend.ports), 'frontend must be the only published service');
 requireInvariant(String(api.user) === '10001:10001', 'api must run as the dedicated non-root UID');
+requireInvariant(String(promptStorageInit.user) === '0:0', 'prompt storage initializer must explicitly run as root');
+requireInvariant(promptStorageInit.read_only === true, 'prompt storage initializer root filesystem must be read-only');
+requireInvariant(list(promptStorageInit.cap_drop).includes('ALL'), 'prompt storage initializer must drop all capabilities first');
+requireInvariant(
+  ['CHOWN', 'DAC_OVERRIDE', 'FOWNER'].every((capability) => list(promptStorageInit.cap_add).includes(capability))
+    && list(promptStorageInit.cap_add).length === 3,
+  'prompt storage initializer must receive only the capabilities needed to repair volume ownership',
+);
+requireInvariant(list(promptStorageInit.security_opt).includes('no-new-privileges:true'), 'prompt storage initializer must set no-new-privileges');
+requireInvariant(promptStorageInit.network_mode === 'none', 'prompt storage initializer must not have network access');
+requireInvariant(promptStorageInit.privileged !== true, 'prompt storage initializer must not be privileged');
+requireInvariant(!promptStorageInit.ports && !promptStorageInit.expose, 'prompt storage initializer must not expose ports');
+requireInvariant(
+  api.depends_on?.['prompt-storage-init']?.condition === 'service_completed_successfully',
+  'api must wait for prompt storage initialization',
+);
 requireInvariant(String(controller.user).includes('ROOTLESS_DOCKER_UID'), 'controller UID must match the rootless Docker owner');
 
 for (const source of volumeSources(api)) {
@@ -64,6 +81,16 @@ for (const source of volumeSources(api)) {
 }
 requireInvariant(volumeSources(api).every((source) => source !== '.' && source !== root), 'api must not mount the repository');
 requireInvariant(environment(api).AGENT_WORKSPACE === '/var/lib/slide-agent', 'api must use the dedicated Agent state volume');
+requireInvariant(environment(api).PROMPT_VERSIONS_DIR === '/var/lib/slide-agent/prompts', 'api must persist prompts in the Agent state volume');
+requireInvariant(
+  list(promptStorageInit.volumes).includes('agent-state:/var/lib/slide-agent'),
+  'prompt storage initializer and api must share the Agent state volume',
+);
+const promptStorageCommand = JSON.stringify(promptStorageInit.command ?? '');
+requireInvariant(
+  promptStorageCommand.includes('/var/lib/slide-agent/prompts') && promptStorageCommand.includes('10001:10001'),
+  'prompt storage initializer must repair the configured prompt directory for the api UID',
+);
 requireInvariant(environment(api).SANDBOX_CONTROLLER_URL === 'http://sandbox-controller:3010', 'api must call the internal sandbox controller');
 requireInvariant(!('DOCKER_HOST' in environment(api)), 'api must not receive DOCKER_HOST');
 requireInvariant(environment(controller).DOCKER_HOST === 'unix:///run/docker.sock', 'controller must use the mounted rootless socket');
