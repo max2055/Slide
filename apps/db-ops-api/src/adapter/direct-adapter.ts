@@ -216,7 +216,14 @@ export class DirectAdapter implements IAgentEngine {
 
     const port = parseInt(process.env.AGENT_WS_PORT || '28888', 10);
 
-    this.wsServer = new WebSocketServer({ port, maxPayload: this.runtimeLimits.wsMaxPayloadBytes });
+    // Bind explicitly for container-to-container connections. Relying on the
+    // runtime default can bind the listener to an IPv6-only address, which
+    // makes the frontend proxy see an abnormal 1006 close.
+    this.wsServer = new WebSocketServer({
+      host: process.env.AGENT_WS_HOST || '0.0.0.0',
+      port,
+      maxPayload: this.runtimeLimits.wsMaxPayloadBytes,
+    });
 
     // Serve basic HTTP endpoints (the frontend fetches /__slide/control-ui-config.json
     // which is proxied to this port). Without this, the WS-only server returns 426.
