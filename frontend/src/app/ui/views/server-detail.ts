@@ -453,13 +453,6 @@ export class ServerDetailPage extends LitElement {
     }
   }
 
-  private _viewAlerts() {
-    if (!this.serverId) return;
-    window.dispatchEvent(new CustomEvent("slide-navigate", {
-      detail: { tab: "alerts", serverId: this.serverId },
-    }));
-  }
-
   private _viewInstance(instanceId: number) {
     window.dispatchEvent(new CustomEvent("slide-navigate", {
       detail: { tab: "instance-detail", id: instanceId },
@@ -467,10 +460,6 @@ export class ServerDetailPage extends LitElement {
   }
 
   private _setTab(tab: string) {
-    if (tab === 'alerts' && this.serverId) {
-      this._viewAlerts();
-      return;
-    }
     this.activeTab = tab;
     if (tab === "metrics" && this.serverId) {
       this.loadMetricHistory(this.serverId, this.activeRange);
@@ -595,7 +584,6 @@ export class ServerDetailPage extends LitElement {
           <div class="header-right">
             <span class="last-updated">${this._formatTimeAgo(this.lastUpdated)}</span>
             <button class="btn" @click=${() => this._oneClickInspection()} .disabled=${this.isRefreshing}>${icons['clipboard']} 一键巡检</button>
-            <button class="btn" @click=${() => this._viewAlerts()}>${icons['triangle-alert']} 查看告警</button>
             <button class="btn-primary" @click=${this.refreshCurrentTab} .disabled=${this.isRefreshing}>
               ${this.isRefreshing ? html`<span class="spinner" style="width:14px;height:14px;border-width:1.5px;"></span>` : icons['refresh']} 刷新
             </button>
@@ -607,7 +595,6 @@ export class ServerDetailPage extends LitElement {
             { key: "overview", label: "概览" },
             { key: "metrics", label: "指标" },
             { key: "config", label: "配置" },
-            { key: "alerts", label: "告警" },
             { key: "diagnostics", label: "诊断" },
             { key: "network", label: "网络" },
             { key: "processes", label: "进程" },
