@@ -53,6 +53,12 @@ describe('feedback-page', () => {
     expect(root.textContent).toContain('Agent');
     expect(root.textContent).toContain('未接收');
     expect(root.querySelector('.serial')?.textContent).toBe('3');
+    const headers = [...root.querySelectorAll('app-data-table thead th')].map((header) => header.textContent?.trim());
+    expect(headers).toContain('创建时间');
+    expect(headers.indexOf('创建时间')).toBeLessThan(headers.indexOf('更新时间'));
+    const cells = [...root.querySelectorAll('app-data-table tbody tr td')];
+    expect(cells[6]?.textContent).toContain('2026');
+    expect(cells[6]?.textContent).not.toBe(cells[7]?.textContent);
     expect(root.querySelector('app-data-table')).not.toBeNull();
     expect(root.querySelector('button[aria-label="编辑 连接页报错"]')).not.toBeNull();
     expect(root.querySelector('button[aria-label="删除 连接页报错"]')).not.toBeNull();

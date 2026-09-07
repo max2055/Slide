@@ -180,14 +180,16 @@ export class FeedbackPage extends LitElement {
       app-data-table .data-table td:nth-child(4),
       app-data-table .data-table td:nth-child(5),
       app-data-table .data-table td:nth-child(6),
-      app-data-table .data-table td:nth-child(7) {
+      app-data-table .data-table td:nth-child(7),
+      app-data-table .data-table td:nth-child(8) {
         grid-column: 1 / -1;
         color: var(--muted);
       }
       app-data-table .data-table td:nth-child(4)::before { content: '状态：'; }
       app-data-table .data-table td:nth-child(5)::before { content: '来源：'; }
       app-data-table .data-table td:nth-child(6)::before { content: '提交人：'; }
-      app-data-table .data-table td:nth-child(7)::before { content: '更新时间：'; }
+      app-data-table .data-table td:nth-child(7)::before { content: '创建时间：'; }
+      app-data-table .data-table td:nth-child(8)::before { content: '更新时间：'; }
       app-data-table .data-table td:nth-child(4) {
         display: flex;
         align-items: center;
@@ -380,6 +382,7 @@ export class FeedbackPage extends LitElement {
         `,
         source: html`<app-badge variant=${item.source === 'agent' ? 'info' : 'muted'}>${item.source === 'agent' ? 'Agent' : '手动'}</app-badge>`,
         author: item.createdByUsername ?? '已删除用户',
+        createdAt: this.formatTime(item.createdAt),
         updatedAt: this.formatTime(item.updatedAt),
         actions: html`<span class="actions">
           <button
@@ -404,6 +407,7 @@ export class FeedbackPage extends LitElement {
       { key: 'status', label: '状态', width: '6.5rem' },
       { key: 'source', label: '来源', width: '5rem' },
       { key: 'author', label: '提交人', width: '6rem' },
+      { key: 'createdAt', label: '创建时间', width: '9rem' },
       { key: 'updatedAt', label: '更新时间', width: '9rem' },
       { key: 'actions', label: '操作', width: '6.5rem' },
     ];
