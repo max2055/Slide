@@ -7,6 +7,7 @@
 import { BaseMetricProvider, calculateCounterRate } from './base-provider.js';
 import type { DatabaseConnection } from '../database-service.js';
 import type { MetricDefinition } from '../metric-registry.js';
+import { collectDamengMemoryUsage } from './dameng-memory.js';
 
 function scalar(rows: unknown): number | undefined {
   if (!Array.isArray(rows) || !Array.isArray(rows[0])) return undefined;
@@ -50,12 +51,7 @@ export class DamengProvider extends BaseMetricProvider {
         }
 
         case 'memory_usage': {
-          // Buffer hit rate based estimate
-          const bufferResult = await instance.dmConnection.execute<[[number]]>(`
-            SELECT NVL(RAT_HIT, 0) * 100 as hit_rate FROM V$BUFFERPOOL WHERE ID = 0
-          `);
-          const dmBufferHitRate = scalar(bufferResult.rows) ?? 100;
-          return Math.min(100, Math.round((100 - dmBufferHitRate) * 0.5 + 30));
+          return await collectDamengMemoryUsage(instance.dmConnection);
         }
 
         case 'disk_usage': {
