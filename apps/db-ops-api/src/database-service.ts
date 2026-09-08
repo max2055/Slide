@@ -11,6 +11,8 @@ import { withTimeout } from './promise-timeout.js';
 import { authorizeDatabaseTarget } from './security/database-target-policy.js';
 import { classifySql } from './sql-validator.js';
 import { ensureOracleClientReady, formatOracleConnectionError, initializeOracleClient } from './oracle-client.js';
+import { collectDamengMemoryUsage } from './collectors/dameng-memory.js';
+import { calculateCounterRate } from './collectors/base-provider.js';
 
 initializeOracleClient();
 
@@ -67,7 +69,7 @@ export interface DatabaseConnection {
 
 export interface RealtimeMetrics {
   cpu_usage: number;
-  memory_usage: number;
+  memory_usage: number | null;
   disk_usage: number;
   connections: number;
   max_connections?: number;
@@ -1081,18 +1083,23 @@ class DatabaseService {
         WHERE NAME IN ('parse count', 'sql executed count', 'transaction commit count')
       `);
 
-      const stats: any = statResult.rows[0] || {};
-      const parses = stats.parses as number || 0;
-      const executes = stats.executes as number || 0;
-      const commits = stats.commits as number || 0;
+      const stats = statResult.rows[0] || [];
+      const executes = Number(stats[1]) || 0;
+      const commits = Number(stats[2]) || 0;
+      const qps = calculateCounterRate(conn, 'dameng_realtime_qps', executes);
+      const tps = calculateCounterRate(conn, 'dameng_realtime_tps', commits);
 
       // 缓冲池命中率 - Dameng uses V$BUFFERPOOL with RAT_HIT column
-      const bufferResult = await conn.dmConnection.execute(`
-        SELECT NVL(RAT_HIT, 0) * 100 as hit_rate
-        FROM V$BUFFERPOOL
-        WHERE ID = 0
-      `);
-      const dmBufferHitRate = bufferResult.rows[0]?.[0] as number || 100;
+      let dmBufferHitRate: number | undefined;
+      try {
+        const bufferResult = await conn.dmConnection.execute(`
+          SELECT NVL(RAT_HIT, 0) * 100 as hit_rate
+          FROM V$BUFFERPOOL
+          WHERE ID = 0
+        `);
+        const value = bufferResult.rows[0]?.[0];
+        if (value != null && Number.isFinite(Number(value))) dmBufferHitRate = Number(value);
+      } catch { /* Optional view must not discard other metrics. */ }
 
       // 锁等待数量
       let dmLockWait = 0;
@@ -1114,10 +1121,13 @@ class DatabaseService {
       }
 
       // 死锁数量
-      const deadlockResult = await conn.dmConnection.execute(
-        "SELECT COUNT(*) as count FROM V$DEADLOCK_HISTORY"
-      );
-      const dmDeadlockCount = deadlockResult.rows[0]?.[0] as number || 0;
+      let dmDeadlockCount: number | undefined;
+      try {
+        const deadlockResult = await conn.dmConnection.execute(
+          "SELECT COUNT(*) as count FROM V$DEADLOCK_HISTORY"
+        );
+        dmDeadlockCount = Number(deadlockResult.rows[0]?.[0]) || 0;
+      } catch { /* V$DEADLOCK_HISTORY is unavailable on some DM8 versions. */ }
 
       // 内存使用 - 从 V$SYSSTAT 获取 (V$MEMORY_INFO 不存在于 Dameng)
       let dmPagedMemoryUsage = 0;
@@ -1140,14 +1150,19 @@ class DatabaseService {
         ? Math.min(100, Math.round((activeSessions / maxConnections) * 100))
         : 0;
 
-      // 获取内存使用率 - 从缓冲区命中率估算
-      const memoryUsage = Math.min(100, Math.round((100 - dmBufferHitRate) * 0.5 + 30));
+      let memoryUsage: number | null = null;
+      try {
+        memoryUsage = await collectDamengMemoryUsage(conn.dmConnection);
+      } catch { /* Keep memory unavailable while returning the remaining metrics. */ }
 
       // 获取版本
-      const versionResult = await conn.dmConnection.execute(
-        "SELECT TRIM(REPLACE(SVR_VERSION, 'DM Database Server x64 ', '')) FROM V$INSTANCE"
-      );
-      const version = versionResult.rows[0]?.[0] as string || '';
+      let version = '';
+      try {
+        const versionResult = await conn.dmConnection.execute(
+          "SELECT TRIM(REPLACE(SVR_VERSION, 'DM Database Server x64 ', '')) FROM V$INSTANCE"
+        );
+        version = versionResult.rows[0]?.[0] as string || '';
+      } catch { /* Version metadata must not discard collected observations. */ }
 
       return {
         cpu_usage: cpuUsage,
@@ -1155,16 +1170,17 @@ class DatabaseService {
         disk_usage: 45,
         connections,
         max_connections: maxConnections,
-        qps: Math.floor(executes / 100),
-        tps: Math.floor(commits / 10),
+        qps,
+        tps,
         active_transactions: activeSessions,
         slow_queries: 0,
         db_type: 'dameng',
-        dm_buffer_hit_rate: Math.round(dmBufferHitRate * 100) / 100,
+        ...(dmBufferHitRate !== undefined ? { dm_buffer_hit_rate: Math.round(dmBufferHitRate * 100) / 100 } : {}),
         dm_lock_wait: dmLockWait,
-        dm_deadlock_count: dmDeadlockCount,
+        ...(dmDeadlockCount !== undefined ? { dm_deadlock_count: dmDeadlockCount } : {}),
         dm_paged_memory_usage: dmPagedMemoryUsage,
         dm_os_memory_usage: dmOsMemoryUsage,
+        version,
       };
     } catch (error) {
       console.error(`获取达梦实时指标失败：${id}`, error);
