@@ -31,7 +31,7 @@ describe('UI-02: navigation contract', () => {
   it('uses the specified primary navigation groups and fixed utility entries', () => {
     expect(TAB_GROUPS.map((group) => [group.label, [...group.tabs]])).toEqual([
       ['workspace', ['chat', 'dashboard']],
-      ['resources', ['instances-db', 'servers', 'network-devices']],
+      ['resources', ['servers', 'network-devices', 'instances-db']],
       ['operations', ['events', 'sql-console', 'cron-jobs', 'reports']],
       ['securityGovernance', ['approval', 'audit-center']],
     ]);
