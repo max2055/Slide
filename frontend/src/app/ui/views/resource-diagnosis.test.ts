@@ -15,7 +15,7 @@ describe('cross-resource diagnosis', () => {
   it('loads a deep-linked resource and exposes missing evidence without inventing facts', async () => {
     await import('./resource-diagnosis.js');
     history.replaceState({}, '', '/resource-diagnosis?resourceType=network_device&resourceId=3');
-    authFetch.mockImplementation(async (url: string) => ({ ok: true, json: async () => url === '/api/resources'
+    authFetch.mockImplementation(async (url: string) => url.endsWith('/evaluation') ? { ok: false, json: async () => ({ error: 'EVALUATION_UNAVAILABLE' }) } : ({ ok: true, json: async () => url === '/api/resources'
       ? { items: [{ resource: { type: 'network_device', id: 3 }, label: 'Edge switch', status: 'unknown', attributes: {} }] }
       : { schemaVersion: 1, resource: { type: 'network_device', id: 3 }, generatedAt: new Date().toISOString(), facts: [], inferences: [], hypotheses: [], gaps: ['OBSERVATIONS_EMPTY'], truncated: false } }));
     const element = document.createElement('resource-diagnosis-page') as HTMLElement & { updateComplete: Promise<unknown> };

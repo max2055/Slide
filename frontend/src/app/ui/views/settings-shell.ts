@@ -12,6 +12,7 @@ import {
   type SettingsPageId,
 } from "../settings-navigation.ts";
 import "../components/app-empty-state.js";
+import "./source-settings.js";
 
 function readPermissions(): Set<string> | null {
   try {
@@ -325,7 +326,7 @@ export class SettingsShell extends LitElement {
           >
             ${this.visibleGroups.map((group) => html`
               <optgroup label=${group.label}>
-                ${group.items.map((item) => html`<option value=${item.id}>${item.label}</option>`)}
+                ${group.items.map((item) => html`<option .selected=${item.id === this.activePage} value=${item.id}>${item.label}</option>`)}
               </optgroup>
             `)}
           </select>
@@ -370,6 +371,7 @@ export class SettingsShell extends LitElement {
 
   private renderPage() {
     switch (this.activePage) {
+      case "source": return html`<source-settings></source-settings>`;
       case "branding": return html`<branding-settings></branding-settings>`;
       case "appearance": return html`<appearance-settings></appearance-settings>`;
       case "notifications": return html`<feishu-notification-settings></feishu-notification-settings>`;

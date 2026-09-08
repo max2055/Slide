@@ -19,6 +19,8 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     const related = { type: 'network_device', id: 3 };
     const item = { schemaVersion: 1, id: 'ev-cpu-1', kind: 'fact', status: 'observed', subject: { resource }, quality: 'good', observedAt: new Date().toISOString(), validUntil: new Date(Date.now() + 300_000).toISOString(), source: 'metrics', correlationId: 'corr-1', provenance: { adapter: 'collector' }, payload: { metricId: 'cpu', value: 0 } };
     let diagnosed = false;
+    let savedConfig: Record<string, unknown> | null = null;
+    let synced = false;
     await page.route('**/api/**', async route => {
       const path = new URL(route.request().url()).pathname;
       if (!path.startsWith('/api/')) return route.fallback();
@@ -26,6 +28,15 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
       if (path === '/api/auth/permissions') body = ['*'];
       if (path === '/api/user/preferences') body = { preferences: { locale: 'zh-CN' } };
       if (path === '/api/version') body = { version: 'test' };
+      if (path === '/api/platform/source/manifest') body = { releaseId: 'release-e2e', commitSha: 'a'.repeat(40), treeDigest: 'b'.repeat(64), signature: 'c'.repeat(64), files: [{ path: 'apps/api.ts', digest: 'd'.repeat(64), bytes: 1024 }] };
+      if (path === '/api/platform/source/config') {
+        if (route.request().method() === 'PUT') savedConfig = route.request().postDataJSON();
+        body = { config: savedConfig };
+      }
+      if (path === '/api/platform/source/sync') {
+        expect(route.request().postDataJSON()).toEqual({ token: 'single-use-e2e' }); synced = true; body = { success: true };
+      }
+      if (path.endsWith('/evaluation')) body = { schemaVersion: 1, generatedAt: item.observedAt, rulesVersion: 3, invariants: [{ ruleId: 'cpu-bounds', version: 1, status: 'unknown', reason: 'MISSING_INPUT', evidenceRefs: ['ev-cpu-1'] }], expectations: [{ metricId: 'cpu', status: 'unknown', reason: 'BASELINE_SHORT', mean: null, deviation: null, sampleCount: 2, evidenceRefs: [] }], gaps: ['BASELINE_SHORT'] };
       if (path === '/api/resources') body = { items: [
         { resource, label: 'Orders database', status: 'online', attributes: {} },
         { resource: { type: 'server', id: 2 }, label: 'Host', status: 'online', attributes: {} },
@@ -43,6 +54,10 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     const view = page.locator('resource-diagnosis-page');
     await expect(view.getByRole('heading', { name: '跨资源诊断' })).toBeVisible();
     await expect(view.getByRole('combobox', { name: '资源', exact: true })).toHaveValue('instance:1');
+    await expect(view.locator('resource-evaluation')).toContainText('cpu-bounds');
+    await expect(view.locator('resource-evaluation')).toContainText('规则集 3');
+    await expect(view.locator('resource-evaluation')).toContainText('BASELINE_SHORT');
+    await expect(view.locator('source-manifest')).toContainText('release-e2e');
     await view.locator('[data-evidence-id="ev-cpu-1"] summary').click();
     await expect(view.locator('[data-evidence-id="ev-cpu-1"]')).toContainText('corr-1');
     await expect(view.locator('[data-evidence-id="ev-cpu-1"]')).toContainText('新鲜');
@@ -61,6 +76,25 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     await expect(view.locator('[data-evidence-id="ev-cpu-1"]')).toBeVisible();
     await view.getByRole('combobox', { name: '资源', exact: true }).selectOption('server:2');
     await expect(page).toHaveURL(/resourceType=server&resourceId=2/);
+    await page.goto('/settings/platform/source');
+    const source = page.locator('source-settings');
+    await expect(source.getByRole('heading', { name: '部署源码', exact: true })).toBeVisible();
+    if (viewport.width < 640) await expect(page.locator('settings-shell select')).toHaveValue('source');
+    await expect(source.getByRole('checkbox', { name: '允许模型读取源码内容' })).not.toBeChecked();
+    await source.getByRole('textbox', { name: 'GitLab URL' }).fill('https://gitlab.example.com');
+    await source.getByRole('textbox', { name: '项目 ID' }).fill('42');
+    await source.getByRole('textbox', { name: '允许的源码路径' }).fill('apps/');
+    await source.getByRole('button', { name: '保存配置' }).click();
+    await expect(source).toContainText('配置已保存');
+    expect(savedConfig).toEqual({ baseUrl: 'https://gitlab.example.com', projectId: '42', allowedPaths: ['apps/'], allowModelContent: false });
+    await source.getByLabel('单次同步令牌', { exact: true }).fill('single-use-e2e');
+    await source.getByRole('button', { name: '同步源码' }).click();
+    await expect.poll(() => synced).toBe(true);
+    await expect(source.getByLabel('单次同步令牌', { exact: true })).toHaveValue('');
+    expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain('single-use-e2e');
+    await expect(source.locator('source-manifest')).toContainText('release-e2e');
+    await page.screenshot({ path: testInfo.outputPath(`source-settings-${viewport.width}.png`), fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(errors).toEqual([]);
   });
 }

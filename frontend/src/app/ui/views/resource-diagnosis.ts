@@ -7,6 +7,8 @@ import { permissionMatches } from '../settings-navigation.js';
 import '../components/app-form-field.js';
 import '../components/app-empty-state.js';
 import '../components/app-badge.js';
+import './resource-evaluation.js';
+import './source-manifest.js';
 
 type ResourceType = 'instance' | 'server' | 'network_device';
 interface ResourceRef { type: ResourceType; id: number }
@@ -154,6 +156,8 @@ export class ResourceDiagnosisPage extends LitElement {
         ${this.evidence.gaps.length ? html`<section><h2>证据缺口</h2>${this.evidence.gaps.map(gap => html`<p><code>${gap}</code></p>`)}</section>` : nothing}
         ${(['facts', 'inferences', 'hypotheses'] as const).map((kind, index) => html`<section data-kind=${kind}><h2>${['事实', '推论', '假设'][index]} (${this.evidence![kind].length})</h2>${this.evidence![kind].length ? [...this.evidence![kind]].sort((a, b) => (b.observedAt ?? '').localeCompare(a.observedAt ?? '')).map(item => this.renderItem(item)) : html`<app-empty-state title="暂无证据"></app-empty-state>`}</section>`)}` : nothing}
       ${this.pack ? html`<section><h2>关联资源</h2>${this.pack.relations.map(relation => html`<p><a href=${this.resourceHref(relation.source)}>${key(relation.source)}</a> ${relation.relationType} <a href=${this.resourceHref(relation.target)}>${key(relation.target)}</a> <span>${relation.provenance}</span></p>`)}${this.pack.relatedEvidence.map(item => html`<p><a href=${this.resourceHref(item.resource.resource)}>${resourceLabels[item.resource.resource.type]} · ${item.resource.label}</a></p>`)}${this.pack.gaps.map(gap => html`<p>${gap.scope}: ${gap.code}</p>`)}${this.pack.truncated ? html`<p>关联证据已截断</p>` : nothing}</section>` : nothing}
+      ${this.selected ? html`<resource-evaluation .resourceType=${this.selected.type} .resourceId=${this.selected.id}></resource-evaluation>` : nothing}
+      ${permissionMatches(this.permissions, 'config:view') ? html`<section><source-manifest></source-manifest></section>` : nothing}
       ${this.agentResult ? html`<section><h2>Agent 诊断</h2><pre>${JSON.stringify(this.agentResult, null, 2)}</pre></section>` : nothing}
     `;
   }
