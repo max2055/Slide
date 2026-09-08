@@ -6,7 +6,8 @@ import type { ResourceRef } from '../resources/types.js';
 import { dbConnection } from '../db-connection.js';
 import { PersistentOperationService } from '../operations/operation-service.js';
 import { evidenceService, type EvidenceService } from './evidence-service.js';
-import { authorizeEvidence, validateEvidenceQuery } from './evidence-store.js';
+import { authorizeEvidence, EvidenceStore, validateEvidenceQuery } from './evidence-store.js';
+import { auditLogManager } from '../audit/audit-log.js';
 import { dimensionsKey, evaluateInvariants } from './invariant-engine.js';
 import { evaluateExpectation } from './expectation-engine.js';
 import { EvidenceResourceSchema, validateEvidenceItem } from './evidence-contract.js';
@@ -30,7 +31,7 @@ function parseRules(raw: unknown): InvariantConfiguration {
   return value;
 }
 export class EvidenceEvaluationService {
-  constructor(private readonly pool: () => Executor | null = () => dbConnection.getPool(), private readonly evidence: Pick<EvidenceService, 'getBundle' | 'getItem'> = evidenceService, private readonly operations: OperationReader = new PersistentOperationService(() => dbConnection.getPool() as any), private readonly clock: () => Date = () => new Date()) {}
+  constructor(private readonly pool: () => Executor | null = () => dbConnection.getPool(), private readonly evidence: Pick<EvidenceService, 'getBundle' | 'getItem'> = evidenceService, private readonly operations: OperationReader = new PersistentOperationService(() => dbConnection.getPool() as any), private readonly clock: () => Date = () => new Date(), private readonly historyStore: Pick<EvidenceStore, 'history'> = new EvidenceStore(pool)) {}
   private executor(): Executor { const pool = this.pool(); if (!pool) throw new Error('EVIDENCE_STORAGE_UNAVAILABLE'); return pool; }
   async rules(actor: ActorContext, ref: ResourceRef): Promise<InvariantConfiguration> {
     authorizeEvidence(actor, ref);
@@ -39,7 +40,7 @@ export class EvidenceEvaluationService {
   }
   async updateRules(actor: ActorContext, ref: ResourceRef, input: unknown): Promise<InvariantConfiguration> {
     authorizeEvidence(actor, ref);
-    if (!actor.permissions.includes('*') && !actor.roles.includes('admin')) throw new Error('RULES_FORBIDDEN');
+    if (!actor.permissions.some(value => value === '*' || value === 'admin:*')) throw new Error('RULES_FORBIDDEN');
     if (!Value.Check(updateSchema, input)) throw new Error('RULES_INVALID');
     const next = parseRules({ schemaVersion: 1, version: input.expectedVersion + 1, rules: input.rules });
     const executor = this.executor();
@@ -54,6 +55,7 @@ export class EvidenceEvaluationService {
       const [result] = await executor.execute('UPDATE system_config SET config_value = ? WHERE config_key = ? AND BINARY config_value = BINARY ?', [JSON.stringify(next), configKey(ref), raw]);
       if (result.affectedRows !== 1) throw new Error('RULES_VERSION_CONFLICT');
     }
+    await auditLogManager.logConfigChange({ userId: String(actor.userId), username: actor.username, configKey: configKey(ref), oldValue: current, newValue: next });
     return next;
   }
   async evaluate(actor: ActorContext, ref: ResourceRef) {
@@ -67,9 +69,20 @@ export class EvidenceEvaluationService {
       const key = `${item.payload.metricId}:${item.source}:${dimensionsKey(item.dimensions)}`;
       if (!latest.has(key) || latest.get(key)!.observedAt < item.observedAt) latest.set(key, item);
     }
+    const gaps = new Set([...bundle.gaps, ...(!config.rules.length ? ['INVARIANTS_NOT_CONFIGURED'] : []), ...(bundle.truncated ? ['EVIDENCE_TRUNCATED'] : [])]);
+    if (latest.size > 32) gaps.add('EXPECTATION_IDENTITIES_TRUNCATED');
+    const expectations: ReturnType<typeof evaluateExpectation>[] = [];
+    const refs = new Set(facts.map(item => item.id));
+    for (const current of [...latest.values()].slice(0, 32)) {
+      const history = await this.historyStore.history(actor, ref, current, now);
+      if (history.truncated) gaps.add('EXPECTATION_HISTORY_TRUNCATED');
+      const result = evaluateExpectation(current, history.items, now.getTime());
+      expectations.push(result);
+      result.evidenceRefs.forEach(id => refs.add(id));
+    }
     return { schemaVersion: 1, resource: ref, generatedAt: now.toISOString(), rulesVersion: config.version,
-      invariants: evaluateInvariants(facts, config.rules, now.getTime()), expectations: [...latest.values()].map(current => evaluateExpectation(current, facts, now.getTime())),
-      evidenceRefs: facts.map(item => item.id), gaps: [...bundle.gaps, ...(!config.rules.length ? ['INVARIANTS_NOT_CONFIGURED'] : []), ...(bundle.truncated ? ['EVIDENCE_TRUNCATED'] : [])] };
+      invariants: evaluateInvariants(facts, config.rules, now.getTime()), expectations,
+      evidenceRefs: [...refs], gaps: [...gaps] };
   }
   async recordDecision(actor: ActorContext, ref: ResourceRef, input: unknown): Promise<EvidenceDecision> {
     authorizeEvidence(actor, ref);
@@ -89,10 +102,34 @@ export class EvidenceEvaluationService {
     if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('DECISION_INVALID');
     const [rows] = await this.executor().execute('SELECT record_json FROM agent_evidence_decisions WHERE owner_user_id = ? AND resource_type = ? AND resource_id = ? AND id = ? LIMIT 1', [actor.userId, ref.type, ref.id, id]);
     if (!rows[0]) return null;
-    let result: unknown;
-    try { result = typeof rows[0].record_json === 'string' ? JSON.parse(rows[0].record_json) : rows[0].record_json; } catch { throw new Error('DECISION_INVALID'); }
-    if (!Value.Check(decisionSchema, result) || result.id !== id || result.resource.type !== ref.type || result.resource.id !== ref.id) throw new Error('DECISION_INVALID');
+    const result = await this.readDecision(actor, ref, rows[0].record_json);
+    if (result.id !== id) throw new Error('DECISION_INVALID');
     return result;
+  }
+  private async readDecision(actor: ActorContext, ref: ResourceRef, raw: unknown): Promise<EvidenceDecision> {
+    let result: unknown;
+    try { result = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { throw new Error('DECISION_INVALID'); }
+    if (!Value.Check(decisionSchema, result) || result.resource.type !== ref.type || result.resource.id !== ref.id) throw new Error('DECISION_INVALID');
+    validateEvidenceQuery({ from: result.from, to: result.to, limit: 100 });
+    for (const id of result.evidenceRefs) {
+      const item = await this.evidence.getItem(actor, ref, id);
+      if (!validateEvidenceItem(item) || item.id !== id || item.subject.resource.type !== ref.type || item.subject.resource.id !== ref.id || Date.parse(item.observedAt) < Date.parse(result.from) || Date.parse(item.observedAt) > Date.parse(result.to)) throw new Error('DECISION_EVIDENCE_INVALID');
+    }
+    return result;
+  }
+  async decisions(actor: ActorContext, ref: ResourceRef, limit = 20) {
+    authorizeEvidence(actor, ref);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error('DECISION_INVALID');
+    const [rows] = await this.executor().execute(`SELECT record_json FROM agent_evidence_decisions WHERE owner_user_id = ? AND resource_type = ? AND resource_id = ? ORDER BY created_at DESC, id DESC LIMIT ${limit + 1}`, [actor.userId, ref.type, ref.id]);
+    const items: EvidenceDecision[] = []; const gaps = new Set<string>();
+    for (const row of rows.slice(0, limit)) {
+      try { items.push(await this.readDecision(actor, ref, row.record_json)); }
+      catch (error) {
+        if (error instanceof Error && ['DECISION_INVALID', 'DECISION_EVIDENCE_INVALID', 'EVIDENCE_QUERY_INVALID'].includes(error.message)) gaps.add('DECISION_EVIDENCE_UNAVAILABLE');
+        else throw error;
+      }
+    }
+    return { schemaVersion: 1, resource: ref, items, truncated: rows.length > limit, gaps: [...gaps] };
   }
   async recovery(actor: ActorContext, ref: ResourceRef, operationId: string) {
     authorizeEvidence(actor, ref);

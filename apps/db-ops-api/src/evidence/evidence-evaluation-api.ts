@@ -8,6 +8,7 @@ interface EvaluationApi {
   updateRules(actor: ActorContext, ref: ResourceRef, input: unknown): Promise<unknown>;
   recordDecision(actor: ActorContext, ref: ResourceRef, input: unknown): Promise<unknown>;
   decision(actor: ActorContext, ref: ResourceRef, id: string): Promise<unknown>;
+  decisions(actor: ActorContext, ref: ResourceRef, limit?: number): Promise<unknown>;
   recovery(actor: ActorContext, ref: ResourceRef, id: string): Promise<unknown>;
 }
 export async function registerEvidenceEvaluationRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler, service: EvaluationApi = evidenceEvaluationService) {
@@ -18,7 +19,8 @@ export async function registerEvidenceEvaluationRoutes(app: FastifyInstance, ver
     const ref = { type, id: Number(id) } as ResourceRef;
     try {
       const result = method === 'evaluate' || method === 'rules' ? await service[method](request.user, ref)
-        : method === 'decision' ? await service.decision(request.user, ref, decisionId)
+        : method === 'decisions' ? await service.decisions(request.user, ref, request.query.limit === undefined ? undefined : Number(request.query.limit))
+          : method === 'decision' ? await service.decision(request.user, ref, decisionId)
           : method === 'recovery' ? await service.recovery(request.user, ref, operationId)
             : await service[method](request.user, ref, request.body);
       return result === null ? reply.code(404).send({ error: 'DECISION_NOT_FOUND' }) : reply.send(result);
@@ -37,6 +39,7 @@ export async function registerEvidenceEvaluationRoutes(app: FastifyInstance, ver
   app.get('/api/resources/:type/:id/invariants', options, handle('rules'));
   app.put('/api/resources/:type/:id/invariants', options, handle('updateRules'));
   app.post('/api/resources/:type/:id/decisions', options, handle('recordDecision'));
+  app.get('/api/resources/:type/:id/decisions', options, handle('decisions'));
   app.get('/api/resources/:type/:id/decisions/:decisionId', options, handle('decision'));
   app.get('/api/resources/:type/:id/recovery/:operationId', options, handle('recovery'));
 }

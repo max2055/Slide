@@ -4,6 +4,7 @@ import type { ActorContext } from '../auth/actor-context.js';
 import { canReadResource } from '../resources/resource-service.js';
 import type { ResourceRef } from '../resources/types.js';
 import { EvidenceResourceSchema, validateEvidenceItem, type EvidenceItem } from './evidence-contract.js';
+import { dimensionsKey } from './invariant-engine.js';
 export interface EvidenceQuery { from: string; to: string; limit: number; correlationId?: string; }
 interface Executor { execute(sql: string, values?: any[]): Promise<any>; }
 export function authorizeEvidence(actor: ActorContext, ref: ResourceRef): void {
@@ -44,6 +45,25 @@ export class EvidenceStore {
     if (!/^[a-f0-9]{64}$/.test(id)) throw new Error('EVIDENCE_ID_INVALID');
     const [rows] = await this.executor().execute('SELECT evidence_json FROM agent_evidence WHERE owner_user_id = ? AND resource_type = ? AND resource_id = ? AND id = ? LIMIT 1', [actor.userId, ref.type, ref.id, id]);
     return this.decode(rows, ref).find(item => item.id === id) ?? null;
+  }
+  async history(actor: ActorContext, ref: ResourceRef, current: EvidenceItem, now: Date): Promise<{ items: EvidenceItem[]; truncated: boolean }> {
+    authorizeEvidence(actor, ref);
+    if (!validateEvidenceItem(current) || current.subject.resource.type !== ref.type || current.subject.resource.id !== ref.id || !current.payload.metricId || !Number.isFinite(now.getTime())) throw new Error('EVIDENCE_INVALID');
+    const from = new Date(now.getTime() - 86400_000);
+    // The indexed resource/time range and row ceiling bound each identity lookup.
+    const [rows] = await this.executor().execute(`SELECT evidence_json FROM agent_evidence
+      WHERE owner_user_id = ? AND resource_type = ? AND resource_id = ? AND observed_at >= ? AND observed_at < ?
+        AND JSON_UNQUOTE(JSON_EXTRACT(evidence_json, '$.payload.metricId')) = ?
+        AND JSON_UNQUOTE(JSON_EXTRACT(evidence_json, '$.source')) = ?
+        AND COALESCE(JSON_EXTRACT(evidence_json, '$.dimensions'), JSON_OBJECT()) = CAST(? AS JSON)
+        AND JSON_UNQUOTE(JSON_EXTRACT(evidence_json, '$.status')) = 'fact'
+        AND JSON_UNQUOTE(JSON_EXTRACT(evidence_json, '$.quality')) = 'good'
+      ORDER BY observed_at DESC, id ASC LIMIT 2001`, [actor.userId, ref.type, ref.id, from, new Date(current.observedAt), current.payload.metricId, current.source, dimensionsKey(current.dimensions)]);
+    const valid = this.decode(rows.slice(0, 2000), ref).filter(item => item.status === 'fact' && item.quality === 'good' && item.payload.metricId === current.payload.metricId
+      && item.source === current.source && dimensionsKey(item.dimensions) === dimensionsKey(current.dimensions)
+      && item.observedAt >= from.toISOString() && item.observedAt < current.observedAt && typeof item.payload.value === 'number');
+    const distinct = [...new Map(valid.sort((a, b) => b.observedAt.localeCompare(a.observedAt) || b.id.localeCompare(a.id)).map(item => [item.observedAt, item])).values()];
+    return { items: distinct.slice(0, 40), truncated: rows.length > 2000 || distinct.length > 40 };
   }
 }
 export const evidenceStore = new EvidenceStore();
