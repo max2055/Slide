@@ -13,14 +13,16 @@ export class EvidenceService {
     const now = this.clock();
     const query = { from: options.from ?? new Date(now.getTime() - 86400_000).toISOString(), to: options.to ?? now.toISOString(), limit: options.limit ?? 100, correlationId: options.correlationId };
     validateEvidenceQuery(query);
+    query.from = new Date(query.from).toISOString();
+    query.to = new Date(query.to).toISOString();
     const gaps = new Set<string>();
     const fresh: EvidenceItem[] = [];
     // Explicit historical windows only read persisted evidence.
     if (options.from === undefined && options.to === undefined && options.correlationId === undefined) {
       let observations: Observation[] = [];
-      try { observations = await this.collect(actor, ref, { limit: query.limit }); }
+      try { observations = await this.collect(actor, ref, { limit: query.limit + 1 }); }
       catch { gaps.add('OBSERVATIONS_UNAVAILABLE'); }
-      for (const observation of observations.slice(0, query.limit)) {
+      for (const observation of observations.slice(0, query.limit + 1)) {
         if (observation.resource.type !== ref.type || observation.resource.id !== ref.id) { gaps.add('OBSERVATION_INVALID'); continue; }
         const observedAt = observation.observedAt instanceof Date && Number.isFinite(observation.observedAt.getTime()) ? observation.observedAt : null;
         const validUntil = observation.validUntil instanceof Date && Number.isFinite(observation.validUntil.getTime()) ? observation.validUntil : null;
@@ -35,14 +37,15 @@ export class EvidenceService {
       }
     }
     const stored = await this.store.query(actor, ref, query);
-    const candidates = sortEvidence([...new Map([...stored, ...fresh].map(item => [item.id, item])).values()]);
-    const items = candidates.filter(item => item.observedAt >= query.from && item.observedAt <= query.to).slice(0, query.limit);
+    const candidates = sortEvidence([...new Map([...stored, ...fresh].map(item => [item.id, item])).values()])
+      .filter(item => item.observedAt >= query.from && item.observedAt <= query.to);
+    const items = candidates.slice(0, query.limit);
     if (!items.length) gaps.add('NO_EVIDENCE_IN_WINDOW');
     for (const item of items) {
       if (Date.parse(item.validUntil) <= now.getTime()) gaps.add('EVIDENCE_STALE');
       if (item.quality !== 'good') gaps.add('EVIDENCE_QUALITY_' + item.quality.toUpperCase());
     }
-    return { schemaVersion: 1, resource: ref, generatedAt: now.toISOString(), facts: items.filter(item => item.status === 'fact'), inferences: items.filter(item => item.status === 'inference'), hypotheses: items.filter(item => item.status === 'hypothesis'), gaps: [...gaps].sort(), truncated: candidates.length >= query.limit };
+    return { schemaVersion: 1, resource: ref, generatedAt: now.toISOString(), facts: items.filter(item => item.status === 'fact'), inferences: items.filter(item => item.status === 'inference'), hypotheses: items.filter(item => item.status === 'hypothesis'), gaps: [...gaps].sort(), truncated: candidates.length > query.limit };
   }
   async getItem(actor: ActorContext, ref: ResourceRef, id: string): Promise<EvidenceItem | null> { return this.store.getById(actor, ref, id); }
 }

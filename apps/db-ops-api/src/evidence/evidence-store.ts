@@ -31,11 +31,12 @@ export class EvidenceStore {
     return rows.map(row => { try { return typeof row.evidence_json === 'string' ? JSON.parse(row.evidence_json) : row.evidence_json; } catch { return null; } })
       .filter((item): item is EvidenceItem => validateEvidenceItem(item) && item.subject.resource.type === ref.type && item.subject.resource.id === ref.id);
   }
+  // One extra row lets the bundle distinguish an exact limit from omitted evidence.
   async query(actor: ActorContext, ref: ResourceRef, query: EvidenceQuery): Promise<EvidenceItem[]> {
     authorizeEvidence(actor, ref); validateEvidenceQuery(query);
     const values: unknown[] = [actor.userId, ref.type, ref.id, new Date(query.from), new Date(query.to)];
     if (query.correlationId) values.push(query.correlationId);
-    const [rows] = await this.executor().execute(`SELECT evidence_json FROM agent_evidence WHERE owner_user_id = ? AND resource_type = ? AND resource_id = ? AND observed_at >= ? AND observed_at <= ?${query.correlationId ? ' AND correlation_id = ?' : ''} ORDER BY observed_at DESC, id ASC LIMIT ${query.limit}`, values);
+    const [rows] = await this.executor().execute(`SELECT evidence_json FROM agent_evidence WHERE owner_user_id = ? AND resource_type = ? AND resource_id = ? AND observed_at >= ? AND observed_at <= ?${query.correlationId ? ' AND correlation_id = ?' : ''} ORDER BY observed_at DESC, id ASC LIMIT ${query.limit + 1}`, values);
     return this.decode(rows, ref);
   }
   async getById(actor: ActorContext, ref: ResourceRef, id: string): Promise<EvidenceItem | null> {

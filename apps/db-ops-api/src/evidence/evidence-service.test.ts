@@ -14,6 +14,44 @@ function fixture() {
   return { execute, store, observations, service };
 }
 describe('persistent authorized evidence', () => {
+  it('includes UTC evidence inside an offset historical window', async () => {
+    const f = fixture();
+    const saved = (await f.service.getBundle(actor, ref)).facts[0];
+    f.execute.mockResolvedValueOnce([[{ evidence_json: JSON.stringify(saved) }], []]);
+    const result = await f.service.getBundle(actor, ref, { from: '2026-09-08T07:59:00+08:00', to: '2026-09-08T08:01:00+08:00' });
+    expect(result.facts).toEqual([saved]);
+  });
+  it('does not claim truncation when the live result exactly meets the limit', async () => {
+    const f = fixture();
+    const result = await f.service.getBundle(actor, ref, { limit: 1 });
+    expect(result.facts).toHaveLength(1);
+    expect(result.truncated).toBe(false);
+    expect(f.observations).toHaveBeenCalledWith(actor, ref, { limit: 2 });
+  });
+  it('uses a bounded stored sentinel to distinguish exact and omitted results', async () => {
+    const f = fixture();
+    const saved = (await f.service.getBundle(actor, ref)).facts[0];
+    const { id, ...content } = saved;
+    const extraContent = { ...content, payload: { metricId: 'memory_usage', value: 2 } };
+    const extra = { ...extraContent, id: evidenceId(extraContent) };
+    const options = { from: '2026-09-08T00:00:00.000Z', to: now.toISOString(), limit: 1 };
+    f.execute.mockResolvedValueOnce([[{ evidence_json: saved }], []]);
+    expect((await f.service.getBundle(actor, ref, options)).truncated).toBe(false);
+    f.execute.mockResolvedValueOnce([[{ evidence_json: saved }, { evidence_json: extra }], []]);
+    const result = await f.service.getBundle(actor, ref, options);
+    expect(result.facts).toHaveLength(1); expect(result.truncated).toBe(true);
+    expect(f.execute).toHaveBeenLastCalledWith(expect.stringContaining('LIMIT 2'), expect.any(Array));
+    await f.service.getBundle(actor, ref, { ...options, limit: 100 });
+    expect(f.execute).toHaveBeenLastCalledWith(expect.stringContaining('LIMIT 101'), expect.any(Array));
+  });
+  it('reports proven live observation omission using the extra observation', async () => {
+    const f = fixture();
+    const observation = (await f.observations())[0];
+    f.observations.mockResolvedValueOnce([observation, { ...observation, metricId: 'memory_usage' }]);
+    const result = await f.service.getBundle(actor, ref, { limit: 1 });
+    expect(result.facts).toHaveLength(1); expect(result.truncated).toBe(true);
+    expect(f.observations).toHaveBeenLastCalledWith(actor, ref, { limit: 2 });
+  });
   it('persists real observations with ownership and marks stale evidence as a gap', async () => {
     const f = fixture();
     const bundle = await f.service.getBundle(actor, ref);
