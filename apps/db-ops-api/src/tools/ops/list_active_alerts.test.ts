@@ -13,7 +13,7 @@ const actor = { userId: 7, username: 'operator', roles: ['admin'], permissions: 
 describe('list_active_alerts boundary scenarios', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    alertService.getAlerts.mockResolvedValue([]);
+    alertService.getAlerts.mockResolvedValue({ items: [], total: 0 });
     rbacService.getUserInstanceAccess.mockResolvedValue([]);
   });
 
@@ -29,5 +29,34 @@ describe('list_active_alerts boundary scenarios', () => {
     const result = await listActiveAlertsTool.handler({});
     expect(result).toMatchObject({ success: false, errorCode: 'MISSING_ACTOR' });
     expect(alertService.getAlerts).not.toHaveBeenCalled();
+  });
+
+  it('reads the paginated service response before applying time and instance filters', async () => {
+    alertService.getAlerts.mockResolvedValue({
+      items: [
+        { id: 1, instance_id: 10, severity: 'warning', created_at: '2026-09-08T10:00:00Z' },
+        { id: 2, instance_id: 20, severity: 'warning', created_at: '2026-09-08T10:00:00Z' },
+        { id: 3, instance_id: 10, severity: 'warning', created_at: '2026-09-01T10:00:00Z' },
+      ],
+      total: 3,
+    });
+    rbacService.getUserInstanceAccess.mockResolvedValue([{ instance_id: 10 }]);
+
+    const result = await listActiveAlertsTool.handler({ since: '2026-09-08T00:00:00Z' }, { actor, userId: 7 });
+
+    expect(result).toMatchObject({ success: true, data: { total: 1, alerts: [{ id: 1, level: 'warning' }] } });
+  });
+
+  it('returns an empty paginated result without an array-method exception', async () => {
+    await expect(listActiveAlertsTool.handler({}, { actor })).resolves.toMatchObject({
+      success: true, data: { total: 0, alerts: [] },
+    });
+  });
+
+  it('supports the legacy array response', async () => {
+    alertService.getAlerts.mockResolvedValue([{ id: 1, instance_id: 10 }]);
+    await expect(listActiveAlertsTool.handler({}, { actor })).resolves.toMatchObject({
+      success: true, data: { total: 1, alerts: [{ id: 1 }] },
+    });
   });
 });
