@@ -18,6 +18,7 @@ vi.mock('../db-connection.js', () => ({
 }));
 
 import { registerNetworkDeviceRoutes } from './network-device-routes.js';
+import { registerHttpSecurity } from '../security/http-security.js';
 
 type Token = 'reader' | 'manager' | 'backup' | 'none';
 const actors: Record<Token, any> = {
@@ -29,6 +30,7 @@ const actors: Record<Token, any> = {
 
 async function appWith(dependencies: any = {}): Promise<FastifyInstance> {
   const app = Fastify();
+  await registerHttpSecurity(app, { NODE_ENV: 'test' });
   const verifyToken: preHandlerHookHandler = async (request, reply) => {
     const token = request.headers.authorization?.replace(/^Bearer\s+/, '') as Token | undefined;
     const user = token ? actors[token] : undefined;
@@ -46,6 +48,31 @@ beforeEach(() => {
 });
 
 describe('network-device routes', () => {
+  it.each([
+    'SSH_TARGET_DENIED', 'SSH_CONNECT_FAILED', 'SSH_COMMAND_FAILED', 'SSH_COMMAND_TIMEOUT',
+    'CONFIG_OUTPUT_LIMIT', 'CONFIG_EMPTY', 'CONFIG_BACKUP_STORE_UNAVAILABLE', 'CONFIG_BACKUP_FAILED',
+  ])('preserves the public backup failure through HTTP security: %s', async (error) => {
+    const app = await appWith({ backupService: { capture: vi.fn(async () => ({ success: false, error })) } });
+    const response = await app.inject({
+      method: 'POST', url: '/api/network-devices/7/config-backups',
+      headers: { authorization: 'Bearer backup' },
+    });
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toEqual({ error });
+    await app.close();
+  });
+
+  it('continues to hide unexpected backup errors', async () => {
+    const app = await appWith({ backupService: { capture: vi.fn(async () => { throw new Error('password=secret'); }) } });
+    const response = await app.inject({
+      method: 'POST', url: '/api/network-devices/7/config-backups',
+      headers: { authorization: 'Bearer backup' },
+    });
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toEqual({ error: 'INTERNAL_ERROR' });
+    await app.close();
+  });
+
   it('enforces authentication and view/manage permissions', async () => {
     const app = await appWith();
     expect((await app.inject({ method: 'GET', url: '/api/network-devices' })).statusCode).toBe(401);
@@ -140,7 +167,7 @@ describe('network-device routes', () => {
     });
     const response = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { host: '192.0.2.10', version: 3, snmpv3: { username: 'm', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: '12345678', privacyProtocol: 'AES', privacySecret: '12345678' }, ssh: { username: 'readonly', credentialType: 'password', credentialValue: 'secret-password', hostKeyFingerprint: `SHA256:${'A'.repeat(43)}` } } });
     expect(response.statusCode).toBe(502);
-    expect(response.json()).toEqual({ success: false, error: 'NETWORK_DEVICE_OPERATION_FAILED' });
+    expect(response.json()).toEqual({ error: 'INTERNAL_ERROR' });
     expect(JSON.stringify(response.json())).not.toContain('secret-password');
     await app.close();
   });

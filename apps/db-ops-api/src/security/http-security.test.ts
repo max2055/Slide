@@ -11,6 +11,8 @@ async function app() {
   fastify.get('/failure', async (_request, reply) => reply.code(500).send({ error: 'password=secret', stack: 'internal' }));
   fastify.get('/sandbox-failure', async (_request, reply) => reply.code(503).send({ reasonCode: 'SANDBOX_NOT_READY', detail: 'hidden' }));
   fastify.get('/sandbox-network-failure', async (_request, reply) => reply.code(503).send({ reasonCode: 'SANDBOX_NETWORK_NOT_READY', detail: 'hidden' }));
+  fastify.get('/backup-failure', async (_request, reply) => reply.code(502).send({ error: 'SSH_CONNECT_FAILED', detail: 'password=secret', stack: 'internal' }));
+  fastify.get('/unknown-backup-failure', async (_request, reply) => reply.code(502).send({ error: 'SSH_UNKNOWN_SECRET', detail: 'password=secret' }));
   await fastify.ready();
   return fastify;
 }
@@ -55,6 +57,16 @@ describe('HTTP security boundary', () => {
     const response = await fastify.inject({ method: 'GET', url: '/sandbox-network-failure' });
     expect(response.statusCode).toBe(503);
     expect(response.json()).toEqual({ reasonCode: 'SANDBOX_NETWORK_NOT_READY' });
+    await fastify.close();
+  });
+
+  it('preserves exact public backup codes while stripping details and hiding unknown codes', async () => {
+    const fastify = await app();
+    const known = await fastify.inject({ method: 'GET', url: '/backup-failure' });
+    expect(known.statusCode).toBe(502);
+    expect(known.json()).toEqual({ error: 'SSH_CONNECT_FAILED' });
+    const unknown = await fastify.inject({ method: 'GET', url: '/unknown-backup-failure' });
+    expect(unknown.json()).toEqual({ error: 'INTERNAL_ERROR' });
     await fastify.close();
   });
 

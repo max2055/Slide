@@ -63,10 +63,12 @@ export const listActiveAlertsTool: AnyAgentTool = {
       }
 
       // 获取告警列表（alertDatabaseService.getAlerts 支持 level/limit 过滤）
-      const alerts = await alertDatabaseService.getAlerts({
+      const result = await alertDatabaseService.getAlerts({
         level: severity,
         limit,
       });
+      const alerts = Array.isArray(result) ? result : result?.items;
+      if (!Array.isArray(alerts)) throw new Error('ALERTS_UNAVAILABLE');
 
       // 应用 since 时间过滤（getAlerts 不支持 since 参数，在此做内存过滤）
       let filtered = alerts;
