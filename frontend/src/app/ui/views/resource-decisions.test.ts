@@ -1,0 +1,30 @@
+import { afterEach, expect, it, vi } from 'vitest';
+const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
+vi.mock('../../../api/index.js', () => ({ authFetch }));
+import './resource-decisions.js';
+const settle = () => new Promise(resolve => setTimeout(resolve, 10));
+afterEach(() => { document.body.replaceChildren(); localStorage.clear(); authFetch.mockReset(); });
+it('offers only inference/hypothesis and posts actual selected evidence within its time window', async () => {
+  localStorage.setItem('permissions', JSON.stringify(['*']));
+  const id = 'a'.repeat(64);
+  authFetch.mockImplementation(async (url: string, options?: RequestInit) => ({ ok: true, json: async () => options ? { id: 'decision-1', ...JSON.parse(String(options.body)), createdAt: '2026-09-09T00:00:00Z' } : url.endsWith('/evidence') ? { facts: [{ id, status: 'fact', kind: 'observation', observedAt: '2026-09-09T00:00:00.123Z', payload: { metricId: 'cpu', value: 99 } }], inferences: [], hypotheses: [] } : { items: [], gaps: [], truncated: false } }));
+  const view = document.createElement('resource-decisions') as HTMLElement & { resourceType: string; resourceId: number };
+  view.resourceType = 'server'; view.resourceId = 2; document.body.append(view); await settle();
+  expect(Array.from(view.shadowRoot?.querySelectorAll('select option') ?? []).map(option => option.getAttribute('value'))).toEqual(['inference', 'hypothesis']);
+  const statement = view.shadowRoot!.querySelector<HTMLTextAreaElement>('textarea')!;
+  statement.value = 'CPU pressure may explain latency'; statement.dispatchEvent(new Event('input'));
+  view.shadowRoot!.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click(); await settle();
+  view.shadowRoot!.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true })); await settle();
+  const posted = authFetch.mock.calls.find(([, options]) => options?.method === 'POST');
+  expect(posted?.[0]).toBe('/api/resources/server/2/decisions');
+  expect(JSON.parse(String(posted?.[1]?.body))).toEqual({ statement: 'CPU pressure may explain latency', status: 'inference', evidenceRefs: [id], from: '2026-09-09T00:00:00.123Z', to: '2026-09-09T00:00:00.123Z' });
+});
+it('keeps decision reads available but hides mutations from non-admin readers', async () => {
+  localStorage.setItem('permissions', JSON.stringify(['servers:view']));
+  authFetch.mockImplementation(async (url: string) => ({ ok: true, json: async () => url.endsWith('/evidence') ? { facts: [], inferences: [], hypotheses: [] } : { items: [{ id: 'existing', status: 'hypothesis', statement: 'Pending evidence', evidenceRefs: ['b'.repeat(64)], from: '2026-09-09T00:00:00Z', to: '2026-09-09T00:00:00Z', createdAt: '2026-09-09T00:00:00Z' }], gaps: ['PARTIAL_RECORDS'], truncated: true } }));
+  const view = document.createElement('resource-decisions') as HTMLElement & { resourceType: string; resourceId: number };
+  view.resourceType = 'server'; view.resourceId = 2; document.body.append(view); await settle();
+  expect(view.shadowRoot?.textContent).toContain('Pending evidence');
+  expect(view.shadowRoot?.textContent).toContain('PARTIAL_RECORDS');
+  expect(view.shadowRoot?.querySelector('form')).toBeNull();
+});

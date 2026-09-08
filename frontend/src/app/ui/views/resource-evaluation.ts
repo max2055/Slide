@@ -3,6 +3,8 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
 import '../components/app-empty-state.js';
 import '../components/app-badge.js';
+import './resource-invariants.js';
+import './resource-decisions.js';
 interface RuleResult { ruleId: string; version: number; status: string; reason: string; evidenceRefs: string[] }
 interface Expectation { metricId: string; status: string; reason: string; mean: number | null; deviation: number | null; sampleCount: number; evidenceRefs: string[] }
 interface Evaluation { generatedAt: string; rulesVersion: number; invariants: RuleResult[]; expectations: Expectation[]; gaps: string[] }
@@ -41,6 +43,8 @@ export class ResourceEvaluation extends LitElement {
       ${data ? html`<p class="meta">规则集 ${data.rulesVersion} · ${data.generatedAt}</p>
         <section><h2>不变量评估</h2>${data.invariants.length ? data.invariants.map(rule => html`<article><p><code>${rule.ruleId}</code> v${rule.version} <app-badge>${rule.status}</app-badge></p><p>${rule.reason}</p><p class="meta">证据 ${rule.evidenceRefs.join(', ') || '无'}</p></article>`) : html`<app-empty-state title="暂无规则评估"></app-empty-state>`}</section>
         <section><h2>统计预期</h2>${data.expectations.length ? data.expectations.map(item => html`<article><p>${item.metricId} <app-badge>${item.status}</app-badge></p><p>${item.reason}</p><p>均值 ${item.mean ?? '未知'} · 偏差 ${item.deviation ?? '未知'} · 样本 ${item.sampleCount}</p><p class="meta">证据 ${item.evidenceRefs.join(', ') || '无'}</p></article>`) : html`<app-empty-state title="暂无统计预期"></app-empty-state>`}</section>
-        ${data.gaps.map(gap => html`<p>${gap}</p>`)}` : nothing}`;
+        ${data.gaps.map(gap => html`<p>${gap}</p>`)}` : nothing}
+      <resource-invariants .resourceType=${this.resourceType} .resourceId=${this.resourceId} @rules-saved=${this.load}></resource-invariants>
+      <resource-decisions .resourceType=${this.resourceType} .resourceId=${this.resourceId}></resource-decisions>`;
   }
 }
