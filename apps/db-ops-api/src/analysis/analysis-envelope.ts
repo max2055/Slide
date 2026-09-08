@@ -4,7 +4,7 @@ import { Value } from '@sinclair/typebox/value';
 export const ANALYSIS_ENVELOPE_VERSION = 1;
 
 const ResourceRef = Type.Object({
-  type: Type.Union([Type.Literal('instance'), Type.Literal('server')]),
+  type: Type.Union([Type.Literal('instance'), Type.Literal('server'), Type.Literal('network_device')]),
   id: Type.Integer({ minimum: 1 }),
 });
 
