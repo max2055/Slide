@@ -12,6 +12,7 @@ describe('evidence HTTP boundary', () => {
     expect(service.getBundle).toHaveBeenCalledWith(actor, { type: 'server', id: 4 }, expect.objectContaining({ limit: 10 }));
     expect((await app.inject('/api/resources/server/0/evidence')).statusCode).toBe(400);
     expect((await app.inject('/api/resources/server/4/evidence?limit=nan')).statusCode).toBe(400);
+    expect((await app.inject('/api/resources/server/4/evidence?limit=101')).statusCode).toBe(400);
     expect((await app.inject('/api/resources/server/4/evidence/' + 'a'.repeat(64))).statusCode).toBe(404);
     await app.close();
   });

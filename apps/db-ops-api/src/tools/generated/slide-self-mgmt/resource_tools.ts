@@ -3,6 +3,7 @@ import { toolCatalog } from '../../catalog.js';
 import { resourceDiagnosticService } from '../../../resources/resource-diagnostic-service.js';
 import type { ResourceRef, ResourceType } from '../../../resources/types.js';
 import { evidenceService } from '../../../evidence/evidence-service.js';
+import { createEvidenceEvaluationTools } from '../../../evidence/evidence-tools.js';
 
 function actorOrError(context?: ToolExecutionContext): ToolResult<never> | null {
   return context?.actor ? null : { success: false, error: '缺少已认证的操作员上下文', errorCode: 'MISSING_ACTOR' };
@@ -103,7 +104,7 @@ export const getEvidenceItemTool: AnyAgentTool = {
     catch { return { success: false, errorCode: 'EVIDENCE_UNAVAILABLE', error: '证据不可用或无权访问' }; }
   },
 };
-export const resourceTools = [listResourcesTool, getResourceObservationsTool, getResourceRelationsTool, diagnoseResourceTool, getEvidenceBundleTool, getEvidenceItemTool];
+export const resourceTools = [listResourcesTool, getResourceObservationsTool, getResourceRelationsTool, diagnoseResourceTool, getEvidenceBundleTool, getEvidenceItemTool, ...createEvidenceEvaluationTools()];
 
 // Keep direct module imports equivalent to the other generated tools. The
 // central index also calls registerAll(), which is idempotent by tool name.

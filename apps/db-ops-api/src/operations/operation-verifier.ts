@@ -18,12 +18,14 @@ export function verifyRecoveryWindow(plan: RecoveryPlan, evidence: EvidenceItem[
   const base = { verifiedBy: 'independent-observation-window-v1', evidenceRefs: samples.map(item => item.id), startedAt: plan.startedAt, windowSeconds: plan.windowSeconds };
   if (now < end || samples.length < 3) return { ...base, status: 'unknown' as const, reason: 'RECOVERY_WINDOW_INCOMPLETE' };
   let previous = start;
+  let previousValidUntil: number | undefined;
   for (const sample of samples) {
     const observed = Date.parse(sample.observedAt);
-    if (observed - previous > plan.maxSampleGapSeconds * 1000 || sample.quality !== 'good' || typeof sample.payload.value !== 'number'
+    if ((previousValidUntil !== undefined && previousValidUntil < observed) || observed - previous > plan.maxSampleGapSeconds * 1000 || sample.quality !== 'good' || typeof sample.payload.value !== 'number'
       || !Number.isFinite(sample.payload.value) || Date.parse(sample.validUntil) <= observed) return { ...base, status: 'unknown' as const, reason: 'RECOVERY_EVIDENCE_GAP' };
     if ((plan.min !== undefined && sample.payload.value < plan.min) || (plan.max !== undefined && sample.payload.value > plan.max)) return { ...base, status: 'not-recovered' as const, reason: 'RECOVERY_CONSTRAINT_VIOLATED' };
     previous = observed;
+    previousValidUntil = Date.parse(sample.validUntil);
   }
   const last = samples.at(-1)!;
   if (end - previous > plan.maxSampleGapSeconds * 1000 || Date.parse(last.validUntil) < end) return { ...base, status: 'unknown' as const, reason: 'RECOVERY_EVIDENCE_GAP' };
