@@ -25,7 +25,7 @@ This amendment preserves the discussion plan in `2026-09-08-agent-evidence-repla
 - [x] Invariant/expectation evaluations, evidence-linked decisions and independent recovery verification. Opt-in policies snapshot at operation creation; a full independent observation window is required.
 - [x] Cross-resource diagnosis workspace, platform health, source configuration, invariant configuration, evidence-linked decision and recovery UI. Live desktop/mobile checks passed.
 - [x] Security/spec reviews, affected regression and release build. Gate outcomes and environment limitations are recorded below; not all smoke cases passed.
-- [ ] Push branch and create GitHub PR; no merge or deployment.
+- [x] Push branch and create GitHub PR #36: https://github.com/max2055/Slide/pull/36. No merge or deployment; remote CI is tracked on the PR.
 
 ## Verification
 
