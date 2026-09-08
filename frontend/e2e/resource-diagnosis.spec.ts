@@ -25,6 +25,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     let ruleVersion = 3;
     let rules: unknown[] = [];
     let decisions: Record<string, unknown>[] = [];
+    let recoveryPolicy: Record<string, unknown> = { schemaVersion: 1, version: 0, enabled: false, commandTypes: [], metricId: '', source: '', windowSeconds: 60, maxSampleGapSeconds: 30 };
     await page.route('**/api/**', async route => {
       const path = new URL(route.request().url()).pathname;
       if (!path.startsWith('/api/')) return route.fallback();
@@ -32,6 +33,18 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
       if (path === '/api/auth/permissions') body = ['*'];
       if (path === '/api/user/preferences') body = { preferences: { locale: 'zh-CN' } };
       if (path === '/api/version') body = { version: 'test' };
+      if (path.endsWith('/recovery-policy')) {
+        if (route.request().method() === 'PUT') {
+          const { expectedVersion, ...submitted } = route.request().postDataJSON();
+          expect(expectedVersion).toBe(recoveryPolicy.version);
+          recoveryPolicy = { schemaVersion: 1, version: Number(expectedVersion) + 1, ...submitted };
+        }
+        body = recoveryPolicy;
+      }
+      if (path.endsWith('/recovery/op-e2e')) {
+        expect(route.request().method()).toBe('GET');
+        body = { schemaVersion: 1, status: 'not-recovered', reason: 'RECOVERY_BOUND_VIOLATED', operationId: 'op-e2e', operationState: 'succeeded', evidenceRefs: [evidenceId], verifiedBy: 'evidence-window-v1', policyVersion: 1, metricId: 'cpu', source: 'metrics', startedAt: item.observedAt, windowSeconds: 60 };
+      }
       if (path === '/api/platform/source/manifest') body = { releaseId: 'release-e2e', commitSha: 'a'.repeat(40), treeDigest: 'b'.repeat(64), signature: 'c'.repeat(64), files: [{ path: 'apps/api.ts', digest: 'd'.repeat(64), bytes: 1024 }] };
       if (path === '/api/platform/source/config') {
         if (route.request().method() === 'PUT') savedConfig = route.request().postDataJSON();
@@ -103,6 +116,26 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     await page.screenshot({ path: testInfo.outputPath(`resource-editors-${viewport.width}.png`), fullPage: true });
     await ruleEditor.getByRole('button', { name: '删除 cpu-limit' }).click();
     await expect(view.locator('resource-evaluation')).toContainText('规则集 6');
+    const recovery = view.locator('resource-recovery');
+    await expect(recovery.getByRole('checkbox', { name: '启用恢复策略' })).not.toBeChecked();
+    await recovery.getByRole('checkbox', { name: '启用恢复策略' }).check();
+    await recovery.getByLabel('命令类型', { exact: true }).fill('test-observation-command');
+    await recovery.getByLabel('恢复指标 ID', { exact: true }).fill('cpu');
+    await recovery.getByLabel('证据来源', { exact: true }).fill('metrics');
+    await recovery.getByLabel('恢复下界', { exact: true }).fill('0');
+    await recovery.getByLabel('恢复上界', { exact: true }).fill('80');
+    await recovery.getByLabel('恢复维度 JSON', { exact: true }).fill('{"core":"all"}');
+    await recovery.getByRole('button', { name: '保存恢复策略' }).click();
+    await expect(recovery).toContainText('恢复策略已保存');
+    expect(recoveryPolicy).toEqual({ schemaVersion: 1, version: 1, enabled: true, commandTypes: ['test-observation-command'], metricId: 'cpu', source: 'metrics', min: 0, max: 80, dimensions: { core: 'all' }, windowSeconds: 60, maxSampleGapSeconds: 30 });
+    await recovery.getByLabel('操作 ID', { exact: true }).fill('op-e2e');
+    await recovery.getByRole('button', { name: '查询恢复状态' }).click();
+    await expect(recovery.locator('[data-recovery-result]')).toContainText('not-recovered');
+    await expect(recovery.locator('[data-recovery-result]')).toContainText('RECOVERY_BOUND_VIOLATED');
+    await expect(recovery.locator('[data-recovery-result]')).toContainText(evidenceId);
+    await recovery.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`resource-recovery-${viewport.width}.png`), fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await view.getByRole('button', { name: 'Agent 诊断', exact: true }).click();
     await expect.poll(() => diagnosed).toBe(true);
     await view.getByRole('button', { name: '获取关联证据' }).click();

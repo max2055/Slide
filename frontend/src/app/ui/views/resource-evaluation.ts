@@ -5,6 +5,7 @@ import '../components/app-empty-state.js';
 import '../components/app-badge.js';
 import './resource-invariants.js';
 import './resource-decisions.js';
+import './resource-recovery.js';
 interface RuleResult { ruleId: string; version: number; status: string; reason: string; evidenceRefs: string[] }
 interface Expectation { metricId: string; status: string; reason: string; mean: number | null; deviation: number | null; sampleCount: number; evidenceRefs: string[] }
 interface Evaluation { generatedAt: string; rulesVersion: number; invariants: RuleResult[]; expectations: Expectation[]; gaps: string[] }
@@ -45,6 +46,7 @@ export class ResourceEvaluation extends LitElement {
         <section><h2>统计预期</h2>${data.expectations.length ? data.expectations.map(item => html`<article><p>${item.metricId} <app-badge>${item.status}</app-badge></p><p>${item.reason}</p><p>均值 ${item.mean ?? '未知'} · 偏差 ${item.deviation ?? '未知'} · 样本 ${item.sampleCount}</p><p class="meta">证据 ${item.evidenceRefs.join(', ') || '无'}</p></article>`) : html`<app-empty-state title="暂无统计预期"></app-empty-state>`}</section>
         ${data.gaps.map(gap => html`<p>${gap}</p>`)}` : nothing}
       <resource-invariants .resourceType=${this.resourceType} .resourceId=${this.resourceId} @rules-saved=${this.load}></resource-invariants>
-      <resource-decisions .resourceType=${this.resourceType} .resourceId=${this.resourceId}></resource-decisions>`;
+      <resource-decisions .resourceType=${this.resourceType} .resourceId=${this.resourceId}></resource-decisions>
+      <resource-recovery .resourceType=${this.resourceType} .resourceId=${this.resourceId}></resource-recovery>`;
   }
 }
