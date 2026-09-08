@@ -34,6 +34,13 @@ describe("server workbench Phase 142 contract", () => {
     }
   });
 
+  it("keeps alert navigation in the event center instead of the server detail view", () => {
+    const source = fs.readFileSync(path.resolve(__dirname, "./server-detail.ts"), "utf8");
+    expect(source).not.toContain("_viewAlerts");
+    expect(source).not.toMatch(/\{ key: ["']alerts["'], label: ["']告警["'] \}/);
+    expect(source).not.toContain("查看告警");
+  });
+
   it("exposes the same four row actions as database and network inventories", () => {
     const source = fs.readFileSync(path.resolve(__dirname, "./servers-page.ts"), "utf8");
     expect(source).toContain("_testServer");
