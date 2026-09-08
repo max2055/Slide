@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { dbConnection } from '../db-connection.js';
+import { platformLogs } from '../platform/structured-log-evidence-adapter.js';
 
 export type AgentRunState = 'running' | 'completed' | 'partial' | 'failed' | 'cancelled' | 'timed_out';
 export interface AgentRun { id: string; actorId: number; sessionId: string; messageId: string; idempotencyKey: string; state: AgentRunState; result?: unknown; error?: unknown; }
@@ -24,6 +25,7 @@ export class AgentRunService {
     );
     const row = rows[0];
     if (!row) throw new Error('Agent run claim failed');
+    platformLogs.record({ component: 'agent', eventType: row.id === id ? 'run.started' : 'run.duplicate', status: 'ok', correlationId: row.id });
     return { created: row.id === id, run: this.map(row) };
   }
 
@@ -41,6 +43,7 @@ export class AgentRunService {
        WHERE id = ? AND state = 'running'`,
       [state, result ? JSON.stringify(result) : null, error ? JSON.stringify(error) : null, id],
     );
+    if (Number(outcome.affectedRows) === 1) platformLogs.record({ component: 'agent', eventType: 'run.' + state, status: state === 'completed' ? 'ok' : state === 'failed' || state === 'timed_out' ? 'failed' : 'unknown', correlationId: id });
     return Number(outcome.affectedRows) === 1;
   }
 
