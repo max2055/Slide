@@ -277,6 +277,7 @@ export const zh_CN: TranslationMap = {
     "scoring-settings": "评分权重配置",
     "cron-jobs": "自动化任务",
     "health-center": "平台状态",
+    "resource-diagnosis": "跨资源诊断",
     feedback: "问题反馈",
     rbac: "权限管理",
     // 其他（保留）

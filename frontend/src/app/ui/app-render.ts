@@ -39,6 +39,7 @@ import "./views/agent-sandbox-status.ts";
 import "./views/prompt-settings.ts";
 import "./views/scoring-settings.ts";
 import "./views/health-center.ts";
+import "./views/resource-diagnosis.ts";
 import "./views/feedback-page.ts";
 import "./views/alerts.ts";
 import "./views/schema-management.ts";
@@ -757,6 +758,9 @@ export function renderApp(state: AppViewState) {
           : nothing}
         ${state.tab === "cron-jobs"
           ? html`<cron-jobs-settings></cron-jobs-settings>`
+          : nothing}
+        ${state.tab === "resource-diagnosis"
+          ? html`<resource-diagnosis-page></resource-diagnosis-page>`
           : nothing}
         ${state.tab === "health-center"
           ? html`<platform-status-page></platform-status-page>`

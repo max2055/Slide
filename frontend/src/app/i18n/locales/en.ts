@@ -282,6 +282,7 @@ export const en: TranslationMap = {
     "scoring-settings": "Scoring Weights",
     "cron-jobs": "Automation Tasks",
     "health-center": "Platform Status",
+    "resource-diagnosis": "Resource Diagnosis",
     feedback: "Feedback",
   },
   subtitles: {
