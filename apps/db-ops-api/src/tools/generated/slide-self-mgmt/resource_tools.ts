@@ -2,6 +2,7 @@ import type { AnyAgentTool, ToolExecutionContext, ToolResult } from '../../types
 import { toolCatalog } from '../../catalog.js';
 import { resourceDiagnosticService } from '../../../resources/resource-diagnostic-service.js';
 import type { ResourceRef, ResourceType } from '../../../resources/types.js';
+import { evidenceService } from '../../../evidence/evidence-service.js';
 
 function actorOrError(context?: ToolExecutionContext): ToolResult<never> | null {
   return context?.actor ? null : { success: false, error: '缺少已认证的操作员上下文', errorCode: 'MISSING_ACTOR' };
@@ -76,7 +77,33 @@ export const diagnoseResourceTool: AnyAgentTool = {
   },
 };
 
-export const resourceTools = [listResourcesTool, getResourceObservationsTool, getResourceRelationsTool, diagnoseResourceTool];
+export const getEvidenceBundleTool: AnyAgentTool = {
+  name: 'get_evidence_bundle',
+  description: '按资源和时间窗读取结构化证据；事实、推断、假设分栏，过期或缺失数据保持显式缺口。',
+  parameters: { type: 'object', properties: { resourceType: { type: 'string', enum: ['instance', 'server', 'network_device'] }, resourceId: { type: 'number' }, correlationId: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, limit: { type: 'number', description: 'Integer from 1 to 100' } }, required: ['resourceType', 'resourceId'] },
+  group: 'slide_self_mgmt', readOnly: true,
+  handler: async (args, context) => {
+    const missing = actorOrError(context); if (missing) return missing;
+    const ref = refFrom(args); if (!ref) return invalidRef();
+    if (['from', 'to', 'correlationId'].some(key => args[key] !== undefined && typeof args[key] !== 'string') || (args.limit !== undefined && typeof args.limit !== 'number')) return { success: false, error: 'EVIDENCE_QUERY_INVALID' };
+    try { return { success: true, data: await evidenceService.getBundle(context!.actor!, ref, { from: args.from as string | undefined, to: args.to as string | undefined, correlationId: args.correlationId as string | undefined, limit: args.limit as number | undefined }) }; }
+    catch { return { success: false, error: '证据不可用或无权访问', errorCode: 'EVIDENCE_UNAVAILABLE' }; }
+  },
+};
+
+export const getEvidenceItemTool: AnyAgentTool = {
+  name: 'get_evidence_item', description: '读取当前操作员拥有且当前仍可访问的资源证据。',
+  parameters: { type: 'object', properties: { resourceType: { type: 'string', enum: ['instance', 'server', 'network_device'] }, resourceId: { type: 'number' }, evidenceId: { type: 'string', description: '64 lowercase hexadecimal characters' } }, required: ['resourceType', 'resourceId', 'evidenceId'] },
+  group: 'slide_self_mgmt', readOnly: true,
+  handler: async (args, context) => {
+    const missing = actorOrError(context); if (missing) return missing;
+    const ref = refFrom(args); if (!ref) return invalidRef();
+    if (typeof args.evidenceId !== 'string' || !/^[a-f0-9]{64}$/.test(args.evidenceId)) return { success: false, errorCode: 'EVIDENCE_ID_INVALID', error: '证据 ID 无效' };
+    try { const item = await evidenceService.getItem(context!.actor!, ref, args.evidenceId); return item ? { success: true, data: item } : { success: false, errorCode: 'EVIDENCE_NOT_FOUND', error: '证据不存在' }; }
+    catch { return { success: false, errorCode: 'EVIDENCE_UNAVAILABLE', error: '证据不可用或无权访问' }; }
+  },
+};
+export const resourceTools = [listResourcesTool, getResourceObservationsTool, getResourceRelationsTool, diagnoseResourceTool, getEvidenceBundleTool, getEvidenceItemTool];
 
 // Keep direct module imports equivalent to the other generated tools. The
 // central index also calls registerAll(), which is idempotent by tool name.

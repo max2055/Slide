@@ -41,6 +41,8 @@ const TOOL_SECURITY_CATALOG: Readonly<Record<string, ToolSecurityDefinition>> = 
   get_resource_observations: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),
   get_resource_relations: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),
   diagnose_resource: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),
+  get_evidence_bundle: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),
+  get_evidence_item: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),
   slide_oracle_ash_report: definition('actor', 'read', 'instance', ['instance:view'], 'never', 'registered-database', 'use'),
   slide_oracle_awr_report: definition('actor', 'read', 'instance', ['instance:view'], 'never', 'registered-database', 'use'),
   slide_oracle_tablespace_detail: definition('actor', 'read', 'instance', ['instance:view'], 'never', 'registered-database', 'use'),

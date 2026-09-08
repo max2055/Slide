@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ActorContext } from '../../../auth/actor-context.js';
-import { diagnoseResourceTool, getResourceObservationsTool, listResourcesTool } from './resource_tools.js';
+import { diagnoseResourceTool, getResourceObservationsTool, listResourcesTool, getEvidenceBundleTool } from './resource_tools.js';
 import { resourceDiagnosticService } from '../../../resources/resource-diagnostic-service.js';
 
 const actor: ActorContext = Object.freeze({
@@ -9,6 +9,10 @@ const actor: ActorContext = Object.freeze({
 });
 
 describe('resource agent tools', () => {
+  it('requires a resource for evidence bundles', async () => {
+    expect(await getEvidenceBundleTool.handler({}, { actor })).toMatchObject({ success: false, errorCode: 'RESOURCE_INVALID' });
+    expect(getEvidenceBundleTool.parameters.required).toEqual(['resourceType', 'resourceId']);
+  });
   it('requires an authenticated actor context', async () => {
     const result = await listResourcesTool.handler({}, {});
     expect(result).toMatchObject({ success: false, errorCode: 'MISSING_ACTOR' });
