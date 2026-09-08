@@ -30,16 +30,20 @@ describe('OperationService', () => {
 });
 
 class FakeOperationPool {
+  policy: unknown = null;
+  policyReads = 0;
+  transactionActive = false;
   rows: any[] = [];
   events: any[] = [];
   commits = 0;
   rollbacks = 0;
   async getConnection() { return this; }
-  async beginTransaction() {}
-  async commit() { this.commits++; }
-  async rollback() { this.rollbacks++; }
+  async beginTransaction() { this.transactionActive = true; }
+  async commit() { this.commits++; this.transactionActive = false; }
+  async rollback() { this.rollbacks++; this.transactionActive = false; }
   release() {}
   async query(sql: string, values: any[] = []): Promise<any> {
+    if (sql.includes('FROM system_config')) { expect(this.transactionActive).toBe(true); this.policyReads++; return [this.policy ? [{ config_value: JSON.stringify(this.policy) }] : []]; }
     if (sql.includes('INSERT INTO operations')) {
       const [id, actorId, origin, resourceType, resourceId, commandType, risk, idempotencyKey, approvalId, correlationId] = values;
       if (!this.rows.some((row) => row.actor_id === actorId && row.idempotency_key === idempotencyKey)) {
@@ -57,6 +61,20 @@ class FakeOperationPool {
 }
 
 describe('PersistentOperationService', () => {
+  it('snapshots configured recovery in the create transaction and retains it on reuse', async () => {
+    const pool = new FakeOperationPool();
+    pool.policy = { schemaVersion: 1, version: 1, enabled: true, commandTypes: ['write'], metricId: 'cpu', source: 'collector', max: 80, windowSeconds: 60, maxSampleGapSeconds: 30 };
+    const service = new PersistentOperationService(() => pool as any);
+    const input = { actorId: 7, origin: 'api', resource: { type: 'instance', id: '12' }, commandType: 'write', risk: 'low' as const, idempotencyKey: 'same', correlationId: 'corr' };
+    await service.create(input);
+    const snapshot = JSON.parse(pool.events[0][5]).recoveryBinding;
+    expect(snapshot).toMatchObject({ actorId: 7, resource: { type: 'instance', id: 12 }, commandType: 'write', policyVersion: 1, max: 80 });
+    pool.policy = { ...(pool.policy as object), version: 2, max: 100 };
+    await service.create({ ...input, recoveryBinding: { max: 200 } } as any);
+    expect(pool.events).toHaveLength(1); expect(pool.policyReads).toBe(1);
+    expect(JSON.parse(pool.events[0][5]).recoveryBinding).toEqual(snapshot);
+    expect(pool.commits).toBe(2);
+  });
   it('persists idempotency and events in committed transactions', async () => {
     const pool = new FakeOperationPool();
     const service = new PersistentOperationService(() => pool as any);
@@ -65,6 +83,7 @@ describe('PersistentOperationService', () => {
     const second = await service.create(input);
     expect(second.id).toBe(first.id);
     expect(pool.events).toHaveLength(1);
+    expect(pool.events[0][5]).toBeNull();
     await service.transition(first.id, 'waiting_approval', 'NEEDS_APPROVAL', 7);
     expect(pool.events).toHaveLength(2);
     expect(pool.commits).toBe(3);
@@ -77,6 +96,18 @@ describe('PersistentOperationService', () => {
     await expect(service.transition(operation.id, 'succeeded', 'INVALID')).rejects.toThrow('Illegal operation transition');
     expect(pool.rollbacks).toBe(1);
     expect(pool.events).toHaveLength(1);
+  });
+  it('rolls back creation when its immutable event cannot be persisted', async () => {
+    class FailingEventPool extends FakeOperationPool {
+      override async query(sql: string, values: any[] = []): Promise<any> {
+        if (sql.includes('INSERT INTO operation_events')) throw new Error('event unavailable');
+        return super.query(sql, values);
+      }
+    }
+    const pool = new FailingEventPool();
+    const service = new PersistentOperationService(() => pool as any);
+    await expect(service.create({ actorId: 7, origin: 'api', resource: { type: 'instance', id: '12' }, commandType: 'read', risk: 'low', idempotencyKey: 'one', correlationId: 'corr' })).rejects.toThrow('event unavailable');
+    expect(pool.rollbacks).toBe(1); expect(pool.commits).toBe(0);
   });
 
   it('creates a distinct retry attempt without replaying an existing operation', async () => {

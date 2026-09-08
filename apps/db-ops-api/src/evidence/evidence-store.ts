@@ -65,5 +65,20 @@ export class EvidenceStore {
     const distinct = [...new Map(valid.sort((a, b) => b.observedAt.localeCompare(a.observedAt) || b.id.localeCompare(a.id)).map(item => [item.observedAt, item])).values()];
     return { items: distinct.slice(0, 40), truncated: rows.length > 2000 || distinct.length > 40 };
   }
+  async recoveryWindow(actor: ActorContext, ref: ResourceRef, plan: { metricId: string; source: string; dimensions?: Record<string, string>; startedAt: string; windowSeconds: number }) {
+    authorizeEvidence(actor, ref);
+    const start = Date.parse(plan.startedAt); const end = start + plan.windowSeconds * 1000;
+    if (!Number.isFinite(start) || !Number.isSafeInteger(plan.windowSeconds) || plan.windowSeconds < 30 || plan.windowSeconds > 3600 || !plan.metricId || plan.metricId.length > 128 || !plan.source || plan.source.length > 256) throw new Error('RECOVERY_PLAN_INVALID');
+    const dimensions = dimensionsKey(plan.dimensions);
+    const [rows] = await this.executor().execute(`SELECT evidence_json FROM agent_evidence
+      WHERE owner_user_id = ? AND resource_type = ? AND resource_id = ? AND observed_at >= ? AND observed_at <= ?
+        AND JSON_UNQUOTE(JSON_EXTRACT(evidence_json, '$.payload.metricId')) = ?
+        AND JSON_UNQUOTE(JSON_EXTRACT(evidence_json, '$.source')) = ?
+        AND COALESCE(JSON_EXTRACT(evidence_json, '$.dimensions'), JSON_OBJECT()) = CAST(? AS JSON)
+      ORDER BY observed_at ASC, id ASC LIMIT 2001`, [actor.userId, ref.type, ref.id, new Date(start), new Date(end), plan.metricId, plan.source, dimensions]);
+    const items = this.decode(rows.slice(0, 2000), ref).filter(item => item.source === plan.source && item.payload.metricId === plan.metricId && dimensionsKey(item.dimensions) === dimensions
+      && Date.parse(item.observedAt) >= start && Date.parse(item.observedAt) <= end);
+    return { items, truncated: rows.length > 2000 };
+  }
 }
 export const evidenceStore = new EvidenceStore();

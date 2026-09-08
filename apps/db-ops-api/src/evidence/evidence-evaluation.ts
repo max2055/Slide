@@ -11,6 +11,8 @@ import { auditLogManager } from '../audit/audit-log.js';
 import { dimensionsKey, evaluateInvariants } from './invariant-engine.js';
 import { evaluateExpectation } from './expectation-engine.js';
 import { EvidenceResourceSchema, validateEvidenceItem } from './evidence-contract.js';
+import { parseRecoveryPolicy, RecoveryPolicyUpdateSchema, recoveryPolicyKey, validateRecoveryBinding, type RecoveryPolicy } from '../operations/recovery-policy.js';
+import { verifyRecoveryWindow } from '../operations/operation-verifier.js';
 
 const rule = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }), version: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }), metricId: Type.String({ minLength: 1, maxLength: 128 }), min: Type.Optional(Type.Number()), max: Type.Optional(Type.Number()), dimensions: Type.Optional(Type.Record(Type.String({ pattern: '^[a-z][a-z0-9_]{0,63}$' }), Type.String({ maxLength: 256 }), { maxProperties: 16, additionalProperties: false })) }, { additionalProperties: false });
 const rulesSchema = Type.Object({ schemaVersion: Type.Literal(1), version: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }), rules: Type.Array(rule, { maxItems: 100 }) }, { additionalProperties: false });
@@ -20,7 +22,7 @@ const decisionSchema = Type.Composite([decisionInput, Type.Object({ id: Type.Str
 export type EvidenceDecision = Static<typeof decisionSchema>;
 export type InvariantConfiguration = Static<typeof rulesSchema>;
 interface Executor { execute(sql: string, values?: any[]): Promise<any>; }
-interface OperationReader { getForActor(id: string, actorId: number): Promise<{ id: string; actorId: number; resource: { type: string; id: string }; state: string } | null>; }
+interface OperationReader { getForActor(id: string, actorId: number): Promise<{ id: string; actorId: number; resource: { type: string; id: string }; state: string; commandType?: string; finishedAt?: Date } | null>; recoveryBindingForActor?(id: string, actorId: number): Promise<unknown>; }
 function configKey(ref: ResourceRef): string { return `evidence_invariants:${ref.type}:${ref.id}`; }
 function parseRules(raw: unknown): InvariantConfiguration {
   let value: unknown;
@@ -31,7 +33,7 @@ function parseRules(raw: unknown): InvariantConfiguration {
   return value;
 }
 export class EvidenceEvaluationService {
-  constructor(private readonly pool: () => Executor | null = () => dbConnection.getPool(), private readonly evidence: Pick<EvidenceService, 'getBundle' | 'getItem'> = evidenceService, private readonly operations: OperationReader = new PersistentOperationService(() => dbConnection.getPool() as any), private readonly clock: () => Date = () => new Date(), private readonly historyStore: Pick<EvidenceStore, 'history'> = new EvidenceStore(pool)) {}
+  constructor(private readonly pool: () => Executor | null = () => dbConnection.getPool(), private readonly evidence: Pick<EvidenceService, 'getBundle' | 'getItem'> = evidenceService, private readonly operations: OperationReader = new PersistentOperationService(() => dbConnection.getPool() as any), private readonly clock: () => Date = () => new Date(), private readonly historyStore: Pick<EvidenceStore, 'history' | 'recoveryWindow'> = new EvidenceStore(pool)) {}
   private executor(): Executor { const pool = this.pool(); if (!pool) throw new Error('EVIDENCE_STORAGE_UNAVAILABLE'); return pool; }
   async rules(actor: ActorContext, ref: ResourceRef): Promise<InvariantConfiguration> {
     authorizeEvidence(actor, ref);
@@ -136,7 +138,44 @@ export class EvidenceEvaluationService {
     if (!/^[a-zA-Z0-9-]{1,64}$/.test(operationId)) throw new Error('OPERATION_INVALID');
     const operation = await this.operations.getForActor(operationId, actor.userId);
     if (!operation || operation.actorId !== actor.userId || operation.resource.type !== ref.type || String(operation.resource.id) !== String(ref.id)) throw new Error('OPERATION_NOT_FOUND');
-    return { schemaVersion: 1, resource: ref, operationId, operationState: operation.state, status: 'unknown' as const, reason: 'RECOVERY_PLAN_NOT_BOUND', evidenceRefs: [], verifiedBy: 'operation-metadata-v1' };
+    const base = { schemaVersion: 1, resource: ref, operationId, operationState: operation.state, status: 'unknown' as const, reason: 'RECOVERY_PLAN_NOT_BOUND', evidenceRefs: [] as string[], verifiedBy: 'operation-metadata-v1' };
+    const binding = await this.operations.recoveryBindingForActor?.(operationId, actor.userId);
+    if (!validateRecoveryBinding(binding) || binding.actorId !== actor.userId || binding.resource.type !== ref.type || binding.resource.id !== ref.id || binding.commandType !== operation.commandType) return base;
+    const finished = operation.finishedAt;
+    if (!(finished instanceof Date) || !Number.isFinite(finished.getTime()) || !['succeeded', 'failed', 'unknown'].includes(operation.state)) return { ...base, reason: 'RECOVERY_OPERATION_INCOMPLETE', policyVersion: binding.policyVersion };
+    const plan = { ...binding, startedAt: finished.toISOString() };
+    const now = this.clock();
+    if (finished > now) return { ...base, reason: 'RECOVERY_OPERATION_INCOMPLETE', policyVersion: binding.policyVersion };
+    await this.evidence.getBundle(actor, ref);
+    const history = await this.historyStore.recoveryWindow(actor, ref, plan);
+    if (history.truncated) return { ...base, reason: 'RECOVERY_EVIDENCE_TRUNCATED', policyVersion: binding.policyVersion };
+    return { ...base, ...verifyRecoveryWindow(plan, history.items, now.getTime()), policyVersion: binding.policyVersion, source: binding.source, metricId: binding.metricId };
+  }
+  async recoveryPolicy(actor: ActorContext, ref: ResourceRef): Promise<RecoveryPolicy> {
+    authorizeEvidence(actor, ref);
+    const [rows] = await this.executor().execute('SELECT config_value FROM system_config WHERE config_key = ? LIMIT 1', [recoveryPolicyKey(ref)]);
+    return rows[0] ? parseRecoveryPolicy(rows[0].config_value) : { schemaVersion: 1, version: 0, enabled: false, commandTypes: [], metricId: '', source: '', windowSeconds: 60, maxSampleGapSeconds: 30 };
+  }
+  async updateRecoveryPolicy(actor: ActorContext, ref: ResourceRef, input: unknown): Promise<RecoveryPolicy> {
+    authorizeEvidence(actor, ref);
+    if (!actor.permissions.some(value => value === '*' || value === 'admin:*')) throw new Error('RECOVERY_POLICY_FORBIDDEN');
+    if (!Value.Check(RecoveryPolicyUpdateSchema, input)) throw new Error('RECOVERY_POLICY_INVALID');
+    const { expectedVersion, ...fields } = input;
+    const next = parseRecoveryPolicy({ ...fields, schemaVersion: 1, version: expectedVersion + 1 });
+    const executor = this.executor(); const key = recoveryPolicyKey(ref);
+    const [rows] = await executor.execute('SELECT config_value FROM system_config WHERE config_key = ? LIMIT 1', [key]);
+    const current = rows[0] ? parseRecoveryPolicy(rows[0].config_value) : { version: 0 };
+    if (current.version !== expectedVersion) throw new Error('RECOVERY_POLICY_VERSION_CONFLICT');
+    if (!rows[0]) {
+      try { await executor.execute("INSERT INTO system_config (config_key, config_value, value_type) VALUES (?, ?, 'json')", [key, JSON.stringify(next)]); }
+      catch (error) { if ((error as { code?: string }).code === 'ER_DUP_ENTRY') throw new Error('RECOVERY_POLICY_VERSION_CONFLICT'); throw error; }
+    } else {
+      const raw = typeof rows[0].config_value === 'string' ? rows[0].config_value : JSON.stringify(rows[0].config_value);
+      const [result] = await executor.execute('UPDATE system_config SET config_value = ? WHERE config_key = ? AND BINARY config_value = BINARY ?', [JSON.stringify(next), key, raw]);
+      if (result.affectedRows !== 1) throw new Error('RECOVERY_POLICY_VERSION_CONFLICT');
+    }
+    await auditLogManager.logConfigChange({ userId: String(actor.userId), username: actor.username, configKey: key, oldValue: current, newValue: next });
+    return next;
   }
 }
 export const evidenceEvaluationService = new EvidenceEvaluationService();

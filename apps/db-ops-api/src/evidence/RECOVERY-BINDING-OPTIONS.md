@@ -1,5 +1,7 @@
 # Recovery binding assessment
 
+Update: prospective opt-in binding is now implemented using CREATED event metadata. The original assessment below records the decision; no existing operation receives a retrospective binding. Policy configuration is available through the recovery-policy endpoint documented in INTEGRATION-CONTRACT.md.
+
 Current state: operations persist actor/resource/state/times, but no trusted metric recovery plan. The CREATED operation event has a metadata column; PersistentOperationService.create currently appends this event with no metadata. A succeeded state is execution completion, not recovery. Existing operations must stay unknown.
 
 Smallest prospective binding: at operation creation, inside its existing database transaction, read the configured resource invariant set and snapshot a bounded recovery plan into the CREATED event metadata. Snapshot rule-set version, full selected thresholds and dimensions, collector source identity, verifier version, recovery window and sample-gap policy, resource and actor, and a canonical digest. Selection and timing policy must be server-defined for supported command types. The request must not supply a recovery plan or claim completion. Reused idempotency keys retain the original event/plan.
