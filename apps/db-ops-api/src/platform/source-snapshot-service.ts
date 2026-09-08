@@ -38,7 +38,8 @@ export function assertSourceContent(content: string, path = ''): void {
     const visit = (value: unknown): void => {
       if (!value || typeof value !== 'object') return;
       for (const [key, child] of Object.entries(value)) {
-        if (sensitive.test(key) && typeof child === 'string' && child.trim()) throw new Error('SOURCE_SENSITIVE_CONTENT');
+        if (sensitive.test(key) && child !== null && child !== undefined
+          && (typeof child !== 'string' || child.trim())) throw new Error('SOURCE_SENSITIVE_CONTENT');
         visit(child);
       }
     };

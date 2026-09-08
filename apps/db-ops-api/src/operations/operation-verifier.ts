@@ -6,17 +6,22 @@ export interface RecoveryPlan {
   startedAt: string; windowSeconds: number; maxSampleGapSeconds: number;
 }
 export function verifyRecoveryWindow(plan: RecoveryPlan, evidence: EvidenceItem[], now = Date.now()) {
-  const start = Date.parse(plan.startedAt); const end = start + plan.windowSeconds * 1000;
-  if (!Number.isFinite(start) || !Number.isSafeInteger(plan.windowSeconds) || plan.windowSeconds < 30 || plan.windowSeconds > 3600
+  const finished = Date.parse(plan.startedAt);
+  if (!Number.isFinite(finished) || !Number.isSafeInteger(plan.windowSeconds) || plan.windowSeconds < 30 || plan.windowSeconds > 3600
     || !Number.isSafeInteger(plan.maxSampleGapSeconds) || plan.maxSampleGapSeconds < 1 || plan.maxSampleGapSeconds > plan.windowSeconds
     || (!Number.isFinite(plan.min) && !Number.isFinite(plan.max)) || (plan.min !== undefined && !Number.isFinite(plan.min)) || (plan.max !== undefined && !Number.isFinite(plan.max))
     || (plan.min !== undefined && plan.max !== undefined && plan.min > plan.max)) throw new Error('RECOVERY_PLAN_INVALID');
-  const samples = evidence.filter(item => item.subject.resource.type === plan.resource.type && item.subject.resource.id === plan.resource.id
+  const candidates = evidence.filter(item => item.subject.resource.type === plan.resource.type && item.subject.resource.id === plan.resource.id
     && item.kind === 'observation' && item.status === 'fact' && item.payload.metricId === plan.metricId
     && (plan.source === undefined || item.source === plan.source)
-    && dimensionsKey(item.dimensions) === dimensionsKey(plan.dimensions) && Date.parse(item.observedAt) >= start && Date.parse(item.observedAt) <= Math.min(now, end))
+    && dimensionsKey(item.dimensions) === dimensionsKey(plan.dimensions) && Date.parse(item.observedAt) >= finished && Date.parse(item.observedAt) <= now)
     .sort((a, b) => a.observedAt.localeCompare(b.observedAt));
-  const base = { verifiedBy: 'independent-observation-window-v1', evidenceRefs: samples.map(item => item.id), startedAt: plan.startedAt, windowSeconds: plan.windowSeconds };
+  // The full window begins with actual evidence, not an unobserved grace interval.
+  const start = candidates[0] ? Date.parse(candidates[0].observedAt) : finished;
+  const end = start + plan.windowSeconds * 1000;
+  const samples = candidates.filter(item => Date.parse(item.observedAt) <= end);
+  const base = { verifiedBy: 'independent-observation-window-v1', evidenceRefs: samples.map(item => item.id), startedAt: new Date(start).toISOString(), operationFinishedAt: plan.startedAt, windowSeconds: plan.windowSeconds };
+  if (start - finished > plan.maxSampleGapSeconds * 1000) return { ...base, status: 'unknown' as const, reason: 'RECOVERY_EVIDENCE_GAP' };
   if (now < end || new Set(samples.map(sample => sample.observedAt)).size < 3) return { ...base, status: 'unknown' as const, reason: 'RECOVERY_WINDOW_INCOMPLETE' };
   let previous = start;
   let previousValidUntil: number | undefined;

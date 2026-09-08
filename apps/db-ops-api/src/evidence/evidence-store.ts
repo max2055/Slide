@@ -65,9 +65,11 @@ export class EvidenceStore {
     const distinct = [...new Map(valid.sort((a, b) => b.observedAt.localeCompare(a.observedAt) || b.id.localeCompare(a.id)).map(item => [item.observedAt, item])).values()];
     return { items: distinct.slice(0, 40), truncated: rows.length > 2000 || distinct.length > 40 };
   }
-  async recoveryWindow(actor: ActorContext, ref: ResourceRef, plan: { metricId: string; source: string; dimensions?: Record<string, string>; startedAt: string; windowSeconds: number }) {
+  async recoveryWindow(actor: ActorContext, ref: ResourceRef, plan: { metricId: string; source: string; dimensions?: Record<string, string>; startedAt: string; windowSeconds: number; maxSampleGapSeconds?: number }) {
     authorizeEvidence(actor, ref);
-    const start = Date.parse(plan.startedAt); const end = start + plan.windowSeconds * 1000;
+    const start = Date.parse(plan.startedAt); const gap = plan.maxSampleGapSeconds ?? 0;
+    const end = start + (plan.windowSeconds + gap) * 1000;
+    if (!Number.isSafeInteger(gap) || gap < 0 || gap > plan.windowSeconds) throw new Error('RECOVERY_PLAN_INVALID');
     if (!Number.isFinite(start) || !Number.isSafeInteger(plan.windowSeconds) || plan.windowSeconds < 30 || plan.windowSeconds > 3600 || !plan.metricId || plan.metricId.length > 128 || !plan.source || plan.source.length > 256) throw new Error('RECOVERY_PLAN_INVALID');
     const dimensions = dimensionsKey(plan.dimensions);
     const [rows] = await this.executor().execute(`SELECT evidence_json FROM agent_evidence

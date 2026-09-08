@@ -48,3 +48,15 @@ it('keeps missing snapshots, actor mismatches and expired interiors unknown', as
   f.execute.mockResolvedValueOnce([[{ evidence_json: { ...expired, id: evidenceId(expired) } }, { evidence_json: sample(30) }, { evidence_json: sample(60) }], []]);
   expect(await f.service.recovery(actor, ref, 'op1')).toMatchObject({ status: 'unknown', reason: 'RECOVERY_EVIDENCE_GAP' });
 });
+it('does not count the unobserved interval before the first sample toward recovery', async () => {
+  const f = fixture();
+  f.execute.mockResolvedValueOnce([[30, 45, 60].map(seconds => ({ evidence_json: sample(seconds) })), []]);
+  expect(await f.service.recovery(actor, ref, 'op1')).toMatchObject({ status: 'unknown', reason: 'RECOVERY_WINDOW_INCOMPLETE' });
+});
+it('waits a full window after the first observation and reads the bounded delayed window', async () => {
+  const f = fixture();
+  const service = new EvidenceEvaluationService(() => ({ execute: f.execute }), f.evidence, f.operations, () => new Date(now.getTime() + 30_000));
+  f.execute.mockResolvedValueOnce([[30, 60, 90].map(seconds => ({ evidence_json: sample(seconds) })), []]);
+  expect(await service.recovery(actor, ref, 'op1')).toMatchObject({ status: 'recovered', startedAt: new Date(now.getTime() - 30_000).toISOString(), operationFinishedAt: new Date(now.getTime() - 60_000).toISOString() });
+  expect(f.execute.mock.calls[0][1]?.[4]).toEqual(new Date(now.getTime() + 30_000));
+});

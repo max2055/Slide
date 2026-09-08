@@ -19,6 +19,9 @@ describe('source snapshot boundary', () => {
     for (const [path, content] of [
       ['src/config.json', '{"password":"dummy-sensitive-value"}'],
       ['src/config.yaml', 'password: dummy-sensitive-value'],
+      ['src/config.json', '{"password":12345678}'],
+      ['src/config.yaml', 'password: 12345678'],
+      ['src/config.yaml', 'password: false'],
       ['src/config.json', '{"pass\\u0077ord":"dummy-sensitive-value"}'],
       ['src/config.yaml', 'auth:\n  token: |\n    dummy-sensitive-value'],
       ['src/config.ts', 'const token = `dummy-sensitive-value`;'],
