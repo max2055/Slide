@@ -49,6 +49,19 @@ const PUBLIC_5XX_REASON_CODES = new Set([
   'SANDBOX_CONFIG_UPDATE_FAILED',
 ]);
 
+// Backup routes already translate transport failures to fixed public codes.
+// Preserve those codes, but never forward the accompanying exception details.
+const PUBLIC_5XX_ERROR_CODES = new Set([
+  'SSH_TARGET_DENIED',
+  'SSH_CONNECT_FAILED',
+  'SSH_COMMAND_FAILED',
+  'SSH_COMMAND_TIMEOUT',
+  'CONFIG_OUTPUT_LIMIT',
+  'CONFIG_EMPTY',
+  'CONFIG_BACKUP_STORE_UNAVAILABLE',
+  'CONFIG_BACKUP_FAILED',
+]);
+
 export async function registerHttpSecurity(fastify: FastifyInstance, env: NodeJS.ProcessEnv = process.env): Promise<void> {
   await fastify.register(cors, { origin: resolveCorsOrigins(env) });
   await fastify.register(helmet, {
@@ -71,6 +84,10 @@ export async function registerHttpSecurity(fastify: FastifyInstance, env: NodeJS
       const reasonCode = (payload as { reasonCode?: unknown }).reasonCode;
       if (typeof reasonCode === 'string' && PUBLIC_5XX_REASON_CODES.has(reasonCode)) {
         return { reasonCode };
+      }
+      const error = (payload as { error?: unknown }).error;
+      if (typeof error === 'string' && PUBLIC_5XX_ERROR_CODES.has(error)) {
+        return { error };
       }
       return { error: 'INTERNAL_ERROR' };
     }
