@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { StructuredLogEvidenceAdapter } from './structured-log-evidence-adapter.js';
 
 describe('platform log evidence', () => {
+  it('reports omitted aggregation groups and does not conflate colon-delimited labels', () => {
+    const adapter = new StructuredLogEvidenceAdapter();
+    adapter.record({ component: 'a:b', eventType: 'c', status: 'ok' });
+    adapter.record({ component: 'a', eventType: 'b:c', status: 'failed' });
+    expect(adapter.query({}).groups).toHaveLength(2);
+    for (let i = 0; i < 101; i++) adapter.record({ component: 'api', eventType: `event${i}`, status: 'ok' });
+    expect(adapter.query({}).gaps).toContain('LOG_GROUPS_TRUNCATED');
+  });
   it('aggregates without retaining message bodies or credentials', () => {
     const adapter = new StructuredLogEvidenceAdapter(() => Date.parse('2026-09-08T10:00:00Z'));
     adapter.record({ component: 'api', eventType: 'request', status: 'failed', durationMs: 12, errorCode: 'API_FAILURE', message: 'password=secret', sql: 'select sensitive', token: 'hidden' } as any);

@@ -1,4 +1,5 @@
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
+import { expensiveOperationRateLimitConfig } from '../security/http-security.js';
 import { credentialReferenceService } from '../security/credential-reference-service.js';
 import { sourceManagementService, requireSourceAdmin, requireSourceReader, type SourceManagementService } from './source-management-service.js';
 
@@ -12,11 +13,11 @@ export async function registerSourceRoutes(app: FastifyInstance, verifyToken: pr
     } catch (error) {
       const raw = error instanceof Error ? error.message : '';
       const code = /^SOURCE_[A-Z_]+$/.test(raw) ? raw : 'SOURCE_UNAVAILABLE';
-      const status = /REQUIRED|FORBIDDEN|DENIED/.test(code) ? 403 : /BUSY/.test(code) ? 409 : /INVALID|TOO_LARGE/.test(code) ? 400 : 503;
+      const status = /REQUIRED|FORBIDDEN|DENIED/.test(code) ? 403 : /RATE_LIMITED/.test(code) ? 429 : /BUSY|UNKNOWN|NOT_CONFIGURED|UNTRUSTED/.test(code) ? 409 : /INVALID|TOO_LARGE/.test(code) ? 400 : 503;
       return reply.code(status).send({ error: code });
     }
   };
-  const options = { preHandler: [verifyToken] };
+  const options = { preHandler: [verifyToken], config: { rateLimit: expensiveOperationRateLimitConfig } };
   app.get('/api/platform/source/config', options, route(false, async request => ({ config: await service.load(request.user) })));
   app.put('/api/platform/source/config', options, route(true, async request => ({ config: await service.save(request.user, request.body) })));
   app.post('/api/platform/source/sync', { ...options, bodyLimit: 20_000 }, route(true, async request => {

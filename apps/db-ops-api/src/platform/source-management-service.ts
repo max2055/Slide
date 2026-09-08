@@ -6,7 +6,9 @@ import type { ActorContext } from '../auth/actor-context.js';
 import { credentialReferenceService } from '../security/credential-reference-service.js';
 import { auditLogManager } from '../audit/audit-log.js';
 import { GitLabSourceConnector } from './gitlab-source-connector.js';
-import { SourceSnapshotService } from './source-snapshot-service.js';
+import { SourceSnapshotService, describeSourceFiles } from './source-snapshot-service.js';
+import { readDeploymentBinding } from './deployment-binding.js';
+import { FixedWindowRateLimiter } from '../security/agent-runtime-limits.js';
 
 const ConfigSchema = Type.Object({
   baseUrl: Type.String({ maxLength: 512 }), projectId: Type.String({ pattern: '^[0-9]{1,20}$' }),
@@ -24,6 +26,8 @@ export function requireSourceReader(actor: ActorContext) {
 
 export class SourceManagementService {
   private syncing = false;
+  private readsInFlight = 0;
+  private readonly readBudget = new FixedWindowRateLimiter(30, 60_000);
   constructor(private readonly pool: () => Executor | null = () => dbConnection.getPool(), private readonly allowedOrigins = (process.env.SLIDE_GITLAB_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean)) {}
   private executor() { const executor = this.pool(); if (!executor) throw new Error('SOURCE_STORAGE_UNAVAILABLE'); return executor; }
   private validate(input: unknown): SourceConfig {
@@ -42,12 +46,11 @@ export class SourceManagementService {
   async save(actor: ActorContext, input: unknown) {
     requireSourceAdmin(actor); const config = this.validate(input);
     await this.executor().execute('REPLACE INTO system_config (config_key, config_value) VALUES (?, ?)', ['source.gitlab', JSON.stringify(config)]);
+    await auditLogManager.logConfigChange({ userId: String(actor.userId), username: actor.username, configKey: 'source.gitlab', newValue: config });
     return config;
   }
   private deployment() {
-    const releaseId = process.env.SLIDE_RELEASE_ID ?? ''; const commitSha = process.env.SLIDE_COMMIT_SHA ?? ''; const treeDigest = process.env.SLIDE_SOURCE_DIGEST ?? '';
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(releaseId) || !/^[a-f0-9]{40}$/.test(commitSha) || !/^[a-f0-9]{64}$/.test(treeDigest)) throw new Error('SOURCE_DEPLOYMENT_UNKNOWN');
-    return { releaseId, commitSha, treeDigest };
+    return readDeploymentBinding();
   }
   private snapshots() {
     return new SourceSnapshotService(resolve(process.env.SLIDE_SOURCE_ROOT ?? './data/source-snapshots'), process.env.SLIDE_SOURCE_SIGNING_KEY ?? '');
@@ -65,22 +68,39 @@ export class SourceManagementService {
       // Validate the expected deployment digest before publishing a usable snapshot.
       const { createHash } = await import('node:crypto');
       const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-      const descriptors = [...files].sort((a, b) => a.path.localeCompare(b.path)).map(file => ({ path: file.path, digest: hash(file.content), bytes: Buffer.byteLength(file.content) }));
+      const descriptors = describeSourceFiles(files);
       if (hash(JSON.stringify(descriptors)) !== deployment.treeDigest) throw new Error('SOURCE_COMMIT_MISMATCH');
-      return await this.snapshots().publish({ releaseId: deployment.releaseId, commitSha: deployment.commitSha, projectId: config.projectId }, files);
+      const manifest = await this.snapshots().publish({ releaseId: deployment.releaseId, commitSha: deployment.commitSha, projectId: config.projectId }, files);
+      await auditLogManager.logToolCall({ userId: String(actor.userId), username: actor.username, toolName: 'source_sync', toolParams: deployment, result: 'success' });
+      return manifest;
+    } catch (error) {
+      await auditLogManager.logToolCall({ userId: String(actor.userId), username: actor.username, toolName: 'source_sync', toolParams: deployment, result: 'failure', errorMessage: 'SOURCE_SYNC_FAILED' });
+      throw error;
     } finally { this.syncing = false; }
   }
   async inspect(actor: ActorContext, mode: 'manifest' | 'search' | 'read' | 'symbol', args: Record<string, unknown> = {}, model = false) {
-    requireSourceReader(actor); const config = await this.load(actor);
-    if (!config) throw new Error('SOURCE_NOT_CONFIGURED');
-    if (model && !config.allowModelContent) throw new Error('SOURCE_MODEL_EGRESS_DENIED');
-    const binding = this.deployment(); const snapshots = this.snapshots();
-    await auditLogManager.logToolCall({ userId: String(actor.userId), username: actor.username, toolName: 'source_' + mode,
-      toolParams: { releaseId: binding.releaseId, commitSha: binding.commitSha }, result: 'pending' });
-    if (mode === 'manifest') return snapshots.manifest(binding.releaseId, binding);
-    if (mode === 'search') return snapshots.search(binding.releaseId, binding, args.query as string);
-    if (mode === 'symbol') return snapshots.symbols(binding.releaseId, binding, args.name as string);
-    return snapshots.read(binding.releaseId, binding, args.path as string, args.startLine as number, args.endLine as number);
+    requireSourceReader(actor);
+    if (!this.readBudget.allow()) throw new Error('SOURCE_RATE_LIMITED');
+    if (this.readsInFlight >= 2) throw new Error('SOURCE_READ_BUSY');
+    this.readsInFlight++;
+    const audit = { userId: String(actor.userId), username: actor.username, toolName: 'source_' + mode };
+    try {
+      const config = await this.load(actor);
+      if (!config) throw new Error('SOURCE_NOT_CONFIGURED');
+      if (model && !config.allowModelContent) throw new Error('SOURCE_MODEL_EGRESS_DENIED');
+      const binding = this.deployment(); const snapshots = this.snapshots();
+      const manifest = await snapshots.manifest(binding.releaseId, binding);
+      if (manifest.projectId !== config.projectId || manifest.files.some(file => !config.allowedPaths.some(path => file.path.startsWith(path)))) throw new Error('SOURCE_SNAPSHOT_POLICY_CHANGED');
+      const result = mode === 'manifest' ? manifest
+        : mode === 'search' ? await snapshots.search(binding.releaseId, binding, args.query as string)
+        : mode === 'symbol' ? await snapshots.symbols(binding.releaseId, binding, args.name as string)
+        : await snapshots.read(binding.releaseId, binding, args.path as string, args.startLine as number, args.endLine as number);
+      await auditLogManager.logToolCall({ ...audit, toolParams: binding, result: 'success' });
+      return result;
+    } catch (error) {
+      await auditLogManager.logToolCall({ ...audit, result: 'failure', errorMessage: 'SOURCE_READ_FAILED' });
+      throw error;
+    } finally { this.readsInFlight--; }
   }
 }
 export const sourceManagementService = new SourceManagementService();

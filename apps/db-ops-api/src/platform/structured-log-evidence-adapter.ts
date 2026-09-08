@@ -37,15 +37,17 @@ export class StructuredLogEvidenceAdapter {
     if (from > to || to > now || from < now - HOUR || to - from > HOUR) throw new Error('PLATFORM_LOG_WINDOW_INVALID');
     const rows = this.entries.filter(entry => Date.parse(entry.timestamp) >= from && Date.parse(entry.timestamp) <= to && (!options.component || entry.component === options.component));
     const groups = new Map<string, { component: string; eventType: string; errorCode?: string; count: number; failures: number; durationMs: number; lastObservedAt: string; correlationIds: string[] }>();
+    let omittedGroups = false;
     for (const row of rows) {
-      const key = `${row.component}:${row.eventType}:${row.errorCode ?? ''}`;
-      if (!groups.has(key) && groups.size >= 100) continue;
+      const key = JSON.stringify([row.component, row.eventType, row.errorCode ?? null]);
+      if (!groups.has(key) && groups.size >= 100) { omittedGroups = true; continue; }
       const group = groups.get(key) ?? { component: row.component, eventType: row.eventType, errorCode: row.errorCode, count: 0, failures: 0, durationMs: 0, lastObservedAt: row.timestamp, correlationIds: [] };
       group.count++; group.failures += Number(row.status === 'failed'); group.durationMs += row.durationMs ?? 0; group.lastObservedAt = row.timestamp;
       if (group.correlationIds.length < 10 && row.correlationId && !group.correlationIds.includes(row.correlationId)) group.correlationIds.push(row.correlationId);
       groups.set(key, group);
     }
     const gaps: string[] = [];
+    if (omittedGroups) gaps.push('LOG_GROUPS_TRUNCATED');
     if (!rows.length) gaps.push('LOG_EVIDENCE_MISSING');
     if (from < this.startedAt) gaps.push('LOG_WINDOW_PRECEDES_PROCESS');
     if (this.droppedAt !== null && this.droppedAt >= from) gaps.push('LOG_BUFFER_TRUNCATED');

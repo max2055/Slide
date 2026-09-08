@@ -4,6 +4,13 @@ import { GitLabSourceConnector } from './gitlab-source-connector.js';
 const sha = 'a'.repeat(40);
 const config = { baseUrl: 'https://gitlab.example.test', projectId: '7', commitSha: sha, allowedPaths: ['src/'], token: 'fixture-token', tokenExpiresAt: '2030-01-01T00:00:00Z' };
 describe('GitLab source connector', () => {
+  it('stops the whole sync when its deadline is exhausted', async () => {
+    let now = Date.now();
+    const request = vi.fn(async () => { now += 121_000; return new Response(JSON.stringify({ id: sha })); });
+    const connector = new GitLabSourceConnector([config.baseUrl], request as typeof fetch, () => now);
+    await expect(connector.fetchFiles(config)).rejects.toThrow('SOURCE_SYNC_DEADLINE');
+    expect(request).toHaveBeenCalledTimes(1);
+  });
   it('pins each request and filters paths before downloading blobs', async () => {
     const request = vi.fn(async (url: string, init: RequestInit) => {
       expect(init.redirect).toBe('error'); expect(new URL(url).origin).toBe(config.baseUrl);

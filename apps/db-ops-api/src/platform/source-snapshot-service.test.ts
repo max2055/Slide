@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile, symlink, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SourceSnapshotService } from './source-snapshot-service.js';
+import { SourceSnapshotService, assertSourceContent } from './source-snapshot-service.js';
 
 const roots: string[] = [];
 const commit = 'a'.repeat(40);
@@ -15,6 +15,21 @@ async function setup() {
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
 describe('source snapshot boundary', () => {
+  it('blocks JSON, YAML and escaped sensitive configuration keys', () => {
+    for (const [path, content] of [
+      ['src/config.json', '{"password":"dummy-sensitive-value"}'],
+      ['src/config.yaml', 'password: dummy-sensitive-value'],
+      ['src/config.json', '{"pass\\u0077ord":"dummy-sensitive-value"}'],
+      ['src/config.yaml', 'auth:\n  token: |\n    dummy-sensitive-value'],
+      ['src/config.ts', 'const token = `dummy-sensitive-value`;'],
+    ]) expect(() => assertSourceContent(content, path)).toThrow('SOURCE_SENSITIVE_CONTENT');
+  });
+  it('makes identical release publication idempotent but rejects replacement', async () => {
+    const { service, manifest } = await setup();
+    const identity = { releaseId: 'release-1', commitSha: commit, projectId: '7' };
+    expect(await service.publish(identity, [{ path: 'src/example.ts', content: 'export function inspect() { return 1; }\n' }])).toEqual(manifest);
+    await expect(service.publish(identity, [{ path: 'src/example.ts', content: 'changed' }])).rejects.toThrow('SOURCE_SNAPSHOT_UNTRUSTED');
+  });
   it('reads version-bound snippets and locates TypeScript symbols without execution', async () => {
     const { service, manifest } = await setup();
     const binding = { commitSha: commit, treeDigest: manifest.treeDigest };
