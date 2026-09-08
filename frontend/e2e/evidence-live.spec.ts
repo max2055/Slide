@@ -28,6 +28,15 @@ for (const width of [1440, 390]) {
       await expect(view.locator('[data-evidence-id]').first()).toBeVisible();
       await expect(view.locator('resource-invariants')).toContainText('cpu-range');
       await expect(view.locator('resource-decisions')).toContainText('Qualification hypothesis, not a runtime fact');
+      const recovery = view.locator('resource-recovery');
+      await expect(recovery.getByRole('checkbox', { name: '启用恢复策略' })).not.toBeChecked();
+      if (type === 'server' && process.env.EVIDENCE_QA_OPERATION_ID) {
+        await recovery.getByRole('textbox', { name: '操作 ID', exact: true }).fill(process.env.EVIDENCE_QA_OPERATION_ID);
+        await recovery.getByRole('button', { name: '查询恢复状态' }).click();
+        await expect(recovery.locator('[data-recovery-result]')).toContainText('RECOVERY_WINDOW_SATISFIED');
+        await recovery.locator('[data-recovery-result]').scrollIntoViewIfNeeded();
+        await page.screenshot({ path: info.outputPath(`recovery-live-${width}.png`), fullPage: true });
+      }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
     await page.screenshot({ path: info.outputPath(`evidence-live-${width}.png`), fullPage: true });

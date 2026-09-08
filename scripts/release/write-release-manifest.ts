@@ -9,7 +9,7 @@ const paths = (process.env.SLIDE_SOURCE_PATHS ?? '').split(',').map(path => path
 const git = (args: string[]) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
 let source;
 if (paths.length) {
-  const files = git(['ls-tree', '-r', '--name-only', '-z', commit]).split('\0').filter(path => {
+  const files = git(['ls-tree', '--full-tree', '-r', '--name-only', '-z', commit]).split('\0').filter(path => {
     if (!paths.some(prefix => path.startsWith(prefix))) return false;
     try { assertSourcePath(path); return true; } catch { return false; }
   }).map(path => ({ path, content: git(['show', `${commit}:${path}`]) }));
