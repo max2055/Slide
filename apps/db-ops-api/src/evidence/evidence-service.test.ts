@@ -14,6 +14,13 @@ function fixture() {
   return { execute, store, observations, service };
 }
 describe('persistent authorized evidence', () => {
+  it('keeps observation identity stable across diagnostic requests', async () => {
+    const f = fixture();
+    const first = (await f.service.getBundle(actor, ref)).facts[0];
+    const second = (await f.service.getBundle({ ...actor, requestId: 'another-request' }, ref)).facts[0];
+    expect(second.id).toBe(first.id);
+    expect(second.correlationId).toMatch(/^observation:/);
+  });
   it('includes UTC evidence inside an offset historical window', async () => {
     const f = fixture();
     const saved = (await f.service.getBundle(actor, ref)).facts[0];

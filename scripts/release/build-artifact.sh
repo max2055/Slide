@@ -11,7 +11,7 @@ artifact="slide-${version}.tar.gz"
 staging="$(mktemp -d "${TMPDIR:-/tmp}/slide-release.XXXXXX")"
 trap 'rm -rf "$staging"' EXIT
 
-pnpm --filter slide-frontend build
+VITE_SLIDE_BUILD_ID="$commit" pnpm --filter slide-frontend build
 mkdir -p "$staging/slide/frontend"
 git archive HEAD | tar -xf - -C "$staging/slide"
 cp -R frontend/dist "$staging/slide/frontend/dist"

@@ -1,3 +1,5 @@
+import { platformLogs } from '../platform/structured-log-evidence-adapter.js';
+
 export type WorkflowState = 'queued' | 'running' | 'retry' | 'completed' | 'dead_letter' | 'cancelled';
 export interface ClaimedJob { id: string; type: string; payload: Record<string, unknown>; attempts: number; maxAttempts: number; fencingToken: number; }
 export interface WorkflowStore {
@@ -100,6 +102,7 @@ export class WorkerRuntime {
     try {
       const job = await this.claim();
       if (!job) return 'idle';
+      platformLogs.record({ component: 'queue', eventType: 'job.claimed', status: 'ok', correlationId: job.id });
 
       let heartbeatStopped = false;
       let heartbeatInFlight: Promise<void> | null = null;
@@ -110,6 +113,7 @@ export class WorkerRuntime {
       const markLeaseLost = () => {
         if (leaseLost) return;
         leaseLost = true;
+        platformLogs.record({ component: 'queue', eventType: 'job.lease_lost', status: 'unknown', correlationId: job.id, errorCode: 'WORKFLOW_LEASE_LOST' });
         heartbeatStopped = true;
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         console.error(`[WorkerRuntime] WORKFLOW_LEASE_LOST:${job.id}`);
@@ -150,15 +154,21 @@ export class WorkerRuntime {
         if (leaseLost) return 'retry';
 
         if (!handlerFailed) {
-          return await this.store.complete(job.id, this.workerId, job.fencingToken) ? 'completed' : 'retry';
+          const complete = await this.store.complete(job.id, this.workerId, job.fencingToken);
+          platformLogs.record({ component: 'queue', eventType: complete ? 'job.completed' : 'job.lease_lost', status: complete ? 'ok' : 'unknown', correlationId: job.id });
+          return complete ? 'completed' : 'retry';
         }
         const retryAt = job.attempts >= job.maxAttempts ? null : new Date(now + Math.min(60_000, 1_000 * 2 ** Math.max(0, job.attempts - 1)));
-        await this.store.fail(job, this.workerId, handlerError instanceof Error ? handlerError : new Error(String(handlerError)), retryAt);
+        const recorded = await this.store.fail(job, this.workerId, handlerError instanceof Error ? handlerError : new Error(String(handlerError)), retryAt);
+        platformLogs.record({ component: 'queue', eventType: recorded ? retryAt ? 'job.retry' : 'job.dead_letter' : 'job.lease_lost', status: recorded ? 'failed' : 'unknown', correlationId: job.id, errorCode: 'WORKFLOW_HANDLER_FAILED' });
         return retryAt ? 'retry' : 'dead_letter';
       } finally {
         heartbeatStopped = true;
         if (heartbeatTimer) clearInterval(heartbeatTimer);
       }
+    } catch (error) {
+      platformLogs.record({ component: 'queue', eventType: 'worker.error', status: 'failed', errorCode: 'WORKFLOW_STORE_OR_HANDLER_ERROR' });
+      throw error;
     } finally {
       this.runInFlight = false;
     }

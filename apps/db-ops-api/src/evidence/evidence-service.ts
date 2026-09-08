@@ -29,7 +29,9 @@ export class EvidenceService {
         if (!observedAt || !validUntil || observedAt > now) { gaps.add('OBSERVATION_TIME_UNKNOWN'); continue; }
         const content = { schemaVersion: 1 as const, kind: 'observation', status: 'fact' as const, subject: { resource: ref }, quality: observation.value === null ? 'unknown' as const : observation.quality,
           observedAt: observedAt.toISOString(), validUntil: validUntil.toISOString(), source: observation.source, provenance: observation.source,
-          correlationId: actor.requestId, ...(observation.dimensions ? { dimensions: observation.dimensions } : {}),
+          // The observation identity must not change when a different request reads it.
+          correlationId: 'observation:' + evidenceId({ resource: ref, metricId: observation.metricId, source: observation.source, observedAt: observedAt.toISOString(), dimensions: observation.dimensions ?? {} }),
+          ...(observation.dimensions ? { dimensions: observation.dimensions } : {}),
           payload: { metricId: observation.metricId, value: observation.value, ...(observation.reason ? { reason: observation.reason } : {}) } };
         const item = { ...content, id: evidenceId(content) };
         if (!validateEvidenceItem(item)) { gaps.add('OBSERVATION_INVALID'); continue; }
