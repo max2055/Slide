@@ -33,7 +33,7 @@ export class GitHubSourceConnector {
       if (remaining <= 0) throw new Error('SOURCE_SYNC_DEADLINE');
       try {
         const response = await this.request(url, { headers: { Authorization: `Bearer ${config.token}` }, redirect: 'error', signal: AbortSignal.timeout(Math.min(15_000, remaining)) });
-        if (!response.ok || !response.body) throw new Error('SOURCE_UPSTREAM_UNAVAILABLE');
+        if (!response.ok || !response.body) { console.error('[source-sync] GitHub upstream', response.status, url.replace(/repos\/[^/]+\/[^/]+/, 'repos/<repo>')); throw new Error('SOURCE_UPSTREAM_UNAVAILABLE'); }
         const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let bytes = 0;
         try {
           for (;;) {
@@ -45,7 +45,7 @@ export class GitHubSourceConnector {
           }
         } finally { await reader.cancel(); }
         return { text: Buffer.concat(chunks).toString('utf8'), next: response.headers.get('x-next-page') };
-      } catch { throw new Error(this.now() >= deadline ? 'SOURCE_SYNC_DEADLINE' : 'SOURCE_UPSTREAM_UNAVAILABLE'); }
+      } catch (error) { console.error('[source-sync] GitHub read failed', error instanceof Error ? error.message : 'unknown'); throw new Error(this.now() >= deadline ? 'SOURCE_SYNC_DEADLINE' : 'SOURCE_UPSTREAM_UNAVAILABLE'); }
     };
     const commit = JSON.parse((await read(`${endpoint}/commits/${config.commitSha}`, 256 * 1024)).text);
     if (commit.id !== config.commitSha) throw new Error('SOURCE_COMMIT_MISMATCH');
