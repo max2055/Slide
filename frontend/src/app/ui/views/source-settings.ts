@@ -16,6 +16,7 @@ export class SourceSettings extends LitElement {
   @state() private loading = true;
   @state() private error = '';
   @state() private message = '';
+  @state() private syncStatus = '';
   @state() private revision = 0;
   @state() private permissions: Set<string> = new Set();
   private readonly permissionsHandler = () => { this.readPermissions(); };
@@ -60,16 +61,18 @@ export class SourceSettings extends LitElement {
   private async sync() {
     if (!this.editable || this.busy || !this.token) return;
     const token = this.token; this.token = ''; this.busy = true; this.error = ''; this.message = '';
+    this.syncStatus = '正在连接代码托管平台并同步源码，可能需要几分钟…';
     try {
       const response = await authFetch('/api/platform/source/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
       const text = await response.text(); let body: any = {}; try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text }; } if (!response.ok) throw new Error(body.error ?? `SOURCE_SYNC_FAILED (${response.status})`);
-      this.revision++; this.message = '源码同步完成';
-    } catch (error) { this.error = String(error); } finally { this.busy = false; }
+      this.revision++; this.message = '源码同步完成'; this.syncStatus = '';
+    } catch (error) { this.error = String(error); this.syncStatus = ''; } finally { this.busy = false; }
   }
   override render() {
     return html`<h1>部署源码</h1>${this.loading ? html`<div class="skeleton" aria-label="加载源码配置"></div>` : nothing}
       ${this.error ? html`<p class="error" role="alert">${this.error}</p><button class="btn" @click=${this.load}>${icons['refresh-cw']} 重试加载</button>` : nothing}
       ${this.message ? html`<p role="status">${this.message}</p>` : nothing}
+      ${this.syncStatus ? html`<p role="status" aria-live="polite">${this.syncStatus}</p>` : nothing}
       <form @submit=${this.save}>
         <app-form-field label="代码托管平台"><select aria-label="代码托管平台" .value=${this.config.provider ?? 'gitlab'} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, provider: (e.target as HTMLSelectElement).value as 'gitlab'|'github', baseUrl: (e.target as HTMLSelectElement).value === 'github' ? 'https://github.com' : '' }; }}><option value="gitlab">GitLab</option><option value="github">GitHub</option></select></app-form-field>
         <p class="hint">选择源码所在的代码托管平台。同步只读取部署提交，不会写入仓库。</p>
@@ -82,7 +85,7 @@ export class SourceSettings extends LitElement {
         <div class="permission-row"><input aria-label="允许模型读取源码内容" id="allow-model-content" type="checkbox" .checked=${this.config.allowModelContent} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, allowModelContent: (e.target as HTMLInputElement).checked }; }}><label for="allow-model-content"><strong>允许模型读取源码内容</strong><span>开启后，Agent 可在已允许目录内读取经过安全扫描的源码片段；令牌和未授权文件仍不可见。</span></label></div>
         ${this.editable ? html`<button class="btn-primary" type="submit" .disabled=${this.busy || this.loading}>${icons.save} 保存配置</button>` : nothing}
       </form>
-      ${this.editable ? html`<section><app-form-field label="单次同步令牌"><input aria-label="单次同步令牌" title="仅本次同步使用，提交后立即清除" placeholder="粘贴后立即同步" type="password" autocomplete="off" .disabled=${this.busy || this.loading} .value=${this.token} @input=${(e: Event) => { this.token = (e.target as HTMLInputElement).value; }}></app-form-field><p class="hint">令牌不会保存，也不会发送给 Agent。</p><button class="btn" data-action="sync" .disabled=${this.busy || this.loading || !this.token} @click=${this.sync}>${icons['refresh-cw']} 同步源码</button></section>` : nothing}
+      ${this.editable ? html`<section><app-form-field label="单次同步令牌"><input aria-label="单次同步令牌" title="仅本次同步使用，提交后立即清除" placeholder="粘贴后立即同步" type="password" autocomplete="off" .disabled=${this.busy || this.loading} .value=${this.token} @input=${(e: Event) => { this.token = (e.target as HTMLInputElement).value; }}></app-form-field><p class="hint">令牌不会保存，也不会发送给 Agent。</p><button class="btn" data-action="sync" .disabled=${this.busy || this.loading || !this.token}>${this.busy ? icons['loader'] : icons['refresh-cw']} ${this.busy ? '同步中…' : '同步源码'}</button></section>` : nothing}
       <section><source-manifest .revision=${this.revision}></source-manifest></section>`;
   }
 }
