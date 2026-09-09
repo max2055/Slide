@@ -56,7 +56,7 @@ export class GitHubSourceConnector {
       } catch (error) { console.error('[source-sync] GitHub read failed', error instanceof Error ? error.message : 'unknown'); throw new Error(this.now() >= deadline ? 'SOURCE_SYNC_DEADLINE' : 'SOURCE_UPSTREAM_UNAVAILABLE'); }
     };
     const commit = JSON.parse((await read(`${endpoint}/commits/${config.commitSha}`, 256 * 1024)).text);
-    if (commit.id !== config.commitSha) throw new Error('SOURCE_COMMIT_MISMATCH');
+    if (commit.sha !== config.commitSha) throw new Error('SOURCE_COMMIT_MISMATCH');
     // Prefer a single archive download; it avoids recursive-tree timeouts on large repositories.
     try {
       const archive = await this.request(`https://api.github.com/repos/${config.projectId}/zipball/${config.commitSha}`, { headers: { Authorization: `Bearer ${config.token}` }, redirect: 'error' } as any);
