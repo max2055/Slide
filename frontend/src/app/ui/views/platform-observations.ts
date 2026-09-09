@@ -24,4 +24,4 @@ export class PlatformObservationsPage extends LitElement {
   }
   render() { return html`<h1>平台观测</h1><p>汇总平台运行时产生的结构化观测信号，与平台自检结果分离展示。</p>${this.loading ? html`<p>加载中…</p>` : html`<div class="grid">${this.groups.map(g=>html`<section class="card"><span class="label">${g.category}</span><strong class="value">${g.count}</strong><span class="label">观测项 · ${g.failures ? `${g.failures} 项异常` : '无异常'}</span></section>`)}</div>`}`; }
 }
-if (!customElements.get('platform-observations')) customElements.define('platform-observations', PlatformObservationsPage);
+if (!customElements.get('platform-observations')) customElements.define('platform-observations', class extends PlatformObservationsPage {});
