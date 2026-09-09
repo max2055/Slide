@@ -15,7 +15,7 @@ export interface SourceManifest extends SourceIdentity {
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
-const MAX_FILES = 4000;
+const MAX_FILES = 20000;
 
 function releaseName(value: string): string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(value)) throw new Error('SOURCE_RELEASE_INVALID');

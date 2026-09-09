@@ -40,7 +40,7 @@ export class GitHubSourceConnector {
             const { value, done } = await reader.read(); if (done) break;
             if (this.now() >= deadline) throw new Error('SOURCE_UPSTREAM_UNAVAILABLE');
             bytes += value.byteLength; total += value.byteLength;
-            if (bytes > max || total > 32 * 1024 * 1024) throw new Error('SOURCE_UPSTREAM_UNAVAILABLE');
+            if (bytes > max || total > 128 * 1024 * 1024) throw new Error('SOURCE_UPSTREAM_UNAVAILABLE');
             chunks.push(value);
           }
         } finally { await reader.cancel(); }
@@ -53,7 +53,7 @@ export class GitHubSourceConnector {
     for (;;) {
       const response = await read(`${endpoint}/git/trees/${config.commitSha}?recursive=1`, 256 * 1024);
       const entries = JSON.parse(response.text);
-      if (!Array.isArray(entries.tree) || entries.tree.length > 4000) throw new Error('SOURCE_TREE_INVALID');
+      if (!Array.isArray(entries.tree) || entries.tree.length > 20000) throw new Error('SOURCE_TREE_INVALID');
       for (const entry of entries.tree) {
         if (entry?.type !== 'blob' || typeof entry.path !== 'string' || (config.allowedPaths.length > 0 && !config.allowedPaths.some(path => entry.path.startsWith(path)))) continue;
         try { assertSourcePath(entry.path); } catch { continue; }
@@ -63,7 +63,7 @@ export class GitHubSourceConnector {
       if (!/^[0-9]+$/.test(response.next) || Number(response.next) !== page + 1 || page >= 100) throw new Error('SOURCE_TREE_TOO_LARGE');
       page++;
     }
-    if (!paths.length || paths.length > 4000) throw new Error('SOURCE_FILE_COUNT_INVALID');
+    if (!paths.length || paths.length > 20000) throw new Error('SOURCE_FILE_COUNT_INVALID');
     const files: SourceFile[] = [];
     for (const path of paths) {
       const blob = JSON.parse((await read(`${endpoint}/contents/${encodeURIComponent(path)}?ref=${config.commitSha}`, 512 * 1024)).text); if (blob.encoding !== 'base64' || typeof blob.content !== 'string') throw new Error('SOURCE_UPSTREAM_UNAVAILABLE'); const content = Buffer.from(blob.content.replace(/\n/g,''), 'base64').toString('utf8');
