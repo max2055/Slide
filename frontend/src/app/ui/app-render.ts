@@ -56,6 +56,7 @@ import "./views/appearance-settings.ts";
 import "./views/branding-settings.ts";
 import "./views/event-center.ts";
 import "./views/platform-status.ts";
+import "./views/platform-observations.ts";
 import { icons } from "../../icons.js";
 import { normalizeBasePath, TAB_GROUPS, TAB_REQUIRED_PERMISSIONS, UTILITY_TABS, subtitleForTab, titleForTab } from "./navigation.ts";
 import { agentLogoUrl } from "./views/agents-utils.ts";

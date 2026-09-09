@@ -2,10 +2,11 @@ import { LitElement, css, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { permissionMatches } from "../settings-navigation.ts";
 
-type StatusView = "health" | "sandbox";
+type StatusView = "health" | "observations" | "sandbox";
 
 const STATUS_VIEWS: readonly { id: StatusView; label: string; permission: string }[] = [
   { id: "health", label: "平台自检", permission: "config:view" },
+  { id: "observations", label: "平台观测", permission: "config:view" },
   { id: "sandbox", label: "Agent 沙箱", permission: "audit:view" },
 ];
 
@@ -95,7 +96,9 @@ export class PlatformStatusPage extends LitElement {
           `)}
         </div>
       ` : nothing}
-      ${this.activeView === "sandbox"
+      ${this.activeView === "observations"
+        ? html`<platform-observations-page></platform-observations-page>`
+        : this.activeView === "sandbox"
         ? html`<agent-sandbox-status-page></agent-sandbox-status-page>`
         : html`<health-center-page></health-center-page>`}
     `;
