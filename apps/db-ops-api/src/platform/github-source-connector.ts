@@ -31,7 +31,9 @@ export class GitHubSourceConnector {
     // GitHub.com exposes its REST API on api.github.com; GitHub Enterprise uses
     // the configured origin's /api/v3 path.
     const apiOrigin = origin.hostname === 'github.com' ? 'https://api.github.com' : origin.origin;
-    const endpoint = `${apiOrigin}/api/v3/repos/${config.projectId}`.replace('https://api.github.com/api/v3', 'https://api.github.com/repos');
+    const endpoint = origin.hostname === 'github.com'
+      ? `https://api.github.com/repos/${config.projectId}`
+      : `${apiOrigin}/api/v3/repos/${config.projectId}`;
     let total = 0;
     const read = async (url: string, max: number) => {
       const remaining = deadline - this.now();
