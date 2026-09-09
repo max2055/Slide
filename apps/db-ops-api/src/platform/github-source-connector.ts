@@ -23,7 +23,10 @@ export class GitHubSourceConnector {
     for (const path of config.allowedPaths) {
       if (typeof path !== 'string' || !/^[A-Za-z0-9_/-]+\/$/.test(path) || path.split('/').slice(0, -1).some(part => !part || part === '..')) throw new Error('SOURCE_PATH_INVALID');
     }
-    const endpoint = `${origin.origin}/api/v3/repos/${config.projectId}`;
+    // GitHub.com exposes its REST API on api.github.com; GitHub Enterprise uses
+    // the configured origin's /api/v3 path.
+    const apiOrigin = origin.hostname === 'github.com' ? 'https://api.github.com' : origin.origin;
+    const endpoint = `${apiOrigin}/api/v3/repos/${config.projectId}`.replace('https://api.github.com/api/v3', 'https://api.github.com/repos');
     let total = 0;
     const read = async (url: string, max: number) => {
       const remaining = deadline - this.now();
