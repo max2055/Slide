@@ -86,7 +86,7 @@ export async function registerHttpSecurity(fastify: FastifyInstance, env: NodeJS
         return { reasonCode };
       }
       const error = (payload as { error?: unknown }).error;
-      if (typeof error === 'string' && PUBLIC_5XX_ERROR_CODES.has(error)) {
+      if (typeof error === 'string' && (PUBLIC_5XX_ERROR_CODES.has(error) || error.startsWith('SOURCE_'))) {
         return { error };
       }
       return { error: 'INTERNAL_ERROR' };
