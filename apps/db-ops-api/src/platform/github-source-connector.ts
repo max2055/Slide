@@ -51,7 +51,7 @@ export class GitHubSourceConnector {
     if (commit.id !== config.commitSha) throw new Error('SOURCE_COMMIT_MISMATCH');
     const paths: string[] = []; let page = 1;
     for (;;) {
-      const response = await read(`${endpoint}/git/trees/${config.commitSha}?recursive=1`, 256 * 1024);
+      const response = await read(`${endpoint}/git/trees/${config.commitSha}?recursive=1`, 8 * 1024 * 1024);
       const entries = JSON.parse(response.text);
       if (!Array.isArray(entries.tree) || entries.tree.length > 20000) throw new Error('SOURCE_TREE_INVALID');
       for (const entry of entries.tree) {
