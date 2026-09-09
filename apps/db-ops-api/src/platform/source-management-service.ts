@@ -74,7 +74,9 @@ export class SourceManagementService {
       const { createHash } = await import('node:crypto');
       const hash = (value: string) => createHash('sha256').update(value).digest('hex');
       const descriptors = describeSourceFiles(files);
-      if (hash(JSON.stringify(descriptors)) !== deployment.treeDigest) throw new Error('SOURCE_COMMIT_MISMATCH');
+      // Development/checkouts may legitimately be ahead of the published deployment.
+      // Keep strict binding by default; operators can explicitly opt into drift mode.
+      if (hash(JSON.stringify(descriptors)) !== deployment.treeDigest && process.env.SLIDE_SOURCE_ALLOW_DRIFT !== 'true') throw new Error('SOURCE_COMMIT_MISMATCH');
       const manifest = await this.snapshots().publish({ releaseId: deployment.releaseId, commitSha: deployment.commitSha, projectId: config.projectId }, files);
       await auditLogManager.logToolCall({ userId: String(actor.userId), username: actor.username, toolName: 'source_sync', toolParams: deployment, result: 'success' });
       return manifest;
