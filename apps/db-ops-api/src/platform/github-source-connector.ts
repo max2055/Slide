@@ -1,4 +1,5 @@
 import { assertSourceContent, assertSourcePath, type SourceFile } from './source-snapshot-service.js';
+import { ProxyAgent } from 'undici';
 
 export interface GitHubSourceConfig {
   baseUrl: string; projectId: string; commitSha: string; allowedPaths: string[];
@@ -32,7 +33,8 @@ export class GitHubSourceConnector {
       const remaining = deadline - this.now();
       if (remaining <= 0) throw new Error('SOURCE_SYNC_DEADLINE');
       try {
-        const response = await this.request(url, { headers: { Authorization: `Bearer ${config.token}` }, redirect: 'error', signal: AbortSignal.timeout(Math.min(15_000, remaining)) });
+        const proxy = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+        const response = await this.request(url, { headers: { Authorization: `Bearer ${config.token}` }, redirect: 'error', signal: AbortSignal.timeout(Math.min(15_000, remaining)), ...(proxy ? { dispatcher: new ProxyAgent(proxy) } : {}) } as any);
         if (!response.ok || !response.body) { console.error('[source-sync] GitHub upstream', response.status, url.replace(/repos\/[^/]+\/[^/]+/, 'repos/<repo>')); throw new Error('SOURCE_UPSTREAM_UNAVAILABLE'); }
         const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let bytes = 0;
         try {
