@@ -41,7 +41,7 @@ export class SourceSettings extends LitElement {
   private async load() {
     this.loading = true; this.error = '';
     try {
-      const response = await authFetch('/api/platform/source/config'); const body = await response.json();
+      const response = await authFetch('/api/platform/source/config'); const text = await response.text(); let body: any = {}; try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text }; }
       if (!response.ok) throw new Error(body.error ?? `SOURCE_CONFIG_UNAVAILABLE (${response.status})`);
       this.config = body.config ?? { provider: 'gitlab', baseUrl: '', projectId: '', allowedPaths: [], allowModelContent: false };
     } catch (error) { this.error = String(error); } finally { this.loading = false; }

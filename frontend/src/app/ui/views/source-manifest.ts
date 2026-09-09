@@ -24,7 +24,7 @@ export class SourceManifestView extends LitElement {
   private async load() {
     const version = ++this.requestVersion; this.loading = true; this.error = ''; this.manifest = null;
     try {
-      const response = await authFetch('/api/platform/source/manifest'); const body = await response.json();
+      const response = await authFetch('/api/platform/source/manifest'); const text = await response.text(); let body: any = {}; try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text }; }
       if (!response.ok && body.error === 'SOURCE_NOT_CONFIGURED') { if (version === this.requestVersion) this.error = '尚未配置部署源码。请先填写 GitLab 地址、项目 ID 和源码路径。'; return; }
       if (!response.ok) throw new Error(body.error ?? `SOURCE_MANIFEST_UNAVAILABLE (${response.status})`);
       if (version === this.requestVersion) this.manifest = body;
