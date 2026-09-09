@@ -14,7 +14,6 @@ import { inferBasePathFromPathname } from "../navigation.ts";
 import "../components/app-card.js";
 import "../components/app-badge.js";
 import "../components/app-empty-state.js";
-import "./platform-observations.js";
 
 // ── Types ───────────────────────────────────────────────
 
@@ -384,7 +383,6 @@ export class HealthCenterPage extends LitElement {
     const normalChecks = d.checks.filter(c => c.status === 'pass' || c.status === 'deferred');
 
     return html`
-      <platform-observations></platform-observations>
       <!-- Page header -->
       <div class="page-header">
         <div>
