@@ -20,12 +20,12 @@ export function readDeploymentBinding() {
 }
 
 export function createSourceBinding(releaseId: string, commitSha: string, allowedPaths: string[], files: SourceFile[]) {
-  if (!allowedPaths.length || allowedPaths.length > 32 || allowedPaths.some(path => !/^[A-Za-z0-9_/-]+\/$/.test(path)
+  if (allowedPaths.length > 32 || allowedPaths.some(path => !/^[A-Za-z0-9_/-]+\/$/.test(path)
     || path.split('/').slice(0, -1).some(part => !part || part === '..'))) throw new Error('SOURCE_PATH_INVALID');
   if (!files.length || files.length > 4000 || new Set(files.map(file => file.path)).size !== files.length) throw new Error('SOURCE_FILE_COUNT_INVALID');
   for (const file of files) {
     assertSourcePath(file.path); assertSourceContent(file.content, file.path);
-    if (!allowedPaths.some(path => file.path.startsWith(path))) throw new Error('SOURCE_PATH_INVALID');
+    if (allowedPaths.length && !allowedPaths.some(path => file.path.startsWith(path))) throw new Error('SOURCE_PATH_INVALID');
   }
   const descriptors = describeSourceFiles(files);
   if (descriptors.reduce((sum, file) => sum + file.bytes, 0) > 32 * 1024 * 1024) throw new Error('SOURCE_SNAPSHOT_TOO_LARGE');
