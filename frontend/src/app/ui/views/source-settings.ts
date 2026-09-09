@@ -7,10 +7,10 @@ import { permissionMatches } from '../settings-navigation.js';
 import '../components/app-form-field.js';
 import './source-manifest.js';
 
-interface SourceConfig { baseUrl: string; projectId: string; allowedPaths: string[]; allowModelContent: boolean }
+interface SourceConfig { provider?: 'gitlab' | 'github'; baseUrl: string; projectId: string; allowedPaths: string[]; allowModelContent: boolean }
 @customElement('source-settings')
 export class SourceSettings extends LitElement {
-  @state() private config: SourceConfig = { baseUrl: '', projectId: '', allowedPaths: [], allowModelContent: false };
+  @state() private config: SourceConfig = { provider: 'gitlab', baseUrl: '', projectId: '', allowedPaths: [], allowModelContent: false };
   @state() private token = '';
   @state() private busy = false;
   @state() private loading = true;
@@ -39,7 +39,7 @@ export class SourceSettings extends LitElement {
     try {
       const response = await authFetch('/api/platform/source/config'); const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? `SOURCE_CONFIG_UNAVAILABLE (${response.status})`);
-      this.config = body.config ?? { baseUrl: '', projectId: '', allowedPaths: [], allowModelContent: false };
+      this.config = body.config ?? { provider: 'gitlab', baseUrl: '', projectId: '', allowedPaths: [], allowModelContent: false };
     } catch (error) { this.error = String(error); } finally { this.loading = false; }
   }
   private async save(event: Event) {
@@ -65,10 +65,12 @@ export class SourceSettings extends LitElement {
       ${this.error ? html`<p class="error" role="alert">${this.error}</p><button class="btn" @click=${this.load}>${icons['refresh-cw']} 重试加载</button>` : nothing}
       ${this.message ? html`<p role="status">${this.message}</p>` : nothing}
       <form @submit=${this.save}>
-        <app-form-field label="GitLab URL"><input aria-label="GitLab URL" title="GitLab 实例根地址，例如 https://gitlab.example.com" placeholder="https://gitlab.example.com" type="url" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.baseUrl} @input=${(e: Event) => { this.config = { ...this.config, baseUrl: (e.target as HTMLInputElement).value }; }}></app-form-field>
+        <app-form-field label="代码托管平台"><select aria-label="代码托管平台" .value=${this.config.provider ?? 'gitlab'} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, provider: (e.target as HTMLSelectElement).value as 'gitlab'|'github', baseUrl: (e.target as HTMLSelectElement).value === 'github' ? 'https://github.com' : '' }; }}><option value="gitlab">GitLab</option><option value="github">GitHub</option></select></app-form-field>
+        <p class="hint">选择源码所在的代码托管平台。同步只读取部署提交，不会写入仓库。</p>
+        <app-form-field label="${this.config.provider === 'github' ? 'GitHub URL' : 'GitLab URL'}"><input aria-label="${this.config.provider === 'github' ? 'GitHub URL' : 'GitLab URL'}" title="平台实例根地址" placeholder=${this.config.provider === 'github' ? 'https://github.com' : 'https://gitlab.example.com'} type="url" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.baseUrl} @input=${(e: Event) => { this.config = { ...this.config, baseUrl: (e.target as HTMLInputElement).value }; }}></app-form-field>
         <p class="hint">填写实例根地址，不要填写项目路径、查询参数或令牌。</p>
         <app-form-field label="项目 ID"><input aria-label="项目 ID" title="项目数字 ID，不是项目名称" placeholder="例如 123" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.projectId} @input=${(e: Event) => { this.config = { ...this.config, projectId: (e.target as HTMLInputElement).value }; }}></app-form-field>
-        <p class="hint">填写项目的数字 ID，可在项目首页或设置中查看。</p>
+        <p class="hint">${this.config.provider === 'github' ? '填写 owner/repository，例如 openai/example。' : '填写项目的数字 ID，可在项目首页或设置中查看。'}</p>
         <app-form-field label="允许的源码路径"><textarea aria-label="允许的源码路径" title="每行一个目录前缀，并以 / 结尾" placeholder="每行一个目录，例如：&#10;apps/db-ops-api/src/&#10;frontend/src/" .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.allowedPaths.join('\n')} @input=${(e: Event) => { this.config = { ...this.config, allowedPaths: (e.target as HTMLTextAreaElement).value.split('\n') }; }}></textarea></app-form-field>
         <p class="hint">只同步这些目录；建议填写 Agent 分析所需的最小范围。</p>
         <app-form-field label="模型内容授权"><input aria-label="允许模型读取源码内容" type="checkbox" .checked=${this.config.allowModelContent} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, allowModelContent: (e.target as HTMLInputElement).checked }; }}></app-form-field>

@@ -13,7 +13,7 @@ import { FixedWindowRateLimiter } from '../security/agent-runtime-limits.js';
 
 const ConfigSchema = Type.Object({
   provider: Type.Optional(Type.Union([Type.Literal('gitlab'), Type.Literal('github')])),
-  baseUrl: Type.String({ maxLength: 512 }), projectId: Type.String({ pattern: '^[0-9]{1,20}$' }),
+  baseUrl: Type.String({ maxLength: 512 }), projectId: Type.String({ minLength: 1, maxLength: 128 }),
   allowedPaths: Type.Array(Type.String({ pattern: '^[A-Za-z0-9_/-]+/$', maxLength: 256 }), { minItems: 1, maxItems: 32, uniqueItems: true }),
   allowModelContent: Type.Boolean(),
 }, { additionalProperties: false });
@@ -30,12 +30,14 @@ export class SourceManagementService {
   private syncing = false;
   private readsInFlight = 0;
   private readonly readBudget = new FixedWindowRateLimiter(30, 60_000);
-  constructor(private readonly pool: () => Executor | null = () => dbConnection.getPool(), private readonly allowedOrigins = (process.env.SLIDE_GITLAB_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean)) {}
+  constructor(private readonly pool: () => Executor | null = () => dbConnection.getPool(), private readonly allowedOrigins = `${process.env.SLIDE_GITLAB_ORIGINS ?? ''},${process.env.SLIDE_GITHUB_ORIGINS ?? 'https://github.com'}`.split(',').map(value => value.trim()).filter(Boolean)) {}
   private executor() { const executor = this.pool(); if (!executor) throw new Error('SOURCE_STORAGE_UNAVAILABLE'); return executor; }
   private validate(input: unknown): SourceConfig {
     if (!Value.Check(ConfigSchema, input)) throw new Error('SOURCE_CONFIG_INVALID');
     let url: URL; try { url = new URL(input.baseUrl); } catch { throw new Error('SOURCE_ORIGIN_DENIED'); }
     if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/' || !this.allowedOrigins.includes(url.origin)) throw new Error('SOURCE_ORIGIN_DENIED');
+    if ((input.provider ?? 'gitlab') === 'gitlab' && !/^\d{1,20}$/.test(input.projectId)) throw new Error('SOURCE_CONFIG_INVALID');
+    if (input.provider === 'github' && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(input.projectId)) throw new Error('SOURCE_CONFIG_INVALID');
     if (input.allowedPaths.some(path => path.split('/').slice(0, -1).some(part => !part || part === '..'))) throw new Error('SOURCE_CONFIG_INVALID');
     return { ...input, baseUrl: url.origin };
   }
