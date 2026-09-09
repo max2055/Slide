@@ -53,7 +53,7 @@ export class SourceSettings extends LitElement {
       const allowedPaths = [...new Set(this.config.allowedPaths.map(path => path.trim()).filter(Boolean))];
       if (allowedPaths.some(path => !/^[A-Za-z0-9_/-]+\/$/.test(path))) throw new Error('源码路径必须每行一个目录，并以 / 结尾');
       const response = await authFetch('/api/platform/source/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...this.config, provider: this.config.provider ?? 'gitlab', allowedPaths }) });
-      const body = await response.json(); if (!response.ok) throw new Error(body.error ?? 'SOURCE_SAVE_FAILED');
+      const text = await response.text(); let body: any = {}; try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text }; } if (!response.ok) throw new Error(body.error ?? `SOURCE_SAVE_FAILED (${response.status})`);
       this.config = body.config; this.message = '配置已保存';
     } catch (error) { this.error = String(error); } finally { this.busy = false; }
   }
@@ -62,7 +62,7 @@ export class SourceSettings extends LitElement {
     const token = this.token; this.token = ''; this.busy = true; this.error = ''; this.message = '';
     try {
       const response = await authFetch('/api/platform/source/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
-      const body = await response.json(); if (!response.ok) throw new Error(body.error ?? 'SOURCE_SYNC_FAILED');
+      const text = await response.text(); let body: any = {}; try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text }; } if (!response.ok) throw new Error(body.error ?? `SOURCE_SYNC_FAILED (${response.status})`);
       this.revision++; this.message = '源码同步完成';
     } catch (error) { this.error = String(error); } finally { this.busy = false; }
   }
