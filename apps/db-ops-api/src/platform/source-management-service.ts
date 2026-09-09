@@ -14,7 +14,7 @@ import { FixedWindowRateLimiter } from '../security/agent-runtime-limits.js';
 const ConfigSchema = Type.Object({
   provider: Type.Optional(Type.Union([Type.Literal('gitlab'), Type.Literal('github')])),
   baseUrl: Type.String({ maxLength: 512 }), projectId: Type.String({ minLength: 1, maxLength: 128 }),
-  allowedPaths: Type.Array(Type.String({ pattern: '^[A-Za-z0-9_/-]+/$', maxLength: 256 }), { minItems: 1, maxItems: 32, uniqueItems: true }),
+  allowedPaths: Type.Array(Type.String({ pattern: '^[A-Za-z0-9_/-]+/$', maxLength: 256 }), { maxItems: 32, uniqueItems: true }),
   allowModelContent: Type.Boolean(),
 }, { additionalProperties: false });
 export type SourceConfig = Static<typeof ConfigSchema>;
@@ -95,7 +95,7 @@ export class SourceManagementService {
       if (model && !config.allowModelContent) throw new Error('SOURCE_MODEL_EGRESS_DENIED');
       const binding = this.deployment(); const snapshots = this.snapshots();
       const manifest = await snapshots.manifest(binding.releaseId, binding);
-      if (manifest.projectId !== config.projectId || manifest.files.some(file => !config.allowedPaths.some(path => file.path.startsWith(path)))) throw new Error('SOURCE_SNAPSHOT_POLICY_CHANGED');
+      if (manifest.projectId !== config.projectId || (config.allowedPaths.length > 0 && manifest.files.some(file => !config.allowedPaths.some(path => file.path.startsWith(path))))) throw new Error('SOURCE_SNAPSHOT_POLICY_CHANGED');
       const result = mode === 'manifest' ? manifest
         : mode === 'search' ? await snapshots.search(binding.releaseId, binding, args.query as string)
         : mode === 'symbol' ? await snapshots.symbols(binding.releaseId, binding, args.name as string)

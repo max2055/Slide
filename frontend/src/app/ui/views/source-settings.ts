@@ -51,7 +51,7 @@ export class SourceSettings extends LitElement {
     this.busy = true; this.error = ''; this.message = '';
     try {
       const allowedPaths = [...new Set(this.config.allowedPaths.map(path => path.trim()).filter(Boolean))];
-      if (!allowedPaths.length || allowedPaths.some(path => !/^[A-Za-z0-9_/-]+\/$/.test(path))) throw new Error('源码路径必须每行一个目录，并以 / 结尾');
+      if (allowedPaths.some(path => !/^[A-Za-z0-9_/-]+\/$/.test(path))) throw new Error('源码路径必须每行一个目录，并以 / 结尾');
       const response = await authFetch('/api/platform/source/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...this.config, provider: this.config.provider ?? 'gitlab', allowedPaths }) });
       const body = await response.json(); if (!response.ok) throw new Error(body.error ?? 'SOURCE_SAVE_FAILED');
       this.config = body.config; this.message = '配置已保存';
@@ -78,7 +78,7 @@ export class SourceSettings extends LitElement {
         <app-form-field label="项目 ID"><input aria-label="项目 ID" title="项目数字 ID，不是项目名称" placeholder="例如 123" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.projectId} @input=${(e: Event) => { this.config = { ...this.config, projectId: (e.target as HTMLInputElement).value }; }}></app-form-field>
         <p class="hint">${this.config.provider === 'github' ? '填写 owner/repository，例如 openai/example。' : '填写项目的数字 ID，可在项目首页或设置中查看。'}</p>
         <app-form-field label="允许的源码路径"><textarea aria-label="允许的源码路径" title="每行一个目录前缀，并以 / 结尾" placeholder="每行一个目录，例如：&#10;apps/db-ops-api/src/&#10;frontend/src/" .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.allowedPaths.join('\n')} @input=${(e: Event) => { this.config = { ...this.config, allowedPaths: (e.target as HTMLTextAreaElement).value.split('\n') }; }}></textarea></app-form-field>
-        <p class="hint">只同步这些目录；建议填写 Agent 分析所需的最小范围。</p>
+        <p class="hint">只同步这些目录；留空表示同步全部源码。无论哪种模式都会执行大小限制与敏感信息扫描。</p>
         <div class="permission-row"><input aria-label="允许模型读取源码内容" id="allow-model-content" type="checkbox" .checked=${this.config.allowModelContent} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, allowModelContent: (e.target as HTMLInputElement).checked }; }}><label for="allow-model-content"><strong>允许模型读取源码内容</strong><span>开启后，Agent 可在已允许目录内读取经过安全扫描的源码片段；令牌和未授权文件仍不可见。</span></label></div>
         ${this.editable ? html`<button class="btn-primary" type="submit" .disabled=${this.busy || this.loading}>${icons.save} 保存配置</button>` : nothing}
       </form>

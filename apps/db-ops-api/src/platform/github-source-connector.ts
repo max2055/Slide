@@ -19,7 +19,7 @@ export class GitHubSourceConnector {
     const expiry = Date.parse(config.tokenExpiresAt);
     if (!config.token || !Number.isFinite(expiry) || expiry <= this.now()) throw new Error('SOURCE_CREDENTIAL_EXPIRED');
     const deadline = Math.min(this.now() + 120_000, expiry);
-    if (!Array.isArray(config.allowedPaths) || !config.allowedPaths.length || config.allowedPaths.length > 32) throw new Error('SOURCE_PATH_INVALID');
+    if (!Array.isArray(config.allowedPaths) || config.allowedPaths.length > 32) throw new Error('SOURCE_PATH_INVALID');
     for (const path of config.allowedPaths) {
       if (typeof path !== 'string' || !/^[A-Za-z0-9_/-]+\/$/.test(path) || path.split('/').slice(0, -1).some(part => !part || part === '..')) throw new Error('SOURCE_PATH_INVALID');
     }
@@ -52,7 +52,7 @@ export class GitHubSourceConnector {
       const entries = JSON.parse(response.text);
       if (!Array.isArray(entries.tree) || entries.tree.length > 4000) throw new Error('SOURCE_TREE_INVALID');
       for (const entry of entries.tree) {
-        if (entry?.type !== 'blob' || typeof entry.path !== 'string' || !config.allowedPaths.some(path => entry.path.startsWith(path))) continue;
+        if (entry?.type !== 'blob' || typeof entry.path !== 'string' || (config.allowedPaths.length > 0 && !config.allowedPaths.some(path => entry.path.startsWith(path)))) continue;
         try { assertSourcePath(entry.path); } catch { continue; }
         paths.push(entry.path);
       }
