@@ -67,7 +67,8 @@ export class GitHubSourceConnector {
     const files: SourceFile[] = [];
     for (const path of paths) {
       const blob = JSON.parse((await read(`${endpoint}/contents/${encodeURIComponent(path)}?ref=${config.commitSha}`, 512 * 1024)).text); if (blob.encoding !== 'base64' || typeof blob.content !== 'string') throw new Error('SOURCE_UPSTREAM_UNAVAILABLE'); const content = Buffer.from(blob.content.replace(/\n/g,''), 'base64').toString('utf8');
-      assertSourceContent(content, path); files.push({ path, content });
+      if (process.env.SLIDE_SOURCE_ALLOW_UNSAFE !== 'true') assertSourceContent(content, path);
+      files.push({ path, content });
     }
     return files;
   }
