@@ -12,6 +12,7 @@ export async function registerSourceRoutes(app: FastifyInstance, verifyToken: pr
       return reply.send(await action(request));
     } catch (error) {
       const raw = error instanceof Error ? error.message : '';
+      console.error('[source-route]', raw || error);
       const code = /^SOURCE_[A-Z_]+$/.test(raw) ? raw : 'SOURCE_UNAVAILABLE';
       const status = /REQUIRED|FORBIDDEN|DENIED/.test(code) ? 403 : /RATE_LIMITED/.test(code) ? 429 : /BUSY|UNKNOWN|NOT_CONFIGURED|UNTRUSTED/.test(code) ? 409 : /INVALID|TOO_LARGE/.test(code) ? 400 : 503;
       return reply.code(status).send({ error: code });
