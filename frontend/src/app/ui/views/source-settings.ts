@@ -46,7 +46,9 @@ export class SourceSettings extends LitElement {
     event.preventDefault(); if (!this.editable || this.busy) return;
     this.busy = true; this.error = ''; this.message = '';
     try {
-      const response = await authFetch('/api/platform/source/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.config) });
+      const allowedPaths = [...new Set(this.config.allowedPaths.map(path => path.trim()).filter(Boolean))];
+      if (!allowedPaths.length || allowedPaths.some(path => !/^[A-Za-z0-9_/-]+\/$/.test(path))) throw new Error('源码路径必须每行一个目录，并以 / 结尾');
+      const response = await authFetch('/api/platform/source/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...this.config, provider: this.config.provider ?? 'gitlab', allowedPaths }) });
       const body = await response.json(); if (!response.ok) throw new Error(body.error ?? 'SOURCE_SAVE_FAILED');
       this.config = body.config; this.message = '配置已保存';
     } catch (error) { this.error = String(error); } finally { this.busy = false; }
