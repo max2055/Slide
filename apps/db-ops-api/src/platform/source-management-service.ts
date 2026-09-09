@@ -6,11 +6,13 @@ import type { ActorContext } from '../auth/actor-context.js';
 import { credentialReferenceService } from '../security/credential-reference-service.js';
 import { auditLogManager } from '../audit/audit-log.js';
 import { GitLabSourceConnector } from './gitlab-source-connector.js';
+import { GitHubSourceConnector } from './github-source-connector.js';
 import { SourceSnapshotService, describeSourceFiles } from './source-snapshot-service.js';
 import { readDeploymentBinding } from './deployment-binding.js';
 import { FixedWindowRateLimiter } from '../security/agent-runtime-limits.js';
 
 const ConfigSchema = Type.Object({
+  provider: Type.Optional(Type.Union([Type.Literal('gitlab'), Type.Literal('github')])),
   baseUrl: Type.String({ maxLength: 512 }), projectId: Type.String({ pattern: '^[0-9]{1,20}$' }),
   allowedPaths: Type.Array(Type.String({ pattern: '^[A-Za-z0-9_/-]+/$', maxLength: 256 }), { minItems: 1, maxItems: 32, uniqueItems: true }),
   allowModelContent: Type.Boolean(),
@@ -64,7 +66,8 @@ export class SourceManagementService {
     try {
       const token = await credentialReferenceService.consume(credentialRef, actor.userId, 'gitlab_source_sync');
       if (!token) throw new Error('SOURCE_CREDENTIAL_INVALID');
-      const files = await new GitLabSourceConnector(this.allowedOrigins).fetchFiles({ ...config, commitSha: deployment.commitSha, token, tokenExpiresAt: new Date(Date.now() + 15 * 60_000).toISOString() });
+      const sourceConfig = { ...config, commitSha: deployment.commitSha, token, tokenExpiresAt: new Date(Date.now() + 15 * 60_000).toISOString() };
+      const files = config.provider === 'github' ? await new GitHubSourceConnector(this.allowedOrigins).fetchFiles(sourceConfig) : await new GitLabSourceConnector(this.allowedOrigins).fetchFiles(sourceConfig as any);
       // Validate the expected deployment digest before publishing a usable snapshot.
       const { createHash } = await import('node:crypto');
       const hash = (value: string) => createHash('sha256').update(value).digest('hex');
