@@ -116,8 +116,8 @@ importers:
         specifier: ^4.6.2
         version: 4.22.4
       undici:
-        specifier: ^7.29.1
-        version: 7.29.1
+        specifier: 6.28.0
+        version: 6.28.0
       ws:
         specifier: ^8.20.0
         version: 8.21.0
@@ -3034,10 +3034,6 @@ packages:
     resolution: {integrity: sha512-LIY910g9TI13YS95lrMFrs8Rm/u/irgHeTWoKCoteeJ04CUJ92eEfj0rVn+7VKMPBpUPiUoBKfhNyLI23EE/KA==}
     engines: {node: '>=18.17'}
 
-  undici@7.29.1:
-    resolution: {integrity: sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==}
-    engines: {node: '>=20.18.1'}
-
   unicode-properties@1.4.1:
     resolution: {integrity: sha512-CLjCCLQ6UuMxWnbIylkisbRj31qxHPAurvena/0iwSVbQ2G1VY5/HjV0IRabOEbDHlzZlRdCrD4NhB0JtU40Pg==}
 
@@ -5935,8 +5931,6 @@ snapshots:
   undici-types@7.16.0: {}
 
   undici@6.28.0: {}
-
-  undici@7.29.1: {}
 
   unicode-properties@1.4.1:
     dependencies:
