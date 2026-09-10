@@ -54,6 +54,18 @@ export class AppFormField extends LitElement {
         :host([inline]) .form-control {
           flex: 1;
         }
+        :host-context(source-settings) {
+          display: flex;
+          align-items: baseline;
+          gap: var(--space-md, 12px);
+        }
+        :host-context(source-settings) .form-label {
+          margin-bottom: 0;
+          white-space: nowrap;
+          min-width: 120px;
+          flex-shrink: 0;
+        }
+        :host-context(source-settings) .form-control { flex: 1; }
         .form-field {
           width: 100%;
         }
