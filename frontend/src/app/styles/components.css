@@ -4493,7 +4493,7 @@ details[open] > .ov-expandable-toggle::after {
 .btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .btn-primary {
-  display: inline-flex; align-items: center; gap: var(--space-xs);
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs);
   background: var(--btn-primary-bg);
   color: var(--btn-primary-color);
   border: 1px solid var(--btn-primary-border);

@@ -93,14 +93,29 @@ export async function registerNetworkDeviceRoutes(
     catch { return reply.code(500).send({ error: '获取网络设备列表失败' }); }
   });
 
-  // Keep the static probe endpoint before /:id. The enrollment probe is
-  // SNMP-first; when an SSH credential is supplied, it performs a second,
-  // command-free SSH handshake and verifies the host key when one is pinned.
+  // Keep the static probe endpoint before /:id. SSH mode performs only a
+  // command-free handshake; the default mode probes SNMP and can optionally
+  // include the same SSH handshake for backward compatibility.
   fastify.post('/api/network-devices/test-connection', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } }, preHandler: manage }, async (request, reply) => {
     try {
-      const check = strictBody(request.body as Record<string, unknown>, ['host', 'version', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh', 'vendor'], 'POST /api/network-devices/test-connection');
+      const check = strictBody(request.body as Record<string, unknown>, ['mode', 'host', 'version', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh', 'vendor'], 'POST /api/network-devices/test-connection');
       if (check.error) return reply.code(400).send(check.error);
       const body = check.body as Record<string, unknown>;
+      if (body.mode !== undefined && body.mode !== 'snmp' && body.mode !== 'ssh') return reply.code(400).send({ success: false, error: 'NETWORK_DEVICE_TEST_MODE_INVALID' });
+      if (body.mode === 'ssh') {
+        const host = validateNetworkHost(body.host);
+        const port = validatePort(body.sshPort ?? body.ssh_port, 'ssh_port', 22);
+        const ssh = validateSshCredential(body.ssh);
+        await sshProbe({
+          host,
+          port,
+          username: ssh.username,
+          credentialType: ssh.credentialType,
+          credentialValue: ssh.credentialValue,
+          hostKeyFingerprint: ssh.hostKeyFingerprint,
+        });
+        return reply.send({ success: true, ssh: { verified: true } });
+      }
       if (body.vendor !== undefined && body.vendor !== 'huawei' && body.vendor !== 'cisco') return reply.code(400).send({ success: false, error: 'NETWORK_DEVICE_VENDOR_UNSUPPORTED' });
       if (body.version !== undefined && body.version !== 2 && body.version !== 3) return reply.code(400).send({ success: false, error: 'SNMP_UNSUPPORTED_SECURITY' });
       const host = validateNetworkHost(body.host);

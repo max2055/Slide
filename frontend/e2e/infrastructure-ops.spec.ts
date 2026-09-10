@@ -499,9 +499,15 @@ for (const viewport of VIEWPORTS) {
     await serverDialog.locator('app-form-field[label="IP/主机名"] input').fill(serverFixture(state).host);
     await serverDialog.locator('app-form-field[label="标签 (可选)"] input').fill(serverFixture(state).label);
     await serverDialog.locator('app-form-field[label="操作系统"] select').selectOption('rhel');
-    await serverDialog.locator('app-form-field[label="SSH用户名"] input').fill('fixture-admin');
-    await serverDialog.locator('app-form-field[label="SSH主机密钥指纹"] input').fill('SHA256:fixture-host-key');
-    await serverDialog.locator('app-form-field[label="密码"] input').fill('fixture-password');
+    const serverAuthMethod = serverDialog.locator('app-ssh-auth-selector');
+    await expect(serverAuthMethod.locator('input[value="password"]')).toBeChecked();
+    await serverAuthMethod.locator('input[value="key"]').check();
+    await expect(serverAuthMethod.locator('input[value="password"]')).not.toBeChecked();
+    await expect(serverDialog.locator('app-form-field[label="SSH 私钥"] textarea')).toBeVisible();
+    await serverAuthMethod.locator('input[value="password"]').check();
+    await expect(serverDialog).not.toContainText('SSH主机密钥指纹');
+    await serverDialog.locator('app-form-field[label="SSH 用户名"] input').fill('fixture-admin');
+    await serverDialog.locator('app-form-field[label="SSH 密码"] input').fill('fixture-password');
     await serverDialog.getByRole('button', { name: '保存', exact: true }).click();
     const serverPost = await waitForCall(calls, (call) => call.method === 'POST' && call.path === '/api/servers');
     expect(serverPost.body).toMatchObject({ host: serverFixture(state).host, os_type: 'rhel', credential_username: 'fixture-admin' });
@@ -544,7 +550,7 @@ for (const viewport of VIEWPORTS) {
     await serverActions.getByRole('button', { name: '测试', exact: true }).click();
     await waitForCall(calls, (call) => call.method === 'POST' && call.path === `/api/servers/${IDS.server}/collect`);
 
-    // Huawei network-device onboarding, including an SNMPv3 probe contract.
+    // Huawei network-device onboarding through the default SNMPv2c flow.
     await page.goto('/network-devices');
     const devicesPage = page.locator('network-devices-page');
     await expect(devicesPage).toBeVisible({ timeout: 15_000 });
@@ -553,19 +559,41 @@ for (const viewport of VIEWPORTS) {
     await expect(deviceDialog.locator('[role="dialog"]')).toBeVisible();
     await deviceDialog.locator('app-form-field[label="名称"] input').fill(networkDeviceFixture.name);
     await deviceDialog.locator('app-form-field[label="主机"] input').fill(networkDeviceFixture.host);
-    await deviceDialog.locator('app-form-field[label="标签"] input').fill(networkDeviceFixture.label);
-    await deviceDialog.locator('app-form-field[label="站点"] input').fill(networkDeviceFixture.site);
-    await deviceDialog.locator('app-form-field[label="型号"] input').fill(networkDeviceFixture.model);
-    await deviceDialog.locator('app-form-field[label="OS 版本"] input').fill(networkDeviceFixture.os_version);
-    await deviceDialog.locator('app-form-field[label="SNMPv3 用户名"] input').fill('fixture-snmp-reader');
-    await deviceDialog.locator('app-form-field[label="认证密钥"] input').fill(FIXTURE_SECRET);
-    await deviceDialog.locator('app-form-field[label="隐私密钥"] input').fill('fixture-privacy-secret');
-    await deviceDialog.getByRole('button', { name: '测试 SNMPv3', exact: true }).click();
+    await expect(deviceDialog.locator('app-form-field[label="标签"], app-form-field[label="站点"]')).toHaveCount(0);
+    await expect(deviceDialog).not.toContainText('主机密钥指纹');
+    await deviceDialog.locator('app-form-field[label="型号（可选）"] input').fill(networkDeviceFixture.model);
+    await deviceDialog.locator('app-form-field[label="OS 版本（可选）"] input').fill(networkDeviceFixture.os_version);
+    await expect(deviceDialog.locator('app-form-field[label="SNMP 版本"] select')).toHaveValue('2');
+    await deviceDialog.locator('app-form-field[label="Community"] input').fill(FIXTURE_SECRET);
+    await expect(deviceDialog.locator('app-ssh-auth-selector input[value="password"]')).toBeChecked();
+    await deviceDialog.locator('app-form-field[label="SSH 用户名"] input').fill('fixture-device-admin');
+    await deviceDialog.locator('app-form-field[label="SSH 密码"] input').fill('fixture-ssh-secret');
+    const saveButton = deviceDialog.getByRole('button', { name: '保存', exact: true });
+    await expect(saveButton).toHaveCSS('justify-content', 'center');
+    await deviceDialog.getByRole('button', { name: '测试 SNMPv2c', exact: true }).click();
     const probeCall = await waitForCall(calls, (call) => call.method === 'POST' && call.path === '/api/network-devices/test-connection');
-    expect(probeCall.body).toMatchObject({ vendor: 'huawei', version: 3, snmpv3: { username: 'fixture-snmp-reader', securityLevel: 'authPriv', authProtocol: 'SHA', privacyProtocol: 'AES' } });
-    await deviceDialog.getByRole('button', { name: '保存', exact: true }).click();
+    expect(probeCall.body).toMatchObject({ vendor: 'huawei', version: 2, snmpv2c: { version: 2, community: FIXTURE_SECRET } });
+    await deviceDialog.getByRole('button', { name: '测试 SSH', exact: true }).click();
+    const sshProbeCall = await waitForCall(calls, (call) => call.method === 'POST' && call.path === '/api/network-devices/test-connection' && call.body?.mode === 'ssh');
+    expect(sshProbeCall.body).toEqual({
+      mode: 'ssh',
+      host: networkDeviceFixture.host,
+      sshPort: 22,
+      ssh: { protocol: 'ssh', credentialType: 'password', username: 'fixture-device-admin', credentialValue: 'fixture-ssh-secret' },
+    });
+    await saveButton.click();
     const devicePost = await waitForCall(calls, (call) => call.method === 'POST' && call.path === '/api/network-devices');
-    expect(devicePost.body).toMatchObject({ name: networkDeviceFixture.name, host: networkDeviceFixture.host, vendor: 'huawei' });
+    expect(devicePost.body).toMatchObject({
+      name: networkDeviceFixture.name,
+      host: networkDeviceFixture.host,
+      vendor: 'huawei',
+      label: null,
+      site: null,
+      model: networkDeviceFixture.model,
+      osVersion: networkDeviceFixture.os_version,
+      snmpv2c: { version: 2, community: FIXTURE_SECRET },
+    });
+    expect(devicePost.body).not.toHaveProperty('ssh.hostKeyFingerprint');
     expect(JSON.stringify(devicePost.body)).toContain(FIXTURE_SECRET);
     await expect(page.getByText(networkDeviceFixture.label, { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('body')).not.toContainText(FIXTURE_SECRET);

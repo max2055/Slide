@@ -90,10 +90,11 @@ export const NetworkDeviceSshCredentialSchema = Type.Object({
   credentialType: Type.Union([Type.Literal('password'), Type.Literal('key')]),
   username: Type.String({ minLength: 1, maxLength: 255 }),
   credentialValue: Type.String({ minLength: 1, maxLength: 512 }),
-  hostKeyFingerprint: Type.String({ pattern: '^SHA256:[A-Za-z0-9+/]{43}$' }),
+  hostKeyFingerprint: Type.Optional(Type.String({ pattern: '^SHA256:[A-Za-z0-9+/]{43}$' })),
 }, { $id: 'NetworkDeviceSshCredential', additionalProperties: false });
 export const NetworkDeviceTestConnectionRequestSchema = Type.Object({
   host: Type.String({ minLength: 1 }),
+  mode: Type.Optional(Type.Union([Type.Literal('snmp'), Type.Literal('ssh')])),
   version: Type.Optional(Type.Union([Type.Literal(2), Type.Literal(3)])),
   snmpPort: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
   snmp_port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),

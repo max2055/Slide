@@ -20,23 +20,27 @@ export class SourceSettings extends LitElement {
   @state() private revision = 0;
   @state() private permissions: Set<string> = new Set();
   private readonly permissionsHandler = () => { this.readPermissions(); };
-  override updated() {
-    this.renderRoot.querySelectorAll('app-form-field').forEach(field => field.setAttribute('inline', ''));
-  }
   static styles = [sharedBtnStyles, css`
     :host { display: block; min-width: 0; color: var(--text); }
     h1 { font-size: 22px; color: var(--text-strong); margin: 0 0 var(--space-lg); }
-    form, section { padding: var(--space-lg) 0; border-bottom: 1px solid var(--border); }
-    input:not([type="checkbox"]), textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: var(--space-sm); font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+    h2 { font-size: 16px; color: var(--text-strong); margin: 0 0 var(--space-lg); }
+    form, .sync-section { margin: 0; padding: var(--space-lg) 0 var(--space-xl); border-bottom: 1px solid var(--border); }
+    input:not([type="checkbox"]), textarea, select { box-sizing: border-box; width: 100%; min-width: 0; padding: var(--space-sm); font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+    input:not([type="checkbox"]), select { min-height: 40px; }
     textarea { min-height: 100px; resize: vertical; }
-    .error { color: var(--danger); } p { overflow-wrap: anywhere; } .hint { color: var(--muted); font-size: 12px; margin: calc(var(--space-xs) * -1) 0 var(--space-md); }
-    .permission-row { display:flex; align-items:flex-start; gap:var(--space-sm); margin:var(--space-lg) 0; }
-    .permission-row input { width:18px; height:18px; margin-top:2px; flex:0 0 auto; }
-    .permission-row label { display:flex; flex-direction:column; gap:var(--space-xs); cursor:pointer; }
-    .permission-row label span { color:var(--muted); font-size:12px; line-height:1.5; }
+    .error { color: var(--danger); } p { overflow-wrap: anywhere; }
+    .permission-control { display:flex; align-items:center; gap:var(--space-sm); min-height:40px; cursor:pointer; }
+    .permission-control input { width:18px; height:18px; flex:0 0 auto; }
     svg { width: 16px; height: 16px; } .skeleton { height: 100px; background: var(--border); opacity: .4; }
-    .source-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-md); margin: var(--space-md) 0; }
-    @media (max-width: 800px) { .source-grid { grid-template-columns: 1fr; } }
+    .action-row { display:grid; grid-template-columns:minmax(120px, 180px) minmax(0, 1fr); column-gap:var(--space-lg); margin-top:var(--space-md); }
+    .action-content { grid-column:2; display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; }
+    .action-content .btn, .action-content .btn-primary { min-height:40px; }
+    .sync-status { color: var(--muted); font-size: var(--text-sm); margin: var(--space-sm) 0 0; }
+    source-manifest { margin-top:var(--space-xl); }
+    @media (max-width: 720px) {
+      .action-row { grid-template-columns:1fr; }
+      .action-content { grid-column:1; }
+    }
   `];
   override connectedCallback() { super.connectedCallback(); this.readPermissions(); window.addEventListener('slide-permissions-loaded', this.permissionsHandler); void this.load(); }
   override disconnectedCallback() { this.token = ''; window.removeEventListener('slide-permissions-loaded', this.permissionsHandler); super.disconnectedCallback(); }
@@ -77,21 +81,22 @@ export class SourceSettings extends LitElement {
     return html`<h1>部署源码</h1>${this.loading ? html`<div class="skeleton" aria-label="加载源码配置"></div>` : nothing}
       ${this.error ? html`<p class="error" role="alert">${this.error}</p><button class="btn" @click=${this.load}>${icons['refresh-cw']} 重试加载</button>` : nothing}
       ${this.message ? html`<p role="status">${this.message}</p>` : nothing}
-      ${this.syncStatus ? html`<p role="status" aria-live="polite">${this.syncStatus}</p>` : nothing}
       <form @submit=${this.save}>
-        <app-form-field label="代码托管平台"><select aria-label="代码托管平台" .value=${this.config.provider ?? 'gitlab'} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, provider: (e.target as HTMLSelectElement).value as 'gitlab'|'github', baseUrl: (e.target as HTMLSelectElement).value === 'github' ? 'https://github.com' : '' }; }}><option value="gitlab">GitLab</option><option value="github">GitHub</option></select></app-form-field>
-        <p class="hint">选择源码所在的代码托管平台。同步只读取部署提交，不会写入仓库。</p>
-        <app-form-field label="${this.config.provider === 'github' ? 'GitHub URL' : 'GitLab URL'}"><input aria-label="${this.config.provider === 'github' ? 'GitHub URL' : 'GitLab URL'}" title="平台实例根地址" placeholder=${this.config.provider === 'github' ? 'https://github.com' : 'https://gitlab.example.com'} type="url" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.baseUrl} @input=${(e: Event) => { this.config = { ...this.config, baseUrl: (e.target as HTMLInputElement).value }; }}></app-form-field>
-        <p class="hint">填写实例根地址，不要填写项目路径、查询参数或令牌。</p>
-        <div class="source-grid">${(['httpProxy', 'httpsProxy', 'allProxy'] as const).map(key => html`<app-form-field label="${key === 'httpProxy' ? 'HTTP 代理' : key === 'httpsProxy' ? 'HTTPS 代理' : 'ALL 代理'}"><input aria-label="${key}" placeholder="例如 http://127.0.0.1:7890" .value=${this.config[key] ?? ''} .disabled=${!this.editable || this.busy || this.loading} @input=${(e: Event) => { this.config = { ...this.config, [key]: (e.target as HTMLInputElement).value }; }}></app-form-field>`)}</div>
-        <app-form-field label="项目 ID"><input aria-label="项目 ID" title="项目数字 ID，不是项目名称" placeholder="例如 123" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.projectId} @input=${(e: Event) => { this.config = { ...this.config, projectId: (e.target as HTMLInputElement).value }; }}></app-form-field>
-        <p class="hint">${this.config.provider === 'github' ? '填写 owner/repository，例如 openai/example。' : '填写项目的数字 ID，可在项目首页或设置中查看。'}</p>
-        <app-form-field label="允许的源码路径"><textarea aria-label="允许的源码路径" title="每行一个目录前缀，并以 / 结尾" placeholder="每行一个目录，例如：&#10;apps/db-ops-api/src/&#10;frontend/src/" .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.allowedPaths.join('\n')} @input=${(e: Event) => { this.config = { ...this.config, allowedPaths: (e.target as HTMLTextAreaElement).value.split('\n') }; }}></textarea></app-form-field>
-        <p class="hint">只同步这些目录；留空表示同步全部源码。无论哪种模式都会执行大小限制与敏感信息扫描。</p>
-        <div class="permission-row"><input aria-label="允许模型读取源码内容" id="allow-model-content" type="checkbox" .checked=${this.config.allowModelContent} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, allowModelContent: (e.target as HTMLInputElement).checked }; }}><label for="allow-model-content"><strong>允许模型读取源码内容</strong><span>开启后，Agent 可在已允许目录内读取经过安全扫描的源码片段；令牌和未授权文件仍不可见。</span></label></div>
-        ${this.editable ? html`<button class="btn-primary" type="submit" .disabled=${this.busy || this.loading}>${icons.save} 保存配置</button>` : nothing}
+        <h2>代码仓库配置</h2>
+        <app-form-field label="代码托管平台" hint="选择源码所在的代码托管平台。同步只读取部署提交，不会写入仓库。" .inline=${true}><select aria-label="代码托管平台" .value=${this.config.provider ?? 'gitlab'} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, provider: (e.target as HTMLSelectElement).value as 'gitlab'|'github', baseUrl: (e.target as HTMLSelectElement).value === 'github' ? 'https://github.com' : '' }; }}><option value="gitlab">GitLab</option><option value="github">GitHub</option></select></app-form-field>
+        <app-form-field label="${this.config.provider === 'github' ? 'GitHub URL' : 'GitLab URL'}" hint="填写实例根地址，不要填写项目路径、查询参数或令牌。" .inline=${true}><input aria-label="${this.config.provider === 'github' ? 'GitHub URL' : 'GitLab URL'}" title="平台实例根地址" placeholder=${this.config.provider === 'github' ? 'https://github.com' : 'https://gitlab.example.com'} type="url" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.baseUrl} @input=${(e: Event) => { this.config = { ...this.config, baseUrl: (e.target as HTMLInputElement).value }; }}></app-form-field>
+        ${(['httpProxy', 'httpsProxy', 'allProxy'] as const).map(key => html`<app-form-field label="${key === 'httpProxy' ? 'HTTP 代理' : key === 'httpsProxy' ? 'HTTPS 代理' : 'ALL 代理'}" .inline=${true}><input aria-label="${key}" placeholder="例如 http://127.0.0.1:7890" .value=${this.config[key] ?? ''} .disabled=${!this.editable || this.busy || this.loading} @input=${(e: Event) => { this.config = { ...this.config, [key]: (e.target as HTMLInputElement).value }; }}></app-form-field>`)}
+        <app-form-field label="项目 ID" .hint=${this.config.provider === 'github' ? '填写 owner/repository，例如 openai/example。' : '填写项目的数字 ID，可在项目首页或设置中查看。'} .inline=${true}><input aria-label="项目 ID" title="项目数字 ID，不是项目名称" placeholder="例如 123" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.projectId} @input=${(e: Event) => { this.config = { ...this.config, projectId: (e.target as HTMLInputElement).value }; }}></app-form-field>
+        <app-form-field label="允许的源码路径" hint="只同步这些目录；留空表示同步全部源码。无论哪种模式都会执行大小限制与敏感信息扫描。" .inline=${true}><textarea aria-label="允许的源码路径" title="每行一个目录前缀，并以 / 结尾" placeholder="每行一个目录，例如：&#10;apps/db-ops-api/src/&#10;frontend/src/" .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.allowedPaths.join('\n')} @input=${(e: Event) => { this.config = { ...this.config, allowedPaths: (e.target as HTMLTextAreaElement).value.split('\n') }; }}></textarea></app-form-field>
+        <app-form-field label="模型读取" hint="开启后，Agent 可在已允许目录内读取经过安全扫描的源码片段；令牌和未授权文件仍不可见。" .inline=${true}><label class="permission-control" for="allow-model-content"><input aria-label="允许模型读取源码内容" id="allow-model-content" type="checkbox" .checked=${this.config.allowModelContent} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, allowModelContent: (e.target as HTMLInputElement).checked }; }}><strong>允许模型读取源码内容</strong></label></app-form-field>
+        ${this.editable ? html`<div class="action-row"><div class="action-content"><button class="btn-primary" type="submit" .disabled=${this.busy || this.loading}>${icons.save} 保存配置</button></div></div>` : nothing}
       </form>
-      ${this.editable ? html`<section><app-form-field label="单次同步令牌"><input aria-label="单次同步令牌" title="仅本次同步使用，提交后立即清除" placeholder="粘贴后立即同步" type="password" autocomplete="off" .disabled=${this.busy || this.loading} .value=${this.token} @input=${(e: Event) => { this.config = this.config; this.token = (e.target as HTMLInputElement).value; }}></app-form-field><p class="hint">令牌不会保存，也不会发送给 Agent。</p><button type="button" class="btn" data-action="sync" .disabled=${this.busy || this.loading || !this.token} @click=${(e: Event) => { e.preventDefault(); void this.sync(); }}>${this.busy ? icons['loader'] : icons['refresh-cw']} ${this.busy ? '同步中…' : '同步源码'}</button>${!this.token && !this.busy ? html`<p class="hint">请输入单次同步令牌后，按钮才可用。</p>` : nothing}</section>` : nothing}
-      <section><source-manifest .revision=${this.revision}></source-manifest></section>`;
+      ${this.editable ? html`<section class="sync-section">
+        <h2>同步源码</h2>
+        <app-form-field label="单次同步令牌" hint="令牌提交后立即清除，不会保存或发送给 Agent。" .inline=${true}><input aria-label="单次同步令牌" title="仅本次同步使用" placeholder="请输入本次同步使用的访问令牌" type="password" autocomplete="off" .disabled=${this.busy || this.loading} .value=${this.token} @input=${(e: Event) => { this.token = (e.target as HTMLInputElement).value; }}></app-form-field>
+        <div class="action-row"><div class="action-content"><button type="button" class="btn" data-action="sync" .disabled=${this.busy || this.loading || !this.token} @click=${(e: Event) => { e.preventDefault(); void this.sync(); }}>${this.busy ? icons['loader'] : icons['refresh-cw']} ${this.busy ? '同步中…' : '同步源码'}</button>${!this.token && !this.busy ? html`<span class="sync-status">请输入令牌后开始同步</span>` : nothing}</div></div>
+        ${this.syncStatus ? html`<div class="action-row"><p class="action-content sync-status" role="status" aria-live="polite">${this.syncStatus}</p></div>` : nothing}
+      </section>` : nothing}
+      <source-manifest .revision=${this.revision}></source-manifest>`;
   }
 }

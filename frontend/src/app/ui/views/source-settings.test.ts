@@ -12,6 +12,16 @@ it('allows source administrators to reach the source settings page', () => {
   const item = SETTINGS_GROUPS.find(group => group.id === 'platform')!.items.find(item => item.id === 'source')!;
   expect(canAccessSettingsItem(item, new Set(['admin:*']))).toBe(true);
 });
+it('renders source controls as aligned label-control rows', async () => {
+  authFetch.mockRejectedValue(new Error('offline'));
+  const view = document.createElement('source-settings'); document.body.append(view); await settle();
+  const fields = [...view.shadowRoot!.querySelectorAll<any>('app-form-field')];
+  expect(fields.length).toBeGreaterThan(0);
+  expect(fields.every(field => field.inline)).toBe(true);
+  expect(fields[0].querySelector('select')).not.toBeNull();
+  const fieldParts = [...fields[0].shadowRoot!.querySelector('.form-field')!.children].map((node: Element) => node.className);
+  expect(fieldParts).toEqual(['form-label', 'form-control', 'form-hint']);
+});
 it('defaults model sharing off and clears single-use sync credentials', async () => {
   localStorage.setItem('permissions', JSON.stringify(['*']));
   authFetch.mockImplementation(async (url: string) => ({ ok: true, json: async () => url.endsWith('/config') ? { config: null } : { releaseId: 'release-test', commitSha: 'abc', treeDigest: 'digest', signature: 'signed', files: [] } }));

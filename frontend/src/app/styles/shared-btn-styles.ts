@@ -24,7 +24,7 @@ export const sharedBtnStyles = css`
   .btn-ghost:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; }
 
   .btn-primary {
-    display: inline-flex; align-items: center; gap: 6px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
     white-space: nowrap;
     background: var(--btn-primary-bg, var(--accent));
     color: var(--btn-primary-color, var(--accent-foreground, #fff));

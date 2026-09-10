@@ -102,6 +102,10 @@ describe('generated public API contract', () => {
       snmpv3: { username: 'monitor', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: '12345678', privacyProtocol: 'AES', privacySecret: '12345678' },
       ssh: { credentialType: 'password', username: 'readonly', credentialValue: 'secret', hostKeyFingerprint: `SHA256:${'A'.repeat(43)}` },
     })).toBe(true);
+    expect(Value.Check(NetworkDeviceTestConnectionRequestSchema, {
+      mode: 'ssh', host: '192.0.2.10', sshPort: 22,
+      ssh: { credentialType: 'password', username: 'readonly', credentialValue: 'secret' },
+    })).toBe(true);
     expect(Value.Check(NetworkDeviceTestConnectionResponseSchema, { success: true, ssh: { verified: true } })).toBe(true);
     expect(Value.Check(NetworkDeviceRelationInputSchema, { target: { type: 'server', id: 3 }, relationType: 'connected_to' })).toBe(true);
     expect(Value.Check(NetworkDeviceRelationInputSchema, { target: { type: 'instance', id: 11 }, relationType: 'serves' })).toBe(false);

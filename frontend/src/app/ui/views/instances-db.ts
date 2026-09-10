@@ -326,11 +326,18 @@ export class InstancesPage extends LitElement {
       margin-bottom: var(--space-lg);
     }
 
-    .form-row {
+    .instance-form {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: var(--space-md) var(--space-lg);
-      margin-bottom: var(--space-md);
+      gap: var(--space-md);
+      --app-form-field-label-width: 160px;
+    }
+
+    .form-row {
+      display: contents;
+    }
+
+    .instance-form app-form-field {
+      margin-bottom: 0;
     }
 
 
@@ -1168,17 +1175,18 @@ export class InstancesPage extends LitElement {
     return html`
       <app-dialog
         .open=${true}
-        size="md"
+        size="lg"
         .closable=${!this.isSubmitting}
         .closeOnOverlay=${false}
         title="${title}"
         @app-dialog-close=${this._closeDialogs}
       >
+        <div class="instance-form">
         <div class="form-row">
-          <app-form-field label="实例名称" required>
+          <app-form-field label="实例名称" required .inline=${true}>
             <input class="form-input" type="text" .value=${this.formData.name} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("name", e.target.value)} placeholder="如：生产主库" />
           </app-form-field>
-          <app-form-field label="环境">
+          <app-form-field label="环境" .inline=${true}>
             <select class="form-select" .value=${this.formData.environment} .disabled=${baseFieldsLocked} @change=${(e: any) => this._updateForm("environment", e.target.value)}>
               <option value="development">开发环境</option>
               <option value="testing">测试环境</option>
@@ -1189,7 +1197,7 @@ export class InstancesPage extends LitElement {
         </div>
 
         <div class="form-row">
-          <app-form-field label="数据库类型">
+          <app-form-field label="数据库类型" .inline=${true}>
             <select class="form-select" .value=${this.formData.db_type} .disabled=${baseFieldsLocked} @change=${(e: any) => {
               this._updateForm("db_type", e.target.value);
               const ports: Record<string, number> = { mysql: 3306, postgresql: 5432, oracle: 1521, dameng: 5236 };
@@ -1201,34 +1209,34 @@ export class InstancesPage extends LitElement {
               <option value="dameng">达梦</option>
             </select>
           </app-form-field>
-          <app-form-field label="端口">
+          <app-form-field label="端口" .inline=${true}>
             <input class="form-input" type="number" .value=${this.formData.port} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("port", parseInt(e.target.value) || 0)} />
           </app-form-field>
         </div>
 
         <div class="form-row">
-          <app-form-field label="主机地址" required style="grid-column: 1 / -1;">
+          <app-form-field label="主机地址" required .inline=${true}>
             <input class="form-input" type="text" .value=${this.formData.host} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("host", e.target.value)} placeholder="如：localhost 或 192.168.1.100" />
           </app-form-field>
         </div>
 
         <div class="form-row">
-          <app-form-field label="用户名" required>
+          <app-form-field label="用户名" required .inline=${true}>
             <input class="form-input" type="text" autocomplete="off" .value=${this.formData.username} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("username", e.target.value)} />
           </app-form-field>
-          <app-form-field label="密码${isEdit ? ' (留空不修改)' : ''}" .required=${!isEdit}>
+          <app-form-field label="密码${isEdit ? ' (留空不修改)' : ''}" .required=${!isEdit} .inline=${true}>
             <input class="form-input" type="password" autocomplete="new-password" .value=${this.formData.password} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("password", e.target.value)} placeholder=${isEdit ? "留空表示不修改" : ""} />
           </app-form-field>
         </div>
 
         <div class="form-row">
-          <app-form-field label="${this.formData.db_type === 'oracle' ? 'Oracle 数据库标识 (SID/Service Name)' : '数据库名'}" hint="${this.formData.db_type === 'oracle' ? '用于 Easy Connect 格式的数据库标识，支持 SID 或 Service Name' : '连接后默认使用的数据库'}" style="grid-column: 1 / -1;">
+          <app-form-field label="${this.formData.db_type === 'oracle' ? 'Oracle 数据库标识 (SID/Service Name)' : '数据库名'}" hint="${this.formData.db_type === 'oracle' ? '用于 Easy Connect 格式的数据库标识，支持 SID 或 Service Name' : '连接后默认使用的数据库'}" .inline=${true}>
             <input class="form-input" type="text" .value=${this.formData.database_name} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("database_name", e.target.value)} placeholder=${this.formData.db_type === 'oracle' ? '如：ORCL 或 pdb1.subnet.vcn.oraclevcn.com' : '默认数据库名'} />
           </app-form-field>
         </div>
 
         <div class="form-row">
-          <app-form-field label="描述" style="grid-column: 1 / -1;">
+          <app-form-field label="描述" .inline=${true}>
             <textarea class="form-textarea" .value=${this.formData.description} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("description", e.target.value)} placeholder="可选：添加实例描述信息"></textarea>
           </app-form-field>
         </div>
@@ -1246,6 +1254,7 @@ export class InstancesPage extends LitElement {
         </div>` : nothing}
 
         ${this.testMessage ? html`<div class="test-result ${this.testStatus}">${this.testStatus === 'success' ? icons['check-circle'] : icons['x-circle']} ${this.testMessage}</div>` : ''}
+        </div>
         <div slot="footer" style="display:flex;justify-content:flex-end;align-items:center;gap:var(--space-md)">
           <button class="btn" @click=${this._handleTestConnection} .disabled=${this.testStatus === 'testing' || this.isSubmitting || baseFieldsLocked}>
             ${this.testStatus === 'testing' ? '测试中...' : '测试连接'}

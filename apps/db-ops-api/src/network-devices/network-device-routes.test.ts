@@ -156,6 +156,12 @@ describe('network-device routes', () => {
     const v2 = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { host: '192.0.2.10', vendor: 'cisco', version: 2, snmpv2c: { community: 'readonly' } } });
     expect(v2.statusCode).toBe(200);
     expect(probe).toHaveBeenLastCalledWith(expect.objectContaining({ version: 2, community: 'readonly' }));
+    const snmpProbeCalls = probe.mock.calls.length;
+    const sshOnly = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { mode: 'ssh', host: '192.0.2.10', sshPort: 22, ssh: { username: 'readonly', credentialType: 'password', credentialValue: 'secret' } } });
+    expect(sshOnly.statusCode).toBe(200);
+    expect(sshOnly.json()).toEqual({ success: true, ssh: { verified: true } });
+    expect(probe).toHaveBeenCalledTimes(snmpProbeCalls);
+    expect(sshProbe).toHaveBeenLastCalledWith(expect.objectContaining({ host: '192.0.2.10', port: 22, username: 'readonly', credentialType: 'password', hostKeyFingerprint: undefined }));
     await app.close();
   });
 
