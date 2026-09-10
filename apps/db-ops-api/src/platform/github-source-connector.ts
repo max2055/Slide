@@ -59,7 +59,7 @@ export class GitHubSourceConnector {
     if (commit.sha !== config.commitSha) throw new Error('SOURCE_COMMIT_MISMATCH');
     // Prefer a single archive download; it avoids recursive-tree timeouts on large repositories.
     try {
-      const archive = await this.request(`https://api.github.com/repos/${config.projectId}/zipball/${config.commitSha}`, { headers: { Authorization: `Bearer ${config.token}` }, redirect: 'error' } as any);
+      const archive = await this.request(`https://codeload.github.com/${config.projectId}/zip/${config.commitSha}`, { headers: { Authorization: `Bearer ${config.token}` }, redirect: 'error', signal: AbortSignal.timeout(Math.min(90_000, Math.max(1, deadline - this.now())))} as any);
       if (archive.ok) {
         const dir = mkdtempSync(join(tmpdir(), 'slide-source-')); const zip = join(dir, 'repo.zip');
         require('node:fs').writeFileSync(zip, Buffer.from(await archive.arrayBuffer())); execFileSync('unzip', ['-q', zip, '-d', dir]);
@@ -67,7 +67,10 @@ export class GitHubSourceConnector {
         const walk = (base: string) => { for (const name of readdirSync(base)) { const full = join(base, name); const rel = full.slice(join(dir, root!).length + 1); if (statSync(full).isDirectory()) walk(full); else if (!config.allowedPaths.length || config.allowedPaths.some(p => rel.startsWith(p))) { try { assertSourcePath(rel); const content = readFileSync(full, 'utf8'); if (process.env.SLIDE_SOURCE_ALLOW_UNSAFE !== 'true') assertSourceContent(content, rel); files.push({ path: rel, content }); } catch {} } } };
         walk(join(dir, root!)); rmSync(dir, { recursive: true, force: true }); if (files.length) return files;
       }
-    } catch { /* fall back to API tree below */ }
+    } catch (error) {
+      console.error('[source-sync] GitHub archive failed', error instanceof Error ? error.message : 'unknown');
+      throw new Error(this.now() >= deadline ? 'SOURCE_SYNC_DEADLINE' : 'SOURCE_UPSTREAM_UNAVAILABLE');
+    }
     const paths: string[] = []; let page = 1;
     for (;;) {
       const response = await read(`${endpoint}/git/trees/${config.commitSha}?recursive=1`, 8 * 1024 * 1024);
