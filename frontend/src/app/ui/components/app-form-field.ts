@@ -22,15 +22,8 @@ export class AppFormField extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    let root: Node | null = this;
-    while (root) {
-      const host = (root as ShadowRoot).host;
-      if (host instanceof HTMLElement && host.tagName.toLowerCase() === 'source-settings') {
-        this.inline = true;
-        break;
-      }
-      root = host ?? root.parentNode;
-    }
+    const host = (this.getRootNode() as ShadowRoot).host;
+    if (host instanceof HTMLElement && host.tagName.toLowerCase() === 'source-settings') this.inline = true;
   }
 
   updated(changed: Map<string, unknown>): void {
