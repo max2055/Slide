@@ -5,8 +5,7 @@ import { dbConnection } from '../db-connection.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { credentialReferenceService } from '../security/credential-reference-service.js';
 import { auditLogManager } from '../audit/audit-log.js';
-import { GitLabSourceConnector } from './gitlab-source-connector.js';
-import { GitHubSourceConnector } from './github-source-connector.js';
+import { GitSourceConnector } from './git-source-connector.js';
 import { SourceSnapshotService, describeSourceFiles } from './source-snapshot-service.js';
 import { readDeploymentBinding } from './deployment-binding.js';
 import { FixedWindowRateLimiter } from '../security/agent-runtime-limits.js';
@@ -16,6 +15,7 @@ const ConfigSchema = Type.Object({
   baseUrl: Type.String({ maxLength: 512 }), projectId: Type.String({ minLength: 1, maxLength: 128 }),
   allowedPaths: Type.Array(Type.String({ pattern: '^[A-Za-z0-9_/-]+/$', maxLength: 256 }), { maxItems: 32, uniqueItems: true }),
   allowModelContent: Type.Boolean(),
+  httpProxy: Type.Optional(Type.String({ maxLength: 512 })), httpsProxy: Type.Optional(Type.String({ maxLength: 512 })), allProxy: Type.Optional(Type.String({ maxLength: 512 })),
 }, { additionalProperties: false });
 export type SourceConfig = Static<typeof ConfigSchema>;
 interface Executor { execute(sql: string, values?: string[]): Promise<any> }
@@ -39,6 +39,7 @@ export class SourceManagementService {
     if ((input.provider ?? 'gitlab') === 'gitlab' && !/^\d{1,20}$/.test(input.projectId)) throw new Error('SOURCE_CONFIG_INVALID');
     if (input.provider === 'github' && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(input.projectId)) throw new Error('SOURCE_CONFIG_INVALID');
     if (input.allowedPaths.some(path => path.split('/').slice(0, -1).some(part => !part || part === '..'))) throw new Error('SOURCE_CONFIG_INVALID');
+    for (const key of ['httpProxy', 'httpsProxy', 'allProxy'] as const) if (input[key] && !/^https?:\/\/[^\s]+$/.test(input[key])) throw new Error('SOURCE_CONFIG_INVALID');
     return { ...input, baseUrl: url.origin };
   }
   async load(actor: ActorContext): Promise<SourceConfig | null> {
@@ -69,7 +70,7 @@ export class SourceManagementService {
       const token = await credentialReferenceService.consume(credentialRef, actor.userId, 'gitlab_source_sync');
       if (!token) throw new Error('SOURCE_CREDENTIAL_INVALID');
       const sourceConfig = { ...config, commitSha: deployment.commitSha, token, tokenExpiresAt: new Date(Date.now() + 15 * 60_000).toISOString() };
-      const files = config.provider === 'github' ? await new GitHubSourceConnector(this.allowedOrigins).fetchFiles(sourceConfig) : await new GitLabSourceConnector(this.allowedOrigins).fetchFiles(sourceConfig as any);
+      const files = new GitSourceConnector(this.allowedOrigins).fetchFiles(sourceConfig as any);
       // Validate the expected deployment digest before publishing a usable snapshot.
       const { createHash } = await import('node:crypto');
       const hash = (value: string) => createHash('sha256').update(value).digest('hex');

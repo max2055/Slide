@@ -7,7 +7,7 @@ import { permissionMatches } from '../settings-navigation.js';
 import '../components/app-form-field.js';
 import './source-manifest.js';
 
-interface SourceConfig { provider?: 'gitlab' | 'github'; baseUrl: string; projectId: string; allowedPaths: string[]; allowModelContent: boolean }
+interface SourceConfig { provider?: 'gitlab' | 'github'; baseUrl: string; projectId: string; allowedPaths: string[]; allowModelContent: boolean; httpProxy?: string; httpsProxy?: string; allProxy?: string }
 @customElement('source-settings')
 export class SourceSettings extends LitElement {
   @state() private config: SourceConfig = { provider: 'gitlab', baseUrl: '', projectId: '', allowedPaths: [], allowModelContent: false };
@@ -32,6 +32,8 @@ export class SourceSettings extends LitElement {
     .permission-row label { display:flex; flex-direction:column; gap:var(--space-xs); cursor:pointer; }
     .permission-row label span { color:var(--muted); font-size:12px; line-height:1.5; }
     svg { width: 16px; height: 16px; } .skeleton { height: 100px; background: var(--border); opacity: .4; }
+    .source-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-md); margin: var(--space-md) 0; }
+    @media (max-width: 800px) { .source-grid { grid-template-columns: 1fr; } }
   `];
   override connectedCallback() { super.connectedCallback(); this.readPermissions(); window.addEventListener('slide-permissions-loaded', this.permissionsHandler); void this.load(); }
   override disconnectedCallback() { this.token = ''; window.removeEventListener('slide-permissions-loaded', this.permissionsHandler); super.disconnectedCallback(); }
@@ -78,6 +80,7 @@ export class SourceSettings extends LitElement {
         <p class="hint">选择源码所在的代码托管平台。同步只读取部署提交，不会写入仓库。</p>
         <app-form-field label="${this.config.provider === 'github' ? 'GitHub URL' : 'GitLab URL'}"><input aria-label="${this.config.provider === 'github' ? 'GitHub URL' : 'GitLab URL'}" title="平台实例根地址" placeholder=${this.config.provider === 'github' ? 'https://github.com' : 'https://gitlab.example.com'} type="url" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.baseUrl} @input=${(e: Event) => { this.config = { ...this.config, baseUrl: (e.target as HTMLInputElement).value }; }}></app-form-field>
         <p class="hint">填写实例根地址，不要填写项目路径、查询参数或令牌。</p>
+        <div class="source-grid">${(['httpProxy', 'httpsProxy', 'allProxy'] as const).map(key => html`<app-form-field label="${key === 'httpProxy' ? 'HTTP 代理' : key === 'httpsProxy' ? 'HTTPS 代理' : 'ALL 代理'}"><input aria-label="${key}" placeholder="例如 http://127.0.0.1:7890" .value=${this.config[key] ?? ''} .disabled=${!this.editable || this.busy || this.loading} @input=${(e: Event) => { this.config = { ...this.config, [key]: (e.target as HTMLInputElement).value }; }}></app-form-field>`)}</div>
         <app-form-field label="项目 ID"><input aria-label="项目 ID" title="项目数字 ID，不是项目名称" placeholder="例如 123" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.projectId} @input=${(e: Event) => { this.config = { ...this.config, projectId: (e.target as HTMLInputElement).value }; }}></app-form-field>
         <p class="hint">${this.config.provider === 'github' ? '填写 owner/repository，例如 openai/example。' : '填写项目的数字 ID，可在项目首页或设置中查看。'}</p>
         <app-form-field label="允许的源码路径"><textarea aria-label="允许的源码路径" title="每行一个目录前缀，并以 / 结尾" placeholder="每行一个目录，例如：&#10;apps/db-ops-api/src/&#10;frontend/src/" .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.allowedPaths.join('\n')} @input=${(e: Event) => { this.config = { ...this.config, allowedPaths: (e.target as HTMLTextAreaElement).value.split('\n') }; }}></textarea></app-form-field>
