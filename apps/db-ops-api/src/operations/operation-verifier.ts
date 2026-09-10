@@ -1,0 +1,39 @@
+import type { ResourceRef } from '../resources/types.js';
+import type { EvidenceItem } from '../evidence/evidence-contract.js';
+import { dimensionsKey } from '../evidence/invariant-engine.js';
+export interface RecoveryPlan {
+  resource: ResourceRef; metricId: string; source?: string; min?: number; max?: number; dimensions?: Record<string, string>;
+  startedAt: string; windowSeconds: number; maxSampleGapSeconds: number;
+}
+export function verifyRecoveryWindow(plan: RecoveryPlan, evidence: EvidenceItem[], now = Date.now()) {
+  const finished = Date.parse(plan.startedAt);
+  if (!Number.isFinite(finished) || !Number.isSafeInteger(plan.windowSeconds) || plan.windowSeconds < 30 || plan.windowSeconds > 3600
+    || !Number.isSafeInteger(plan.maxSampleGapSeconds) || plan.maxSampleGapSeconds < 1 || plan.maxSampleGapSeconds > plan.windowSeconds
+    || (!Number.isFinite(plan.min) && !Number.isFinite(plan.max)) || (plan.min !== undefined && !Number.isFinite(plan.min)) || (plan.max !== undefined && !Number.isFinite(plan.max))
+    || (plan.min !== undefined && plan.max !== undefined && plan.min > plan.max)) throw new Error('RECOVERY_PLAN_INVALID');
+  const candidates = evidence.filter(item => item.subject.resource.type === plan.resource.type && item.subject.resource.id === plan.resource.id
+    && item.kind === 'observation' && item.status === 'fact' && item.payload.metricId === plan.metricId
+    && (plan.source === undefined || item.source === plan.source)
+    && dimensionsKey(item.dimensions) === dimensionsKey(plan.dimensions) && Date.parse(item.observedAt) >= finished && Date.parse(item.observedAt) <= now)
+    .sort((a, b) => a.observedAt.localeCompare(b.observedAt));
+  // The full window begins with actual evidence, not an unobserved grace interval.
+  const start = candidates[0] ? Date.parse(candidates[0].observedAt) : finished;
+  const end = start + plan.windowSeconds * 1000;
+  const samples = candidates.filter(item => Date.parse(item.observedAt) <= end);
+  const base = { verifiedBy: 'independent-observation-window-v1', evidenceRefs: samples.map(item => item.id), startedAt: new Date(start).toISOString(), operationFinishedAt: plan.startedAt, windowSeconds: plan.windowSeconds };
+  if (start - finished > plan.maxSampleGapSeconds * 1000) return { ...base, status: 'unknown' as const, reason: 'RECOVERY_EVIDENCE_GAP' };
+  if (now < end || new Set(samples.map(sample => sample.observedAt)).size < 3) return { ...base, status: 'unknown' as const, reason: 'RECOVERY_WINDOW_INCOMPLETE' };
+  let previous = start;
+  let previousValidUntil: number | undefined;
+  for (const sample of samples) {
+    const observed = Date.parse(sample.observedAt);
+    if ((previousValidUntil !== undefined && previousValidUntil < observed) || observed - previous > plan.maxSampleGapSeconds * 1000 || sample.quality !== 'good' || typeof sample.payload.value !== 'number'
+      || !Number.isFinite(sample.payload.value) || Date.parse(sample.validUntil) <= observed) return { ...base, status: 'unknown' as const, reason: 'RECOVERY_EVIDENCE_GAP' };
+    if ((plan.min !== undefined && sample.payload.value < plan.min) || (plan.max !== undefined && sample.payload.value > plan.max)) return { ...base, status: 'not-recovered' as const, reason: 'RECOVERY_CONSTRAINT_VIOLATED' };
+    previous = observed;
+    previousValidUntil = Date.parse(sample.validUntil);
+  }
+  const last = samples.at(-1)!;
+  if (end - previous > plan.maxSampleGapSeconds * 1000 || Date.parse(last.validUntil) < end) return { ...base, status: 'unknown' as const, reason: 'RECOVERY_EVIDENCE_GAP' };
+  return { ...base, status: 'recovered' as const, reason: 'RECOVERY_WINDOW_SATISFIED' };
+}

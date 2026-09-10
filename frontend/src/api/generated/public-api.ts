@@ -16,8 +16,8 @@ export type NetworkDevicesResponse = NetworkDevice[];
 export type NetworkDeviceSnmpSecurityLevel = 'noAuthNoPriv' | 'authNoPriv' | 'authPriv';
 export interface NetworkDeviceSnmpCredential { username: string; securityLevel: NetworkDeviceSnmpSecurityLevel; authProtocol?: 'MD5' | 'SHA'; authSecret?: string; privacyProtocol?: 'DES' | 'AES'; privacySecret?: string; }
 export interface NetworkDeviceSnmpV2Credential { version?: 2; community: string; }
-export interface NetworkDeviceSshCredential { credentialType: 'password' | 'key'; username: string; credentialValue: string; hostKeyFingerprint: string; }
-export interface NetworkDeviceTestConnectionRequest { host: string; version?: 2 | 3; snmpPort?: number; snmp_port?: number; sshPort?: number; ssh_port?: number; snmpv3?: NetworkDeviceSnmpCredential; snmpv2c?: NetworkDeviceSnmpV2Credential; snmpv2?: NetworkDeviceSnmpV2Credential; snmp?: NetworkDeviceSnmpCredential | NetworkDeviceSnmpV2Credential; ssh?: NetworkDeviceSshCredential; vendor?: NetworkDeviceVendor; }
+export interface NetworkDeviceSshCredential { credentialType: 'password' | 'key'; username: string; credentialValue: string; hostKeyFingerprint?: string; }
+export interface NetworkDeviceTestConnectionRequest { host: string; mode?: 'snmp' | 'ssh'; version?: 2 | 3; snmpPort?: number; snmp_port?: number; sshPort?: number; ssh_port?: number; snmpv3?: NetworkDeviceSnmpCredential; snmpv2c?: NetworkDeviceSnmpV2Credential; snmpv2?: NetworkDeviceSnmpV2Credential; snmp?: NetworkDeviceSnmpCredential | NetworkDeviceSnmpV2Credential; ssh?: NetworkDeviceSshCredential; vendor?: NetworkDeviceVendor; }
 export interface NetworkDeviceProbeResult { reachable: boolean; quality: string; reason?: string | null; observedAt: string; sysName?: string | null; uptimeSeconds?: number; }
 export interface NetworkDeviceTestConnectionResponse { success: boolean; probe?: NetworkDeviceProbeResult; ssh?: { verified: boolean }; error?: string; }
 export interface NetworkDeviceProbeResponse { success: boolean; observations?: number; interfaces?: number; error?: string; }

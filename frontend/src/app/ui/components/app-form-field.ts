@@ -18,7 +18,7 @@ export class AppFormField extends LitElement {
   @property() hint = "";
   @property() error = "";
   @property({ type: Boolean }) required = false;
-  @property({ type: Boolean }) inline = false;
+  @property({ type: Boolean, reflect: true }) inline = false;
 
   updated(changed: Map<string, unknown>): void {
     if (changed.has("error")) {
@@ -41,18 +41,41 @@ export class AppFormField extends LitElement {
           margin-bottom: var(--space-md, 12px);
         }
         :host([inline]) {
-          display: flex;
-          align-items: baseline;
-          gap: var(--space-md, 12px);
+          display: block;
+        }
+        :host([inline]) .form-field {
+          display: grid;
+          grid-template-columns: minmax(120px, var(--app-form-field-label-width, 180px)) minmax(0, 1fr);
+          column-gap: var(--space-lg, 20px);
+          row-gap: var(--space-xs, 4px);
+          align-items: start;
         }
         :host([inline]) .form-label {
+          grid-column: 1;
+          grid-row: 1;
           margin-bottom: 0;
-          white-space: nowrap;
-          min-width: 100px;
-          flex-shrink: 0;
+          overflow-wrap: anywhere;
+          padding-top: 10px;
         }
         :host([inline]) .form-control {
-          flex: 1;
+          grid-column: 2;
+          grid-row: 1;
+          min-width: 0;
+        }
+        :host([inline]) .form-hint,
+        :host([inline]) .form-error {
+          grid-column: 2;
+          margin-top: 0;
+        }
+        @media (max-width: 720px) {
+          :host([inline]) .form-field { grid-template-columns: 1fr; }
+          :host([inline]) .form-label,
+          :host([inline]) .form-control,
+          :host([inline]) .form-hint,
+          :host([inline]) .form-error { grid-column: 1; }
+          :host([inline]) .form-label,
+          :host([inline]) .form-control { grid-row: auto; }
+          :host([inline]) .form-label { padding-top: 0; }
         }
         .form-field {
           width: 100%;

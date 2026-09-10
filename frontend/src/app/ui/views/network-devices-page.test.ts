@@ -87,7 +87,7 @@ describe("network-devices-page", () => {
     document.body.append(element);
     await settle(element);
     element.openCreate();
-    element.form = { ...element.form, host: "10.0.0.8", username: "readonly", authSecret: "secret123", privacySecret: "private123" };
+    element.form = { ...element.form, host: "10.0.0.8", snmpVersion: 3, username: "readonly", authSecret: "secret123", privacySecret: "private123" };
     await element.testConnection();
     const call = authFetch.mock.calls.find(([url]) => url === "/api/network-devices/test-connection");
     expect(call?.[1]?.method).toBe("POST");
@@ -95,7 +95,7 @@ describe("network-devices-page", () => {
     expect(element.textContent).not.toMatch(/restore|config push|SNMP SET|任意命令/i);
   });
 
-  it("tests SSH credentials without requiring a host-key fingerprint", async () => {
+  it("tests SSH independently without requiring SNMP or a host-key fingerprint", async () => {
     authFetch.mockImplementation(async (url: string) => {
       if (url === "/api/network-devices") return response([]);
       if (url === "/api/network-devices/test-connection") return response({ success: true });
@@ -107,20 +107,23 @@ describe("network-devices-page", () => {
     element.openCreate();
     element.form = {
       ...element.form,
-      host: "10.0.0.8", username: "readonly", securityLevel: "noAuthNoPriv",
-      sshUsername: "ops", sshCredentialValue: "secret",
+      host: "10.0.0.8", sshUsername: "ops", sshCredentialValue: "secret",
     };
 
-    await element.testConnection();
+    await element.testSshConnection();
 
     const call = authFetch.mock.calls.find(([url]) => url === "/api/network-devices/test-connection");
-    expect(JSON.parse(call?.[1]?.body).ssh).toEqual({
-      protocol: "ssh", credentialType: "password", username: "ops", credentialValue: "secret",
+    expect(JSON.parse(call?.[1]?.body)).toEqual({
+      mode: "ssh",
+      host: "10.0.0.8",
+      sshPort: 22,
+      ssh: { protocol: "ssh", credentialType: "password", username: "ops", credentialValue: "secret" },
     });
+    expect(showToast).toHaveBeenCalledWith("SSH 连接成功", "success");
     expect(element.formError).toBeNull();
   });
 
-  it("renders SSH credential and host-key fields for backup enrollment", async () => {
+  it("defaults new devices to SNMPv2c and omits nonessential and host-key fields", async () => {
     authFetch.mockResolvedValue(response([]));
     const element = document.createElement("network-devices-page") as any;
     document.body.append(element);
@@ -128,8 +131,29 @@ describe("network-devices-page", () => {
     element.openCreate();
     await settle(element);
     expect(element.querySelector('app-form-field[label="SSH 用户名"]')).toBeTruthy();
-    expect(element.querySelector('app-form-field[label="主机密钥指纹 (可选)"]')).toBeTruthy();
+    expect(element.querySelector('app-ssh-auth-selector')).toBeTruthy();
+    expect(element.querySelector('app-form-field[label="Community"]')).toBeTruthy();
+    const snmpVersion = element.querySelector('app-form-field[label="SNMP 版本"] select') as HTMLSelectElement | null;
+    expect(snmpVersion?.value).toBe("2");
+    expect(element.querySelector('app-form-field[label="标签"]')).toBeNull();
+    expect(element.querySelector('app-form-field[label="站点"]')).toBeNull();
+    expect(element.textContent).not.toContain("主机密钥指纹");
+    expect(element.querySelector('app-form-field[label="型号（可选）"]')).toBeTruthy();
+    expect(element.querySelector('app-form-field[label="OS 版本（可选）"]')).toBeTruthy();
     expect(element.querySelector('.credential-section')).toBeTruthy();
+  });
+
+  it("renders add-device fields as inline label-control rows", async () => {
+    authFetch.mockResolvedValue(response([]));
+    const element = document.createElement("network-devices-page") as any;
+    document.body.append(element);
+    await settle(element);
+    element.openCreate();
+    await settle(element);
+    const fields = [...element.querySelectorAll('app-dialog[title="添加网络设备"] app-form-field')] as any[];
+    expect(fields.length).toBeGreaterThan(0);
+    expect(fields.every((field) => field.inline)).toBe(true);
+    expect(element.querySelectorAll(".device-form-section")).toHaveLength(3);
   });
 
   it("submits SSH credentials without requiring a host-key fingerprint", async () => {
@@ -144,7 +168,7 @@ describe("network-devices-page", () => {
     element.openCreate();
     element.form = {
       ...element.form,
-      name: "edge-1", host: "10.0.0.8", username: "monitor",
+      name: "edge-1", host: "10.0.0.8", snmpVersion: 3, username: "monitor",
       securityLevel: "noAuthNoPriv", sshUsername: "ops", sshCredentialValue: "secret",
     };
 

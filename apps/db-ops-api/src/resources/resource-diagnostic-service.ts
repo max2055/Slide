@@ -609,7 +609,7 @@ async function defaultObservations(ref: ResourceRef, actor: ActorContext, option
       reason: row[metricId] == null ? 'missing_observation' : undefined,
     })).slice(0, limit);
   }
-  const networkQualityColumns = ref.type === 'network_device' ? ', x.quality, x.source' : '';
+  const networkQualityColumns = ref.type === 'network_device' ? ', x.quality, x.source, x.valid_until AS validUntil, x.reason' : '';
   const [rows] = await pool.execute<any[]>(
     `SELECT x.${metricColumn} AS metricId, x.metric_value AS value, x.${timeColumn} AS observedAt${networkQualityColumns}, x.dimensions
      FROM ${table} x JOIN (SELECT ${metricColumn} AS metric_id, MAX(${timeColumn}) AS latest_at FROM ${table} WHERE ${idColumn} = ? GROUP BY ${metricColumn}) latest
@@ -620,7 +620,8 @@ async function defaultObservations(ref: ResourceRef, actor: ActorContext, option
     try { dimensions = typeof row.dimensions === 'string' ? JSON.parse(row.dimensions) : row.dimensions ?? undefined; } catch { dimensions = undefined; }
     const observedAt = row.observedAt ? new Date(row.observedAt) : null;
     return { resource: ref, metricId: String(row.metricId), value: row.value == null ? null : Number(row.value), observedAt,
-      validUntil: observedAt ? new Date(observedAt.getTime() + 5 * 60_000) : null, dimensions, source: String(row.source ?? table),
+      validUntil: ref.type === 'network_device' ? (row.validUntil ? new Date(row.validUntil) : null) : observedAt ? new Date(observedAt.getTime() + 5 * 60_000) : null,
+      reason: ref.type === 'network_device' ? row.reason ?? undefined : undefined, dimensions, source: String(row.source ?? table),
       quality: ref.type === 'network_device' ? (row.quality ?? (row.value == null ? 'unknown' : 'good')) : (row.value == null ? 'unknown' : 'good'), } as Observation;
   });
 }

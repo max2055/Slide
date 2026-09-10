@@ -36,6 +36,7 @@ class FakePool {
       ...['ref_id', 'owner_id', 'tool_name', 'secret_encrypted', 'status', 'expires_at'].map((column_name) => ({ table_name: 'agent_credential_references', column_name })),
       ...['agent_id', 'tool_allowlist', 'skill_allowlist', 'allowed_effects', 'resource_scope', 'version', 'updated_by'].map((column_name) => ({ table_name: 'agent_security_policies', column_name })),
       ...['id', 'agent_id', 'version', 'policy_json', 'change_note', 'changed_by'].map((column_name) => ({ table_name: 'agent_security_policy_history', column_name })),
+      ...['id', 'owner_user_id', 'resource_type', 'resource_id', 'correlation_id', 'evidence_json', 'observed_at', 'valid_until'].map((column_name) => ({ table_name: 'agent_evidence', column_name })),
     ]];
     if (sql.includes('information_schema.STATISTICS')) return [[
       { table_name: 'refresh_tokens', index_name: 'idx_rt_user_session' },
@@ -47,6 +48,8 @@ class FakePool {
       { table_name: 'agent_tool_audit', index_name: 'idx_agent_tool_audit_agent_created' },
       { table_name: 'agent_credential_references', index_name: 'idx_agent_credential_active' },
       { table_name: 'agent_security_policy_history', index_name: 'uq_agent_security_policy_history_version' },
+      { table_name: 'agent_evidence', index_name: 'idx_agent_evidence_resource_time' },
+      { table_name: 'agent_evidence', index_name: 'idx_agent_evidence_correlation' },
     ]];
     if (sql.includes('information_schema.REFERENTIAL_CONSTRAINTS')) return [[
       { table_name: 'sql_execution_history', constraint_name: 'fk_sql_history_approval' },
@@ -58,6 +61,7 @@ class FakePool {
       { table_name: 'agent_credential_references', constraint_name: 'fk_agent_credential_owner' },
       { table_name: 'agent_security_policies', constraint_name: 'fk_agent_security_policy_updated_by' },
       { table_name: 'agent_security_policy_history', constraint_name: 'fk_agent_security_policy_history_actor' },
+      { table_name: 'agent_evidence', constraint_name: 'fk_agent_evidence_owner' },
     ]];
     if (sql.startsWith('SELECT migration_id')) return [[this.entries.get(values[0])].filter(Boolean)];
     if (sql.startsWith('INSERT INTO app_schema_migrations')) {

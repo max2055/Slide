@@ -14,7 +14,7 @@ export const TAB_GROUPS = [
   },
   {
     label: "operations",
-    tabs: ["events", "sql-console", "cron-jobs", "reports"],
+    tabs: ["events", "resource-diagnosis", "sql-console", "cron-jobs", "reports"],
   },
   {
     label: "securityGovernance",
@@ -25,6 +25,7 @@ export const TAB_GROUPS = [
 export const UTILITY_TABS = ["health-center", "feedback", "settings"] as const;
 
 export type Tab =
+  | "resource-diagnosis"
   | "agents"
   | "ai-settings"
   | "prompt-settings"
@@ -63,6 +64,7 @@ export type Tab =
   | "settings";
 
 const TAB_PATHS: Record<Tab, string> = {
+  "resource-diagnosis": "/resource-diagnosis",
   agents: "/agents",
   "ai-settings": "/ai-settings",
   "prompt-settings": "/prompt-settings",
@@ -225,6 +227,8 @@ export function inferBasePathFromPathname(pathname: string): string {
 
 export function iconForTab(tab: Tab): IconName {
   switch (tab) {
+    case "resource-diagnosis":
+      return "search";
     case "agents":
       return "bot";
     case "ai-settings":

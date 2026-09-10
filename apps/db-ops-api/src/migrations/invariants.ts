@@ -15,6 +15,7 @@ const requiredColumns: Record<string, string[]> = {
   agent_credential_references: ['ref_id', 'owner_id', 'tool_name', 'secret_encrypted', 'status', 'expires_at'],
   agent_security_policies: ['agent_id', 'tool_allowlist', 'skill_allowlist', 'allowed_effects', 'resource_scope', 'version', 'updated_by'],
   agent_security_policy_history: ['id', 'agent_id', 'version', 'policy_json', 'change_note', 'changed_by'],
+  agent_evidence: ['id', 'owner_user_id', 'resource_type', 'resource_id', 'correlation_id', 'evidence_json', 'observed_at', 'valid_until'],
 };
 
 const requiredIndexes: Array<[string, string]> = [
@@ -27,6 +28,8 @@ const requiredIndexes: Array<[string, string]> = [
   ['agent_tool_audit', 'idx_agent_tool_audit_agent_created'],
   ['agent_credential_references', 'idx_agent_credential_active'],
   ['agent_security_policy_history', 'uq_agent_security_policy_history_version'],
+  ['agent_evidence', 'idx_agent_evidence_resource_time'],
+  ['agent_evidence', 'idx_agent_evidence_correlation'],
 ];
 
 const requiredForeignKeys: Array<[string, string]> = [
@@ -39,6 +42,7 @@ const requiredForeignKeys: Array<[string, string]> = [
   ['agent_credential_references', 'fk_agent_credential_owner'],
   ['agent_security_policies', 'fk_agent_security_policy_updated_by'],
   ['agent_security_policy_history', 'fk_agent_security_policy_history_actor'],
+  ['agent_evidence', 'fk_agent_evidence_owner'],
 ];
 
 const networkRequiredColumns: Record<string, string[]> = {

@@ -1,3 +1,4 @@
+import { platformLogs } from './platform/structured-log-evidence-adapter.js';
 export type SchedulableMetric = { id: string; default_interval: number };
 export type CollectionScheduleEntry = { metricId: string; lastSuccessMs?: number; nextDueMs: number; lastResult?: 'success' | 'failure' | 'skipped' };
 export type CollectionResourceType = 'instance' | 'server' | 'network_device';
@@ -42,6 +43,7 @@ export class MysqlCollectionScheduleStore implements CollectionScheduleStore {
        ON DUPLICATE KEY UPDATE last_success_at = IF(VALUES(last_result) = 'success', VALUES(last_success_at), last_success_at), next_due_at = VALUES(next_due_at), last_result = VALUES(last_result)`,
       [resourceType, resourceId, providerId, metric.id, succeeded ? now : null, nextDue, succeeded ? 'success' : 'failure'],
     );
+    platformLogs.record({ component: 'collector', eventType: 'collection.' + resourceType, status: succeeded ? 'ok' : 'failed', errorCode: succeeded ? undefined : 'COLLECTION_FAILED' });
   }
 
   private pool(): SqlPool {

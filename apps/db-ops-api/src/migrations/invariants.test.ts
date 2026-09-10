@@ -4,6 +4,7 @@ import { assertSchemaInvariants } from './invariants.js';
 import type { MigrationPool } from './types.js';
 
 const columns = {
+  agent_evidence: ['id', 'owner_user_id', 'resource_type', 'resource_id', 'correlation_id', 'evidence_json', 'observed_at', 'valid_until'],
   users: ['id', 'username', 'password_hash', 'session_version'],
   refresh_tokens: ['id', 'token_hash', 'user_id', 'session_version', 'revoked'],
   approval_requests: ['id', 'status', 'operation_id'],
@@ -55,6 +56,8 @@ describe('assertSchemaInvariants', () => {
             { table_name: 'agent_tool_audit', index_name: 'idx_agent_tool_audit_agent_created' },
             { table_name: 'agent_credential_references', index_name: 'idx_agent_credential_active' },
             { table_name: 'agent_security_policy_history', index_name: 'uq_agent_security_policy_history_version' },
+            { table_name: 'agent_evidence', index_name: 'idx_agent_evidence_resource_time' },
+            { table_name: 'agent_evidence', index_name: 'idx_agent_evidence_correlation' },
           ]];
         }
         if (sql.includes('information_schema.REFERENTIAL_CONSTRAINTS')) {
@@ -68,6 +71,7 @@ describe('assertSchemaInvariants', () => {
             { table_name: 'agent_credential_references', constraint_name: 'fk_agent_credential_owner' },
             { table_name: 'agent_security_policies', constraint_name: 'fk_agent_security_policy_updated_by' },
             { table_name: 'agent_security_policy_history', constraint_name: 'fk_agent_security_policy_history_actor' },
+            { table_name: 'agent_evidence', constraint_name: 'fk_agent_evidence_owner' },
           ]];
         }
         throw new Error(`Unexpected query: ${sql}`);
@@ -101,6 +105,8 @@ describe('assertSchemaInvariants', () => {
           { table_name: 'agent_tool_audit', index_name: 'idx_agent_tool_audit_agent_created' },
           { table_name: 'agent_credential_references', index_name: 'idx_agent_credential_active' },
           { table_name: 'agent_security_policy_history', index_name: 'uq_agent_security_policy_history_version' },
+          { table_name: 'agent_evidence', index_name: 'idx_agent_evidence_resource_time' },
+          { table_name: 'agent_evidence', index_name: 'idx_agent_evidence_correlation' },
         ]];
         if (sql.includes('information_schema.REFERENTIAL_CONSTRAINTS')) return [[
           { table_name: 'sql_execution_history', constraint_name: 'fk_sql_history_approval' },
@@ -112,6 +118,7 @@ describe('assertSchemaInvariants', () => {
           { table_name: 'agent_credential_references', constraint_name: 'fk_agent_credential_owner' },
           { table_name: 'agent_security_policies', constraint_name: 'fk_agent_security_policy_updated_by' },
           { table_name: 'agent_security_policy_history', constraint_name: 'fk_agent_security_policy_history_actor' },
+          { table_name: 'agent_evidence', constraint_name: 'fk_agent_evidence_owner' },
         ]];
         throw new Error(`Unexpected query: ${sql}`);
       }) as MigrationPool['query'],
@@ -155,6 +162,8 @@ describe('assertSchemaInvariants', () => {
       { table_name: 'agent_tool_audit', index_name: 'idx_agent_tool_audit_agent_created' },
       { table_name: 'agent_credential_references', index_name: 'idx_agent_credential_active' },
       { table_name: 'agent_security_policy_history', index_name: 'uq_agent_security_policy_history_version' },
+      { table_name: 'agent_evidence', index_name: 'idx_agent_evidence_resource_time' },
+      { table_name: 'agent_evidence', index_name: 'idx_agent_evidence_correlation' },
       { table_name: 'network_devices', index_name: 'uq_network_device_host_snmp' },
       { table_name: 'network_device_credentials', index_name: 'uq_network_device_credential_protocol' },
       { table_name: 'network_device_interfaces', index_name: 'uq_network_device_interface' },
@@ -174,6 +183,7 @@ describe('assertSchemaInvariants', () => {
       ['agent_tool_approvals', 'fk_agent_tool_approval_requester'], ['agent_tool_audit', 'fk_agent_tool_audit_actor'],
       ['agent_credential_references', 'fk_agent_credential_owner'], ['agent_security_policies', 'fk_agent_security_policy_updated_by'],
       ['agent_security_policy_history', 'fk_agent_security_policy_history_actor'],
+      ['agent_evidence', 'fk_agent_evidence_owner'],
       ['network_device_credentials', 'fk_network_device_credentials_device'],
       ['network_device_interfaces', 'fk_network_device_interfaces_device'],
       ['network_device_observations', 'fk_network_device_observations_device'],

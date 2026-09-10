@@ -26,6 +26,7 @@ import { createActorBoundToolRegistry, createCronToolRegistry, loadPlatformTools
 import { agentRunService } from '../agent-run-service.js';
 import { instanceDatabaseService } from '../../instance-database-service.js';
 import { completeAnalysisTool } from '../../tools/generated/slide-self-mgmt/complete_analysis.js';
+import { platformLogs } from '../../platform/structured-log-evidence-adapter.js';
 
 // ── Mock LLMProvider — returns hardcoded responses ──
 
@@ -342,6 +343,21 @@ describe('DirectAdapter', () => {
 
   describe('start()', () => {
     const TEST_WS_PORT = 28992;
+
+    it('records bounded WS lifecycle evidence without client close text', async () => {
+      const record = vi.spyOn(platformLogs, 'record');
+      process.env.AGENT_WS_PORT = String(TEST_WS_PORT);
+      const adapter = createMockAdapter(); adaptersToCleanup.push(adapter);
+      await adapter.start();
+      const ws = new WebSocket(`ws://127.0.0.1:${TEST_WS_PORT}`);
+      await new Promise<void>(resolve => ws.once('open', resolve));
+      ws.close(1000, 'private-client-message');
+      await new Promise<void>(resolve => ws.once('close', () => resolve()));
+      await vi.waitFor(() => expect(record).toHaveBeenCalledWith(expect.objectContaining({ component: 'ws', eventType: 'connection.closed' })));
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({ component: 'ws', eventType: 'connection.opened' }));
+      expect(JSON.stringify(record.mock.calls)).not.toContain('private-client-message');
+      record.mockRestore();
+    });
 
     it('should create a WebSocketServer on the specified port', async () => {
       process.env.AGENT_WS_PORT = String(TEST_WS_PORT);

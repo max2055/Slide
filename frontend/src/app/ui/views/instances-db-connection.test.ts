@@ -83,6 +83,20 @@ describe('database instance edit connection validation', () => {
     expect(page.formData.password).toBe('');
   });
 
+  it('renders the add-instance form as inline label-control rows', async () => {
+    authFetch.mockResolvedValue(response([]));
+    const page = document.createElement('instances-page') as any;
+    page.loading = false;
+    page._addInstance();
+    document.body.append(page);
+    await page.updateComplete;
+    const dialog = page.shadowRoot.querySelector('app-dialog[title="添加数据库实例"]');
+    const fields = [...dialog.querySelectorAll('.instance-form app-form-field')] as any[];
+    expect(dialog.getAttribute('size')).toBe('lg');
+    expect(fields.length).toBeGreaterThan(0);
+    expect(fields.every((field) => field.inline)).toBe(true);
+  });
+
   it('maps database authentication failures to a user-facing credential error', () => {
     expect(normalizeConnectionTestMessage('连接失败：ORA-01017: invalid username/password; logon denied'))
       .toBe('用户名或密码错误');

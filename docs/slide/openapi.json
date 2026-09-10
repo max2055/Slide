@@ -6532,8 +6532,7 @@
         "required": [
           "credentialType",
           "username",
-          "credentialValue",
-          "hostKeyFingerprint"
+          "credentialValue"
         ],
         "type": "object"
       },
@@ -6569,6 +6568,18 @@
           "host": {
             "minLength": 1,
             "type": "string"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "const": "snmp",
+                "type": "string"
+              },
+              {
+                "const": "ssh",
+                "type": "string"
+              }
+            ]
           },
           "snmp": {
             "$id": "NetworkDeviceSnmpCredentialUnion",
@@ -6806,8 +6817,7 @@
             "required": [
               "credentialType",
               "username",
-              "credentialValue",
-              "hostKeyFingerprint"
+              "credentialValue"
             ],
             "type": "object"
           },
@@ -10445,7 +10455,7 @@
                 }
               }
             },
-            "description": "Validated read-only SNMPv2c or SNMPv3 probe result"
+            "description": "Validated read-only SNMP probe or command-free SSH handshake result"
           },
           "400": {
             "content": {

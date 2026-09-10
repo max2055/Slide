@@ -8,6 +8,7 @@ import "../components/app-badge.js";
 import "../components/app-empty-state.js";
 import "../components/app-data-table.js";
 import "../components/app-card.js";
+import "../components/app-ssh-auth-selector.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
@@ -38,7 +39,6 @@ interface ServerFormData {
   credential_type: "password" | "key";
   credential_username: string;
   credential_value: string;
-  host_key_fingerprint: string;
 }
 
 
@@ -168,44 +168,15 @@ export class ServersPage extends LitElement {
     .form-grid {
       display: grid;
       gap: var(--space-md);
+      --app-form-field-label-width: 160px;
     }
 
     .form-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: var(--space-md);
+      display: contents;
     }
 
-    @media (max-width: 560px) {
-      .form-row {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    .form-hint {
-      font-size: var(--text-sm);
-      color: var(--muted);
-      margin-top: var(--space-xs);
-      line-height: 1.4;
-    }
-
-    .radio-group {
-      display: flex;
-      gap: var(--space-lg);
-      padding: var(--space-xs) 0;
-    }
-
-    .radio-option {
-      display: flex;
-      align-items: center;
-      gap: var(--space-sm);
-      cursor: pointer;
-      font-size: var(--text-base);
-      color: var(--text);
-    }
-
-    .radio-option input[type="radio"] {
-      accent-color: var(--accent);
+    .form-grid app-form-field {
+      margin-bottom: 0;
     }
 
     .dialog-footer {
@@ -263,7 +234,6 @@ export class ServersPage extends LitElement {
     credential_type: "password",
     credential_username: "",
     credential_value: "",
-    host_key_fingerprint: "",
   };
   @state() private _testConnectionMessage = "";
   @state() private _testConnectionSuccess: boolean | null = null;
@@ -312,7 +282,6 @@ export class ServersPage extends LitElement {
       credential_type: "password",
       credential_username: "",
       credential_value: "",
-      host_key_fingerprint: "",
     };
     this._testConnectionMessage = "";
     this._testConnectionSuccess = null;
@@ -340,7 +309,6 @@ export class ServersPage extends LitElement {
       credential_type: server.credential_type,
       credential_username: credentialUsername,
       credential_value: "",
-      host_key_fingerprint: server.host_key_fingerprint || "",
     };
     this._testConnectionMessage = "";
     this._testConnectionSuccess = null;
@@ -469,9 +437,6 @@ export class ServersPage extends LitElement {
           credential_type: this._form.credential_type,
           credential_username: this._form.credential_username,
           credential_value: this._form.credential_value,
-          ...(this._form.host_key_fingerprint.trim()
-            ? { host_key_fingerprint: this._form.host_key_fingerprint.trim() }
-            : {}),
         }),
       });
       const result = await res.json();
@@ -798,27 +763,27 @@ export class ServersPage extends LitElement {
       <app-dialog .open=${true} size="lg" .closeOnOverlay=${false} title=${title} @app-dialog-close=${this._closeDialog}>
         <div class="form-grid">
           <div class="form-row">
-            <app-form-field label="IP/主机名" required>
+            <app-form-field label="IP/主机名" required .inline=${true}>
               <input class="form-input" type="text" .value=${this._form.host}
                 @input=${(e: any) => this._updateForm("host", e.target.value)}
                 placeholder="192.168.1.100" />
             </app-form-field>
 
-            <app-form-field label="SSH端口">
+            <app-form-field label="SSH端口" .inline=${true}>
               <input class="form-input" type="number" .value=${this._form.port}
                 @input=${(e: any) => this._updateForm("port", parseInt(e.target.value) || 22)}
                 placeholder="22" />
             </app-form-field>
           </div>
 
-          <app-form-field label="标签 (可选)">
+          <app-form-field label="标签 (可选)" .inline=${true}>
             <input class="form-input" type="text" .value=${this._form.label}
               @input=${(e: any) => this._updateForm("label", e.target.value)}
               placeholder="例如：生产环境主服务器" />
           </app-form-field>
 
           <div class="form-row">
-            <app-form-field label="操作系统">
+            <app-form-field label="操作系统" .inline=${true}>
               <select class="form-select" .value=${this._form.os_type}
                 @change=${(e: any) => this._updateForm("os_type", e.target.value)}>
                 <option value="kylin">Kylin OS</option>
@@ -827,39 +792,24 @@ export class ServersPage extends LitElement {
               </select>
             </app-form-field>
 
-            <app-form-field label="SSH认证方式">
-              <div class="radio-group">
-                <label class="radio-option">
-                  <input type="radio" name="credential_type" value="password"
-                    ?checked=${this._form.credential_type === "password"}
-                    @change=${() => this._updateForm("credential_type", "password")} />
-                  密码
-                </label>
-                <label class="radio-option">
-                  <input type="radio" name="credential_type" value="key"
-                    ?checked=${this._form.credential_type === "key"}
-                    @change=${() => this._updateForm("credential_type", "key")} />
-                  SSH密钥
-                </label>
-              </div>
+            <app-form-field label="SSH 认证方式" .inline=${true}>
+              <app-ssh-auth-selector .value=${this._form.credential_type}
+                @ssh-auth-change=${(event: CustomEvent<{ value: "password" | "key" }>) => this._updateForm("credential_type", event.detail.value)}>
+              </app-ssh-auth-selector>
             </app-form-field>
           </div>
 
-          <app-form-field label="SSH用户名" required>
+          <app-form-field label="SSH 用户名" required .inline=${true}>
             <input class="form-input" type="text" .value=${this._form.credential_username}
               @input=${(e: any) => this._updateForm("credential_username", e.target.value)}
               placeholder="root" />
           </app-form-field>
 
-          <app-form-field label="SSH主机密钥指纹 (可选)">
-            <input class="form-input" type="text" .value=${this._form.host_key_fingerprint}
-              @input=${(e: any) => this._updateForm("host_key_fingerprint", e.target.value)}
-              placeholder="SHA256:..." />
-          </app-form-field>
-
           <app-form-field
-            label=${this._form.credential_type === "password" ? "密码" : "SSH私钥"}
-            .required=${!this._editingId}>
+            label=${this._form.credential_type === "password" ? "SSH 密码" : "SSH 私钥"}
+            hint="凭据将使用 AES-256-CBC 加密存储"
+            .required=${!this._editingId}
+            .inline=${true}>
             ${this._form.credential_type === "password"
               ? html`<input class="form-input" type="password" autocomplete="new-password"
                   .value=${this._form.credential_value}
@@ -870,8 +820,6 @@ export class ServersPage extends LitElement {
                   placeholder=${this._editingId ? "留空表示不修改" : ""} rows="4"></textarea>`
             }
           </app-form-field>
-
-          <div class="form-hint">凭据将使用 AES-256-CBC 加密存储</div>
 
           ${this._testConnectionMessage
             ? html`
@@ -884,11 +832,11 @@ export class ServersPage extends LitElement {
         <div slot="footer" class="dialog-footer">
           <div></div>
           <div class="dialog-footer-right">
-            <button class="btn" @click=${this._handleTestConnection} ?disabled=${this._testingConnection}>
+            <button class="btn" @click=${this._handleTestConnection} .disabled=${this._testingConnection}>
               ${this._testingConnection ? "测试中..." : "测试连接"}
             </button>
             <button class="btn" @click=${this._closeDialog}>取消</button>
-            <button class="btn-primary" @click=${this._handleSubmit} ?disabled=${this._isSubmitting}>
+            <button class="btn-primary" @click=${this._handleSubmit} .disabled=${this._isSubmitting}>
               ${this._isSubmitting ? "保存中..." : "保存"}
             </button>
           </div>

@@ -11,13 +11,11 @@ artifact="slide-${version}.tar.gz"
 staging="$(mktemp -d "${TMPDIR:-/tmp}/slide-release.XXXXXX")"
 trap 'rm -rf "$staging"' EXIT
 
-pnpm --filter slide-frontend build
+VITE_SLIDE_BUILD_ID="$commit" pnpm --filter slide-frontend build
 mkdir -p "$staging/slide/frontend"
 git archive HEAD | tar -xf - -C "$staging/slide"
 cp -R frontend/dist "$staging/slide/frontend/dist"
-cat > "$staging/slide/RELEASE.json" <<EOF
-{"version":"$version","commit":"$commit","node":"$(node --version)","pnpm":"$(pnpm --version)"}
-EOF
+pnpm --filter slide-api exec tsx ../../scripts/release/write-release-manifest.ts "$staging/slide/RELEASE.json" "$version" "$commit"
 
 mkdir -p "$output_dir"
 COPYFILE_DISABLE=1 tar -czf "$output_dir/$artifact" -C "$staging" slide

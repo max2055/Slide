@@ -38,6 +38,7 @@ import { getServerAlertsTool } from './server_tools.js';
 import { analyzeServerHealthTool } from './server_tools.js';
 import { getServerDiagnosticsTool } from './server_tools.js';
 import { resourceTools } from './resource_tools.js';
+import { platformTools } from './platform_tools.js';
 
 export const slideSelfMgmtTools = [
   checkStatusTool,
@@ -56,4 +57,5 @@ export const slideSelfMgmtTools = [
   analyzeServerHealthTool,
   getServerDiagnosticsTool,
   ...resourceTools,
+  ...platformTools,
 ];

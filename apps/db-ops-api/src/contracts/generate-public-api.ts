@@ -61,7 +61,7 @@ export function buildOpenApiDocument() {
           operationId: 'testNetworkDeviceConnection', security: [{ bearerAuth: [] }],
           requestBody: { required: true, content: { 'application/json': { schema: refSchema(PublicApiSchemas.NetworkDeviceTestConnectionRequest) } } },
           responses: {
-            '200': { description: 'Validated read-only SNMPv2c or SNMPv3 probe result', content: { 'application/json': { schema: refSchema(PublicApiSchemas.NetworkDeviceTestConnectionResponse) } } },
+            '200': { description: 'Validated read-only SNMP probe or command-free SSH handshake result', content: { 'application/json': { schema: refSchema(PublicApiSchemas.NetworkDeviceTestConnectionResponse) } } },
             '400': { description: 'Invalid or unsupported SNMP payload', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
             '401': { description: 'Authentication required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
             '403': { description: 'Network-device manage permission required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
@@ -225,8 +225,8 @@ export type NetworkDevicesResponse = NetworkDevice[];
 export type NetworkDeviceSnmpSecurityLevel = 'noAuthNoPriv' | 'authNoPriv' | 'authPriv';
 export interface NetworkDeviceSnmpCredential { username: string; securityLevel: NetworkDeviceSnmpSecurityLevel; authProtocol?: 'MD5' | 'SHA'; authSecret?: string; privacyProtocol?: 'DES' | 'AES'; privacySecret?: string; }
 export interface NetworkDeviceSnmpV2Credential { version?: 2; community: string; }
-export interface NetworkDeviceSshCredential { credentialType: 'password' | 'key'; username: string; credentialValue: string; hostKeyFingerprint: string; }
-export interface NetworkDeviceTestConnectionRequest { host: string; version?: 2 | 3; snmpPort?: number; snmp_port?: number; sshPort?: number; ssh_port?: number; snmpv3?: NetworkDeviceSnmpCredential; snmpv2c?: NetworkDeviceSnmpV2Credential; snmpv2?: NetworkDeviceSnmpV2Credential; snmp?: NetworkDeviceSnmpCredential | NetworkDeviceSnmpV2Credential; ssh?: NetworkDeviceSshCredential; vendor?: NetworkDeviceVendor; }
+export interface NetworkDeviceSshCredential { credentialType: 'password' | 'key'; username: string; credentialValue: string; hostKeyFingerprint?: string; }
+export interface NetworkDeviceTestConnectionRequest { host: string; mode?: 'snmp' | 'ssh'; version?: 2 | 3; snmpPort?: number; snmp_port?: number; sshPort?: number; ssh_port?: number; snmpv3?: NetworkDeviceSnmpCredential; snmpv2c?: NetworkDeviceSnmpV2Credential; snmpv2?: NetworkDeviceSnmpV2Credential; snmp?: NetworkDeviceSnmpCredential | NetworkDeviceSnmpV2Credential; ssh?: NetworkDeviceSshCredential; vendor?: NetworkDeviceVendor; }
 export interface NetworkDeviceProbeResult { reachable: boolean; quality: string; reason?: string | null; observedAt: string; sysName?: string | null; uptimeSeconds?: number; }
 export interface NetworkDeviceTestConnectionResponse { success: boolean; probe?: NetworkDeviceProbeResult; ssh?: { verified: boolean }; error?: string; }
 export interface NetworkDeviceProbeResponse { success: boolean; observations?: number; interfaces?: number; error?: string; }

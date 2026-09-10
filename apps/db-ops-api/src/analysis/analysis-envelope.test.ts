@@ -16,6 +16,9 @@ const validEnvelope = {
 };
 
 describe('AnalysisEnvelope', () => {
+  it('accepts network resources and canonical persisted evidence references', () => {
+    expect(validateAnalysisEnvelope({ ...validEnvelope, subject: { type: 'network_device', id: 4 }, evidenceRefs: [{ ref: 'a'.repeat(64), summary: 'Observed reachability' }] }).ok).toBe(true);
+  });
   it('accepts a versioned structured analysis envelope', () => {
     expect(validateAnalysisEnvelope(validEnvelope)).toEqual({ ok: true, value: validEnvelope });
   });

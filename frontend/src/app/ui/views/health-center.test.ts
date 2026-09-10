@@ -26,7 +26,9 @@ describe('system health and consistency page', () => {
   });
 
   async function renderPage() {
-    authFetch.mockResolvedValue({ ok: true, json: async () => overview });
+    authFetch.mockImplementation(async (url: string) => url === '/api/platform/observations'
+      ? { ok: false, status: 503 }
+      : { ok: true, json: async () => overview });
     const element = document.createElement('health-center-page') as HTMLElement & { updateComplete: Promise<unknown> };
     document.body.append(element);
     await element.updateComplete;

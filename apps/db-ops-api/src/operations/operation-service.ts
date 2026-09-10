@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Operation, OperationEvent, OperationState } from './types.js';
+import { createRecoveryBinding, recoveryPolicyKey } from './recovery-policy.js';
+import type { ResourceRef } from '../resources/types.js';
 
 interface QueryExecutor { query<T = any>(sql: string, values?: unknown[]): Promise<[T, unknown?]>; }
 interface Transaction extends QueryExecutor { beginTransaction(): Promise<void>; commit(): Promise<void>; rollback(): Promise<void>; release(): void; }
@@ -93,7 +95,20 @@ export class PersistentOperationService {
       );
       const row = rows[0];
       if (!row) throw new Error('Operation insert failed');
-      if (row.id === id) await this.append(connection, id, null, 'queued', 'CREATED', input.actorId);
+      if (row.id === id) {
+        let metadata: Record<string, unknown> | undefined;
+        const ref = { type: row.resource_type, id: Number(row.resource_id) } as ResourceRef;
+        if (['instance', 'server', 'network_device'].includes(ref.type) && Number.isSafeInteger(ref.id) && ref.id > 0) {
+          const [policies] = await connection.query<any[]>('SELECT config_value FROM system_config WHERE config_key = ? LIMIT 1', [recoveryPolicyKey(ref)]);
+          if (policies[0]) {
+            try {
+              const binding = createRecoveryBinding(policies[0].config_value, Number(row.actor_id), ref, row.command_type);
+              if (binding) metadata = { recoveryBinding: binding };
+            } catch { metadata = { recoveryBindingUnavailable: 'RECOVERY_POLICY_INVALID' }; }
+          }
+        }
+        await this.append(connection, id, null, 'queued', 'CREATED', input.actorId, metadata);
+      }
       await connection.commit();
       return this.map(row);
     } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
@@ -152,6 +167,16 @@ export class PersistentOperationService {
     const exists = await this.getForActor(id, actorId);
     if (!exists) return null;
     return rows.map((row) => ({ operationId: row.operation_id, fromState: row.from_state, toState: row.to_state, reasonCode: row.reason_code, actorId: row.actor_id ?? undefined, metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata ?? undefined, createdAt: new Date(row.created_at) }));
+  }
+
+  async recoveryBindingForActor(id: string, actorId: number): Promise<unknown> {
+    const pool = this.poolProvider();
+    if (!pool) throw new Error('Operation database unavailable');
+    const [rows] = await pool.query<any[]>(`SELECT oe.metadata FROM operation_events oe JOIN operations o ON o.id = oe.operation_id
+      WHERE o.id = ? AND o.actor_id = ? AND oe.actor_id = ? AND oe.reason_code = 'CREATED' AND oe.from_state IS NULL
+      ORDER BY oe.id ASC LIMIT 1`, [id, actorId, actorId]);
+    try { const metadata = typeof rows[0]?.metadata === 'string' ? JSON.parse(rows[0].metadata) : rows[0]?.metadata; return metadata?.recoveryBinding ?? null; }
+    catch { return null; }
   }
 
   async cancelForActor(id: string, actorId: number): Promise<Operation | null> {

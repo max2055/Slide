@@ -139,6 +139,10 @@ import { agentSecurityPolicyService } from './src/security/agent-security-policy
 import { registerNetworkDeviceRoutes } from './src/network-devices/network-device-routes.js';
 import { networkDeviceCollector } from './src/network-devices/network-device-collector.js';
 import { registerResourceRoutes } from './src/resources/resource-routes.js';
+import { registerEvidenceRoutes } from './src/evidence/evidence-api.js';
+import { registerEvidenceEvaluationRoutes } from './src/evidence/evidence-evaluation-api.js';
+import { installPlatformObservation } from './src/platform/platform-observation-service.js';
+import { registerSourceRoutes } from './src/platform/source-routes.js';
 
 const fastify = Fastify({
   logger: false,
@@ -348,6 +352,10 @@ async function start() {
   await registerDeviceAuthRoutes(fastify, verifyToken);
   await registerNetworkDeviceRoutes(fastify, verifyToken);
   await registerResourceRoutes(fastify, verifyToken);
+  await installPlatformObservation(fastify, verifyToken);
+  await registerSourceRoutes(fastify, verifyToken);
+  await registerEvidenceRoutes(fastify, verifyToken);
+  await registerEvidenceEvaluationRoutes(fastify, verifyToken);
   await registerInstanceHostRoutes(fastify, {
     verifyToken,
     service: instanceHostService,

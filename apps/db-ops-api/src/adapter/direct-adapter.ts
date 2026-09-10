@@ -18,6 +18,7 @@
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
+import { platformLogs } from '../platform/structured-log-evidence-adapter.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import {
@@ -253,6 +254,7 @@ export class DirectAdapter implements IAgentEngine {
     this.wsServer.on('connection', (ws: WebSocket, req: IncomingMessage) => {
       const connectionId = randomUUID();
       const connectedAt = new Date().toISOString();
+      platformLogs.record({ component: 'ws', eventType: 'connection.opened', status: 'ok', correlationId: connectionId, releaseId: process.env.SLIDE_RELEASE_ID });
       const pendingMessages = new Map<string, string>();
       console.log('[DirectAdapter] WS client connected', JSON.stringify({
         connectionId,
@@ -352,13 +354,14 @@ export class DirectAdapter implements IAgentEngine {
       });
 
       ws.on('close', (code, reasonBuffer) => {
-        const reason = reasonBuffer.toString();
+        platformLogs.record({ component: 'ws', eventType: 'connection.closed', status: code === 1000 || code === 1001 ? 'ok' : 'unknown',
+          correlationId: connectionId, errorCode: `WS_${code}`, releaseId: process.env.SLIDE_RELEASE_ID });
         console.warn('[DirectAdapter] WebSocket closed', JSON.stringify({
           timestamp: new Date().toISOString(),
           connectionId,
           connectedAt,
           code,
-          reason,
+          reasonBytes: reasonBuffer.length,
           wasClean: code !== 1006,
           userId: authenticatedUserId,
           pendingMessages: [...pendingMessages].map(([messageId, idempotencyKey]) => ({ messageId, idempotencyKey })),
@@ -689,11 +692,13 @@ export class DirectAdapter implements IAgentEngine {
       });
 
       ws.on('error', (err) => {
+        platformLogs.record({ component: 'ws', eventType: 'connection.error', status: 'failed', correlationId: connectionId, errorCode: 'WS_TRANSPORT_ERROR' });
         console.error('[DirectAdapter] WS error:', err.message);
       });
     });
 
     this.wsServer.on('error', (err) => {
+      platformLogs.record({ component: 'ws', eventType: 'server.error', status: 'failed', errorCode: 'WS_SERVER_ERROR' });
       console.error('[DirectAdapter] WS server error:', err.message);
     });
 
