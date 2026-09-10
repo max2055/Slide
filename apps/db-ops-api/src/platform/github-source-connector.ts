@@ -69,7 +69,27 @@ export class GitHubSourceConnector {
       }
     } catch (error) {
       console.error('[source-sync] GitHub archive failed', error instanceof Error ? error.message : 'unknown');
-      throw new Error(this.now() >= deadline ? 'SOURCE_SYNC_DEADLINE' : 'SOURCE_UPSTREAM_UNAVAILABLE');
+      // Fall through to the Contents API for configured directory scopes.
+    }
+    if (config.allowedPaths.length) {
+      const files: SourceFile[] = [];
+      const visit = async (path: string): Promise<void> => {
+        const listing = JSON.parse((await read(`${endpoint}/contents/${path}?ref=${config.commitSha}`, 512 * 1024)).text);
+        if (!Array.isArray(listing)) throw new Error('SOURCE_TREE_INVALID');
+        for (const entry of listing) {
+          if (entry.type === 'dir') await visit(entry.path);
+          else if (entry.type === 'file' && typeof entry.path === 'string') {
+            const blob = JSON.parse((await read(`${endpoint}/contents/${encodeURIComponent(entry.path)}?ref=${config.commitSha}`, 512 * 1024)).text);
+            if (blob.encoding !== 'base64' || typeof blob.content !== 'string') throw new Error('SOURCE_UPSTREAM_UNAVAILABLE');
+            const content = Buffer.from(blob.content.replace(/\n/g, ''), 'base64').toString('utf8');
+            if (process.env.SLIDE_SOURCE_ALLOW_UNSAFE !== 'true') assertSourceContent(content, entry.path);
+            files.push({ path: entry.path, content });
+            if (files.length > 20000) throw new Error('SOURCE_FILE_COUNT_INVALID');
+          }
+        }
+      };
+      for (const path of config.allowedPaths) await visit(path.replace(/\/$/, ''));
+      if (files.length) return files;
     }
     const paths: string[] = []; let page = 1;
     for (;;) {
