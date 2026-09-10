@@ -18,7 +18,20 @@ export class AppFormField extends LitElement {
   @property() hint = "";
   @property() error = "";
   @property({ type: Boolean }) required = false;
-  @property({ type: Boolean }) inline = false;
+  @property({ type: Boolean, reflect: true }) inline = false;
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    let root: Node | null = this;
+    while (root) {
+      const host = (root as ShadowRoot).host;
+      if (host instanceof HTMLElement && host.tagName.toLowerCase() === 'source-settings') {
+        this.inline = true;
+        break;
+      }
+      root = host ?? root.parentNode;
+    }
+  }
 
   updated(changed: Map<string, unknown>): void {
     if (changed.has("error")) {
