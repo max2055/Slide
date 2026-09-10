@@ -20,6 +20,9 @@ export class SourceSettings extends LitElement {
   @state() private revision = 0;
   @state() private permissions: Set<string> = new Set();
   private readonly permissionsHandler = () => { this.readPermissions(); };
+  override updated() {
+    this.renderRoot.querySelectorAll('app-form-field').forEach(field => field.setAttribute('inline', ''));
+  }
   static styles = [sharedBtnStyles, css`
     :host { display: block; min-width: 0; color: var(--text); }
     h1 { font-size: 22px; color: var(--text-strong); margin: 0 0 var(--space-lg); }
