@@ -1,7 +1,7 @@
 import { assertSourceContent, assertSourcePath, type SourceFile } from './source-snapshot-service.js';
 import { ProxyAgent } from 'undici';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, statSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, statSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -62,7 +62,7 @@ export class GitHubSourceConnector {
       const archive = await this.request(`https://codeload.github.com/${config.projectId}/zip/${config.commitSha}`, { headers: { Authorization: `Bearer ${config.token}` }, redirect: 'error', signal: AbortSignal.timeout(Math.min(90_000, Math.max(1, deadline - this.now())))} as any);
       if (archive.ok) {
         const dir = mkdtempSync(join(tmpdir(), 'slide-source-')); const zip = join(dir, 'repo.zip');
-        require('node:fs').writeFileSync(zip, Buffer.from(await archive.arrayBuffer())); execFileSync('unzip', ['-q', zip, '-d', dir]);
+        writeFileSync(zip, Buffer.from(await archive.arrayBuffer())); execFileSync('unzip', ['-q', zip, '-d', dir]);
         const root = readdirSync(dir).find(name => name !== 'repo.zip'); const files: SourceFile[] = [];
         const walk = (base: string) => { for (const name of readdirSync(base)) { const full = join(base, name); const rel = full.slice(join(dir, root!).length + 1); if (statSync(full).isDirectory()) walk(full); else if (!config.allowedPaths.length || config.allowedPaths.some(p => rel.startsWith(p))) { try { assertSourcePath(rel); const content = readFileSync(full, 'utf8'); if (process.env.SLIDE_SOURCE_ALLOW_UNSAFE !== 'true') assertSourceContent(content, rel); files.push({ path: rel, content }); } catch {} } } };
         walk(join(dir, root!)); rmSync(dir, { recursive: true, force: true }); if (files.length) return files;
