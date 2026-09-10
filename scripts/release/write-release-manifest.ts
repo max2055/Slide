@@ -8,9 +8,9 @@ if (!destination || !version || !/^[a-f0-9]{40}$/.test(commit ?? '')) throw new 
 const paths = (process.env.SLIDE_SOURCE_PATHS ?? '').split(',').map(path => path.trim()).filter(Boolean);
 const git = (args: string[]) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
 let source;
-{
+if (paths.length) {
   const files = git(['ls-tree', '--full-tree', '-r', '--name-only', '-z', commit]).split('\0').filter(path => {
-    if (paths.length && !paths.some(prefix => path.startsWith(prefix))) return false;
+    if (!paths.some(prefix => path.startsWith(prefix))) return false;
     try { assertSourcePath(path); return true; } catch { return false; }
   }).map(path => ({ path, content: git(['show', `${commit}:${path}`]) }));
   source = createSourceBinding(version, commit, paths, files);

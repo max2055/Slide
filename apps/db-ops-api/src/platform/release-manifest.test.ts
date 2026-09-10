@@ -15,3 +15,16 @@ it('generates root-relative deployment source from the API package working direc
     expect(manifest.source.treeDigest).toMatch(/^[a-f0-9]{64}$/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+it('omits source binding when no reviewed source paths are configured', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'slide-manifest-test-'));
+  try {
+    const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    const destination = join(directory, 'RELEASE.json');
+    const env = { ...process.env };
+    delete env.SLIDE_SOURCE_PATHS;
+    execFileSync(process.execPath, ['--import', 'tsx', resolve('../../scripts/release/write-release-manifest.ts'), destination, 'qualification', commit], { env, stdio: 'pipe' });
+    const manifest = JSON.parse(await readFile(destination, 'utf8'));
+    expect(manifest).not.toHaveProperty('source');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
