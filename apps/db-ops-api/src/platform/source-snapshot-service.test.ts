@@ -15,6 +15,13 @@ async function setup() {
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
 describe('source snapshot boundary', () => {
+  it('accepts GitHub owner/repository identities', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'slide-source-github-test-')); roots.push(root);
+    const service = new SourceSnapshotService(root, 'test-signing-key-not-production-123456');
+    const manifest = await service.publish({ releaseId: 'github-release', commitSha: commit, projectId: 'max2055/Slide' }, [{ path: 'src/example.ts', content: 'export const ok = true;\n' }]);
+    expect(manifest.projectId).toBe('max2055/Slide');
+  });
+
   it('blocks JSON, YAML and escaped sensitive configuration keys', () => {
     for (const [path, content] of [
       ['src/config.json', '{"password":"dummy-sensitive-value"}'],
@@ -26,6 +33,9 @@ describe('source snapshot boundary', () => {
       ['src/config.yaml', 'auth:\n  token: |\n    dummy-sensitive-value'],
       ['src/config.ts', 'const token = `dummy-sensitive-value`;'],
     ]) expect(() => assertSourceContent(content, path)).toThrow('SOURCE_SENSITIVE_CONTENT');
+  });
+  it('does not treat ordinary dependency names ending in token as secrets', () => {
+    expect(() => assertSourceContent('{"jsonwebtoken":"^9.0.2"}', 'package.json')).not.toThrow();
   });
   it('makes identical release publication idempotent but rejects replacement', async () => {
     const { service, manifest } = await setup();

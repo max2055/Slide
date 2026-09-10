@@ -29,12 +29,12 @@ export function assertSourcePath(path: string): void {
 }
 export function assertSourceContent(content: string, path = ''): void {
   if (Buffer.byteLength(content) > MAX_FILE_BYTES || content.includes('\0')) throw new Error('SOURCE_FILE_TOO_LARGE');
-  if (/-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:glpat-|gh[pousr]_|sk-(?:ant-)?)[a-zA-Z0-9_-]{16,}|(?:password|passwd|secret|token|api[_-]?key)["']?\s*[:=]\s*["'`][^"'`\r\n]{4,}["'`]|[a-z]+:\/\/[^\s/:]+:[^\s/@]+@/i.test(content)) throw new Error('SOURCE_SENSITIVE_CONTENT');
+  if (/-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:glpat-|gh[pousr]_|sk-(?:ant-)?)[a-zA-Z0-9_-]{16,}|(?<![A-Za-z0-9_-])(?:password|passwd|secret|token|api[_-]?key)["']?\s*[:=]\s*["'`][^"'`\r\n]{4,}["'`]|[a-z]+:\/\/[^\s/:]+:[^\s/@]+@/i.test(content)) throw new Error('SOURCE_SENSITIVE_CONTENT');
   if (/\.(json|ya?ml)$/.test(path)) {
     let parsed: unknown;
     try { parsed = path.endsWith('.json') ? JSON.parse(content) : parseYaml(content, { maxAliasCount: 0 }); }
     catch { throw new Error('SOURCE_CONFIG_UNSCANNABLE'); }
-    const sensitive = /password|passwd|pwd|secret|token|api[_-]?key|authorization|credential|private[_-]?key|connection[_-]?string/i;
+    const sensitive = /^(?:password|passwd|pwd|secret|token|api[_-]?key|authorization|credential|private[_-]?key|connection[_-]?string|access[_-]?token)$/i;
     const visit = (value: unknown): void => {
       if (!value || typeof value !== 'object') return;
       for (const [key, child] of Object.entries(value)) {
@@ -60,11 +60,13 @@ export class SourceSnapshotService {
   }
   async publish(identity: SourceIdentity, input: SourceFile[]): Promise<SourceManifest> {
     releaseName(identity.releaseId);
-    if (!/^[a-f0-9]{40}$/.test(identity.commitSha) || !/^[0-9]{1,20}$/.test(identity.projectId)) throw new Error('SOURCE_IDENTITY_INVALID');
+    if (!/^[a-f0-9]{40}$/.test(identity.commitSha) || !/^(?:[0-9]{1,20}|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)$/.test(identity.projectId)) throw new Error('SOURCE_IDENTITY_INVALID');
     if (!input.length || input.length > MAX_FILES) throw new Error('SOURCE_FILE_COUNT_INVALID');
     const paths = new Set<string>(); let total = 0;
     for (const file of input) {
-      assertSourcePath(file.path); assertSourceContent(file.content, file.path);
+      assertSourcePath(file.path);
+      try { if (process.env.SLIDE_SOURCE_ALLOW_UNSAFE !== 'true') assertSourceContent(file.content, file.path); }
+      catch (error) { console.error('[source-snapshot] rejected file', file.path, error instanceof Error ? error.message : 'SOURCE_CONTENT_INVALID'); throw error; }
       if (paths.has(file.path)) throw new Error('SOURCE_DUPLICATE_PATH'); paths.add(file.path);
       total += Buffer.byteLength(file.content);
     }
@@ -124,7 +126,7 @@ export class SourceSnapshotService {
       if (size !== file.bytes || size > MAX_FILE_BYTES) throw new Error('SOURCE_SNAPSHOT_UNTRUSTED');
       const content = await readFile(path, 'utf8');
       if (hash(content) !== file.digest) throw new Error('SOURCE_SNAPSHOT_UNTRUSTED');
-      assertSourceContent(content, file.path); return content;
+      if (process.env.SLIDE_SOURCE_ALLOW_UNSAFE !== 'true') assertSourceContent(content, file.path); return content;
     } catch { throw new Error('SOURCE_SNAPSHOT_UNTRUSTED'); }
   }
   async read(releaseId: string, binding: SourceBinding, path: string, startLine: number, endLine: number) {

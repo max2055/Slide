@@ -82,7 +82,8 @@ export class SourceManagementService {
       await auditLogManager.logToolCall({ userId: String(actor.userId), username: actor.username, toolName: 'source_sync', toolParams: deployment, result: 'success' });
       return manifest;
     } catch (error) {
-      await auditLogManager.logToolCall({ userId: String(actor.userId), username: actor.username, toolName: 'source_sync', toolParams: deployment, result: 'failure', errorMessage: 'SOURCE_SYNC_FAILED' });
+      const errorCode = error instanceof Error && /^SOURCE_[A-Z_]+$/.test(error.message) ? error.message : 'SOURCE_SYNC_FAILED';
+      await auditLogManager.logToolCall({ userId: String(actor.userId), username: actor.username, toolName: 'source_sync', toolParams: deployment, result: 'failure', errorMessage: errorCode });
       throw error;
     } finally { this.syncing = false; }
   }
