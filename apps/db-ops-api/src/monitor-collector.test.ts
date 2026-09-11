@@ -213,3 +213,10 @@ describe('health scheduling without due metrics', () => {
     monitorCollector.stop();
   });
 });
+
+it('marks an unexpected health collection error unknown rather than declaring an outage', async () => {
+  vi.clearAllMocks();
+  mocks.checkHealth.mockRejectedValue(new Error('query failed'));
+  await (monitorCollector as any).updateHealthStatusFromCheck(301);
+  expect(mocks.updateHealthStatus).toHaveBeenLastCalledWith(301, 0, 'unknown');
+});

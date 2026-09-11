@@ -23,7 +23,7 @@ it.each([
   vi.spyOn(databaseService as any, '_withAutoReconnect').mockImplementation(async (_id: any, fn: any) => fn({ id: 21, db_type: 'oracle', oraclePool: {} }));
   vi.spyOn(databaseService as any, 'checkOracleHealth').mockResolvedValue({ health_score: 0, status: 'critical', checks: [check] });
   vi.spyOn(scoringConfigService, 'getWeights').mockResolvedValue({ availability: 0, performance: 1, capacity: 0, security: 0 });
-  await expect(databaseService.checkHealth(21)).resolves.toMatchObject({ health_score: 0, status: 'critical' });
+  await expect(databaseService.checkHealth(21)).resolves.toMatchObject({ health_score: 0, status: check.name === '连接状态' ? 'critical' : 'unknown' });
 });
 
 it('marks an incomplete weighted health assessment unknown instead of displaying a healthy score', async () => {
@@ -34,4 +34,14 @@ it('marks an incomplete weighted health assessment unknown instead of displaying
   ] });
   vi.spyOn(scoringConfigService, 'getWeights').mockResolvedValue({ availability: .35, performance: .35, capacity: .2, security: .1 });
   await expect(databaseService.checkHealth(21)).resolves.toMatchObject({ status: 'unknown', checks: expect.arrayContaining([expect.objectContaining({ name: '表空间使用率', status: 'unknown', score: 0 })]) });
+});
+
+it('preserves confirmed connectivity when the remainder of a health assessment fails', async () => {
+  vi.spyOn(databaseService as any, '_withAutoReconnect').mockImplementation(async (_id: any, fn: any) => fn({ id: 21, db_type: 'oracle', oraclePool: {} }));
+  vi.spyOn(databaseService as any, 'checkOracleHealth').mockResolvedValue({ health_score: 0, status: 'unknown', checks: [
+    { name: '连接状态', status: 'ok', score: 100 },
+    { name: 'Oracle 检查', status: 'unknown', score: 0 },
+  ] });
+  vi.spyOn(scoringConfigService, 'getWeights').mockResolvedValue({ availability: .35, performance: .35, capacity: .2, security: .1 });
+  await expect(databaseService.checkHealth(21)).resolves.toMatchObject({ status: 'unknown' });
 });
