@@ -1,3 +1,4 @@
+import { returnToDashboard } from './dashboard-model.js';
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { authFetch } from "../../../api/index.js";
@@ -97,7 +98,9 @@ export class NetworkDeviceDetail extends LitElement {
   }
 
   private validId(): number | null {
-    return this.deviceId != null && Number.isSafeInteger(this.deviceId) && this.deviceId > 0 ? this.deviceId : null;
+    const raw = location.pathname === "/network-device-detail" ? new URL(location.href).searchParams.get("networkDeviceId") : null;
+    const id = this.deviceId ?? (raw && /^[1-9]\d*$/.test(raw) ? Number(raw) : null);
+    return id != null && Number.isSafeInteger(id) && id > 0 ? id : null;
   }
 
   private async json<T>(url: string, init?: RequestInit): Promise<T> {
@@ -136,7 +139,7 @@ export class NetworkDeviceDetail extends LitElement {
     }
   }
 
-  private navigateBack() {
+  private navigateBack() { if (returnToDashboard()) return;
     window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "network-devices" } }));
   }
 

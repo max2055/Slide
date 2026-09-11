@@ -1,0 +1,123 @@
+{
+  "environment": {
+    "api": "http://127.0.0.1:3006",
+    "baseCommit": "dfef2f0",
+    "branch": "feat/max-36-operations-overview",
+    "workingTree": "implementation candidate"
+  },
+  "inventoryStatus": 200,
+  "resources": [
+    {
+      "resource": {
+        "type": "instance",
+        "id": 1
+      },
+      "evidenceStatus": 200,
+      "facts": 7,
+      "evidenceGaps": [
+        "EVIDENCE_QUALITY_UNKNOWN"
+      ],
+      "packStatus": 200,
+      "receiptStatus": 202,
+      "analysisId": 19087,
+      "receiptState": "queued",
+      "history": [
+        {
+          "http": 200,
+          "status": "running",
+          "checkedAt": "2026-09-11T02:58:18Z"
+        },
+        {
+          "http": 200,
+          "status": "completed",
+          "checkedAt": "2026-09-11T02:59:12Z"
+        }
+      ],
+      "result": "completed",
+      "hasStoredResult": true,
+      "resultUrl": "/api/resources/instance/1/analyses/19087"
+    },
+    {
+      "resource": {
+        "type": "server",
+        "id": 3
+      },
+      "evidenceStatus": 200,
+      "facts": 0,
+      "evidenceGaps": [
+        "NO_EVIDENCE_IN_WINDOW"
+      ],
+      "packStatus": 200,
+      "receiptStatus": 202,
+      "analysisId": 19088,
+      "receiptState": "queued",
+      "history": [
+        {
+          "http": 200,
+          "status": "running",
+          "checkedAt": "2026-09-11T02:58:18Z"
+        },
+        {
+          "http": 200,
+          "status": "completed",
+          "checkedAt": "2026-09-11T02:58:33Z"
+        }
+      ],
+      "result": "completed",
+      "hasStoredResult": true,
+      "resultUrl": "/api/resources/server/3/analyses/19088"
+    },
+    {
+      "type": "network_device",
+      "result": "not_verified",
+      "reason": "No managed resource available"
+    }
+  ],
+  "browser": {
+    "frontend": "http://127.0.0.1:5176",
+    "apiPid": 93777,
+    "frontendPid": 89871,
+    "databaseTask": 19090,
+    "serverTask": 19091,
+    "result": "2 passed / 1 skipped (no managed network device)",
+    "mock": false
+  },
+  "capacity": {
+    "http": 200,
+    "instanceId": 1,
+    "samples": 16,
+    "sampleTimesPresent": true
+  },
+  "deliverySourceDigest": {
+    "sha256": "29e0a13fbf610d9ae42ae06f47a98bb8c61888aa79e43bf256bf5d1029db6cfd",
+    "files": [
+      "apps/db-ops-api/server.ts",
+      "apps/db-ops-api/src/instance-database-service.ts",
+      "apps/db-ops-api/src/resources/resource-agent-diagnosis-service.test.ts",
+      "apps/db-ops-api/src/resources/resource-agent-diagnosis-service.ts",
+      "apps/db-ops-api/src/resources/resource-diagnostic-service.test.ts",
+      "apps/db-ops-api/src/resources/resource-diagnostic-service.ts",
+      "apps/db-ops-api/src/resources/resource-routes.test.ts",
+      "apps/db-ops-api/src/resources/resource-routes.ts",
+      "apps/db-ops-api/src/server-database-service.ts",
+      "frontend/e2e/dashboard-overview-real.spec.ts",
+      "frontend/e2e/dashboard-overview.spec.ts",
+      "frontend/e2e/resource-diagnosis.spec.ts",
+      "frontend/src/app/i18n/locales/en.ts",
+      "frontend/src/app/i18n/locales/operations-overview.ts",
+      "frontend/src/app/i18n/locales/zh-CN.ts",
+      "frontend/src/app/ui/views/__tests__/design-tokens.test.ts",
+      "frontend/src/app/ui/views/dashboard-model.ts",
+      "frontend/src/app/ui/views/dashboard-styles.ts",
+      "frontend/src/app/ui/views/dashboard.test.ts",
+      "frontend/src/app/ui/views/dashboard.ts",
+      "frontend/src/app/ui/views/instance-detail.ts",
+      "frontend/src/app/ui/views/network-device-detail.ts",
+      "frontend/src/app/ui/views/resource-diagnosis.test.ts",
+      "frontend/src/app/ui/views/resource-diagnosis.ts",
+      "frontend/src/app/ui/views/server-detail.ts",
+      "frontend/src/icons.ts"
+    ],
+    "note": "Final source files; UI-only label/truncation changes after real browser verification covered by focused tests and build."
+  }
+}

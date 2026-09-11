@@ -72,9 +72,10 @@ class ServerDatabaseService {
   /**
    * Get all servers
    */
-  async getAllServers(): Promise<ServerRow[]> {
+  async getAllServers(options: { strict?: boolean } = {}): Promise<ServerRow[]> {
     const pool = this.getPool();
     if (!pool) {
+      if (options.strict) throw new Error('SERVER_ENUMERATION_UNAVAILABLE');
       return [];
     }
 
@@ -89,6 +90,7 @@ class ServerDatabaseService {
 
       return rows as ServerRow[];
     } catch (error) {
+      if (options.strict) throw new Error('SERVER_ENUMERATION_UNAVAILABLE', { cause: error });
       console.error('获取服务器列表失败:', error);
       return [];
     }

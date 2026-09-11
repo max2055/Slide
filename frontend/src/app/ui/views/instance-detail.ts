@@ -1,3 +1,4 @@
+import { returnToDashboard } from './dashboard-model.js';
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
@@ -265,7 +266,7 @@ export class InstanceDetailPage extends LitElement {
     } catch { /* ignore */ }
   }
 
-  private _goBack() { const u = new URL(window.location.href); u.searchParams.set("tab", "instances-db"); u.searchParams.delete("id"); window.history.pushState({}, "", u); window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "instances-db" } })); }
+  private _goBack() { if (returnToDashboard()) return; const u = new URL(window.location.href); u.searchParams.set("tab", "instances-db"); u.searchParams.delete("id"); window.history.pushState({}, "", u); window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "instances-db" } })); }
   private _setTab(tab: string) { this.activeTab = tab; this.loadTabData(); if (tab === "trend" && !this.trendLoaded) this.loadTrendData(this.trendTab); }
   private _toggleAutoRefresh() { this.autoRefresh = !this.autoRefresh; this.startAutoRefresh(); }
   private async _manualRefresh() { await this.refreshCurrentTab(); }

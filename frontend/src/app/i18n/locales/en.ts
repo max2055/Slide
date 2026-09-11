@@ -1,6 +1,8 @@
+import { operationsOverviewEn } from "./operations-overview.js";
 import type { TranslationMap } from "../lib/types.ts";
 
 export const en: TranslationMap = {
+  operationsOverview: operationsOverviewEn,
   common: {
     health: "Health",
     ok: "OK",

@@ -2571,6 +2571,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
       const start_date = query?.start_date || null;
       const end_date = query?.end_date || null;
+      const validDate = (value: unknown) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+      if ((start_date || end_date) && (!validDate(start_date) || !validDate(end_date) || start_date > end_date || Date.parse(end_date) > Date.now())) {
+        return reply.code(400).send({ error: 'CAPACITY_DATE_RANGE_INVALID' });
+      }
+      if (!Number.isFinite(hours) || hours <= 0 || hours > 24 * 366) return reply.code(400).send({ error: 'CAPACITY_HOURS_INVALID' });
       const pool = dbConnection.getPool();
       if (!pool) return reply.code(500).send({ error: '数据库未连接' });
 
@@ -2600,14 +2605,16 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
       // Cross-instance aggregation with hour-level bucket
       const [rows] = await pool.execute(
-        `SELECT
-           DATE_FORMAT(recorded_at, '%Y-%m-%d %H:00:00') as time_bucket,
-           SUM(total_size_gb) as total_size_gb,
-           COUNT(DISTINCT instance_id) as instance_count
-         FROM capacity_history
-         ${whereClause}
-         GROUP BY DATE_FORMAT(recorded_at, '%Y-%m-%d %H:00:00')
-         ORDER BY time_bucket ASC`,
+        `SELECT time_bucket, SUM(total_size_gb) AS total_size_gb,
+           COUNT(DISTINCT instance_id) AS instance_count, MAX(recorded_at) AS observed_at
+         FROM (
+           SELECT instance_id, total_size_gb, recorded_at,
+             DATE_FORMAT(recorded_at, '%Y-%m-%d %H:00:00') AS time_bucket,
+             ROW_NUMBER() OVER (PARTITION BY instance_id, DATE_FORMAT(recorded_at, '%Y-%m-%d %H:00:00') ORDER BY recorded_at DESC, id DESC) AS sample_rank
+           FROM capacity_history ${whereClause}
+         ) samples
+         WHERE sample_rank = 1
+         GROUP BY time_bucket ORDER BY time_bucket ASC`,
         params
       ) as any;
 
@@ -2639,7 +2646,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         current_total_gb: currentTotal,
         trend: rows.map((r: any) => ({
           time: r.time_bucket,
-          total_size_gb: Number(r.total_size_gb),
+          total_size_gb: r.total_size_gb == null ? null : Number(r.total_size_gb),
+          observed_at: r.observed_at,
           instance_count: instance_id ? 1 : r.instance_count,
         })),
       });

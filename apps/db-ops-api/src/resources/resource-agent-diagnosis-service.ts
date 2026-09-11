@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { canReadResource } from './resource-service.js';
+import { redactSensitiveData } from '../security/sensitive-data.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { dispatchOrReuse } from '../ai-agent-bridge.js';
 import { aiAnalysisDatabaseService } from '../ai-analysis-database-service.js';
@@ -19,6 +22,7 @@ export interface ResourceAgentDiagnosisDependencies {
   analysisStore: AnalysisStore;
   dispatch: typeof dispatchOrReuse;
   now: () => Date;
+  readAnalysis?: typeof aiAnalysisDatabaseService.getAnalysisById;
 }
 
 function subjectFields(ref: ResourceRef): { instance_id?: number; server_id?: number; network_device_id?: number } {
@@ -40,14 +44,37 @@ export class ResourceAgentDiagnosisService {
       analysisStore: aiAnalysisDatabaseService,
       dispatch: dispatchOrReuse,
       now: () => new Date(),
+      readAnalysis: (id) => aiAnalysisDatabaseService.getAnalysisById(id),
     },
   ) {}
 
+  private cachePrefix(actor: ActorContext, ref: ResourceRef): string {
+    const access = createHash('sha256').update(JSON.stringify([actor.userId, actor.sessionVersion, [...actor.permissions].sort(), Object.entries(actor.instanceScopes).sort()])).digest('hex').slice(0, 24);
+    return `resource:${ref.type}:${ref.id}:${access}:`;
+  }
+
+  async result(actor: ActorContext, ref: ResourceRef, analysisId: number) {
+    if (!canReadResource(actor, ref)) throw new Error('RESOURCE_FORBIDDEN');
+    if (!Number.isSafeInteger(analysisId) || analysisId <= 0) throw new Error('ANALYSIS_ID_INVALID');
+    const record = await this.dependencies.readAnalysis?.(analysisId);
+    const subject = record && (ref.type === 'instance' ? record.instance_id : ref.type === 'server' ? record.server_id : record.network_device_id);
+    // Results may contain related-resource context. Bind reads to the same
+    // actor and permission snapshot that created the bounded diagnostic pack.
+    if (!record || Number(subject) !== ref.id || !record.cache_key?.startsWith(this.cachePrefix(actor, ref))) throw new Error('RESOURCE_NOT_FOUND');
+    return {
+      analysisId: record.id, resource: ref, status: record.status,
+      createdAt: record.created_at, completedAt: record.completed_at,
+      result: redactSensitiveData(record.result),
+      error: record.status === 'failed' ? '诊断执行失败，请查看任务日志或重试' : null,
+      contextLabel: '历史诊断上下文',
+    };
+  }
+
   async diagnose(actor: ActorContext, ref: ResourceRef): Promise<ResourceAgentDiagnosisResult> {
     const evidence = await this.dependencies.evidence.diagnose(actor, ref);
-    const cacheKey = `resource:${ref.type}:${ref.id}:${this.dependencies.now().toISOString().slice(0, 13)}`;
+    const cacheKey = `${this.cachePrefix(actor, ref)}${this.dependencies.now().toISOString().slice(0, 13)}`;
     const cached = await this.dependencies.analysisStore.findByCacheKey(cacheKey);
-    if (cached?.id) return { success: true, analysisId: cached.id, status: 'cached' };
+    if (cached?.id && cached.status !== 'failed') return { success: true, analysisId: cached.id, status: 'cached' };
 
     const created = await this.dependencies.analysisStore.createAnalysis({
       analysis_type: 'fault_diagnosis',

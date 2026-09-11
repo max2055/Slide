@@ -176,9 +176,10 @@ class InstanceDatabaseService {
   /**
    * 获取管理列表中的全部实例，包括已停用和连接异常的实例。
    */
-  async getManagedInstances(): Promise<DatabaseInstance[]> {
+  async getManagedInstances(options: { strict?: boolean } = {}): Promise<DatabaseInstance[]> {
     const pool = this.getPool();
     if (!pool) {
+      if (options.strict) throw new Error('INSTANCE_ENUMERATION_UNAVAILABLE');
       return [];
     }
 
@@ -196,6 +197,7 @@ class InstanceDatabaseService {
 
       return rows as DatabaseInstance[];
     } catch (error) {
+      if (options.strict) throw new Error('INSTANCE_ENUMERATION_UNAVAILABLE', { cause: error });
       console.error('获取管理实例列表失败:', error);
       return [];
     }
