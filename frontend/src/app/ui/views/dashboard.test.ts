@@ -155,3 +155,18 @@ describe('compact overview selection', () => {
     expect(cards[2].variant).toBeUndefined(); expect(cards[2].value).toBe('—');
   });
 });
+
+
+describe('capacity total scope', () => {
+  it('uses all filtered instance IDs by default and preserves explicit instance selection', async () => {
+    const dashboard = document.createElement('dashboard-page') as any;
+    dashboard.resourceScope = 'instance';
+    dashboard.resourceOverview = { items: [1, 2].map(id => item({ resource: { type: 'instance', id }, label: `db-${id}` })) };
+    authFetch.mockResolvedValue({ ok: true, json: async () => ({ trend: [] }) });
+    dashboard.normalizeSelection(); expect(dashboard.selectedInstanceId).toBeNull();
+    await dashboard.loadTrend(); expect(authFetch.mock.lastCall?.[0]).toContain('instance_ids=1%2C2');
+    dashboard.search = 'db-2'; await dashboard.loadTrend(); expect(authFetch.mock.lastCall?.[0]).toContain('instance_ids=2');
+    dashboard.selectedInstanceId = 2; await dashboard.loadTrend(); expect(authFetch.mock.lastCall?.[0]).toContain('instance_id=2');
+    dashboard.search = 'absent'; dashboard.normalizeSelection(); authFetch.mockClear(); await dashboard.loadTrend(); expect(authFetch).not.toHaveBeenCalled();
+  });
+});

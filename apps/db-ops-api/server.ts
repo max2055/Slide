@@ -1,3 +1,4 @@
+import { capacityInstanceIds } from './src/capacity-scope.js';
 /**
  * Slide - Database Operations API Server
  */
@@ -2562,12 +2563,21 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const query = request.query as any;
       const hours = Number(query?.hours) || 168;
       const instance_id = query?.instance_id ? Number(query.instance_id) : null;
-      const allowedInstanceIds = getAccessibleInstanceIds((request as any).user);
+      let allowedInstanceIds = getAccessibleInstanceIds((request as any).user);
       if (instance_id !== null && (!Number.isSafeInteger(instance_id) || instance_id <= 0)) {
         return reply.code(400).send({ error: 'instance_id 必须为正整数' });
       }
       if (instance_id !== null && !hasInstanceAccess((request as any).user, instance_id, 'read-only')) {
         return reply.code(403).send({ error: '无权访问该实例' });
+      }
+      if (query.instance_ids !== undefined) {
+        if (instance_id !== null) return reply.code(400).send({ error: 'CAPACITY_SCOPE_INVALID' });
+        try {
+          allowedInstanceIds = capacityInstanceIds(query.instance_ids, id => hasInstanceAccess((request as any).user, id, 'read-only'));
+        } catch (error) {
+          const code = (error as Error).message;
+          return reply.code(code === 'CAPACITY_SCOPE_FORBIDDEN' ? 403 : 400).send({ error: code });
+        }
       }
       const start_date = query?.start_date || null;
       const end_date = query?.end_date || null;
@@ -2648,7 +2658,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           time: r.time_bucket,
           total_size_gb: r.total_size_gb == null ? null : Number(r.total_size_gb),
           observed_at: r.observed_at,
-          instance_count: instance_id ? 1 : r.instance_count,
+          instance_count: instance_id ? 1 : Number(r.instance_count),
         })),
       });
     } catch (error: any) {

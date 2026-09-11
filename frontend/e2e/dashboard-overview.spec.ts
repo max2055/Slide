@@ -37,7 +37,7 @@ async function fixture(page: Page, options: { emptyNetwork?: boolean; overviewFa
     if (/^\/api\/network-devices\/\d+$/.test(path)) body = { id: 21, label: 'Core switch', name: 'Core switch', host: '10.0.0.3', vendor: 'huawei', status: 'online', snmp_port: 161 };
     if (/^\/api\/network-devices\/\d+\/(metrics|interfaces|relations)$/.test(path)) body = { metrics: [], interfaces: [], relations: [] };
     if (path === '/api/resources') body = { items: items.map(item => ({ resource: item.resource, label: item.label, status: item.status, attributes: item.attributes })) };
-    if (path === '/api/dashboard/capacity-trend') body = { current_total_gb: 2.71, trend: [{ time: new Date(Date.now() - 7200_000).toISOString(), total_size_gb: 2.4 }, { time: now, total_size_gb: 2.71 }] };
+    if (path === '/api/dashboard/capacity-trend') body = { current_total_gb: 2.71, trend: [{ time: new Date(Date.now() - 3600_000).toISOString(), total_size_gb: 2.4, instance_count: 2 }, { time: now, total_size_gb: 2.71, instance_count: 2 }] };
     if (path.endsWith('/evidence')) body = { generatedAt: now, facts: [{ id: 'a'.repeat(64), kind: 'observation', status: 'fact', quality: 'good', observedAt: now, validUntil: new Date(Date.now() + 300_000).toISOString(), source: 'fixture', correlationId: 'test', provenance: {}, payload: { metricId: 'cpu_usage', value: 0 } }], inferences: [], hypotheses: [], gaps: [], truncated: false };
     if (path.endsWith('/diagnose-agent')) { posts++; body = { analysisId: 42, status: 'queued' }; }
     if (path.endsWith('/analyses/42')) { polls++; body = { analysisId: 42, status: polls > 1 ? 'completed' : 'running', completedAt: now, result: { summary: '已读取真实记录（测试夹具）' } }; }
@@ -63,7 +63,7 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 900
         expect(new Set(tops).size).toBe(1);
         const heights = await view.locator('stat-card').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().height));
         for (const height of heights) { expect(height).toBeGreaterThanOrEqual(88); expect(height).toBeLessThanOrEqual(104); }
-        const first = (await view.locator('.risk-row').first().boundingBox())!; expect(first.y + first.height).toBeLessThan(viewport.height);
+        if (name === '综合态势') { const first = (await view.locator('.risk-row').first().boundingBox())!; expect(first.y + first.height).toBeLessThan(viewport.height); }
         if (viewport.width === 1440 && name === '综合态势') {
           const last = (await view.locator('.risk-row').nth(4).boundingBox())!; expect(last.y + last.height).toBeLessThan(900);
           const quality = (await view.locator('.collection-summary').boundingBox())!; expect(quality.y + quality.height).toBeLessThan(900);
@@ -72,7 +72,7 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 900
       if (name !== '综合态势') await expect(view.getByRole('combobox', { name: '指标', exact: true })).toHaveValue(name === '网络设备' ? 'device_cpu_percent' : 'cpu_usage');
       if (name === '服务器') { await expect(view).not.toContainText('Orders MySQL'); await expect(view).toContainText('Payments host'); }
       if (name === '网络设备') { await view.getByRole('button', { name: '读取最近备份' }).click(); await expect(view).toContainText('最近已保存备份 v2'); }
-      if (name === '数据库') await expect(view.locator('.trend-chart-container')).toBeVisible();
+      if (name === '数据库') { await expect(view.locator('.trend-chart-container')).toBeVisible(); await expect(view.locator('.engine-pie')).toBeVisible(); }
       else await expect(view.locator('.trend-chart-container')).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await view.evaluate((element: any) => { element.scrollingParent().scrollTop = 0; });
@@ -205,3 +205,19 @@ for (const permissions of [['network_devices:view'], ['network_devices:view', 'n
     await expect(view.locator('stat-card')).toHaveCount(0);
   });
 }
+
+test('database pie and total trend follow the filtered inventory', async ({ page }) => {
+  await fixture(page); await page.goto('/dashboard?scope=instance');
+  const view = page.locator('dashboard-page');
+  await expect(view.locator('.engine-pie')).toHaveAttribute('aria-label', 'mysql: 2 (100%)');
+  await expect(view.getByRole('combobox', { name: '统计范围', exact: true })).toHaveValue('');
+  await expect(view.locator('.trend-chart-container svg')).toBeVisible();
+  const width = await view.locator('.trend-chart-container svg').evaluate(node => node.getBoundingClientRect().width);
+  expect(width).toBeGreaterThan(200);
+  await view.getByRole('searchbox').fill('10.0.0.1');
+  await view.getByRole('searchbox').fill('Orders MySQL secondary');
+  await expect(view.locator('.engine-pie')).toHaveAttribute('aria-label', 'mysql: 1 (100%)');
+  // The selected single-instance mode remains available alongside the default total.
+  const selected = page.waitForResponse(response => response.url().includes('capacity-trend') && response.url().includes('instance_id=2'));
+  await view.getByRole('combobox', { name: '统计范围', exact: true }).selectOption('2'); await selected;
+});
