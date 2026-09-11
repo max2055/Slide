@@ -15,3 +15,13 @@ it.each([[1, 0, 0, 0, 100, 'healthy'], [.35, .35, .2, .1, 73, 'warning']])('deri
   expect(result).toMatchObject({ health_score: score, status });
   expect(result?.checks.some(c => c.status === 'critical')).toBe(true);
 });
+
+it.each([
+  [{ name: 'Oracle 检查', status: 'critical', score: 0 }],
+  [{ name: '连接状态', status: 'critical', score: 0 }],
+])('keeps failed or unavailable health checks at zero regardless of weights: %j', async (check) => {
+  vi.spyOn(databaseService as any, '_withAutoReconnect').mockImplementation(async (_id: any, fn: any) => fn({ id: 21, db_type: 'oracle', oraclePool: {} }));
+  vi.spyOn(databaseService as any, 'checkOracleHealth').mockResolvedValue({ health_score: 0, status: 'critical', checks: [check] });
+  vi.spyOn(scoringConfigService, 'getWeights').mockResolvedValue({ availability: 0, performance: 1, capacity: 0, security: 0 });
+  await expect(databaseService.checkHealth(21)).resolves.toMatchObject({ health_score: 0, status: 'critical' });
+});

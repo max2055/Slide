@@ -49,6 +49,7 @@ beforeEach(() => {
 
 describe('network-device routes', () => {
   it.each([
+    'SSH_CREDENTIAL_READ_FAILED', 'CONFIG_BACKUP_VENDOR_UNSUPPORTED',
     'SSH_TARGET_DENIED', 'SSH_CONNECT_FAILED', 'SSH_COMMAND_FAILED', 'SSH_COMMAND_TIMEOUT',
     'CONFIG_OUTPUT_LIMIT', 'CONFIG_EMPTY', 'CONFIG_BACKUP_STORE_UNAVAILABLE', 'CONFIG_BACKUP_FAILED',
   ])('preserves the public backup failure through HTTP security: %s', async (error) => {
