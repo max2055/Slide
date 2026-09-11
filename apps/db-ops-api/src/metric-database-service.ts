@@ -45,9 +45,10 @@ class MetricDatabaseService {
   /**
    * 获取所有指标定义
    */
-  async getAllMetrics(): Promise<MetricDefinitionRow[]> {
+  async getAllMetrics(strict = false): Promise<MetricDefinitionRow[]> {
     const pool = this.getPool();
     if (!pool) {
+      if (strict) throw new Error('METRIC_STORE_UNAVAILABLE');
       return [];
     }
 
@@ -57,6 +58,7 @@ class MetricDatabaseService {
       ) as any;
       return rows as MetricDefinitionRow[];
     } catch (error) {
+      if (strict) throw error;
       console.error('获取指标定义列表失败:', error);
       return [];
     }
@@ -142,7 +144,7 @@ class MetricDatabaseService {
     value_type?: string;
     category?: string;
     target_type?: MetricTargetType;
-  }): Promise<{ success: boolean; error?: string }> {
+  }, builtin = false): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
@@ -152,7 +154,7 @@ class MetricDatabaseService {
       await pool.execute(
         `INSERT INTO metric_definitions
          (id, target_type, name, description, unit, db_types, aggregation, default_interval, is_collected, is_builtin, collection_sqls, compute_expr, value_type, category)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           data.id,
           data.target_type || 'instance',
@@ -163,6 +165,7 @@ class MetricDatabaseService {
           data.aggregation,
           data.default_interval,
           data.is_collected !== undefined ? data.is_collected : true,
+          builtin,
           data.collection_sqls ? JSON.stringify(data.collection_sqls) : null,
           data.compute_expr || null,
           data.value_type || 'gauge',

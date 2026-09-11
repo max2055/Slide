@@ -929,7 +929,7 @@ class DatabaseService {
         SELECT ROUND(SUM(pinhits) / SUM(pins) * 100, 2) as hit_rate
         FROM V$LIBRARYCACHE
       `);
-      const libraryCacheHitRate = libraryCacheResult.rows[0]?.[0] as number || 100;
+      const libraryCacheHitRate = (libraryCacheResult.rows[0]?.[0] as number | null) ?? null;
 
       // PGA 缓存命中率
       const pgaResult = await connection.execute(`
@@ -1876,6 +1876,8 @@ class DatabaseService {
       let tsScore = 100;
       let tsMessage: string;
       if (tablespaceUsage === null) {
+        tsStatus = 'unknown';
+        tsScore = 0;
         tsMessage = '表空间使用率：不可用（DBA 权限不足）';
       } else {
         tsMessage = `表空间使用率：${tablespaceUsage.toFixed(1)}%`;
@@ -1900,22 +1902,25 @@ class DatabaseService {
       });
 
       // 检查库缓存命中率
-      let libraryCacheHitRate = 100;
+      let libraryCacheHitRate: number | null = null;
       try {
         const libraryCacheResult = await conn.oracleConnection.execute(`
           SELECT ROUND(SUM(pinhits) / NULLIF(SUM(pins), 0) * 100, 2) as hit_rate
           FROM V$LIBRARYCACHE
         `);
-        libraryCacheHitRate = libraryCacheResult.rows[0]?.[0] as number || 100;
+        libraryCacheHitRate = (libraryCacheResult.rows[0]?.[0] as number | null) ?? null;
       } catch {
         console.warn(`[OracleHealth] V$LIBRARYCACHE 查询失败，库缓存检查跳过`);
-        libraryCacheHitRate = 100;
+        libraryCacheHitRate = null;
       }
 
       let cacheStatus = 'ok';
       let cacheScore = 100;
-      let cacheMessage = `库缓存命中率：${libraryCacheHitRate.toFixed(2)}%`;
-      if (libraryCacheHitRate < 80) {
+      let cacheMessage = libraryCacheHitRate === null ? '库缓存命中率：不可用' : `库缓存命中率：${libraryCacheHitRate.toFixed(2)}%`;
+      if (libraryCacheHitRate === null) {
+        cacheStatus = 'unknown';
+        cacheScore = 0;
+      } else if (libraryCacheHitRate < 80) {
         cacheStatus = 'critical';
         cacheScore = 40;
         cacheMessage = `库缓存命中率过低：${libraryCacheHitRate.toFixed(2)}%`;
