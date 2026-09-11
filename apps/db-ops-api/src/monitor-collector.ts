@@ -399,7 +399,7 @@ class MonitorCollector {
       }
     } catch (error) {
       console.error(`更新实例 ${instanceId} 健康状态失败:`, error);
-      await instanceDatabaseService.updateHealthStatus(instanceId, 0, 'critical');
+      await instanceDatabaseService.updateHealthStatus(instanceId, 0, 'unknown');
     }
   }
 

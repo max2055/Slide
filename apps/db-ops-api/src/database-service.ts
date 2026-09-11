@@ -1504,8 +1504,9 @@ class DatabaseService {
           const available = scoredChecks.some(check => check.dimension === 'availability' && check.score > 0);
           const score = available ? total : 0;
           healthResult.health_score = score;
-          const incomplete = scoredChecks.some(check => check.status === 'unknown' && check.dimension && weights[check.dimension] > 0);
-          healthResult.status = !available ? 'critical' : incomplete ? 'unknown' : score >= 80 ? 'healthy' : score >= 60 ? 'warning' : 'critical';
+          const incomplete = scoredChecks.some(check => check.status === 'unknown' && (!check.dimension || weights[check.dimension] > 0));
+          const connectionFailed = scoredChecks.some(check => check.dimension === 'availability' && check.status === 'critical' && check.score === 0);
+          healthResult.status = connectionFailed ? 'critical' : !available || incomplete ? 'unknown' : score >= 80 ? 'healthy' : score >= 60 ? 'warning' : 'critical';
           healthResult.dimensions = dimensions;
           healthResult.checks = scoredChecks;
         } catch (error) {
@@ -2007,11 +2008,12 @@ class DatabaseService {
       console.error(`Oracle 健康检查失败：${conn.id}`, error);
       return {
         health_score: 0,
-        status: 'critical',
+        status: 'unknown',
         checks: [
+          ...checks,
           {
             name: 'Oracle 检查',
-            status: 'critical',
+            status: 'unknown',
             score: 0,
             message: `检查失败：${error instanceof Error ? error.message : '未知错误'}`,
           },
@@ -2220,11 +2222,12 @@ class DatabaseService {
       console.error(`达梦数据库健康检查失败：${conn.id}`, error);
       return {
         health_score: 0,
-        status: 'critical',
+        status: 'unknown',
         checks: [
+          ...checks,
           {
             name: '达梦检查',
-            status: 'critical',
+            status: 'unknown',
             score: 0,
             message: `检查失败：${error instanceof Error ? error.message : '未知错误'}`,
           },
