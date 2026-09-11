@@ -56,6 +56,18 @@ describe('database instance host relation form', () => {
     document.body.replaceChildren();
   });
 
+  it('separates unknown instances from confirmed critical instances', async () => {
+    authFetch.mockResolvedValue(response([]));
+    const page = await mountPage();
+    page.instances = [{ ...instance, id: 1, health_status: 'unknown' }, { ...instance, id: 2, health_status: 'critical' }];
+    await settle(page);
+    expect(page.stats).toMatchObject({ unknown: 1, critical: 1 });
+    page.filter = 'critical';
+    expect(page.filteredInstances.map((item: any) => item.id)).toEqual([2]);
+    page.filter = 'unknown';
+    expect(page.filteredInstances.map((item: any) => item.id)).toEqual([1]);
+  });
+
   it('retries only the host PUT after a created instance relation save fails', async () => {
     let relationWrites = 0;
     const mutationOrder: string[] = [];
