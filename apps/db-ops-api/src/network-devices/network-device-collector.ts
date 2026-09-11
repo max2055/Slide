@@ -167,7 +167,8 @@ export class NetworkDeviceCollector {
           const lastProbe = this.lastProbeAttempt.get(target.id);
           // Probe before reading schedules, so store failures cannot freeze reachability.
           if (lastProbe === undefined || now - lastProbe >= 60_000) {
-            await this.collectDevice(target.id, []);
+            const probe = await this.collectDevice(target.id, []);
+            if (!probe.success) continue;
           }
           const dueMetricIds = await dueStoredMetricIds(this.scheduleStore, 'network_device', target.id, NETWORK_DEVICE_PROVIDER_ID, definitions, now);
           if (dueMetricIds.length === 0) continue;

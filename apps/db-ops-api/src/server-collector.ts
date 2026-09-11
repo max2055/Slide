@@ -129,6 +129,7 @@ class ServerCollector {
   private collectionTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private tickInFlight = false;
+  private readonly protocolOnline = new Set<number>();
   private readonly lastProbeAttempt = new Map<number, number>();
   private failureCounts: Map<number, number> = new Map();
   private inFlight = new Set<number>();
@@ -161,6 +162,7 @@ class ServerCollector {
     sshSessionPool.closeAll();
     this.failureCounts.clear();
     this.lastProbeAttempt.clear();
+    this.protocolOnline.clear();
     console.log('[ServerCollector] stopped');
   }
 
@@ -170,10 +172,12 @@ class ServerCollector {
     }
     if (this.inFlight.has(serverId)) return failedResult(new Error('COLLECTION_IN_PROGRESS'));
     this.inFlight.add(serverId);
+    this.protocolOnline.delete(serverId);
+    this.lastProbeAttempt.set(serverId, Date.now());
     try {
       const server = await serverDatabaseService.getServerById(serverId);
       if (!server) return failedResult(new Error('SERVER_NOT_FOUND'));
-      if (!isSupportedServerOs(server.os_type)) return failedResult(new Error('HOST_OS_UNSUPPORTED'));
+      if (requestedMetricIds?.length !== 0 && !isSupportedServerOs(server.os_type)) return failedResult(new Error('HOST_OS_UNSUPPORTED'));
       const metricIds = requestedMetricIds ?? this.getSchedulableDefinitions(server.os_type).map((definition) => definition.id);
       this.lastProbeAttempt.set(serverId, Date.now());
       const result = await this._collectOneServer(server, metricIds);
@@ -200,14 +204,20 @@ class ServerCollector {
     try {
       const servers = await serverDatabaseService.getCollectionEnabledServers();
       const activeIds = new Set(servers.map(server => server.id));
-      for (const id of this.lastProbeAttempt.keys()) if (!activeIds.has(id)) this.lastProbeAttempt.delete(id);
+      for (const id of this.lastProbeAttempt.keys()) if (!activeIds.has(id)) {
+        this.lastProbeAttempt.delete(id);
+        this.protocolOnline.delete(id);
+      }
       for (const server of servers) {
         try {
           const now = Date.now();
           const lastProbe = this.lastProbeAttempt.get(server.id);
           if (lastProbe === undefined || now - lastProbe >= 60_000) {
             const probe = await this.collectServer(server.id, []);
-            if (!probe.success && probe.error !== 'COLLECTION_IN_PROGRESS') await this.recordFailure(server.id, probe);
+            if (!probe.success) {
+              if (probe.error !== 'COLLECTION_IN_PROGRESS') await this.recordFailure(server.id, probe);
+              continue;
+            }
           }
           const definitions = this.getSchedulableDefinitions(server.os_type);
           const dueMetricIds = await dueStoredMetricIds(this.scheduleStore, 'server', server.id, SERVER_PROVIDER_ID, definitions, now);
@@ -230,6 +240,7 @@ class ServerCollector {
   }
 
   private async recordFailure(serverId: number, _result: ServerCollectionResult): Promise<void> {
+    if (this.protocolOnline.has(serverId)) return;
     const failures = (this.failureCounts.get(serverId) || 0) + 1;
     this.failureCounts.set(serverId, failures);
     if (failures >= this.config.maxFailuresBeforeUnreachable) {
@@ -253,7 +264,7 @@ class ServerCollector {
   private async _collectOneServer(server: ServerRow, requestedMetricIds: readonly string[]): Promise<ServerCollectionResult> {
     // Validate the configured profile before decrypting credentials or opening
     // a network connection. Unknown labels never fall through to generic Linux.
-    if (!isSupportedServerOs(server.os_type)) {
+    if (requestedMetricIds.length > 0 && !isSupportedServerOs(server.os_type)) {
       throw new Error('HOST_OS_UNSUPPORTED');
     }
     const canonicalOs = normalizeServerOs(server.os_type)!;
@@ -293,15 +304,17 @@ class ServerCollector {
         server.host_key_fingerprint,
       );
 
+      this.protocolOnline.add(server.id);
+      this.failureCounts.delete(server.id);
+      await serverDatabaseService.updateServerStatus(server.id, 'online');
+      if (requestedMetricIds.length === 0) {
+        return { success: true, metricsCount: 0, succeededMetricIds: [], collectedAt: new Date().toISOString() };
+      }
       const osResult = (await execute(['LC_ALL=C LANG=C uname -s']))[0];
       if (!osResult || osResult.exitCode !== 0 || osResult.stdout.trim() !== 'Linux') {
         throw new Error('HOST_OS_UNSUPPORTED');
       }
 
-      if (requestedMetricIds.length === 0) {
-        await serverDatabaseService.updateServerStatus(server.id, 'online');
-        return { success: true, metricsCount: 0, succeededMetricIds: [], collectedAt: new Date().toISOString() };
-      }
       const requested = new Set(requestedMetricIds);
       const collectFilesystem = requestedMetricIds.some((metricId) => FILESYSTEM_METRIC_IDS.has(metricId));
       const batches = serverMetricProvider.getCollectionBatches(canonicalOs)
