@@ -184,18 +184,18 @@ class MonitorCollector {
         if (inst.status !== 'active') continue;
 
         try {
-        // Health has its own cadence, including engines with no due metrics.
-        const lastHealth = this.lastHealthAttempt.get(inst.id);
-        if (lastHealth === undefined || now - lastHealth >= this.healthIntervalMs) {
-          this.lastHealthAttempt.set(inst.id, now);
-          await this.collectInstanceMetrics(inst, []);
-        }
-        const definitions = metricRegistry.getByDbType(inst.db_type)
-          .filter((metric) => metric.is_collected && metric.id !== 'health_score');
-        const dueIds = await dueStoredMetricIds(this.scheduleStore, 'instance', inst.id, 'unified', definitions, now);
-        const due = definitions.filter((metric) => dueIds.includes(metric.id));
-        if (due.length === 0) continue;
-        await this.collectAndRecord(inst, due, false);
+          // Health has its own cadence, including engines with no due metrics.
+          const lastHealth = this.lastHealthAttempt.get(inst.id);
+          if (lastHealth === undefined || now - lastHealth >= this.healthIntervalMs) {
+            this.lastHealthAttempt.set(inst.id, now);
+            await this.collectInstanceMetrics(inst, []);
+          }
+          const definitions = metricRegistry.getByDbType(inst.db_type)
+            .filter((metric) => metric.is_collected && metric.id !== 'health_score');
+          const dueIds = await dueStoredMetricIds(this.scheduleStore, 'instance', inst.id, 'unified', definitions, now);
+          const due = definitions.filter((metric) => dueIds.includes(metric.id));
+          if (due.length === 0) continue;
+          await this.collectAndRecord(inst, due, false);
         } catch (error) {
           console.error(`实例 #${inst.id} 采集 tick 失败:`, error);
         }

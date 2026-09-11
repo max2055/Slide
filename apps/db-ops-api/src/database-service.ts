@@ -1498,8 +1498,12 @@ class DatabaseService {
         try {
           const weights = await scoringConfigService.getWeights();
           const { dimensions, total, checks: scoredChecks } = calculateDimensionScores(healthResult.checks, conn.db_type, weights);
-          healthResult.health_score = total;
-          healthResult.status = total >= 80 ? 'healthy' : total >= 60 ? 'warning' : 'critical';
+          // No successful connectivity observation means no evidence for a
+          // weighted health score, even when availability has zero weight.
+          const available = scoredChecks.some(check => check.dimension === 'availability' && check.score > 0);
+          const score = available ? total : 0;
+          healthResult.health_score = score;
+          healthResult.status = score >= 80 ? 'healthy' : score >= 60 ? 'warning' : 'critical';
           healthResult.dimensions = dimensions;
           healthResult.checks = scoredChecks;
         } catch (error) {
