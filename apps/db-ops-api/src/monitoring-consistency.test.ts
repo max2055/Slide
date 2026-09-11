@@ -72,3 +72,10 @@ it('does not infer a reboot from another device with a lower uptime', async () =
   const second = await adapter.collectSystemMetrics({ host: '192.0.2.2' } as any, undefined, ['device_uptime_seconds']);
   expect(second[0].reason).not.toBe('device_rebooted');
 });
+it.each([0, null])('keeps Oracle realtime cache value %s without converting missing to zero or zero to 100', async value => {
+  const execute = async (sql: string) => ({ rows: sql.includes('hit_rate') || sql.includes('SUM(DECODE') ? [[value]] : [[1]] });
+  const result = await (databaseService as any).getOracleMetrics({ oracleConnection: { execute, callTimeout: 0 } }, 1);
+  for (const metric of ['library_cache_hit_rate', 'pga_cache_hit_rate', 'shared_pool_hit_rate']) {
+    expect(result[metric]).toBe(value);
+  }
+});
