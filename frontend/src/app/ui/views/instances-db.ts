@@ -476,7 +476,7 @@ export class InstancesPage extends LitElement {
   @state() private loading = true;
   @state() private refreshing = false;
   @state() private error: string | null = null;
-  @state() private filter: "all" | "healthy" | "warning" | "critical" = "all";
+  @state() private filter: "all" | "healthy" | "warning" | "critical" | "unknown" = "all";
   @state() private searchQuery = "";
   @state() private sortKey: string = "";
   @state() private sortDir: "asc" | "desc" = "asc";
@@ -568,7 +568,8 @@ export class InstancesPage extends LitElement {
       const matchesFilter = this.filter === "all" ||
         (this.filter === "healthy" && status === "healthy") ||
         (this.filter === "warning" && status === "warning") ||
-        (this.filter === "critical" && (status === "critical" || status === "unknown"));
+        (this.filter === "critical" && status === "critical") ||
+        (this.filter === "unknown" && status === "unknown");
       const matchesSearch = !this.searchQuery ||
         inst.name.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
         inst.host.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
@@ -607,7 +608,8 @@ export class InstancesPage extends LitElement {
       total: this.instances.length,
       healthy: this.instances.filter(i => i.health_status === "healthy").length,
       warning: this.instances.filter(i => i.health_status === "warning").length,
-      critical: this.instances.filter(i => i.health_status === "critical" || i.health_status === "unknown").length,
+      critical: this.instances.filter(i => i.health_status === "critical").length,
+      unknown: this.instances.filter(i => !i.health_status || i.health_status === "unknown").length,
     };
   }
 
@@ -662,6 +664,9 @@ export class InstancesPage extends LitElement {
               <button class="filter-btn ${this.filter === "critical" ? "active" : ""}" @click=${() => (this.filter = "critical")}>
                 <span class="status-dot status-dot-danger"></span> 异常 (${this.stats.critical})
               </button>
+              <button class="filter-btn ${this.filter === "unknown" ? "active" : ""}" @click=${() => (this.filter = "unknown")}>
+                未知 (${this.stats.unknown})
+              </button>
             </div>
             <div class="toolbar-actions">
               ${this.activeFilterCount > 0
@@ -704,7 +709,7 @@ export class InstancesPage extends LitElement {
                         <th class="sortable" @click=${() => this._toggleSort('db_version')}>版本 ${this._sortArrow('db_version')}</th>
                         <th class="sortable" style="width: 72px; text-align:center;" @click=${() => this._toggleSort('data_size_gb')}>容量 ${this._sortArrow('data_size_gb')}</th>
                         <th class="sortable" style="width: 170px; text-align:center;" @click=${() => this._toggleSort('addr')}>连接地址 ${this._sortArrow('addr')}</th>
-                        <th class="sortable" style="width: 72px; text-align:center;" @click=${() => this._toggleSort('health_status')}>状态 ${this._sortArrow('health_status')}</th>
+                        <th class="sortable" style="width: 72px; text-align:center;" @click=${() => this._toggleSort('health_status')}>健康状态 ${this._sortArrow('health_status')}</th>
                         <th class="sortable" style="width: 56px; text-align:center;" @click=${() => this._toggleSort('health_score')}>健康分 ${this._sortArrow('health_score')}</th>
                         <th style="width: 180px; text-align:center;">操作</th>
                       </tr>

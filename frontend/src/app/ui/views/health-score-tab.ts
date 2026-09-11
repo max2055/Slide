@@ -6,6 +6,7 @@ import { authFetch } from "../../../api/index.js";
 import { resolveHealthScoreState, type HealthScoreInstanceState } from "./health-score-state.js";
 
 interface HealthHistory {
+  status?: string;
   health_score: number;
   created_at: string;
 }
@@ -19,11 +20,13 @@ interface HealthCheck {
 }
 
 interface HealthChecksResponse {
+  created_at?: string;
   checks: HealthCheck[];
   status: string;
 }
 
 interface HealthScoreInstance extends HealthScoreInstanceState {
+  last_health_check_at?: string;
   health_score?: number | null;
 }
 
@@ -48,6 +51,8 @@ export class HealthScoreTab extends LitElement {
 
   @state() private healthHistory: HealthHistory[] | null = null;
   @state() private latestChecks: HealthCheck[] = [];
+  @state() private latestChecksAt: string | null = null;
+  @state() private latestChecksStatus = "unknown";
   @state() private healthStatus: string = "unknown";
   @state() private instanceState: HealthScoreInstance | null = null;
   @state() private capabilities: CollectionCapability[] = [];
@@ -324,6 +329,8 @@ export class HealthScoreTab extends LitElement {
     // Never let a refresh render evidence from the previous instance state.
     this.healthHistory = null;
     this.latestChecks = [];
+    this.latestChecksAt = null;
+    this.latestChecksStatus = "unknown";
     this.healthStatus = "unknown";
     this.instanceState = null;
     this.capabilities = [];
@@ -354,6 +361,8 @@ export class HealthScoreTab extends LitElement {
         const data: HealthChecksResponse = await checksRes.json();
         if (requestVersion !== this.loadRequestVersion) return;
         this.latestChecks = Array.isArray(data?.checks) ? data.checks : [];
+        this.latestChecksAt = data?.created_at ?? null;
+        this.latestChecksStatus = data?.status ?? "unknown";
         this.healthStatus = typeof data?.status === "string" ? data.status : "unknown";
       }
       if (instanceRes.ok) {
@@ -527,7 +536,7 @@ export class HealthScoreTab extends LitElement {
       return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
     });
 
-    const totalScores = this.healthHistory.map((h) => h.health_score);
+    const totalScores = this.healthHistory.map((h) => h.status === "unknown" ? null : h.health_score);
 
     return html`
       <metric-chart
@@ -544,6 +553,11 @@ export class HealthScoreTab extends LitElement {
 
   private _renderCheckDetails() {
     const scoreAvailable = this._getLatestScore() !== null;
+    const checksAt = Date.parse(this.latestChecksAt ?? '');
+    const instanceAt = Date.parse(this.instanceState?.last_health_check_at ?? '');
+    const freshIncomplete = this.instanceState?.hasCredential === true
+      && this.latestChecksStatus === 'unknown' && this.healthStatus === 'unknown'
+      && Number.isFinite(checksAt) && Number.isFinite(instanceAt) && Math.abs(checksAt - instanceAt) <= 2000;
     return html`
       <button
         class="collapsible-toggle ${this.expandedChecks ? "expanded" : ""}"
@@ -555,7 +569,7 @@ export class HealthScoreTab extends LitElement {
 
       ${this.expandedChecks ? html`
         <div class="collapsible-content">
-          ${!scoreAvailable || this.latestChecks.length === 0 ? html`
+          ${(!scoreAvailable && !freshIncomplete) || this.latestChecks.length === 0 ? html`
             <div style="padding: var(--space-xl); text-align: center; color: var(--muted);">
               暂无健康检查数据
             </div>
@@ -565,7 +579,7 @@ export class HealthScoreTab extends LitElement {
                 ${this._getStatusIcon(check.status)}
               </div>
               <span class="check-name">${check.name}</span>
-              <span class="check-score ${this._getScoreBadgeClass(check.score)}">${check.score}</span>
+              <span class="check-score ${check.status === 'unknown' ? '' : this._getScoreBadgeClass(check.score)}">${check.status === 'unknown' ? '未知' : check.score}</span>
               <span class="check-dimension">${this._getDimensionLabel(check.dimension)}</span>
             </div>
             ${check.message ? html`
