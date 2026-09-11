@@ -83,12 +83,12 @@ export class AppCard extends LitElement {
         }
         .card-footer.empty { display: none; }
       </style>
-      <div class="card card--${this.variant}${this.compact ? " card--compact" : ""}">
-        <div class="card-header">
+      <div class="card card--${this.variant}${this.compact ? " card--compact" : ""}" part="root">
+        <div class="card-header" part="header">
           <slot name="header" @slotchange=${this._onHeaderSlotChange}></slot>
         </div>
-        <div class="card-body"><slot></slot></div>
-        <div class="card-footer">
+        <div class="card-body" part="body"><slot></slot></div>
+        <div class="card-footer" part="footer">
           <slot name="footer" @slotchange=${this._onFooterSlotChange}></slot>
         </div>
       </div>

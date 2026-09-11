@@ -129,3 +129,44 @@ describe('failure and truncation regressions', () => {
     expect(dashboard.shadowRoot.querySelector('a[href="/servers"]')).toBeNull();
   });
 });
+
+describe('compact overview selection', () => {
+  it('clears a selected risk when a refreshed snapshot or engine filter hides it', async () => {
+    const dashboard = document.createElement('dashboard-page') as any;
+    dashboard.selectedRisk = 'server:1';
+    dashboard.resourceOverview = { items: [item({ status: 'offline' })] };
+    dashboard.normalizeSelection(); expect(dashboard.selectedRisk).toBe('server:1');
+    authFetch.mockResolvedValue({ ok: true, json: async () => ({ items: [item()] }) });
+    await dashboard.loadDashboardData();
+    expect(dashboard.selectedRisk).toBe(''); expect(location.search).not.toContain('risk=');
+    dashboard.resourceScope = 'instance'; dashboard.engine = 'postgresql'; dashboard.selectedRisk = 'instance:1';
+    dashboard.resourceOverview = { items: [item({ resource: { type: 'instance', id: 1 }, status: 'offline', attributes: { dbType: 'mysql' } })] };
+    dashboard.normalizeSelection(); expect(dashboard.selectedRisk).toBe('');
+  });
+  it('uses semantic KPI variants only for known nonzero risk and reflects detail selection', async () => {
+    authFetch.mockResolvedValue({ ok: true, json: async () => ({ items: [item({ status: 'offline', freshness: 'stale', unresolvedAlerts: 1, alertIds: ['1'] })] }) });
+    const dashboard = document.createElement('dashboard-page') as any;
+    document.body.append(dashboard); await new Promise(done => setTimeout(done, 0)); await dashboard.updateComplete;
+    const cards = dashboard.shadowRoot.querySelectorAll('stat-card');
+    expect([...cards].map((card: any) => card.variant)).toEqual([undefined, 'danger', 'warn', 'warn']);
+    cards[2].click(); await dashboard.updateComplete;
+    expect(cards[2].getAttribute('aria-pressed')).toBe('true');
+    dashboard.resourceOverview = { items: [item({ gaps: ['ALERTS_UNAVAILABLE'] })] }; await dashboard.updateComplete;
+    expect(cards[2].variant).toBeUndefined(); expect(cards[2].value).toBe('—');
+  });
+});
+
+
+describe('capacity total scope', () => {
+  it('uses all filtered instance IDs by default and preserves explicit instance selection', async () => {
+    const dashboard = document.createElement('dashboard-page') as any;
+    dashboard.resourceScope = 'instance';
+    dashboard.resourceOverview = { items: [1, 2].map(id => item({ resource: { type: 'instance', id }, label: `db-${id}` })) };
+    authFetch.mockResolvedValue({ ok: true, json: async () => ({ trend: [] }) });
+    dashboard.normalizeSelection(); expect(dashboard.selectedInstanceId).toBeNull();
+    await dashboard.loadTrend(); expect(authFetch.mock.lastCall?.[0]).toContain('instance_ids=1%2C2');
+    dashboard.search = 'db-2'; await dashboard.loadTrend(); expect(authFetch.mock.lastCall?.[0]).toContain('instance_ids=2');
+    dashboard.selectedInstanceId = 2; await dashboard.loadTrend(); expect(authFetch.mock.lastCall?.[0]).toContain('instance_id=2');
+    dashboard.search = 'absent'; dashboard.normalizeSelection(); authFetch.mockClear(); await dashboard.loadTrend(); expect(authFetch).not.toHaveBeenCalled();
+  });
+});

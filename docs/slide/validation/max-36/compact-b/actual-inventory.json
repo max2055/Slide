@@ -1,0 +1,15 @@
+{
+  "snapshotStatus": 200,
+  "collectedAt": "2026-09-11T06:23:39.555Z",
+  "counts": {
+    "instance": 5,
+    "server": 1,
+    "network_device": 0
+  },
+  "styles": {
+    "accent": "#6366f1",
+    "theme": "light",
+    "mode": "light"
+  },
+  "automaticAnalysisPosts": 0
+}

@@ -1,0 +1,34 @@
+{
+  "snapshotStatus": 200,
+  "collectedAt": "2026-09-11T06:49:23.346Z",
+  "counts": {
+    "instance": 5,
+    "server": 1,
+    "network_device": 0
+  },
+  "styles": {
+    "accent": "#6366f1",
+    "theme": "light",
+    "mode": "light"
+  },
+  "capacity": {
+    "scope": [
+      1,
+      7,
+      2,
+      8,
+      6
+    ],
+    "points": 16,
+    "last": {
+      "time": "2026-09-10 16:00:00",
+      "total_size_gb": 0.63,
+      "observed_at": "2026-09-10T16:51:27.000Z",
+      "instance_count": 1
+    },
+    "matchesSumOfSingleInstances": true,
+    "invalidScopeStatus": 400,
+    "conflictingScopeStatus": 400
+  },
+  "automaticAnalysisPosts": 0
+}
