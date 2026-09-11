@@ -80,6 +80,17 @@ export async function registerResourceRoutes(
     }
   });
 
+  fastify.get('/api/resources/:type/:id/analyses/:analysisId', { preHandler }, async (request, reply) => {
+    const params = request.params as Record<string, unknown>;
+    const ref = parseRef(params);
+    const analysisId = typeof params.analysisId === 'string' && /^[1-9]\d*$/.test(params.analysisId) ? Number(params.analysisId) : NaN;
+    if (!ref || !Number.isSafeInteger(analysisId)) return reply.code(400).send({ error: 'ANALYSIS_ID_INVALID' });
+    const currentActor = actor(request);
+    if (!currentActor.permissions.some(permission => ['*', 'ai:*', 'ai:view'].includes(permission))) return reply.code(403).send({ error: 'AI_RESULT_FORBIDDEN' });
+    try { return reply.send(await agentDiagnosis.result(currentActor, ref, analysisId)); }
+    catch (error) { return reply.code(errorStatus(error)).send({ error: errorStatus(error) === 500 ? 'ANALYSIS_READ_FAILED' : (error as Error).message }); }
+  });
+
   fastify.post('/api/resources/:type/:id/diagnose-agent', { preHandler }, async (request, reply) => {
     const ref = parseRef(request.params as Record<string, unknown>);
     if (!ref) return reply.code(400).send({ error: 'RESOURCE_REF_INVALID' });

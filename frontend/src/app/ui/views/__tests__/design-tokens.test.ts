@@ -70,7 +70,8 @@ describe('UI-01: Design tokens are theme-independent', () => {
 describe('UI-01: Migrated pages use design tokens', () => {
   for (const page of MIGRATED_PAGES) {
     it(`${page} uses var(--text-*) or var(--space-*)`, () => {
-      const content = readFileSync(`${VIEWS_DIR}/${page}`, 'utf8');
+      const content = readFileSync(`${VIEWS_DIR}/${page}`, 'utf8')
+        + (page === 'dashboard.ts' ? readFileSync(`${VIEWS_DIR}/dashboard-styles.ts`, 'utf8') : '');
       const usesTextTokens = /var\(--text-(?:xs|sm|base|md|lg|xl|2xl)\)/.test(content);
       const usesSpaceTokens = /var\(--space-(?:xs|sm|md|lg|xl)\)/.test(content);
       expect(usesTextTokens || usesSpaceTokens).toBe(true);

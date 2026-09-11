@@ -41,6 +41,8 @@ export interface RelatedResourceEvidence {
 }
 
 export interface ResourceListResult {
+  truncated?: boolean;
+  unavailableTypes?: ResourceType[];
   items: ResourceDetail[];
   collectedAt: string;
   dataQuality: 'complete' | 'partial' | 'empty';
@@ -52,6 +54,11 @@ export interface ResourceOverviewItem {
   resource: ResourceRef;
   label: string;
   status: string;
+  attributes?: Record<string, unknown>;
+  observations?: Observation[];
+  alertIds?: string[];
+  alertSeverity?: string;
+  alertsTruncated?: boolean;
   quality: Observation['quality'] | 'partial';
   freshness: ResourceFreshness;
   observedAt: string | null;
@@ -62,6 +69,9 @@ export interface ResourceOverviewItem {
 }
 
 export interface ResourceOverviewResult {
+  unavailableTypes?: ResourceType[];
+  truncated?: boolean;
+  limit?: number;
   schemaVersion: 1;
   collectedAt: string;
   dataQuality: 'complete' | 'partial' | 'empty';
@@ -232,11 +242,14 @@ export class ResourceDiagnosticService {
   ) {}
 
   async listResources(actor: ActorContext): Promise<ResourceListResult> {
-    const items = (await this.dependencies.list(actor)).slice(0, MAX_LIST_ITEMS);
+    const inventory = await this.dependencies.list(actor) as ResourceDetail[] & { unavailableTypes?: ResourceType[] };
+    const items = inventory.slice(0, MAX_LIST_ITEMS);
     return {
       items,
+      truncated: inventory.length >= MAX_LIST_ITEMS,
+      unavailableTypes: inventory.unavailableTypes ?? [],
       collectedAt: new Date().toISOString(),
-      dataQuality: items.length ? 'complete' : 'empty',
+      dataQuality: inventory.unavailableTypes?.length || inventory.length >= MAX_LIST_ITEMS ? 'partial' : items.length ? 'complete' : 'empty',
     };
   }
 
@@ -247,7 +260,8 @@ export class ResourceDiagnosticService {
    * the resource appear healthy or hiding the rest of the inventory.
    */
   async overview(actor: ActorContext, now = new Date()): Promise<ResourceOverviewResult> {
-    const resources = (await this.dependencies.list(actor)).slice(0, MAX_LIST_ITEMS);
+    const inventory = await this.dependencies.list(actor) as ResourceDetail[] & { unavailableTypes?: ResourceType[] };
+    const resources = [...new Map(inventory.filter(item => canReadResource(actor, item.resource)).map(item => [`${item.resource.type}:${item.resource.id}`, item])).values()].slice(0, MAX_LIST_ITEMS);
     const items = await mapWithConcurrency(resources, OVERVIEW_CONCURRENCY, async (resource) => {
       const gaps: string[] = [];
       const [observationResult, alertResult, relationResult] = await Promise.all([
@@ -287,13 +301,16 @@ export class ResourceDiagnosticService {
           : observationResult.value.some((entry) => entry.quality === 'unknown' || entry.value === null)
             ? 'partial' as const
             : 'good' as const;
-      const unresolvedAlerts = alertResult.value.filter((alert) => {
-        const status = String(alert.status ?? alert.state ?? '').toLowerCase();
-        return !['resolved', 'closed', 'recovered', 'cleared'].includes(status);
-      }).length;
+      const activeAlerts = [...new Map([...alertResult.value].reverse().filter(activeAlert).map((alert, index) => [String(alert.id ?? `${resource.resource.type}:${resource.resource.id}:unknown:${index}`), alert])).values()];
+      const unresolvedAlerts = activeAlerts.length;
+      if (alertResult.value.length >= MAX_ALERTS) gaps.push('ALERTS_TRUNCATED');
+      if (observationResult.value.length >= 32) gaps.push('OBSERVATIONS_TRUNCATED');
+      const severityOrder = ['critical', 'error', 'warning', 'warn', 'info'];
+      const alertSeverity = activeAlerts.map(alert => String(alert.level ?? alert.severity ?? 'info').toLowerCase()).sort((a, b) => (severityOrder.indexOf(a) < 0 ? 9 : severityOrder.indexOf(a)) - (severityOrder.indexOf(b) < 0 ? 9 : severityOrder.indexOf(b)))[0];
       const impactScope = relationResult.value
         .map((relation) => relation.source.type === resource.resource.type && relation.source.id === resource.resource.id
           ? relation.target : relation.source)
+        .filter((candidate) => canReadResource(actor, candidate))
         .filter((candidate) => !(candidate.type === resource.resource.type && candidate.id === resource.resource.id))
         .filter((candidate, index, all) => all.findIndex((item) => item.type === candidate.type && item.id === candidate.id) === index)
         .slice(0, 64);
@@ -301,7 +318,12 @@ export class ResourceDiagnosticService {
       return {
         resource: resource.resource,
         label: resource.label,
-        status: resource.status || 'unknown',
+        status: resource.resource.type === 'instance' ? String(resource.attributes.healthStatus ?? resource.status ?? 'unknown') : resource.status || 'unknown',
+        attributes: resource.attributes,
+        observations: observationResult.value.slice(0, 32),
+        alertIds: activeAlerts.map((alert, index) => String(alert.id ?? `${resource.resource.type}:${resource.resource.id}:unknown:${index}`)),
+        alertSeverity,
+        alertsTruncated: alertResult.value.length >= MAX_ALERTS,
         quality,
         freshness,
         observedAt,
@@ -318,13 +340,16 @@ export class ResourceDiagnosticService {
       byType[item.resource.type] += 1;
       byStatus[item.status] = (byStatus[item.status] ?? 0) + 1;
     }
-    const unresolvedAlerts = items.reduce((total, item) => total + item.unresolvedAlerts, 0);
+    const unresolvedAlerts = new Set(items.flatMap(item => item.alertIds)).size;
     const impactedResources = new Set(items.flatMap((item) => item.impactScope.map((ref) => `${ref.type}:${ref.id}`))).size;
     const hasGaps = items.some((item) => item.gaps.length > 0);
     return {
       schemaVersion: 1,
       collectedAt: now.toISOString(),
-      dataQuality: items.length === 0 ? 'empty' : hasGaps ? 'partial' : 'complete',
+      dataQuality: inventory.unavailableTypes?.length || hasGaps || inventory.length >= MAX_LIST_ITEMS ? 'partial' : items.length === 0 ? 'empty' : 'complete',
+      unavailableTypes: inventory.unavailableTypes ?? [],
+      truncated: inventory.length >= MAX_LIST_ITEMS,
+      limit: MAX_LIST_ITEMS,
       summary: {
         total: items.length,
         byType,
@@ -540,10 +565,12 @@ export class ResourceDiagnosticService {
 }
 
 async function defaultList(actor: ActorContext): Promise<ResourceDetail[]> {
+  const unavailableTypes: ResourceType[] = [];
+  const failed = (type: ResourceType) => { unavailableTypes.push(type); return []; };
   const [instances, servers, devices] = await Promise.all([
-    instanceDatabaseService.getManagedInstances(),
-    serverDatabaseService.getAllServers(),
-    networkDeviceDatabaseService.getAllDevices(),
+    actor.permissions.includes('*') || actor.permissions.includes('instance:*') || Object.keys(actor.instanceScopes).length ? instanceDatabaseService.getManagedInstances({ strict: true }).catch(() => failed('instance')) : Promise.resolve([]),
+    canReadResource(actor, { type: 'server', id: 1 }) ? serverDatabaseService.getAllServers({ strict: true }).catch(() => failed('server')) : Promise.resolve([]),
+    canReadResource(actor, { type: 'network_device', id: 1 }) ? networkDeviceDatabaseService.getAllDevices().catch(() => failed('network_device')) : Promise.resolve([]),
   ]);
   const result: ResourceDetail[] = [];
   for (const instance of instances) {
@@ -573,7 +600,7 @@ async function defaultList(actor: ActorContext): Promise<ResourceDetail[]> {
       collectionEnabled: Boolean(dto.collection_enabled),
     } });
   }
-  return result.slice(0, MAX_LIST_ITEMS);
+  return Object.assign(result, { unavailableTypes });
 }
 
 async function defaultObservations(ref: ResourceRef, actor: ActorContext, options: { metricIds?: string[]; limit?: number } = {}): Promise<Observation[]> {

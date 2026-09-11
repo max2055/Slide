@@ -37,3 +37,22 @@ describe('ResourceAgentDiagnosisService', () => {
     expect(store.markDispatched).toHaveBeenCalledWith(91, 'resource-diagnosis-network_device-17-91');
   });
 });
+
+describe('resource analysis result authorization', () => {
+  it.each(['instance', 'server', 'network_device'] as const)('reads true status for %s and rejects mismatched subjects and permission snapshots', async type => {
+    let created: any;
+    const service = new ResourceAgentDiagnosisService({
+      evidence: { diagnose: vi.fn(async () => evidence) },
+      analysisStore: {
+        findByCacheKey: vi.fn(async () => null), createAnalysis: vi.fn(async data => { created = data; return { success: true, analysisId: 91 }; }),
+        updateStatus: vi.fn(async () => ({ success: true })), markDispatched: vi.fn(async () => true),
+      }, dispatch: vi.fn(async () => ({ analysisId: 91, cached: false })) as any, now: () => new Date(),
+      readAnalysis: vi.fn(async () => ({ ...created, id: 91, status: 'running', result: null })),
+    });
+    await service.diagnose(actor, { type, id: 17 });
+    await expect(service.result(actor, { type, id: 17 }, 91)).resolves.toMatchObject({ analysisId: 91, status: 'running', result: null });
+    await expect(service.result(actor, { type, id: 18 }, 91)).rejects.toThrow('RESOURCE_NOT_FOUND');
+    await expect(service.result({ ...actor, userId: 2 }, { type, id: 17 }, 91)).rejects.toThrow('RESOURCE_NOT_FOUND');
+    await expect(service.result({ ...actor, permissions: [], instanceScopes: {} }, { type, id: 17 }, 91)).rejects.toThrow('RESOURCE_FORBIDDEN');
+  });
+});

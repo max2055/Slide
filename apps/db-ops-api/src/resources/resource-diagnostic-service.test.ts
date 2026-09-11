@@ -155,3 +155,41 @@ describe('ResourceDiagnosticService', () => {
     expect(result.relatedEvidence[1].gaps).toEqual([]);
   });
 });
+
+describe('overview completeness and alarm identity', () => {
+  it('deduplicates acknowledged unresolved IDs across resources and flags bounded reads', async () => {
+    const deps = dependencies({ alerts: vi.fn(async () => [{ id: 1, status: 'acknowledged', level: 'critical' }, { id: 1, status: 'acknowledged' }, { id: 2, status: 'resolved' }]) });
+    const result = await new ResourceDiagnosticService(deps).overview(actor, new Date('2026-08-26T00:01:00Z'));
+    expect(result.summary.unresolvedAlerts).toBe(1);
+    expect(result.items.every(item => item.unresolvedAlerts === 1 && item.alertIds?.[0] === '1')).toBe(true);
+    expect(result.items[0].alertSeverity).toBe('critical');
+    deps.alerts = vi.fn(async () => Array.from({ length: 100 }, (_, id) => ({ id, status: 'resolved' })));
+    const capped = await new ResourceDiagnosticService(deps).overview(actor);
+    expect(capped.items[0].alertsTruncated).toBe(true);
+    expect(capped.items[0].gaps).toContain('ALERTS_TRUNCATED');
+  });
+  it('exposes inventory truncation, preserves null and zero, and retains collection errors', async () => {
+    const deps = dependencies({
+      list: vi.fn(async () => Array.from({ length: 501 }, (_, id) => detail({ type: 'server', id: id + 1 }))),
+      observations: vi.fn(async ref => { if (ref.id === 1) throw new Error('failed'); return [observation(ref, 'cpu_usage', 0), observation(ref, 'memory_usage', null)]; }),
+    });
+    const result = await new ResourceDiagnosticService(deps).overview(actor);
+    expect(result.truncated).toBe(true); expect(result.items).toHaveLength(500);
+    expect(result.items[0].gaps).toContain('OBSERVATIONS_UNAVAILABLE');
+    expect(result.items[1].observations?.map(metric => metric.value)).toEqual([0, null]);
+  });
+  it('does not include an unauthorized related resource in the impact summary', async () => {
+    const deps = dependencies({ relations: vi.fn(async ref => [{ source: ref, target: { type: 'instance' as const, id: 999 }, relationType: 'depends_on' as const, provenance: 'fixture', validFrom: new Date(0), validUntil: null }]) });
+    const result = await new ResourceDiagnosticService(deps).overview(actor);
+    expect(result.items.every(item => item.impactScope.length === 0)).toBe(true);
+  });
+});
+
+describe('partial inventory', () => {
+  it('distinguishes failed inventory from successfully empty inventory', async () => {
+    const deps = dependencies({ list: vi.fn(async () => Object.assign([], { unavailableTypes: ['server'] })) });
+    const service = new ResourceDiagnosticService(deps);
+    expect(await service.overview(actor)).toMatchObject({ dataQuality: 'partial', unavailableTypes: ['server'], items: [] });
+    expect(await service.listResources(actor)).toMatchObject({ dataQuality: 'partial', unavailableTypes: ['server'], items: [] });
+  });
+});

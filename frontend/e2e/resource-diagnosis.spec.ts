@@ -136,7 +136,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     await recovery.scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath(`resource-recovery-${viewport.width}.png`), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await view.getByRole('button', { name: 'Agent 诊断', exact: true }).click();
+    await view.getByRole('button', { name: '开始只读诊断', exact: true }).click();
     await expect.poll(() => diagnosed).toBe(true);
     await view.getByRole('button', { name: '获取关联证据' }).click();
     await view.getByRole('link', { name: '网络设备 · Edge switch' }).click();

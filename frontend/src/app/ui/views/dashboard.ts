@@ -1,1072 +1,360 @@
-import { LitElement, html, css, nothing } from "lit";
-import { customElement, state } from "lit/decorators.js";
-import "../components/app-card.js";
-import "../components/app-badge.js";
-import "../components/app-empty-state.js";
-import "../components/app-data-table.js";
-import * as echarts from "echarts";
-import type { EChartsType } from "echarts";
-import { icons } from "../../../icons.js";
-import "../../../components/stat-card.js";
-import { authFetch } from "../../../api/index.js";
-import { showToast } from "../components/app-toast-container.js";
-import { I18nController } from "../../i18n/lib/lit-controller.ts";
-import { t } from "../../i18n/index.ts";
+import { LitElement, html, nothing } from 'lit';
+import { live } from 'lit/directives/live.js';
+import { customElement, state } from 'lit/decorators.js';
+import * as echarts from 'echarts';
+import { authFetch } from '../../../api/index.js';
+import { icons } from '../../../icons.js';
+import { t, I18nController } from '../../i18n/index.js';
+import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
+import { permissionMatches } from '../settings-navigation.js';
+import { dashboardStyles } from './dashboard-styles.js';
+import { collectionRisk, compareRisk, freshness, isRisk, latestMetric, metricConfig, resourceKey, resourceTypes, runState, scopedItems, summarize, usableMetric, type Overview, type OverviewItem, type Ref, type ResourceType, type RunState, type Scope } from './dashboard-model.js';
+import '../components/app-card.js';
+import '../components/app-badge.js';
+import '../components/app-data-table.js';
+import '../components/app-empty-state.js';
+import '../components/app-form-field.js';
+import '../../../components/stat-card.js';
+const o = (key: string) => t(`operationsOverview.${key}`);
+const stateVariant = { normal: 'ok', abnormal: 'warn', unavailable: 'danger', unknown: 'muted' };
+type DetailFilter = '' | RunState | 'alerts' | 'collection' | 'fresh' | 'risk' | 'attention';
+interface Capacity { current_total_gb: number | null; trend: Array<{ time: string; total_size_gb: number | null; instance_count?: number }> }
 
-type ResourceType = "instance" | "server" | "network_device";
-interface ResourceOverviewItem {
-  resource: { type: ResourceType; id: number };
-  label: string;
-  status: string;
-  quality: "good" | "degraded" | "invalid" | "unknown" | "partial";
-  freshness: "fresh" | "stale" | "missing";
-  observedAt: string | null;
-  unresolvedAlerts: number;
-  relationCount: number;
-  impactScope: Array<{ type: ResourceType; id: number }>;
-  gaps: string[];
-}
-interface ResourceOverview {
-  schemaVersion: 1;
-  collectedAt: string;
-  dataQuality: "complete" | "partial" | "empty";
-  summary: {
-    total: number;
-    byType: Record<ResourceType, number>;
-    byStatus: Record<string, number>;
-    fresh: number;
-    stale: number;
-    missing: number;
-    unresolvedAlerts: number;
-    impactedResources: number;
-  };
-  items: ResourceOverviewItem[];
-}
-interface ResourceMetricAggregate {
-  value: number | null;
-  resourceCount: number;
-  observedAt: string | null;
-}
-interface ResourceMetricsSummary {
-  schemaVersion: 1;
-  collectedAt: string;
-  dataQuality: "complete" | "partial" | "empty";
-  scopes: Record<ResourceType, { metrics: Record<string, ResourceMetricAggregate> }>;
-}
-
-interface DashboardAiStats {
-  today_total: number;
-  breakdown: Record<string, number>;
-  last_updated?: string;
-}
-
-interface DashboardAlert {
-  id: number;
-  title: string;
-  severity: string;
-  created_at: string;
-}
-
-@customElement("dashboard-page")
+@customElement('dashboard-page')
 export class DashboardPage extends LitElement {
-  static override styles = css`
-    :host {
-      display: block;
-    }
-
-    @keyframes fade-in {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-
-    .dashboard-grid {
-      display: flex;
-      flex-direction: column;
-      gap: var(--space-xl);
-      padding: 0 0 var(--space-xl) 0;
-      animation: fade-in 0.3s ease-out;
-    }
-
-    .dashboard-toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: var(--space-md);
-      flex-wrap: wrap;
-    }
-
-    .scope-switch {
-      display: inline-flex;
-      gap: 2px;
-      padding: 3px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      background: var(--bg-accent);
-    }
-
-    .scope-switch button {
-      border: 0;
-      border-radius: var(--radius-sm);
-      background: transparent;
-      color: var(--muted);
-      padding: 7px 12px;
-      font-size: var(--text-sm);
-      cursor: pointer;
-      transition: background var(--duration-normal) var(--ease-out), color var(--duration-normal) var(--ease-out);
-    }
-
-    .scope-switch button.active {
-      background: var(--card);
-      color: var(--text-strong);
-      box-shadow: var(--shadow-sm);
-    }
-
-    .dashboard-meta { color: var(--muted); font-size: var(--text-sm); display: flex; align-items: center; gap: var(--space-sm); }
-    .dashboard-notice { padding: var(--space-sm) var(--space-md); border: 1px solid var(--warn); border-radius: var(--radius-sm); color: var(--warn); background: var(--warn-subtle); font-size: var(--text-sm); }
-    .dashboard__stat-cards { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-    .dashboard__primary { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, 1fr); gap: var(--space-md); }
-    .dashboard-panel { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); padding: var(--space-lg); box-shadow: var(--shadow-sm); }
-    .dashboard-panel__header { display: flex; justify-content: space-between; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-md); }
-    .dashboard-panel__title { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--text-md); font-weight: 600; color: var(--text-strong); }
-    .health-distribution { display: grid; gap: var(--space-md); }
-    .health-row { display: grid; grid-template-columns: 82px 1fr 40px; gap: var(--space-sm); align-items: center; font-size: var(--text-sm); }
-    .health-track { height: 9px; display: flex; overflow: hidden; border-radius: var(--radius-sm); background: var(--bg-muted); }
-    .health-track span { height: 100%; }
-    .health-track .ok { background: var(--ok); } .health-track .warn { background: var(--warn); } .health-track .danger { background: var(--danger); } .health-track .muted { background: var(--muted); }
-    .health-count { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-strong); }
-    .metric-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-sm); }
-    .metric-row { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-sm); padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-accent); }
-    .metric-row__label { color: var(--muted); font-size: var(--text-sm); }
-    .metric-row__value { color: var(--text-strong); font-weight: 650; font-variant-numeric: tabular-nums; }
-    .metric-row__coverage { display: block; margin-top: 2px; color: var(--muted); font-size: var(--text-xs); }
-
-    /* ---- Stat Cards Grid ---- */
-    .dashboard__stat-cards {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: var(--space-md);
-    }
-
-    /* ---- Charts Grid ---- */
-    .dashboard__charts {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: var(--space-md);
-    }
-
-    .chart-card {
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      background: var(--card);
-      padding: var(--space-lg);
-      box-shadow: var(--shadow-sm);
-    }
-
-    .chart-card__header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: var(--space-sm);
-      margin-bottom: 12px;
-    }
-
-    .chart-card__title {
-      font-size: var(--text-md);
-      font-weight: 600;
-      color: var(--text-strong);
-      display: flex;
-      align-items: center;
-      gap: var(--space-xs);
-    }
-    .chart-card__title svg {
-      width: 16px;
-      height: 16px;
-      opacity: 0.72;
-      flex-shrink: 0;
-    }
-
-    .chart-card__controls {
-      display: flex;
-      align-items: center;
-      gap: var(--space-md);
-    }
-
-    .chart-container {
-      width: 100%;
-      height: 260px;
-    }
-
-    .chart-empty-state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 260px;
-      color: var(--muted);
-      font-size: var(--text-base);
-      gap: var(--space-xs);
-    }
-
-    .chart-current-total {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      font-size: var(--text-sm);
-      color: var(--muted);
-      padding: var(--space-xs) 0 0 0;
-    }
-
-    .chart-current-total .total-badge {
-      display: inline-flex;
-      align-items: center;
-      padding: 2px 10px;
-      background: var(--accent-subtle);
-      border-radius: var(--radius-sm);
-      font-weight: 600;
-      font-size: var(--text-md);
-      color: var(--accent);
-    }
-
-    .chart-current-total strong {
-      font-weight: 600;
-      color: var(--text-strong);
-    }
-
-    /* ---- Time preset buttons ---- */
-    .time-btn {
-      padding: var(--space-xs) var(--space-md);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      background: var(--card);
-      color: var(--muted);
-      font-size: var(--text-sm);
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-
-    .time-btn:hover {
-      border-color: var(--accent);
-      color: var(--accent);
-    }
-
-    .time-btn.active {
-      background: var(--accent-subtle);
-      border-color: var(--accent);
-      color: var(--accent);
-    }
-
-    /* ---- Instance filter dropdown ---- */
-    .instance-select {
-      padding: var(--space-xs) var(--space-sm);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      background: var(--card);
-      color: var(--text);
-      font-size: var(--text-sm);
-      cursor: pointer;
-    }
-
-    /* ---- Date range picker ---- */
-    .date-picker-group {
-      display: flex;
-      align-items: center;
-      gap: var(--space-xs);
-    }
-
-    .date-picker {
-      padding: var(--space-xs) var(--space-sm);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      background: var(--card);
-      color: var(--text);
-      font-size: var(--text-sm);
-      cursor: pointer;
-    }
-
-    .date-separator {
-      font-size: var(--text-sm);
-      color: var(--muted);
-    }
-
-    /* ---- Alert Panel ---- */
-    .dashboard__panels {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: var(--space-md);
-      margin-top: var(--space-sm);
-    }
-
-    .resource-overview-card {
-      display: block;
-    }
-
-    .resource-overview-summary {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: var(--space-sm) var(--space-lg);
-      margin-bottom: var(--space-md);
-      color: var(--muted);
-      font-size: var(--text-sm);
-    }
-
-    .resource-overview-summary span {
-      white-space: nowrap;
-    }
-
-    .resource-overview-table {
-      overflow-x: auto;
-    }
-
-
-    .status-list {
-      display: flex;
-      flex-direction: column;
-      gap: var(--space-sm);
-    }
-
-    .status-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 8px var(--space-md);
-      background: var(--bg-elevated);
-      border-radius: var(--radius-sm);
-      transition: background 0.15s ease;
-      cursor: pointer;
-    }
-
-    .status-item:hover {
-      background: var(--bg-hover);
-    }
-
-    .status-item__left {
-      display: flex;
-      align-items: center;
-      gap: var(--space-md);
-    }
-
-    .status-item__icon {
-      width: 28px;
-      height: 28px;
-      border-radius: var(--radius-sm);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-    .status-item__icon svg {
-      width: 14px;
-      height: 14px;
-      stroke: currentColor;
-      fill: none;
-      stroke-width: 1.5px;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-
-    .status-item__icon.ok {
-      background: var(--ok-subtle);
-      color: var(--ok);
-    }
-
-    .status-item__icon.warn {
-      background: var(--warn-subtle);
-      color: var(--warn);
-    }
-
-    .status-item__icon.danger {
-      background: var(--danger-subtle);
-      color: var(--danger);
-    }
-
-    .status-item__name {
-      font-size: var(--text-base);
-      font-weight: 500;
-      color: var(--text-strong);
-    }
-
-    .status-item__time {
-      font-size: var(--text-sm);
-      color: var(--muted);
-      flex-shrink: 0;
-      min-width: 72px;
-      text-align: right;
-    }
-
-    .status-item__time small {
-      color: var(--muted);
-      font-size: var(--text-xs);
-      white-space: nowrap;
-    }
-
-
-
-    .loading {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 300px;
-      color: var(--muted);
-    }
-
-    /* ---- Responsive Breakpoints ---- */
-    @media (max-width: 1200px) {
-      .dashboard__stat-cards {
-        grid-template-columns: repeat(3, 1fr);
-      }
-      .dashboard__charts {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    @media (max-width: 768px) {
-      .dashboard__stat-cards {
-        grid-template-columns: repeat(2, 1fr);
-      }
-      .dashboard__primary { grid-template-columns: 1fr; }
-    }
-
-    @media (max-width: 480px) {
-      .dashboard__stat-cards,
-      .dashboard__charts,
-      .metric-list {
-        grid-template-columns: 1fr;
-      }
-    }
-  `;
-
-  @state() private dbTypeDistribution: Array<{ name: string; value: number }> = [];
-  @state() private capacityTrend: { current_total_gb: number; trend: Array<{ time: string; total_size_gb: number }> } | null = null;
-  @state() private loading = true;
-  @state() private error: string | null = null;
-  @state() private selectedHours = 168;
+  static override styles = [sharedBtnStyles, dashboardStyles];
+  private readonly _i18n = new I18nController(this);
+  @state() private resourceOverview: Overview | null = null;
+  @state() private resourceScope: Scope = 'all';
+  @state() private search = '';
+  @state() private engine = '';
+  @state() private detailFilter: DetailFilter = '';
+  @state() private detailType: ResourceType | '' = '';
+  @state() private page = 1;
+  @state() private selectedRisk = '';
+  @state() private loading = false;
+  @state() private error = '';
+  @state() private permissions = new Set<string>();
+  @state() private selectedMetric = '';
   @state() private selectedInstanceId: number | null = null;
-  @state() private instances: Array<{ id: number; name: string; db_type: string; health_status?: string | null }> = [];
+  @state() private selectedHours = 168;
+  @state() private customDates = false;
   @state() private startDate = '';
   @state() private endDate = '';
+  @state() private capacityTrend: Capacity | null = null;
   @state() private trendLoading = false;
-  @state() private resourceOverview: ResourceOverview | null = null;
-  @state() private resourceMetrics: ResourceMetricsSummary | null = null;
-  @state() private aiStats: DashboardAiStats | null = null;
-  @state() private recentAlerts: DashboardAlert[] = [];
-  @state() private resourceScope: "all" | ResourceType = "all";
-  @state() private moduleErrors: string[] = [];
+  @state() private trendError = '';
+  @state() private trendTime = '';
+  @state() private backupDevice: number | null = null;
+  @state() private backup: { collectedAt: string; versionNo: number; redactionStatus: string } | null = null;
+  @state() private backupMessage = '';
+  @state() private backupLoading = false;
+  private backupVersion = 0;
+  private overviewVersion = 0;
+  private trendVersion = 0;
+  private trendQuery = '';
+  private trendCache = new Map<string, { data: Capacity; time: string }>();
+  private chart: echarts.EChartsType | null = null;
+  private resize: ResizeObserver | null = null;
+  private trendElement: Element | null = null;
+  private restorePosition = true;
+  private readonly onPopState = () => { this.readUrl(); void this.loadTrend(); };
+  private readonly onPermissions = () => this.readPermissions();
 
-  private readonly _i18n = new I18nController(this);
-
-  // ECharts instances for lifecycle management
-  private _pieChart: EChartsType | null = null;
-  private _pieRO: ResizeObserver | null = null;
-  private _trendChart: EChartsType | null = null;
-  private _trendRO: ResizeObserver | null = null;
-  private _pieContainer: HTMLDivElement | null = null;
-  private _trendContainer: HTMLDivElement | null = null;
-
-  override firstUpdated() {
-    this.loadDashboardData();
+  override connectedCallback() {
+    super.connectedCallback(); this.readPermissions(); this.readUrl();
+    window.addEventListener('popstate', this.onPopState);
+    window.addEventListener('slide-permissions-loaded', this.onPermissions);
+    void this.loadDashboardData();
   }
-
-  override updated(changedProperties: Map<string, unknown>) {
-    const chartStateChanged = changedProperties.has('dbTypeDistribution')
-      || changedProperties.has('capacityTrend')
-      || changedProperties.has('resourceScope')
-      || changedProperties.has('loading');
-    this._syncPieChart(chartStateChanged);
-    this._syncTrendChart(chartStateChanged);
-  }
-
   override disconnectedCallback() {
+    this.overviewVersion++; this.trendVersion++; this.backupVersion++; this.disposeChart();
+    window.removeEventListener('popstate', this.onPopState);
+    window.removeEventListener('slide-permissions-loaded', this.onPermissions);
     super.disconnectedCallback();
-    this._disposePieChart();
-    this._disposeTrendChart();
   }
-
-  private _disposePieChart() {
-    this._pieRO?.disconnect();
-    this._pieChart?.dispose();
-    this._pieChart = null;
-    this._pieRO = null;
-    this._pieContainer = null;
+  private readPermissions() {
+    try { this.permissions = new Set(JSON.parse(localStorage.getItem('permissions') ?? '[]')); } catch { this.permissions = new Set(); }
   }
-
-  private _disposeTrendChart() {
-    this._trendRO?.disconnect();
-    this._trendChart?.dispose();
-    this._trendChart = null;
-    this._trendRO = null;
-    this._trendContainer = null;
+  private readUrl() {
+    const params = new URL(location.href).searchParams;
+    const scope = params.get('scope') ?? 'all';
+    this.resourceScope = ['all', ...resourceTypes].includes(scope) ? scope as Scope : 'all';
+    this.search = (params.get('q') ?? '').slice(0, 200);
+    this.engine = this.resourceScope === 'instance' ? (params.get('engine') ?? '').slice(0, 64) : '';
+    const filter = params.get('state') ?? '';
+    this.detailFilter = ['', 'normal', 'abnormal', 'unavailable', 'unknown', 'alerts', 'collection', 'fresh', 'risk', 'attention'].includes(filter) ? filter as DetailFilter : '';
+    const detailType = params.get('detailType');
+    this.detailType = resourceTypes.includes(detailType as ResourceType) ? detailType as ResourceType : '';
+    const page = Number(params.get('page'));
+    this.page = Number.isSafeInteger(page) && page > 0 ? Math.min(page, 500) : 1;
+    const hours = Number(params.get('hours'));
+    this.selectedHours = [24, 168, 720].includes(hours) ? hours : 168;
+    const id = Number(params.get('capacityInstance'));
+    this.selectedInstanceId = Number.isSafeInteger(id) && id > 0 ? id : null;
+    this.startDate = params.get('start') ?? ''; this.endDate = params.get('end') ?? '';
+    this.customDates = this.validDates();
+    if (!this.customDates) { this.startDate = ''; this.endDate = ''; }
+    this.selectedRisk = params.get('risk') ?? '';
   }
-
-  private _databaseChartsVisible(): boolean {
-    return !this.loading && (this.resourceScope === 'all' || this.resourceScope === 'instance');
-  }
-
-  private _syncPieChart(force = false) {
-    const container = this.renderRoot.querySelector('.pie-chart-container') as HTMLDivElement | null;
-    if (!this._databaseChartsVisible() || !container || this.dbTypeDistribution.length === 0) {
-      this._disposePieChart();
-      return;
+  private saveUrl() {
+    const url = new URL(location.href);
+    for (const [key, value] of Object.entries({ scope: this.resourceScope, q: this.search, engine: this.engine, state: this.detailFilter, detailType: this.detailType, page: this.page > 1 ? String(this.page) : '', hours: String(this.selectedHours), capacityInstance: this.selectedInstanceId ? String(this.selectedInstanceId) : '', start: this.customDates ? this.startDate : '', end: this.customDates ? this.endDate : '', risk: this.selectedRisk })) {
+      if (value) url.searchParams.set(key, value); else url.searchParams.delete(key);
     }
-    if (!force && this._pieChart && this._pieContainer === container) return;
-    this._disposePieChart();
-    const { chart, ro } = this._initPieChart(container, this.dbTypeDistribution);
-    this._pieChart = chart;
-    this._pieRO = ro;
-    this._pieContainer = container;
+    history.replaceState(history.state, '', url);
   }
-
-  private _syncTrendChart(force = false) {
-    const container = this.renderRoot.querySelector('.trend-chart-container') as HTMLDivElement | null;
-    if (!this._databaseChartsVisible() || !container || !this.capacityTrend?.trend.length) {
-      this._disposeTrendChart();
-      return;
-    }
-    if (!force && this._trendChart && this._trendContainer === container) return;
-    this._disposeTrendChart();
-    const times = this.capacityTrend.trend.map((point) => point.time);
-    const values = this.capacityTrend.trend.map((point) => point.total_size_gb);
-    const { chart, ro } = this._initTrendChart(container, { time: times, values });
-    this._trendChart = chart;
-    this._trendRO = ro;
-    this._trendContainer = container;
-  }
-
   private async loadDashboardData() {
-    const errors: string[] = [];
-    const [overviewResult, metricsResult, alertsResult, instancesResult, capacityResult, aiStatsResult] = await Promise.allSettled([
-      authFetch("/api/resources/overview"),
-      authFetch("/api/resources/metrics/summary"),
-      authFetch("/api/alerts"),
-      authFetch("/api/database/instances"),
-      authFetch(`/api/dashboard/capacity-trend?hours=${this.selectedHours}`),
-      authFetch("/api/dashboard/ai-stats"),
-    ]);
-
-    const responseJson = async (result: PromiseSettledResult<Response>) => {
-      if (result.status !== "fulfilled" || !result.value.ok) return null;
-      try {
-        return await result.value.json();
-      } catch {
-        return null;
-      }
-    };
-    const [overview, metrics, alertsData, instances, capacity, aiStats] = await Promise.all([
-      responseJson(overviewResult), responseJson(metricsResult), responseJson(alertsResult),
-      responseJson(instancesResult), responseJson(capacityResult), responseJson(aiStatsResult),
-    ]);
-    if (overview) this.resourceOverview = overview as ResourceOverview;
-    else {
-      this.resourceOverview = null;
-      errors.push(t("dashboard.overviewUnavailable"));
-    }
-    if (metrics) this.resourceMetrics = metrics as ResourceMetricsSummary;
-    else {
-      this.resourceMetrics = null;
-      errors.push(t("dashboard.metricsUnavailable"));
-    }
-    if (alertsData) {
-      const alerts = Array.isArray(alertsData)
-        ? alertsData
-        : alertsData && Array.isArray(alertsData.items) ? alertsData.items : [];
-      this.recentAlerts = alerts
-        .filter((alert: any) => !alert.acknowledged)
-        .slice(0, 3)
-        .map((alert: any) => ({
-          id: Number(alert.id),
-          title: String(alert.title ?? alert.message ?? t('dashboard.unknownAlert')),
-          severity: String(alert.severity ?? alert.level ?? 'info').toLowerCase(),
-          created_at: String(alert.created_at ?? alert.createdAt ?? new Date().toISOString()),
-        }));
-    } else {
-      this.recentAlerts = [];
-      errors.push(t("dashboard.alertsUnavailable"));
-    }
-    if (instances) {
-      const list = instances as Array<{ id: number; name: string; db_type: string; health_status: string | null; last_health_check_at: string | null }>;
-      this.instances = list;
-      const typeMap: Record<string, number> = {};
-      for (const inst of list) typeMap[inst.db_type || "unknown"] = (typeMap[inst.db_type || "unknown"] || 0) + 1;
-      this.dbTypeDistribution = Object.entries(typeMap).map(([name, value]) => ({ name, value }));
-    } else {
-      this.instances = [];
-      this.dbTypeDistribution = [];
-    }
-    if (capacity) this.capacityTrend = capacity;
-    else this.capacityTrend = null;
-    if (aiStats) this.aiStats = aiStats as DashboardAiStats;
-    else {
-      this.aiStats = null;
-      errors.push(t("dashboard.aiUnavailable"));
-    }
-    this.moduleErrors = errors;
-    this.error = !this.resourceOverview && !this.resourceMetrics ? t("dashboard.overviewUnavailable") : null;
-    this.loading = false;
-  }
-
-  private async reloadTrend(opts?: { hours?: number; instanceId?: number | null; startDate?: string; endDate?: string }) {
-    this.trendLoading = true;
+    const version = ++this.overviewVersion;
+    this.loading = true; this.error = '';
     try {
-      const qp = new URLSearchParams();
-
-      if (opts?.startDate && opts?.endDate) {
-        qp.set('start_date', opts.startDate);
-        qp.set('end_date', opts.endDate);
-        this.selectedHours = 0;
-        this.startDate = opts.startDate;
-        this.endDate = opts.endDate;
-      } else {
-        const hours = opts?.hours ?? this.selectedHours;
-        qp.set('hours', String(hours));
-        this.selectedHours = hours;
-        this.startDate = '';
-        this.endDate = '';
+      const response = await authFetch('/api/resources/overview');
+      if (!response.ok) { if (response.status === 403 && version === this.overviewVersion) this.resourceOverview = null; throw new Error(response.status === 403 ? o('permission') : `${o('unavailableData')} (${response.status})`); }
+      const data = await response.json();
+      if (!Array.isArray(data.items)) throw new Error(o('unavailableData'));
+      if (version !== this.overviewVersion) return;
+      for (const item of data.items as OverviewItem[]) {
+        const previous = this.resourceOverview?.items.find(old => resourceKey(old.resource) === resourceKey(item.resource));
+        if (item.gaps.includes('ALERTS_UNAVAILABLE') && previous) {
+          item.unresolvedAlerts = previous.unresolvedAlerts; item.alertIds = previous.alertIds; item.alertSeverity = previous.alertSeverity; item.alertsObservedAt = previous.alertsObservedAt;
+        } else if (!item.gaps.includes('ALERTS_UNAVAILABLE')) item.alertsObservedAt = data.collectedAt;
       }
-
-      const instanceId = opts?.instanceId !== undefined ? opts.instanceId : this.selectedInstanceId;
-      if (instanceId) qp.set('instance_id', String(instanceId));
-
-      const res = await authFetch(`/api/dashboard/capacity-trend?${qp.toString()}`);
-      if (!res.ok) throw new Error(t("dashboard.capacityLoadFailed"));
-      const data = await res.json();
-      this.capacityTrend = data;
-    } catch (err: any) {
-      showToast('Failed to load capacity trend', 'error');
-    } finally {
-      this.trendLoading = false;
-    }
-  }
-
-  private _initPieChart(container: HTMLDivElement, data: Array<{ name: string; value: number }>) {
-    const chart = echarts.init(container, undefined, { renderer: "canvas" });
-    const total = data.reduce((s, d) => s + d.value, 0);
-
-    chart.setOption({
-      tooltip: {
-        trigger: "item",
-        formatter: (params: any) => {
-          const pct = ((params.value / total) * 100).toFixed(1);
-          return `${params.name}<br/>${t("dashboard.instanceCount")}: ${params.value}<br/>${t("dashboard.shareLabel")}: ${pct}%`;
-        },
-      },
-      legend: {
-        orient: "horizontal",
-        left: "center",
-        bottom: 0,
-        itemGap: 16,
-        itemWidth: 8,
-        itemHeight: 8,
-        textStyle: { color: "#777", fontSize: 12 },
-        formatter: (name: string) => {
-          const item = data.find(d => d.name === name);
-          const pct = item ? ((item.value / total) * 100).toFixed(1) : "0";
-          return `${name}  ${pct}%`;
-        },
-      },
-      series: [{
-        type: "pie",
-        radius: "75%",
-        center: ["50%", "48%"],
-        avoidLabelOverlap: true,
-        itemStyle: { borderRadius: 4, borderColor: "#fff", borderWidth: 2 },
-        label: { show: false },
-        emphasis: {
-          label: { show: true, fontSize: 13, fontWeight: "bold" },
-        },
-        data,
-      }],
-    });
-
-    chart.on("click", (params: any) => {
-      window.dispatchEvent(new CustomEvent("slide-navigate", {
-        detail: { tab: "instances-db", filter: { db_type: params.name.toLowerCase() } },
-      }));
-    });
-
-    const ro = new ResizeObserver(() => chart.resize());
-    ro.observe(container);
-    return { chart, ro };
-  }
-
-  private _initTrendChart(container: HTMLDivElement, data: { time: string[]; values: number[] }) {
-    const chart = echarts.init(container, undefined, { renderer: "canvas" });
-
-    chart.setOption({
-      tooltip: {
-        trigger: "axis",
-        formatter: (params: any) => {
-          return `${params[0].name}<br/>${t("dashboard.dataTotal")}: ${params[0].value.toFixed(2)} GB`;
-        },
-      },
-      grid: { left: 50, right: 20, top: 10, bottom: 30 },
-      xAxis: {
-        type: "category",
-        data: data.time,
-        boundaryGap: false,
-        axisLabel: { color: "#777", fontSize: 11 },
-        axisLine: { lineStyle: { color: "#d0d0d0" } },
-      },
-      yAxis: {
-        type: "value",
-        name: "GB",
-        axisLabel: { color: "#777", fontSize: 11 },
-        splitLine: { lineStyle: { color: "#d0d0d0", type: "dashed" } },
-      },
-      series: [{
-        type: "line",
-        data: data.values,
-        smooth: true,
-        showSymbol: false,
-        lineStyle: { width: 2, color: "#409eff" },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: "rgba(64, 158, 255, 0.3)" },
-            { offset: 1, color: "rgba(64, 158, 255, 0.05)" },
-          ]),
-        },
-      }],
-    });
-
-    const ro = new ResizeObserver(() => chart.resize());
-    ro.observe(container);
-    return { chart, ro };
-  }
-
-  private _navigateTo(tab: string) {
-    window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab } }));
-  }
-
-  private _resourceTypeLabel(type: ResourceType): string {
-    return type === "instance" ? t("dashboard.database") : type === "server" ? t("dashboard.server") : t("dashboard.networkDevice");
-  }
-
-  private _resourceStatusVariant(item: ResourceOverviewItem): "ok" | "warn" | "danger" | "muted" {
-    // An explicit outage or missing collection evidence is actionable even
-    // when no alert has been emitted yet, so it must remain in the danger
-    // queue instead of being hidden as a muted/unknown state.
-    if (["offline", "error", "critical", "unreachable", "down"].includes(item.status.toLowerCase())) return "danger";
-    if (item.freshness === "missing") return "danger";
-    if (item.quality === "invalid") return "danger";
-    if (item.freshness === "stale" || item.quality === "degraded" || item.quality === "partial" || item.unresolvedAlerts > 0) return "warn";
-    return "ok";
-  }
-
-  private _visibleResourceItems(): ResourceOverviewItem[] {
-    const items = this.resourceOverview?.items ?? [];
-    return this.resourceScope === "all" ? items : items.filter((item) => item.resource.type === this.resourceScope);
-  }
-
-  private _visibleResourceSummary() {
-    const items = this._visibleResourceItems();
-    const healthy = items.filter((item) => this._resourceStatusVariant(item) === "ok").length;
-    const degraded = items.filter((item) => this._resourceStatusVariant(item) === "warn").length;
-    const critical = items.filter((item) => this._resourceStatusVariant(item) === "danger" || item.freshness === "missing").length;
-    return {
-      total: items.length,
-      healthy,
-      degraded,
-      critical,
-      activeIncidents: items.reduce((total, item) => total + item.unresolvedAlerts, 0),
-      staleOrMissing: items.filter((item) => item.freshness !== "fresh").length,
-    };
-  }
-
-  private _scopeLabel(scope: "all" | ResourceType): string {
-    return scope === "all" ? t("dashboard.allResources") : this._resourceTypeLabel(scope);
-  }
-
-  private _resourceMetricRows(): Array<{ label: string; value: string; coverage: string }> {
-    const scope = this.resourceScope === "all" ? null : this.resourceScope;
-    const scopes = scope ? [scope] : (["instance", "server", "network_device"] as ResourceType[]);
-    const labels: Record<string, string> = {
-      cpu_usage: t("dashboard.metrics.cpuUsage"), memory_usage: t("dashboard.metrics.memoryUsage"), disk_usage: t("dashboard.metrics.diskUsage"),
-      connections: t("dashboard.metrics.connections"), qps: "QPS", load_1min: t("dashboard.metrics.load1m"),
-      device_reachability: t("dashboard.metrics.deviceReachability"), device_cpu_percent: t("dashboard.metrics.deviceCpu"), device_memory_percent: t("dashboard.metrics.deviceMemory"),
-      device_temperature_celsius: t("dashboard.metrics.deviceTemperature"),
-    };
-    const rows: Array<{ label: string; value: string; coverage: string }> = [];
-    for (const type of scopes) {
-      const metrics = this.resourceMetrics?.scopes[type]?.metrics ?? {};
-      for (const [metricId, metric] of Object.entries(metrics)) {
-        if (metric.value == null || !metric.resourceCount) continue;
-        let value: string;
-        if (metricId === "device_reachability") {
-          value = metric.value >= 1 ? t("dashboard.reachable") : t("dashboard.unreachable");
-        } else {
-          const suffix = /(?:percent|usage)$/.test(metricId) || metricId === "cpu_usage" ? "%" : metricId.includes("temperature") ? " °C" : "";
-          const numeric = metric.value < 10 && suffix === "%" ? metric.value.toFixed(1) : String(Math.round(metric.value * 10) / 10);
-          value = `${numeric}${suffix}`;
-        }
-        rows.push({ label: `${this._resourceTypeLabel(type)} · ${labels[metricId] ?? metricId}`, value, coverage: t("dashboard.resourceCoverage", { count: String(metric.resourceCount) }) });
+      const unavailable = data.unavailableTypes ?? [];
+      if (unavailable.length) {
+        data.items = [...data.items, ...(this.resourceOverview?.items ?? []).filter(item => unavailable.includes(item.resource.type))];
+        this.error = `${unavailable.map((type: string) => o(type)).join(' / ')}: ${o('unavailableData')}`;
       }
-    }
-    return rows.slice(0, 8);
+      this.resourceOverview = data;
+      this.normalizeSelection();
+      await this.loadTrend();
+    } catch (error) { if (version === this.overviewVersion) this.error = error instanceof Error ? error.message : o('failure'); }
+    finally { if (version === this.overviewVersion) this.loading = false; }
   }
-
-  private _resourceRows(): Array<Record<string, unknown>> {
-    return this._visibleResourceItems().map((item) => ({
-      resource: html`<span>${this._resourceTypeLabel(item.resource.type)} · ${item.label}</span>`,
-      status: html`<app-badge variant=${this._resourceStatusVariant(item)}>${item.status || "unknown"}</app-badge>`,
-      freshness: html`<app-badge variant=${item.freshness === "fresh" ? "ok" : item.freshness === "stale" ? "warn" : "danger"}>${this._freshnessLabel(item.freshness)}</app-badge>`,
-      alerts: item.unresolvedAlerts,
-      relations: t("dashboard.relationsValue", { relations: String(item.relationCount), impact: String(item.impactScope.length) }),
-      gaps: item.gaps.length ? item.gaps.join(", ") : "-",
+  private normalizeSelection() {
+    const databases = this._visibleResourceItems().filter(item => item.resource.type === 'instance');
+    if (!databases.some(item => item.resource.id === this.selectedInstanceId)) this.selectedInstanceId = databases[0]?.resource.id ?? null;
+  }
+  private _visibleResourceItems() { return scopedItems(this.resourceOverview, this.resourceScope, this.search, this.engine); }
+  private switchScope(scope: Scope) {
+    this.backupVersion++; this.backupLoading = false; this.backup = null; this.backupMessage = '';
+    this.resourceScope = scope; this.search = ''; this.engine = ''; this.detailFilter = ''; this.detailType = ''; this.selectedRisk = ''; this.selectedMetric = ''; this.page = 1;
+    this.normalizeSelection(); this.saveUrl(); void this.loadTrend();
+  }
+  private changeScopeFilter(event: Event, kind: 'search' | 'engine') {
+    this[kind] = (event.target as HTMLInputElement).value;
+    this.backupVersion++; this.backupLoading = false; this.backupDevice = null; this.backup = null; this.backupMessage = '';
+    this.page = 1; this.selectedRisk = ''; this.normalizeSelection(); this.saveUrl(); void this.loadTrend();
+  }
+  private selectDetail(filter: DetailFilter, type: ResourceType | '' = '') { this.detailFilter = filter; this.detailType = type; this.page = 1; this.saveUrl(); }
+  private clearFilters() { this.search = ''; this.engine = ''; this.selectDetail(''); this.normalizeSelection(); this.saveUrl(); void this.loadTrend(); }
+  private keydownTab(event: KeyboardEvent, index: number) {
+    const scopes: Scope[] = ['all', ...resourceTypes];
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? 3 : event.key === 'ArrowRight' ? (index + 1) % 4 : event.key === 'ArrowLeft' ? (index + 3) % 4 : -1;
+    if (next < 0) return;
+    event.preventDefault(); this.switchScope(scopes[next]);
+    void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLButtonElement>(`#scope-${scopes[next]}`)?.focus());
+  }
+  private icon(type: Scope) { return type === 'all' ? icons['layout-dashboard'] : type === 'instance' ? icons.database : type === 'server' ? icons.server : icons.network; }
+  private label(item: OverviewItem) { return item.label.trim() || `${o(item.resource.type)} #${item.resource.id}`; }
+  private time(value: string | null) {
+    const stamp = Date.parse(value ?? '');
+    if (!Number.isFinite(stamp)) return o('unknown');
+    if (stamp > Date.now()) return o('timeInvalid');
+    return new Date(stamp).toLocaleString();
+  }
+  private detailHref(ref: Ref, diagnosis = false) {
+    const url = new URL(diagnosis ? '/resource-diagnosis' : ref.type === 'instance' ? '/instance-detail' : ref.type === 'server' ? '/server-detail' : '/network-device-detail', location.origin);
+    if (diagnosis) { url.searchParams.set('resourceType', ref.type); url.searchParams.set('resourceId', String(ref.id)); }
+    else url.searchParams.set(ref.type === 'network_device' ? 'networkDeviceId' : 'id', String(ref.id));
+    url.searchParams.set('returnTo', '/dashboard' + location.search);
+    return url.pathname + url.search;
+  }
+  private scrollingParent(): Element {
+    let node: Element | null = this;
+    while (node) {
+      if (node.scrollHeight > node.clientHeight && /auto|scroll/.test(getComputedStyle(node).overflowY)) return node;
+      node = node.parentElement ?? (node.getRootNode() as ShadowRoot).host ?? null;
+    }
+    return document.scrollingElement ?? document.documentElement;
+  }
+  private savePosition() { try { sessionStorage.setItem('slide.overview.scroll', String(this.scrollingParent().scrollTop)); } catch { /* Storage is optional. */ } }
+  private renderActions(item: OverviewItem) {
+    return html`<div class="actions"><a class="btn-ghost" href=${this.detailHref(item.resource)} @click=${this.savePosition}>${o('viewResource')}</a><a class="btn-ghost" href=${this.detailHref(item.resource, true)} @click=${this.savePosition}>${o('evidence')}</a>${permissionMatches(this.permissions, 'ai:manage') ? html`<a class="btn-ghost" href=${this.detailHref(item.resource, true)} @click=${this.savePosition}>${o('diagnose')}</a>` : html`<button class="btn-ghost" .disabled=${true} title=${o('noAi')}>${o('diagnose')}</button>`}</div>`;
+  }
+  private renderState(item: OverviewItem) { const state = runState(item); return html`<app-badge variant=${stateVariant[state]} title=${`${o('previous')}: ${item.status}`}>${o(state === 'unavailable' && item.resource.type === 'network_device' ? 'unreachable' : state)}</app-badge>`; }
+  private renderFreshness(item: OverviewItem) { const value = freshness(item); return html`<app-badge variant=${value === 'fresh' ? 'ok' : value === 'stale' ? 'warn' : 'muted'}>${o(value)}</app-badge>`; }
+  private alertCount(item: OverviewItem) { return item.gaps.includes('ALERTS_UNAVAILABLE') ? `${o('unavailableData')}${item.alertsObservedAt ? ` (${o('retained')}: ${item.unresolvedAlerts} · ${this.time(item.alertsObservedAt)})` : ''}` : `${item.alertsTruncated ? o('atLeast') + ' ' : ''}${item.unresolvedAlerts}`; }
+  private renderKpis(items: OverviewItem[]) {
+    const s = summarize(items); const totalIncomplete = this.resourceOverview?.truncated || this.resourceOverview?.unavailableTypes?.some(type => this.resourceScope === 'all' || type === this.resourceScope);
+    const cards = [
+      { label: o(this.resourceScope === 'all' ? 'resources' : this.resourceScope === 'instance' ? 'instances' : this.resourceScope), value: `${totalIncomplete ? o('atLeast') + ' ' : ''}${s.total}`, hint: o('dedup'), filter: '' },
+      { label: o(this.resourceScope === 'server' ? 'unavailableServers' : this.resourceScope === 'network_device' ? 'unreachableDevices' : this.resourceScope === 'instance' ? 'abnormalInstances' : 'abnormalResources'), value: `${totalIncomplete || s.alertsUnavailable ? o('atLeast') + ' ' : ''}${['server', 'network_device'].includes(this.resourceScope) ? s.unavailable : s.abnormal}`, hint: o('dedup'), filter: ['server', 'network_device'].includes(this.resourceScope) ? 'unavailable' : 'attention' },
+      { label: o('alerts'), value: s.alertsUnavailable ? '—' : `${s.alertsIncomplete || totalIncomplete ? o('atLeast') + ' ' : ''}${s.alerts}`, hint: o(s.alertsUnavailable ? 'alertUnavailable' : 'acknowledged'), filter: 'alerts' },
+      { label: o(this.resourceScope === 'all' ? 'collectionRisk' : 'coverage'), value: this.resourceScope === 'all' ? `${totalIncomplete ? o('atLeast') + ' ' : ''}${s.collection}` : !s.total || totalIncomplete ? '—' : `${Math.round(s.fresh / s.total * 100)}%`, hint: `${o('freshCoverage')} ${s.fresh}/${s.total}`, filter: this.resourceScope === 'all' ? 'collection' : 'fresh' },
+    ];
+    return html`<div class="dashboard__stat-cards">${cards.map(card => html`<stat-card tabindex="0" role="button" aria-label=${`${card.label} ${card.value}`} .label=${card.label} .value=${card.value} .hint=${card.hint} @click=${() => this.selectDetail(card.filter as DetailFilter)} @keydown=${(event: KeyboardEvent) => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); this.selectDetail(card.filter as DetailFilter); } }}></stat-card>`)}</div>`;
+  }
+  private renderRiskQueue(items: OverviewItem[]) {
+    const risks = items.filter(isRisk).sort(compareRisk);
+    return html`<app-card><div slot="header" class="toolbar"><h2>${o('riskQueue')} · ${risks.length}</h2><button class="btn-ghost" @click=${() => { this.selectDetail('risk'); this.renderRoot.querySelector('#resource-details')?.scrollIntoView({ block: 'start' }); }}>${o('allRisks')}</button></div>
+      <small>${o('topFive')}</small>${risks.slice(0, 5).map(item => html`<article class="risk-row" data-resource=${resourceKey(item.resource)}>
+        <div class="actions"><span aria-hidden="true">${this.icon(item.resource.type)}</span><a class="resource-name" href=${this.detailHref(item.resource)} @click=${this.savePosition}>${this.label(item)}</a>${this.renderState(item)}${this.renderFreshness(item)}</div>
+        <div class="metadata"><span>${item.gaps.includes('ALERTS_UNAVAILABLE') ? o('alertUnavailable') : item.unresolvedAlerts ? `${o('alerts')}: ${this.alertCount(item)}` : o(runState(item) === 'unavailable' ? 'unavailable' : freshness(item) === 'fresh' ? 'qualityGap' : freshness(item))}</span><time title=${item.observedAt ?? ''}>${o('observed')}: ${this.time(item.observedAt)}</time><button class="btn-ghost" @click=${() => { this.selectedRisk = resourceKey(item.resource); this.saveUrl(); }}>${o('relations')} ${item.gaps.includes('RELATIONS_UNAVAILABLE') ? '—' : item.impactScope.length}</button></div>
+        ${this.renderActions(item)}</article>`)}
+      ${!risks.length ? html`<app-empty-state title=${o(items.some(item => runState(item) === 'unknown') ? 'unknownHealth' : 'noRisks')} description=${`${o('freshCoverage')} ${summarize(items).fresh}/${items.length}`}></app-empty-state>` : nothing}
+    </app-card>`;
+  }
+  private renderHealth(items: OverviewItem[]) {
+    return html`<app-card><h2 slot="header">${o('health')}</h2>${resourceTypes.filter(type => this.resourceScope === 'all' || this.resourceScope === type).map(type => {
+      const subset = items.filter(item => item.resource.type === type);
+      return html`<div class="health-row"><strong>${o(type)} · ${subset.length}</strong><div class="health-bar" aria-hidden="true">${(['normal', 'abnormal', 'unavailable', 'unknown'] as RunState[]).map(state => html`<span class=${state} style=${`width:${subset.length ? subset.filter(item => runState(item) === state).length / subset.length * 100 : 0}%`}></span>`)}</div><div class="health-track">${(['normal', 'abnormal', 'unavailable', 'unknown'] as RunState[]).map(state => html`<button class=${`btn-ghost ${state}`} @click=${() => this.selectDetail(state, type)}>${o(state === 'unavailable' && type === 'network_device' ? 'unreachable' : state)} ${subset.filter(item => runState(item) === state).length}</button>`)}</div></div>`;
+    })}</app-card>`;
+  }
+  private renderRelations(items: OverviewItem[]) {
+    const selected = items.find(item => resourceKey(item.resource) === this.selectedRisk);
+    return html`<app-card><h2 slot="header">${o('relations')}</h2><p>${o('relationHint')}</p>${!selected ? html`<small>${o('selectRisk')}</small>` : html`<strong>${this.label(selected)}</strong>${selected.gaps.includes('RELATIONS_UNAVAILABLE') ? html`<p>${o('relationUnavailable')}</p>` : !selected.impactScope.length ? html`<p>${o('noRelations')}</p>` : selected.impactScope.map(ref => {
+      const item = this.resourceOverview?.items.find(item => resourceKey(item.resource) === resourceKey(ref));
+      return html`<p><a href=${this.detailHref(ref, true)} @click=${this.savePosition}>${o(ref.type)} · ${item ? this.label(item) : '#' + ref.id}</a></p>`;
+    })}<a href=${this.detailHref(selected.resource, true)} @click=${this.savePosition}>${o('evidence')}</a>`}</app-card>`;
+  }
+  private metricText(item: OverviewItem, metricId: string): string {
+    const metric = latestMetric(item, metricId);
+    if (metric?.reason?.includes('unsupported')) return o('unsupported');
+    if (usableMetric(metric)) return `${Math.round(metric.value * 10) / 10}${this.unit(metricId)}`;
+    if (!metric || metric.value === null) return o('missing');
+    if (!['good', 'degraded'].includes(metric.quality)) return o(metric.quality === 'invalid' ? 'invalid' : 'unknown');
+    return o('stale');
+  }
+  private unit(metric: string) { return metric.includes('temperature') ? ' °C' : ['connections', 'qps'].includes(metric) ? '' : '%'; }
+  private renderMetrics(items: OverviewItem[]) {
+    if (this.resourceScope === 'all') return nothing;
+    const metrics = metricConfig[this.resourceScope];
+    const id = metrics.includes(this.selectedMetric) ? this.selectedMetric : metrics[0];
+    const groups = this.resourceScope === 'instance' ? [...new Set(items.map(item => String(item.attributes?.dbType ?? 'unknown')))] : [this.resourceScope];
+    return html`<app-card><h2 slot="header">${o('metrics')}</h2><div class="filters"><app-form-field label=${o('metric')}><select aria-label=${o('metric')} .value=${id} @change=${(event: Event) => { this.selectedMetric = (event.target as HTMLSelectElement).value; }}>${metrics.map(metric => html`<option value=${metric} .selected=${live(metric === id)}>${o(metric)}</option>`)}</select></app-form-field></div>
+      <p class="metadata">${o('latestOnly')} · ${o('comparable')}</p>${groups.map(group => {
+        const subset = this.resourceScope === 'instance' ? items.filter(item => String(item.attributes?.dbType ?? 'unknown') === group) : items;
+        const valid = subset.filter(item => usableMetric(latestMetric(item, id))).sort((a, b) => latestMetric(b, id)!.value! - latestMetric(a, id)!.value! || resourceKey(a.resource).localeCompare(resourceKey(b.resource)));
+        const unsupported = subset.filter(item => latestMetric(item, id)?.reason?.includes('unsupported')).length;
+        const max = /usage|percent/.test(id) ? 100 : Math.max(1, ...valid.map(item => latestMetric(item, id)!.value!));
+        const aggregate = valid.reduce((sum, item) => sum + latestMetric(item, id)!.value!, 0);
+        return html`<p><strong>${this.resourceScope === 'instance' ? group : o(this.resourceScope)}</strong> · ${o('effective')} ${valid.length} · ${o('unsupported')} ${unsupported} ${valid.length ? html`· ${o(['connections', 'qps'].includes(id) ? 'sum' : 'mean')} ${(aggregate / (['connections', 'qps'].includes(id) ? 1 : valid.length)).toFixed(1)}${this.unit(id)}` : nothing}</p>
+          ${valid.slice(0, 5).map(item => html`<div class="metric-row"><a href=${this.detailHref(item.resource)} @click=${this.savePosition}>${this.label(item)}<br><small>${this.time(latestMetric(item, id)!.observedAt)}</small></a><meter min="0" max=${max} value=${latestMetric(item, id)!.value!} aria-label=${`${this.label(item)} ${o(id)}`}></meter><strong>${this.metricText(item, id)}</strong></div>`)}
+          ${!valid.length ? html`<app-empty-state title=${o('noMetric')}></app-empty-state>` : nothing}`;
+      })}${this.resourceScope === 'network_device' ? html`<p class="metadata">${o('backup')}</p>` : nothing}</app-card>`;
+  }
+  private async loadBackup() {
+    const id = this.backupDevice ?? this._visibleResourceItems()[0]?.resource.id;
+    if (!id || this.resourceScope !== 'network_device' || this.backupLoading) return;
+    this.backupDevice = id; this.backupLoading = true; this.backupMessage = '';
+    const version = ++this.backupVersion;
+    try {
+      const response = await authFetch(`/api/network-devices/${id}/config-backups`);
+      if (!response.ok) throw new Error(response.status === 403 ? o('permission') : o('unavailableData'));
+      const body = await response.json();
+      if (!Array.isArray(body.backups)) throw new Error(o('unavailableData'));
+      if (version !== this.backupVersion) return;
+      this.backup = [...body.backups].sort((a, b) => Date.parse(b.collectedAt) - Date.parse(a.collectedAt))[0] ?? null;
+      this.backupMessage = this.backup ? '' : o('noBackup');
+    } catch (error) { if (version === this.backupVersion) this.backupMessage = error instanceof Error ? error.message : o('unavailableData'); }
+    finally { if (version === this.backupVersion) this.backupLoading = false; }
+  }
+  private renderBackups(items: OverviewItem[]) {
+    if (this.resourceScope !== 'network_device') return nothing;
+    const id = items.some(item => item.resource.id === this.backupDevice) ? this.backupDevice : items[0]?.resource.id;
+    return html`<app-card><h2 slot="header">${o('backupTitle')}</h2><p class="metadata">${o('backupScope')}</p><div class="filters"><app-form-field label=${o('network_device')}><select aria-label=${o('backupDevice')} .value=${String(id ?? '')} @change=${(event: Event) => { this.backupVersion++; this.backupLoading = false; this.backupDevice = Number((event.target as HTMLSelectElement).value); this.backup = null; this.backupMessage = ''; }}>${items.map(item => html`<option value=${item.resource.id} .selected=${live(item.resource.id === id)}>${this.label(item)}</option>`)}</select></app-form-field><button class="btn" .disabled=${this.backupLoading} @click=${() => { this.backupDevice = id ?? null; void this.loadBackup(); }}>${o(this.backupLoading ? 'refreshing' : 'readBackup')}</button></div>
+      ${this.backupMessage ? html`<p role="status">${this.backupMessage}</p>` : nothing}${this.backup && id === this.backupDevice ? html`<p>${o('savedBackup')} v${this.backup.versionNo} · ${this.time(this.backup.collectedAt)} · ${o(this.backup.redactionStatus === 'failed' ? 'backupRedactionFailed' : this.backup.redactionStatus === 'redacted' ? 'backupRedacted' : 'backupUnredacted')}</p>` : nothing}${id ? html`<a href=${this.detailHref({ type: 'network_device', id })} @click=${this.savePosition}>${o('viewResource')}</a>` : nothing}</app-card>`;
+  }
+  private renderDetails(items: OverviewItem[]) {
+    const filtered = items.filter(item => (!this.detailType || item.resource.type === this.detailType) && (!this.detailFilter || (this.detailFilter === 'alerts' ? item.unresolvedAlerts > 0 : this.detailFilter === 'collection' ? collectionRisk(item) : this.detailFilter === 'fresh' ? freshness(item) === 'fresh' : this.detailFilter === 'risk' ? isRisk(item) : this.detailFilter === 'attention' ? ['abnormal', 'unavailable'].includes(runState(item)) : runState(item) === this.detailFilter))).sort(compareRisk);
+    const pages = Math.max(1, Math.ceil(filtered.length / 10)); const page = Math.min(this.page, pages);
+    const rows = filtered.slice((page - 1) * 10, page * 10).map(item => ({
+      name: html`<a href=${this.detailHref(item.resource)} @click=${this.savePosition}>${this.label(item)}</a><br><small>${o(item.resource.type)} · ${item.attributes?.host ?? resourceKey(item.resource)}</small>`,
+      engine: String(item.attributes?.dbType ?? '—'), model: String(item.attributes?.model ?? '—'),
+      status: this.renderState(item), freshness: this.renderFreshness(item), alerts: html`<a class="btn-ghost" href=${this.detailHref(item.resource, true)} @click=${this.savePosition}>${this.alertCount(item)}</a>`,
+      cpu: this.metricText(item, 'cpu_usage'), memory: this.metricText(item, 'memory_usage'), disk: this.metricText(item, 'disk_usage'),
+      observed: html`<time title=${item.observedAt ?? ''}>${this.time(item.observedAt)}</time>`, actions: this.renderActions(item),
     }));
+    const columns = [{ key: 'name', label: o('name') }, ...(this.resourceScope === 'instance' ? [{ key: 'engine', label: o('engine') }] : this.resourceScope === 'network_device' ? [{ key: 'model', label: o('model') }] : []), { key: 'status', label: o('runtime') }, ...(this.resourceScope === 'server' ? [{ key: 'cpu', label: 'CPU' }, { key: 'memory', label: o('memory_usage') }, { key: 'disk', label: o('disk_usage') }] : []), { key: 'freshness', label: o('collected') }, { key: 'alerts', label: o('alerts') }, { key: 'observed', label: o('observed') }, { key: 'actions', label: o('actions') }];
+    return html`<app-card id="resource-details"><div slot="header" class="toolbar"><h2>${o('details')} · ${filtered.length}</h2>${this.detailFilter || this.detailType ? html`<div class="actions"><app-badge>${o('selectedFilter')}: ${o(this.detailFilter === 'attention' ? 'abnormalResources' : this.detailFilter === 'collection' ? 'collectionRisk' : this.detailFilter === 'risk' ? 'riskQueue' : this.detailFilter || this.detailType)}</app-badge><button class="btn-ghost" @click=${() => this.selectDetail('')}>${o('clear')}</button></div>` : nothing}</div><div class="table-scroll"><app-data-table .columns=${columns} .rows=${rows} .emptyMessage=${o('noMatch')} .dense=${true}></app-data-table></div><div slot="footer" class="actions"><button class="btn" .disabled=${page <= 1} @click=${() => { this.page = page - 1; this.saveUrl(); }}>${o('prev')}</button><span>${page}/${pages} ${o('page')}</span><button class="btn" .disabled=${page >= pages} @click=${() => { this.page = page + 1; this.saveUrl(); }}>${o('next')}</button></div></app-card>`;
   }
-
-  private _freshnessLabel(freshness: ResourceOverviewItem["freshness"]): string {
-    return freshness === "fresh" ? t("dashboard.fresh") : freshness === "stale" ? t("dashboard.stale") : t("dashboard.missing");
+  private validDates() {
+    return /^\d{4}-\d{2}-\d{2}$/.test(this.startDate) && /^\d{4}-\d{2}-\d{2}$/.test(this.endDate) && Number.isFinite(Date.parse(this.startDate)) && Number.isFinite(Date.parse(this.endDate)) && new Date(this.startDate).toISOString().slice(0, 10) === this.startDate && new Date(this.endDate).toISOString().slice(0, 10) === this.endDate && this.startDate <= this.endDate && Date.parse(this.endDate) <= Date.now();
   }
-
-  private _combinedDataQuality(): ResourceOverview["dataQuality"] {
-    const overviewQuality = this.resourceOverview?.dataQuality;
-    const metricsQuality = this.resourceMetrics?.dataQuality;
-    if (!overviewQuality && !metricsQuality) return "empty";
-    if (!overviewQuality || !metricsQuality) return "partial";
-    if (overviewQuality === "empty" && metricsQuality === "empty") return "empty";
-    if (overviewQuality === "partial" || metricsQuality === "partial"
-      || overviewQuality === "empty" || metricsQuality === "empty") return "partial";
-    return "complete";
+  private async loadTrend() {
+    const version = ++this.trendVersion;
+    if (this.resourceScope !== 'instance' || !this.selectedInstanceId) { this.capacityTrend = null; this.trendLoading = false; return; }
+    const id = this.selectedInstanceId;
+    const params = new URLSearchParams({ instance_id: String(id) });
+    if (this.customDates && this.validDates()) { params.set('start_date', this.startDate); params.set('end_date', this.endDate); }
+    else params.set('hours', String(this.selectedHours));
+    const query = params.toString();
+    if (query !== this.trendQuery) { const cached = this.trendCache.get(query); this.capacityTrend = cached?.data ?? null; this.trendTime = cached?.time ?? ''; }
+    this.trendQuery = query; this.trendLoading = true; this.trendError = '';
+    try {
+      const response = await authFetch(`/api/dashboard/capacity-trend?${params}`);
+      if (!response.ok) throw new Error(`${o('capacity')}: ${response.status === 403 ? o('permission') : o('unavailableData')}`);
+      const result = await response.json();
+      if (!Array.isArray(result.trend)) throw new Error(o('unavailableData'));
+      if (version !== this.trendVersion) return;
+      this.capacityTrend = result; this.trendTime = new Date().toISOString();
+      this.trendCache.set(query, { data: result, time: this.trendTime });
+      if (this.trendCache.size > 12) this.trendCache.delete(this.trendCache.keys().next().value!);
+    } catch (error) { if (version === this.trendVersion) this.trendError = error instanceof Error ? error.message : o('failure'); }
+    finally { if (version === this.trendVersion) this.trendLoading = false; }
   }
-
-  private _qualityLabel(quality: ResourceOverview["dataQuality"]): string {
-    return quality === "complete" ? t("dashboard.complete") : quality === "partial" ? t("dashboard.partial") : t("dashboard.empty");
+  private renderDatabase(items: OverviewItem[]) {
+    if (this.resourceScope !== 'instance') return nothing;
+    const engines = [...new Set(items.map(item => String(item.attributes?.dbType ?? 'unknown')))].map(name => ({ name, count: items.filter(item => String(item.attributes?.dbType ?? 'unknown') === name).length })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    return html`<app-card><h2 slot="header">${o('dbTypes')}</h2>${engines.map(({ name, count }) => html`<div class="engine-row"><button class="btn-ghost" @click=${() => { this.engine = name; this.page = 1; this.normalizeSelection(); this.saveUrl(); void this.loadTrend(); }}>${name}</button><meter min="0" max=${items.length} value=${count} aria-label=${name}></meter><span>${count} · ${Math.round(count / items.length * 100)}%</span></div>`)}</app-card>
+      <app-card><h2 slot="header">${o('capacity')}</h2><p class="metadata">${o('localFilter')} · ${o('dataTime')}: ${this.time(this.trendTime)}</p><div class="filters"><app-form-field label=${o('chooseInstance')}><select aria-label=${o('chooseInstance')} .value=${String(this.selectedInstanceId ?? '')} @change=${(event: Event) => { this.selectedInstanceId = Number((event.target as HTMLSelectElement).value); this.saveUrl(); void this.loadTrend(); }}>${items.map(item => html`<option value=${item.resource.id} .selected=${live(item.resource.id === this.selectedInstanceId)}>${this.label(item)}</option>`)}</select></app-form-field>${[24, 168, 720].map((hours, index) => html`<button class=${!this.customDates && this.selectedHours === hours ? 'btn-primary' : 'btn'} @click=${() => { this.customDates = false; this.selectedHours = hours; this.saveUrl(); void this.loadTrend(); }}>${['24h', '7d', '30d'][index]}</button>`)}<button class="btn" aria-expanded=${String(this.customDates)} @click=${() => { this.customDates = !this.customDates; }}>${o('custom')}</button></div>
+      ${this.customDates ? html`<div class="filters"><app-form-field label=${o('start')}><input type="date" aria-label=${o('start')} .value=${this.startDate} @input=${(event: Event) => { this.startDate = (event.target as HTMLInputElement).value; }}></app-form-field><app-form-field label=${o('end')}><input type="date" aria-label=${o('end')} .value=${this.endDate} @input=${(event: Event) => { this.endDate = (event.target as HTMLInputElement).value; }}></app-form-field><button class="btn" @click=${() => { if (!this.validDates()) { this.trendError = o('invalidDates'); return; } this.saveUrl(); void this.loadTrend(); }}>${o('apply')}</button></div>` : nothing}
+      ${this.trendError ? html`<p class="notice" role="alert">${this.trendError} <button class="btn" @click=${this.loadTrend}>${o('retry')}</button></p>` : nothing}
+      ${this.trendLoading && !this.capacityTrend ? html`<div class="skeleton large" aria-label=${o('refreshing')}></div>` : this.capacityTrend?.trend.length ? html`<p>${o('capacity')}: ${this._formatBytes(this.capacityTrend.trend.at(-1)!.total_size_gb)} · ${this.capacityTrend.trend[0].time} → ${this.capacityTrend.trend.at(-1)!.time} · ${this.capacityTrend.trend.length} samples</p><div class="trend-chart-container" role="img" aria-label=${`${o('capacity')} GB`}></div>` : html`<app-empty-state title=${o('noCapacity')}></app-empty-state>`}<p class="metadata">${o('capacityGaps')}</p></app-card>`;
   }
-
-  private _riskPriority(item: ResourceOverviewItem): number {
-    const variant = this._resourceStatusVariant(item);
-    return variant === "danger" ? 2 : variant === "warn" ? 1 : 0;
-  }
-
-  private _renderRecentAlerts() {
-    return html`
-      <section class="dashboard-panel">
-        <div class="dashboard-panel__header">
-          <span class="dashboard-panel__title">${icons['triangle-alert']} ${t("dashboard.recentAlerts")}</span>
-          <button class="btn-ghost" @click=${() => this._navigateTo('alerts')}>${t("dashboard.viewAlerts")}</button>
-        </div>
-        ${this.recentAlerts.length ? html`<div class="status-list">${this.recentAlerts.map((alert) => html`
-          <div class="status-item" @click=${() => this._navigateTo('alerts')}>
-            <div class="status-item__left">
-              <div class="status-item__icon ${alert.severity === 'critical' || alert.severity === 'error' ? 'danger' : alert.severity === 'warning' || alert.severity === 'warn' ? 'warn' : 'ok'}">
-                ${alert.severity === 'critical' || alert.severity === 'error' ? icons['alert-circle'] : alert.severity === 'warning' || alert.severity === 'warn' ? icons['triangle-alert'] : icons['info']}
-              </div>
-              <span class="status-item__name">${alert.title}</span>
-            </div>
-            <span class="status-item__time">${this._formatTime(alert.created_at)}</span>
-          </div>`)} </div>` : html`<app-empty-state title=${t("dashboard.noRecentAlerts")} description=${t("dashboard.systemNormal")}><div slot="icon">${icons['check-circle']}</div></app-empty-state>`}
-      </section>
-    `;
-  }
-
-  private _renderResourceOverview() {
-    const overview = this.resourceOverview;
-    if (!overview) return nothing;
-    return html`
-      <app-card class="resource-overview-card">
-        <span slot="header">${t("dashboard.resourceInventory")}</span>
-        <div class="resource-overview-summary"><span>${t("dashboard.currentScope")}：${this._scopeLabel(this.resourceScope)}</span><span>${t("dashboard.relationsAndGaps")}</span></div>
-        ${this._visibleResourceItems().length
-          ? html`<div class="resource-overview-table"><app-data-table .columns=${[
-            { key: "resource", label: t("dashboard.resource") },
-            { key: "status", label: t("dashboard.status") },
-            { key: "freshness", label: t("dashboard.freshness") },
-            { key: "alerts", label: t("dashboard.unresolvedAlerts"), textAlign: "right" },
-            { key: "relations", label: t("dashboard.relationsImpact") },
-            { key: "gaps", label: t("dashboard.gaps") },
-          ]} .rows=${this._resourceRows()} .dense=${true} emptyMessage=${t("dashboard.noResources")}></app-data-table></div>`
-          : html`<app-empty-state title=${t("dashboard.noResources")} description=${t("dashboard.addResources")}></app-empty-state>`}
-      </app-card>
-    `;
-  }
-
-  private _formatBytes(gb: number): string {
-    if (gb >= 1024) return `${(gb / 1024).toFixed(2)} TB`;
-    return `${gb.toFixed(2)} GB`;
-  }
-
-  private _formatTime(dateStr: string): string {
-    const date = new Date(dateStr);
-    const diff = Date.now() - date.getTime();
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    if (minutes < 1) return t("dashboard.justNow");
-    if (minutes < 60) return t("dashboard.minutesAgo", { count: String(minutes) });
-    if (hours < 24) return t("dashboard.hoursAgo", { count: String(hours) });
-    return t("dashboard.today");
-  }
-
-  private _onInstanceChange(e: Event) {
-    const select = e.target as HTMLSelectElement;
-    this.selectedInstanceId = select.value ? Number(select.value) : null;
-    this.reloadTrend({ hours: this.selectedHours, instanceId: this.selectedInstanceId });
-  }
-
-  private get _instanceOptions() {
-    return this.instances.map(i => html`<option value=${i.id}>${i.name}</option>`);
-  }
-
-  private _onStartDateChange(e: Event) {
-    this.startDate = (e.target as HTMLInputElement).value;
-    if (this.startDate && this.endDate) {
-      this.reloadTrend({ startDate: this.startDate, endDate: this.endDate, instanceId: this.selectedInstanceId });
+  private _formatBytes(value: number | null) { return value === null || !Number.isFinite(value) ? '—' : `${value.toFixed(2)} GB`; }
+  private disposeChart() { this.resize?.disconnect(); this.chart?.dispose(); this.chart = null; this.resize = null; this.trendElement = null; }
+  override updated(changes: Map<string, unknown>) {
+    const container = this.renderRoot.querySelector<HTMLElement>('.trend-chart-container');
+    if (!container) this.disposeChart();
+    else if (container !== this.trendElement || changes.has('capacityTrend')) {
+      this.disposeChart(); this.trendElement = container;
+      this.chart = echarts.init(container, undefined, { renderer: 'svg' });
+      const style = getComputedStyle(this);
+      const text = style.getPropertyValue('--text').trim(); const accent = style.getPropertyValue('--accent').trim();
+      const points: Array<[string, number | null]> = [];
+      for (const point of this.capacityTrend?.trend ?? []) {
+        const previous = points.at(-1);
+        if (previous && Date.parse(point.time) - Date.parse(previous[0]) > 3_600_000) points.push([new Date(Date.parse(previous[0]) + 3_600_000).toISOString(), null]);
+        points.push([point.time, point.total_size_gb]);
+      }
+      this.chart.setOption({ textStyle: { color: text }, tooltip: { trigger: 'axis' }, grid: { left: 55, right: 20, top: 30, bottom: 40 }, xAxis: { type: 'time', axisLabel: { color: text } }, yAxis: { type: 'value', name: 'GB', axisLabel: { color: text } }, series: [{ type: 'line', name: o('capacity'), data: points, connectNulls: false, smooth: false, lineStyle: { color: accent }, itemStyle: { color: accent } }] });
+      this.resize = new ResizeObserver(() => this.chart?.resize()); this.resize.observe(container);
+    }
+    if (this.restorePosition && this.resourceOverview && !this.loading) {
+      this.restorePosition = false;
+      try { const top = Number(sessionStorage.getItem('slide.overview.scroll')); if (top > 0) this.scrollingParent().scrollTop = top; } catch { /* Optional restoration. */ }
     }
   }
-
-  private _onEndDateChange(e: Event) {
-    this.endDate = (e.target as HTMLInputElement).value;
-    if (this.startDate && this.endDate) {
-      this.reloadTrend({ startDate: this.startDate, endDate: this.endDate, instanceId: this.selectedInstanceId });
-    }
-  }
-
   override render() {
-    if (this.loading) {
-      return html`<div class="loading" style="flex-direction:column;gap:16px;padding:40px;">
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--space-md);">
-            <div class="skeleton-stat" style="width:100%;height:80px;"></div>
-            <div class="skeleton-stat" style="width:100%;height:80px;"></div>
-            <div class="skeleton-stat" style="width:100%;height:80px;"></div>
-            <div class="skeleton-stat" style="width:100%;height:80px;"></div>
-            <div class="skeleton-stat" style="width:100%;height:80px;"></div>
-            <div class="skeleton-stat" style="width:100%;height:80px;"></div>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);">
-            <div class="skeleton-block" style="height:320px;"></div>
-            <div class="skeleton-block" style="height:320px;"></div>
-          </div>
-          <div class="skeleton-block" style="height:200px;"></div>
-        </div>`;
-    }
-
-    if (this.error) {
-      return html`<div class="dashboard-panel" style="color: var(--danger);">${this.error}</div>`;
-    }
-    const summary = this._visibleResourceSummary();
-    const typeCounts = (['instance', 'server', 'network_device'] as ResourceType[]).map((type) => ({ type, count: this._visibleResourceItems().filter((item) => item.resource.type === type).length }));
-    const riskItems = this._visibleResourceItems()
-      .filter((item) => this._resourceStatusVariant(item) !== 'ok')
-      .sort((a, b) => this._riskPriority(b) - this._riskPriority(a)
-        || b.unresolvedAlerts - a.unresolvedAlerts
-        || b.impactScope.length - a.impactScope.length)
-      .slice(0, 5);
-    const freshnessCounts = {
-      fresh: this._visibleResourceItems().filter((item) => item.freshness === 'fresh').length,
-      stale: this._visibleResourceItems().filter((item) => item.freshness === 'stale').length,
-      missing: this._visibleResourceItems().filter((item) => item.freshness === 'missing').length,
-    };
-    const quality = this._combinedDataQuality();
-    return html`
-      <div class="dashboard-grid">
-        <div class="dashboard-toolbar">
-          <div class="scope-switch" role="tablist" aria-label=${t("dashboard.resourceScope")}>
-            ${(['all', 'instance', 'server', 'network_device'] as const).map((scope) => html`
-              <button class=${this.resourceScope === scope ? 'active' : ''} aria-selected=${this.resourceScope === scope} @click=${() => { this.resourceScope = scope; }}>${this._scopeLabel(scope)}</button>
-            `)}
-          </div>
-          <div class="dashboard-meta">
-            <span>${t("dashboard.collectedAt")} ${this.resourceOverview?.collectedAt ? this._formatTime(this.resourceOverview.collectedAt) : t("dashboard.unknown")}</span>
-            <app-badge variant=${quality === 'complete' ? 'ok' : quality === 'partial' ? 'warn' : 'muted'}>${this._qualityLabel(quality)}</app-badge>
-            <button class="btn-ghost" @click=${() => this.loadDashboardData()}>${t("dashboard.refresh")}</button>
-          </div>
-        </div>
-        ${this.moduleErrors.length ? html`<div class="dashboard-notice">${this.moduleErrors.join(' · ')}</div>` : nothing}
-
-        <div class="dashboard__stat-cards">
-          <stat-card label=${t("dashboard.managedResources")} value=${summary.total} hint=${typeCounts.map(({ type, count }) => `${this._resourceTypeLabel(type)} ${count}`).join(' · ')}></stat-card>
-          <stat-card label=${t("dashboard.healthyOnline")} value=${summary.healthy} variant="ok" hint=${t("dashboard.share", { percent: String(summary.total ? Math.round(summary.healthy / summary.total * 100) : 0) })}></stat-card>
-          <stat-card label=${t("dashboard.degraded")} value=${summary.degraded} variant="warn" hint=${t("dashboard.needsAttention")}></stat-card>
-          <stat-card label=${t("dashboard.criticalOffline")} value=${summary.critical} variant="danger" hint=${t("dashboard.prioritize")}></stat-card>
-          <stat-card label=${t("dashboard.activeIncidents")} value=${summary.activeIncidents} variant=${summary.activeIncidents ? 'warn' : 'ok'} hint=${t("dashboard.unresolvedAlerts")}></stat-card>
-          <stat-card label=${t("dashboard.staleMissing")} value=${summary.staleOrMissing} variant=${summary.staleOrMissing ? 'warn' : 'ok'} hint=${t("dashboard.collectionQuality")}></stat-card>
-          <stat-card label=${t("dashboard.aiAnalyses")} value=${this.aiStats?.today_total ?? 0} hint=${t("dashboard.today")}></stat-card>
-        </div>
-
-        <div class="dashboard__primary">
-          <section class="dashboard-panel">
-            <div class="dashboard-panel__header"><span class="dashboard-panel__title">${icons['triangle-alert']} ${t("dashboard.riskQueue")}</span><button class="btn-ghost" @click=${() => this._navigateTo('alerts')}>${t("dashboard.viewAlerts")}</button></div>
-            ${riskItems.length ? html`<div class="status-list">${riskItems.map((item) => html`
-              <div class="status-item" @click=${() => this._navigateTo(item.resource.type === 'instance' ? 'instances-db' : item.resource.type === 'server' ? 'servers' : 'network-devices')}>
-                <div class="status-item__left"><div class="status-item__icon ${this._resourceStatusVariant(item)}">${icons['triangle-alert']}</div><span class="status-item__name">${this._resourceTypeLabel(item.resource.type)} · ${item.label}</span></div>
-                <span class="status-item__time">${item.unresolvedAlerts ? t("dashboard.alertCount", { count: String(item.unresolvedAlerts) }) : item.status}<br><small>${this._freshnessLabel(item.freshness)} · ${t("dashboard.impactCount", { count: String(item.impactScope.length) })}</small></span>
-              </div>` )}</div>` : html`<app-empty-state title=${t("dashboard.noRisks")} description=${t("dashboard.noRisksDescription")}><div slot="icon">${icons['check-circle']}</div></app-empty-state>`}
-          </section>
-          <section class="dashboard-panel">
-            <div class="dashboard-panel__header"><span class="dashboard-panel__title">${t("dashboard.healthDistribution")}</span><span class="dashboard-meta">${this._scopeLabel(this.resourceScope)}</span></div>
-            <div class="health-distribution">${typeCounts.filter(({ count }) => count > 0).map(({ type, count }) => {
-              const items = this._visibleResourceItems().filter((item) => item.resource.type === type);
-              const ok = items.filter((item) => this._resourceStatusVariant(item) === 'ok').length;
-              const warn = items.filter((item) => this._resourceStatusVariant(item) === 'warn').length;
-              const danger = items.filter((item) => this._resourceStatusVariant(item) === 'danger').length;
-              const muted = Math.max(0, count - ok - warn - danger);
-              return html`<div class="health-row"><span>${this._resourceTypeLabel(type)}</span><div class="health-track"><span class="ok" style="width:${ok / count * 100}%"></span><span class="warn" style="width:${warn / count * 100}%"></span><span class="danger" style="width:${danger / count * 100}%"></span><span class="muted" style="width:${muted / count * 100}%"></span></div><span class="health-count">${count}</span></div>`;
-            })}</div>
-          </section>
-        </div>
-
-        <section class="dashboard-panel">
-          <div class="dashboard-panel__header"><span class="dashboard-panel__title">${t("dashboard.collectionQuality")}</span><app-badge variant=${quality === 'complete' ? 'ok' : quality === 'partial' ? 'warn' : 'muted'}>${this._qualityLabel(quality)}</app-badge></div>
-          <div class="health-distribution">
-            ${(['fresh', 'stale', 'missing'] as const).map((freshness) => html`
-              <div class="health-row"><span>${this._freshnessLabel(freshness)}</span><div class="health-track"><span class=${freshness === 'fresh' ? 'ok' : freshness === 'stale' ? 'warn' : 'danger'} style="width:${summary.total ? freshnessCounts[freshness] / summary.total * 100 : 0}%"></span></div><span class="health-count">${freshnessCounts[freshness]}</span></div>
-            `)}
-          </div>
-        </section>
-
-        <section class="dashboard-panel">
-          <div class="dashboard-panel__header"><span class="dashboard-panel__title">${t("dashboard.metricSnapshot")}</span><span class="dashboard-meta">${t("dashboard.latestObservations")}</span></div>
-          ${this._resourceMetricRows().length ? html`<div class="metric-list">${this._resourceMetricRows().map((metric) => html`<div class="metric-row"><div><span class="metric-row__label">${metric.label}</span><span class="metric-row__coverage">${metric.coverage}</span></div><span class="metric-row__value">${metric.value}</span></div>`)}</div>` : html`<app-empty-state title=${t("dashboard.noMetrics")} description=${t("dashboard.enableCollection")}></app-empty-state>`}
-        </section>
-
-        ${this.resourceScope === 'all' || this.resourceScope === 'instance' ? html`<div class="dashboard__charts">
-          <!-- DB Type Distribution Pie Chart -->
-          <div class="chart-card">
-            <div class="chart-card__header">
-              <span class="chart-card__title">${icons['database']} ${t("dashboard.dbTypeDistribution")}</span><span class="dashboard-meta">${t("dashboard.databaseOnly")}</span>
-            </div>
-            ${this.dbTypeDistribution.length > 0
-              ? html`<div class="chart-container pie-chart-container"></div>`
-              : html`<div class="chart-empty-state">${t("dashboard.noDatabaseInstances")}</div>`
-            }
-          </div>
-
-          <!-- Data Volume Trend Line Chart -->
-          <div class="chart-card">
-            <div class="chart-card__header">
-              <span class="chart-card__title">${icons['bar-chart']} ${t("dashboard.capacityTrend")}</span>
-              <div class="chart-card__controls">
-                <select class="instance-select" @change=${this._onInstanceChange}>
-                  <option value="">${t("dashboard.allDatabases")}</option>
-                  ${this._instanceOptions}
-                </select>
-                <button class="time-btn ${this.selectedHours === 24 ? 'active' : ''}" @click=${() => this.reloadTrend({ hours: 24, instanceId: this.selectedInstanceId })}>24h</button>
-                <button class="time-btn ${this.selectedHours === 168 ? 'active' : ''}" @click=${() => this.reloadTrend({ hours: 168, instanceId: this.selectedInstanceId })}>7d</button>
-                <button class="time-btn ${this.selectedHours === 720 ? 'active' : ''}" @click=${() => this.reloadTrend({ hours: 720, instanceId: this.selectedInstanceId })}>30d</button>
-                <div class="date-picker-group">
-                  <input type="date" class="date-picker" .value=${this.startDate} @change=${this._onStartDateChange}>
-                  <span class="date-separator">${t("dashboard.to")}</span>
-                  <input type="date" class="date-picker" .value=${this.endDate} @change=${this._onEndDateChange}>
-                </div>
-              </div>
-            </div>
-            ${this.capacityTrend && this.capacityTrend.trend.length > 0
-              ? html`
-                  <div class="chart-current-total">${t("dashboard.currentTotal")} <span class="total-badge">${this._formatBytes(this.capacityTrend.current_total_gb)}</span></div>
-                  <div class="chart-container trend-chart-container"></div>
-                `
-              : html`<div class="chart-empty-state">${t("dashboard.noCapacityData")}</div>`
-            }
-          </div>
-        </div>` : nothing}
-
-        ${this._renderRecentAlerts()}
-        ${this._renderResourceOverview()}
-      </div>
-    `;
+    const items = this._visibleResourceItems();
+    const scopeInventory = scopedItems(this.resourceOverview, this.resourceScope);
+    const engines = [...new Set(scopeInventory.map(item => String(item.attributes?.dbType ?? 'unknown')))];
+    const s = summarize(items);
+    const scopePermission = this.resourceScope === 'server' ? 'servers:view' : this.resourceScope === 'network_device' ? 'network_devices:view' : 'instance:view';
+    const inventoryFailed = this.resourceOverview?.unavailableTypes?.some(type => this.resourceScope === 'all' || type === this.resourceScope);
+    const noPermission = this.resourceScope !== 'all' && !permissionMatches(this.permissions, scopePermission);
+    return html`<div class="dashboard-grid"><header class="toolbar"><h1>${o('title')}</h1><div class="metadata"><time title=${this.resourceOverview?.collectedAt ?? ''}>${o('dataTime')}: ${this.time(this.resourceOverview?.collectedAt ?? null)}</time><button class="btn" .disabled=${this.loading} @click=${this.loadDashboardData}><span aria-hidden="true">${icons['refresh-cw']}</span>${o(this.loading ? 'refreshing' : 'refresh')}</button></div></header>
+      <div class="scope-switch" role="tablist" aria-label=${o('title')}>${(['all', ...resourceTypes] as Scope[]).map((scope, index) => html`<button id=${`scope-${scope}`} class="btn" role="tab" aria-selected=${String(this.resourceScope === scope)} aria-controls="overview-panel" tabindex=${this.resourceScope === scope ? '0' : '-1'} @keydown=${(event: KeyboardEvent) => this.keydownTab(event, index)} @click=${() => this.switchScope(scope)}><span aria-hidden="true">${this.icon(scope)}</span>${o(scope)}</button>`)}</div>
+      <div class="filters"><app-form-field label=${o('scopeSearch')}><input type="search" aria-label=${o('scopeSearch')} .value=${this.search} @input=${(event: Event) => this.changeScopeFilter(event, 'search')}></app-form-field>${this.resourceScope === 'instance' ? html`<app-form-field label=${o('engine')}><select aria-label=${o('engine')} .value=${this.engine} @change=${(event: Event) => this.changeScopeFilter(event, 'engine')}><option value="">${o('allEngines')}</option>${engines.map(engine => html`<option value=${engine} .selected=${live(engine === this.engine)}>${engine} (${scopeInventory.filter(item => String(item.attributes?.dbType ?? 'unknown') === engine).length})</option>`)}</select></app-form-field>` : nothing}${this.search || this.engine ? html`<button class="btn-ghost" @click=${this.clearFilters}>${o('clear')}</button>` : nothing}</div>
+      ${this.error ? html`<p class="notice" role="alert">${this.error} ${this.resourceOverview ? o('retained') : ''}<button class="btn" @click=${this.loadDashboardData}>${o('retry')}</button></p>` : nothing}
+      ${this.resourceOverview?.truncated ? html`<p class="notice">${o('incomplete')}</p>` : nothing}
+      <section id="overview-panel" role="tabpanel" aria-labelledby=${`scope-${this.resourceScope}`} class="dashboard-grid">
+      ${!this.resourceOverview ? this.loading ? html`<div class="dashboard__stat-cards">${[0, 1, 2, 3].map(() => html`<div class="skeleton"></div>`)}</div><div class="skeleton large"></div>` : html`<app-empty-state title=${o('unavailableData')}></app-empty-state>` : !scopeInventory.length ? html`<app-empty-state title=${inventoryFailed ? o('unavailableData') : this.resourceOverview.truncated ? o('incomplete') : noPermission ? o('permission') : `${o('noManaged')} ${o(this.resourceScope === 'all' ? 'resources' : this.resourceScope)}`} description=${o('manageHint')}></app-empty-state>${!this.resourceOverview.truncated && !inventoryFailed && !noPermission && this.resourceScope !== 'all' && permissionMatches(this.permissions, this.resourceScope === 'network_device' ? 'network_devices:manage' : this.resourceScope === 'server' ? 'servers:manage' : 'instance:manage') ? html`<a class="btn" href=${this.resourceScope === 'network_device' ? '/network-devices' : this.resourceScope === 'server' ? '/servers' : '/instances-db'}>${o('manage')}</a>` : nothing}` : !items.length ? html`<app-empty-state title=${o('noMatch')}></app-empty-state><button class="btn" @click=${this.clearFilters}>${o('clear')}</button>` : html`
+        ${!this.resourceOverview.truncated && (s.alertsIncomplete || items.some(item => item.gaps.includes('OBSERVATIONS_TRUNCATED'))) ? html`<p class="notice">${o('incomplete')}</p>` : nothing}${s.alertsUnavailable ? html`<p class="notice">${o('alertUnavailable')}</p>` : nothing}
+        ${this.renderKpis(items)}<div class="dashboard__primary">${this.renderRiskQueue(items)}<div class="side-panels">${this.renderHealth(items)}${this.renderRelations(items)}</div></div>
+        <details><summary>${o('collection')} · ${o('fresh')} ${s.fresh}/${s.total} · ${o('collectionRisk')} ${s.collection}</summary><div class="metadata">${['fresh', 'stale', 'missing', 'failed'].map(state => html`<span>${o(state)} ${items.filter(item => freshness(item) === state).length}</span>`)}<span>${o('qualityGap')} ${items.filter(item => item.quality !== 'good').length}</span></div></details>
+        ${this.renderDatabase(items)}${this.renderMetrics(items)}${this.renderBackups(items)}${this.renderDetails(items)}`}
+      </section></div>`;
   }
-}
-
-if (!customElements.get("dashboard-page")) {
-  customElements.define("dashboard-page", DashboardPage);
 }

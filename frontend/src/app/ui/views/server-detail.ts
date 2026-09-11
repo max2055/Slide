@@ -1,3 +1,4 @@
+import { returnToDashboard } from './dashboard-model.js';
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import * as echarts from "echarts";
@@ -230,8 +231,8 @@ export class ServerDetailPage extends LitElement {
     const params = new URLSearchParams(window.location.search);
     const id = params.get("id");
     const tab = params.get("tab");
-    if (id && tab === "server-detail") {
-      this.serverId = parseInt(id, 10);
+    if (id && (tab === "server-detail" || location.pathname === "/server-detail") && /^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id))) {
+      this.serverId = Number(id);
     }
   }
 
@@ -425,7 +426,7 @@ export class ServerDetailPage extends LitElement {
     }
   }
 
-  private _goBack() {
+  private _goBack() { if (returnToDashboard()) return;
     window.dispatchEvent(new CustomEvent("slide-navigate", {
       detail: { tab: "servers" },
     }));
