@@ -125,9 +125,9 @@ export class StatCard extends LitElement {
     const variantClass = this.variant ? `variant-${this.variant}` : '';
     return html`
       <div class="stat-card ${variantClass}" part="root">
-        <span class="stat-card__label">${this.label}</span>
-        <span class="stat-card__value">${this.value}</span>
-        <span class="stat-card__hint">${this.hint}</span>
+        <span class="stat-card__label" part="label">${this.label}</span>
+        <span class="stat-card__value" part="value">${this.value}</span>
+        <span class="stat-card__hint" part="hint">${this.hint}</span>
       </div>`;
   }
 }
