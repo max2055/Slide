@@ -157,7 +157,7 @@ export interface SlowQuery {
 
 export interface HealthCheckResult {
   health_score: number;
-  status: 'healthy' | 'warning' | 'critical';
+  status: 'healthy' | 'warning' | 'critical' | 'unknown';
   checks: { name: string; status: string; score: number; message?: string }[];
   db_version?: string | null;
   data_size_gb?: number | null;
@@ -1503,7 +1503,8 @@ class DatabaseService {
           const available = scoredChecks.some(check => check.dimension === 'availability' && check.score > 0);
           const score = available ? total : 0;
           healthResult.health_score = score;
-          healthResult.status = score >= 80 ? 'healthy' : score >= 60 ? 'warning' : 'critical';
+          const incomplete = scoredChecks.some(check => check.status === 'unknown' && check.dimension && weights[check.dimension] > 0);
+          healthResult.status = !available ? 'critical' : incomplete ? 'unknown' : score >= 80 ? 'healthy' : score >= 60 ? 'warning' : 'critical';
           healthResult.dimensions = dimensions;
           healthResult.checks = scoredChecks;
         } catch (error) {

@@ -107,6 +107,8 @@ function toSnmpConfig(target: NetworkDeviceCollectionTarget, credentials: Networ
 }
 
 export class NetworkDeviceCollector {
+  private readonly lastProbeAttempt = new Map<number, number>();
+  private tickInFlight = false;
   private readonly failures = new Map<number, number>();
   private readonly inFlight = new Set<number>();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -148,37 +150,40 @@ export class NetworkDeviceCollector {
     this.timer = null;
     this.inFlight.clear();
     this.failures.clear();
+    this.lastProbeAttempt.clear();
   }
 
   async tick(): Promise<void> {
-    const targets = await this.store.getCollectionEnabledDevices?.() ?? [];
-    const definitions = this.getSchedulableDefinitions();
-    for (const target of targets) {
-      const now = Date.now();
-      const dueMetricIds = await dueStoredMetricIds(
-        this.scheduleStore,
-        'network_device',
-        target.id,
-        NETWORK_DEVICE_PROVIDER_ID,
-        definitions,
-        now,
-      );
-      if (dueMetricIds.length === 0) continue;
-      const result = await this.collectDevice(target.id, dueMetricIds);
-      for (const definition of definitions.filter((candidate) => dueMetricIds.includes(candidate.id))) {
-        await this.scheduleStore.record(
-          'network_device',
-          target.id,
-          NETWORK_DEVICE_PROVIDER_ID,
-          definition,
-          now,
-          result.success,
-        );
+    if (this.tickInFlight) return;
+    this.tickInFlight = true;
+    try {
+      const targets = await this.store.getCollectionEnabledDevices?.() ?? [];
+      const activeIds = new Set(targets.map(target => target.id));
+      for (const id of this.lastProbeAttempt.keys()) if (!activeIds.has(id)) this.lastProbeAttempt.delete(id);
+      const definitions = this.getSchedulableDefinitions();
+      for (const target of targets) {
+        try {
+          const now = Date.now();
+          const lastProbe = this.lastProbeAttempt.get(target.id);
+          // Probe before reading schedules, so store failures cannot freeze reachability.
+          if (lastProbe === undefined || now - lastProbe >= 60_000) {
+            await this.collectDevice(target.id, []);
+          }
+          const dueMetricIds = await dueStoredMetricIds(this.scheduleStore, 'network_device', target.id, NETWORK_DEVICE_PROVIDER_ID, definitions, now);
+          if (dueMetricIds.length === 0) continue;
+          const result = await this.collectDevice(target.id, dueMetricIds);
+          const succeeded = new Set(result.succeededMetricIds ?? []);
+          for (const definition of definitions.filter(candidate => dueMetricIds.includes(candidate.id))) {
+            await this.scheduleStore.record('network_device', target.id, NETWORK_DEVICE_PROVIDER_ID, definition, now, succeeded.has(definition.id));
+          }
+        } catch (error) {
+          console.error(`[NetworkDeviceCollector] device #${target.id} tick failed:`, stableError(error));
+        }
       }
-    }
+    } finally { this.tickInFlight = false; }
   }
 
-  async collectDevice(id: number, requestedMetricIds?: readonly string[]): Promise<{ success: boolean; observations?: number; interfaces?: number; error?: string }> {
+  async collectDevice(id: number, requestedMetricIds?: readonly string[]): Promise<{ success: boolean; succeededMetricIds?: string[]; observations?: number; interfaces?: number; error?: string }> {
     if (this.inFlight.has(id)) return { success: false, error: 'COLLECTION_IN_PROGRESS' };
     this.inFlight.add(id);
     try {
@@ -187,7 +192,7 @@ export class NetworkDeviceCollector {
       if (!target.collectionEnabled) return { success: false, error: 'COLLECTION_DISABLED' };
       const metricIds = requestedMetricIds ?? this.getSchedulableDefinitions().map((definition) => definition.id);
       const requested = new Set(metricIds);
-      if (requested.size === 0) return { success: false, error: 'NO_METRICS_DEFINED' };
+      this.lastProbeAttempt.set(id, Date.now());
       let authorizedTarget: { address: string; port: number };
       try {
         authorizedTarget = await this.options.authorizeTarget(
@@ -212,9 +217,14 @@ export class NetworkDeviceCollector {
         };
       } catch (error) { return this.recordFailure(id, stableError(error)); }
 
+      let reachable = false;
       try {
         const probe = await this.adapter.probe(config);
         if (!probe.reachable) return this.recordFailure(id, 'SNMP_RESPONSE_INVALID');
+        reachable = true;
+        await this.store.updateStatus(id, 'online');
+        this.failures.delete(id);
+        if (requested.size === 0) return { success: true, succeededMetricIds: [] };
         const systemMetricIds = metricIds.filter((metricId) => SYSTEM_METRIC_IDS.has(metricId));
         const interfaceMetricIds = metricIds.filter((metricId) => INTERFACE_METRIC_IDS.has(metricId));
         const system = systemMetricIds.length > 0
@@ -227,10 +237,13 @@ export class NetworkDeviceCollector {
         const observations = [...system, ...interfaces.observations]
           .filter((observation) => requested.has(observation.metricId));
         await this.store.insertObservations(id, observations);
-        await this.store.updateStatus(id, 'online');
-        this.failures.delete(id);
-        return { success: true, observations: observations.length, interfaces: interfaces.interfaces.length };
+        const succeededMetricIds = metricIds.filter(metricId => {
+          const samples = observations.filter(observation => observation.metricId === metricId);
+          return samples.length > 0 && samples.every(sample => sample.value !== null && Number.isFinite(sample.value) && sample.quality !== 'unknown');
+        });
+        return { success: true, succeededMetricIds, observations: observations.length, interfaces: interfaces.interfaces.length };
       } catch (error) {
+        if (reachable) return { success: false, error: stableError(error), succeededMetricIds: [] };
         return this.recordFailure(id, stableError(error));
       }
     } finally {

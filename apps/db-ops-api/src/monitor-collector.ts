@@ -388,7 +388,7 @@ class MonitorCollector {
             }));
           await instanceDatabaseService.recordHealthCheck(
             instanceId, health.health_score,
-            health.status as 'healthy' | 'warning' | 'critical',
+            health.status,
             health.checks, issues,
             health.dimensions
           );

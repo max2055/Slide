@@ -710,7 +710,7 @@ class InstanceDatabaseService {
   async recordHealthCheck(
     instanceId: number,
     healthScore: number,
-    healthStatus: 'healthy' | 'warning' | 'critical',
+    healthStatus: 'healthy' | 'warning' | 'critical' | 'unknown',
     checks: any[],
     issues: any[],
     dimensions?: Record<string, number>
