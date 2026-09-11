@@ -13,3 +13,14 @@ it('merges builtin database support on load and refresh while preserving operato
     expect(registry.getById('connections')).toMatchObject({ default_interval: 123, is_collected: false });
   }
 });
+
+it('keeps the previous snapshot visible throughout an asynchronous refresh', async () => {
+  const registry = new MetricRegistry();
+  let finish!: (rows: any[]) => void;
+  vi.spyOn(metricDatabaseService, 'getAllMetrics').mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  const refresh = registry.refreshFromDB();
+  expect(registry.getByDbType('dameng').length).toBeGreaterThan(0);
+  finish([{ ...new MetricRegistry().getById('connections'), default_interval: 99 }]);
+  await refresh;
+  expect(registry.getById('connections')?.default_interval).toBe(99);
+});
