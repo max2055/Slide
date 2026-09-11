@@ -938,17 +938,17 @@ class DatabaseService {
           (SELECT SUM(value) FROM V$SYSSTAT WHERE name = 'physical reads'))) * 100, 2) as hit_rate
         FROM DUAL
       `);
-      const pgaCacheHitRate = pgaResult.rows[0]?.[0] as number || 100;
+      const pgaCacheHitRate = (pgaResult.rows[0]?.[0] as number | null) ?? null;
 
       // 缓冲区命中率 (Buffer Cache Hit Ratio via V$SYSSTAT)
-      let sharedPoolHitRate = 100;
+      let sharedPoolHitRate: number | null = null;
       try {
         const bufResult = await connection.execute(`
           SELECT ROUND((1 - (SUM(DECODE(NAME, 'physical reads', VALUE, 0)) /
             NULLIF(SUM(DECODE(NAME, 'db block gets', VALUE, 0)) + SUM(DECODE(NAME, 'consistent gets', VALUE, 0)), 0))) * 100, 2)
           FROM V$SYSSTAT
         `);
-        sharedPoolHitRate = bufResult.rows[0]?.[0] as number || 100;
+        sharedPoolHitRate = (bufResult.rows[0]?.[0] as number | null) ?? null;
       } catch {
         console.warn(`[OracleMetrics] V$SYSSTAT 缓冲区命中率查询失败`);
       }
@@ -986,7 +986,8 @@ class DatabaseService {
         : 0;
 
       // 获取内存使用率 - 从 PGA 和 SGA 使用率估算
-      const memoryUsage = Math.min(100, Math.round((100 - pgaCacheHitRate) * 0.5 + (tablespaceUsagePercent || 50) * 0.5));
+      const memoryUsage = pgaCacheHitRate === null || tablespaceUsagePercent === null ? null
+        : Math.min(100, Math.round((100 - pgaCacheHitRate) * 0.5 + tablespaceUsagePercent * 0.5));
 
       // 获取版本号
       let version = '';
@@ -1030,9 +1031,9 @@ class DatabaseService {
         active_transactions: activeSessions,
         slow_queries: 0,
         db_type: 'oracle',
-        pga_cache_hit_rate: Math.round(pgaCacheHitRate * 100) / 100,
-        library_cache_hit_rate: Math.round(libraryCacheHitRate * 100) / 100,
-        shared_pool_hit_rate: Math.round(sharedPoolHitRate * 100) / 100,
+        pga_cache_hit_rate: pgaCacheHitRate === null ? null : Math.round(pgaCacheHitRate * 100) / 100,
+        library_cache_hit_rate: libraryCacheHitRate === null ? null : Math.round(libraryCacheHitRate * 100) / 100,
+        shared_pool_hit_rate: sharedPoolHitRate === null ? null : Math.round(sharedPoolHitRate * 100) / 100,
         enqueue_deadlocks: enqueueDeadlocks,
         tablespace_usage_percent: tablespaceUsagePercent !== null ? Math.round(tablespaceUsagePercent * 100) / 100 : null,
         active_sessions: activeSessions,
@@ -1842,6 +1843,8 @@ class DatabaseService {
         }
       } catch {
         console.warn(`[OracleHealth] V$PARAMETER/V$SESSION 查询失败，连接数检查跳过`);
+        connStatus = 'unknown';
+        connScore = 0;
         connMessage = '连接数使用率：不可用（V$ 视图权限不足）';
       }
 
@@ -1941,12 +1944,12 @@ class DatabaseService {
       });
 
       // 检查死锁
-      let enqueueDeadlocks = 0;
+      let enqueueDeadlocks: number | null = null;
       try {
         const deadlockResult = await conn.oracleConnection.execute(
           "SELECT COUNT(*) as count FROM V$LOCK WHERE BLOCK = 1"
         );
-        enqueueDeadlocks = deadlockResult.rows[0]?.[0] as number || 0;
+        enqueueDeadlocks = (deadlockResult.rows[0]?.[0] as number | null) ?? null;
       } catch {
         console.warn(`[OracleHealth] V$LOCK 查询失败，死锁检查跳过`);
       }
@@ -1954,7 +1957,11 @@ class DatabaseService {
       let deadlockStatus = 'ok';
       let deadlockScore = 100;
       let deadlockMessage = '无死锁';
-      if (enqueueDeadlocks > 10) {
+      if (enqueueDeadlocks === null) {
+        deadlockStatus = 'unknown';
+        deadlockScore = 0;
+        deadlockMessage = '死锁检测：不可用';
+      } else if (enqueueDeadlocks > 10) {
         deadlockStatus = 'warning';
         deadlockScore = 70;
         deadlockMessage = `存在 ${enqueueDeadlocks} 次死锁`;
@@ -2087,12 +2094,15 @@ class DatabaseService {
         FROM V$BUFFERPOOL
         WHERE ID = 0
       `);
-      const bufferHitRate = bufferResult.rows[0]?.[0] as number || 100;
+      const bufferHitRate = (bufferResult.rows[0]?.[0] as number | null) ?? null;
 
       let bufferStatus = 'ok';
       let bufferScore = 100;
-      let bufferMessage = `缓冲池命中率：${bufferHitRate.toFixed(2)}%`;
-      if (bufferHitRate < 80) {
+      let bufferMessage = bufferHitRate === null ? '缓冲池命中率：不可用' : `缓冲池命中率：${bufferHitRate.toFixed(2)}%`;
+      if (bufferHitRate === null) {
+        bufferStatus = 'unknown';
+        bufferScore = 0;
+      } else if (bufferHitRate < 80) {
         bufferStatus = 'critical';
         bufferScore = 40;
         bufferMessage = `缓冲池命中率过低：${bufferHitRate.toFixed(2)}%`;
@@ -2112,7 +2122,7 @@ class DatabaseService {
       });
 
       // 检查锁等待
-      let lockWaitCount = 0;
+      let lockWaitCount: number | null = null;
       try {
         const lockWaitResult = await conn.dmConnection.execute(
           "SELECT COUNT(*) as count FROM V$LOCK WHERE BLOCK = 1"
@@ -2125,14 +2135,18 @@ class DatabaseService {
           );
           lockWaitCount = lockResult.rows[0]?.[0] as number || 0;
         } catch {
-          lockWaitCount = 0;
+          lockWaitCount = null;
         }
       }
 
       let lockStatus = 'ok';
       let lockScore = 100;
       let lockMessage = '无锁等待';
-      if (lockWaitCount > 5) {
+      if (lockWaitCount === null) {
+        lockStatus = 'unknown';
+        lockScore = 0;
+        lockMessage = '锁等待检测：不可用';
+      } else if (lockWaitCount > 5) {
         lockStatus = 'warning';
         lockScore = 70;
         lockMessage = `存在 ${lockWaitCount} 次锁等待`;
@@ -2173,8 +2187,8 @@ class DatabaseService {
         // V$DEADLOCK_HISTORY 可能不存在，跳过此检查
         checks.push({
           name: '死锁检测',
-          status: 'warning',
-          score: 100,
+          status: 'unknown',
+          score: 0,
           message: '无法获取死锁信息',
         });
       }
