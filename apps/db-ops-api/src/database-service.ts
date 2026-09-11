@@ -1499,6 +1499,7 @@ class DatabaseService {
           const weights = await scoringConfigService.getWeights();
           const { dimensions, total, checks: scoredChecks } = calculateDimensionScores(healthResult.checks, conn.db_type, weights);
           healthResult.health_score = total;
+          healthResult.status = total >= 80 ? 'healthy' : total >= 60 ? 'warning' : 'critical';
           healthResult.dimensions = dimensions;
           healthResult.checks = scoredChecks;
         } catch (error) {

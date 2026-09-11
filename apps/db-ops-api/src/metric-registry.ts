@@ -66,8 +66,13 @@ export class MetricRegistry {
       }
       const predefined = this._getPredefinedMetrics();
       for (const m of predefined) {
-        if (!this.definitions.has(this.definitionKey(m))) {
+        const existing = this.definitions.get(this.definitionKey(m));
+        if (!existing) {
           this.definitions.set(this.definitionKey(m), m);
+        } else if (m.is_builtin && existing.is_builtin) {
+          // Older seeded rows must not hide newly supported database engines.
+          // Preserve operator intervals, enabled flags and SQL overrides.
+          existing.db_types = [...new Set([...existing.db_types, ...m.db_types])];
         }
       }
       console.log(`[MetricRegistry] loaded ${this.definitions.size} definitions (${rows.length} DB + ${this.definitions.size - rows.length} predefined)`);

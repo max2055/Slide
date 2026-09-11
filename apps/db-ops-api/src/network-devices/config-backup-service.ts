@@ -15,8 +15,18 @@ export const CONFIG_BACKUP_COMMANDS = Object.freeze([
   'display current-configuration',
 ] as const);
 
+const CISCO_CONFIG_BACKUP_COMMANDS = Object.freeze(['terminal length 0', 'show running-config'] as const);
+
+function backupCommands(vendor?: string): readonly string[] {
+  if (vendor === 'cisco') return CISCO_CONFIG_BACKUP_COMMANDS;
+  if (!vendor || vendor === 'huawei') return CONFIG_BACKUP_COMMANDS;
+  throw new ConfigBackupError('CONFIG_BACKUP_VENDOR_UNSUPPORTED');
+}
+
 export type ConfigBackupErrorCode =
   | 'NETWORK_DEVICE_NOT_FOUND'
+  | 'SSH_CREDENTIAL_READ_FAILED'
+  | 'CONFIG_BACKUP_VENDOR_UNSUPPORTED'
   | 'SSH_CREDENTIAL_REQUIRED'
   | 'SSH_HOST_KEY_FINGERPRINT_REQUIRED'
   | 'SSH_TARGET_DENIED'
@@ -43,6 +53,7 @@ export interface ConfigBackupTarget {
   id: number;
   host: string;
   sshPort: number;
+  vendor?: string;
   name?: string;
 }
 
@@ -281,12 +292,13 @@ function redactConfiguration(content: string): { preview: string; status: Config
   }
 }
 
-function stableFailure(error: unknown): ConfigBackupError {
+function stableFailure(error: unknown, fallback: ConfigBackupErrorCode = 'SSH_COMMAND_FAILED'): ConfigBackupError {
   if (error instanceof ConfigBackupError) return error;
+  if (fallback !== 'SSH_COMMAND_FAILED') return new ConfigBackupError(fallback);
   const code = error && typeof error === 'object' && 'code' in error ? String((error as any).code) : '';
   if (code === 'SSH_COMMAND_TIMEOUT') return new ConfigBackupError('SSH_COMMAND_TIMEOUT');
   if (/timeout/i.test(error instanceof Error ? error.message : '')) return new ConfigBackupError('SSH_COMMAND_TIMEOUT');
-  return new ConfigBackupError('SSH_COMMAND_FAILED');
+  return new ConfigBackupError(fallback);
 }
 
 function normalizeBackupTarget(value: unknown): ConfigBackupTarget | null {
@@ -296,7 +308,7 @@ function normalizeBackupTarget(value: unknown): ConfigBackupTarget | null {
   const host = typeof row.host === 'string' ? row.host : '';
   const sshPort = Number(row.sshPort ?? row.ssh_port);
   if (!Number.isSafeInteger(id) || id < 1 || !host || !Number.isInteger(sshPort)) return null;
-  return { id, host, sshPort, name: typeof row.name === 'string' ? row.name : undefined };
+  return { id, host, sshPort, vendor: typeof row.vendor === 'string' ? row.vendor : undefined, name: typeof row.name === 'string' ? row.name : undefined };
 }
 
 class DefaultSshTransport implements ConfigBackupSshTransport {
@@ -492,7 +504,7 @@ export class ConfigBackupService {
       const request = {
         host: authorizedTarget.address, port: authorizedTarget.port, username: credentials.username,
         credentialType: credentials.credentialType, credentialValue: credentials.credentialValue,
-        hostKeyFingerprint: fingerprint, commands: CONFIG_BACKUP_COMMANDS,
+        hostKeyFingerprint: fingerprint, commands: backupCommands(target.vendor),
         timeoutMs: this.commandTimeoutMs, maxOutputBytes: this.maxOutputBytes,
       };
       const result = await (this.transport as ConfigBackupTransport).collect(request);
@@ -524,9 +536,11 @@ export class ConfigBackupService {
     if (this.inFlight.has(deviceId)) throw new ConfigBackupError('SSH_COMMAND_FAILED');
     this.inFlight.add(deviceId);
     let connection: ConfigBackupConnection | null = null;
+    let failureStage: ConfigBackupErrorCode = 'CONFIG_BACKUP_STORE_UNAVAILABLE';
     try {
       const device = normalizeBackupTarget(await this.deviceService.getDeviceById(deviceId));
       if (!device) throw new ConfigBackupError('NETWORK_DEVICE_NOT_FOUND');
+      const commands = backupCommands(device.vendor);
       let target: AuthorizedNetworkDeviceTarget;
       try {
         target = await this.authorizeTarget({ host: device.host, port: device.sshPort }, {
@@ -535,6 +549,7 @@ export class ConfigBackupService {
           production: this.targetPolicy?.production,
         });
       } catch (error) { throw new ConfigBackupError('SSH_TARGET_DENIED', { cause: error }); }
+      failureStage = 'SSH_CREDENTIAL_READ_FAILED';
       const credentials = await this.deviceService.getCredentials(deviceId, 'ssh');
       if (!credentials || credentials.protocol !== 'ssh' || !credentials.credentialValue || !credentials.credentialType) {
         throw new ConfigBackupError('SSH_CREDENTIAL_REQUIRED');
@@ -542,19 +557,22 @@ export class ConfigBackupService {
       let fingerprint: string | undefined;
       try { fingerprint = normalizeOptionalSshHostKeyFingerprint(credentials.hostKeyFingerprint); }
       catch { throw new ConfigBackupError('SSH_HOST_KEY_FINGERPRINT_REQUIRED'); }
+      failureStage = 'SSH_CONNECT_FAILED';
       connection = await (this.transport as ConfigBackupSshTransport).connect({ target, username: credentials.username, credentialType: credentials.credentialType, credentialValue: credentials.credentialValue, hostKeyFingerprint: fingerprint, readyTimeoutMs: this.commandTimeoutMs });
-      const output = await this.runFixedCommands(connection);
+      failureStage = 'SSH_COMMAND_FAILED';
+      const output = await this.runFixedCommands(connection, commands);
       const content = output;
       const sizeBytes = Buffer.byteLength(content, 'utf8');
       if (sizeBytes === 0) throw new ConfigBackupError('CONFIG_EMPTY');
       const digest = createHash('sha256').update(content, 'utf8').digest('hex');
       const redaction = redactConfiguration(content);
+      failureStage = 'CONFIG_BACKUP_STORE_UNAVAILABLE';
       const summary = await this.store.insert!({ deviceId, contentEncrypted: this.crypto.encrypt(content), contentSha256: digest, sourceProtocol: 'ssh', collectedAt: this.clock(), sizeBytes, redactionStatus: redaction.status, createdBy: actorId });
       const result = { summary, preview: redaction.preview.slice(0, 64 * 1024), deduplicated: summary.contentSha256 === digest };
       await this.recordAudit({ action: 'collect', deviceId, backupId: summary.id, contentSha256: digest, sizeBytes, actorId });
       return result;
     } catch (error) {
-      const stable = stableFailure(error);
+      const stable = stableFailure(error, failureStage);
       const auditResult = this.recordAudit({ action: 'failed', deviceId, reason: stable.code, actorId });
       if (auditResult && typeof (auditResult as Promise<void>).catch === 'function') await (auditResult as Promise<void>).catch(() => undefined);
       throw stable;
@@ -605,15 +623,15 @@ export class ConfigBackupService {
     return this.legacyMode ? { success: true, fromId, toId, diff: [...removed, ...added].join('\n') } : { fromId, toId, diff: [...removed, ...added].join('\n') };
   }
 
-  private async runFixedCommands(connection: ConfigBackupConnection): Promise<string> {
+  private async runFixedCommands(connection: ConfigBackupConnection, commands: readonly string[]): Promise<string> {
     let output = '';
-    for (const command of CONFIG_BACKUP_COMMANDS) {
+    for (const command of commands) {
       // Commands are constants above; no request/user supplied command reaches
       // the SSH transport.
       const result = await this.withTimeout(connection.exec(command), this.commandTimeoutMs);
       if (result.exitCode != null && result.exitCode !== 0) throw new ConfigBackupError('SSH_COMMAND_FAILED');
       const chunk = result.stdout ?? '';
-      output += command === CONFIG_BACKUP_COMMANDS[1] ? chunk : '';
+      output += command === commands[1] ? chunk : '';
       if (Buffer.byteLength(output, 'utf8') > this.maxOutputBytes) throw new ConfigBackupError('CONFIG_OUTPUT_LIMIT');
     }
     return output;
