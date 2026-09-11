@@ -77,6 +77,27 @@ describe('server collector Linux lifecycle', () => {
     mocks.execute.mockResolvedValue([{}]);
   });
 
+  it('checks SSH availability without enabled metrics on an independent minute cadence', async () => {
+    mocks.getCollectionEnabledServers.mockResolvedValue([{ id: 9, os_type: 'RHEL 8' }]);
+    mocks.execCommands.mockResolvedValue([ok('Linux\n')]);
+    const registry = vi.spyOn(metricRegistry, 'getByTargetType').mockReturnValue([]);
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    const record = vi.fn();
+    const collector = new ServerCollector({}, { list: async () => [], record });
+    try {
+      await collector.tick();
+      await collector.tick();
+      expect(mocks.getConnection).toHaveBeenCalledTimes(1);
+      now.mockReturnValue(61000);
+      await collector.tick();
+      expect(mocks.getConnection).toHaveBeenCalledTimes(2);
+      expect(mocks.updateServerStatus).toHaveBeenLastCalledWith(9, 'online');
+      expect(mocks.execute).not.toHaveBeenCalled();
+      expect(record).not.toHaveBeenCalled();
+      expect(mocks.releaseConnection).toHaveBeenCalledTimes(2);
+    } finally { registry.mockRestore(); now.mockRestore(); }
+  });
+
   it('persists byte and legacy disk rows without an inode row when df -Pi fails', async () => {
     mocks.execCommands.mockImplementation(async (_client: unknown, commands: string[]) => {
       if (commands.length === 1 && commands[0] === 'LC_ALL=C LANG=C uname -s') return [ok('Linux\n')];
