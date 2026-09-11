@@ -230,3 +230,11 @@ describe('independent reachability and metric quality', () => {
     expect(persistence.updateStatus).toHaveBeenLastCalledWith(7, 'online');
   });
 });
+
+it('counts a failed probe once per tick even when metrics are also due', async () => {
+  const persistence = store({ getCollectionEnabledDevices: vi.fn(async () => [target]) });
+  const snmp = adapter({ probe: vi.fn(async () => { throw new Error('SNMP_TIMEOUT'); }) });
+  const collector = new NetworkDeviceCollector(persistence, snmp as any, { scheduleStore: { list: async () => [], record: vi.fn() } });
+  await collector.tick();
+  expect(snmp.probe).toHaveBeenCalledTimes(1);
+});

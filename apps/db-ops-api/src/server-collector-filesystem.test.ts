@@ -98,6 +98,22 @@ describe('server collector Linux lifecycle', () => {
     } finally { registry.mockRestore(); now.mockRestore(); }
   });
 
+  it('can probe SSH on an unsupported OS without running metric commands', async () => {
+    mocks.getServerById.mockResolvedValue({ id: 9, host: 'host', port: 22, os_type: 'unsupported', credential_type: 'password' });
+    const collector = new ServerCollector();
+    await expect(collector.collectServer(9, [])).resolves.toMatchObject({ success: true });
+    expect(mocks.execCommands).not.toHaveBeenCalled();
+    expect(mocks.updateServerStatus).toHaveBeenLastCalledWith(9, 'online');
+  });
+
+  it('does not call an SSH-reachable server unreachable because metric commands fail', async () => {
+    mocks.execCommands.mockImplementation(async (_client: unknown, commands: string[]) => commands.map(command => command.includes('uname') ? ok('Linux') : failed()));
+    const collector = new ServerCollector({ maxFailuresBeforeUnreachable: 1 });
+    await collector.collectServerWithFailureState(9);
+    expect(mocks.updateServerStatus).toHaveBeenLastCalledWith(9, 'online');
+    expect(mocks.updateServerStatus).not.toHaveBeenCalledWith(9, 'unreachable');
+  });
+
   it('persists byte and legacy disk rows without an inode row when df -Pi fails', async () => {
     mocks.execCommands.mockImplementation(async (_client: unknown, commands: string[]) => {
       if (commands.length === 1 && commands[0] === 'LC_ALL=C LANG=C uname -s') return [ok('Linux\n')];
