@@ -77,6 +77,43 @@ describe('server collector Linux lifecycle', () => {
     mocks.execute.mockResolvedValue([{}]);
   });
 
+  it('checks SSH availability without enabled metrics on an independent minute cadence', async () => {
+    mocks.getCollectionEnabledServers.mockResolvedValue([{ id: 9, os_type: 'RHEL 8' }]);
+    mocks.execCommands.mockResolvedValue([ok('Linux\n')]);
+    const registry = vi.spyOn(metricRegistry, 'getByTargetType').mockReturnValue([]);
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    const record = vi.fn();
+    const collector = new ServerCollector({}, { list: async () => [], record });
+    try {
+      await collector.tick();
+      await collector.tick();
+      expect(mocks.getConnection).toHaveBeenCalledTimes(1);
+      now.mockReturnValue(61000);
+      await collector.tick();
+      expect(mocks.getConnection).toHaveBeenCalledTimes(2);
+      expect(mocks.updateServerStatus).toHaveBeenLastCalledWith(9, 'online');
+      expect(mocks.execute).not.toHaveBeenCalled();
+      expect(record).not.toHaveBeenCalled();
+      expect(mocks.releaseConnection).toHaveBeenCalledTimes(2);
+    } finally { registry.mockRestore(); now.mockRestore(); }
+  });
+
+  it('can probe SSH on an unsupported OS without running metric commands', async () => {
+    mocks.getServerById.mockResolvedValue({ id: 9, host: 'host', port: 22, os_type: 'unsupported', credential_type: 'password' });
+    const collector = new ServerCollector();
+    await expect(collector.collectServer(9, [])).resolves.toMatchObject({ success: true });
+    expect(mocks.execCommands).not.toHaveBeenCalled();
+    expect(mocks.updateServerStatus).toHaveBeenLastCalledWith(9, 'online');
+  });
+
+  it('does not call an SSH-reachable server unreachable because metric commands fail', async () => {
+    mocks.execCommands.mockImplementation(async (_client: unknown, commands: string[]) => commands.map(command => command.includes('uname') ? ok('Linux') : failed()));
+    const collector = new ServerCollector({ maxFailuresBeforeUnreachable: 1 });
+    await collector.collectServerWithFailureState(9);
+    expect(mocks.updateServerStatus).toHaveBeenLastCalledWith(9, 'online');
+    expect(mocks.updateServerStatus).not.toHaveBeenCalledWith(9, 'unreachable');
+  });
+
   it('persists byte and legacy disk rows without an inode row when df -Pi fails', async () => {
     mocks.execCommands.mockImplementation(async (_client: unknown, commands: string[]) => {
       if (commands.length === 1 && commands[0] === 'LC_ALL=C LANG=C uname -s') return [ok('Linux\n')];

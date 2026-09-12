@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  getAllInstances: vi.fn(),
   getConnection: vi.fn(),
   checkHealth: vi.fn(),
   checkConnectionAlive: vi.fn(),
@@ -32,7 +33,7 @@ vi.mock('./instance-database-service.js', () => ({
     getInstancePassword: mocks.getInstancePassword,
     updateHealthStatus: mocks.updateHealthStatus,
     recordHealthCheck: mocks.recordHealthCheck,
-    getAllInstances: vi.fn(),
+    getAllInstances: mocks.getAllInstances,
     getInstanceById: mocks.getInstanceById,
   },
 }));
@@ -186,4 +187,36 @@ describe('MonitorCollector credential-aware health state', () => {
       succeededMetricIds: ['cpu_usage'],
     });
   });
+});
+
+
+describe('health scheduling without due metrics', () => {
+  it('checks active instances with no registered metrics, independently every minute', async () => {
+    vi.clearAllMocks();
+    monitorCollector.stop();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(100000);
+    mocks.getAllInstances.mockResolvedValue([{ id: 201, status: 'active', db_type: 'dameng', username: 'app' }]);
+    mocks.getByDbType.mockReturnValue([]);
+    mocks.getInstancePassword.mockResolvedValue('secret');
+    mocks.getConnection.mockReturnValue({ connected: true });
+    mocks.checkHealth.mockResolvedValue({ health_score: 90, status: 'healthy', checks: [] });
+    await (monitorCollector as any)._tick();
+    expect(mocks.checkHealth).toHaveBeenCalledTimes(1);
+    expect(mocks.updateHealthStatus).toHaveBeenCalledWith(201, 90, 'healthy', undefined, undefined);
+    await (monitorCollector as any)._tick();
+    expect(mocks.checkHealth).toHaveBeenCalledTimes(1);
+    now.mockReturnValue(160000);
+    await (monitorCollector as any)._tick();
+    expect(mocks.checkHealth).toHaveBeenCalledTimes(2);
+    expect(mocks.collectInstance).not.toHaveBeenCalled();
+    now.mockRestore();
+    monitorCollector.stop();
+  });
+});
+
+it('marks an unexpected health collection error unknown rather than declaring an outage', async () => {
+  vi.clearAllMocks();
+  mocks.checkHealth.mockRejectedValue(new Error('query failed'));
+  await (monitorCollector as any).updateHealthStatusFromCheck(301);
+  expect(mocks.updateHealthStatus).toHaveBeenLastCalledWith(301, 0, 'unknown');
 });

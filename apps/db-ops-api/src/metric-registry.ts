@@ -50,34 +50,38 @@ export class MetricRegistry {
    */
   async initialize(): Promise<void> {
     try {
-      let rows = await metricDatabaseService.getAllMetrics();
+      let rows = await metricDatabaseService.getAllMetrics(true);
       console.log(`[MetricRegistry] initialize: DB returned ${rows.length} rows`);
       if (rows.length === 0) {
         console.log('[MetricRegistry] DB empty, seeding predefined metrics...');
         await this._seedPredefinedToDB();
-        rows = await metricDatabaseService.getAllMetrics();
+        rows = await metricDatabaseService.getAllMetrics(true);
         console.log(`[MetricRegistry] after seed: ${rows.length} rows`);
       }
       // Load DB rows into memory, then fill gaps with predefined defaults
-      this.definitions.clear();
+      const nextDefinitions = new Map<string, MetricDefinition>();
       for (const row of rows) {
         const definition = this._rowToDefinition(row);
-        this.definitions.set(this.definitionKey(definition), definition);
+        nextDefinitions.set(this.definitionKey(definition), definition);
       }
       const predefined = this._getPredefinedMetrics();
       for (const m of predefined) {
-        if (!this.definitions.has(this.definitionKey(m))) {
-          this.definitions.set(this.definitionKey(m), m);
+        const existing = nextDefinitions.get(this.definitionKey(m));
+        if (!existing) {
+          nextDefinitions.set(this.definitionKey(m), m);
+        } else if (m.is_builtin && (existing.is_builtin || (existing.name === m.name && !existing.collection_sqls && !existing.compute_expr))) {
+          // Older seeded rows must not hide newly supported database engines.
+          // Preserve operator intervals, enabled flags and SQL overrides.
+          existing.db_types = [...new Set([...existing.db_types, ...m.db_types])];
         }
       }
+      this.definitions = nextDefinitions;
       console.log(`[MetricRegistry] loaded ${this.definitions.size} definitions (${rows.length} DB + ${this.definitions.size - rows.length} predefined)`);
       return;
     } catch (e) {
-      console.warn('[MetricRegistry] DB 不可用，使用预定义指标:', (e as Error).message);
+      console.warn('[MetricRegistry] 刷新失败，保留有效快照:', (e as Error).message);
     }
-    // Last-resort fallback (DB completely unavailable)
-    this.loadPredefinedMetrics();
-    console.log(`[MetricRegistry] fallback: loaded ${this.definitions.size} predefined`);
+    // The constructor supplies defaults until the first successful load.
   }
 
   private async _seedPredefinedToDB(): Promise<void> {
@@ -91,7 +95,7 @@ export class MetricRegistry {
           default_interval: m.default_interval,
           is_collected: m.is_collected,
           target_type: m.target_type,
-        });
+        }, m.is_builtin);
         if (r.success) ok++; else { fail++; console.warn(`[MetricRegistry] seed ${m.id} failed: ${r.error}`); }
       } catch (e) { fail++; console.warn(`[MetricRegistry] seed ${m.id} error:`, (e as Error).message); }
     }
@@ -102,14 +106,7 @@ export class MetricRegistry {
    * 刷新内存缓存（在 POST/PUT/DELETE 写操作后调用）
    */
   async refreshFromDB(): Promise<void> {
-    const oldDefs = this.definitions;
-    this.definitions = new Map(); // swap to empty map, advance concurrently
-    try {
-      await this.initialize(); // populates this.definitions with fresh data
-    } catch {
-      // Restore previous state on failure so readers see stale data rather than empty
-      this.definitions = oldDefs;
-    }
+    await this.initialize();
   }
 
   /**

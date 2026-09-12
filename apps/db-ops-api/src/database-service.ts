@@ -157,7 +157,7 @@ export interface SlowQuery {
 
 export interface HealthCheckResult {
   health_score: number;
-  status: 'healthy' | 'warning' | 'critical';
+  status: 'healthy' | 'warning' | 'critical' | 'unknown';
   checks: { name: string; status: string; score: number; message?: string }[];
   db_version?: string | null;
   data_size_gb?: number | null;
@@ -929,7 +929,7 @@ class DatabaseService {
         SELECT ROUND(SUM(pinhits) / SUM(pins) * 100, 2) as hit_rate
         FROM V$LIBRARYCACHE
       `);
-      const libraryCacheHitRate = libraryCacheResult.rows[0]?.[0] as number || 100;
+      const libraryCacheHitRate = (libraryCacheResult.rows[0]?.[0] as number | null) ?? null;
 
       // PGA 缓存命中率
       const pgaResult = await connection.execute(`
@@ -938,17 +938,17 @@ class DatabaseService {
           (SELECT SUM(value) FROM V$SYSSTAT WHERE name = 'physical reads'))) * 100, 2) as hit_rate
         FROM DUAL
       `);
-      const pgaCacheHitRate = pgaResult.rows[0]?.[0] as number || 100;
+      const pgaCacheHitRate = (pgaResult.rows[0]?.[0] as number | null) ?? null;
 
       // 缓冲区命中率 (Buffer Cache Hit Ratio via V$SYSSTAT)
-      let sharedPoolHitRate = 100;
+      let sharedPoolHitRate: number | null = null;
       try {
         const bufResult = await connection.execute(`
           SELECT ROUND((1 - (SUM(DECODE(NAME, 'physical reads', VALUE, 0)) /
             NULLIF(SUM(DECODE(NAME, 'db block gets', VALUE, 0)) + SUM(DECODE(NAME, 'consistent gets', VALUE, 0)), 0))) * 100, 2)
           FROM V$SYSSTAT
         `);
-        sharedPoolHitRate = bufResult.rows[0]?.[0] as number || 100;
+        sharedPoolHitRate = (bufResult.rows[0]?.[0] as number | null) ?? null;
       } catch {
         console.warn(`[OracleMetrics] V$SYSSTAT 缓冲区命中率查询失败`);
       }
@@ -986,7 +986,8 @@ class DatabaseService {
         : 0;
 
       // 获取内存使用率 - 从 PGA 和 SGA 使用率估算
-      const memoryUsage = Math.min(100, Math.round((100 - pgaCacheHitRate) * 0.5 + (tablespaceUsagePercent || 50) * 0.5));
+      const memoryUsage = pgaCacheHitRate === null || tablespaceUsagePercent === null ? null
+        : Math.min(100, Math.round((100 - pgaCacheHitRate) * 0.5 + tablespaceUsagePercent * 0.5));
 
       // 获取版本号
       let version = '';
@@ -1030,9 +1031,9 @@ class DatabaseService {
         active_transactions: activeSessions,
         slow_queries: 0,
         db_type: 'oracle',
-        pga_cache_hit_rate: Math.round(pgaCacheHitRate * 100) / 100,
-        library_cache_hit_rate: Math.round(libraryCacheHitRate * 100) / 100,
-        shared_pool_hit_rate: Math.round(sharedPoolHitRate * 100) / 100,
+        pga_cache_hit_rate: pgaCacheHitRate === null ? null : Math.round(pgaCacheHitRate * 100) / 100,
+        library_cache_hit_rate: libraryCacheHitRate === null ? null : Math.round(libraryCacheHitRate * 100) / 100,
+        shared_pool_hit_rate: sharedPoolHitRate === null ? null : Math.round(sharedPoolHitRate * 100) / 100,
         enqueue_deadlocks: enqueueDeadlocks,
         tablespace_usage_percent: tablespaceUsagePercent !== null ? Math.round(tablespaceUsagePercent * 100) / 100 : null,
         active_sessions: activeSessions,
@@ -1498,7 +1499,14 @@ class DatabaseService {
         try {
           const weights = await scoringConfigService.getWeights();
           const { dimensions, total, checks: scoredChecks } = calculateDimensionScores(healthResult.checks, conn.db_type, weights);
-          healthResult.health_score = total;
+          // No successful connectivity observation means no evidence for a
+          // weighted health score, even when availability has zero weight.
+          const available = scoredChecks.some(check => check.dimension === 'availability' && check.score > 0);
+          const score = available ? total : 0;
+          healthResult.health_score = score;
+          const incomplete = scoredChecks.some(check => check.status === 'unknown' && (!check.dimension || weights[check.dimension] > 0));
+          const connectionFailed = scoredChecks.some(check => check.dimension === 'availability' && check.status === 'critical' && check.score === 0);
+          healthResult.status = connectionFailed ? 'critical' : !available || incomplete ? 'unknown' : score >= 80 ? 'healthy' : score >= 60 ? 'warning' : 'critical';
           healthResult.dimensions = dimensions;
           healthResult.checks = scoredChecks;
         } catch (error) {
@@ -1836,6 +1844,8 @@ class DatabaseService {
         }
       } catch {
         console.warn(`[OracleHealth] V$PARAMETER/V$SESSION 查询失败，连接数检查跳过`);
+        connStatus = 'unknown';
+        connScore = 0;
         connMessage = '连接数使用率：不可用（V$ 视图权限不足）';
       }
 
@@ -1871,6 +1881,8 @@ class DatabaseService {
       let tsScore = 100;
       let tsMessage: string;
       if (tablespaceUsage === null) {
+        tsStatus = 'unknown';
+        tsScore = 0;
         tsMessage = '表空间使用率：不可用（DBA 权限不足）';
       } else {
         tsMessage = `表空间使用率：${tablespaceUsage.toFixed(1)}%`;
@@ -1895,22 +1907,25 @@ class DatabaseService {
       });
 
       // 检查库缓存命中率
-      let libraryCacheHitRate = 100;
+      let libraryCacheHitRate: number | null = null;
       try {
         const libraryCacheResult = await conn.oracleConnection.execute(`
           SELECT ROUND(SUM(pinhits) / NULLIF(SUM(pins), 0) * 100, 2) as hit_rate
           FROM V$LIBRARYCACHE
         `);
-        libraryCacheHitRate = libraryCacheResult.rows[0]?.[0] as number || 100;
+        libraryCacheHitRate = (libraryCacheResult.rows[0]?.[0] as number | null) ?? null;
       } catch {
         console.warn(`[OracleHealth] V$LIBRARYCACHE 查询失败，库缓存检查跳过`);
-        libraryCacheHitRate = 100;
+        libraryCacheHitRate = null;
       }
 
       let cacheStatus = 'ok';
       let cacheScore = 100;
-      let cacheMessage = `库缓存命中率：${libraryCacheHitRate.toFixed(2)}%`;
-      if (libraryCacheHitRate < 80) {
+      let cacheMessage = libraryCacheHitRate === null ? '库缓存命中率：不可用' : `库缓存命中率：${libraryCacheHitRate.toFixed(2)}%`;
+      if (libraryCacheHitRate === null) {
+        cacheStatus = 'unknown';
+        cacheScore = 0;
+      } else if (libraryCacheHitRate < 80) {
         cacheStatus = 'critical';
         cacheScore = 40;
         cacheMessage = `库缓存命中率过低：${libraryCacheHitRate.toFixed(2)}%`;
@@ -1930,12 +1945,12 @@ class DatabaseService {
       });
 
       // 检查死锁
-      let enqueueDeadlocks = 0;
+      let enqueueDeadlocks: number | null = null;
       try {
         const deadlockResult = await conn.oracleConnection.execute(
           "SELECT COUNT(*) as count FROM V$LOCK WHERE BLOCK = 1"
         );
-        enqueueDeadlocks = deadlockResult.rows[0]?.[0] as number || 0;
+        enqueueDeadlocks = (deadlockResult.rows[0]?.[0] as number | null) ?? null;
       } catch {
         console.warn(`[OracleHealth] V$LOCK 查询失败，死锁检查跳过`);
       }
@@ -1943,7 +1958,11 @@ class DatabaseService {
       let deadlockStatus = 'ok';
       let deadlockScore = 100;
       let deadlockMessage = '无死锁';
-      if (enqueueDeadlocks > 10) {
+      if (enqueueDeadlocks === null) {
+        deadlockStatus = 'unknown';
+        deadlockScore = 0;
+        deadlockMessage = '死锁检测：不可用';
+      } else if (enqueueDeadlocks > 10) {
         deadlockStatus = 'warning';
         deadlockScore = 70;
         deadlockMessage = `存在 ${enqueueDeadlocks} 次死锁`;
@@ -1989,11 +2008,12 @@ class DatabaseService {
       console.error(`Oracle 健康检查失败：${conn.id}`, error);
       return {
         health_score: 0,
-        status: 'critical',
+        status: 'unknown',
         checks: [
+          ...checks,
           {
             name: 'Oracle 检查',
-            status: 'critical',
+            status: 'unknown',
             score: 0,
             message: `检查失败：${error instanceof Error ? error.message : '未知错误'}`,
           },
@@ -2076,12 +2096,15 @@ class DatabaseService {
         FROM V$BUFFERPOOL
         WHERE ID = 0
       `);
-      const bufferHitRate = bufferResult.rows[0]?.[0] as number || 100;
+      const bufferHitRate = (bufferResult.rows[0]?.[0] as number | null) ?? null;
 
       let bufferStatus = 'ok';
       let bufferScore = 100;
-      let bufferMessage = `缓冲池命中率：${bufferHitRate.toFixed(2)}%`;
-      if (bufferHitRate < 80) {
+      let bufferMessage = bufferHitRate === null ? '缓冲池命中率：不可用' : `缓冲池命中率：${bufferHitRate.toFixed(2)}%`;
+      if (bufferHitRate === null) {
+        bufferStatus = 'unknown';
+        bufferScore = 0;
+      } else if (bufferHitRate < 80) {
         bufferStatus = 'critical';
         bufferScore = 40;
         bufferMessage = `缓冲池命中率过低：${bufferHitRate.toFixed(2)}%`;
@@ -2101,7 +2124,7 @@ class DatabaseService {
       });
 
       // 检查锁等待
-      let lockWaitCount = 0;
+      let lockWaitCount: number | null = null;
       try {
         const lockWaitResult = await conn.dmConnection.execute(
           "SELECT COUNT(*) as count FROM V$LOCK WHERE BLOCK = 1"
@@ -2114,14 +2137,18 @@ class DatabaseService {
           );
           lockWaitCount = lockResult.rows[0]?.[0] as number || 0;
         } catch {
-          lockWaitCount = 0;
+          lockWaitCount = null;
         }
       }
 
       let lockStatus = 'ok';
       let lockScore = 100;
       let lockMessage = '无锁等待';
-      if (lockWaitCount > 5) {
+      if (lockWaitCount === null) {
+        lockStatus = 'unknown';
+        lockScore = 0;
+        lockMessage = '锁等待检测：不可用';
+      } else if (lockWaitCount > 5) {
         lockStatus = 'warning';
         lockScore = 70;
         lockMessage = `存在 ${lockWaitCount} 次锁等待`;
@@ -2162,8 +2189,8 @@ class DatabaseService {
         // V$DEADLOCK_HISTORY 可能不存在，跳过此检查
         checks.push({
           name: '死锁检测',
-          status: 'warning',
-          score: 100,
+          status: 'unknown',
+          score: 0,
           message: '无法获取死锁信息',
         });
       }
@@ -2195,11 +2222,12 @@ class DatabaseService {
       console.error(`达梦数据库健康检查失败：${conn.id}`, error);
       return {
         health_score: 0,
-        status: 'critical',
+        status: 'unknown',
         checks: [
+          ...checks,
           {
             name: '达梦检查',
-            status: 'critical',
+            status: 'unknown',
             score: 0,
             message: `检查失败：${error instanceof Error ? error.message : '未知错误'}`,
           },

@@ -57,3 +57,10 @@ describe('schema comment parity migration', () => {
     }
   });
 });
+
+it('restores the health status comment after the unknown-state enum migration', async () => {
+  const migrations = await loadMigrations();
+  const alterations = migrations.filter(m => /ALTER TABLE\s+`?health_check_history`?\s+MODIFY COLUMN\s+`?status`?/i.test(m.sql));
+  const latest = alterations.at(-1)!;
+  expect(latest.sql).toMatch(/ENUM\('healthy', 'warning', 'critical', 'unknown'\) NOT NULL COMMENT '[^']+'/);
+});

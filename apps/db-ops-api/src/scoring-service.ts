@@ -77,8 +77,7 @@ export function calculateDimensionScores(
     const dimension = dimensionMap[check.name] || null;
     // Unknown/pending availability is lack of evidence, even if an older
     // producer left a stale numeric score on the check object.
-    const score = dimension === 'availability'
-      && (check.status === 'unknown' || check.status === 'pending_credentials')
+    const score = (check.status === 'unknown' || check.status === 'pending_credentials')
       ? 0
       : check.score;
     if (dimension && dimensionScores[dimension]) {

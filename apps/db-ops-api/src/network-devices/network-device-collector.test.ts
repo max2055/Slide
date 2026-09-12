@@ -190,3 +190,51 @@ describe('NetworkDeviceCollector', () => {
     );
   });
 });
+
+describe('independent reachability and metric quality', () => {
+  it('probes every minute without any enabled metrics and does not write metric schedules', async () => {
+    const registry = vi.spyOn(metricRegistry, 'getByTargetType').mockReturnValue([]);
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    const persistence = store({ getCollectionEnabledDevices: vi.fn(async () => [target]) });
+    const snmp = adapter();
+    const record = vi.fn();
+    const collector = new NetworkDeviceCollector(persistence, snmp as any, { scheduleStore: { list: async () => [], record } });
+    try {
+      await collector.tick();
+      await collector.tick();
+      expect(snmp.probe).toHaveBeenCalledTimes(1);
+      now.mockReturnValue(61000);
+      await collector.tick();
+      expect(snmp.probe).toHaveBeenCalledTimes(2);
+      expect(persistence.updateStatus).toHaveBeenCalledWith(7, 'online');
+      expect(record).not.toHaveBeenCalled();
+      expect(snmp.collectSystemMetrics).not.toHaveBeenCalled();
+    } finally { registry.mockRestore(); now.mockRestore(); }
+  });
+  it('does not advance a missing metric as success when another metric is valid', async () => {
+    const definitions = [{ id: 'device_cpu_percent', default_interval: 300, is_collected: true }, { id: 'device_memory_percent', default_interval: 300, is_collected: true }];
+    const registry = vi.spyOn(metricRegistry, 'getByTargetType').mockReturnValue(definitions as any);
+    const persistence = store({ getCollectionEnabledDevices: vi.fn(async () => [target]) });
+    const record = vi.fn();
+    const snmp = adapter({ collectSystemMetrics: vi.fn(async () => [observation('device_cpu_percent', 0), observation('device_memory_percent', null, 'unknown')]) });
+    try {
+      await new NetworkDeviceCollector(persistence, snmp as any, { scheduleStore: { list: async () => [], record } }).tick();
+      expect(record.mock.calls.map(call => [call[3].id, call[5]])).toEqual([['device_cpu_percent', true], ['device_memory_percent', false]]);
+      expect(persistence.updateStatus).toHaveBeenLastCalledWith(7, 'online');
+    } finally { registry.mockRestore(); }
+  });
+  it('keeps SNMP online when metric collection fails after a successful probe', async () => {
+    const persistence = store();
+    const snmp = adapter({ collectSystemMetrics: vi.fn(async () => { throw new Error('metric unsupported'); }) });
+    await new NetworkDeviceCollector(persistence, snmp as any).collectDevice(7, ['device_cpu_percent']);
+    expect(persistence.updateStatus).toHaveBeenLastCalledWith(7, 'online');
+  });
+});
+
+it('counts a failed probe once per tick even when metrics are also due', async () => {
+  const persistence = store({ getCollectionEnabledDevices: vi.fn(async () => [target]) });
+  const snmp = adapter({ probe: vi.fn(async () => { throw new Error('SNMP_TIMEOUT'); }) });
+  const collector = new NetworkDeviceCollector(persistence, snmp as any, { scheduleStore: { list: async () => [], record: vi.fn() } });
+  await collector.tick();
+  expect(snmp.probe).toHaveBeenCalledTimes(1);
+});

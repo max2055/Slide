@@ -128,6 +128,9 @@ function failedResult(error: unknown): ServerCollectionResult {
 class ServerCollector {
   private collectionTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  private tickInFlight = false;
+  private readonly protocolOnline = new Set<number>();
+  private readonly lastProbeAttempt = new Map<number, number>();
   private failureCounts: Map<number, number> = new Map();
   private inFlight = new Set<number>();
   private config: CollectorConfig;
@@ -158,6 +161,8 @@ class ServerCollector {
     this.running = false;
     sshSessionPool.closeAll();
     this.failureCounts.clear();
+    this.lastProbeAttempt.clear();
+    this.protocolOnline.clear();
     console.log('[ServerCollector] stopped');
   }
 
@@ -167,12 +172,14 @@ class ServerCollector {
     }
     if (this.inFlight.has(serverId)) return failedResult(new Error('COLLECTION_IN_PROGRESS'));
     this.inFlight.add(serverId);
+    this.protocolOnline.delete(serverId);
+    this.lastProbeAttempt.set(serverId, Date.now());
     try {
       const server = await serverDatabaseService.getServerById(serverId);
       if (!server) return failedResult(new Error('SERVER_NOT_FOUND'));
-      if (!isSupportedServerOs(server.os_type)) return failedResult(new Error('HOST_OS_UNSUPPORTED'));
+      if (requestedMetricIds?.length !== 0 && !isSupportedServerOs(server.os_type)) return failedResult(new Error('HOST_OS_UNSUPPORTED'));
       const metricIds = requestedMetricIds ?? this.getSchedulableDefinitions(server.os_type).map((definition) => definition.id);
-      if (metricIds.length === 0) return failedResult(new Error('NO_METRICS_DEFINED'));
+      this.lastProbeAttempt.set(serverId, Date.now());
       const result = await this._collectOneServer(server, metricIds);
       this.failureCounts.delete(server.id);
       return result;
@@ -192,26 +199,40 @@ class ServerCollector {
   }
 
   async tick(): Promise<void> {
-    const servers = await serverDatabaseService.getCollectionEnabledServers();
-    for (const server of servers) {
-      const definitions = this.getSchedulableDefinitions(server.os_type);
-      const now = Date.now();
-      const dueMetricIds = await dueStoredMetricIds(
-        this.scheduleStore,
-        'server',
-        server.id,
-        SERVER_PROVIDER_ID,
-        definitions,
-        now,
-      );
-      if (dueMetricIds.length === 0) continue;
-      const result = await this.collectServer(server.id, dueMetricIds);
-      const succeeded = new Set(result.succeededMetricIds ?? []);
-      for (const definition of definitions.filter((candidate) => dueMetricIds.includes(candidate.id))) {
-        await this.scheduleStore.record('server', server.id, SERVER_PROVIDER_ID, definition, now, succeeded.has(definition.id));
+    if (this.tickInFlight) return;
+    this.tickInFlight = true;
+    try {
+      const servers = await serverDatabaseService.getCollectionEnabledServers();
+      const activeIds = new Set(servers.map(server => server.id));
+      for (const id of this.lastProbeAttempt.keys()) if (!activeIds.has(id)) {
+        this.lastProbeAttempt.delete(id);
+        this.protocolOnline.delete(id);
       }
-      if (!result.success && result.error !== 'COLLECTION_IN_PROGRESS') await this.recordFailure(server.id, result);
-    }
+      for (const server of servers) {
+        try {
+          const now = Date.now();
+          const lastProbe = this.lastProbeAttempt.get(server.id);
+          if (lastProbe === undefined || now - lastProbe >= 60_000) {
+            const probe = await this.collectServer(server.id, []);
+            if (!probe.success) {
+              if (probe.error !== 'COLLECTION_IN_PROGRESS') await this.recordFailure(server.id, probe);
+              continue;
+            }
+          }
+          const definitions = this.getSchedulableDefinitions(server.os_type);
+          const dueMetricIds = await dueStoredMetricIds(this.scheduleStore, 'server', server.id, SERVER_PROVIDER_ID, definitions, now);
+          if (dueMetricIds.length === 0) continue;
+          const result = await this.collectServer(server.id, dueMetricIds);
+          const succeeded = new Set(result.succeededMetricIds ?? []);
+          for (const definition of definitions.filter(candidate => dueMetricIds.includes(candidate.id))) {
+            await this.scheduleStore.record('server', server.id, SERVER_PROVIDER_ID, definition, now, succeeded.has(definition.id));
+          }
+          if (!result.success && result.error !== 'COLLECTION_IN_PROGRESS') await this.recordFailure(server.id, result);
+        } catch (error) {
+          console.error(`[ServerCollector] server #${server.id} tick failed:`, stableErrorCode(error));
+        }
+      }
+    } finally { this.tickInFlight = false; }
   }
 
   private async _tick(): Promise<void> {
@@ -219,6 +240,7 @@ class ServerCollector {
   }
 
   private async recordFailure(serverId: number, _result: ServerCollectionResult): Promise<void> {
+    if (this.protocolOnline.has(serverId)) return;
     const failures = (this.failureCounts.get(serverId) || 0) + 1;
     this.failureCounts.set(serverId, failures);
     if (failures >= this.config.maxFailuresBeforeUnreachable) {
@@ -242,7 +264,7 @@ class ServerCollector {
   private async _collectOneServer(server: ServerRow, requestedMetricIds: readonly string[]): Promise<ServerCollectionResult> {
     // Validate the configured profile before decrypting credentials or opening
     // a network connection. Unknown labels never fall through to generic Linux.
-    if (!isSupportedServerOs(server.os_type)) {
+    if (requestedMetricIds.length > 0 && !isSupportedServerOs(server.os_type)) {
       throw new Error('HOST_OS_UNSUPPORTED');
     }
     const canonicalOs = normalizeServerOs(server.os_type)!;
@@ -282,6 +304,12 @@ class ServerCollector {
         server.host_key_fingerprint,
       );
 
+      this.protocolOnline.add(server.id);
+      this.failureCounts.delete(server.id);
+      await serverDatabaseService.updateServerStatus(server.id, 'online');
+      if (requestedMetricIds.length === 0) {
+        return { success: true, metricsCount: 0, succeededMetricIds: [], collectedAt: new Date().toISOString() };
+      }
       const osResult = (await execute(['LC_ALL=C LANG=C uname -s']))[0];
       if (!osResult || osResult.exitCode !== 0 || osResult.stdout.trim() !== 'Linux') {
         throw new Error('HOST_OS_UNSUPPORTED');

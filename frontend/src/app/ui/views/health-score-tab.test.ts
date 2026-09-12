@@ -81,6 +81,25 @@ describe('health-score-tab stale score handling', () => {
     document.body.replaceChildren();
   });
 
+  it('shows fresh incomplete checks without presenting them as zero or healthy', async () => {
+    const at = '2026-09-11T08:00:00.000Z';
+    mockResponses({
+      '/health-history?days=7': response([]),
+      '/health-checks': response({ status: 'unknown', created_at: at, checks: [{ name: '表空间使用率', status: 'unknown', score: 0, message: '权限不足' }] }),
+      '/collection-capabilities': response([]),
+      '/api/database/instances/7': response({ ...healthyInstance, health_status: 'unknown', last_health_check_at: at }),
+    });
+    const element = document.createElement('health-score-tab') as any;
+    element.instanceId = 7;
+    document.body.append(element);
+    await settle(element);
+    element.expandedChecks = true;
+    await settle(element);
+    expect(element.shadowRoot?.textContent).toContain('权限不足');
+    expect(element.shadowRoot?.querySelector('.check-score')?.textContent).toBe('未知');
+    expect(element.shadowRoot?.querySelector('.score-number')?.textContent).toBe('未知');
+  });
+
   it('clears a previously healthy score when refresh responses are not OK', async () => {
     const element = await renderHealthyTab();
     mockResponses({

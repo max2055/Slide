@@ -227,3 +227,30 @@ describe('ConfigBackupService', () => {
     expect(result.diff).not.toContain('SuperSecret');
   });
 });
+
+
+describe('vendor backup and failure stages', () => {
+  it('uses Cisco commands and stores only the running configuration', async () => {
+    const active = connection();
+    active.exec = vi.fn(async (command) => {
+      active.commands.push(command);
+      if (command === 'terminal length 0') return { stdout: 'paging disabled', exitCode: 0 };
+      if (command === 'show running-config') return { stdout: 'hostname switch-1\nusername admin secret 5 hidden', exitCode: 0 };
+      return { stdout: 'Syntax error', exitCode: 16 };
+    });
+    const config = options({ deviceService: { getDeviceById: vi.fn(async () => ({ ...target, vendor: 'cisco' })), getCredentials: vi.fn(async () => credentials) } }, active);
+    const result = await new ConfigBackupService(config).collect(7);
+    expect(active.commands).toEqual(['terminal length 0', 'show running-config']);
+    expect(result.preview).toContain('hostname switch-1');
+    expect(result.preview).not.toContain('hidden');
+    expect(result.preview).not.toContain('paging disabled');
+  });
+  it.each(['device', 'credentials', 'store'])('does not disguise %s failures as command errors', async (stage) => {
+    const config = options();
+    const error = new Error('private internal failure');
+    if (stage === 'device') (config.deviceService!.getDeviceById as any).mockRejectedValue(error);
+    if (stage === 'credentials') (config.deviceService!.getCredentials as any).mockRejectedValue(error);
+    if (stage === 'store') (config.store!.insert as any).mockRejectedValue(error);
+    await expect(new ConfigBackupService(config).collect(7)).rejects.toMatchObject({ code: stage === 'credentials' ? 'SSH_CREDENTIAL_READ_FAILED' : 'CONFIG_BACKUP_STORE_UNAVAILABLE' });
+  });
+});

@@ -129,7 +129,7 @@ function qualityFor(value: number | null, reason?: string): ObservationQuality {
 
 export class HuaweiAdapter {
   private readonly counters = new Map<string, CounterState>();
-  private lastUptimeSeconds: number | null = null;
+  private readonly lastUptimeSeconds = new Map<string, number>();
 
   constructor(
     private readonly client: Pick<SnmpClient, 'get' | 'table'> | HuaweiSnmpTransport,
@@ -187,8 +187,10 @@ export class HuaweiAdapter {
         reason = 'value_out_of_range';
       }
       if (metricId === 'device_uptime_seconds' && value != null) {
-        if (this.lastUptimeSeconds != null && value < this.lastUptimeSeconds) reason = 'device_rebooted';
-        this.lastUptimeSeconds = value;
+        const deviceKey = JSON.stringify([config.host, config.port ?? 161]);
+        const previousUptime = this.lastUptimeSeconds.get(deviceKey);
+        if (previousUptime != null && value < previousUptime) reason = 'device_rebooted';
+        this.lastUptimeSeconds.set(deviceKey, value);
       }
       observations.push(this.metric(metricId, value, observedAt, qualityFor(value, reason), reason, numeric ?? undefined));
     }
@@ -230,7 +232,7 @@ export class HuaweiAdapter {
       ];
       for (const counter of counters) {
         if (requested && !requested.has(counter.metricId)) continue;
-        const result = this.rate(`${ifIndex}:${counter.metricId}:${counter.direction}`, counter.current, counter.bits, observedAt.getTime());
+        const result = this.rate(JSON.stringify([config.host, config.port ?? 161, ifIndex, counter.metricId, counter.direction]), counter.current, counter.bits, observedAt.getTime());
         const dimensions = { ...baseDimensions, direction: counter.direction };
         observations.push(this.metric(counter.metricId, counter.metricId.endsWith('_bps') && result.value != null ? result.value * 8 : result.value, observedAt, result.quality, result.reason, counter.current == null || counter.current > BigInt(Number.MAX_SAFE_INTEGER) ? undefined : Number(counter.current), dimensions));
       }
