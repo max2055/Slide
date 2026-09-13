@@ -37,3 +37,12 @@
 - Integration fixes directly required by acceptance: clear historical selection when the existing send/scroll reset runs; include unanswered newest messages at segment boundaries; connect shell scroll callbacks and make the latest-message indicator reactive.
 - Scope remains the approved conversation navigator. Stop condition: commit and open the PR with check results; do not merge or deploy.
 - Hard resource budget: not set. Raw/cached input, output tokens and measured cost: unavailable. Subagents: 0; maximum agent depth: 0; execution concurrency: one agent.
+
+## Follow-up v2: ruler alignment and initial reading position
+
+- Scope: center a short ruler vertically; open/switch conversations at their latest message while preserving explicit history navigation. Base: `origin/main` at `70fe110` after PR #41 merged.
+- Root cause: `handleUpdated` contained the chat scroll scheduling logic, but `SlideApp` never called it from Lit's `updated` hook. Initial scroll now waits for real history rather than a loading skeleton or empty/login view.
+- Short rulers use intrinsic height in a centered flex container; long rulers retain their constrained scroll area and existing tick hit-testing.
+- Both new browser checks failed before the production fix, then all 9 Chromium cases passed. The shell fixture now retains the production update lifecycle instead of overriding it with a no-op.
+- Final frontend gate: 69 test files / 395 tests passed, typecheck passed, production build and CSP passed, lint 0 errors. Browser verification uses synthetic messages and the actual application lifecycle; no live backend/LLM deployment was performed.
+- Budget remains unset; actual token/cost telemetry unavailable; no subagents. Delivery: separate fix branch and PR, no merge/deployment.

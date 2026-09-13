@@ -14,6 +14,7 @@ import { DEFAULT_TAB_OPTIONS, type Tab } from "./navigation.ts";
 
 type LifecycleHost = {
   basePath: string;
+  querySelector: (selector: string) => Element | null;
   client?: DirectGatewayClient | null;
   connectGeneration: number;
   connected?: boolean;
@@ -97,7 +98,11 @@ export function handleDisconnected(host: LifecycleHost) {
 }
 
 export function handleUpdated(host: LifecycleHost, changed: Map<PropertyKey, unknown>) {
-  if (host.tab === "chat" && host.chatManualRefreshInFlight) {
+  // Initial positioning must wait for real history, not the loading skeleton/login view.
+  if (host.chatLoading || host.chatManualRefreshInFlight || !host.querySelector(".chat-thread")) {
+    return;
+  }
+  if (!host.chatMessages.length && !host.chatToolMessages.length && !host.chatStream) {
     return;
   }
   if (

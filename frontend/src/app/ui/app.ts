@@ -1,4 +1,4 @@
-import { LitElement } from "lit";
+import { LitElement, type PropertyValues } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { i18n, I18nController, isSupportedLocale } from "../i18n/index.ts";
 import {
@@ -13,6 +13,7 @@ import {
   handleConnected,
   handleDisconnected,
   handleFirstUpdated,
+  handleUpdated,
 } from "./app-lifecycle.ts";
 import { renderApp } from "./app-render.ts";
 import { switchChatSession } from "./app-render.helpers.ts";
@@ -737,6 +738,10 @@ export class SlideApp extends LitElement {
     const newRatio = Math.max(0.4, Math.min(0.7, ratio));
     this.splitRatio = newRatio;
     this.applySettings({ ...this.settings, splitRatio: newRatio });
+  }
+
+  protected override updated(changed: PropertyValues) {
+    handleUpdated(this as unknown as Parameters<typeof handleUpdated>[0], changed);
   }
 
   render() {

@@ -164,8 +164,8 @@ export class ChatHistoryNav extends LitElement {
       <style>
         :host { display: block; position: absolute; inset: var(--space-sm) auto var(--space-sm) 0; width: 4rem; z-index: 5; }
         :host([hidden]) { display: none; }
-        :host > div { height: 100%; }
-        nav { position: relative; height: 100%; overflow: auto; scrollbar-width: none; overscroll-behavior: contain; }
+        :host > div { height: 100%; display: flex; flex-direction: column; justify-content: center; }
+        nav { position: relative; flex: 0 1 auto; min-height: 0; max-height: 100%; overflow: auto; scrollbar-width: none; overscroll-behavior: contain; }
         nav::-webkit-scrollbar { display: none; }
         .tick { display: flex; align-items: center; width: 100%; height: 1.25rem; padding: 0 var(--space-sm); border: 0; background: transparent; cursor: pointer; }
         .tick::before { content: ""; display: block; width: var(--tick-width, .75rem); height: .1875rem; flex-shrink: 0; background: var(--border-strong, var(--border)); transition: width 120ms ease-out, background 120ms ease-out; }
