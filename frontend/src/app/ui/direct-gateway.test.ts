@@ -93,6 +93,17 @@ describe('109-04: DirectGatewayClient', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('forwards cursor pagination and preserves the response cursor and stable IDs', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      messages: [{ id: 'm-1', role: 'user', content: 'hello' }], nextBefore: 17, thinkingLevel: 'low',
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    await expect(client.request('chat.history', { sessionKey: 'agent:main:session-1', paged: true, before: 30, limit: 200 }))
+      .resolves.toMatchObject({ messages: [{ id: 'm-1' }], nextBefore: 17, thinkingLevel: 'low' });
+    expect(String(fetchMock.mock.calls[0][0])).toContain('sessionKey=session-1&limit=200&paged=true&before=30');
+  });
+
   it('includes the REST response body in errors', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
       JSON.stringify({ error: 'sessionKey parameter is required' }),

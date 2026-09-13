@@ -49,6 +49,10 @@ export function scheduleChatScroll(host: ScrollHost, force = false, smooth = fal
       if (!target) {
         return;
       }
+      if (target.dataset.historyReading === "true") {
+        host.chatNewMessagesBelow = true;
+        return;
+      }
       const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
 
       // force=true only overrides when we haven't auto-scrolled yet (initial load).
@@ -82,7 +86,7 @@ export function scheduleChatScroll(host: ScrollHost, force = false, smooth = fal
       host.chatScrollTimeout = window.setTimeout(() => {
         host.chatScrollTimeout = null;
         const latest = pickScrollTarget();
-        if (!latest) {
+        if (!latest || latest.dataset.historyReading === "true") {
           return;
         }
         const latestDistanceFromBottom =
@@ -130,6 +134,9 @@ export function handleChatScroll(host: ScrollHost, event: Event) {
   }
   const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
   host.chatUserNearBottom = distanceFromBottom < NEAR_BOTTOM_THRESHOLD;
+  host.chatNewMessagesBelow = !host.chatUserNearBottom;
+  // Explicit history navigation remains pinned until the user chooses latest.
+  if (container.dataset.historyReading === "true") host.chatUserNearBottom = false;
   // Clear the "new messages below" indicator when user scrolls back to bottom.
   if (host.chatUserNearBottom) {
     host.chatNewMessagesBelow = false;
@@ -146,6 +153,11 @@ export function handleLogsScroll(host: ScrollHost, event: Event) {
 }
 
 export function resetChatScroll(host: ScrollHost) {
+  const thread = queryHost(host, ".chat-thread") as HTMLElement | null;
+  if (thread) {
+    delete thread.dataset.historyReading;
+    thread.dispatchEvent(new Event("chat-history-reset"));
+  }
   host.chatHasAutoScrolled = false;
   host.chatUserNearBottom = true;
   host.chatNewMessagesBelow = false;

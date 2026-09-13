@@ -136,14 +136,15 @@ export async function loadChatHistory(state: ChatState) {
   state.chatLoading = true;
   state.lastError = null;
   try {
-    let res: { messages?: Array<unknown>; thinkingLevel?: string };
+    let res: { messages?: Array<unknown>; thinkingLevel?: string; nextBefore?: number | null };
     for (;;) {
       try {
-        res = await state.client.request<{ messages?: Array<unknown>; thinkingLevel?: string }>(
+        res = await state.client.request<{ messages?: Array<unknown>; thinkingLevel?: string; nextBefore?: number | null }>(
           "chat.history",
           {
             sessionKey,
             limit: 200,
+            paged: true,
           },
         );
         break;
@@ -166,7 +167,20 @@ export async function loadChatHistory(state: ChatState) {
     if (!shouldApplyChatHistoryResult(state, requestVersion, sessionKey)) {
       return;
     }
-    const messages = Array.isArray(res.messages) ? res.messages : [];
+    const pages = [Array.isArray(res.messages) ? res.messages : []];
+    let before = res.nextBefore;
+    while (before != null) {
+      if (!Number.isSafeInteger(before) || before <= 0) throw new Error('Invalid history cursor');
+      if (!state.client || !state.connected || !shouldApplyChatHistoryResult(state, requestVersion, sessionKey)) return;
+      const page = await state.client.request<{ messages?: unknown[]; nextBefore?: number | null }>(
+        "chat.history", { sessionKey, limit: 200, paged: true, before },
+      );
+      if (!shouldApplyChatHistoryResult(state, requestVersion, sessionKey)) return;
+      pages.push(Array.isArray(page.messages) ? page.messages : []);
+      if (page.nextBefore != null && page.nextBefore >= before) throw new Error('History cursor did not advance');
+      before = page.nextBefore;
+    }
+    const messages = pages.reverse().flat();
     state.chatMessages = messages.filter((message) => !shouldHideHistoryMessage(message));
     state.chatThinkingLevel = res.thinkingLevel ?? null;
     // Clear all streaming state — history includes tool results and text

@@ -277,6 +277,8 @@ export class DirectGatewayClient {
       const params_ = new URLSearchParams();
       if (sessionKey) params_.set('sessionKey', sessionKey);
       params_.set('limit', String(limit));
+      if (p?.paged === true) params_.set('paged', 'true');
+      if (p?.before !== undefined) params_.set('before', String(p.before));
       const url = `/api/chat/history?${params_.toString()}`;
       const headers: Record<string, string> = {};
       const token = this._getToken();
@@ -289,7 +291,7 @@ export class DirectGatewayClient {
         }
         const data = await r.json();
         const rawMessages = Array.isArray(data) ? data : (data?.messages ?? []);
-        return { messages: rawMessages };
+        return { messages: rawMessages, nextBefore: data?.nextBefore, thinkingLevel: data?.thinkingLevel };
       }) as unknown as T;
     }
     if (method === 'agents.list') {
