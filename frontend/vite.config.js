@@ -16,7 +16,7 @@ export default defineConfig({
           if (!id.includes('node_modules')) return undefined
           if (id.includes('/echarts/') || id.includes('/zrender/')) return 'charts'
           if (id.includes('/@codemirror/') || id.includes('/codemirror/')) return 'editor'
-          if (id.includes('/marked/') || id.includes('/markdown-it') || id.includes('/@create-markdown/')) return 'markdown'
+          if (id.includes('/markdown-it')) return 'markdown'
           if (id.includes('/lit/') || id.includes('/lit-html/')) return 'lit'
           return undefined
         }
@@ -39,6 +39,7 @@ export default defineConfig({
     }
   },
   server: {
+    watch: { ignored: ['**/test-results*/**', '**/playwright-report/**'] },
     port: 5173,
     strictPort: true, // 端口被占用时报错，不自动尝试其他端口
     proxy: {

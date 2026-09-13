@@ -793,6 +793,31 @@ describe('DirectAdapter', () => {
   });
 
   describe('invoke()', () => {
+    it.each(['cancel', 'deadline'])('aborts a non-cooperative background provider on %s', async mode => {
+      vi.useFakeTimers();
+      vi.stubEnv('AGENT_RUN_TIMEOUT_MS', '5000');
+      let observed: AbortSignal | undefined;
+      let started!: () => void;
+      const ready = new Promise<void>(resolve => { started = resolve; });
+      const pendingCall = (_m: Message[], _t: ToolSchema[], options?: LLMCallOptions): Promise<LLMResponse> => {
+        observed = options?.signal; started(); return new Promise(() => {});
+      };
+      const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: {
+        getDefaultModel: () => 'test', chat: pendingCall,
+        chatStream: (m, t, _callbacks, options) => pendingCall(m, t, options),
+      } });
+      const controller = new AbortController();
+      try {
+        const pending = adapter.invoke('lifecycle-' + mode, 'Analyze', undefined, { signal: controller.signal });
+        await ready;
+        if (mode === 'cancel') controller.abort(new Error('operator cancelled'));
+        else await vi.advanceTimersByTimeAsync(5001);
+        expect(await pending).toMatchObject({ stopReason: 'cancelled', error: mode === 'cancel' ? 'operator cancelled' : 'ANALYSIS_TIMED_OUT' });
+        expect(observed?.aborted).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally { vi.useRealTimers(); vi.unstubAllEnvs(); }
+    });
+
     it('should return InvokeResult with content', async () => {
       const adapter = createMockAdapter();
 

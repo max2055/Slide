@@ -3,6 +3,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
+bash scripts/release/assert-clean-source.sh
 
 commit="$(git rev-parse HEAD)"
 version="${RELEASE_VERSION:-0.9.0-${commit:0:12}}"

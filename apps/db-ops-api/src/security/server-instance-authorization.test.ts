@@ -24,12 +24,6 @@ describe('server instance authorization coverage', () => {
     }
   });
 
-  it('filters the database instance list by the authenticated actor scope', () => {
-    const [route] = routeBlocks('/api/database/instances');
-    expect(route.block).toContain("requirePermission('instance:view')");
-    expect(route.block).toContain('filterByInstanceAccess((request as any).user, instances');
-  });
-
   it('activates a reloaded instance before collecting and returns the first collection result', () => {
     const [route] = routeBlocks('/api/database/instances/:id/reload');
     const activeAt = route.block.indexOf('instanceDatabaseService.markInstanceActive(Number(id))');

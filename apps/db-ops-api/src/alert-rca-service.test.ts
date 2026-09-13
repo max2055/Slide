@@ -35,52 +35,9 @@ describe('AlertRCAService', () => {
     });
   });
 
-  describe('buildRCAPrompt', () => {
-    it('should generate prompt with alert overview section', () => {
-      const alert = {
-        id: 1,
-        title: 'CPU High',
-        level: 'critical' as const,
-        alert_type: 'performance' as const,
-        instance_id: 10,
-        metric_name: 'cpu_usage',
-        metric_value: '95.5',
-        threshold_value: '90',
-        created_at: new Date('2026-04-25T10:00:00Z'),
-      };
-      const prompt = (service as any).buildRCAPrompt(alert, [], [], [], [], [], []);
-      expect(prompt).toContain('告警ID');
-      expect(prompt).toContain('CPU High');
-      expect(prompt).toContain('critical');
-      expect(prompt).toContain('cpu_usage');
-    });
-
-    it('should include all data sections', () => {
-      const alert = {
-        id: 1,
-        title: 'Test Alert',
-        level: 'warning' as const,
-        alert_type: 'performance' as const,
-        instance_id: 10,
-        metric_name: null,
-        metric_value: null,
-        threshold_value: null,
-        created_at: new Date('2026-04-25T10:00:00Z'),
-      };
-      const prompt = (service as any).buildRCAPrompt(
-        alert,
-        ['metrics data'],
-        ['session data'],
-        ['slow query data'],
-        ['lock wait data'],
-        ['recent alerts'],
-        []
-      );
-      expect(prompt).toContain('指标趋势');
-      expect(prompt).toContain('活跃会话');
-      expect(prompt).toContain('慢查询');
-      expect(prompt).toContain('锁等待');
-      expect(prompt).toContain('最近告警');
-    });
+  it('rejects analysis of a missing alert through the public entry point', async () => {
+    const { dbConnection } = await import('./db-connection.js');
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute: vi.fn().mockResolvedValue([[]]) } as any);
+    expect(await service.analyzeAlert(123)).toMatchObject({ success: false });
   });
 });

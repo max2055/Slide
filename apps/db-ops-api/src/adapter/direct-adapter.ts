@@ -872,6 +872,7 @@ export class DirectAdapter implements IAgentEngine {
     systemPrompt?: string,
     options?: InvokeOptions,
   ): Promise<InvokeResult> {
+    options?.signal?.throwIfAborted();
     // Get or create session so invoke() runs are persisted and visible in chat history (CR-07)
     const session = this.sessionManager.getOrCreate(sessionKey);
 
@@ -922,6 +923,11 @@ export class DirectAdapter implements IAgentEngine {
       finalizeContent: (_ctx: any, c: string | null) => c,
     };
 
+    const controller = new AbortController();
+    const cancel = () => controller.abort(options?.signal?.reason);
+    options?.signal?.addEventListener('abort', cancel, { once: true });
+    if (options?.signal?.aborted) cancel();
+    const timeout = setTimeout(() => controller.abort(new Error('ANALYSIS_TIMED_OUT')), this.runtimeLimits.runTimeoutMs);
     try {
       const result = await this.runner.run({
         initialMessages: messages,
@@ -936,6 +942,7 @@ export class DirectAdapter implements IAgentEngine {
         contextWindowTokens: 200_000,
         maxTokens: 4096,
         llmTimeoutS: 60,
+        signal: controller.signal,
       });
 
       // Embed thinking as <think> tags so chat UI renders collapsible thinking section
@@ -964,7 +971,7 @@ ${result.finalContent || ''}`
         usage: result.usage,
         toolEvents: result.toolEvents,
         stopReason: result.stopReason,
-        error: result.error,
+        error: controller.signal.aborted ? String(controller.signal.reason?.message ?? 'Cancelled') : result.error,
         iterationCount: result.messages ? Math.ceil(result.messages.length / 2) : 0,
       };
     } catch (err) {
@@ -973,6 +980,9 @@ ${result.finalContent || ''}`
       // Save session even on error so partial state is not lost
       try { await this.sessionManager.save(session); } catch { /* best-effort */ }
       throw err;
+    } finally {
+      clearTimeout(timeout);
+      options?.signal?.removeEventListener('abort', cancel);
     }
   }
 

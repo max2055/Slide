@@ -119,14 +119,16 @@ class AiAnalysisDatabaseService {
     }
 
     try {
-      await pool.execute(
+      const [result] = await pool.execute(
         `UPDATE ai_analysis SET
          status = ?,
          started_at = CASE WHEN ? = 'running' THEN NOW() ELSE started_at END
-         WHERE id = ?`,
+         WHERE id = ? AND status IN ('pending', 'running')`,
         [status, status, analysisId]
       );
-      return { success: true };
+      return (result as any).affectedRows > 0
+        ? { success: true }
+        : { success: false, error: '分析不存在或已结束' };
     } catch (error: any) {
       console.error('更新分析状态失败:', error);
       return { success: false, error: error.message };
@@ -224,8 +226,7 @@ class AiAnalysisDatabaseService {
     try {
       // Store strings as JSON (column type is JSON), JSON-encode objects
       const resultValue = JSON.stringify(data.result);
-      try {
-        await pool.execute(
+      const [update] = await pool.execute(
           `UPDATE ai_analysis SET
            status = 'completed',
            result = ?,
@@ -233,7 +234,7 @@ class AiAnalysisDatabaseService {
            \`usage\` = ?,
            duration_ms = ?,
            completed_at = NOW()
-           WHERE id = ?`,
+           WHERE id = ? AND status IN ('pending', 'running')`,
           [
             resultValue,
             data.executionTrace ? JSON.stringify(data.executionTrace) : null,
@@ -241,24 +242,8 @@ class AiAnalysisDatabaseService {
             data.duration_ms || null,
             analysisId,
           ]
-        );
-      } catch (err: any) {
-        // If execution_trace column doesn't exist yet (migration pending), retry without it
-        if (err?.message?.includes?.(`Unknown column 'execution_trace'`)) {
-          await pool.execute(
-            `UPDATE ai_analysis SET
-             status = 'completed',
-             result = ?,
-             \`usage\` = ?,
-             duration_ms = ?,
-             completed_at = NOW()
-             WHERE id = ?`,
-            [resultValue, data.usage ? JSON.stringify(data.usage) : null, data.duration_ms || null, analysisId]
-          );
-        } else {
-          throw err;
-        }
-      }
+        ) as any;
+      if (update.affectedRows === 0) return { success: false, error: 'ANALYSIS_ALREADY_TERMINAL' };
       return { success: true };
     } catch (error: any) {
       console.error('完成分析失败:', error);
@@ -290,7 +275,7 @@ class AiAnalysisDatabaseService {
         `UPDATE ai_analysis SET
            status = 'completed', result = ?, analysis_envelope = ?, envelope_backfill_status = 'parsed',
            execution_trace = ?, \`usage\` = ?, duration_ms = ?, completed_at = NOW()
-         WHERE id = ? AND status <> 'completed'`,
+         WHERE id = ? AND status IN ('pending', 'running')`,
         [
           JSON.stringify(safeEnvelope.displayMarkdown), JSON.stringify(safeEnvelope),
           data.executionTrace ? JSON.stringify(data.executionTrace) : null,
@@ -298,9 +283,9 @@ class AiAnalysisDatabaseService {
         ],
       ) as any;
       if (result.affectedRows === 0) {
-        const [rows] = await pool.execute('SELECT analysis_envelope FROM ai_analysis WHERE id = ?', [analysisId]) as any;
+        const [rows] = await pool.execute('SELECT status, analysis_envelope FROM ai_analysis WHERE id = ?', [analysisId]) as any;
         const existing = rows?.[0]?.analysis_envelope;
-        if (existing && JSON.stringify(typeof existing === 'string' ? JSON.parse(existing) : existing) === JSON.stringify(safeEnvelope)) {
+        if (rows?.[0]?.status === 'completed' && existing && JSON.stringify(typeof existing === 'string' ? JSON.parse(existing) : existing) === JSON.stringify(safeEnvelope)) {
           return { success: true };
         }
         return { success: false, error: '分析已完成或不存在' };
@@ -325,14 +310,15 @@ class AiAnalysisDatabaseService {
     }
 
     try {
-      await pool.execute(
+      const [update] = await pool.execute(
         `UPDATE ai_analysis SET
          status = 'failed',
          error_message = ?,
          completed_at = NOW()
-         WHERE id = ?`,
+         WHERE id = ? AND status IN ('pending', 'running')`,
         [errorMessage, analysisId]
-      );
+      ) as any;
+      if (update.affectedRows === 0) return { success: false, error: 'ANALYSIS_ALREADY_TERMINAL' };
       return { success: true };
     } catch (error: any) {
       console.error('标记分析失败失败:', error);
@@ -361,8 +347,8 @@ class AiAnalysisDatabaseService {
 
       let failedCount = 0;
       for (const row of rows) {
-        await this.failAnalysis(row.id, '诊断超时：Agent 在 10 分钟内未完成');
-        failedCount++;
+        const result = await this.failAnalysis(row.id, '诊断超时：Agent 在 10 分钟内未完成');
+        if (result.success) failedCount++;
       }
 
       return { failed_count: failedCount };
@@ -545,7 +531,7 @@ class AiAnalysisDatabaseService {
   }
 
   /**
-   * 轮询分析状态直到完成或失败，超时自动标记失败。
+   * 轮询分析状态直到完成、失败或观察期限结束，不修改状态。
    * 用于捕获 Agent 未调用 slide_complete_analysis 的情况。
    */
   async waitForCompletion(
@@ -563,8 +549,7 @@ class AiAnalysisDatabaseService {
       await new Promise(resolve => setTimeout(resolve, pollInterval));
     }
 
-    // Timeout: auto-fail
-    await this.failAnalysis(analysisId, '分析超时：Agent 未在规定时间内完成');
+    // Observers do not own the execution deadline or mutate terminal state.
     return this.getAnalysisById(analysisId);
   }
 

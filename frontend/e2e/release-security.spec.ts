@@ -11,29 +11,23 @@ test('qualification security boundary rejects unauthenticated administration and
   expect(await invalidLogin.json()).toMatchObject({ error: expect.any(String) });
 });
 
-test('viewer cannot distinguish or read an administrator private chat session', async ({ page }) => {
-  const login = await page.request.post('/api/auth/login', {
-    data: { username: 'qualification-viewer', password: 'Tpam1234' },
-  });
-  expect(login.status()).toBe(200);
-  const { token } = await login.json();
-  const headers = { Authorization: `Bearer ${token}` };
-  const forbidden = await page.request.get('/api/chat/history?sessionKey=qualification-admin-private-session', { headers });
-  const missing = await page.request.get('/api/chat/history?sessionKey=qualification-no-such-session', { headers });
-  expect(forbidden.status()).toBe(404);
-  expect(missing.status()).toBe(404);
-  expect(await forbidden.json()).toEqual(await missing.json());
-});
-
-test('viewer cannot modify or delete an administrator private chat session', async ({ page }) => {
+test('viewer cannot read, modify or delete an administrator private chat session', async ({ page }) => {
   const viewerLogin = await page.request.post('/api/auth/login', {
     data: { username: 'qualification-viewer', password: 'Tpam1234' },
   });
   const adminLogin = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: 'Tpam1234' },
   });
+  expect(viewerLogin.status()).toBe(200);
+  expect(adminLogin.status()).toBe(200);
   const viewerHeaders = { Authorization: `Bearer ${(await viewerLogin.json()).token}` };
   const adminHeaders = { Authorization: `Bearer ${(await adminLogin.json()).token}` };
+  const forbidden = await page.request.get('/api/chat/history?sessionKey=qualification-admin-private-session', { headers: viewerHeaders });
+  const missing = await page.request.get('/api/chat/history?sessionKey=qualification-no-such-session', { headers: viewerHeaders });
+  expect(forbidden.status()).toBe(404);
+  expect(missing.status()).toBe(404);
+  expect(await forbidden.json()).toEqual(await missing.json());
+
   const session = '/api/sessions/qualification-admin-private-session';
   const update = await page.request.patch(session, { headers: viewerHeaders, data: { model: 'forged-model' } });
   const remove = await page.request.delete(session, { headers: viewerHeaders });

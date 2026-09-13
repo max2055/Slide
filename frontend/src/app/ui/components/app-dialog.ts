@@ -32,36 +32,63 @@ export class AppDialog extends LitElement {
 
   private _previousFocus: HTMLElement | null = null;
 
-  updated(changed: Map<string, unknown>): void {
-    if (changed.has("open")) {
-      if (this.open) {
-        this._previousFocus = document.activeElement as HTMLElement | null;
-        this._trapFocus();
-      } else if (this._previousFocus) {
-        this._previousFocus.focus();
-        this._previousFocus = null;
-      }
+  private _nativeDialog: HTMLDialogElement | null = null;
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.requestUpdate();
+  }
+
+  disconnectedCallback(): void {
+    this._closeNative();
+    super.disconnectedCallback();
+  }
+
+  updated(): void {
+    if (!this.open) { this._closeNative(); return; }
+    const dialog = this.renderRoot.querySelector<HTMLDialogElement>('dialog');
+    if (!dialog || !this.isConnected || dialog.open) return;
+    let active = document.activeElement;
+    while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+    this._previousFocus = active instanceof HTMLElement ? active : null;
+    this._nativeDialog = dialog;
+    // Native modal semantics include the composed slot tree and make the background inert.
+    dialog.showModal();
+  }
+
+  private _closeNative(): void {
+    this._nativeDialog?.close();
+    this._nativeDialog = null;
+    if (this._previousFocus?.isConnected) this._previousFocus.focus();
+    this._previousFocus = null;
+  }
+
+  private _onKeyDown(e: KeyboardEvent): void {
+    if (e.key !== "Tab" || e.composedPath().find(node => node instanceof HTMLDialogElement) !== this._nativeDialog) return;
+    const focusable: HTMLElement[] = [];
+    const visit = (element: Element): void => {
+      if (element.hasAttribute("inert") || element.matches(":disabled") || element.hasAttribute("hidden")) return;
+      if (element instanceof HTMLElement && element.tabIndex >= 0 &&
+          element.getClientRects().length && getComputedStyle(element).visibility !== "hidden") focusable.push(element);
+      const children = element instanceof HTMLSlotElement
+        ? element.assignedElements({ flatten: true })
+        : element.shadowRoot ? Array.from(element.shadowRoot.children) : Array.from(element.children);
+      children.forEach(visit);
+    };
+    if (!this._nativeDialog) return;
+    visit(this._nativeDialog);
+    let active = document.activeElement;
+    while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (!first || (e.shiftKey ? active === first : active === last)) {
+      e.preventDefault();
+      (e.shiftKey ? last : first)?.focus();
     }
   }
 
-  private _trapFocus(): void {
-    // On next frame after render, focus the first focusable element inside dialog.
-    requestAnimationFrame(() => {
-      const dialog = this.querySelector('[role="dialog"]');
-      if (!dialog) return;
-      const focusable = dialog.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-      );
-      if (focusable.length > 0) {
-        focusable[0].focus();
-      }
-    });
-  }
-
-  private _onKeydown(e: KeyboardEvent): void {
-    if (e.key === "Escape" && this.closable && this.open) {
-      this._close();
-    }
+  private _onCancel(e: Event): void {
+    e.preventDefault();
+    if (this.closable) this._close();
   }
 
   private _onOverlayClick(e: MouseEvent): void {
@@ -87,10 +114,18 @@ export class AppDialog extends LitElement {
 
     return html`
       <style>
+        *, *::before, *::after { box-sizing: border-box; }
         .dialog-overlay {
           position: fixed;
           inset: 0;
-          background: rgba(0, 0, 0, 0.3);
+          margin: 0;
+          border: 0;
+          width: 100vw;
+          height: 100dvh;
+          max-width: none;
+          max-height: none;
+          background: transparent;
+          color: inherit;
           z-index: var(--z-modal, 1000);
           display: flex;
           align-items: center;
@@ -98,6 +133,7 @@ export class AppDialog extends LitElement {
           padding: var(--space-xl, 24px);
           animation: fade-in 200ms var(--ease-out) both;
         }
+        .dialog-overlay::backdrop { background: rgba(0, 0, 0, 0.3); }
         .dialog {
           background: var(--card, #fff);
           border-radius: var(--radius-lg);
@@ -159,16 +195,15 @@ export class AppDialog extends LitElement {
           flex-shrink: 0;
         }
       </style>
-      <div
+      <dialog
         class="dialog-overlay"
+        aria-label=${this.title || nothing}
         @click=${this._onOverlayClick}
-        @keydown=${this._onKeydown}
+        @cancel=${this._onCancel}
+        @keydown=${this._onKeyDown}
       >
         <div
           class="dialog"
-          role="dialog"
-          aria-modal="true"
-          aria-label="${this.title || nothing}"
           style="max-width: ${width}"
         >
           <div class="dialog-header">
@@ -193,7 +228,7 @@ export class AppDialog extends LitElement {
             <slot name="footer"></slot>
           </div>
         </div>
-      </div>
+      </dialog>
     `;
   }
 }
