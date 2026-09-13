@@ -115,3 +115,62 @@ test('the application shell wires transcript scrolling and return-to-latest call
   await expect(page.locator('[data-chat-turn="msg:518"]')).toBeVisible();
   await expect.poll(() => page.locator('.chat-thread').evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeLessThan(5);
 });
+
+
+test('a short ruler is vertically centered and still previews the correct turn', async ({ page }) => {
+  await page.evaluate(() => {
+    const fixture = (window as any).historyFixture;
+    fixture.props.messages = fixture.props.messages.slice(0, 18);
+    fixture.update();
+  });
+  const ticks = page.locator('chat-history-nav .tick');
+  await expect(ticks).toHaveCount(9);
+  await expect.poll(async () => {
+    const host = await page.locator('chat-history-nav').boundingBox();
+    const first = await ticks.first().boundingBox();
+    const last = await ticks.last().boundingBox();
+    return Math.abs((first!.y + last!.y + last!.height) / 2 - (host!.y + host!.height / 2));
+  }).toBeLessThan(2);
+  await ticks.nth(4).hover();
+  await expect(page.getByRole('tooltip')).toContainText('第 5 轮');
+});
+
+test('opening and switching conversations wait for history and land on the latest message', async ({ page }) => {
+  await page.route('**/api/**', (route) => route.fulfill({ json: {} }));
+  await page.evaluate(() => (window as any).historyFixture.mountShell(true));
+  // Let the loading frame finish before data arrives, just as with a slow history request.
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.evaluate(() => {
+    const app = document.querySelector('history-fixture-shell') as any;
+    app.chatMessages = (window as any).historyFixture.props.messages;
+    app.chatLoading = false;
+  });
+  const distanceFromBottom = () => page.locator('.chat-thread').evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+  await expect.poll(distanceFromBottom).toBeLessThan(5);
+  await expect(page.locator('[data-chat-turn="msg:518"]')).toBeInViewport();
+  await page.locator('chat-history-nav .tick').first().click();
+  await expect(page.locator('[data-chat-turn="msg:0"]')).toBeInViewport();
+  await page.evaluate(() => {
+    const app = document.querySelector('history-fixture-shell') as any;
+    app.resetChatScroll();
+    app.sessionKey = 'shell-second';
+    app.chatMessages = [];
+    app.chatLoading = true;
+  });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.evaluate(() => {
+    const app = document.querySelector('history-fixture-shell') as any;
+    app.chatMessages = (window as any).historyFixture.props.messages.slice(0, 18);
+    app.chatLoading = false;
+  });
+  await expect.poll(distanceFromBottom).toBeLessThan(5);
+  await expect(page.locator('[data-chat-turn="msg:16"]')).toBeInViewport();
+  await expect(page.getByRole('button', { name: '回到最新' })).toBeHidden();
+  // A subsequent stream must not pull the user away from an explicitly selected old turn.
+  await page.locator('chat-history-nav .tick').first().click();
+  await expect(page.locator('[data-chat-turn="msg:0"]')).toBeInViewport();
+  const before = await page.locator('.chat-thread').evaluate((el) => el.scrollTop);
+  await page.evaluate(() => { (document.querySelector('history-fixture-shell') as any).chatStream = '继续输出'; });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  expect(await page.locator('.chat-thread').evaluate((el) => el.scrollTop)).toBe(before);
+});

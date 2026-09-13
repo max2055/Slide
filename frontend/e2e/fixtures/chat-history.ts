@@ -31,18 +31,18 @@ const props: ChatProps = {
 render(renderChat(props), root);
 (window as any).historyFixture = {
   props, update,
-  mountShell: async () => {
+  mountShell: async (loading = false) => {
     const { SlideApp } = await import('../../src/app/ui/app.ts');
     class FixtureShell extends SlideApp {
       connectedCallback() { LitElement.prototype.connectedCallback.call(this); }
-      protected updated() {}
     }
     customElements.define('history-fixture-shell', FixtureShell);
     const app = new FixtureShell();
     app.connected = true;
     app.tab = 'chat';
     app.sessionKey = 'shell-session';
-    app.chatMessages = props.messages;
+    app.chatLoading = loading;
+    app.chatMessages = loading ? [] : props.messages;
     app.style.cssText = 'display:block;height:100%;';
     root.replaceChildren(app);
     await app.updateComplete;
