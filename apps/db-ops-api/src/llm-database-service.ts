@@ -149,7 +149,7 @@ class LLMDatabaseService {
    */
   async getAllProviders(): Promise<LLMProvider[]> {
     const pool = this.getPool();
-    if (!pool) return [];
+    if (!pool) throw new Error('LLM_CONFIGURATION_UNAVAILABLE');
 
     try {
       const [rows] = await pool.execute(
@@ -162,8 +162,7 @@ class LLMDatabaseService {
         models_supported: this.parseJsonField<ModelInfo[]>(row, 'models_supported'),
       }));
     } catch (error) {
-      console.error('获取 LLM 提供商列表失败:', error);
-      return [];
+      throw new Error('LLM_CONFIGURATION_UNAVAILABLE', { cause: error });
     }
   }
 
@@ -172,7 +171,7 @@ class LLMDatabaseService {
    */
   async getEnabledProviders(): Promise<LLMProvider[]> {
     const pool = this.getPool();
-    if (!pool) return [];
+    if (!pool) throw new Error('LLM_CONFIGURATION_UNAVAILABLE');
 
     try {
       const [rows] = await pool.execute(
@@ -185,8 +184,7 @@ class LLMDatabaseService {
         models_supported: this.parseJsonField<ModelInfo[]>(row, 'models_supported'),
       }));
     } catch (error) {
-      console.error('获取启用的 LLM 提供商失败:', error);
-      return [];
+      throw new Error('LLM_CONFIGURATION_UNAVAILABLE', { cause: error });
     }
   }
 
@@ -195,7 +193,7 @@ class LLMDatabaseService {
    */
   async getDefaultProvider(): Promise<LLMProvider | null> {
     const pool = this.getPool();
-    if (!pool) return null;
+    if (!pool) throw new Error('LLM_CONFIGURATION_UNAVAILABLE');
 
     try {
       const [rows] = await pool.execute(
@@ -212,8 +210,7 @@ class LLMDatabaseService {
       }
       return null;
     } catch (error) {
-      console.error('获取默认 LLM 提供商失败:', error);
-      return null;
+      throw new Error('LLM_CONFIGURATION_UNAVAILABLE', { cause: error });
     }
   }
 
@@ -222,7 +219,7 @@ class LLMDatabaseService {
    */
   async getProviderByName(name: string): Promise<LLMProvider | null> {
     const pool = this.getPool();
-    if (!pool) return null;
+    if (!pool) throw new Error('LLM_CONFIGURATION_UNAVAILABLE');
 
     try {
       const [rows] = await pool.execute(
@@ -240,8 +237,7 @@ class LLMDatabaseService {
       }
       return null;
     } catch (error) {
-      console.error('获取 LLM 提供商失败:', error);
-      return null;
+      throw new Error('LLM_CONFIGURATION_UNAVAILABLE', { cause: error });
     }
   }
 
@@ -250,7 +246,7 @@ class LLMDatabaseService {
    */
   async getProviderById(id: number): Promise<LLMProvider | null> {
     const pool = this.getPool();
-    if (!pool) return null;
+    if (!pool) throw new Error('LLM_CONFIGURATION_UNAVAILABLE');
 
     try {
       const [rows] = await pool.execute(
@@ -268,8 +264,7 @@ class LLMDatabaseService {
       }
       return null;
     } catch (error) {
-      console.error('获取 LLM 提供商失败:', error);
-      return null;
+      throw new Error('LLM_CONFIGURATION_UNAVAILABLE', { cause: error });
     }
   }
 
@@ -278,7 +273,7 @@ class LLMDatabaseService {
    */
   async getProvidersByDeploymentType(type: DeploymentType): Promise<LLMProvider[]> {
     const pool = this.getPool();
-    if (!pool) return [];
+    if (!pool) throw new Error('LLM_CONFIGURATION_UNAVAILABLE');
 
     try {
       const [rows] = await pool.execute(
@@ -291,8 +286,7 @@ class LLMDatabaseService {
         models_supported: this.parseJsonField<ModelInfo[]>(row, 'models_supported'),
       }));
     } catch (error) {
-      console.error('获取 LLM 提供商失败:', error);
-      return [];
+      throw new Error('LLM_CONFIGURATION_UNAVAILABLE', { cause: error });
     }
   }
 

@@ -71,12 +71,14 @@ function applyDefaultTab(host: LifecycleHost) {
   }
 }
 
-async function syncUserPreferences(host: { settings: import('./storage.ts').UiSettings }) {
-  const { syncPreferencesFromServer, saveSettings } = await import('./storage.ts');
-  const merged = await syncPreferencesFromServer(host.settings);
+export async function syncUserPreferences(host: { settings: import('./storage.ts').UiSettings }) {
+  const { syncPreferencesFromServer } = await import('./storage.ts');
+  const initial = host.settings;
+  const merged = await syncPreferencesFromServer(initial);
   // Apply server-synced preferences
   const { applySettings } = await import('./app-settings.ts');
-  applySettings(host as Parameters<typeof applySettings>[0], merged);
+  // A late bootstrap response must not overwrite edits made while it was loading.
+  if (host.settings === initial) applySettings(host as Parameters<typeof applySettings>[0], merged);
 }
 
 export function handleFirstUpdated(host: LifecycleHost) {

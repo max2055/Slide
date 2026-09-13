@@ -237,43 +237,11 @@ export async function getPlatformTool(toolName: string): Promise<AnyAgentTool | 
 
 // ── Adapter instance factories ──
 
-/**
- * Create an LLMProvider from the database-configured enabled provider.
- * Falls back to AnthropicProvider (env var) if no DB provider is enabled.
- */
+/** Select the configured provider without changing process-wide environment. */
 export async function createLLMProvider(): Promise<import('@slide/agent-core').LLMProvider> {
-  try {
-    const { llmDatabaseService } = await import('../llm-database-service.js');
-    const providers = await llmDatabaseService.getEnabledProviders();
-    for (const p of providers) {
-      const apiKey = await llmDatabaseService.getProviderApiKey(p.name);
-      if (apiKey) {
-        const model = p.default_model || undefined;
-        const baseURL = p.api_base_url || undefined;
-        const apiFormat = p.api_format || null;
-
-        if (apiFormat === 'anthropic-messages') {
-          process.env.ANTHROPIC_API_KEY = apiKey;
-          if (model) process.env.ANTHROPIC_MODEL = model;
-          const { AnthropicProvider } = await import('./llm-provider.js');
-          console.log(`[getAgentEngine] Using AnthropicProvider (DB: ${p.display_name}, model: ${model})`);
-          return new AnthropicProvider();
-        }
-
-        // OpenAI 兼容（openai-completions / null / 未知）
-        const { OpenAIProvider } = await import('@slide/agent-core');
-        console.log(`[getAgentEngine] Using OpenAIProvider (DB: ${p.display_name}, model: ${model}, baseURL: ${baseURL || 'default'})`);
-        return new OpenAIProvider({ apiKey, baseURL, model });
-      }
-    }
-  } catch (err) {
-    console.warn('[getAgentEngine] Could not load DB provider:', err instanceof Error ? err.message : String(err));
-  }
-
-  // Fallback: env-var AnthropicProvider（DB 无可用 provider 时紧急兜底）
-  console.error('[getAgentEngine] WARNING: No DB provider configured, falling back to ANTHROPIC_API_KEY env var. Please configure a provider in LLM settings.');
-  const { AnthropicProvider } = await import('./llm-provider.js');
-  return new AnthropicProvider();
+  const { llmDatabaseService } = await import('../llm-database-service.js');
+  const { createConfiguredAgentProvider } = await import('./llm-provider-factory.js');
+  return createConfiguredAgentProvider(llmDatabaseService);
 }
 
 async function createDirectAdapter(): Promise<DirectAdapter> {

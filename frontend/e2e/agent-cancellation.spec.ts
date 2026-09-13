@@ -18,7 +18,8 @@ test('Stop cancels the active Agent run and persists its terminal state', async 
   const stop = page.getByRole('button', { name: 'Stop generating' });
   await expect(stop).toBeVisible({ timeout: 10_000 });
   expect(await dbConnection.initialize({
-    host: '127.0.0.1', port: 3306, user: 'root', password: 'Tpam1234', database: 'db_ops_ai_qualification',
+    host: process.env.DB_HOST ?? '127.0.0.1', port: Number(process.env.DB_PORT ?? 3306),
+    user: process.env.DB_USER ?? 'root', password: process.env.DB_PASSWORD, database: 'db_ops_ai_qualification',
   })).toBe(true);
   try {
     const pool = dbConnection.getPool();
@@ -63,7 +64,8 @@ test('unsupported attachments fail explicitly without creating an Agent run', as
   await expect(page.locator('.login-gate')).toBeHidden({ timeout: 15_000 });
 
   expect(await dbConnection.initialize({
-    host: '127.0.0.1', port: 3306, user: 'root', password: 'Tpam1234', database: 'db_ops_ai_qualification',
+    host: process.env.DB_HOST ?? '127.0.0.1', port: Number(process.env.DB_PORT ?? 3306),
+    user: process.env.DB_USER ?? 'root', password: process.env.DB_PASSWORD, database: 'db_ops_ai_qualification',
   })).toBe(true);
   const pool = dbConnection.getPool()!;
   const [beforeRows] = await pool.query<Array<{ count: number }>>('SELECT COUNT(*) AS count FROM agent_runs');

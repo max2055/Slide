@@ -2,7 +2,7 @@
  * AnthropicProvider — implements @slide/agent-core LLMProvider interface.
  *
  * Wraps the Anthropic SDK to provide chat (non-streaming) and chatStream
- * methods. Reads API key and model from environment variables.
+ * methods. Receives an immutable connection configuration.
  *
  * Imports ToolSchema from @slide/agent-core (type only).
  * Only this adapter provides Anthropic; OpenAI/Ollama providers can be
@@ -118,26 +118,22 @@ function toAnthropicTools(tools: ToolSchema[]): AnthropicTool[] {
 export class AnthropicProvider implements LLMProvider {
   private client_: Anthropic | null = null;
 
-  /**
-   * Deferred client creation — provider constructs successfully
-   * even without an API key so server startup is not blocked.
-   * The API key is resolved at first call time.
-   */
-  constructor(private apiKey?: string) {}
+  private readonly config: { apiKey?: string; baseURL?: string; model?: string };
+
+  constructor(config: string | { apiKey?: string; baseURL?: string; model?: string } = {}) {
+    this.config = typeof config === 'string' ? { apiKey: config } : { ...config };
+  }
 
   private get client(): Anthropic {
     if (!this.client_) {
-      const key = this.apiKey || process.env.ANTHROPIC_API_KEY;
-      if (!key) {
-        throw new Error('ANTHROPIC_API_KEY is not configured — set it in .env or pass to constructor');
-      }
-      this.client_ = new Anthropic({ apiKey: key });
+      if (!this.config.apiKey) throw new Error('LLM_CREDENTIAL_NOT_CONFIGURED');
+      this.client_ = new Anthropic({ apiKey: this.config.apiKey, baseURL: this.config.baseURL });
     }
     return this.client_;
   }
 
   getDefaultModel(): string {
-    return process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250929';
+    return this.config.model || 'claude-sonnet-4-20250929';
   }
 
   async chat(
@@ -158,7 +154,7 @@ export class AnthropicProvider implements LLMProvider {
         tools: anthropicTools,
         max_tokens: options?.maxTokens || 4096,
         temperature: options?.temperature ?? 0.0,
-      });
+      }, { signal: options?.signal });
 
       return this.parseResponse(response);
     } catch (err) {
@@ -199,7 +195,7 @@ export class AnthropicProvider implements LLMProvider {
         tools: anthropicTools,
         max_tokens: options?.maxTokens || 4096,
         temperature: options?.temperature ?? 0.0,
-      });
+      }, { signal: options?.signal });
 
       for await (const event of stream) {
         if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {

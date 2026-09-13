@@ -10,7 +10,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "smoke": "tsx tests/smoke-test.ts",
-    "smoke:ci": "tsx tests/smoke-test.ts 2>&1 | tee smoke-report.txt",
+    "smoke:ci": "bash ../../scripts/qualification/run-smoke-ci.sh",
     "smoke:deep": "tsx tests/deep-smoke.ts",
     "schema:check": "tsx tests/schema-validator.ts",
     "test:all": "tsx tests/smoke-test.ts && tsx tests/deep-smoke.ts && tsx tests/schema-validator.ts",

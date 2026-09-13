@@ -568,7 +568,7 @@ async function defaultList(actor: ActorContext): Promise<ResourceDetail[]> {
   const unavailableTypes: ResourceType[] = [];
   const failed = (type: ResourceType) => { unavailableTypes.push(type); return []; };
   const [instances, servers, devices] = await Promise.all([
-    actor.permissions.includes('*') || actor.permissions.includes('instance:*') || Object.keys(actor.instanceScopes).length ? instanceDatabaseService.getManagedInstances({ strict: true }).catch(() => failed('instance')) : Promise.resolve([]),
+    actor.permissions.includes('*') || actor.permissions.includes('instance:*') || Object.keys(actor.instanceScopes).length ? instanceDatabaseService.getManagedInstances().catch(() => failed('instance')) : Promise.resolve([]),
     canReadResource(actor, { type: 'server', id: 1 }) ? serverDatabaseService.getAllServers({ strict: true }).catch(() => failed('server')) : Promise.resolve([]),
     canReadResource(actor, { type: 'network_device', id: 1 }) ? networkDeviceDatabaseService.getAllDevices().catch(() => failed('network_device')) : Promise.resolve([]),
   ]);

@@ -395,39 +395,6 @@ export class AlertsPage extends LitElement {
       margin-top: var(--space-lg);
     }
 
-    /* Modal overlay */
-    .modal-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.5);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
-      animation: fade-in 0.2s ease;
-    }
-
-    .modal {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: var(--space-xl);
-      width: 90%;
-      max-width: 520px;
-      max-height: 80vh;
-      overflow-y: auto;
-    }
-
-    .modal-title {
-      font-size: var(--text-lg);
-      font-weight: 600;
-      color: var(--text-strong);
-      margin-bottom: var(--space-lg);
-    }
-
     /* Toggle switch */
     .toggle-group {
       display: flex;
@@ -1591,37 +1558,31 @@ export class AlertsPage extends LitElement {
     const levelLabels: Record<string, string> = { info: '提示', warning: '警告', error: '错误', critical: '严重' };
 
     return html`
-      <div class="modal-overlay" @click=${(e: MouseEvent) => { if (e.target === e.currentTarget) this._closeEscalationModal(); }}>
-        <div class="modal">
-          <div class="modal-title">${this.editingEscalation ? '编辑升级规则' : '新建升级规则'}</div>
+      <app-dialog .open=${this.showEscalationModal} title="${this.editingEscalation ? '编辑升级规则' : '新建升级规则'}" @app-dialog-close=${() => this._closeEscalationModal()}>
 
           ${this.ruleFormError ? html`<div style="color: var(--danger); font-size: var(--text-base); margin-bottom: var(--space-md);">${this.ruleFormError}</div>` : ''}
 
-          <div class="form-group">
-            <label class="form-label">从等级</label>
+          <app-form-field label="从等级">
             <select class="form-select" .value=${form.from_level || 'warning'} @change=${(e: any) => this._updateRuleForm('from_level', e.target.value)}>
               ${levels.map(l => html`<option value="${l}">${levelLabels[l]}</option>`)}
             </select>
-          </div>
+          </app-form-field>
 
-          <div class="form-group">
-            <label class="form-label">到等级</label>
+          <app-form-field label="到等级">
             <select class="form-select" .value=${form.to_level || 'error'} @change=${(e: any) => this._updateRuleForm('to_level', e.target.value)}>
               ${levels.map(l => html`<option value="${l}">${levelLabels[l]}</option>`)}
             </select>
-          </div>
+          </app-form-field>
 
-          <div class="form-group">
-            <label class="form-label">超时时间（分钟）</label>
+          <app-form-field label="超时时间（分钟）">
             <input type="number" class="form-input" .value=${form.trigger_value ?? 30} @input=${(e: any) => this._updateRuleForm('trigger_value', Number(e.target.value))} />
-          </div>
+          </app-form-field>
 
-          <div class="form-actions">
+          <div slot="footer" class="form-actions">
             <button class="btn" @click=${() => this._closeEscalationModal()}>取消</button>
             <button class="btn-primary" @click=${() => this._saveEscalationRule()}>保存</button>
           </div>
-        </div>
-      </div>
+      </app-dialog>
     `;
   }
 
@@ -1806,35 +1767,28 @@ export class AlertsPage extends LitElement {
     const selectedDays = (form._days as number[]) || [];
 
     return html`
-      <div class="modal-overlay" @click=${(e: MouseEvent) => { if (e.target === e.currentTarget) this._closeMaintenanceModal(); }}>
-        <div class="modal">
-          <div class="modal-title">${this.editingMaintenance ? '编辑维护窗口' : '新建维护窗口'}</div>
+      <app-dialog .open=${this.showMaintenanceModal} title="${this.editingMaintenance ? '编辑维护窗口' : '新建维护窗口'}" @app-dialog-close=${() => this._closeMaintenanceModal()}>
 
           ${this.ruleFormError ? html`<div style="color: var(--danger); font-size: var(--text-base); margin-bottom: var(--space-md);">${this.ruleFormError}</div>` : ''}
 
-          <div class="form-group">
-            <label class="form-label">名称</label>
+          <app-form-field label="名称">
             <input class="form-input" .value=${form.name || ''} @input=${(e: any) => this._updateRuleForm('name', e.target.value)} placeholder="例如：每周例行维护" />
-          </div>
+          </app-form-field>
 
-          <div class="form-group">
-            <label class="form-label">描述</label>
+          <app-form-field label="描述">
             <input class="form-input" .value=${form.description || ''} @input=${(e: any) => this._updateRuleForm('description', e.target.value)} placeholder="可选" />
-          </div>
+          </app-form-field>
 
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md);">
-            <div class="form-group">
-              <label class="form-label">开始时间</label>
+            <app-form-field label="开始时间">
               <input type="time" class="form-input" .value=${form.start_time || '02:00'} @input=${(e: any) => this._updateRuleForm('start_time', e.target.value)} />
-            </div>
-            <div class="form-group">
-              <label class="form-label">结束时间</label>
+          </app-form-field>
+            <app-form-field label="结束时间">
               <input type="time" class="form-input" .value=${form.end_time || '06:00'} @input=${(e: any) => this._updateRuleForm('end_time', e.target.value)} />
-            </div>
+          </app-form-field>
           </div>
 
-          <div class="form-group">
-            <label class="form-label">星期</label>
+          <app-form-field label="星期">
             <div class="checkbox-group">
               ${dayLabels.map((label, i) => html`
                 <button class="checkbox-label ${selectedDays.includes(i) ? 'active' : ''}" @click=${() => this._toggleDayOfWeek(i)}>
@@ -1842,14 +1796,13 @@ export class AlertsPage extends LitElement {
                 </button>
               `)}
             </div>
-          </div>
+          </app-form-field>
 
-          <div class="form-actions">
+          <div slot="footer" class="form-actions">
             <button class="btn" @click=${() => this._closeMaintenanceModal()}>取消</button>
             <button class="btn-primary" @click=${() => this._saveMaintenanceWindow()}>保存</button>
           </div>
-        </div>
-      </div>
+      </app-dialog>
     `;
   }
 
@@ -2012,36 +1965,30 @@ export class AlertsPage extends LitElement {
     const form = this.ruleForm;
 
     return html`
-      <div class="modal-overlay" @click=${(e: MouseEvent) => { if (e.target === e.currentTarget) this._closeSilenceModal(); }}>
-        <div class="modal">
-          <div class="modal-title">新建静默期</div>
+      <app-dialog .open=${this.showSilenceModal} title="新建静默期" @app-dialog-close=${() => this._closeSilenceModal()}>
 
           ${this.ruleFormError ? html`<div style="color: var(--danger); font-size: var(--text-base); margin-bottom: var(--space-md);">${this.ruleFormError}</div>` : ''}
 
-          <div class="form-group">
-            <label class="form-label">实例</label>
+          <app-form-field label="实例">
             <select class="form-select" .value=${form.instance_id || ''} @change=${(e: any) => this._updateRuleForm('instance_id', e.target.value)}>
               <option value="">请选择实例</option>
               ${this.instances.map((inst: any) => html`<option value="${inst.id}">${inst.name} (${inst.db_type})</option>`)}
             </select>
-          </div>
+          </app-form-field>
 
-          <div class="form-group">
-            <label class="form-label">指标名称</label>
+          <app-form-field label="指标名称">
             <input class="form-input" .value=${form.metric_name || ''} @input=${(e: any) => this._updateRuleForm('metric_name', e.target.value)} placeholder="例如：cpu_usage" />
-          </div>
+          </app-form-field>
 
-          <div class="form-group">
-            <label class="form-label">静默时长（分钟）</label>
+          <app-form-field label="静默时长（分钟）">
             <input type="number" class="form-input" .value=${form.duration_minutes ?? 30} @input=${(e: any) => this._updateRuleForm('duration_minutes', Number(e.target.value))} />
-          </div>
+          </app-form-field>
 
-          <div class="form-actions">
+          <div slot="footer" class="form-actions">
             <button class="btn" @click=${() => this._closeSilenceModal()}>取消</button>
             <button class="btn-primary" @click=${() => this._createSilence()}>创建</button>
           </div>
-        </div>
-      </div>
+      </app-dialog>
     `;
   }
 

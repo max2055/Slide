@@ -6,7 +6,8 @@ export default defineConfig({
   webServer: process.env.PLAYWRIGHT_MANAGED_ENV === '1' ? {
     command: 'bash ../scripts/qualification/serve-e2e.sh',
     url: 'http://127.0.0.1:5175',
-    timeout: 60_000,
+    // Managed startup applies the complete migration ledger before starting both servers.
+    timeout: 180_000,
     reuseExistingServer: false,
   } : undefined,
   use: {

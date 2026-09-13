@@ -53,14 +53,33 @@ const EMPTY_FINAL_RESPONSE_MESSAGE = "[No response — task may have completed.]
 
 // ── Timeout helper ──
 
-function withTimeout<T>(promise: Promise<T>, timeoutS: number): Promise<T> {
-  if (timeoutS <= 0) return promise;
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new TimeoutError(`LLM request timed out after ${timeoutS}s`)), timeoutS * 1000)
-    ),
-  ]);
+function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutS: number, signal?: AbortSignal): Promise<T> {
+  const controller = new AbortController();
+  return new Promise<T>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+    };
+    const cancel = () => {
+      cleanup();
+      const error = signal?.reason ?? new Error('Cancelled');
+      reject(error);
+      controller.abort(error);
+    };
+    if (signal?.aborted) { cancel(); return; }
+    signal?.addEventListener('abort', cancel, { once: true });
+    if (timeoutS > 0) timer = setTimeout(() => {
+      cleanup();
+      const error = new TimeoutError(`LLM request timed out after ${timeoutS}s`);
+      reject(error);
+      controller.abort(error);
+    }, timeoutS * 1000);
+    Promise.resolve().then(() => {
+      controller.signal.throwIfAborted();
+      return operation(controller.signal);
+    }).then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+  });
 }
 
 class TimeoutError extends Error {
@@ -157,6 +176,7 @@ export class AgentRunner {
           shouldExecuteTools: false,
           hasToolCalls: false,
           errorKind: isTimeout ? "timeout" : "provider_error",
+          error: errMsg,
         };
         if (!isTimeout) console.error("[AgentRunner] LLM request failed:", errMsg);
       }
@@ -459,7 +479,7 @@ export class AgentRunner {
     const timeoutS = spec.llmTimeoutS ?? parseFloat(process.env.NANOBOT_LLM_TIMEOUT_S || '300');
 
     if (wantsStreaming) {
-      return this.provider.chatStream(
+      return withTimeout(signal => this.provider.chatStream(
         messages,
         tools,
         {
@@ -483,22 +503,23 @@ export class AgentRunner {
           streamIdleTimeoutS: spec.llmTimeoutS
             ? spec.llmTimeoutS
             : parseFloat(process.env.NANOBOT_STREAM_IDLE_TIMEOUT_S || '0') || undefined,
-          signal: spec.signal,
+          signal,
         }
-      );
+      ), 0, spec.signal);
     }
 
     // Non-streaming: wrap with wall-clock timeout
     return withTimeout(
-      this.provider.chat(messages, tools, {
+      signal => this.provider.chat(messages, tools, {
         model: spec.model,
         temperature: spec.temperature,
         maxTokens: spec.maxTokens,
         reasoningEffort: spec.reasoningEffort,
         timeoutS,
-        signal: spec.signal,
+        signal,
       }),
       timeoutS,
+      spec.signal,
     );
   }
 
@@ -1222,15 +1243,16 @@ async function requestFinalizationRetry(
   const timeoutS = spec.llmTimeoutS ?? parseFloat(process.env.NANOBOT_LLM_TIMEOUT_S || '300');
   try {
     return await withTimeout(
-      provider.chat(retryMessages, [], {
+      signal => provider.chat(retryMessages, [], {
         model: spec.model,
         temperature: spec.temperature,
         maxTokens: spec.maxTokens,
         reasoningEffort: spec.reasoningEffort,
         timeoutS,
-        signal: spec.signal,
+        signal,
       }),
       timeoutS,
+      spec.signal,
     );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

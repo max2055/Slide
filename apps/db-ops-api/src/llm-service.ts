@@ -1,3 +1,4 @@
+import { createServiceProviderClient } from './llm/provider-connection.js';
 /**
  * LLM 服务模块 - 重构版
  * 纯数据库驱动，支持用量追踪和智能路由
@@ -62,6 +63,10 @@ class LLMService {
    * 初始化服务（从数据库加载配置）
    */
   async initialize(): Promise<boolean> {
+    this.providerClients.clear();
+    this.providers.clear();
+    this.defaultProviderName = null;
+    this.initialized = false;
     try {
       const providers = await llmDatabaseService.getEnabledProviders();
 
@@ -83,6 +88,9 @@ class LLMService {
       console.log(`[LLM] 已加载 ${providers.length} 个提供商`);
       return true;
     } catch (error: any) {
+      this.providerClients.clear();
+      this.providers.clear();
+      this.defaultProviderName = null;
       console.error('[LLM] 初始化失败:', error.message);
       return false;
     }
@@ -92,70 +100,9 @@ class LLMService {
    * 创建 Provider 客户端
    */
   private async createClient(provider: LLMProvider): Promise<ProviderClient | null> {
-    // 本地模型不需要 API Key
-    if (provider.deployment_type !== 'local' && !provider.api_key_encrypted) {
-      console.log(`[LLM] ${provider.name} 未配置 API Key，跳过初始化`);
-      return null;
-    }
-
     const apiKey = provider.deployment_type === 'local'
-      ? 'ollama'
-      : await llmDatabaseService.getProviderApiKey(provider.name);
-
-    if (!apiKey && provider.deployment_type !== 'local') {
-      return null;
-    }
-
-    const apiFormat = provider.api_format || null;
-
-    if (apiFormat === 'anthropic-messages') {
-      return {
-        name: provider.name,
-        type: 'anthropic',
-        client: new Anthropic({ apiKey: apiKey! }),
-        config: provider,
-      };
-    }
-
-    if (apiFormat === 'google-generative-ai') {
-      console.warn(`[LLM] ${provider.name} 使用 Google Generative AI，暂不支持`);
-      return null;
-    }
-
-    // Ollama 本地部署（无 api_format 且 deployment_type=local 时保持兼容）
-    if (!apiFormat && provider.deployment_type === 'local') {
-      return {
-        name: provider.name,
-        type: 'ollama',
-        client: null,
-        config: provider,
-      };
-    }
-
-    // openai-completions / null / 未知 → OpenAI 兼容接口
-    if (provider.api_base_url && apiKey) {
-      return {
-        name: provider.name,
-        type: 'openai',
-        client: new OpenAI({
-          apiKey: apiKey,
-          baseURL: provider.api_base_url,
-        }),
-        config: provider,
-      };
-    }
-
-    if (!apiKey) {
-      return null;
-    }
-
-    // 无 baseURL 但有 apiKey → 用默认 OpenAI
-    return {
-      name: provider.name,
-      type: 'openai',
-      client: new OpenAI({ apiKey }),
-      config: provider,
-    };
+      ? null : await llmDatabaseService.getProviderApiKey(provider.name);
+    return createServiceProviderClient(provider, apiKey);
   }
 
   /**
@@ -165,20 +112,22 @@ class LLMService {
     this.providerClients.clear();
     this.providers.clear();
     this.defaultProviderName = null;
-    await this.initialize();
+    if (!await this.initialize()) throw new Error('LLM_CONFIGURATION_UNAVAILABLE');
   }
 
   /**
    * 动态添加/更新 Provider 配置
    */
   async configureProvider(name: string): Promise<boolean> {
+    this.providers.delete(name);
+    this.providerClients.delete(name);
+    if (this.defaultProviderName === name) this.defaultProviderName = null;
     try {
       const provider = await llmDatabaseService.getProviderByName(name);
-      if (!provider) return false;
-
-      this.providers.set(name, provider);
+      if (!provider || !provider.enabled) return false;
 
       const client = await this.createClient(provider);
+      this.providers.set(name, provider);
       if (client) {
         this.providerClients.set(name, client);
       } else {
@@ -906,28 +855,8 @@ class LLMService {
         api_base_url: baseURL || providerInfo.api_base_url,
         default_model: model || providerInfo.default_model,
       };
-      const apiFormat = config.api_format || null;
-      const deploymentType = config.deployment_type || 'api';
-
-      let client;
-      if (apiFormat === 'anthropic-messages') {
-        client = { name: provider, type: 'anthropic', client: new Anthropic({ apiKey, baseURL: baseURL || undefined }), config };
-      } else if (!apiFormat && deploymentType === 'local') {
-        client = { name: provider, type: 'ollama', client: null, config };
-      } else {
-        // OpenAI 兼容接口（openai-completions / null / 未知）
-        client = {
-          name: provider,
-          type: 'openai',
-          client: new OpenAI({
-            apiKey,
-            baseURL: baseURL || undefined,
-          }),
-          config,
-        };
-      }
-
-      const testModel = config.default_model || 'qwen-plus';
+      const client = createServiceProviderClient(config, apiKey);
+      const testModel = client.config.default_model;
 
       // 调用测试
       const result = await this.callLLM(

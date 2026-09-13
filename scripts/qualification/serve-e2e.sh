@@ -5,6 +5,8 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 
 qualification_encryption_key='qualification-e2e-key-32-bytes!!'
+# REST and WebSocket auth must share an explicit key, including on clean CI hosts.
+qualification_jwt_secret="$(node --input-type=module -e 'import { randomBytes } from "node:crypto"; process.stdout.write(randomBytes(32).toString("hex"))')"
 
 QUALIFICATION_DB_NAME=db_ops_ai_qualification \
   pnpm --filter slide-api exec node ../../scripts/qualification/reset-e2e-db.mjs
@@ -40,6 +42,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 PORT=3003 AGENT_WS_PORT=28890 DB_NAME=db_ops_ai_qualification \
+JWT_SECRET_KEY="$qualification_jwt_secret" \
 ENCRYPTION_KEY="$qualification_encryption_key" \
   pnpm --filter slide-api exec tsx server.ts &
 api_pid=$!

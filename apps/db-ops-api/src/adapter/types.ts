@@ -134,6 +134,7 @@ export interface InvokeResult {
 }
 
 export interface InvokeOptions {
+  signal?: AbortSignal;
   /** Bind the internal completion tool to exactly one analysis record. */
   analysisId?: number;
 }
