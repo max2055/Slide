@@ -24,3 +24,6 @@ frontend/test-results/
 tmp/
 nanobot-reference/
 /outputs/
+
+**/test-results*/
+**/playwright-report/

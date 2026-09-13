@@ -107,34 +107,22 @@ export async function dispatchOrReuse(
 
   // A successful model response is not a successful analysis. The tool must persist
   // the validated envelope before this run can be considered completed.
-  getAgentEngine()
-    .then((engine) =>
-      engine.invoke(params.sessionKey, fullMessage, basePrompt, { analysisId }).then((result) => {
-        aiAnalysisDatabaseService.getAnalysisById(analysisId).then((record) => {
-          if (result.stopReason === 'completed' && record?.status === 'completed') {
-            console.log(`[AI Bridge] Persisted structured analysis ${analysisId}`);
-            return;
-          }
-          const reason = result.stopReason === 'completed'
-            ? 'Agent 未保存有效的结构化 AnalysisEnvelope'
-            : result.error || `Agent run ended: ${result.stopReason || 'unknown'}`;
-          return aiAnalysisDatabaseService.failAnalysis(analysisId, reason);
-        });
-      }),
-    )
-    .catch((err) => {
-      console.error(`[AI Bridge] Analysis failed:`, err.message);
-      aiAnalysisDatabaseService.failAnalysis(analysisId, err.message).catch(() => {});
-    });
-
-  // Poll for completion with timeout — caller can await or fire-and-forget
-  aiAnalysisDatabaseService.waitForCompletion(analysisId, 120_000).then((record) => {
-    if (record?.status === 'completed') {
-      console.log(`[AI Bridge] Analysis ${analysisId} completed successfully`);
-    } else if (record?.status === 'failed') {
-      console.warn(`[AI Bridge] Analysis ${analysisId} failed: ${record.error_message}`);
+  void (async () => {
+    try {
+      const engine = await getAgentEngine();
+      const result = await engine.invoke(params.sessionKey, fullMessage, basePrompt, { analysisId });
+      const record = await aiAnalysisDatabaseService.getAnalysisById(analysisId);
+      if (record?.status === 'completed' || record?.status === 'failed') return;
+      const reason = result.stopReason === 'completed'
+        ? 'Agent 未保存有效的结构化 AnalysisEnvelope'
+        : result.error || `Agent run ended: ${result.stopReason || 'unknown'}`;
+      await aiAnalysisDatabaseService.failAnalysis(analysisId, reason);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[AI Bridge] Analysis failed:', message);
+      await aiAnalysisDatabaseService.failAnalysis(analysisId, message);
     }
-  }).catch(() => {});
+  })().catch(err => console.error('[AI Bridge] Failed to persist analysis failure:', err));
 
   return { analysisId, cached: false };
 }

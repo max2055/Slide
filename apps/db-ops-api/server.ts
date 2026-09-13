@@ -30,6 +30,7 @@ import {
 import { RbacService } from './src/auth/rbac-service.js';
 import { rbacApiRoutes } from './src/auth/rbac-api.js';
 import { registerAuthSessionConfigRoutes } from './src/auth/session-config-routes.js';
+import { registerInstanceListRoutes } from './src/instance-list-routes.js';
 import { registerFeedbackRoutes } from './src/feedback-routes.js';
 import { authSessionConfigService } from './src/auth/session-config.js';
 import { strictBody, warnUnknown } from './src/utils/strict-body.js';
@@ -49,7 +50,6 @@ import { requireBrandingWrite } from './src/security/branding-policy.js';
 import { API_BODY_LIMIT, expensiveOperationRateLimitConfig, loginRateLimitConfig, registerHttpSecurity, sensitiveOperationRateLimitConfig } from './src/security/http-security.js';
 import {
   AdapterCapabilitiesResponseSchema,
-  DatabaseInstancesResponseSchema,
   ErrorResponseSchema,
   HealthResponseSchema,
   ServerDiagnosticsSchema,
@@ -684,16 +684,7 @@ async function start() {
     }
   });
 
-  // 数据库实例列表
-  fastify.get('/api/database/instances', { preHandler: [verifyToken, requirePermission('instance:view')], schema: { response: { 200: DatabaseInstancesResponseSchema, 500: ErrorResponseSchema } } }, async (request, reply) => {
-    try {
-      const instances = await instanceDatabaseService.getManagedInstances();
-      const visible = filterByInstanceAccess((request as any).user, instances, (instance: any) => Number(instance.id));
-      reply.send(visible.map((instance) => publicInstanceDto(instance as unknown as Record<string, unknown>)));
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取实例列表失败：' + error.message });
-    }
-  });
+  await registerInstanceListRoutes(fastify, verifyToken);
 
   // ========== LLM 配置管理 API (CRUD) ==========
 

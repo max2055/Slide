@@ -146,6 +146,20 @@ describe('dispatchOrReuse', () => {
     expect(invoke.mock.calls[0][1]).toContain('你是数据库运维专家');
   });
 
+  it('observes invoke completion without launching a second timeout writer', async () => {
+    databaseService.getAnalysisById.mockResolvedValue({ status: 'completed' });
+    await dispatchOrReuse({ type: 'alert_rca', cacheKey: 'race', instanceId: 7, sessionKey: 'race', userMessage: 'analyze', existingAnalysisId: 42 });
+    await vi.waitFor(() => expect(databaseService.getAnalysisById).toHaveBeenCalled());
+    expect(databaseService.waitForCompletion).not.toHaveBeenCalled();
+    expect(databaseService.failAnalysis).not.toHaveBeenCalled();
+  });
+
+  it('awaits rejected completion reads so the failure handler can persist them', async () => {
+    databaseService.getAnalysisById.mockRejectedValue(new Error('ANALYSIS_STORE_UNAVAILABLE'));
+    await dispatchOrReuse({ type: 'alert_rca', cacheKey: 'read-error', instanceId: 7, sessionKey: 'read-error', userMessage: 'analyze', existingAnalysisId: 42 });
+    await vi.waitFor(() => expect(databaseService.failAnalysis).toHaveBeenCalledWith(42, 'ANALYSIS_STORE_UNAVAILABLE'));
+  });
+
   it('persists the concrete provider error for a failed Agent run', async () => {
     invoke.mockResolvedValue({
       content: 'DeepSeek request failed',

@@ -6,7 +6,6 @@
 @import "./styles/chat.css";
 @import "./styles/config.css";
 @import "./styles/usage.css";
-@import "./styles/dreams.css";
 
 /* Inline @create-markdown/preview system theme (can't resolve node_modules from upstream ui/ path) */
 .cm-preview {
