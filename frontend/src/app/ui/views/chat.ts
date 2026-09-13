@@ -47,6 +47,9 @@ import type { ChatAttachment, ChatQueueItem } from "../ui-types.ts";
 import { agentLogoUrl, resolveAgentAvatarUrl } from "./agents-utils.ts";
 import { renderMarkdownSidebar } from "./markdown-sidebar.ts";
 import "../components/resizable-divider.ts";
+import "../components/chat-history-nav.ts";
+import { buildHistoryTurns, historyWindow, type HistoryTurn } from "../chat/history-navigation.ts";
+import type { ChatHistoryNav } from "../components/chat-history-nav.ts";
 
 /**
  * Map raw error messages to user-friendly Chinese text.
@@ -364,6 +367,9 @@ interface ChatEphemeralState {
   searchOpen: boolean;
   searchQuery: string;
   pinnedExpanded: boolean;
+  historySession: string;
+  historySelection: string | null;
+  historyReading: boolean;
 }
 
 function createChatEphemeralState(): ChatEphemeralState {
@@ -377,6 +383,9 @@ function createChatEphemeralState(): ChatEphemeralState {
     searchOpen: false,
     searchQuery: "",
     pinnedExpanded: false,
+    historySession: "",
+    historySelection: null,
+    historyReading: false,
   };
 }
 
@@ -1431,7 +1440,38 @@ export function renderChat(props: ChatProps) {
     );
   };
 
-  const chatItems = buildChatItems(props);
+  if (vs.historySession !== props.sessionKey) {
+    vs.historySession = props.sessionKey;
+    vs.historySelection = null;
+    vs.historyReading = false;
+  }
+  const turns = buildHistoryTurns(props.messages, messageKey).filter((turn) => !deleted.has(`group:user:${turn.key}`));
+  const windowRange = historyWindow(turns, props.messages.length, vs.historySelection);
+  const navigate = (turn: HistoryTurn) => {
+    vs.historySelection = turn.key;
+    vs.historyReading = true;
+    vs.searchOpen = false;
+    vs.searchQuery = "";
+    requestUpdate();
+  };
+  const jumpFromButton = (event: Event, turn: HistoryTurn) => {
+    const main = (event.currentTarget as HTMLElement).closest(".chat-main");
+    void main?.querySelector<ChatHistoryNav>("chat-history-nav")?.navigate(turn);
+  };
+  const returnToLatest = (event: Event) => {
+    const chat = (event.currentTarget as HTMLElement).closest(".chat");
+    const thread = chat?.querySelector<HTMLElement>(".chat-thread");
+    if (thread) delete thread.dataset.historyReading;
+    vs.historySelection = null;
+    vs.historyReading = false;
+    requestUpdate();
+    requestAnimationFrame(() => {
+      if (vs.historySession !== props.sessionKey) return;
+      if (thread) thread.scrollTop = thread.scrollHeight;
+      props.onScrollToBottom?.();
+    });
+  };
+  const chatItems = buildChatItems(props, windowRange.start, windowRange.end);
   syncToolCardExpansionState(props.sessionKey, chatItems, Boolean(props.autoExpandToolCalls));
   const expandedToolCards = getExpandedToolCards(props.sessionKey);
   const toggleToolCardExpanded = (toolCardId: string) => {
@@ -1446,9 +1486,11 @@ export function renderChat(props: ChatProps) {
       role="log"
       aria-live="polite"
       @scroll=${props.onChatScroll}
+      @chat-history-reset=${() => { vs.historySelection = null; vs.historyReading = false; requestUpdate(); }}
       @click=${handleCodeBlockCopy}
     >
       <div class="chat-thread-inner">
+        ${windowRange.previous ? html`<button class="btn-ghost" type="button" @click=${(event: Event) => jumpFromButton(event, windowRange.previous!)}>查看更早对话</button>` : nothing}
         ${props.loading
           ? html`
               <div class="chat-loading-skeleton" aria-label="Loading chat">
@@ -1543,6 +1585,7 @@ export function renderChat(props: ChatProps) {
                 return nothing;
               }
               return html`
+                <div data-chat-turn=${item.role === "user" ? item.messages[0].key : nothing}>
                 ${renderMessageGroup(item, {
                   onOpenSidebar: props.onOpenSidebar,
                   showReasoning,
@@ -1573,12 +1616,14 @@ export function renderChat(props: ChatProps) {
                   },
                 })}
                 ${renderBackLinks(item, toolIds.instanceIds, toolIds.alertIds)}
+                </div>
               `;
             }
             return nothing;
           },
         )
       })()}
+        ${windowRange.next ? html`<button class="btn-ghost" type="button" @click=${(event: Event) => jumpFromButton(event, windowRange.next!)}>查看后续对话</button>` : nothing}
       </div>
     </div>
   `;
@@ -1753,10 +1798,13 @@ export function renderChat(props: ChatProps) {
 
       <div class="chat-split-container ${sidebarOpen ? "chat-split-container--open" : ""}">
         <div
-          class="chat-main"
+          class="chat-main ${turns.length && !props.loading && !vs.searchOpen ? "chat-main--history" : ""}"
           style="flex: ${sidebarOpen ? `0 0 ${splitRatio * 100}%` : "1 1 100%"}"
         >
           ${thread}
+          <chat-history-nav .hidden=${!turns.length || props.loading || vs.searchOpen}
+            .turns=${turns} .sessionKey=${props.sessionKey} .stream=${props.stream ?? ""} .onNavigate=${navigate}>
+          </chat-history-nav>
         </div>
 
         ${sidebarOpen
@@ -1826,10 +1874,10 @@ export function renderChat(props: ChatProps) {
       ${renderFallbackIndicator(props.fallbackStatus)}
       ${renderCompactionIndicator(props.compactionStatus)}
       ${renderContextNotice(activeSession, props.sessions?.defaults?.contextTokens ?? null)}
-      ${props.showNewMessages
+      ${props.showNewMessages || vs.historyReading
         ? html`
-            <button class="chat-new-messages" type="button" @click=${props.onScrollToBottom}>
-              ${icons['arrow-down']} New messages
+            <button class="btn chat-new-messages" type="button" @click=${returnToLatest}>
+              ${icons['arrow-down']} 回到最新
             </button>
           `
         : nothing}
@@ -1934,8 +1982,6 @@ export function renderChat(props: ChatProps) {
   `;
 }
 
-const CHAT_HISTORY_RENDER_LIMIT = 200;
-
 function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
   const result: Array<ChatItem | MessageGroup> = [];
   let currentGroup: MessageGroup | null = null;
@@ -1957,6 +2003,7 @@ function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
 
     if (
       !currentGroup ||
+      role === "user" ||
       currentGroup.role !== role ||
       (role.toLowerCase() === "user" && currentGroup.senderLabel !== senderLabel)
     ) {
@@ -1986,23 +2033,11 @@ function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
   return result;
 }
 
-function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
+function buildChatItems(props: ChatProps, historyStart: number, historyEnd: number): Array<ChatItem | MessageGroup> {
   const items: ChatItem[] = [];
   const history = Array.isArray(props.messages) ? props.messages : [];
   const tools = Array.isArray(props.toolMessages) ? props.toolMessages : [];
-  const historyStart = Math.max(0, history.length - CHAT_HISTORY_RENDER_LIMIT);
-  if (historyStart > 0) {
-    items.push({
-      kind: "message",
-      key: "chat:history:notice",
-      message: {
-        role: "system",
-        content: `Showing last ${CHAT_HISTORY_RENDER_LIMIT} messages (${historyStart} hidden).`,
-        timestamp: Date.now(),
-      },
-    });
-  }
-  for (let i = historyStart; i < history.length; i++) {
+  for (let i = historyStart; i < historyEnd; i++) {
     const msg = history[i];
     const normalized = normalizeMessage(msg);
 
@@ -2021,6 +2056,8 @@ function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
       message: msg,
     });
   }
+  // Streaming belongs only to the latest segment, never to a historical turn.
+  if (historyEnd < history.length) return groupMessages(items);
   const liftedCanvasSources = tools
     .map((tool) => extractChatMessagePreview(tool))
     .filter((entry) => Boolean(entry)) as Array<{

@@ -140,6 +140,7 @@ export class SlideApp extends LitElement {
 
   @state() sessionKey = this.settings.sessionKey;
   @state() chatLoading = false;
+  @state() chatNewMessagesBelow = false;
   @state() chatSending = false;
   @state() chatMessage = "";
   @state() chatMessages: unknown[] = [];

@@ -168,3 +168,27 @@ describe('chat REST actor boundary', () => {
     await app.close();
   });
 });
+
+
+describe('chat history cursor pages', () => {
+  it('forwards the actor/cursor and returns stable message IDs and the next cursor', async () => {
+    const register = await loadRegisterChatRoutes();
+    const app = Fastify();
+    const deps = routeDependencies();
+    const getMessagePage = vi.fn().mockResolvedValue({
+      messages: [{ message_id: 'message-2', sequence: 2, role: 'user', content: 'older', created_at: new Date() }], nextBefore: 2,
+    });
+    await register!(app, { ...deps, service: { ...deps.service, getMessagePage } });
+    const result = await app.inject({ method: 'GET', url: '/api/chat/history?sessionKey=owner-session&paged=true&before=20&limit=10' });
+    expect(result.statusCode).toBe(200);
+    expect(getMessagePage).toHaveBeenCalledWith(actor, 'owner-session', 10, 20);
+    expect(result.json()).toMatchObject({ messages: [{ id: 'message-2', sequence: 2 }], nextBefore: 2 });
+    expect(deps.service.getMessages).not.toHaveBeenCalled();
+    for (const query of ['paged=true&before=-1', 'paged=true&before=1.5', 'before=20', 'paged=true&before=9007199254740992']) {
+      expect((await app.inject({ method: 'GET', url: `/api/chat/history?sessionKey=owner-session&${query}` })).statusCode).toBe(400);
+    }
+    getMessagePage.mockRejectedValueOnce(new ChatSessionNotFoundError());
+    expect((await app.inject({ method: 'GET', url: '/api/chat/history?sessionKey=foreign&paged=true' })).statusCode).toBe(404);
+    await app.close();
+  });
+});

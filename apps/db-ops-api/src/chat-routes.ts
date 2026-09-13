@@ -10,6 +10,7 @@ import { strictBody } from './utils/strict-body.js';
 type ChatRouteService = Pick<
   ChatDatabaseService,
   | 'getMessages'
+  | 'getMessagePage'
   | 'getSessions'
   | 'updateSessionSettings'
   | 'deleteSession'
@@ -81,25 +82,33 @@ export async function registerChatRoutes(
 
   fastify.get('/api/chat/history', { preHandler }, async (request, reply) => {
     try {
-      const { sessionKey, limit: limitText } = request.query as { sessionKey?: string; limit?: string };
+      const { sessionKey, limit: limitText, paged, before: beforeText } = request.query as { sessionKey?: string; limit?: string; paged?: string; before?: string };
       if (!sessionKey) return reply.code(400).send({ error: 'sessionKey parameter is required' });
       const limit = limitText === undefined ? 200 : parseBoundedPositiveInteger(limitText, MAX_HISTORY_LIMIT);
       if (limit === null) return reply.code(400).send({ error: `limit must be a positive integer up to ${MAX_HISTORY_LIMIT}` });
-      const messages = await deps.service.getMessages(
-        authenticatedActor(request as any),
-        sessionKey,
-        limit,
+      const before = beforeText === undefined ? undefined : parseBoundedPositiveInteger(beforeText, Number.MAX_SAFE_INTEGER);
+      if (before === null || (beforeText !== undefined && paged !== 'true')) {
+        return reply.code(400).send({ error: 'before requires paged=true and a positive integer cursor' });
+      }
+      const page = paged === 'true'
+        ? await deps.service.getMessagePage(authenticatedActor(request as any), sessionKey, limit, before)
+        : null;
+      const messages = page?.messages ?? await deps.service.getMessages(
+        authenticatedActor(request as any), sessionKey, limit,
       );
       const metadata = typeof deps.service.getSessionMetadata === 'function'
         ? await deps.service.getSessionMetadata(authenticatedActor(request as any), sessionKey)
         : null;
       const formatted = messages.map((message) => ({
+        id: message.message_id,
+        sequence: message.sequence,
         role: message.role,
         ...formatMessageContent(message.content || ''),
         timestamp: message.created_at ? new Date(message.created_at).getTime() : Date.now(),
       }));
       return reply.send({
         messages: formatted,
+        ...(page ? { nextBefore: page.nextBefore } : {}),
         model: typeof metadata?.model === 'string' ? metadata.model : null,
         thinkingLevel: typeof metadata?.thinkingLevel === 'string' ? metadata.thinkingLevel : null,
       });
