@@ -210,6 +210,29 @@ export class ChatDatabaseService {
       .map((row) => this.mapMessageRow(row));
   }
 
+  /** Cursor pages use the monotonic database ID, including for equal timestamps. */
+  async getMessagePage(
+    actor: ActorContext,
+    sessionId: string,
+    limit: number,
+    before?: number,
+  ): Promise<{ messages: ChatMessageRecord[]; nextBefore: number | null }> {
+    await this.authorizeSession(actor, sessionId, 'history');
+    const [rows] = await this.getPool().query<RowDataPacket[]>(
+      `SELECT cm.* FROM chat_messages cm
+       JOIN chat_sessions cs ON cs.session_id = cm.session_id
+       WHERE cm.session_id = ? AND ${this.accessPredicate('history')}
+         ${before === undefined ? '' : 'AND cm.id < ?'}
+       ORDER BY cm.id DESC LIMIT ?`,
+      [sessionId, ...this.accessValues(actor, 'history'), ...(before === undefined ? [] : [before]), limit + 1],
+    );
+    const page = rows.slice(0, limit);
+    return {
+      nextBefore: rows.length > limit ? Number(page[page.length - 1].id) : null,
+      messages: page.reverse().map((row) => this.mapMessageRow(row)),
+    };
+  }
+
   async getMessageWithParents(
     actor: ActorContext,
     messageId: string,

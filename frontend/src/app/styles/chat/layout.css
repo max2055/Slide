@@ -1097,3 +1097,17 @@
 
 /* Mobile dropdown toggle — hidden on desktop */
 /* Mobile gear toggle + dropdown are hidden by default in layout.css */
+
+/* History navigation occupies its own gutter, independent of transcript scrolling. */
+.chat-main--history { position: relative; container-type: inline-size; }
+.chat-main--history .chat-thread { margin-left: 4rem; }
+.chat-main--history chat-history-nav { --history-panel-width: 100cqw; }
+.chat-history-highlight {
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  transition: background 160ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-history-highlight { transition: none; }
+}
