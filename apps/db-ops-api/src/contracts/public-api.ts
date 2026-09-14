@@ -139,6 +139,16 @@ export const NetworkDeviceCapabilitiesResponseSchema = Type.Object({
   deviceId: Type.Integer({ minimum: 1 }), capabilities: Type.Array(NetworkDeviceCapabilitySchema),
 }, { $id: 'NetworkDeviceCapabilitiesResponse', additionalProperties: false });
 
+export const ConfigBackupScheduleInputSchema = Type.Object({
+  enabled: Type.Boolean(), dailyTime: Type.String({ pattern: '^(?:[01]\\d|2[0-3]):[0-5]\\d$' }),
+}, { $id: 'ConfigBackupScheduleInput', additionalProperties: false });
+export const ConfigBackupScheduleSchema = Type.Object({
+  enabled: Type.Boolean(), dailyTime: Type.String(), timeZone: Type.Literal('Asia/Shanghai'),
+  lastRun: Type.Union([Type.Null(), Type.Object({
+    date: Type.String(), status: Type.Union([Type.Literal('running'), Type.Literal('success'), Type.Literal('failed')]), errorCode: Type.Union([Type.String(), Type.Null()]),
+  })]),
+}, { $id: 'ConfigBackupSchedule', additionalProperties: false });
+
 export const ConfigBackupSummarySchema = Type.Object({
   id: Type.Integer({ minimum: 1 }), deviceId: Type.Integer({ minimum: 1 }), versionNo: Type.Integer({ minimum: 1 }),
   contentSha256: Type.String({ pattern: '^[a-f0-9]{64}$' }), sourceProtocol: Type.Literal('ssh'),
@@ -616,6 +626,8 @@ export const PublicApiSchemas = {
   NetworkDeviceCapability: NetworkDeviceCapabilitySchema,
   NetworkDeviceCapabilitiesResponse: NetworkDeviceCapabilitiesResponseSchema,
   ConfigBackupSummary: ConfigBackupSummarySchema,
+  ConfigBackupScheduleInput: ConfigBackupScheduleInputSchema,
+  ConfigBackupSchedule: ConfigBackupScheduleSchema,
   ConfigBackupSummariesResponse: ConfigBackupSummariesResponseSchema,
   ConfigBackupDetail: ConfigBackupDetailSchema,
   ConfigBackupRaw: ConfigBackupRawSchema,

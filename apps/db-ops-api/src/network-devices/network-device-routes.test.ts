@@ -48,6 +48,38 @@ beforeEach(() => {
 });
 
 describe('network-device routes', () => {
+  it('reads defaults, saves schedules with backup permission, and rejects unauthorized writes', async () => {
+    let schedule = { enabled: true, dailyTime: '00:00', timeZone: 'Asia/Shanghai', lastRun: null };
+    const store = { get: vi.fn(async () => schedule), save: vi.fn(async (_id, input) => { schedule = { ...schedule, ...input }; }) };
+    const app = await appWith({ backupScheduleStore: store });
+    const url = '/api/network-devices/7/backup-schedule';
+    expect((await app.inject({ url })).statusCode).toBe(401);
+    expect((await app.inject({ url, headers: { authorization: 'Bearer reader' } })).json()).toEqual(schedule);
+    const payload = { enabled: false, dailyTime: '03:45' };
+    for (const token of ['reader', 'manager']) {
+      expect((await app.inject({ method: 'PUT', url, payload, headers: { authorization: `Bearer ${token}` } })).statusCode).toBe(403);
+    }
+    expect(store.save).not.toHaveBeenCalled();
+    const result = await app.inject({ method: 'PUT', url, payload, headers: { authorization: 'Bearer backup' } });
+    expect(result.statusCode).toBe(200);
+    expect(result.json()).toMatchObject(payload);
+    expect(store.save).toHaveBeenCalledWith(7, payload);
+    expect((await app.inject({ url, headers: { authorization: 'Bearer reader' } })).json()).toMatchObject(payload);
+    await app.close();
+  });
+
+  it('validates schedule inputs and rejects missing devices', async () => {
+    const store = { get: vi.fn(), save: vi.fn() };
+    const app = await appWith({ backupScheduleStore: store });
+    for (const payload of [{ enabled: 'true', dailyTime: '00:00' }, { enabled: true, dailyTime: '24:00' }, { enabled: true, dailyTime: '12:00', host: 'other' }]) {
+      const result = await app.inject({ method: 'PUT', url: '/api/network-devices/7/backup-schedule', payload, headers: { authorization: 'Bearer backup' } });
+      expect(result.statusCode).toBe(400);
+    }
+    mocks.getDeviceById.mockResolvedValueOnce(null as any);
+    expect((await app.inject({ url: '/api/network-devices/999/backup-schedule', headers: { authorization: 'Bearer reader' } })).statusCode).toBe(404);
+    expect(store.save).not.toHaveBeenCalled();
+    await app.close();
+  });
   it.each([
     'SSH_CREDENTIAL_READ_FAILED', 'CONFIG_BACKUP_VENDOR_UNSUPPORTED',
     'SSH_TARGET_DENIED', 'SSH_CONNECT_FAILED', 'SSH_COMMAND_FAILED', 'SSH_COMMAND_TIMEOUT',

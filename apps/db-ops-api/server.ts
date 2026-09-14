@@ -139,6 +139,7 @@ import { registerDeviceAuthRoutes } from './src/security/device-auth-routes.js';
 import { agentSecurityPolicyService } from './src/security/agent-security-policy-service.js';
 import { registerNetworkDeviceRoutes } from './src/network-devices/network-device-routes.js';
 import { networkDeviceCollector } from './src/network-devices/network-device-collector.js';
+import { configBackupScheduler } from './src/network-devices/config-backup-scheduler.js';
 import { registerResourceRoutes } from './src/resources/resource-routes.js';
 import { registerEvidenceRoutes } from './src/evidence/evidence-api.js';
 import { registerEvidenceEvaluationRoutes } from './src/evidence/evidence-evaluation-api.js';
@@ -5575,6 +5576,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // 网络设备采集器只执行 SNMPv3 只读轮询；未纳管或未启用采集的设备不会
   // 建立连接。采集器内部按设备互斥，停止时释放定时器。
   networkDeviceCollector.start();
+  configBackupScheduler.start();
 
   // 从 metric-registry 同步告警规则
   await alertEngine.syncRulesFromRegistry();
@@ -6089,6 +6091,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (workflowTimer) clearInterval(workflowTimer);
       monitorCollector.stop();
       networkDeviceCollector.stop();
+      await configBackupScheduler.stop();
       alertEngine.stopEvaluationLoop();
       alertEscalationService.stop();
       stopSessionCleanup();

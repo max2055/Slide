@@ -16,6 +16,45 @@ async function settle(element: HTMLElement & { updateComplete: Promise<unknown> 
 }
 
 describe("network-device-detail", () => {
+  it('saves a changed daily time and disabled switch, then renders the persisted values on reload', async () => {
+    const original = authFetch.getMockImplementation()!;
+    let schedule = { enabled: true, dailyTime: '00:00', timeZone: 'Asia/Shanghai', lastRun: null };
+    authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/backup-schedule')) {
+        if (init?.method === 'PUT') schedule = { ...schedule, ...JSON.parse(String(init.body)) };
+        return response(schedule);
+      }
+      return original(url, init);
+    });
+    const element = document.createElement('network-device-detail') as any;
+    element.deviceId = 4; document.body.append(element); await settle(element);
+    const tab = () => Array.from(element.querySelectorAll('button') as NodeListOf<HTMLButtonElement>).find(b => b.textContent?.trim() === '配置备份')!;
+    tab().click(); await settle(element);
+    const time = element.querySelector('input[type="time"]') as HTMLInputElement;
+    expect(time.value).toBe('00:00');
+    time.value = '03:45'; time.dispatchEvent(new Event('input', { bubbles: true })); await settle(element);
+    const enabled = element.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    enabled.checked = false; enabled.dispatchEvent(new Event('change', { bubbles: true })); await settle(element);
+    element.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle(element);
+    expect(schedule).toMatchObject({ enabled: false, dailyTime: '03:45' });
+    expect(showToast).toHaveBeenCalledWith('定时备份设置已保存', 'success');
+    await element.loadContext(); await settle(element);
+    expect(element.querySelector('input[type="time"]').value).toBe('03:45');
+    expect(element.querySelector('input[type="checkbox"]').checked).toBe(false);
+  });
+
+  it('keeps unsaved schedule edits and shows a Chinese error when saving is forbidden', async () => {
+    const original = authFetch.getMockImplementation()!;
+    authFetch.mockImplementation(async (url: string, init?: RequestInit) => init?.method === 'PUT'
+      ? response({ error: '权限不足' }, false, 403) : original(url, init));
+    const element = document.createElement('network-device-detail') as any;
+    element.deviceId = 4; document.body.append(element); await settle(element);
+    element.activeTab = 'backups'; await settle(element);
+    element.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle(element);
+    expect(element.querySelector('[role="alert"]').textContent).toContain('权限不足');
+    expect(showToast).not.toHaveBeenCalledWith('定时备份设置已保存', 'success');
+    expect(element.querySelector('button[type="submit"]').disabled).toBe(false);
+  });
   beforeEach(() => {
     authFetch.mockReset();
     showToast.mockReset();
@@ -32,6 +71,7 @@ describe("network-device-detail", () => {
       ] });
       if (url.endsWith("/interfaces")) return response({ interfaces: [{ id: 1, deviceId: 4, ifIndex: 1, ifName: "GigabitEthernet0/0/1", ifAlias: "uplink", speedBps: 1000000000, adminStatus: "up", operStatus: "up", lastSeenAt: "2026-08-26T00:00:00.000Z" }] });
       if (url.endsWith("/capabilities")) return response({ capabilities: [{ key: "metrics", state: "verified", evidence: null, reason: null, checkedAt: null, validUntil: null }] });
+      if (url.endsWith("/backup-schedule")) return response({ enabled: true, dailyTime: "00:00", timeZone: "Asia/Shanghai", lastRun: null });
       if (url.endsWith("/relations")) return response({ relations: [] });
       if (url.endsWith("/config-backups")) return response({ backups: [{ id: 8, deviceId: 4, versionNo: 1, contentSha256: "a".repeat(64), sourceProtocol: "ssh", collectedAt: "2026-08-26T00:00:00.000Z", sizeBytes: 20, redactionStatus: "redacted" }] });
       if (url.endsWith("/config-backups/8")) return response({ id: 8, deviceId: 4, versionNo: 1, contentSha256: "a".repeat(64), sourceProtocol: "ssh", collectedAt: "2026-08-26T00:00:00.000Z", sizeBytes: 20, redactionStatus: "redacted", preview: "username <redacted>" });
@@ -50,14 +90,14 @@ describe("network-device-detail", () => {
 
     const buttons = () => Array.from(element.querySelectorAll("button") as NodeListOf<HTMLButtonElement>);
     const tab = (label: string) => buttons().find((button) => button.textContent?.trim() === label);
-    tab("Interfaces")?.click();
+    tab("接口")?.click();
     await settle(element);
     expect(element.textContent).toContain("GigabitEthernet0/0/1");
 
-    tab("Backups")?.click();
+    tab("配置备份")?.click();
     await settle(element);
-    expect(element.textContent).toContain("Encrypted configuration backups");
-    expect(element.textContent).toContain("redacted");
+    expect(element.textContent).toContain("加密配置备份");
+    expect(element.textContent).toContain("已脱敏");
   });
 
   it("requests ordinary backup detail without raw=true and renders preview as text", async () => {
@@ -67,10 +107,10 @@ describe("network-device-detail", () => {
     await settle(element);
 
     const buttons = () => Array.from(element.querySelectorAll("button") as NodeListOf<HTMLButtonElement>);
-    const backupsTab = buttons().find((button) => button.textContent?.trim() === "Backups");
+    const backupsTab = buttons().find((button) => button.textContent?.trim() === "配置备份");
     backupsTab?.click();
     await settle(element);
-    const viewButton = buttons().find((button) => button.textContent?.includes("View summary"));
+    const viewButton = buttons().find((button) => button.textContent?.includes("查看摘要"));
     expect(viewButton).toBeTruthy();
     viewButton?.click();
     await settle(element);
@@ -85,6 +125,7 @@ describe("network-device-detail", () => {
       if (url.endsWith("/metrics")) return response({ deviceId: 4, metrics: [] });
       if (url.endsWith("/interfaces")) return response({ interfaces: [] });
       if (url.endsWith("/capabilities")) return response({ capabilities: [] });
+      if (url.endsWith("/backup-schedule")) return response({ enabled: true, dailyTime: "00:00", timeZone: "Asia/Shanghai", lastRun: null });
       if (url.endsWith("/relations")) return response({ relations: [] });
       if (url.endsWith("/config-backups") && init?.method === "POST") {
         return response({ error: "SSH_CREDENTIAL_REQUIRED" }, false, 400);
@@ -98,7 +139,7 @@ describe("network-device-detail", () => {
     await settle(element);
 
     const button = Array.from(element.querySelectorAll("button") as NodeListOf<HTMLButtonElement>)
-      .find((item) => item.textContent?.trim() === "Capture backup");
+      .find((item) => item.textContent?.trim() === "立即备份");
     button?.click();
     await settle(element);
 
@@ -112,13 +153,13 @@ describe("network-device-detail", () => {
     await settle(element);
 
     const buttons = () => Array.from(element.querySelectorAll("button") as NodeListOf<HTMLButtonElement>);
-    buttons().find((button) => button.textContent?.trim() === "Interfaces")?.click();
+    buttons().find((button) => button.textContent?.trim() === "接口")?.click();
     await settle(element);
 
-    expect(element.textContent).toContain("In traffic");
-    expect(element.textContent).toContain("Out traffic");
-    expect(element.textContent).toContain("Errors");
-    expect(element.textContent).toContain("Drops");
+    expect(element.textContent).toContain("入站流量");
+    expect(element.textContent).toContain("出站流量");
+    expect(element.textContent).toContain("错包速率");
+    expect(element.textContent).toContain("丢包速率");
     expect(element.textContent).toContain("1.0 Mbps");
     expect(element.textContent).toContain("2.0 Mbps");
     expect(element.textContent).toContain("3.0/s");

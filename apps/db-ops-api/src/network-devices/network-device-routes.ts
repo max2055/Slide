@@ -15,11 +15,13 @@ import type { ActorContext } from '../auth/actor-context.js';
 import { hasPermission } from '../auth/require-permission.js';
 import { authorizeNetworkDeviceTarget } from '../security/network-device-target-policy.js';
 import type { ResourceRelationType } from '../resources/types.js';
+import { backupScheduleStore, parseBackupSchedule, type BackupScheduleStore } from './config-backup-scheduler.js';
 
 export async function registerNetworkDeviceRoutes(
   fastify: FastifyInstance,
   verifyToken: preHandlerHookHandler,
   dependencies: {
+    backupScheduleStore?: Pick<BackupScheduleStore, 'get' | 'save'>;
     collector?: Pick<NetworkDeviceCollector, 'collectDevice'>;
     backupService?: Pick<ConfigBackupService, 'collect' | 'capture' | 'list' | 'get' | 'diff'> & {
       recordAudit?: (event: ConfigBackupAuditEvent) => Promise<void> | void;
@@ -31,6 +33,7 @@ export async function registerNetworkDeviceRoutes(
 ): Promise<void> {
   const collector = dependencies.collector ?? networkDeviceCollector;
   const backups = dependencies.backupService ?? configBackupService;
+  const schedules = dependencies.backupScheduleStore ?? backupScheduleStore;
   const sshProbe = dependencies.sshProbe ?? verifySshHostKey;
   const snmpAdapter = dependencies.snmpAdapter ?? new HuaweiAdapter(new SnmpClient());
   const authorizeTarget = dependencies.authorizeTarget ?? authorizeNetworkDeviceTarget;
@@ -266,6 +269,28 @@ export async function registerNetworkDeviceRoutes(
       const failure = safeNetworkError(error);
       return reply.code(failure.status === 500 ? 502 : failure.status).send({ error: failure.error });
     }
+  });
+
+  fastify.get('/api/network-devices/:id/backup-schedule', { preHandler: backupRead }, async (request, reply) => {
+    const id = routeId(request);
+    if (id === null) return reply.code(400).send({ error: '资源 ID 无效' });
+    try {
+      if (!await networkDeviceDatabaseService.getDeviceById(id)) return reply.code(404).send({ error: 'NETWORK_DEVICE_NOT_FOUND' });
+      return reply.send(await schedules.get(id));
+    } catch { return reply.code(500).send({ error: '获取定时备份设置失败' }); }
+  });
+
+  fastify.put('/api/network-devices/:id/backup-schedule', { preHandler: backupWrite }, async (request, reply) => {
+    const id = routeId(request);
+    if (id === null) return reply.code(400).send({ error: '资源 ID 无效' });
+    let input;
+    try { input = parseBackupSchedule(request.body); }
+    catch { return reply.code(400).send({ error: '请提供备份开关和有效的每日执行时间（HH:mm）' }); }
+    try {
+      if (!await networkDeviceDatabaseService.getDeviceById(id)) return reply.code(404).send({ error: 'NETWORK_DEVICE_NOT_FOUND' });
+      await schedules.save(id, input);
+      return reply.send(await schedules.get(id));
+    } catch { return reply.code(500).send({ error: '保存定时备份设置失败' }); }
   });
 
   fastify.get('/api/network-devices/:id/config-backups', { preHandler: backupRead }, async (request, reply) => {

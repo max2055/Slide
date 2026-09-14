@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { dueMetricIds, dueStoredMetricIds, recordCollectionResult } from '../src/collection-scheduler.js';
 
 describe('due-only collection scheduler', () => {
+  it.each(['instance', 'server', 'network_device'] as const)('applies shorter and longer intervals immediately for %s', async (resourceType) => {
+    const store = {
+      list: async () => [{ metricId: 'metric', lastSuccessMs: 1000, nextDueMs: 301000, lastResult: 'success' as const }],
+      record: async () => undefined,
+    };
+    await expect(dueStoredMetricIds(store, resourceType, 7, 'provider', [{ id: 'metric', default_interval: 30 }], 31000)).resolves.toEqual(['metric']);
+    await expect(dueStoredMetricIds(store, resourceType, 7, 'provider', [{ id: 'metric', default_interval: 600 }], 301000)).resolves.toEqual([]);
+    await expect(dueStoredMetricIds(store, resourceType, 7, 'provider', [{ id: 'metric', default_interval: 600 }], 601000)).resolves.toEqual(['metric']);
+  });
   const definitions = [
     { id: 'cpu_usage', default_interval: 30 },
     { id: 'connections', default_interval: 60 },
