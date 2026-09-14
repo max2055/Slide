@@ -123,6 +123,7 @@ export class ChatHistoryNav extends LitElement {
     if (!ruler || !first) return;
     const index = Math.floor((this.pointerY - ruler.getBoundingClientRect().top + ruler.scrollTop) / first.offsetHeight);
     if (index >= 0 && index < this.turns.length) this.preview(index);
+    else this.close();
   };
 
   async navigate(turn: HistoryTurn) {
@@ -167,8 +168,8 @@ export class ChatHistoryNav extends LitElement {
         :host > div { height: 100%; display: flex; flex-direction: column; justify-content: center; }
         nav { position: relative; flex: 0 1 auto; min-height: 0; max-height: 100%; overflow: auto; scrollbar-width: none; overscroll-behavior: contain; }
         nav::-webkit-scrollbar { display: none; }
-        .tick { display: flex; align-items: center; width: 100%; height: 1.25rem; padding: 0 var(--space-sm); border: 0; background: transparent; cursor: pointer; }
-        .tick::before { content: ""; display: block; width: var(--tick-width, .75rem); height: .1875rem; flex-shrink: 0; background: var(--border-strong, var(--border)); transition: width 120ms ease-out, background 120ms ease-out; }
+        .tick { display: flex; align-items: center; width: 100%; height: .625rem; padding: 0 var(--space-sm); border: 0; background: transparent; cursor: pointer; }
+        .tick::before { content: ""; display: block; width: var(--tick-width, .375rem); height: .125rem; flex-shrink: 0; background: var(--border-strong, var(--border)); transition: width 120ms ease-out, background 120ms ease-out; }
         .tick[aria-current="true"]::before { background: var(--muted); }
         .tick[data-hovered]::before { background: var(--text-strong); }
         .tick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius-sm); }
@@ -181,10 +182,10 @@ export class ChatHistoryNav extends LitElement {
         @media (prefers-reduced-motion: reduce) { .tick::before { transition: none; } }
       </style>
       <div @pointerleave=${this.close} @focusout=${(event: FocusEvent) => { if (!this.renderRoot.contains(event.relatedTarget as Node)) this.close(); }}>
-        <nav aria-label="历史对话导航" @scroll=${this.rulerScrolled} @pointermove=${(event: PointerEvent) => { this.pointerY = event.clientY; this.rulerScrolled(); }}>
+        <nav aria-label="历史对话导航" @pointerleave=${this.close} @scroll=${this.rulerScrolled} @pointermove=${(event: PointerEvent) => { this.pointerY = event.clientY; this.rulerScrolled(); }}>
           ${repeat(this.turns, (entry) => entry.key, (entry, index) => {
             const distance = this.hovered < 0 ? 99 : Math.abs(index - this.hovered);
-            const width = distance < 4 ? 3.25 - distance * .625 : .75;
+            const width = [1.625, 1.25, .875, .625][distance] ?? .375;
             return html`<button type="button" class="tick" style=${styleMap({ "--tick-width": `${width}rem` })}
               aria-label=${`第 ${index + 1} 轮：${entry.question}`} aria-current=${String(entry.key === this.activeKey)}
               aria-describedby=${index === this.hovered ? "history-preview" : nothing}

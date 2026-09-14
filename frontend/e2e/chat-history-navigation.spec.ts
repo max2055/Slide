@@ -10,17 +10,19 @@ test('equal ticks expand near the pointer, preview without scrolling, and restor
   const ticks = page.locator('chat-history-nav .tick');
   const thread = page.locator('.chat-thread');
   const top = await thread.evaluate((element) => element.scrollTop);
-  await expect.poll(() => ticks.nth(0).evaluate((el) => getComputedStyle(el, '::before').width)).toBe('12px');
+  await expect.poll(() => ticks.nth(0).evaluate((el) => getComputedStyle(el, '::before').width)).toBe('6px');
+  expect(await ticks.first().evaluate(el => el.getBoundingClientRect().height)).toBe(10);
+  expect(await ticks.first().evaluate(el => getComputedStyle(el, '::before').height)).toBe('2px');
   await ticks.nth(180).hover();
   await expect(page.getByRole('tooltip')).toContainText('第 181 轮');
-  await expect.poll(() => ticks.nth(180).evaluate((el) => parseFloat(getComputedStyle(el, '::before').width))).toBe(52);
+  await expect.poll(() => ticks.nth(180).evaluate((el) => parseFloat(getComputedStyle(el, '::before').width))).toBe(26);
   const widths = await ticks.evaluateAll((elements) => [180, 181, 182, 183, 184].map((i) => parseFloat(getComputedStyle(elements[i], '::before').width)));
-  expect(widths).toEqual([52, 42, 32, 22, 12]);
+  expect(widths).toEqual([26, 20, 14, 10, 6]);
   expect(await thread.evaluate((el) => el.scrollTop)).toBe(top);
   await page.screenshot({ path: test.info().outputPath('history-hover.png') });
   await page.mouse.move(1000, 20);
   await expect(page.getByRole('tooltip')).toBeHidden();
-  await expect.poll(() => ticks.nth(180).evaluate((el) => getComputedStyle(el, '::before').width)).toBe('12px');
+  await expect.poll(() => ticks.nth(180).evaluate((el) => getComputedStyle(el, '::before').width)).toBe('6px');
 });
 
 test('old turns render on demand, highlight accurately, and streaming does not steal position', async ({ page }) => {
@@ -174,3 +176,26 @@ test('opening and switching conversations wait for history and land on the lates
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   expect(await page.locator('.chat-thread').evaluate((el) => el.scrollTop)).toBe(before);
 });
+
+for (const edge of ['first', 'last'] as const) {
+  test(`leaving the ${edge} tick into the centered ruler's blank space clears hover`, async ({ page }) => {
+    await page.evaluate(() => {
+      const fixture = (window as any).historyFixture;
+      fixture.props.messages = fixture.props.messages.slice(0, 18);
+      fixture.update();
+    });
+    const ticks = page.locator('chat-history-nav .tick');
+    await expect(ticks).toHaveCount(9);
+    const tick = edge === 'first' ? ticks.first() : ticks.last();
+    await tick.hover();
+    await expect(page.getByRole('tooltip')).toBeVisible();
+    const bounds = await tick.boundingBox();
+    await page.mouse.move(bounds!.x + bounds!.width / 2, edge === 'first' ? bounds!.y - 4 : bounds!.y + bounds!.height + 4);
+    await expect(page.getByRole('tooltip')).toBeHidden();
+    await expect(page.locator('chat-history-nav .tick[data-hovered]')).toHaveCount(0);
+    await expect.poll(() => tick.evaluate(el => getComputedStyle(el, '::before').width)).toBe('6px');
+    // Returning to the same end tick should immediately reopen the preview.
+    await tick.hover();
+    await expect(page.getByRole('tooltip')).toBeVisible();
+  });
+}
