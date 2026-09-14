@@ -46,3 +46,12 @@
 - Both new browser checks failed before the production fix, then all 9 Chromium cases passed. The shell fixture now retains the production update lifecycle instead of overriding it with a no-op.
 - Final frontend gate: 69 test files / 395 tests passed, typecheck passed, production build and CSP passed, lint 0 errors. Browser verification uses synthetic messages and the actual application lifecycle; no live backend/LLM deployment was performed.
 - Budget remains unset; actual token/cost telemetry unavailable; no subagents. Delivery: separate fix branch and PR, no merge/deployment.
+
+## Follow-up v3: compact ticks and hover exit (2026-09-14)
+
+- Scope: narrower/thinner/tighter tick marks and immediate hover cancellation outside the first/last tick. Keep vertical centering and current-reading indicators.
+- Public web search and the Codex app feature documentation did not yield authoritative CSS dimensions. The supplied screenshots are used as a visual estimate: at a 16px root size, collapsed width 6px, thickness 2px, row pitch 10px; expanded widths 26/20/14/10px. These are implementation choices, not claimed official Codex values.
+- Hover exit was attached only to the full-height centering wrapper, so its top/bottom blank areas retained hover. The ruler now handles pointerleave itself and rejects out-of-range pointer indices.
+- Both edge-exit browser regressions failed before the fix. Final verification: all 11 Chromium cases passed; frontend 69 files / 395 tests, typecheck, production build and CSP passed; focused lint 0 errors/warnings.
+- Also checked the actual local conversation `31026c1e-b7a3-4ce3-8a2e-532a9fe26fb7` through the running backend: measured 6px/2px/10px, and confirmed moving below the last tick closes its preview. No new agent message was sent.
+- Hard budget unset; actual token/cost telemetry unavailable; no subagents. Delivery remains a separate PR, without merging into main or deploying externally.
