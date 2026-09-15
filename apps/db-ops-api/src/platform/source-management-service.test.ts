@@ -40,3 +40,22 @@ describe('source management authorization', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 });
+
+describe('Git repository configuration', () => {
+  const config = { provider: 'gitlab', baseUrl: 'https://gitlab.example.test', repositoryPath: 'group/subgroup/project', allowedPaths: ['src/'], allowModelContent: false };
+  it('saves GitLab subgroup paths with a canonical field', async () => {
+    const service = new SourceManagementService(() => ({ execute: vi.fn(async () => [[], []]) }), [config.baseUrl]);
+    await expect(service.save(actor, config)).resolves.toMatchObject({ repositoryPath: config.repositoryPath });
+  });
+  it('migrates legacy GitHub paths on read', async () => {
+    const legacy = { ...config, provider: 'github', repositoryPath: undefined, projectId: 'owner/repo' };
+    const service = new SourceManagementService(() => ({ execute: vi.fn(async () => [[{ config_value: JSON.stringify(legacy) }], []]) }), [config.baseUrl]);
+    await expect(service.load(actor)).resolves.toMatchObject({ repositoryPath: 'owner/repo' });
+  });
+  it.each(['123', '../repo', 'group/../repo', 'group//repo', 'group/repo.git', 'group/repo?token=x'])('rejects invalid repository path %s', async repositoryPath => {
+    const execute = vi.fn();
+    const service = new SourceManagementService(() => ({ execute }), [config.baseUrl]);
+    await expect(service.save(actor, { ...config, repositoryPath })).rejects.toThrow('SOURCE_CONFIG_INVALID');
+    expect(execute).not.toHaveBeenCalled();
+  });
+});
