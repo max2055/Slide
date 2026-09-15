@@ -43,3 +43,13 @@ it('disables mutations for config readers', async () => {
   expect(view.shadowRoot?.querySelector('[data-action="sync"]')).toBeNull();
   expect(view.shadowRoot?.querySelector<HTMLInputElement>('input[type="url"]')?.disabled).toBe(true);
 });
+it('saves GitLab subgroup repository paths and deploy usernames', async () => {
+  localStorage.setItem('permissions', JSON.stringify(['admin:*']));
+  const config = { provider: 'gitlab', baseUrl: 'https://gitlab.example.test', repositoryPath: 'group/subgroup/repo', gitUsername: 'gitlab+deploy-token-7', allowedPaths: ['src/'], allowModelContent: false };
+  authFetch.mockImplementation(async (url: string) => ({ ok: true, text: async () => JSON.stringify(url.endsWith('/config') ? { config } : { files: [], commitSha: 'a'.repeat(40), treeDigest: 'b'.repeat(64) }) }));
+  const view = document.createElement('source-settings'); document.body.append(view); await settle();
+  expect(view.shadowRoot!.querySelector<HTMLInputElement>('[aria-label="仓库路径"]')!.value).toBe(config.repositoryPath);
+  expect(view.shadowRoot!.querySelector<HTMLInputElement>('[aria-label="Git 用户名"]')!.value).toBe(config.gitUsername);
+  view.shadowRoot!.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true })); await settle();
+  expect(authFetch).toHaveBeenCalledWith('/api/platform/source/config', expect.objectContaining({ method: 'PUT', body: JSON.stringify(config) }));
+});

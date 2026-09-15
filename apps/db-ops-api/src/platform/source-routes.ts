@@ -1,6 +1,5 @@
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { expensiveOperationRateLimitConfig } from '../security/http-security.js';
-import { credentialReferenceService } from '../security/credential-reference-service.js';
 import { sourceManagementService, requireSourceAdmin, requireSourceReader, type SourceManagementService } from './source-management-service.js';
 
 export async function registerSourceRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler,
@@ -14,7 +13,7 @@ export async function registerSourceRoutes(app: FastifyInstance, verifyToken: pr
       const raw = error instanceof Error ? error.message : '';
       console.error('[source-route]', raw || error);
       const code = /^SOURCE_[A-Z_]+$/.test(raw) ? raw : 'SOURCE_UNAVAILABLE';
-      const status = /REQUIRED|FORBIDDEN|DENIED/.test(code) ? 403 : /RATE_LIMITED/.test(code) ? 429 : /BUSY|UNKNOWN|NOT_CONFIGURED|UNTRUSTED/.test(code) ? 409 : /INVALID|TOO_LARGE/.test(code) ? 400 : 503;
+      const status = /REPOSITORY_PATH_REQUIRED/.test(code) ? 409 : /REPOSITORY_NOT_FOUND/.test(code) ? 404 : /COMMIT_MISMATCH/.test(code) ? 409 : /REQUIRED|FORBIDDEN|DENIED/.test(code) ? 403 : /RATE_LIMITED/.test(code) ? 429 : /BUSY|UNKNOWN|NOT_CONFIGURED|UNTRUSTED/.test(code) ? 409 : /INVALID|TOO_LARGE/.test(code) ? 400 : 503;
       return reply.code(status).send({ error: code });
     }
   };
@@ -24,8 +23,8 @@ export async function registerSourceRoutes(app: FastifyInstance, verifyToken: pr
   app.post('/api/platform/source/sync', { ...options, bodyLimit: 20_000 }, route(true, async request => {
     const body = request.body;
     if (!body || typeof body.token !== 'string' || !body.token || body.token.length > 16_384 || Object.keys(body).some(key => key !== 'token')) throw new Error('SOURCE_CREDENTIAL_INVALID');
-    const credential = await credentialReferenceService.create(request.user.userId, 'gitlab_source_sync', body.token, 15 * 60_000);
-    return service.sync(request.user, credential.ref);
+    const token = body.token; body.token = '';
+    return service.sync(request.user, token);
   }));
   app.get('/api/platform/source/manifest', options, route(false, request => service.inspect(request.user, 'manifest')));
   app.get('/api/platform/source/search', options, route(false, request => service.inspect(request.user, 'search', { query: request.query.query })));

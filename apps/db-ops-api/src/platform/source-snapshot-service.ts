@@ -1,6 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, writeFile, rename, rm, lstat, realpath } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
+import { assertRepositoryPath } from './source-repository-path.js';
 import ts from 'typescript';
 import { parse as parseYaml } from 'yaml';
 
@@ -60,7 +61,10 @@ export class SourceSnapshotService {
   }
   async publish(identity: SourceIdentity, input: SourceFile[]): Promise<SourceManifest> {
     releaseName(identity.releaseId);
-    if (!/^[a-f0-9]{40}$/.test(identity.commitSha) || !/^(?:[0-9]{1,20}|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)$/.test(identity.projectId)) throw new Error('SOURCE_IDENTITY_INVALID');
+    if (!/^[a-f0-9]{40}$/.test(identity.commitSha) || !identity.projectId) throw new Error('SOURCE_IDENTITY_INVALID');
+    if (!/^\d{1,20}$/.test(identity.projectId)) {
+      try { assertRepositoryPath(identity.projectId); } catch { throw new Error('SOURCE_IDENTITY_INVALID'); }
+    }
     if (!input.length || input.length > MAX_FILES) throw new Error('SOURCE_FILE_COUNT_INVALID');
     const paths = new Set<string>(); let total = 0;
     for (const file of input) {
