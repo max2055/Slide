@@ -29,7 +29,7 @@ for (const resourceType of ['instance', 'server', 'network_device']) {
     // The existing detail back control must return to the original overview.
     const detail = page.locator(resourceType === 'instance' ? 'instance-detail-page' : resourceType === 'server' ? 'server-detail' : 'network-device-detail');
     await expect(detail).toBeAttached(); console.info(resourceType, 'detail loaded');
-    await detail.getByRole('button', { name: /返回列表|返回原运维总览|Back|Network devices/ }).first().click();
+    await detail.getByRole('button', { name: /返回列表|返回原运维总览|Back|网络设备/ }).first().click();
     await expect(page).toHaveURL(new RegExp(`dashboard\\?scope=${resourceType}`));
     await page.evaluate(async () => { const { i18n } = await import('/src/app/i18n/index.ts'); await i18n.setLocale('zh-CN'); });
     await overview.locator(`[data-resource="${resourceType}:${resource.resource.id}"]`).getByRole('link', { name: '查看证据', exact: true }).click();
