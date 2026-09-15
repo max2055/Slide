@@ -375,6 +375,7 @@ async function installApiFixtures(page: Page, state: FixtureState, calls: Call[]
     if (path === `/api/network-devices/${IDS.networkDevice}/relations` && method === 'GET') {
       return fulfill(route, { relations: [{ source: { type: 'network_device', id: IDS.networkDevice }, target: { type: 'server', id: IDS.server }, relationType: 'connected_to', provenance: 'fixture', validUntil: null }] });
     }
+    if (path === `/api/network-devices/${IDS.networkDevice}/backup-schedule` && method === 'GET') return fulfill(route, { enabled: true, dailyTime: '00:00', timeZone: 'Asia/Shanghai', lastRun: null });
     if (path === `/api/network-devices/${IDS.networkDevice}/config-backups` && method === 'GET') return fulfill(route, { backups: [backupFixture] });
     if (path === `/api/network-devices/${IDS.networkDevice}/config-backups` && method === 'POST') return fulfill(route, backupFixture, 201);
     if (path === `/api/network-devices/${IDS.networkDevice}/config-backups/${IDS.backup}` && method === 'GET') {
@@ -605,17 +606,17 @@ for (const viewport of VIEWPORTS) {
     // Detail view proves relation observations and redacted, read-only backup viewing.
     await page.getByRole('button', { name: networkDeviceFixture.label, exact: true }).click();
     await expect(page.locator('network-device-detail')).toBeVisible({ timeout: 15_000 });
-    await page.getByRole('button', { name: 'Relations', exact: true }).click();
-    await expect(page.getByText('Related resources (1)', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '关联资源', exact: true }).click();
+    await expect(page.getByText('关联资源（1）', { exact: true })).toBeVisible();
     // The shared table is horizontally scrollable on narrow viewports; the
     // relation cell may begin outside the current scroll position.
-    await expect(page.getByText('connected_to', { exact: true })).toBeAttached();
-    await page.getByRole('button', { name: 'Backups', exact: true }).click();
-    await expect(page.getByText('Encrypted configuration backups', { exact: true })).toBeVisible();
-    await expect.poll(() => page.locator('network-device-detail button').allTextContents()).toContain('View summary');
-    const backupAction = page.locator('network-device-detail button').filter({ hasText: 'View summary' });
+    await expect(page.getByText('连接', { exact: true })).toBeAttached();
+    await page.getByRole('button', { name: '配置备份', exact: true }).click();
+    await expect(page.getByText('加密配置备份', { exact: true })).toBeVisible();
+    await expect.poll(() => page.locator('network-device-detail button').allTextContents()).toContain('查看摘要');
+    const backupAction = page.locator('network-device-detail button').filter({ hasText: '查看摘要' });
     await backupAction.click();
-    const backupDialog = page.locator('app-dialog[title="Configuration backup v1"]');
+    const backupDialog = page.locator('app-dialog[title="配置备份 v1"]');
     await expect(backupDialog.locator('.preview')).toContainText('<redacted>');
     await expect(backupDialog).not.toContainText(FIXTURE_SECRET);
     expect(calls.some((call) => call.url.includes('raw=true'))).toBe(false);

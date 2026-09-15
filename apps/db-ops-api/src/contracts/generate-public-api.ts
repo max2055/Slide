@@ -74,6 +74,16 @@ export function buildOpenApiDocument() {
         put: { operationId: 'updateNetworkDevice', security: [{ bearerAuth: [] }], parameters: [pathId('id')], responses: { '200': { description: 'Network device updated', content: { 'application/json': { schema: refSchema(PublicApiSchemas.NetworkDevice) } } } } },
         delete: { operationId: 'deleteNetworkDevice', security: [{ bearerAuth: [] }], parameters: [pathId('id')], responses: { '200': { description: 'Network device deleted', content: { 'application/json': { schema: refSchema(PublicApiSchemas.OkResponse) } } } } },
       },
+      '/api/network-devices/{id}/backup-schedule': {
+        get: { operationId: 'getConfigBackupSchedule', security: [{ bearerAuth: [] }], parameters: [pathId('id')], responses: {
+          '200': { description: 'Daily backup schedule in Beijing time; requires network_devices:view', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ConfigBackupSchedule) } } },
+        } },
+        put: { operationId: 'updateConfigBackupSchedule', security: [{ bearerAuth: [] }], parameters: [pathId('id')], requestBody: { required: true, content: { 'application/json': { schema: refSchema(PublicApiSchemas.ConfigBackupScheduleInput) } } }, responses: {
+          '200': { description: 'Saved schedule; requires network_devices:backup', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ConfigBackupSchedule) } } },
+          '400': { description: 'Invalid schedule', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+          '403': { description: 'Backup permission required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+        } },
+      },
       '/api/network-devices/{id}/probe': {
         post: {
           operationId: 'probeNetworkDevice', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
@@ -237,6 +247,8 @@ export interface NetworkDeviceInterfacesResponse { interfaces: NetworkDeviceInte
 export interface NetworkDeviceCapability { key: string; state: CapabilityState; evidence: Record<string, unknown> | null; reason: string | null; checkedAt: string | null; validUntil: string | null; }
 export interface NetworkDeviceCapabilitiesResponse { deviceId: number; capabilities: NetworkDeviceCapability[]; }
 export interface ConfigBackupSummary { id: number; deviceId: number; versionNo: number; contentSha256: string; sourceProtocol: 'ssh'; collectedAt: string; sizeBytes: number; redactionStatus: 'redacted' | 'unredacted' | 'failed'; }
+export interface ConfigBackupScheduleInput { enabled: boolean; dailyTime: string; }
+export interface ConfigBackupSchedule extends ConfigBackupScheduleInput { timeZone: 'Asia/Shanghai'; lastRun: { date: string; status: 'running' | 'success' | 'failed'; errorCode: string | null } | null; }
 export interface ConfigBackupDetail extends ConfigBackupSummary { preview: string; }
 export interface ConfigBackupRaw extends ConfigBackupSummary { content: string; }
 export type ConfigBackupResponse = ConfigBackupDetail | ConfigBackupRaw;

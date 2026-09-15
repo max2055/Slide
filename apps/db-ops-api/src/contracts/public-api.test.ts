@@ -65,6 +65,7 @@ describe('generated public API contract', () => {
       '/api/health',
       '/api/network-devices',
       '/api/network-devices/{id}',
+      '/api/network-devices/{id}/backup-schedule',
       '/api/network-devices/{id}/capabilities',
       '/api/network-devices/{id}/config-backups',
       '/api/network-devices/{id}/config-backups/{backupId}',

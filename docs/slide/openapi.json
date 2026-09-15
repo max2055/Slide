@@ -2015,6 +2015,93 @@
           }
         ]
       },
+      "ConfigBackupSchedule": {
+        "$id": "ConfigBackupSchedule",
+        "additionalProperties": false,
+        "properties": {
+          "dailyTime": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "lastRun": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "properties": {
+                  "date": {
+                    "type": "string"
+                  },
+                  "errorCode": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "anyOf": [
+                      {
+                        "const": "running",
+                        "type": "string"
+                      },
+                      {
+                        "const": "success",
+                        "type": "string"
+                      },
+                      {
+                        "const": "failed",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "date",
+                  "status",
+                  "errorCode"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "timeZone": {
+            "const": "Asia/Shanghai",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "dailyTime",
+          "timeZone",
+          "lastRun"
+        ],
+        "type": "object"
+      },
+      "ConfigBackupScheduleInput": {
+        "$id": "ConfigBackupScheduleInput",
+        "additionalProperties": false,
+        "properties": {
+          "dailyTime": {
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled",
+          "dailyTime"
+        ],
+        "type": "object"
+      },
       "ConfigBackupSummariesResponse": {
         "$id": "ConfigBackupSummariesResponse",
         "additionalProperties": false,
@@ -9774,6 +9861,100 @@
               }
             },
             "description": "Network device updated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/network-devices/{id}/backup-schedule": {
+      "get": {
+        "operationId": "getConfigBackupSchedule",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigBackupSchedule"
+                }
+              }
+            },
+            "description": "Daily backup schedule in Beijing time; requires network_devices:view"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "updateConfigBackupSchedule",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigBackupScheduleInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigBackupSchedule"
+                }
+              }
+            },
+            "description": "Saved schedule; requires network_devices:backup"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid schedule"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Backup permission required"
           }
         },
         "security": [

@@ -40,6 +40,36 @@ function adapter(overrides: Partial<{
 }
 
 describe('NetworkDeviceCollector', () => {
+  it('automatically polls on the heartbeat and applies metric interval changes without restarting', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-15T00:00:00Z'));
+    const definition = { id: 'device_cpu_percent', is_collected: true, default_interval: 300 };
+    const registry = vi.spyOn(metricRegistry, 'getByTargetType').mockReturnValue([definition] as any);
+    const states: any[] = [];
+    const persistence = store({ getCollectionEnabledDevices: async () => [target] });
+    const snmp = adapter();
+    const collector = new NetworkDeviceCollector(persistence, snmp, {
+      scheduleStore: {
+        list: async () => states,
+        record: async (_type, _id, _provider, metric, now, succeeded) => {
+          if (succeeded) states.splice(0, states.length, { metricId: metric.id, lastSuccessMs: now, nextDueMs: now + metric.default_interval * 1000, lastResult: 'success' });
+        },
+      },
+    });
+    try {
+      collector.start();
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(snmp.collectSystemMetrics).toHaveBeenCalledTimes(1);
+      definition.default_interval = 30;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(snmp.collectSystemMetrics).toHaveBeenCalledTimes(2);
+      definition.default_interval = 600;
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(snmp.collectSystemMetrics).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(snmp.collectSystemMetrics).toHaveBeenCalledTimes(3);
+    } finally { collector.stop(); registry.mockRestore(); vi.useRealTimers(); }
+  });
   it('fails closed on a denied target before reading credentials or opening SNMP', async () => {
     const persistence = store();
     const snmp = adapter();

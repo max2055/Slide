@@ -154,7 +154,7 @@ for (const type of ['server', 'network_device']) {
     await view.locator('.risk-row').first().getByRole('link', { name: '查看资源', exact: true }).click();
     const detail = page.locator(type === 'server' ? 'server-detail' : 'network-device-detail');
     await expect(detail).toContainText(type === 'server' ? '10.0.0.2' : 'Core switch');
-    await detail.getByRole('button', { name: type === 'server' ? '返回列表' : 'Network devices', exact: true }).click();
+    await detail.getByRole('button', { name: type === 'server' ? '返回列表' : '网络设备', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`dashboard\\?scope=${type}`));
     await expect(page.locator('dashboard-page stat-card')).toHaveCount(4);
   });
