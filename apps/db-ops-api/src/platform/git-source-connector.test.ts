@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { GitSourceConnector } from './git-source-connector.js';
 vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }));
@@ -52,4 +52,25 @@ it('never logs raw or encoded credentials on failure', () => {
   expect(() => new GitSourceConnector([config.baseUrl]).fetchFiles(config as any)).toThrow();
   expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain(config.token);
   expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain(encoded);
+});
+
+it('uses an explicit deploy token username', () => {
+  new GitSourceConnector([config.baseUrl]).fetchFiles({ ...config, gitUsername: 'gitlab+deploy-token-7' });
+  expect(JSON.stringify((run.mock.calls[0][2] as any).env)).toContain(Buffer.from(`gitlab+deploy-token-7:${config.token}`).toString('base64'));
+});
+it('clears inherited proxies when no task proxy is configured', () => {
+  vi.stubEnv('http_proxy', 'http://stale:9999'); vi.stubEnv('HTTPS_PROXY', 'http://stale:9999');
+  new GitSourceConnector([config.baseUrl]).fetchFiles(config);
+  const env = (run.mock.calls[0][2] as any).env;
+  expect(env.http_proxy).toBeUndefined(); expect(env.HTTPS_PROXY).toBeUndefined();
+  expect(run.mock.calls[0][1]).toContain('http.proxy=');
+});
+it('does not follow repository symlinks', () => {
+  const previous = run.getMockImplementation()!;
+  run.mockImplementation((command, args, options: any) => {
+    const result = previous(command, args, options);
+    if (args?.includes('clone')) symlinkSync(options.cwd, join(options.cwd, 'src/loop'));
+    return result;
+  });
+  expect(new GitSourceConnector([config.baseUrl]).fetchFiles(config).map(file => file.path)).toEqual(['src/a.ts']);
 });

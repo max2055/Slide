@@ -19,7 +19,7 @@ describe('source API', () => {
 
 it('passes source tokens only within the request without credential persistence', async () => {
   const app = Fastify();
-  const service = { load: vi.fn(), save: vi.fn(), sync: vi.fn(async () => ({ ok: true })), inspect: vi.fn() };
+  const service = { load: vi.fn(), save: vi.fn(), sync: vi.fn(async () => ({ ok: true } as any)), inspect: vi.fn() };
   await registerSourceRoutes(app, async request => { (request as any).user = { userId: 1, permissions: ['admin:*'] }; }, service);
   try {
     const response = await app.inject({ method: 'POST', url: '/api/platform/source/sync', payload: { token: 'one-use-fixture' } });

@@ -7,10 +7,10 @@ import { permissionMatches } from '../settings-navigation.js';
 import '../components/app-form-field.js';
 import './source-manifest.js';
 
-interface SourceConfig { provider?: 'gitlab' | 'github'; baseUrl: string; projectId: string; allowedPaths: string[]; allowModelContent: boolean; httpProxy?: string; httpsProxy?: string; allProxy?: string }
+interface SourceConfig { provider?: 'gitlab' | 'github'; baseUrl: string; repositoryPath: string; allowedPaths: string[]; allowModelContent: boolean; gitUsername?: string; httpProxy?: string; httpsProxy?: string; allProxy?: string }
 @customElement('source-settings')
 export class SourceSettings extends LitElement {
-  @state() private config: SourceConfig = { provider: 'gitlab', baseUrl: '', projectId: '', allowedPaths: [], allowModelContent: false };
+  @state() private config: SourceConfig = { provider: 'gitlab', baseUrl: '', repositoryPath: '', allowedPaths: [], allowModelContent: false };
   @state() private token = '';
   @state() private busy = false;
   @state() private loading = true;
@@ -52,8 +52,8 @@ export class SourceSettings extends LitElement {
     this.loading = true; this.error = '';
     try {
       const response = await authFetch('/api/platform/source/config'); const text = await response.text(); let body: any = {}; try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text }; }
-      if (!response.ok) throw new Error(body.error ?? `SOURCE_CONFIG_UNAVAILABLE (${response.status})`);
-      this.config = body.config ?? { provider: 'gitlab', baseUrl: '', projectId: '', allowedPaths: [], allowModelContent: false };
+      if (!response.ok) throw new Error((body.error === 'SOURCE_REPOSITORY_PATH_REQUIRED' ? '旧 GitLab 数字 ID 已失效，请重新填写平台地址和仓库路径并保存。' : body.error) ?? `SOURCE_CONFIG_UNAVAILABLE (${response.status})`);
+      this.config = body.config ?? { provider: 'gitlab', baseUrl: '', repositoryPath: '', allowedPaths: [], allowModelContent: false };
     } catch (error) { this.error = String(error); } finally { this.loading = false; }
   }
   private async save(event: Event) {
@@ -86,7 +86,8 @@ export class SourceSettings extends LitElement {
         <app-form-field label="代码托管平台" hint="选择源码所在的代码托管平台。同步只读取部署提交，不会写入仓库。" .inline=${true}><select aria-label="代码托管平台" .value=${this.config.provider ?? 'gitlab'} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, provider: (e.target as HTMLSelectElement).value as 'gitlab'|'github', baseUrl: (e.target as HTMLSelectElement).value === 'github' ? 'https://github.com' : '' }; }}><option value="gitlab">GitLab</option><option value="github">GitHub</option></select></app-form-field>
         <app-form-field label="${this.config.provider === 'github' ? 'GitHub URL' : 'GitLab URL'}" hint="填写实例根地址，不要填写项目路径、查询参数或令牌。" .inline=${true}><input aria-label="${this.config.provider === 'github' ? 'GitHub URL' : 'GitLab URL'}" title="平台实例根地址" placeholder=${this.config.provider === 'github' ? 'https://github.com' : 'https://gitlab.example.com'} type="url" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.baseUrl} @input=${(e: Event) => { this.config = { ...this.config, baseUrl: (e.target as HTMLInputElement).value }; }}></app-form-field>
         ${(['httpProxy', 'httpsProxy', 'allProxy'] as const).map(key => html`<app-form-field label="${key === 'httpProxy' ? 'HTTP 代理' : key === 'httpsProxy' ? 'HTTPS 代理' : 'ALL 代理'}" .inline=${true}><input aria-label="${key}" placeholder="例如 http://127.0.0.1:7890" .value=${this.config[key] ?? ''} .disabled=${!this.editable || this.busy || this.loading} @input=${(e: Event) => { this.config = { ...this.config, [key]: (e.target as HTMLInputElement).value }; }}></app-form-field>`)}
-        <app-form-field label="项目 ID" .hint=${this.config.provider === 'github' ? '填写 owner/repository，例如 openai/example。' : '填写项目的数字 ID，可在项目首页或设置中查看。'} .inline=${true}><input aria-label="项目 ID" title="项目数字 ID，不是项目名称" placeholder="例如 123" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.projectId} @input=${(e: Event) => { this.config = { ...this.config, projectId: (e.target as HTMLInputElement).value }; }}></app-form-field>
+        <app-form-field label="仓库路径" .hint=${this.config.provider === 'github' ? '填写 owner/repository，例如 openai/example。' : '填写 group/project 或 group/subgroup/project，不要填写数字 ID 或 .git 后缀。'} .inline=${true}><input aria-label="仓库路径" title="项目数字 ID，不是项目名称" placeholder="例如 123" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.repositoryPath} @input=${(e: Event) => { this.config = { ...this.config, repositoryPath: (e.target as HTMLInputElement).value }; }}></app-form-field>
+        ${this.config.provider !== 'github' ? html`<app-form-field label="Git 用户名" hint="PAT 留空使用 oauth2；Deploy Token 请填写其用户名。" .inline=${true}><input aria-label="Git 用户名" .value=${this.config.gitUsername ?? ''} .disabled=${!this.editable || this.busy || this.loading} @input=${(e: Event) => { this.config = { ...this.config, gitUsername: (e.target as HTMLInputElement).value || undefined }; }}></app-form-field>` : nothing}
         <app-form-field label="允许的源码路径" hint="只同步这些目录；留空表示同步全部源码。无论哪种模式都会执行大小限制与敏感信息扫描。" .inline=${true}><textarea aria-label="允许的源码路径" title="每行一个目录前缀，并以 / 结尾" placeholder="每行一个目录，例如：&#10;apps/db-ops-api/src/&#10;frontend/src/" .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.allowedPaths.join('\n')} @input=${(e: Event) => { this.config = { ...this.config, allowedPaths: (e.target as HTMLTextAreaElement).value.split('\n') }; }}></textarea></app-form-field>
         <app-form-field label="模型读取" hint="开启后，Agent 可在已允许目录内读取经过安全扫描的源码片段；令牌和未授权文件仍不可见。" .inline=${true}><label class="permission-control" for="allow-model-content"><input aria-label="允许模型读取源码内容" id="allow-model-content" type="checkbox" .checked=${this.config.allowModelContent} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, allowModelContent: (e.target as HTMLInputElement).checked }; }}><strong>允许模型读取源码内容</strong></label></app-form-field>
         ${this.editable ? html`<div class="action-row"><div class="action-content"><button class="btn-primary" type="submit" .disabled=${this.busy || this.loading}>${icons.save} 保存配置</button></div></div>` : nothing}
