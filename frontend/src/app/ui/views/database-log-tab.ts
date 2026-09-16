@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, property, state } from "lit/decorators.js";
@@ -32,7 +33,7 @@ interface LogStats {
 
 @customElement("database-log-tab")
 export class DatabaseLogTab extends LitElement {
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host {
       display: block;
     }
@@ -195,10 +196,10 @@ export class DatabaseLogTab extends LitElement {
       white-space: nowrap;
     }
 
-    .level-info { background: #eff6ff; color: #3b82f6; }
-    .level-warning { background: #fffbeb; color: #f59e0b; }
-    .level-error { background: #fef2f2; color: #ef4444; }
-    .level-critical { background: #fef2f2; color: #991b1b; font-weight: 700; }
+    .level-info { background: var(--info-subtle); color: var(--info); }
+    .level-warning { background: var(--warn-subtle); color: var(--warn); }
+    .level-error { background: var(--danger-subtle); color: var(--danger); }
+    .level-critical { background: var(--danger-subtle); color: var(--danger); font-weight: 700; }
 
     .pattern-tag {
       display: inline-block;

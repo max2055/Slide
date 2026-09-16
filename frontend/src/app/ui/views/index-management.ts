@@ -199,7 +199,7 @@ export class IndexManagementPage extends LitElement {
 
     .tag.green {
       background: rgba(34, 197, 94, 0.12);
-      color: #22c55e;
+      color: var(--ok);
     }
 
     .tag.orange {
@@ -219,7 +219,7 @@ export class IndexManagementPage extends LitElement {
 
     .tag.gray {
       background: rgba(107, 114, 128, 0.12);
-      color: #6b7280;
+      color: var(--muted);
     }
 
     .redundant-card {
@@ -365,7 +365,7 @@ export class IndexManagementPage extends LitElement {
       font-size: 10px;
       font-weight: 600;
       background: rgba(107, 114, 128, 0.12);
-      color: #6b7280;
+      color: var(--muted);
       margin-left: var(--space-xs);
     }
   `];
@@ -631,7 +631,7 @@ export class IndexManagementPage extends LitElement {
               <span style="color: var(--warn);">${this.redundancyReport.length}</span> 冗余
             </div>
             <div class="stat-item">
-              <span style="color: #6b7280;">${this.unusedIndexes.length}</span> 未使用
+              <span style="color: var(--muted);">${this.unusedIndexes.length}</span> 未使用
             </div>
           </div>
         </div>

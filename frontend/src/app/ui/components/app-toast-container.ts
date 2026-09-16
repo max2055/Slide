@@ -109,7 +109,7 @@ export class ToastContainer extends LitElement {
         .toast--success .toast__icon { background: var(--ok-subtle); color: var(--ok); }
         .toast--error .toast__icon { background: var(--danger-subtle); color: var(--danger); }
         .toast--warning .toast__icon { background: var(--warn-subtle); color: var(--warn); }
-        .toast--info .toast__icon { background: var(--accent-subtle); color: var(--accent); }
+        .toast--info .toast__icon { background: var(--accent-subtle); color: var(--accent-text); }
         .toast__msg {
           flex: 1;
           font-size: var(--text-sm);

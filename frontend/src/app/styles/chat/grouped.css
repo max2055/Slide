@@ -53,7 +53,7 @@
 .chat-group-timestamp {
   font-size: var(--text-xs);
   color: var(--muted);
-  opacity: 0.7;
+  opacity: 1;
 }
 
 /* ── Group footer action buttons (TTS, delete) ── */
@@ -78,7 +78,7 @@
 }
 
 .chat-group:hover .chat-group-footer button {
-  opacity: 0.6;
+  opacity: 1;
   pointer-events: auto;
 }
 
@@ -100,7 +100,7 @@
 .chat-tts-btn--active {
   opacity: 1 !important;
   pointer-events: auto !important;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .chat-group-delete:hover {
@@ -152,7 +152,7 @@
 
 .chat-avatar.user {
   background: var(--accent-subtle);
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 

@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
@@ -50,7 +51,7 @@ interface ReportType {
 
 @customElement("reports-page")
 export class ReportsPage extends LitElement {
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host {
       display: block;
       animation: fade-in 0.25s var(--ease-out);
@@ -102,7 +103,7 @@ export class ReportsPage extends LitElement {
       font-size: var(--text-2xl);
       background: var(--accent-subtle);
       flex-shrink: 0;
-      color: var(--accent);
+      color: var(--accent-text);
     }
     .report-type-card__icon svg {
       width: 22px;
@@ -132,7 +133,7 @@ export class ReportsPage extends LitElement {
       border-radius: var(--radius-sm);
       font-size: var(--text-sm);
       font-weight: 500;
-      color: var(--accent);
+      color: var(--accent-text);
       background: transparent;
       cursor: pointer;
       transition: all var(--duration-normal) var(--ease-out);
@@ -547,7 +548,7 @@ export class ReportsPage extends LitElement {
                           <td class="report-title">${report.name || report.title}</td>
                           <td style="text-align:center;"><span class="type-badge">${this._reportTypeLabel(report.type)}</span></td>
                           <td style="text-align:center;">
-                            <span class="type-badge" style="font-size:10px;background:${report.target_type === 'server' ? 'rgba(34,197,94,0.12);color:#16a34a' : 'rgba(59,130,246,0.12);color:var(--info)'}">${report.target_type === 'server' ? '服务器' : '实例'}</span>
+                            <span class="type-badge" style="font-size:10px;background:${report.target_type === 'server' ? 'rgba(34,197,94,0.12);color:var(--ok)' : 'rgba(59,130,246,0.12);color:var(--info)'}">${report.target_type === 'server' ? '服务器' : '实例'}</span>
                           </td>
                           <td style="text-align:center;">
                             ${report.target_type === 'server'

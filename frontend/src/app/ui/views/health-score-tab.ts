@@ -98,7 +98,7 @@ export class HealthScoreTab extends LitElement {
     }
 
     .time-range-btn.active {
-      color: var(--accent);
+      color: var(--accent-text);
       border-color: var(--accent);
       background: var(--accent-subtle);
     }
@@ -278,7 +278,7 @@ export class HealthScoreTab extends LitElement {
     }
 
     .collapsible-toggle:hover {
-      color: var(--accent);
+      color: var(--accent-text);
     }
 
     .collapsible-toggle svg {

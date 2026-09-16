@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
@@ -46,7 +47,7 @@ export class ResourceDiagnosisPage extends LitElement {
   private readonly onPopState = () => { this.readSelection(); void this.loadEvidence(); };
   private readonly onPermissions = () => { this.readPermissions(); };
 
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; min-width: 0; color: var(--text); }
     h1 { font-size: 22px; color: var(--text-strong); margin: 0; }
     h2 { font-size: 16px; margin: 0 0 var(--space-md); }
@@ -60,7 +61,7 @@ export class ResourceDiagnosisPage extends LitElement {
     summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: var(--space-sm); align-items: baseline; }
     pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
     code, p, a { overflow-wrap: anywhere; }
-    a { color: var(--accent); }
+    a { color: var(--accent-text); }
     svg { width: 16px; height: 16px; }
     .skeleton { height: 100px; background: var(--border); opacity: .4; }
     .error { color: var(--danger); }

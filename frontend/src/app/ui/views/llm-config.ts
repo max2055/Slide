@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * LLM 配置管理 — 两栏布局：左侧提供商列表 + 右侧详情/模板选择
  * 参考 pi-web ModelsConfig 的 UX 模式优化
@@ -127,7 +128,7 @@ export class LLMConfigPage extends LitElement {
   @state() private showKey = false;
   @state() private modelSuggestions: string[] = [];
   private _savedOkTimer: ReturnType<typeof setTimeout> | null = null;
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
 
     :host { display: block; height: 100%; }
     .shell { display: flex; height: 100%; overflow: hidden; }
@@ -143,7 +144,7 @@ export class LLMConfigPage extends LitElement {
     .sidebar-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px 16px; text-align: center; gap: 10px; }
     .sidebar-empty svg { opacity: 0.2; }
     .sidebar-empty p { font-size: 11px; color: var(--muted); margin: 0; line-height: 1.4; }
-    .sidebar-empty .add-first-btn { margin-top: 4px; padding: 6px 16px; border-radius: var(--radius-md); font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--accent); background: var(--accent); color: #fff; transition: opacity 0.15s; }
+    .sidebar-empty .add-first-btn { margin-top: 4px; padding: 6px 16px; border-radius: var(--radius-md); font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-foreground); transition: opacity 0.15s; }
     .sidebar-empty .add-first-btn:hover { opacity: 0.85; }
     .sidebar-item { display: flex; align-items: center; gap: var(--space-sm); padding: 8px 10px; border-radius: var(--radius-md); cursor: pointer; transition: background 0.12s; }
     .sidebar-item:hover { background: var(--hover); }
@@ -155,10 +156,10 @@ export class LLMConfigPage extends LitElement {
     .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
     .status-on { background: #22c55e; }
     .status-off { background: var(--border); }
-    .default-star { font-size: 11px; color: var(--accent); flex-shrink: 0; margin-left: -2px; }
+    .default-star { font-size: 11px; color: var(--accent-text); flex-shrink: 0; margin-left: -2px; }
     .sidebar-footer { padding: 8px 6px; border-top: 1px solid var(--border); }
     .add-btn { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; padding: 7px 0; background: none; border: 1px dashed var(--border); border-radius: var(--radius-md); color: var(--muted); cursor: pointer; font-size: 12px; transition: border-color 0.12s, color 0.12s; }
-    .add-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .add-btn:hover { border-color: var(--accent); color: var(--accent-text); }
 
     /* Detail */
     .detail { flex: 1; overflow-y: auto; padding: 0; display: flex; flex-direction: column; background: var(--bg-elevated); }
@@ -188,7 +189,7 @@ export class LLMConfigPage extends LitElement {
     .key-wrapper .form-input { padding-right: 34px; }
     .key-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; padding: 0; border: none; background: transparent; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; }
 
-    .model-remove-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; margin-top: 14px; flex-shrink: 0; border: 1px solid rgba(239,68,68,0.25); border-radius: var(--radius-sm); background: transparent; color: #ef4444; cursor: pointer; transition: background 0.12s, border-color 0.12s; }
+    .model-remove-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; margin-top: 14px; flex-shrink: 0; border: 1px solid rgba(239,68,68,0.25); border-radius: var(--radius-sm); background: transparent; color: var(--danger); cursor: pointer; transition: background 0.12s, border-color 0.12s; }
     .model-remove-btn:hover { background: rgba(239,68,68,0.1); border-color: #ef4444; }
     .model-remove-btn svg { width: 14px; height: 14px; }
     .actions-bar { display: flex; gap: var(--space-sm); align-items: center; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
@@ -670,7 +671,7 @@ export class LLMConfigPage extends LitElement {
             <span>${this.editing!.enabled ? '已启用' : '已禁用'}</span>
           </div>
           ${this.editing!.is_default ? html`
-            <span style="font-size:var(--text-xs);color:var(--accent);font-weight:500">★ 默认提供商</span>
+            <span style="font-size:var(--text-xs);color:var(--accent-text);font-weight:500">★ 默认提供商</span>
           ` : html`
             <button class="btn" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-md)" @click=${() => this._setDefault(this.editing!)}>设为默认</button>
           `}

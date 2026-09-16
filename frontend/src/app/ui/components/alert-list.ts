@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * Alert list table with filtering, pagination, severity/status/app-badge rendering.
  *
@@ -43,7 +44,7 @@ interface Alert {
 
 @customElement("alert-list")
 export class AlertList extends LitElement {
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; }
     .toolbar { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--border); background: var(--bg-elevated); flex-wrap: wrap; }
     .filter-btn { display: inline-flex; align-items: center; gap: var(--space-sm); padding: var(--space-sm) var(--space-md); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-sm); font-weight: 500; color: var(--text); background: var(--secondary); cursor: pointer; transition: all var(--duration-normal) var(--ease-out); }
@@ -79,7 +80,7 @@ export class AlertList extends LitElement {
     .pagination-jump-input { padding: 2px 4px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); }
     .tab { padding: var(--space-md) var(--space-xl); font-size: var(--text-md); font-weight: 500; color: var(--muted); background: transparent; border: none; border-bottom: 2px solid transparent; cursor: pointer; transition: all .15s ease; position: relative; }
     .tab:hover { color: var(--text); }
-    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab.active { color: var(--accent-text); border-bottom-color: var(--accent); }
     .tab-badge { position: absolute; top: 8px; right: 4px; min-width: 16px; height: 16px; padding: 0 var(--space-xs); background: var(--accent); color: var(--accent-foreground); border-radius: var(--radius-full); font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
     .form-input { padding: var(--space-sm) var(--space-md); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-base); color: var(--text); background: var(--card); box-sizing: border-box; }
     .skeleton { background: var(--skeleton, var(--border)); border-radius: var(--radius-sm); animation: skeleton-pulse 1.5s ease-in-out infinite; }
@@ -216,7 +217,7 @@ export class AlertList extends LitElement {
           </div>
         </td>
         <td style="text-align:center;">
-          <span class="type-badge" style="font-size:10px;background:${alert.target_type === 'server' ? 'rgba(34,197,94,0.12);color:#16a34a' : alert.target_type === 'network_device' ? 'rgba(245,158,11,0.14);color:#b45309' : 'rgba(59,130,246,0.12);color:var(--info)'}">${alert.target_type === 'server' ? '服务器' : alert.target_type === 'network_device' ? '网络设备' : alert.target_type === 'instance' ? '实例' : '—'}</span>
+          <span class="type-badge" style="font-size:10px;background:${alert.target_type === 'server' ? 'rgba(34,197,94,0.12);color:var(--ok)' : alert.target_type === 'network_device' ? 'rgba(245,158,11,0.14);color:var(--warn)' : 'rgba(59,130,246,0.12);color:var(--info)'}">${alert.target_type === 'server' ? '服务器' : alert.target_type === 'network_device' ? '网络设备' : alert.target_type === 'instance' ? '实例' : '—'}</span>
         </td>
         <td style="text-align:center;">
           ${alert.target_type === 'network_device'

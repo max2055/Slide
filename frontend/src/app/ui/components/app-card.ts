@@ -67,7 +67,7 @@ export class AppCard extends LitElement {
         .card-header ::slotted(svg) {
           width: 16px;
           height: 16px;
-          opacity: 0.72;
+          opacity: 1;
           vertical-align: -2px;
         }
         .card-body {

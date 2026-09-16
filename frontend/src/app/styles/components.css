@@ -708,7 +708,7 @@
 .btn.active {
   border-color: var(--accent);
   background: var(--accent-subtle);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .btn.danger {
@@ -1307,7 +1307,7 @@
 :root[data-theme-mode="light"] .btn.active {
   border-color: var(--accent);
   background: var(--accent-subtle);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 :root[data-theme-mode="light"] .btn.primary,
@@ -1332,7 +1332,7 @@
 :root[data-theme-mode="light"] .chat-controls .btn--icon.active {
   border-color: var(--accent);
   background: var(--accent-subtle);
-  color: var(--accent);
+  color: var(--accent-text);
   box-shadow: 0 0 0 1px var(--accent-subtle);
 }
 
@@ -1433,7 +1433,7 @@
 }
 
 .compaction-indicator--fallback {
-  color: #d97706;
+  color: var(--warn);
   border-color: rgba(217, 119, 6, 0.35);
 }
 
@@ -2016,7 +2016,7 @@
 
 .session-link {
   text-decoration: none;
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 500;
 }
 
@@ -2128,7 +2128,7 @@
   display: inline-flex;
   vertical-align: middle;
   margin-left: var(--space-xs);
-  opacity: 0.4;
+  opacity: 1;
   transition: opacity var(--duration-fast) ease;
 }
 
@@ -2141,7 +2141,7 @@
 }
 
 .data-table th[data-sortable]:hover .data-table-sort-icon {
-  opacity: 0.7;
+  opacity: 1;
 }
 
 .data-table th[data-sort-dir="asc"] .data-table-sort-icon,
@@ -2730,7 +2730,7 @@ td.data-table-key-col {
 }
 
 .chat-text :where(a) {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .chat-text :where(a:hover) {
@@ -2855,7 +2855,7 @@ td.data-table-key-col {
 
 .chat-tool-card__summary-meta {
   color: var(--muted);
-  opacity: 0.7;
+  opacity: 1;
 }
 
 .chat-tool-card__details[open] .chat-tool-card__summary {
@@ -3298,18 +3298,18 @@ td.data-table-key-col {
 .agent-tab.active {
   background: var(--accent-subtle);
   border-color: color-mix(in srgb, var(--accent) 25%, transparent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .agent-tab-count {
   margin-left: var(--space-xs);
   font-size: var(--text-xs);
   font-weight: 700;
-  opacity: 0.7;
+  opacity: 1;
 }
 
 .agent-tab--missing {
-  opacity: 0.5;
+  opacity: 1;
 }
 
 .agent-tab-badge {
@@ -3318,7 +3318,7 @@ td.data-table-key-col {
   font-weight: 700;
   text-transform: uppercase;
   color: var(--warn);
-  opacity: 0.8;
+  opacity: 1;
 }
 
 .agents-overview-grid {
@@ -3359,7 +3359,7 @@ td.data-table-key-col {
   gap: var(--space-xs);
   border: none;
   background: transparent;
-  color: var(--accent);
+  color: var(--accent-text);
   font-family: var(--mono);
   font-size: var(--text-sm);
   padding: 2px 0;
@@ -3370,7 +3370,7 @@ td.data-table-key-col {
 }
 
 .workspace-link:hover {
-  opacity: 0.75;
+  opacity: 1;
   text-decoration: underline;
 }
 
@@ -3994,7 +3994,7 @@ td.data-table-key-col {
 
 .ov-attention-link {
   font-size: var(--text-sm);
-  color: var(--accent, #3b82f6);
+  color: var(--accent-text);
   text-decoration: none;
 }
 
@@ -4136,7 +4136,7 @@ td.data-table-key-col {
   margin-left: auto;
   flex-shrink: 0;
   background: currentColor;
-  opacity: 0.35;
+  opacity: 1;
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E");
   mask-size: contain;
   mask-repeat: no-repeat;
@@ -4514,7 +4514,7 @@ details[open] > .ov-expandable-toggle::after {
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; transform: none; }
 .btn-primary.btn-danger { background: var(--btn-danger-bg); border-color: var(--btn-danger-border); color: var(--btn-danger-color); }
 .btn-primary.btn-danger:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.1), 0 0 0 3px var(--danger-subtle); }
-.btn-primary.btn-success { background: var(--ok); border-color: var(--ok); }
+.btn-primary.btn-success { background: var(--ok); border-color: var(--ok); color: var(--ok-foreground); }
 .btn-primary.btn-success:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.1), 0 0 0 3px var(--ok-subtle); }
 
 .btn-sm {
@@ -4535,7 +4535,7 @@ details[open] > .ov-expandable-toggle::after {
 .btn-sm:active { transform: translateY(0); }
 .btn-sm:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; transform: none; }
 .btn-sm.danger { color: var(--danger); border-color: var(--danger); }
-.btn-sm.danger:hover { background: var(--danger); color: #fff; box-shadow: 0 2px 4px var(--danger-subtle); }
+.btn-sm.danger:hover { background: var(--danger); color: var(--danger-foreground); box-shadow: 0 2px 4px var(--danger-subtle); }
 
 .btn-xs {
   display: inline-flex; align-items: center; gap: var(--space-xs);
@@ -4564,7 +4564,7 @@ details[open] > .ov-expandable-toggle::after {
   cursor: pointer;
   transition: all 0.15s var(--ease-out);
 }
-.btn-danger-outline:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+.btn-danger-outline:hover { background: var(--danger); color: var(--danger-foreground); border-color: var(--danger); }
 
 .btn {
   display: inline-flex; align-items: center; gap: var(--space-xs);
@@ -4593,7 +4593,7 @@ details[open] > .ov-expandable-toggle::after {
   border-radius: var(--radius-sm);
   transition: all 0.15s var(--ease-out);
 }
-.btn-icon:hover { color: var(--accent); background: var(--accent-subtle); border-color: color-mix(in srgb, var(--accent) 20%, transparent); }
+.btn-icon:hover { color: var(--accent-text); background: var(--accent-subtle); border-color: color-mix(in srgb, var(--accent) 20%, transparent); }
 .btn-icon:disabled { opacity: 0.3; cursor: not-allowed; }
 
 /* Unset fixed size when btn-icon is used inside a flex row that manages its own sizing */

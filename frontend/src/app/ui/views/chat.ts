@@ -1760,14 +1760,14 @@ export function renderChat(props: ChatProps) {
     >
       <style>
         .card.chat .chat-link-row { display: flex; gap: 8px; padding: 4px 12px; }
-        .card.chat .chat-link-btn { font-size: 12px; color: var(--accent); text-decoration: underline; background: none; border: none; cursor: pointer; }
+        .card.chat .chat-link-btn { font-size: 12px; color: var(--accent-text); text-decoration: underline; background: none; border: none; cursor: pointer; }
         .connection-status { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); }
         .connection-status__dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; transition: background 300ms ease-out, box-shadow 300ms ease-out; }
         .connection-status__dot.connected { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 14%, transparent); }
         .connection-status__dot.disconnected { background: var(--danger); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 14%, transparent); }
         .connection-status__dot.connecting { background: var(--muted); box-shadow: 0 0 0 4px color-mix(in srgb, var(--muted) 14%, transparent); }
         .connection-status__reconnect { margin-left: auto; padding: 4px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); color: var(--text); font-size: var(--text-sm); font-weight: 600; cursor: pointer; transition: border-color 100ms ease, background 100ms ease, color 100ms ease; }
-        .connection-status__reconnect:hover { border-color: var(--accent); background: var(--accent-subtle); color: var(--accent); }
+        .connection-status__reconnect:hover { border-color: var(--accent); background: var(--accent-subtle); color: var(--accent-text); }
         .connection-banner { display: flex; align-items: center; gap: var(--space-sm, 8px); padding: var(--space-sm, 8px) var(--space-md, 12px); background: rgba(255, 193, 7, 0.15); border-bottom: 1px solid rgba(255, 193, 7, 0.3); color: var(--text); font-size: 13px; }
         .connection-banner__icon { font-size: 16px; }
         .connection-banner__pulse { width: 8px; height: 8px; border-radius: 50%; background: #ffc107; animation: pulse 1.5s ease-in-out infinite; }

@@ -86,7 +86,7 @@ export class AlertDetailModal extends LitElement {
           <div style="display:flex;align-items:center;gap:var(--space-xs);flex-shrink:0;"><span style="color:var(--ok);">●</span><span style="color:var(--muted);">触发</span><span>${new Date(a.created_at).toLocaleString('zh-CN')}</span></div>
           <span style="color:var(--border);">→</span>
           ${a.acknowledged_at ? html`
-            <div style="display:flex;align-items:center;gap:var(--space-xs);flex-shrink:0;"><span style="color:var(--accent);">●</span><span style="color:var(--muted);">确认</span><span>${new Date(a.acknowledged_at).toLocaleString('zh-CN')}</span></div>
+            <div style="display:flex;align-items:center;gap:var(--space-xs);flex-shrink:0;"><span style="color:var(--accent-text);">●</span><span style="color:var(--muted);">确认</span><span>${new Date(a.acknowledged_at).toLocaleString('zh-CN')}</span></div>
             <span style="color:var(--border);">→</span>
           ` : ''}
           ${a.resolved_at ? html`
@@ -99,8 +99,8 @@ export class AlertDetailModal extends LitElement {
           <div style="font-weight:600;font-size:var(--text-md);margin-bottom:var(--space-md);">AI 根因分析</div>
           ${analysisRunning ? html`
             <div style="display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);">
-              <span style="color:var(--accent);">⟳</span> AI 分析运行中...
-              ${this.activeRCAAnalysis?.sessionKey ? html`<a href="#" @click=${(e: Event) => { e.preventDefault(); this._emit('alert-navigate-chat', { sessionKey: this.activeRCAAnalysis!.sessionKey }); }} style="margin-left:auto;font-size:var(--text-sm);color:var(--accent);">查看过程 →</a>` : ''}
+              <span style="color:var(--accent-text);">⟳</span> AI 分析运行中...
+              ${this.activeRCAAnalysis?.sessionKey ? html`<a href="#" @click=${(e: Event) => { e.preventDefault(); this._emit('alert-navigate-chat', { sessionKey: this.activeRCAAnalysis!.sessionKey }); }} style="margin-left:auto;font-size:var(--text-sm);color:var(--accent-text);">查看过程 →</a>` : ''}
             </div>
           ` : analysisComplete ? html`
             <div style="padding:var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);">
@@ -131,7 +131,7 @@ export class AlertDetailModal extends LitElement {
                         : r.status === 'failed' ? html`<span style="color:var(--danger);margin-left:var(--space-sm);">失败</span>`
                         : html`<span style="color:var(--muted);margin-left:var(--space-sm);">${r.status}</span>`}
                     </span>
-                    ${r.session_key ? html`<a href="#" @click=${(e: Event) => { e.preventDefault(); this._emit('alert-navigate-chat', { sessionKey: r.session_key }); }} style="color:var(--accent);font-size:var(--text-xs);">查看 →</a>` : ''}
+                    ${r.session_key ? html`<a href="#" @click=${(e: Event) => { e.preventDefault(); this._emit('alert-navigate-chat', { sessionKey: r.session_key }); }} style="color:var(--accent-text);font-size:var(--text-xs);">查看 →</a>` : ''}
                   </div>
                 `)}
               </div>

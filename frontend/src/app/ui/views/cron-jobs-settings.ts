@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * Cron 任务管理页面
  * 管理定时采集和分析任务的启用/停用、表达式编辑、手动触发和运行日志查看
@@ -183,7 +184,7 @@ export class CronJobsSettings extends LitElement {
     return this.jobs.filter(j => j.task_type === this.filterMode);
   }
 
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; }
     .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
     .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
@@ -211,11 +212,11 @@ export class CronJobsSettings extends LitElement {
     .cell-result { width: 80px; min-width: 80px; }
     .cell-actions { width: 150px; min-width: 150px; justify-content: flex-end; gap: 4px; flex-shrink: 0; overflow: visible; }
     .job-name { font-weight: 600; color: var(--text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
-    .job-name:hover { color: var(--accent); }
+    .job-name:hover { color: var(--accent-text); }
     .job-name--disabled { color: var(--muted); }
     .job-desc { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .cron-text { font-family: var(--mono, monospace); font-size: 11px; color: var(--text); cursor: pointer; white-space: nowrap; }
-    .cron-text:hover { color: var(--accent); }
+    .cron-text:hover { color: var(--accent-text); }
     .relative-time { font-size: 11px; color: var(--muted); white-space: nowrap; }
 
 
@@ -275,7 +276,7 @@ export class CronJobsSettings extends LitElement {
     .cron-preset-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; font-size: 11px; font-family: inherit; color: var(--muted); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; transition: all 0.15s; }
     .cron-preset-chip:hover { color: var(--text); border-color: var(--accent); }
     .cron-preset-chip.active { color: var(--accent-foreground, #fff); background: var(--accent); border-color: var(--accent); }
-    .cron-preset-expr { font-family: var(--mono, monospace); font-size: 10px; opacity: 0.7; }
+    .cron-preset-expr { font-family: var(--mono, monospace); font-size: 10px; opacity: 1; }
 
 
   `];

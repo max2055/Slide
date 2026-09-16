@@ -81,12 +81,12 @@ export class QueryAnalysisTab extends LitElement {
     }
     .tree-node-header:hover { background: var(--bg-hover, #f9fafb); }
     .tree-node-header .node-type { font-size: 13px; font-weight: 600; }
-    .tree-node-header .table-name { font-size: 12px; color: var(--accent, #3b82f6); }
+    .tree-node-header .table-name { font-size: 12px; color: var(--accent-text); }
     .tree-node-meta { font-size: 11px; color: var(--muted, #6b7280); margin-left: 8px; }
     .tag { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
-    .tag-danger { background: #fef2f2; color: #ef4444; }
-    .tag-warn { background: #fffbeb; color: #f59e0b; }
-    .tag-info { background: #eff6ff; color: #3b82f6; }
+    .tag-danger { background: var(--danger-subtle); color: var(--danger); }
+    .tag-warn { background: var(--warn-subtle); color: var(--warn); }
+    .tag-info { background: var(--info-subtle); color: var(--info); }
 
     .btn {
       display: inline-flex;

@@ -48,7 +48,7 @@ export class InstanceTrendChart extends LitElement {
       border-color: var(--border-strong);
     }
     .trend-period-btn.active {
-      color: var(--accent);
+      color: var(--accent-text);
       border-color: var(--accent);
       background: var(--accent-subtle);
     }

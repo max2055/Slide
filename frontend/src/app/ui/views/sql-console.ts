@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
@@ -269,7 +270,7 @@ interface Tab {
 
 @customElement("sql-console-page")
 export class SqlConsolePage extends LitElement {
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: flex; flex-direction: column; height: calc(100vh - 120px); gap: var(--space-md); }
     .tab-bar { display: flex; align-items: center; gap: 2px; padding: var(--space-xs) var(--space-sm); background: var(--bg-elevated, #f9fafb); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-md); overflow-x: auto; flex-shrink: 0; min-height: 36px; }
     .tab { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-xs) var(--space-md); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--text-sm); color: var(--muted, #6b7280); white-space: nowrap; max-width: 160px; background: transparent; border: none; }
@@ -279,7 +280,7 @@ export class SqlConsolePage extends LitElement {
     .tab-close { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; border: none; background: none; cursor: pointer; color: var(--muted, #9ca3af); padding: 0; font-size: var(--text-md); border-radius: var(--radius-sm); }
     .tab-close:hover { background: var(--danger-subtle, rgba(239,68,68,0.1)); color: var(--danger, #ef4444); }
     .tab-add { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: none; background: none; cursor: pointer; color: var(--muted, #6b7280); font-size: 16px; font-weight: 600; border-radius: var(--radius-sm); flex-shrink: 0; }
-    .tab-add:hover { background: var(--accent-subtle, rgba(64,158,255,0.12)); color: var(--accent, #409eff); }
+    .tab-add:hover { background: var(--accent-subtle, rgba(64,158,255,0.12)); color: var(--accent-text); }
     .tab-rename-input { font-size: var(--text-sm); padding: 1px 4px; border: 1px solid var(--accent, #409eff); border-radius: var(--radius-sm); background: var(--card, #fff); color: var(--text, #3c3c43); outline: none; width: 120px; }
     .tab-warning { font-size: var(--text-xs); color: var(--warn, #b45309); margin-left: 8px; white-space: nowrap; }
 
@@ -304,9 +305,9 @@ export class SqlConsolePage extends LitElement {
     .table-name { padding: var(--space-xs) var(--space-md) 4px 24px; font-size: var(--text-sm); color: var(--text, #333); cursor: pointer; display: flex; align-items: center; gap: var(--space-xs); }
     .table-name:hover { background: var(--bg-hover, #f3f4f6); }
     .col-name { padding: 3px 12px 3px 36px; font-size: var(--text-xs); color: var(--muted, #6b7280); cursor: pointer; display: flex; justify-content: space-between; }
-    .col-name:hover { background: var(--accent-subtle, #eff6ff); color: var(--accent, #3b82f6); }
+    .col-name:hover { background: var(--accent-subtle, #eff6ff); color: var(--accent-text); }
     .col-type { font-size: 10px; color: var(--muted, #9ca3af); }
-    .icon { width: 14px; height: 14px; opacity: .6; }
+    .icon { width: 14px; height: 14px; opacity: 1; }
 
     .results { border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-md); overflow: hidden; max-height: 300px; display: flex; flex-direction: column; background: var(--card, #fff); }
     .results-header { padding: var(--space-sm) var(--space-md); font-size: var(--text-sm); border-bottom: 1px solid var(--border, #e5e7eb); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
@@ -332,7 +333,7 @@ export class SqlConsolePage extends LitElement {
     /* Browser tabs (Schema/History toggle) */
     .browser-tabs { display: flex; border-bottom: 1px solid var(--border, #e5e7eb); flex-shrink: 0; }
     .browser-tab { flex: 1; padding: var(--space-sm) var(--space-md); font-size: var(--text-sm); font-weight: 600; cursor: pointer; border: none; background: none; color: var(--muted, #6b7280); border-bottom: 2px solid transparent; }
-    .browser-tab.active { color: var(--accent, #409eff); border-bottom-color: var(--accent, #409eff); background: var(--accent-subtle, rgba(64,158,255,0.06)); }
+    .browser-tab.active { color: var(--accent-text); border-bottom-color: var(--accent, #409eff); background: var(--accent-subtle, rgba(64,158,255,0.06)); }
 
     /* History panel */
     .history-panel { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
@@ -1412,7 +1413,7 @@ export class SqlConsolePage extends LitElement {
                           style="cursor:pointer;user-select:none;white-space:nowrap;text-align:center">
                         ${c}
                         ${this.sortColumn === c
-                          ? html`<span style="margin-left:4px;color:var(--accent, #409eff);font-size:10px">${this.sortDirection === 'asc' ? '▲' : '▼'}</span>`
+                          ? html`<span style="margin-left:4px;color:var(--accent-text);font-size:10px">${this.sortDirection === 'asc' ? '▲' : '▼'}</span>`
                           : ''}
                       </th>`)}</tr></thead>
                     <tbody>

@@ -25,7 +25,7 @@
 
 .chat-thinking-disclosure__icon {
   display: inline-flex;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .chat-thinking-disclosure__icon svg {
@@ -88,13 +88,13 @@
 }
 
 .chat-text :where(a) {
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .chat-text :where(a:hover) {
-  opacity: 0.8;
+  opacity: 1;
 }
 
 .chat-text :where(code) {

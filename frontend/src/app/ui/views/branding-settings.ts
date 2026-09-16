@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * Branding Settings — configure CLI/UI branding strings at runtime.
  * Changes take effect immediately via branding.ts memory cache.
@@ -22,7 +23,7 @@ export class BrandingSettings extends LitElement {
   @state() private message: string = "";
   @state() private messageType: "success" | "error" = "success";
 
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; max-width: 800px; }
     .page-header { margin-bottom: 24px; }
     .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }

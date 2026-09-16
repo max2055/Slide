@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { sharedResourceToolbarStyles } from "../../styles/shared-resource-toolbar-styles.ts";
@@ -89,7 +90,7 @@ function canonicalOsKey(value: string | null | undefined): "kylin" | "rhel" | "c
 
 @customElement("servers-page")
 export class ServersPage extends LitElement {
-  static styles = [sharedBtnStyles, sharedResourceToolbarStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, sharedResourceToolbarStyles, css`
     :host {
       display: block;
       animation: fade-in 0.25s var(--ease-out);

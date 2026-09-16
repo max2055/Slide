@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * Appearance Settings — comprehensive visual personalization.
  * Modifies CSS custom properties on <html> and dispatches settings changes.
@@ -7,7 +8,7 @@ import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
 import { t } from "../../i18n/index.ts";
 import { applyAccentColor, applyBorderRadius, applyNavWidth } from "../app-settings.ts";
-import { applyButtonPalette, type ButtonPalette } from "../btn-palette.ts";
+import { applyButtonPalette, DEFAULT_PALETTE, type ButtonPalette } from "../btn-palette.ts";
 import { applyDensity, type Density } from "../density.ts";
 import { DEFAULT_TAB_OPTIONS, TAB_GROUPS, UTILITY_TABS } from "../navigation.ts";
 import type { Locale } from "../../i18n/lib/types.ts";
@@ -110,12 +111,12 @@ export class AppearanceSettings extends LitElement {
   @state() private defaultModel: string = "";
 
   @state() private btnPalPrimaryBg: string = "#409eff";
-  @state() private btnPalPrimaryColor: string = "#ffffff";
+  @state() private btnPalPrimaryColor: string = DEFAULT_PALETTE.primaryColor;
   @state() private btnPalSecondaryBg: string = "#f1f3f5";
-  @state() private btnPalDangerBg: string = "#f87171";
-  @state() private btnPalGhostColor: string = "#6e6e73";
+  @state() private btnPalDangerBg: string = DEFAULT_PALETTE.dangerBg;
+  @state() private btnPalGhostColor: string = DEFAULT_PALETTE.ghostColor;
 
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; width: min(100%, 800px); }
     :host > app-card { display: block; }
     :host > app-card + app-card { margin-top: var(--space-sm); }
@@ -224,10 +225,10 @@ export class AppearanceSettings extends LitElement {
     const savedPalette = readSettingsField("btnPalette", null);
     if (savedPalette) {
       this.btnPalPrimaryBg = savedPalette.primaryBg || "#409eff";
-      this.btnPalPrimaryColor = savedPalette.primaryColor || "#ffffff";
+      this.btnPalPrimaryColor = savedPalette.primaryColor || DEFAULT_PALETTE.primaryColor;
       this.btnPalSecondaryBg = savedPalette.secondaryBg || "#f1f3f5";
-      this.btnPalDangerBg = savedPalette.dangerBg || "#f87171";
-      this.btnPalGhostColor = savedPalette.ghostColor || "#6e6e73";
+      this.btnPalDangerBg = savedPalette.dangerBg || DEFAULT_PALETTE.dangerBg;
+      this.btnPalGhostColor = savedPalette.ghostColor || DEFAULT_PALETTE.ghostColor;
     }
   }
 

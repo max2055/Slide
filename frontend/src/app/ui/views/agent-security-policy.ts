@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { apiClient } from '../../../api/index.js';
@@ -103,7 +104,7 @@ export class AgentSecurityPolicyPage extends LitElement {
   @state() private loading = true;
   @state() private saving = false;
 
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; color: var(--text); }
     .page-header, .header-actions, .row-between, .choice-grid, .mode-control, .effect-list {
       display: flex;

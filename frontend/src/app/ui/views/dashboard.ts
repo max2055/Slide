@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, nothing } from 'lit';
 import { live } from 'lit/directives/live.js';
 import { customElement, state } from 'lit/decorators.js';
@@ -22,7 +23,7 @@ interface Capacity { current_total_gb: number | null; trend: Array<{ time: strin
 
 @customElement('dashboard-page')
 export class DashboardPage extends LitElement {
-  static override styles = [sharedBtnStyles, dashboardStyles];
+  static override styles = [sharedFieldStyles, sharedBtnStyles, dashboardStyles];
   private readonly _i18n = new I18nController(this);
   @state() private resourceOverview: Overview | null = null;
   @state() private resourceScope: Scope = 'all';

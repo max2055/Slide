@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, property, state } from "lit/decorators.js";
@@ -80,7 +81,7 @@ interface NotificationDeadLetter {
 @customElement("alerts-page")
 export class AlertsPage extends LitElement {
   @property() mode: "active" | "rules" | "notifications" = "active";
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host {
       display: block;
       animation: fade-in 0.25s var(--ease-out);
@@ -121,7 +122,7 @@ export class AlertsPage extends LitElement {
     }
 
     .tab.active {
-      color: var(--accent);
+      color: var(--accent-text);
       border-bottom-color: var(--accent);
     }
 
@@ -470,7 +471,7 @@ export class AlertsPage extends LitElement {
     .checkbox-label.active {
       background: var(--accent-subtle, rgba(99, 102, 241, 0.1));
       border-color: var(--accent);
-      color: var(--accent);
+      color: var(--accent-text);
     }
 
 
@@ -1321,27 +1322,27 @@ export class AlertsPage extends LitElement {
                           <div style="font-size:11px;color:var(--muted);margin-top:1px;">
                             <span class="type-badge" style="font-size:10px;">${rule.metric_name}</span>
                             ${(rule.db_types && rule.db_types.length > 0) ? html`<span style="margin-left:4px;">${rule.db_types.join(', ')}</span>` : ''}
-                            ${rule.target_type === 'server' ? html`<span class="type-badge" style="font-size:10px;margin-left:4px;background:rgba(34,197,94,0.12);color:#16a34a;">server</span>` : ''}
+                            ${rule.target_type === 'server' ? html`<span class="type-badge" style="font-size:10px;margin-left:4px;background:rgba(34,197,94,0.12);color:var(--ok);">server</span>` : ''}
                             ${rule.description ? html`<span style="margin-left:4px;">${rule.description.substring(0,40)}${rule.description.length>40?'...':''}</span>` : ''}
                           </div>
                         </td>
                         <td style="text-align:center;">
-                          <span class="type-badge" style="font-size:10px;background:${rule.target_type === 'server' ? 'rgba(34,197,94,0.12);color:#16a34a' : 'rgba(59,130,246,0.12);color:var(--info)'}">${rule.target_type === 'server' ? '服务器' : '实例'}</span>
+                          <span class="type-badge" style="font-size:10px;background:${rule.target_type === 'server' ? 'rgba(34,197,94,0.12);color:var(--ok)' : 'rgba(59,130,246,0.12);color:var(--info)'}">${rule.target_type === 'server' ? '服务器' : '实例'}</span>
                         </td>
                         <td>
                           ${rule.threshold_type === 'dynamic'
-                            ? html`<span style="color:var(--accent);font-size:11px;font-weight:500;">动态基线</span>`
+                            ? html`<span style="color:var(--accent-text);font-size:11px;font-weight:500;">动态基线</span>`
                             : rule.threshold_template
                               ? html`<div style="display:flex;gap:3px;flex-wrap:wrap;">
-                                  ${rule.threshold_template.warning != null ? html`<span style="padding:1px 6px;border-radius:3px;font-size:10px;font-weight:500;background:rgba(234,179,8,0.15);color:#eab308;">W&ge;${rule.threshold_template.warning}</span>` : ''}
-                                  ${rule.threshold_template.error != null ? html`<span style="padding:1px 6px;border-radius:3px;font-size:10px;font-weight:500;background:rgba(249,115,22,0.15);color:#f97316;">E&ge;${rule.threshold_template.error}</span>` : ''}
-                                  ${rule.threshold_template.critical != null ? html`<span style="padding:1px 6px;border-radius:3px;font-size:10px;font-weight:500;background:rgba(239,68,68,0.12);color:#ef4444;">C&ge;${rule.threshold_template.critical}</span>` : ''}
+                                  ${rule.threshold_template.warning != null ? html`<span style="padding:1px 6px;border-radius:3px;font-size:10px;font-weight:500;background:rgba(234,179,8,0.15);color:var(--warn);">W&ge;${rule.threshold_template.warning}</span>` : ''}
+                                  ${rule.threshold_template.error != null ? html`<span style="padding:1px 6px;border-radius:3px;font-size:10px;font-weight:500;background:rgba(249,115,22,0.15);color:var(--warn);">E&ge;${rule.threshold_template.error}</span>` : ''}
+                                  ${rule.threshold_template.critical != null ? html`<span style="padding:1px 6px;border-radius:3px;font-size:10px;font-weight:500;background:rgba(239,68,68,0.12);color:var(--danger);">C&ge;${rule.threshold_template.critical}</span>` : ''}
                                 </div>`
                               : html`<span style="font-size:11px;color:var(--muted);">${rule.operator} ${rule.threshold}</span>`
                           }
                         </td>
                         <td style="text-align:center;">
-                          <span style="font-size:11px;font-weight:600;color:${rule.severity==='critical'?'#ef4444':rule.severity==='error'?'#f97316':rule.severity==='warning'?'#eab308':'var(--muted)'};">${this._severityLabel(rule.severity)}</span>
+                          <span style="font-size:11px;font-weight:600;color:${rule.severity==='critical'?'var(--danger)':rule.severity==='error'?'var(--warn)':rule.severity==='warning'?'var(--warn)':'var(--muted)'};">${this._severityLabel(rule.severity)}</span>
                         </td>
                         <td style="font-size:11px;color:var(--muted);text-align:center;">${rule.silence_minutes ?? 5}m</td>
                         <td style="text-align:center;">

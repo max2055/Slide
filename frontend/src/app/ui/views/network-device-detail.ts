@@ -323,7 +323,7 @@ export class NetworkDeviceDetail extends LitElement {
       .header-actions { display:flex; flex-wrap:wrap; gap:var(--space-sm); align-items:center; }
       .tabs { display:flex; gap:var(--space-xs); overflow-x:auto; border-bottom:1px solid var(--border); }
       .tab { border:0; border-bottom:2px solid transparent; background:transparent; color:var(--muted); padding:var(--space-sm) var(--space-md); cursor:pointer; white-space:nowrap; }
-      .tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+      .tab.active { color:var(--accent-text); border-bottom-color:var(--accent); }
       .summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:var(--space-md); }
       .summary-grid app-card { text-align:center; }
       .summary-label { color:var(--muted); font-size:var(--text-sm); }

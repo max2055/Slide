@@ -50,13 +50,13 @@ export class InstanceDetailPage extends LitElement {
     .instance-title { min-width:0;flex:1 1 12rem;font-size:var(--text-2xl);font-weight:600;color:var(--text-strong);overflow-wrap:anywhere; }
     .header-right { display:flex;align-items:center;gap:var(--space-md);min-width:0;flex-wrap:wrap; }
     .last-updated { font-size:var(--text-sm);color:var(--muted); }
-    .refresh-btn { display:inline-flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm) var(--space-md);border:1px solid var(--accent);border-radius:var(--radius-sm);font-size:var(--text-sm);font-weight:500;color:var(--accent);background:transparent;cursor:pointer; }
+    .refresh-btn { display:inline-flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm) var(--space-md);border:1px solid var(--accent);border-radius:var(--radius-sm);font-size:var(--text-sm);font-weight:500;color:var(--accent-text);background:transparent;cursor:pointer; }
     .refresh-btn:hover { background:var(--accent);color:var(--accent-foreground); }
     .refresh-btn:disabled { opacity:0.6;cursor:not-allowed; }
     .tabs { display:flex;gap:var(--space-xs);margin-bottom:var(--space-xl);border-bottom:1px solid var(--border);overflow-x:auto; }
     .tab { padding:var(--space-md) var(--space-xl);font-size:var(--text-md);font-weight:500;color:var(--muted);background:transparent;border:none;border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap; }
     .tab:hover { color:var(--text); }
-    .tab.active { color:var(--accent);border-bottom-color:var(--accent); }
+    .tab.active { color:var(--accent-text);border-bottom-color:var(--accent); }
     .tab-badge { position:absolute;top:8px;right:4px;min-width:16px;height:16px;padding:0 4px;background:var(--accent);color:var(--accent-foreground);border-radius:var(--radius-full);font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center; }
     .tab { position:relative; }
     .diagnosis-history-list { display:flex;flex-direction:column;gap:var(--space-xs); }
@@ -76,7 +76,7 @@ export class InstanceDetailPage extends LitElement {
     .sql-code:hover { white-space:normal;word-break:break-all; }
     .capacity-list { display:flex;flex-direction:column;gap:var(--space-md); }
     .capacity-item { display:flex;align-items:center;gap:var(--space-lg);padding:var(--space-md) var(--space-lg);background:var(--bg-elevated);border-radius:var(--radius-md);border:1px solid var(--border); }
-    .capacity-icon { width:40px;height:40px;border-radius:var(--radius-md);background:var(--accent-subtle);display:flex;align-items:center;justify-content:center;color:var(--accent); }
+    .capacity-icon { width:40px;height:40px;border-radius:var(--radius-md);background:var(--accent-subtle);display:flex;align-items:center;justify-content:center;color:var(--accent-text); }
     .capacity-icon svg { width:18px;height:18px; }
     .capacity-info { flex:1;min-width:0; }
     .capacity-name { font-size:var(--text-md);font-weight:500;color:var(--text-strong);margin-bottom:var(--space-xs); }

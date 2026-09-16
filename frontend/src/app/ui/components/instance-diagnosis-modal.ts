@@ -34,7 +34,7 @@ export class InstanceDiagnosisModal extends LitElement {
     .btn-ghost {
       display: inline-flex; align-items: center; gap: var(--space-sm);
       padding: var(--space-sm) var(--space-lg);
-      background: transparent; color: var(--accent);
+      background: transparent; color: var(--accent-text);
       border: 1px solid var(--accent); border-radius: var(--radius-sm);
       font-size: var(--text-md); font-weight: 500;
       cursor: pointer; transition: all 0.15s ease;
