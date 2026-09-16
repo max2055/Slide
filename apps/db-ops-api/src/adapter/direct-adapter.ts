@@ -263,6 +263,9 @@ export class DirectAdapter implements IAgentEngine {
         connectionId,
         connectedAt,
         remoteAddress: req.socket.remoteAddress,
+        remotePort: req.socket.remotePort,
+        localAddress: req.socket.localAddress,
+        localPort: req.socket.localPort,
       }));
       (ws as any)._isAlive = true;
       type ConnectionAuthState = 'unauthenticated' | 'authenticating' | 'authenticated' | 'closed';
@@ -276,7 +279,9 @@ export class DirectAdapter implements IAgentEngine {
         this.runtimeLimits.wsRateWindowMs,
       );
       const authTimer = setTimeout(() => {
-        if (authState === 'unauthenticated') closeAfterAuthFailure(4001, 'Authentication timeout');
+        if (authState === 'unauthenticated' || authState === 'authenticating') {
+          closeAfterAuthFailure(4001, 'Authentication timeout');
+        }
       }, this.runtimeLimits.authTimeoutMs);
       (ws as any)._authState = authState;
       (ws as any)._actorContext = undefined;
@@ -378,7 +383,8 @@ export class DirectAdapter implements IAgentEngine {
         }
       });
 
-      ws.on('message', async (raw: Buffer) => {
+      const handleMessage = async (raw: Buffer) => {
+        if (authState === 'closed' || ws.readyState !== WebSocket.OPEN) return;
         if (!frameLimiter.allow()) {
           ws.close(4008, 'Rate limit exceeded');
           return;
@@ -388,6 +394,11 @@ export class DirectAdapter implements IAgentEngine {
           msg = JSON.parse(raw.toString());
         } catch {
           ws.send(JSON.stringify({ type: 'error', error: 'Invalid JSON' }));
+          return;
+        }
+
+        if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.type !== 'string') {
+          ws.send(JSON.stringify({ type: 'error', error: 'Invalid message envelope' }));
           return;
         }
 
@@ -434,6 +445,7 @@ export class DirectAdapter implements IAgentEngine {
               (ws as any)._authState = authState;
               clearTimeout(authTimer);
               ws.send(JSON.stringify({ type: 'auth_ok' }));
+              console.log('[DirectAdapter] WS authenticated', JSON.stringify({ connectionId, userId: authenticatedUserId }));
             }
           } catch {
             if (authGeneration === authenticationGeneration) {
@@ -688,15 +700,27 @@ export class DirectAdapter implements IAgentEngine {
           default:
             ws.send(JSON.stringify({ type: 'error', error: `Unknown message type: ${msg.type}` }));
         }
+      };
+
+      // EventEmitter does not await async listeners. Contain failures here so a
+      // single message cannot become a process-level unhandled rejection.
+      ws.on('message', async (raw: Buffer) => {
+        try {
+          await handleMessage(raw);
+        } catch {
+          clearAuthentication();
+          platformLogs.record({ component: 'ws', eventType: 'message.error', status: 'failed', correlationId: connectionId, errorCode: 'WS_MESSAGE_HANDLER_ERROR' });
+          console.error('[DirectAdapter] WS message handling failed', JSON.stringify({ connectionId, errorCode: 'WS_MESSAGE_HANDLER_ERROR' }));
+          if (ws.readyState === WebSocket.OPEN) ws.close(1011, 'Message handling failed');
+        }
       });
 
-      ws.on('close', () => {
-        console.log('[DirectAdapter] WS client disconnected');
-      });
-
-      ws.on('error', (err) => {
-        platformLogs.record({ component: 'ws', eventType: 'connection.error', status: 'failed', correlationId: connectionId, errorCode: 'WS_TRANSPORT_ERROR' });
-        console.error('[DirectAdapter] WS error:', err.message);
+      ws.on('error', (err: Error & { code?: string }) => {
+        const errorCode = typeof err.code === 'string' && /^[A-Z][A-Z0-9_]{0,127}$/.test(err.code)
+          ? err.code : 'WS_TRANSPORT_ERROR';
+        platformLogs.record({ component: 'ws', eventType: 'connection.error', status: 'failed', correlationId: connectionId, errorCode });
+        // Exception text may contain client input; retain only bounded codes.
+        console.error('[DirectAdapter] WS error:', JSON.stringify({ connectionId, errorCode }));
       });
     });
 
