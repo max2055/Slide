@@ -344,7 +344,7 @@ export async function handleSendChat(
 }
 
 function shouldQueueLocalSlashCommand(name: string): boolean {
-  return !["stop", "focus", "export-session", "steer", "redirect", "new"].includes(name);
+  return !["stop", "focus", "export-session", "steer", "redirect", "new", "clear"].includes(name);
 }
 
 // ── Slash Command Dispatch ──
@@ -414,21 +414,8 @@ async function dispatchSlashCommand(
 }
 
 async function clearChatHistory(host: ChatHost) {
-  if (!host.client || !host.connected) {
-    return;
-  }
-  try {
-    await host.client.request("sessions.reset", { key: host.sessionKey });
-    host.chatMessages = [];
-    host.chatSideResult = null;
-    host.chatSideResultTerminalRuns?.clear();
-    host.chatStream = null;
-    host.chatRunId = null;
-    await loadChatHistory(host as unknown as ChatState);
-  } catch (err) {
-    host.lastError = String(err);
-  }
-  scheduleChatScroll(host as unknown as Parameters<typeof scheduleChatScroll>[0]);
+  // Deleting a session or starting a new one is not a history reset.
+  host.lastError = "当前不支持清空历史：后端未提供保留会话的清空接口。历史记录未修改；如需开始新对话，请使用 /new。";
 }
 
 function injectCommandResult(host: ChatHost, content: string) {
