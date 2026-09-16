@@ -998,12 +998,11 @@ export function initChatClient(host: Record<string, unknown>): void {
         host.connected = true;
         host.lastError = null;
         const loadState = async () => {
-          try {
-            await loadAgents(host as unknown as AgentsState);
-            await loadSessions(host as unknown as SessionsState, {
-              activeMinutes: CHAT_SESSIONS_ACTIVE_MINUTES,
-            });
-          } catch { /* best-effort */ }
+          // Each loader owns its error state and resolves after handled failures.
+          await loadAgents(host as unknown as AgentsState);
+          await loadSessions(host as unknown as SessionsState, {
+            activeMinutes: CHAT_SESSIONS_ACTIVE_MINUTES,
+          });
           const token = apiClient.getToken();
           if (token && !localStorage.getItem('permissions')) {
             apiClient.fetchResponseWithAuth('/api/auth/permissions', {
