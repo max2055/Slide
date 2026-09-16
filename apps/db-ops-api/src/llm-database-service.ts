@@ -3,6 +3,7 @@
  * 支持完整的 Provider 配置、用量追踪、成本统计
  */
 import mysql from 'mysql2/promise';
+import type { LLMScene, SceneBinding } from './llm/scene-routing.js';
 import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
 
 // 部署方式
@@ -118,6 +119,29 @@ export interface LLMQuotaAlert {
 }
 
 class LLMDatabaseService {
+  async getSceneBindings(): Promise<SceneBinding[]> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('LLM_CONFIGURATION_UNAVAILABLE');
+    try {
+      const [rows] = await pool.execute('SELECT scene, provider_id, model FROM llm_scene_bindings');
+      return rows as SceneBinding[];
+    } catch (error) {
+      throw new Error('LLM_CONFIGURATION_UNAVAILABLE', { cause: error });
+    }
+  }
+
+  async saveSceneBinding(scene: LLMScene, binding: { provider_id: number; model: string } | null): Promise<void> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('LLM_CONFIGURATION_UNAVAILABLE');
+    if (!binding) {
+      await pool.execute('DELETE FROM llm_scene_bindings WHERE scene = ?', [scene]);
+    } else {
+      await pool.execute(`INSERT INTO llm_scene_bindings (scene, provider_id, model) VALUES (?, ?, ?)
+        ON DUPLICATE KEY UPDATE provider_id = VALUES(provider_id), model = VALUES(model)`,
+      [scene, binding.provider_id, binding.model]);
+    }
+  }
+
   /**
    * 获取数据库连接池
    */

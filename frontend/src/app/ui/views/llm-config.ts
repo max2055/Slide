@@ -1,3 +1,5 @@
+import "../components/app-card.js";
+import "../components/app-form-field.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * LLM 配置管理 — 两栏布局：左侧提供商列表 + 右侧详情/模板选择
@@ -5,7 +7,7 @@ import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
  */
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
-import { customElement, state } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { apiClient } from "../../../api/index.js";
 import { icons } from "../../../icons.js";
 
@@ -14,7 +16,7 @@ interface LLMProvider {
   deployment_type: string; api_format?: string;
   api_base_url?: string; default_model?: string;
   models_supported?: ModelConfig[];
-  enabled: boolean; is_default: boolean;
+  enabled: boolean; is_default: boolean; supports_function_call?: boolean;
 }
 
 interface ModelConfig {
@@ -29,7 +31,7 @@ interface FormData {
   name: string; display_name: string; api_base_url: string;
   default_model: string; deployment_type: string; api_format: string;
   api_key: string; enabled: boolean; is_default: boolean;
-  models: ModelConfig[];
+  models: ModelConfig[]; supports_function_call?: boolean;
 }
 
 const API_FORMATS = [
@@ -62,6 +64,13 @@ const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   { id: "ollama", name: "ollama", displayName: "Ollama", color: "#374151", bg: "rgba(55,65,81,0.12)", baseUrl: "http://localhost:11434/v1", defaultModel: "qwen2.5-coder:32b", deploymentType: "local", description: "本地部署 · 开源模型", models: ["qwen2.5-coder:32b", "qwen2.5:72b", "llama3.3:70b", "deepseek-r1:70b", "codellama:70b", "mistral:7b", "gemma3:27b", "phi4:14b"] },
 ];
 
+interface SceneConfig {
+  scene: string;
+  binding: { provider_id: number; model: string } | null;
+  effective: { provider_id: number; provider_name: string; model: string; source: string } | null;
+  error: string | null;
+}
+const SCENE_LABELS: Record<string, string> = { default: '全局默认', chat: '智能对话', sql_analysis: 'SQL 分析', fault_diagnosis: '故障诊断', health_check: '健康检查' };
 type ViewMode = "placeholder" | "picker" | "form";
 
 function blankForm(): FormData {
@@ -113,6 +122,11 @@ function brandFor(name: string): { color: string; bg: string; initial: string } 
 
 @customElement("llm-config-page")
 export class LLMConfigPage extends LitElement {
+  @property({ type: String }) activeTab = "providers";
+  @state() private scenes: SceneConfig[] = [];
+  @state() private sceneDrafts: Record<string, { provider_id: number | null; model: string }> = {};
+  @state() private sceneMessage = '';
+  @state() private sceneSaving = '';
   @state() private providers: LLMProvider[] = [];
   @state() private loading = true;
   @state() private error: string | null = null;
@@ -131,7 +145,14 @@ export class LLMConfigPage extends LitElement {
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
 
     :host { display: block; height: 100%; }
-    .shell { display: flex; height: 100%; overflow: hidden; }
+    .shell { display: flex; height: 100%; min-height: 0; overflow: hidden; }
+    .shell.scenes .detail { min-width: 0; }
+    .shell.scenes app-card { overflow-wrap: anywhere; }
+    @media (max-width: 720px) {
+      .shell { flex-direction: column; }
+      .shell .sidebar { width: auto; min-width: 0; max-height: 12rem; flex-shrink: 0; border-right: none; border-bottom: 1px solid var(--border); }
+      .shell .detail-inner { padding: var(--space-md); }
+    }
     .page-header { margin-bottom: 24px; }
     .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
     .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
@@ -229,6 +250,7 @@ export class LLMConfigPage extends LitElement {
     try {
       const data = await apiClient.get<LLMProvider[]>("/llm/configs");
       this.providers = Array.isArray(data) ? data : [];
+      await this._loadScenes();
       if (this.selectedId && !this.providers.find(p => p.id === this.selectedId)) {
         this.selectedId = null;
         this.editing = null;
@@ -247,6 +269,12 @@ export class LLMConfigPage extends LitElement {
       // First load with no providers: show template picker directly
       if (this.providers.length === 0) {
         this.viewMode = "picker";
+      } else if (this.viewMode === "placeholder") {
+        this._selectProvider(
+          this.providers.find(p => p.is_default)
+          ?? this.providers.find(p => p.enabled)
+          ?? this.providers[0],
+        );
       }
     } catch (e: any) { this.error = e.message || "加载失败"; }
     finally { if (!silent) { this.loading = false; } }
@@ -262,7 +290,7 @@ export class LLMConfigPage extends LitElement {
       api_base_url: p.api_base_url || "", default_model: p.default_model || "",
       deployment_type: p.deployment_type || "api",
       api_format: p.api_format || "", api_key: "",
-      enabled: p.enabled, is_default: p.is_default,
+      enabled: p.enabled, is_default: p.is_default, supports_function_call: Boolean(p.supports_function_call),
       models: (p.models_supported || []).map((m: any) => ({
         id: m.id || "", name: m.name || "",
         contextWindow: m.contextWindow || m.context_window,
@@ -323,6 +351,7 @@ export class LLMConfigPage extends LitElement {
         baseURL: this.form.api_base_url || undefined,
         model: this.form.default_model || undefined,
         enabled: this.form.enabled,
+        supportsFunctionCall: Boolean(this.form.supports_function_call),
         modelsSupported: this.form.models.length > 0 ? this.form.models : undefined,
       };
       if (!body.apiKey) delete body.apiKey;
@@ -451,15 +480,74 @@ export class LLMConfigPage extends LitElement {
     return html`
       <div style="display:flex;flex-direction:column;height:100%">
         <div class="page-header">
-          <h1>模型配置</h1>
-          <p>管理 AI 提供商：添加、编辑、启停、测试连接</p>
+          <h1>${this.activeTab === 'scenes' ? '场景分配' : '模型配置'}</h1>
+          <p>${this.activeTab === 'scenes' ? '为不同场景分配提供商和模型，未单独分配时跟随全局默认' : '管理 AI 提供商：添加、编辑、启停、测试连接'}</p>
         </div>
-        <div class="shell" style="flex:1">
-          ${this._renderSidebar()}
+        <div class="shell ${this.activeTab === 'scenes' ? 'scenes' : ''}" style="flex:1">
+          ${this.activeTab === "scenes" ? "" : this._renderSidebar()}
           ${this._renderDetail()}
         </div>
       </div>
     `;
+  }
+
+  private async _loadScenes() {
+    try {
+      this.scenes = await apiClient.get<SceneConfig[]>('/llm/scenes');
+      this.sceneDrafts = Object.fromEntries(this.scenes.map(row => [row.scene,
+        row.binding ? { ...row.binding } : { provider_id: null, model: '' }]));
+      this.sceneMessage = '';
+    } catch (error: any) { this.sceneMessage = error.message || '场景配置加载失败'; }
+  }
+
+  private async _saveScene(scene: string) {
+    this.sceneSaving = scene;
+    this.sceneMessage = '';
+    const draft = this.sceneDrafts[scene];
+    try {
+      await apiClient.put(`/llm/scenes/${scene}`, draft.provider_id === null
+        ? { provider_id: null } : draft);
+      await this._loadScenes();
+    } catch (error: any) { this.sceneMessage = error.message || '场景配置保存失败'; }
+    finally { this.sceneSaving = ''; }
+  }
+
+  private _renderScenes() {
+    return html`
+      <p class="form-hint">未单独分配的场景跟随全局默认。全局默认在提供商详情中设置。健康检查的规则评分不调用模型。</p>
+      ${this.sceneMessage ? html`<p role="alert" class="msg msg-err">${this.sceneMessage}</p>
+        <button class="btn" @click=${this._loadScenes}>重新加载</button>` : ''}
+      ${this.scenes.map(row => {
+        const draft = this.sceneDrafts[row.scene];
+        const provider = this.providers.find(p => p.id === draft?.provider_id);
+        const models = [...new Set([provider?.default_model, ...(provider?.models_supported || []).map(m => m.id)].filter(Boolean))] as string[];
+        return html`<app-card style="margin-bottom:var(--space-md)">
+          <span slot="header">${SCENE_LABELS[row.scene]}</span>
+          ${row.scene !== 'default' ? html`
+            <app-form-field label="提供商">
+              <select class="form-select" aria-label=${SCENE_LABELS[row.scene] + '提供商'} .value=${String(draft.provider_id ?? '')}
+                .disabled=${!!this.sceneSaving} @change=${(e: Event) => {
+                  const id = Number((e.target as HTMLSelectElement).value) || null;
+                  this.sceneDrafts = { ...this.sceneDrafts, [row.scene]: { provider_id: id, model: this.providers.find(p => p.id === id)?.default_model || '' } };
+                }}>
+                <option value="" .selected=${draft.provider_id === null}>跟随全局默认</option>
+                ${draft.provider_id && !provider ? html`<option value=${String(draft.provider_id)} .selected=${true}>已删除的提供商 #${draft.provider_id}</option>` : ''}
+                ${this.providers.map(p => html`<option value=${String(p.id)} .selected=${p.id === draft.provider_id} .disabled=${!p.enabled}>${p.display_name || p.name}${p.enabled ? '' : '（已禁用）'}</option>`)}
+              </select>
+            </app-form-field>
+            ${draft.provider_id !== null ? html`<app-form-field label="模型">
+              <select class="form-select" aria-label=${SCENE_LABELS[row.scene] + '模型'} .value=${draft.model} .disabled=${!!this.sceneSaving}
+                @change=${(e: Event) => { this.sceneDrafts = { ...this.sceneDrafts, [row.scene]: { ...draft, model: (e.target as HTMLSelectElement).value } }; }}>
+                ${!models.includes(draft.model) ? html`<option value=${draft.model} .selected=${true}>${draft.model || '请选择模型'}（不可用）</option>` : ''}
+                ${models.map(model => html`<option value=${model} .selected=${model === draft.model}>${model}</option>`)}
+              </select>
+            </app-form-field>` : ''}
+            <button class="btn-primary" .disabled=${!!this.sceneSaving || (draft.provider_id !== null && !draft.model)}
+              @click=${() => this._saveScene(row.scene)}>${this.sceneSaving === row.scene ? '保存中…' : '保存分配'}</button>
+          ` : ''}
+          <p class="form-hint" aria-live="polite">${row.error || `当前生效：${row.effective?.provider_name} / ${row.effective?.model}${row.effective?.source === 'default' ? '（全局默认）' : ''}`}</p>
+        </app-card>`;
+      })}`;
   }
 
   _renderSidebar() {
@@ -502,6 +590,9 @@ export class LLMConfigPage extends LitElement {
         <div class="msg ${this.testResult.startsWith('✅') ? 'msg-ok' : 'msg-err'}">${this.testResult}</div>
       </div>` : null;
 
+    if (this.activeTab === "scenes") {
+      return html`<div class="detail"><div class="detail-inner">${this._renderScenes()}</div></div>`;
+    }
     if (this.viewMode === "picker") {
       return html`<div class="detail">${testBanner}<div class="detail-inner">${this._renderPicker()}</div></div>`;
     }
@@ -663,6 +754,10 @@ export class LLMConfigPage extends LitElement {
         `)}
       </div>
 
+      <app-form-field label="工具调用能力" hint="仅在提供商及所用模型支持工具调用时启用；智能对话和后台分析需要此能力。">
+        <input type="checkbox" aria-label="支持工具调用" .checked=${Boolean(this.form.supports_function_call)}
+          @change=${(e: Event) => { this.form = { ...this.form, supports_function_call: (e.target as HTMLInputElement).checked }; }} />
+      </app-form-field>
       <!-- Provider info bar -->
       ${isEdit ? html`
         <div class="toggle-row">

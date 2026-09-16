@@ -1,3 +1,4 @@
+import { resolveSceneModel } from './llm/scene-routing.js';
 import { createServiceProviderClient } from './llm/provider-connection.js';
 /**
  * LLM 服务模块 - 重构版
@@ -253,40 +254,21 @@ class LLMService {
    */
   async chatWithTracking(messages: ChatMessage[], options: ChatOptions): Promise<LLMResponse> {
     const startTime = Date.now();
-    let providerName = options.provider || this.defaultProviderName;
-
-    // 智能选择 Provider
-    if (!providerName || options.requiresFunctionCall || options.requiresVision || options.minContextWindow) {
-      const selected = this.selectProvider({
-        requiresFunctionCall: options.requiresFunctionCall,
-        requiresVision: options.requiresVision,
-        minContextWindow: options.minContextWindow,
-        preferredName: providerName || undefined,
-      });
-      if (!selected) {
-        return {
-          success: false,
-          error: '没有可用的 LLM 提供商',
-        };
-      }
-      providerName = selected.name;
+    let provider: LLMProvider;
+    let client: ProviderClient;
+    let selectedModel: string;
+    try {
+      const resolved = await resolveSceneModel(llmDatabaseService, options.purpose, options, options);
+      provider = resolved.provider;
+      selectedModel = resolved.model;
+      const configured = await this.createClient(provider);
+      if (!configured) throw new Error('LLM 客户端未初始化');
+      client = configured;
+    } catch (error: any) {
+      return { success: false, error: error.message };
     }
-
-    const provider = this.providers.get(providerName);
-    if (!provider) {
-      return {
-        success: false,
-        error: `LLM 提供商 '${providerName}' 未配置`,
-      };
-    }
-
-    const client = this.providerClients.get(providerName);
-    if (!client) {
-      return {
-        success: false,
-        error: `LLM 提供商 '${providerName}' 客户端未初始化`,
-      };
-    }
+    const providerName = provider.name;
+    options = { ...options, model: selectedModel };
 
     try {
       // 调用 LLM
@@ -412,40 +394,21 @@ class LLMService {
     }
   ): Promise<LLMResponse> {
     const startTime = Date.now();
-    let providerName = options.provider || this.defaultProviderName;
-
-    // 智能选择 Provider
-    if (!providerName) {
-      const selected = this.selectProvider({
-        requiresFunctionCall: options.requiresFunctionCall,
-        requiresVision: options.requiresVision,
-        minContextWindow: options.minContextWindow,
-        preferredName: providerName || undefined,
-      });
-      if (!selected) {
-        return {
-          success: false,
-          error: '没有可用的 LLM 提供商',
-        };
-      }
-      providerName = selected.name;
+    let provider: LLMProvider;
+    let client: ProviderClient;
+    let selectedModel: string;
+    try {
+      const resolved = await resolveSceneModel(llmDatabaseService, options.purpose, options, options);
+      provider = resolved.provider;
+      selectedModel = resolved.model;
+      const configured = await this.createClient(provider);
+      if (!configured) throw new Error('LLM 客户端未初始化');
+      client = configured;
+    } catch (error: any) {
+      return { success: false, error: error.message };
     }
-
-    const provider = this.providers.get(providerName);
-    if (!provider) {
-      return {
-        success: false,
-        error: `LLM 提供商 '${providerName}' 未配置`,
-      };
-    }
-
-    const client = this.providerClients.get(providerName);
-    if (!client) {
-      return {
-        success: false,
-        error: `LLM 提供商 '${providerName}' 客户端未初始化`,
-      };
-    }
+    const providerName = provider.name;
+    options = { ...options, model: selectedModel };
 
     try {
       let content = '';
@@ -494,7 +457,7 @@ class LLMService {
       return {
         success: true,
         content,
-        model: provider.default_model,
+        model: selectedModel,
         provider: providerName,
         duration_ms,
         usage: {

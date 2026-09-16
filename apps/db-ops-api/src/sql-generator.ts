@@ -52,7 +52,7 @@ SQL 示例：
       { role: 'user', content: userPrompt },
     ];
 
-    const response = await llmService.chat(messages);
+    const response = await llmService.chatWithTracking(messages, { purpose: 'sql_analysis' });
 
     if (!response.success || !response.content) {
       return { error: response.error || 'AI SQL 生成失败' };

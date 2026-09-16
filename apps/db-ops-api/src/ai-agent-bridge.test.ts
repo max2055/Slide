@@ -124,7 +124,7 @@ describe('dispatchOrReuse', () => {
     expect(fullMessage).toMatch(/忽略.*指令|ignore.*instructions/i);
     expect(systemPrompt).not.toContain(malicious);
     expect(systemPrompt).not.toContain(JSON.stringify(diagnosticContext));
-    expect(invoke).toHaveBeenCalledWith('fault-untrusted', fullMessage, systemPrompt, { analysisId: 42 });
+    expect(invoke).toHaveBeenCalledWith('fault-untrusted', fullMessage, systemPrompt, { analysisId: 42, purpose: 'fault_diagnosis' });
   });
 
   it('preserves alert RCA dispatch without requiring diagnostic context', async () => {

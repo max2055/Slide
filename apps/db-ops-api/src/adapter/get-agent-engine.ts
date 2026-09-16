@@ -238,10 +238,10 @@ export async function getPlatformTool(toolName: string): Promise<AnyAgentTool | 
 // ── Adapter instance factories ──
 
 /** Select the configured provider without changing process-wide environment. */
-export async function createLLMProvider(): Promise<import('@slide/agent-core').LLMProvider> {
+export async function createLLMProvider(purpose = 'chat'): Promise<import('@slide/agent-core').LLMProvider> {
   const { llmDatabaseService } = await import('../llm-database-service.js');
   const { createConfiguredAgentProvider } = await import('./llm-provider-factory.js');
-  return createConfiguredAgentProvider(llmDatabaseService);
+  return createConfiguredAgentProvider(llmDatabaseService, purpose);
 }
 
 async function createDirectAdapter(): Promise<DirectAdapter> {
@@ -257,6 +257,7 @@ async function createDirectAdapter(): Promise<DirectAdapter> {
     tools,
     toolsForActor: createActorBoundToolRegistry,
     llmProvider: provider,
+    providerForPurpose: createLLMProvider,
     skillsLoader,
     workspace: process.env.AGENT_WORKSPACE || process.cwd(),
   });

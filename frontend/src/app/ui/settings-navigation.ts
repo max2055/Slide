@@ -67,7 +67,13 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     id: "ai",
     label: "AI 与 Agent",
     items: [
-      { id: "models", label: "模型配置", path: "/settings/ai/models", icon: "brain", requiredPermission: "llm:view" },
+      {
+        id: "models", label: "模型配置", path: "/settings/ai/models", icon: "brain", requiredPermission: "llm:view",
+        views: [
+          { id: "providers", label: "模型配置", requiredPermission: "llm:view" },
+          { id: "scenes", label: "场景分配", requiredPermission: "llm:view" },
+        ],
+      },
       { id: "prompts", label: "提示词管理", path: "/settings/ai/prompts", icon: "book" },
       {
         id: "capabilities",

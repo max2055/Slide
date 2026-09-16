@@ -793,6 +793,33 @@ describe('DirectAdapter', () => {
   });
 
   describe('invoke()', () => {
+    it('isolates concurrent scene providers and resolves chat configuration for each turn', async () => {
+      const sql = new MockLLMProvider();
+      const fault = new MockLLMProvider();
+      const chat = new MockLLMProvider();
+      vi.spyOn(sql, 'getDefaultModel').mockReturnValue('sql-model');
+      vi.spyOn(fault, 'getDefaultModel').mockReturnValue('fault-model');
+      vi.spyOn(chat, 'getDefaultModel').mockReturnValue('chat-model');
+      const sqlCall = vi.spyOn(sql, 'chat');
+      const faultCall = vi.spyOn(fault, 'chat');
+      const chatCall = vi.spyOn(chat, 'chatStream');
+      const resolve = vi.fn(async (purpose?: string) => purpose === 'sql_analysis' ? sql : purpose === 'fault_diagnosis' ? fault : chat);
+      const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: new FailingProvider(), providerForPurpose: resolve });
+      try {
+        const results = await Promise.all([
+          adapter.invoke('scene-sql', 'SQL', undefined, { purpose: 'sql_analysis' }),
+          adapter.invoke('scene-fault', 'Fault', undefined, { purpose: 'fault_diagnosis' }),
+          adapter.chat('scene-chat', 'Hello', () => {}),
+        ]);
+        expect(results.every(r => r.stopReason === 'completed')).toBe(true);
+        expect(sqlCall.mock.calls[0][2]?.model).toBe('sql-model');
+        expect(faultCall.mock.calls[0][2]?.model).toBe('fault-model');
+        expect(chatCall.mock.calls[0][3]?.model).toBe('chat-model');
+        await adapter.chat('scene-chat', 'Again', () => {});
+        expect(resolve.mock.calls.filter(([purpose]) => purpose === 'chat')).toHaveLength(2);
+      } finally { await adapter.dispose(); }
+    });
+
     it.each(['cancel', 'deadline'])('aborts a non-cooperative background provider on %s', async mode => {
       vi.useFakeTimers();
       vi.stubEnv('AGENT_RUN_TIMEOUT_MS', '5000');

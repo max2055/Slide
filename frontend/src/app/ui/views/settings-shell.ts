@@ -379,7 +379,7 @@ export class SettingsShell extends LitElement {
       case "analysis": return this.activeView === "scoring"
         ? html`<scoring-settings-page></scoring-settings-page>`
         : html`<ai-settings-page></ai-settings-page>`;
-      case "models": return html`<llm-config-page></llm-config-page>`;
+      case "models": return html`<llm-config-page .activeTab=${this.activeView}></llm-config-page>`;
       case "prompts": return html`<prompt-settings-page></prompt-settings-page>`;
       case "capabilities": return this.activeView === "tools"
         ? html`<agent-tools-page></agent-tools-page>`
