@@ -89,11 +89,13 @@ export const defaultAdapterUrl = () => {
 export const MAX_RECONNECT_ATTEMPTS = 10;
 const INITIAL_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
+const STABLE_CONNECTION_MS = 30_000;
 const SESSION_EXPIRED_MESSAGE = '登录已失效，请重新登录。';
 const RATE_LIMITED_MESSAGE = '请求过于频繁，请稍后再试。';
 const NETWORK_INTERRUPTED_MESSAGE = '网络连接中断，消息将在连接恢复后继续确认。';
 const SERVICE_RESTART_MESSAGE = '服务正在重启，消息将在连接恢复后继续确认。';
 const CHAT_ACCEPT_TIMEOUT_MS = 15_000;
+const MAX_CHAT_ACCEPT_RETRIES = 2;
 
 type PendingChatMessage = {
   frame: Record<string, unknown>;
@@ -102,6 +104,7 @@ type PendingChatMessage = {
 };
 
 type PendingChatAcknowledgement = {
+  retries: number;
   frame: Record<string, unknown>;
   resolve: () => void;
   reject: (error: Error) => void;
@@ -120,6 +123,7 @@ export class DirectGatewayClient {
   private maxReconnectAttempts = MAX_RECONNECT_ATTEMPTS;
   private closed = false;
   private authenticated = false;
+  private authenticatedAt: number | null = null;
   private pendingMessages: PendingChatMessage[] = [];
   private pendingChatAcknowledgements = new Map<string, PendingChatAcknowledgement>();
   private lastCloseDetails: WebSocketCloseDetails | null = null;
@@ -141,10 +145,12 @@ export class DirectGatewayClient {
   }
 
   connect(): void {
-    if (this.closed) {
+    if (this.closed || this.ws) {
       return;
     }
+    this.clearReconnectTimer();
     this.authenticated = false;
+    this.authenticatedAt = null;
     this.onStateChange('connecting');
     const socket = new WebSocket(this.url);
     const connectionId = generateUUID();
@@ -152,7 +158,6 @@ export class DirectGatewayClient {
 
     socket.onopen = () => {
       if (this.ws !== socket) return;
-      this.reconnectAttempts = 0;
       const token = typeof window !== 'undefined'
         ? (window as any).__apiClient?.getToken?.()
         : null;
@@ -176,6 +181,11 @@ export class DirectGatewayClient {
     socket.onclose = (ev: CloseEvent) => {
       if (this.ws !== socket) return;
       this.ws = null;
+      // A successful handshake alone does not prove recovery (open/close storms).
+      if (this.authenticatedAt !== null && Date.now() - this.authenticatedAt >= STABLE_CONNECTION_MS) {
+        this.reconnectAttempts = 0;
+      }
+      this.authenticatedAt = null;
       this.authenticated = false;
       this.lastCloseDetails = { code: ev.code, reason: ev.reason, wasClean: ev.wasClean };
       console.warn('[DirectGatewayClient] WebSocket closed', {
@@ -208,9 +218,6 @@ export class DirectGatewayClient {
       } else {
         this.onStateChange('disconnected');
       }
-      if (ev.code === 4002) {
-        // Unauthenticated message sent before auth_ok — retryable (WR-01)
-      }
       if (!this.closed) {
         this.scheduleReconnect();
       }
@@ -224,6 +231,7 @@ export class DirectGatewayClient {
 
   disconnect(): void {
     this.closed = true;
+    this.authenticatedAt = null;
     this.authenticated = false;
     this.rejectPendingMessages(new Error('[DirectGatewayClient] disconnected before the message was sent'));
     this.rejectPendingChatAcknowledgements(
@@ -397,6 +405,7 @@ export class DirectGatewayClient {
 
   /** Manual reconnect — resets retry counter. Used after exhausted state. */
   reconnect(): void {
+    if (this.ws) return;
     this.closed = false;
     this.reconnectAttempts = 0;
     this.clearReconnectTimer();
@@ -412,7 +421,9 @@ export class DirectGatewayClient {
 
     // Handle auth_ok to flush pending messages (CR-04 race condition fix)
     if (type === 'auth_ok') {
+      if (this.authenticated) return;
       this.authenticated = true;
+      this.authenticatedAt = Date.now();
       this.lastCloseDetails = null;
       this.resumePendingChatAcknowledgements();
       const pending = this.pendingMessages;
@@ -496,7 +507,7 @@ export class DirectGatewayClient {
       return Promise.reject(new Error('[DirectGatewayClient] chat.send is missing messageId'));
     }
     return new Promise<void>((resolve, reject) => {
-      const acknowledgement: PendingChatAcknowledgement = { frame, resolve, reject, timer: null };
+      const acknowledgement: PendingChatAcknowledgement = { frame, resolve, reject, timer: null, retries: 0 };
       this.pendingChatAcknowledgements.set(messageId, acknowledgement);
       try {
         this.ws!.send(JSON.stringify(frame));
@@ -563,6 +574,11 @@ export class DirectGatewayClient {
     acknowledgement.timer = setTimeout(() => {
       acknowledgement.timer = null;
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.authenticated) return;
+      if (acknowledgement.retries >= MAX_CHAT_ACCEPT_RETRIES) {
+        this.rejectChatAcknowledgement(messageId, new Error('消息接收状态未知，请先检查会话记录，避免重复提交。'));
+        return;
+      }
+      acknowledgement.retries++;
       // Re-send the exact frame so the server can answer with the durable run snapshot.
       try {
         this.ws.send(JSON.stringify(acknowledgement.frame));
