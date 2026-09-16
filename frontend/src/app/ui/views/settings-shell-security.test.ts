@@ -37,6 +37,16 @@ describe('settings navigation and routing', () => {
     expect(new URL(window.location.href).searchParams.get('view')).toBe('scoring');
   });
 
+  it('restores Agent sessions in AI settings and redirects the legacy route', async () => {
+    const element = await renderAt('/agent-sessions?source=legacy', ['ai:view']);
+    const root = element.shadowRoot!;
+
+    expect(window.location.pathname).toBe('/settings/ai/sessions');
+    expect(new URL(window.location.href).searchParams.get('source')).toBe('legacy');
+    expect([...root.querySelectorAll('.settings-item')].some((node) => node.textContent?.includes('Agent 会话'))).toBe(true);
+    expect(root.querySelector('agent-sessions-page')).not.toBeNull();
+  });
+
   it('filters whole groups and merged-page tabs without expanding permissions', async () => {
     const element = await renderAt('/settings/ai/security?view=policy', ['ai:view']);
     const text = element.shadowRoot?.textContent ?? '';

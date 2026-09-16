@@ -30,6 +30,7 @@ export type SettingsPageId =
   | "analysis"
   | "models"
   | "prompts"
+  | "sessions"
   | "capabilities"
   | "security"
   | "users"
@@ -75,6 +76,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         ],
       },
       { id: "prompts", label: "提示词管理", path: "/settings/ai/prompts", icon: "book" },
+      { id: "sessions", label: "Agent 会话", path: "/settings/ai/sessions", icon: "clipboard", requiredPermission: "ai:view" },
       {
         id: "capabilities",
         label: "Agent 能力",
@@ -128,6 +130,7 @@ export const LEGACY_SETTINGS_PATHS: Readonly<Record<string, LegacySettingsTarget
   "/scoring-settings": { pageId: "analysis", view: "scoring" },
   "/llm-config": { pageId: "models" },
   "/prompt-settings": { pageId: "prompts" },
+  "/agent-sessions": { pageId: "sessions" },
   "/agent-skills": { pageId: "capabilities", view: "skills" },
   "/agent-tools": { pageId: "capabilities", view: "tools" },
   "/agent-security-policy": { pageId: "security", view: "policy" },
@@ -142,6 +145,7 @@ export const LEGACY_SETTINGS_PATHS: Readonly<Record<string, LegacySettingsTarget
   "/settings/ai-settings": { pageId: "analysis", view: "automatic" },
   "/settings/llm-config": { pageId: "models" },
   "/settings/prompt-settings": { pageId: "prompts" },
+  "/settings/agent-sessions": { pageId: "sessions" },
   "/settings/agent-skills": { pageId: "capabilities", view: "skills" },
   "/settings/agent-tools": { pageId: "capabilities", view: "tools" },
   "/settings/agent-security-policy": { pageId: "security", view: "policy" },

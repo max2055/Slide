@@ -102,7 +102,8 @@ test("desktop navigation uses the new groups and fixed utility entries", async (
   await expect(page.locator("settings-shell .settings-group__label")).toHaveText([
     "平台设置", "监控与分析", "AI 与 Agent", "用户与权限",
   ]);
-  await expect(page.locator("settings-shell .settings-item__icon svg")).toHaveCount(11);
+  await expect(page.locator("settings-shell .settings-item__icon svg")).toHaveCount(13);
+  await expect(page.locator("settings-shell .settings-item", { hasText: "Agent 会话" })).toBeVisible();
 });
 
 test("legacy routes preserve query parameters and merged views restore through history", async ({ page }) => {
