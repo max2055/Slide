@@ -15,6 +15,26 @@ async function setup() {
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
 describe('source snapshot boundary', () => {
+  it('keeps flagged and larger source files readable with signed advisory warnings', async () => {
+    const { service, root } = await setup();
+    const files = [
+      { path: 'src/config.json', content: '{"password":"fixture-sensitive-value"}' },
+      { path: 'src/large.ts', content: 'export const large = 1;\n' + '// fixture padding\n'.repeat(40_000) },
+      { path: 'src/template.yaml', content: 'template: [unfinished' },
+    ];
+    const manifest = await service.publish({ releaseId: 'advisory', commitSha: commit, projectId: 'group/repo' }, files);
+    expect(manifest).toMatchObject({ completeness: 'complete', skippedFiles: [], warnings: [
+      { path: 'src/config.json', reason: 'SOURCE_SENSITIVE_CONTENT' },
+      { path: 'src/large.ts', reason: 'SOURCE_LARGE_FILE' },
+      { path: 'src/template.yaml', reason: 'SOURCE_CONFIG_UNSCANNABLE' },
+    ] });
+    for (const file of files) expect((await service.read('advisory', manifest, file.path, 1, 1)).content).toBe(file.content.split('\n')[0]);
+    expect(await service.search('advisory', manifest, 'password')).toHaveLength(1);
+    expect(await service.symbols('advisory', manifest, 'large')).toHaveLength(1);
+    const path = join(root, 'advisory', 'manifest.json');
+    await chmod(path, 0o600); await writeFile(path, JSON.stringify({ ...manifest, warnings: [] }));
+    await expect(service.manifest('advisory')).rejects.toThrow('SOURCE_SNAPSHOT_UNTRUSTED');
+  });
   it('accepts GitHub owner/repository identities', async () => {
     const root = await mkdtemp(join(tmpdir(), 'slide-source-github-test-')); roots.push(root);
     const service = new SourceSnapshotService(root, 'test-signing-key-not-production-123456');
