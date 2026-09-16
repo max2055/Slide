@@ -1,3 +1,4 @@
+/** @deprecated Legacy REST transport; production sync uses GitSourceConnector. */
 import { assertSourceContent, assertSourcePath, type SourceFile } from './source-snapshot-service.js';
 import { ProxyAgent } from 'undici';
 import { execFileSync } from 'node:child_process';

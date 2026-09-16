@@ -3,8 +3,8 @@ import { Value } from '@sinclair/typebox/value';
 import { resolve } from 'node:path';
 import { dbConnection } from '../db-connection.js';
 import type { ActorContext } from '../auth/actor-context.js';
-import { credentialReferenceService } from '../security/credential-reference-service.js';
 import { auditLogManager } from '../audit/audit-log.js';
+import { assertRepositoryPath } from './source-repository-path.js';
 import { GitSourceConnector } from './git-source-connector.js';
 import { SourceSnapshotService, describeSourceFiles } from './source-snapshot-service.js';
 import { readDeploymentBinding } from './deployment-binding.js';
@@ -12,7 +12,8 @@ import { FixedWindowRateLimiter } from '../security/agent-runtime-limits.js';
 
 const ConfigSchema = Type.Object({
   provider: Type.Optional(Type.Union([Type.Literal('gitlab'), Type.Literal('github')])),
-  baseUrl: Type.String({ maxLength: 512 }), projectId: Type.String({ minLength: 1, maxLength: 128 }),
+  baseUrl: Type.String({ maxLength: 512 }), repositoryPath: Type.String({ minLength: 1, maxLength: 256 }),
+  gitUsername: Type.Optional(Type.String({ pattern: '^[A-Za-z0-9_.@+-]+$', minLength: 1, maxLength: 128 })),
   allowedPaths: Type.Array(Type.String({ pattern: '^[A-Za-z0-9_/-]+/$', maxLength: 256 }), { maxItems: 32, uniqueItems: true }),
   allowModelContent: Type.Boolean(),
   httpProxy: Type.Optional(Type.String({ maxLength: 512 })), httpsProxy: Type.Optional(Type.String({ maxLength: 512 })), allProxy: Type.Optional(Type.String({ maxLength: 512 })),
@@ -36,17 +37,27 @@ export class SourceManagementService {
     if (!Value.Check(ConfigSchema, input)) throw new Error('SOURCE_CONFIG_INVALID');
     let url: URL; try { url = new URL(input.baseUrl); } catch { throw new Error('SOURCE_ORIGIN_DENIED'); }
     if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/' || !this.allowedOrigins.includes(url.origin)) throw new Error('SOURCE_ORIGIN_DENIED');
-    if ((input.provider ?? 'gitlab') === 'gitlab' && !/^\d{1,20}$/.test(input.projectId)) throw new Error('SOURCE_CONFIG_INVALID');
-    if (input.provider === 'github' && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(input.projectId)) throw new Error('SOURCE_CONFIG_INVALID');
+    assertRepositoryPath(input.repositoryPath, input.provider ?? 'gitlab');
     if (input.allowedPaths.some(path => path.split('/').slice(0, -1).some(part => !part || part === '..'))) throw new Error('SOURCE_CONFIG_INVALID');
     for (const key of ['httpProxy', 'httpsProxy', 'allProxy'] as const) if (input[key] && !/^https?:\/\/[^\s]+$/.test(input[key])) throw new Error('SOURCE_CONFIG_INVALID');
-    return { ...input, baseUrl: url.origin };
+    return { ...input, provider: input.provider ?? 'gitlab', baseUrl: url.origin };
   }
   async load(actor: ActorContext): Promise<SourceConfig | null> {
     requireSourceReader(actor);
     const [rows] = await this.executor().execute('SELECT config_value FROM system_config WHERE config_key = ?', ['source.gitlab']);
     if (!rows.length) return null;
-    try { return this.validate(JSON.parse(rows[0].config_value)); } catch { throw new Error('SOURCE_CONFIG_INVALID'); }
+    try {
+      const stored = JSON.parse(rows[0].config_value);
+      if (!stored.repositoryPath && stored.projectId) {
+        if (/^\d+$/.test(stored.projectId)) throw new Error('SOURCE_REPOSITORY_PATH_REQUIRED');
+        stored.repositoryPath = stored.projectId;
+        delete stored.projectId;
+      }
+      return this.validate(stored);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'SOURCE_REPOSITORY_PATH_REQUIRED') throw error;
+      throw new Error('SOURCE_CONFIG_INVALID');
+    }
   }
   async save(actor: ActorContext, input: unknown) {
     requireSourceAdmin(actor); const config = this.validate(input);
@@ -60,17 +71,16 @@ export class SourceManagementService {
   private snapshots() {
     return new SourceSnapshotService(resolve(process.env.SLIDE_SOURCE_ROOT ?? './data/source-snapshots'), process.env.SLIDE_SOURCE_SIGNING_KEY ?? '');
   }
-  async sync(actor: ActorContext, credentialRef: string) {
+  async sync(actor: ActorContext, token: string) {
     requireSourceAdmin(actor);
     if (this.syncing) throw new Error('SOURCE_SYNC_BUSY');
     const deployment = this.deployment(); const config = await this.load(actor);
     if (!config) throw new Error('SOURCE_NOT_CONFIGURED');
     this.syncing = true;
     try {
-      const token = await credentialReferenceService.consume(credentialRef, actor.userId, 'gitlab_source_sync');
       if (!token) throw new Error('SOURCE_CREDENTIAL_INVALID');
       const sourceConfig = { ...config, commitSha: deployment.commitSha, token, tokenExpiresAt: new Date(Date.now() + 15 * 60_000).toISOString() };
-      const files = new GitSourceConnector(this.allowedOrigins).fetchFiles(sourceConfig as any);
+      const files = new GitSourceConnector(this.allowedOrigins).fetchFiles({ ...sourceConfig, provider: config.provider ?? 'gitlab' });
       // Validate the expected deployment digest before publishing a usable snapshot.
       const { createHash } = await import('node:crypto');
       const hash = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -78,7 +88,7 @@ export class SourceManagementService {
       // Development/checkouts may legitimately be ahead of the published deployment.
       // Keep strict binding by default; operators can explicitly opt into drift mode.
       if (hash(JSON.stringify(descriptors)) !== deployment.treeDigest && process.env.SLIDE_SOURCE_ALLOW_DRIFT !== 'true') throw new Error('SOURCE_COMMIT_MISMATCH');
-      const manifest = await this.snapshots().publish({ releaseId: deployment.releaseId, commitSha: deployment.commitSha, projectId: config.projectId }, files);
+      const manifest = await this.snapshots().publish({ releaseId: deployment.releaseId, commitSha: deployment.commitSha, projectId: config.repositoryPath }, files);
       await auditLogManager.logToolCall({ userId: String(actor.userId), username: actor.username, toolName: 'source_sync', toolParams: deployment, result: 'success' });
       return manifest;
     } catch (error) {
@@ -99,7 +109,7 @@ export class SourceManagementService {
       if (model && !config.allowModelContent) throw new Error('SOURCE_MODEL_EGRESS_DENIED');
       const binding = this.deployment(); const snapshots = this.snapshots();
       const manifest = await snapshots.manifest(binding.releaseId, binding);
-      if (manifest.projectId !== config.projectId || (config.allowedPaths.length > 0 && manifest.files.some(file => !config.allowedPaths.some(path => file.path.startsWith(path))))) throw new Error('SOURCE_SNAPSHOT_POLICY_CHANGED');
+      if (manifest.projectId !== config.repositoryPath || (config.allowedPaths.length > 0 && manifest.files.some(file => !config.allowedPaths.some(path => file.path.startsWith(path))))) throw new Error('SOURCE_SNAPSHOT_POLICY_CHANGED');
       const result = mode === 'manifest' ? manifest
         : mode === 'search' ? await snapshots.search(binding.releaseId, binding, args.query as string)
         : mode === 'symbol' ? await snapshots.symbols(binding.releaseId, binding, args.name as string)
