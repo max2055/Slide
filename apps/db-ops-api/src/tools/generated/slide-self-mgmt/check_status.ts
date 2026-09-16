@@ -33,7 +33,7 @@ interface SlideStatus {
 
 export const checkStatusTool: AnyAgentTool = {
   name: 'slide_check_status',
-  description: '检查 Slide 平台整体状态，包括后端 API 服务（:3000）、前端服务（:5173）、数据库连接、LLM 连接等。用于快速了解系统各个组件是否正常运行。可选参数：include_details（返回详情）、test_db_connections（测试DB连接）、test_llm（测试LLM连接）',
+  description: '检查 Slide 平台整体状态，包括后端 API 服务（:3000）、前端服务（按部署配置探活，生产探活失败仅作警告，不代表服务停止）、数据库连接、LLM 连接等。用于快速了解系统各个组件是否正常运行。可选参数：include_details（返回详情）、test_db_connections（测试DB连接）、test_llm（测试LLM连接）',
   parameters: {
     type: 'object',
     properties: {
@@ -99,7 +99,7 @@ export const checkStatusTool: AnyAgentTool = {
 
       return {
         success: true,
-        status: status.overall === 'healthy' ? 'success' : status.overall === 'unknown' ? 'warning' : 'warning',
+        status: status.overall === 'healthy' && frontendStatus.status === 'running' ? 'success' : 'warning',
         data: status,
         summary: `Slide 状态：${translateStatus(status.overall)}，${status.services.length} 个服务组件`,
         details: {
@@ -169,41 +169,56 @@ async function checkBackendService(): Promise<ServiceStatus> {
  * 检查前端服务状态
  */
 async function checkFrontendService(): Promise<ServiceStatus> {
-  const startTime = Date.now();
+  const production = process.env.NODE_ENV === 'production';
+  const frontendUrl = process.env.FRONTEND_URL?.trim()
+    || process.env.SLIDE_PUBLIC_ORIGIN?.trim()
+    || (production ? undefined : 'http://localhost:5173');
+  if (!frontendUrl) {
+    return {
+      name: '前端服务',
+      status: 'unknown',
+      error: '未配置 FRONTEND_URL 或 SLIDE_PUBLIC_ORIGIN，跳过前端探活；无法确认前端状态',
+    };
+  }
 
+  let port: number;
   try {
-    const response = await fetch('http://localhost:5173', {
+    const url = new URL(frontendUrl);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+      throw new Error('Invalid frontend URL');
+    }
+    port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+  } catch {
+    return {
+      name: '前端服务',
+      status: 'unknown',
+      error: '前端探活地址配置无效，需使用不含凭证的 HTTP(S) URL；无法确认前端状态',
+    };
+  }
+
+  const startTime = Date.now();
+  try {
+    const response = await fetch(frontendUrl, {
       method: 'HEAD',
       signal: AbortSignal.timeout(5000),
     });
-
     const responseTimeMs = Date.now() - startTime;
-
     if (response.ok || response.status === 304) {
-      return {
-        name: '前端服务',
-        status: 'running',
-        port: 5173,
-        responseTimeMs,
-      };
-    } else {
-      return {
-        name: '前端服务',
-        status: 'error',
-        port: 5173,
-        responseTimeMs,
-        error: `HTTP ${response.status}`,
-      };
+      return { name: '前端服务', status: 'running', port, responseTimeMs };
     }
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
     return {
       name: '前端服务',
-      status: 'stopped',
-      port: 5173,
-      error: errorMessage.includes('ECONNREFUSED')
-        ? '服务未启动或端口不可达'
-        : errorMessage,
+      status: production ? 'unknown' : 'error',
+      port,
+      responseTimeMs,
+      error: `前端探活返回 HTTP ${response.status}，无法确认前端状态`,
+    };
+  } catch {
+    return {
+      name: '前端服务',
+      status: 'unknown',
+      port,
+      error: '前端探活不可达或超时，无法确认前端状态；请检查部署地址与网络，不能据此认定服务停止',
     };
   }
 }
@@ -346,6 +361,10 @@ function getBackendVersion(): string | undefined {
  * 计算整体状态
  */
 function calculateOverallStatus(services: ServiceStatus[]): 'healthy' | 'degraded' | 'unhealthy' | 'unknown' {
+  // 生产前端可能位于独立容器或外部代理后；探活仅作诊断提示。
+  if (process.env.NODE_ENV === 'production') {
+    services = services.filter(service => service.name !== '前端服务');
+  }
   if (services.length === 0) return 'unknown';
 
   const statusCounts = {
