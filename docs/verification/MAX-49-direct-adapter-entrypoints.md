@@ -10,6 +10,19 @@
 
 硬预算未设定；子代理 0、最大代理深度 0、并发代理峰值 1。实际 raw input / cached input / output token 与费用遥测不可用，未使用内部估算冒充实测；未创建 Goal 账本。
 
+## 干净 PR 候选补充记录
+
+交付隔离 v1（范围不变）：原工作树基线含无关未发布提交和打包产物，不能一并推送。另建 `agent/15codex/max-49-pr`，以远端主分支 `45259c040788239035126014a53bb695ee878f64` 为基线，仅 cherry-pick 本任务两次提交；对应新提交为 `1a2232f`（RED 测试）和 `9865379`（修复）。未修改或发布原工作树的 AGENTS.md、打包产物及其他用户修改。
+
+由于基线发生变化，对该最终候选重新完整验证：
+
+- `pnpm --filter slide-frontend test`：72 文件、453/453 通过。
+- `pnpm --filter slide-frontend typecheck`：通过。
+- `pnpm --filter slide-frontend build`：通过，CSP 校验通过；仅有同类 chunk/导入警告。
+- `git diff --check`：通过。PR 仅 7 个任务相关文件。
+
+以下保留最初工作树的调查与阶段验证记录；最终交付的门禁结论以上述干净候选为准。没有重置资源累计，也没有增加代理。
+
 ## 五项决策表
 
 `request()` 实际位于 `frontend/src/app/ui/direct-gateway.ts:248`，不在后端 DirectAdapter 类中；未知方法在第 321 行直接抛错，不产生网络请求。
