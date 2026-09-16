@@ -1002,12 +1002,11 @@ export function initChatClient(host: Record<string, unknown>): void {
           void loadPermissions(host);
         }
         const loadState = async () => {
-          try {
-            await loadAgents(host as unknown as AgentsState);
-            await loadSessions(host as unknown as SessionsState, {
-              activeMinutes: CHAT_SESSIONS_ACTIVE_MINUTES,
-            });
-          } catch { /* best-effort */ }
+          // Each loader owns its error state and resolves after handled failures.
+          await loadAgents(host as unknown as AgentsState);
+          await loadSessions(host as unknown as SessionsState, {
+            activeMinutes: CHAT_SESSIONS_ACTIVE_MINUTES,
+          });
           refreshActiveTab(host as unknown as Parameters<typeof refreshActiveTab>[0]);
         };
         loadState();

@@ -6,7 +6,10 @@ vi.mock('./device-identity.ts', () => {
 });
 
 import { initChatClient } from './direct-gateway.ts';
-import { apiClient } from '../../api/index.ts';
+import * as api from '../../api/index.ts';
+import * as appSettings from './app-settings.ts';
+import { loadAgents, type AgentsState } from './controllers/agents.ts';
+import { loadSessions, type SessionsState } from './controllers/sessions.ts';
 
 class MockWebSocket {
   static readonly OPEN = 1;
@@ -57,13 +60,79 @@ describe('initChatClient', () => {
   });
 
   it.each([
+    ['agents', 'network'], ['agents', 'http'], ['agents', 'json'],
+    ['sessions', 'network'], ['sessions', 'http'], ['sessions', 'json'],
+    ['both', 'network'],
+  ])('continues initialization and recovers after %s %s failure', async (failedLoader, failure) => {
+    const agents = { agents: [{ id: 'agent-1' }], defaultId: 'agent-1' };
+    const sessions = { ok: true, sessions: [{ key: 'session-1' }], defaults: {} };
+    let failing = true;
+    const fetch = vi.spyOn(api, 'authFetch').mockImplementation(async (url) => {
+      const isAgents = String(url) === '/api/agents';
+      if (failing && (failedLoader === 'both' || failedLoader === (isAgents ? 'agents' : 'sessions'))) {
+        if (failure === 'network') throw new Error('offline');
+        if (failure === 'http') return new Response('', { status: 503 });
+        return new Response('{invalid json');
+      }
+      return new Response(JSON.stringify(isAgents ? agents : sessions));
+    });
+    vi.spyOn(api.apiClient, 'getToken').mockReturnValue('jwt-token');
+    const permissions = vi.spyOn(api.apiClient, 'fetchResponseWithAuth')
+      .mockResolvedValue(new Response(JSON.stringify(['chat:read'])));
+    const refresh = vi.spyOn(appSettings, 'refreshActiveTab').mockResolvedValue(undefined);
+    const host = {
+      client: null, connected: false, lastError: null,
+      agentsLoading: false, agentsError: null, agentsList: null, agentsSelectedId: null,
+      sessionsLoading: false, sessionsError: null, sessionsResult: null,
+      sessionsFilterActive: '', sessionsFilterLimit: '',
+      sessionsIncludeGlobal: false, sessionsIncludeUnknown: false,
+    } as AgentsState & SessionsState & { lastError: string | null };
+
+    initChatClient(host);
+    await vi.waitFor(() => expect(MockWebSocket.latest?.frames.length).toBeGreaterThan(0));
+    MockWebSocket.latest?.receive({ type: 'auth_ok' });
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(localStorage.getItem('permissions')).toBe('["chat:read"]'));
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(String(fetch.mock.calls[0][0])).toBe('/api/agents');
+    expect(String(fetch.mock.calls[1][0])).toMatch(/^\/api\/sessions\?/);
+    expect(permissions).toHaveBeenCalledExactlyOnceWith('/api/auth/permissions');
+    expect(host.agentsLoading).toBe(false);
+    expect(host.sessionsLoading).toBe(false);
+    expect(host.connected).toBe(true);
+    expect(host.lastError).toBeNull();
+    for (const loader of ['agents', 'sessions'] as const) {
+      const error = host[`${loader}Error`];
+      if (failedLoader === loader || failedLoader === 'both') {
+        expect(error).toMatch(failure === 'http' ? /HTTP 503/ : failure === 'network' ? /offline/ : /SyntaxError/);
+      } else {
+        expect(error).toBeNull();
+        expect(loader === 'agents' ? host.agentsList : host.sessionsResult)
+          .toEqual(loader === 'agents' ? agents : sessions);
+      }
+    }
+
+    failing = false;
+    await loadAgents(host);
+    await loadSessions(host);
+    expect(host.agentsError).toBeNull();
+    expect(host.sessionsError).toBeNull();
+    expect(host.agentsLoading).toBe(false);
+    expect(host.sessionsLoading).toBe(false);
+    expect(host.agentsList).toEqual(agents);
+    expect(host.agentsSelectedId).toBe('agent-1');
+    expect(host.sessionsResult).toEqual(sessions);
+  });
+
+  it.each([
     ['HTTP failure', () => Promise.resolve(new Response('["users:manage"]', { status: 500 }))],
     ['invalid JSON', () => Promise.resolve(new Response('{'))],
     ['error object', () => Promise.resolve(Response.json({ error: 'failed' }))],
     ['mixed array', () => Promise.resolve(Response.json(['users:view', 42]))],
     ['network failure', () => Promise.reject(new TypeError('Failed to fetch'))],
   ])('does not cache or announce %s and exposes a recoverable error', async (_name, response) => {
-    vi.spyOn(apiClient, 'fetchResponseWithAuth').mockImplementation((url) =>
+    vi.spyOn(api.apiClient, 'fetchResponseWithAuth').mockImplementation((url) =>
       url === '/api/auth/permissions' ? response() : Promise.resolve(Response.json({ agents: [], sessions: [] })),
     );
     const loaded = vi.fn();
@@ -80,7 +149,7 @@ describe('initChatClient', () => {
       initChatClient(host);
       await vi.waitFor(() => expect(MockWebSocket.latest?.frames.length).toBeGreaterThan(0));
       MockWebSocket.latest?.receive({ type: 'auth_ok' });
-      expect(vi.mocked(apiClient.fetchResponseWithAuth).mock.calls.filter(([url]) => url === '/api/auth/permissions')).toHaveLength(1);
+      expect(vi.mocked(api.apiClient.fetchResponseWithAuth).mock.calls.filter(([url]) => url === '/api/auth/permissions')).toHaveLength(1);
     } finally {
       window.removeEventListener('slide-permissions-loaded', loaded);
     }
@@ -88,7 +157,7 @@ describe('initChatClient', () => {
 
   it('replaces a corrupt initialization cache with validated permissions', async () => {
     localStorage.setItem('permissions', '{"error":"old failure"}');
-    vi.spyOn(apiClient, 'fetchResponseWithAuth').mockImplementation((url) => Promise.resolve(
+    vi.spyOn(api.apiClient, 'fetchResponseWithAuth').mockImplementation((url) => Promise.resolve(
       Response.json(url === '/api/auth/permissions' ? ['servers:view'] : { agents: [], sessions: [] }),
     ));
     const host: Record<string, unknown> = { client: null, connected: false };
