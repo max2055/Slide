@@ -77,9 +77,26 @@ describe('initChatClient', () => {
       expect(localStorage.getItem('permissions')).toBeNull();
       expect(loaded).not.toHaveBeenCalled();
       expect(host.connected).toBe(true);
+      initChatClient(host);
+      await vi.waitFor(() => expect(MockWebSocket.latest?.frames.length).toBeGreaterThan(0));
+      MockWebSocket.latest?.receive({ type: 'auth_ok' });
+      expect(vi.mocked(apiClient.fetchResponseWithAuth).mock.calls.filter(([url]) => url === '/api/auth/permissions')).toHaveLength(1);
     } finally {
       window.removeEventListener('slide-permissions-loaded', loaded);
     }
+  });
+
+  it('replaces a corrupt initialization cache with validated permissions', async () => {
+    localStorage.setItem('permissions', '{"error":"old failure"}');
+    vi.spyOn(apiClient, 'fetchResponseWithAuth').mockImplementation((url) => Promise.resolve(
+      Response.json(url === '/api/auth/permissions' ? ['servers:view'] : { agents: [], sessions: [] }),
+    ));
+    const host: Record<string, unknown> = { client: null, connected: false };
+    initChatClient(host);
+    await vi.waitFor(() => expect(MockWebSocket.latest?.frames.length).toBeGreaterThan(0));
+    MockWebSocket.latest?.receive({ type: 'auth_ok' });
+    await vi.waitFor(() => expect(host.userPermissions).toEqual(new Set(['servers:view'])));
+    expect(localStorage.getItem('permissions')).toBe('["servers:view"]');
   });
 
   it('continues with JWT WebSocket login when device identity import fails', async () => {
