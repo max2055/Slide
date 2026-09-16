@@ -137,6 +137,127 @@ describe('109-04: DirectGatewayClient', () => {
     client.disconnect();
   });
 
+  it.each([false, true])('bounds reconnects even when each socket opens (auth=%s)', async (authenticate) => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(1);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    for (let attempt = 0; attempt <= directGateway.MAX_RECONNECT_ATTEMPTS; attempt++) {
+      socket.onopen?.(new Event('open'));
+      if (authenticate) socket.receive({ type: 'auth_ok' });
+      socket.closeWith(1006, '', false);
+      if (attempt === directGateway.MAX_RECONNECT_ATTEMPTS) break;
+      const delay = Math.min(1000 * 2 ** attempt, 30_000);
+      const count = onStateChange.mock.calls.filter(([state]) => state === 'connecting').length;
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(onStateChange.mock.calls.filter(([state]) => state === 'connecting')).toHaveLength(count);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(onStateChange.mock.calls.filter(([state]) => state === 'connecting')).toHaveLength(count + 1);
+    }
+    expect(onStateChange).toHaveBeenLastCalledWith('exhausted');
+    const count = onStateChange.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(onStateChange).toHaveBeenCalledTimes(count);
+    client.reconnect();
+    expect(onStateChange).toHaveBeenLastCalledWith('connecting');
+    client.disconnect();
+  });
+
+  it.each([false, true])('resets backoff after 30 seconds only if authenticated (auth=%s)', async (authenticate) => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(1);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.closeWith(1006, '');
+    await vi.advanceTimersByTimeAsync(1000);
+    socket.onopen?.(new Event('open'));
+    if (authenticate) socket.receive({ type: 'auth_ok' });
+    await vi.advanceTimersByTimeAsync(30_000);
+    socket.closeWith(1006, '');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(onStateChange).toHaveBeenLastCalledWith(authenticate ? 'connecting' : 'network_interrupted');
+    client.disconnect();
+  });
+
+  it('does not replace an active connection on repeated connect or reconnect', () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+    client.connect();
+    client.reconnect();
+    expect(client.isConnected()).toBe(true);
+    expect(onStateChange.mock.calls.filter(([state]) => state === 'connecting')).toHaveLength(1);
+    client.disconnect();
+  });
+
+  it('stops confirmation retries and reports unknown acceptance without changing message identity', async () => {
+    vi.useFakeTimers();
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+    const request = client.sendChat('session-1', 'hello');
+    const result = request.catch((error: Error) => error.message);
+    const original = socket.frames.at(-1);
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toEqual([original, original, original]);
+    expect(await result).toContain('消息接收状态未知');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(3);
+    client.disconnect();
+  });
+
+  it('cancels scheduled reconnect on disconnect and ignores late socket events', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.closeWith(1006, '');
+    client.disconnect();
+    socket.receive({ type: 'auth_ok' });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(onStateChange).toHaveBeenLastCalledWith('disconnected');
+    expect(onStateChange.mock.calls.filter(([state]) => state === 'connecting')).toHaveLength(1);
+  });
+
+  it('does not replay unacknowledged messages for duplicate auth_ok', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+    const request = client.sendChat('session-1', 'hello');
+    socket.receive({ type: 'auth_ok' });
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(1);
+    acknowledgeLastChat(socket);
+    await request;
+    client.disconnect();
+  });
+
+  it('preserves the confirmation retry budget across reconnects', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(1);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+    const result = client.sendChat('session-1', 'hello').catch((error: Error) => error.message);
+    await vi.advanceTimersByTimeAsync(30_000);
+    socket.closeWith(1006, '');
+    await vi.advanceTimersByTimeAsync(1000);
+    socket.receive({ type: 'auth_ok' });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await result).toContain('消息接收状态未知');
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(1);
+    client.disconnect();
+  });
+
   it('isConnected returns false initially', () => {
     const client = new DirectGatewayClient({ onEvent, onStateChange });
     expect(client.isConnected()).toBe(false);
