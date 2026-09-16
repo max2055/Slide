@@ -480,10 +480,10 @@ export function syncUrlWithSessionKey(host: SettingsHost, sessionKey: string, re
 
 export async function loadOverview(host: SettingsHost) {
   const app = host as SettingsAppHost;
-  await Promise.allSettled([
-    loadSessions(app),
-    loadOverviewLogs(app),
-  ]);
+  // DirectAdapter has no raw log stream. Do not retain stale Gateway logs.
+  app.overviewLogLines = [];
+  app.overviewLogCursor = 0;
+  await loadSessions(app);
   buildAttentionItems(app);
 }
 
@@ -528,32 +528,6 @@ export function hasSlidePermission(
     if (permissions.has(resourcePrefix)) return true;
   }
   return false;
-}
-
-async function loadOverviewLogs(host: SettingsAppHost) {
-  if (!host.client || !host.connected) {
-    return;
-  }
-  try {
-    const res = await host.client.request("logs.tail", {
-      cursor: host.overviewLogCursor || undefined,
-      limit: 100,
-      maxBytes: 50_000,
-    });
-    const payload = res as {
-      cursor?: number;
-      lines?: unknown;
-    };
-    const lines = Array.isArray(payload.lines)
-      ? payload.lines.filter((line): line is string => typeof line === "string")
-      : [];
-    host.overviewLogLines = [...host.overviewLogLines, ...lines].slice(-500);
-    if (typeof payload.cursor === "number") {
-      host.overviewLogCursor = payload.cursor;
-    }
-  } catch {
-    /* non-critical */
-  }
 }
 
 function buildAttentionItems(host: SettingsAppHost) {

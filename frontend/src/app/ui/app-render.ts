@@ -24,6 +24,7 @@ import "./components/app-toggle.ts";
 import "./components/app-select-field.ts";
 import "./components/app-option-group.ts";
 import "./components/app-badge.ts";
+import "./components/app-empty-state.ts";
 import "./components/app-toast-container.ts";
 import "./views/instances-db.ts";
 import "./views/servers-page.ts";
@@ -523,6 +524,13 @@ export function renderApp(state: AppViewState) {
           : state.tab === "config"
             ? nothing
             : nothing}
+        ${state.tab === "overview"
+          ? html`<app-empty-state
+              title="暂不支持运行日志"
+              description="当前未提供原始运行日志流，无法读取或追踪日志。平台观测和数据库实例日志属于不同来源。"
+              icon="info"
+            ></app-empty-state>`
+          : nothing}
         ${state.tab === "sessions"
           ? lazyRender(lazySessions, (m) =>
               m.renderSessions({

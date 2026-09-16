@@ -93,7 +93,7 @@ const UI_ONLY_COMMANDS: SlashCommandDef[] = [
   {
     key: "clear",
     name: "clear",
-    description: "Clear chat history",
+    description: "清空历史（当前不支持：后端未提供清空接口）",
     icon: "trash",
     category: "session",
     executeLocal: true,
