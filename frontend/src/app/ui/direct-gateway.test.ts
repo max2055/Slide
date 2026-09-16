@@ -165,7 +165,7 @@ describe('109-04: DirectGatewayClient', () => {
     client.disconnect();
   });
 
-  it('resets backoff only after a stable authenticated connection', async () => {
+  it.each([false, true])('resets backoff after 30 seconds only if authenticated (auth=%s)', async (authenticate) => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(1);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -174,11 +174,12 @@ describe('109-04: DirectGatewayClient', () => {
     client.connect();
     socket.closeWith(1006, '');
     await vi.advanceTimersByTimeAsync(1000);
-    socket.receive({ type: 'auth_ok' });
+    socket.onopen?.(new Event('open'));
+    if (authenticate) socket.receive({ type: 'auth_ok' });
     await vi.advanceTimersByTimeAsync(30_000);
     socket.closeWith(1006, '');
     await vi.advanceTimersByTimeAsync(1000);
-    expect(onStateChange).toHaveBeenLastCalledWith('connecting');
+    expect(onStateChange).toHaveBeenLastCalledWith(authenticate ? 'connecting' : 'network_interrupted');
     client.disconnect();
   });
 
@@ -208,6 +209,52 @@ describe('109-04: DirectGatewayClient', () => {
     expect(await result).toContain('消息接收状态未知');
     await vi.advanceTimersByTimeAsync(60_000);
     expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(3);
+    client.disconnect();
+  });
+
+  it('cancels scheduled reconnect on disconnect and ignores late socket events', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.closeWith(1006, '');
+    client.disconnect();
+    socket.receive({ type: 'auth_ok' });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(onStateChange).toHaveBeenLastCalledWith('disconnected');
+    expect(onStateChange.mock.calls.filter(([state]) => state === 'connecting')).toHaveLength(1);
+  });
+
+  it('does not replay unacknowledged messages for duplicate auth_ok', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+    const request = client.sendChat('session-1', 'hello');
+    socket.receive({ type: 'auth_ok' });
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(1);
+    acknowledgeLastChat(socket);
+    await request;
+    client.disconnect();
+  });
+
+  it('preserves the confirmation retry budget across reconnects', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(1);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+    const result = client.sendChat('session-1', 'hello').catch((error: Error) => error.message);
+    await vi.advanceTimersByTimeAsync(30_000);
+    socket.closeWith(1006, '');
+    await vi.advanceTimersByTimeAsync(1000);
+    socket.receive({ type: 'auth_ok' });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await result).toContain('消息接收状态未知');
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(1);
     client.disconnect();
   });
 

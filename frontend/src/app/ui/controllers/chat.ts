@@ -14,8 +14,6 @@ import {
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const SYNTHETIC_TRANSCRIPT_REPAIR_RESULT =
   "[slide] missing tool result in session history; inserted synthetic error result for transcript repair.";
-const STARTUP_CHAT_HISTORY_RETRY_TIMEOUT_MS = 60_000;
-const STARTUP_CHAT_HISTORY_RETRY_MS = 500;
 const chatHistoryRequestVersions = new WeakMap<object, number>();
 
 function beginChatHistoryRequest(state: ChatState): number {
@@ -75,15 +73,6 @@ function shouldHideHistoryMessage(message: unknown): boolean {
   return isAssistantSilentReply(message) || isSyntheticTranscriptRepairToolResult(message);
 }
 
-function isRetryableStartupUnavailable(_err: unknown, _method: string): boolean {
-  // Gateway RPC removed — no retryable errors in DirectAdapter
-  return false;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export type ChatState = {
   client: DirectGatewayClient | null;
   connected: boolean;
@@ -132,38 +121,13 @@ export async function loadChatHistory(state: ChatState) {
     return;
   }
   const requestVersion = beginChatHistoryRequest(state);
-  const startedAt = Date.now();
   state.chatLoading = true;
   state.lastError = null;
   try {
-    let res: { messages?: Array<unknown>; thinkingLevel?: string; nextBefore?: number | null };
-    for (;;) {
-      try {
-        res = await state.client.request<{ messages?: Array<unknown>; thinkingLevel?: string; nextBefore?: number | null }>(
-          "chat.history",
-          {
-            sessionKey,
-            limit: 200,
-            paged: true,
-          },
-        );
-        break;
-      } catch (err) {
-        if (!shouldApplyChatHistoryResult(state, requestVersion, sessionKey)) {
-          return;
-        }
-        const withinStartupRetryWindow =
-          Date.now() - startedAt < STARTUP_CHAT_HISTORY_RETRY_TIMEOUT_MS;
-        if (withinStartupRetryWindow && isRetryableStartupUnavailable(err, "chat.history")) {
-          await sleep(STARTUP_CHAT_HISTORY_RETRY_MS);
-          if (!state.client || !state.connected) {
-            return;
-          }
-          continue;
-        }
-        throw err;
-      }
-    }
+    const res = await state.client.request<{ messages?: Array<unknown>; thinkingLevel?: string; nextBefore?: number | null }>(
+      "chat.history",
+      { sessionKey, limit: 200, paged: true },
+    );
     if (!shouldApplyChatHistoryResult(state, requestVersion, sessionKey)) {
       return;
     }
