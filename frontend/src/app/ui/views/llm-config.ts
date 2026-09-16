@@ -7,7 +7,7 @@ import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
  */
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
-import { customElement, state } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { apiClient } from "../../../api/index.js";
 import { icons } from "../../../icons.js";
 
@@ -71,7 +71,7 @@ interface SceneConfig {
   error: string | null;
 }
 const SCENE_LABELS: Record<string, string> = { default: '全局默认', chat: '智能对话', sql_analysis: 'SQL 分析', fault_diagnosis: '故障诊断', health_check: '健康检查' };
-type ViewMode = "placeholder" | "picker" | "form" | "scenes";
+type ViewMode = "placeholder" | "picker" | "form";
 
 function blankForm(): FormData {
   return { name: "", display_name: "", api_base_url: "", default_model: "", deployment_type: "api", api_format: "", api_key: "", enabled: true, is_default: false, models: [] };
@@ -122,6 +122,7 @@ function brandFor(name: string): { color: string; bg: string; initial: string } 
 
 @customElement("llm-config-page")
 export class LLMConfigPage extends LitElement {
+  @property({ type: String }) activeTab = "providers";
   @state() private scenes: SceneConfig[] = [];
   @state() private sceneDrafts: Record<string, { provider_id: number | null; model: string }> = {};
   @state() private sceneMessage = '';
@@ -144,13 +145,13 @@ export class LLMConfigPage extends LitElement {
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
 
     :host { display: block; height: 100%; }
-    .shell { display: flex; height: 100%; overflow: hidden; }
+    .shell { display: flex; height: 100%; min-height: 0; overflow: hidden; }
     .shell.scenes .detail { min-width: 0; }
     .shell.scenes app-card { overflow-wrap: anywhere; }
     @media (max-width: 720px) {
-      .shell.scenes { flex-direction: column; }
-      .shell.scenes .sidebar { width: auto; min-width: 0; max-height: 12rem; flex-shrink: 0; border-right: none; border-bottom: 1px solid var(--border); }
-      .shell.scenes .detail-inner { padding: var(--space-md); }
+      .shell { flex-direction: column; }
+      .shell .sidebar { width: auto; min-width: 0; max-height: 12rem; flex-shrink: 0; border-right: none; border-bottom: 1px solid var(--border); }
+      .shell .detail-inner { padding: var(--space-md); }
     }
     .page-header { margin-bottom: 24px; }
     .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
@@ -268,6 +269,12 @@ export class LLMConfigPage extends LitElement {
       // First load with no providers: show template picker directly
       if (this.providers.length === 0) {
         this.viewMode = "picker";
+      } else if (this.viewMode === "placeholder") {
+        this._selectProvider(
+          this.providers.find(p => p.is_default)
+          ?? this.providers.find(p => p.enabled)
+          ?? this.providers[0],
+        );
       }
     } catch (e: any) { this.error = e.message || "加载失败"; }
     finally { if (!silent) { this.loading = false; } }
@@ -476,8 +483,8 @@ export class LLMConfigPage extends LitElement {
           <h1>模型配置</h1>
           <p>管理 AI 提供商：添加、编辑、启停、测试连接</p>
         </div>
-        <div class="shell ${this.viewMode === 'scenes' ? 'scenes' : ''}" style="flex:1">
-          ${this._renderSidebar()}
+        <div class="shell ${this.activeTab === 'scenes' ? 'scenes' : ''}" style="flex:1">
+          ${this.activeTab === "scenes" ? "" : this._renderSidebar()}
           ${this._renderDetail()}
         </div>
       </div>
@@ -547,7 +554,6 @@ export class LLMConfigPage extends LitElement {
   _renderSidebar() {
     return html`
     <div class="sidebar">
-      <button class="btn" @click=${() => { this.viewMode = 'scenes'; this.selectedId = null; }}>场景分配</button>
       <div class="sidebar-list">
         ${this.providers.length === 0 ? html`
           <div class="sidebar-empty">
@@ -585,7 +591,7 @@ export class LLMConfigPage extends LitElement {
         <div class="msg ${this.testResult.startsWith('✅') ? 'msg-ok' : 'msg-err'}">${this.testResult}</div>
       </div>` : null;
 
-    if (this.viewMode === "scenes") {
+    if (this.activeTab === "scenes") {
       return html`<div class="detail"><div class="detail-inner">${this._renderScenes()}</div></div>`;
     }
     if (this.viewMode === "picker") {

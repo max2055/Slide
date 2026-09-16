@@ -49,7 +49,7 @@ describe('scene assignments', () => {
     const element = document.createElement('llm-config-page') as any;
     document.body.append(element);
     await element._load();
-    element.viewMode = 'scenes';
+    element.activeTab = 'scenes';
     await element.updateComplete;
     expect(element.shadowRoot.textContent).toContain('Primary / base（全局默认）');
     const select = element.shadowRoot.querySelector('select');
@@ -68,7 +68,7 @@ describe('scene assignments', () => {
     get.mockImplementation(async (url: string) => url === '/llm/configs' ? providers : [{ scene: 'chat', binding: { provider_id: 99, model: 'gone' }, effective: null, error: '提供商已删除' }]);
     const element = document.createElement('llm-config-page') as any;
     document.body.append(element);
-    await element._load(); element.viewMode = 'scenes'; await element.updateComplete;
+    await element._load(); element.activeTab = 'scenes'; await element.updateComplete;
     expect(element.shadowRoot.textContent).toContain('提供商已删除');
     expect(element.shadowRoot.querySelector('select').value).toBe('99');
     put.mockRejectedValue(new Error('保存失败'));
@@ -76,5 +76,22 @@ describe('scene assignments', () => {
     expect(element.shadowRoot.querySelector('[role="alert"]').textContent).toContain('保存失败');
     expect(element.sceneDrafts.chat.provider_id).toBe(99);
     element.remove();
+  });
+});
+
+describe('initial provider selection', () => {
+  it.each([
+    [[{ id: 1, enabled: true }, { id: 2, enabled: true, is_default: true }], 2],
+    [[{ id: 1, enabled: false }, { id: 2, enabled: true }], 2],
+    [[{ id: 1, enabled: false }], 1],
+    [[], null],
+  ])('opens the default or available provider for %j', async (rows, selectedId) => {
+    get.mockImplementation(async (url: string) => url === '/llm/configs'
+      ? rows.map(row => ({ ...row, name: 'provider', default_model: 'base' })) : []);
+    const element = document.createElement('llm-config-page') as any;
+    await element._load();
+    expect(element.selectedId).toBe(selectedId);
+    expect(element.viewMode).toBe(selectedId === null ? 'picker' : 'form');
+    if (selectedId !== null) expect(element.form.default_model).toBe('base');
   });
 });
