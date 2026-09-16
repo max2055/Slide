@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { assertSourceContent, assertSourcePath, describeSourceFiles, type SourceFile } from './source-snapshot-service.js';
 
 export function resolveDeploymentBinding(env: NodeJS.ProcessEnv, release: unknown = {}) {
-  const explicit = ['SLIDE_RELEASE_ID', 'SLIDE_COMMIT_SHA', 'SLIDE_SOURCE_DIGEST'].some(key => env[key] !== undefined);
+  const explicit = ['SLIDE_RELEASE_ID', 'SLIDE_COMMIT_SHA', 'SLIDE_SOURCE_DIGEST'].some(key => Boolean(env[key]));
   const source = explicit ? { releaseId: env.SLIDE_RELEASE_ID, commitSha: env.SLIDE_COMMIT_SHA, treeDigest: env.SLIDE_SOURCE_DIGEST } : (release as any)?.source;
   if (!source || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(source.releaseId ?? '')
     || !/^[a-f0-9]{40}$/.test(source.commitSha ?? '') || !/^[a-f0-9]{64}$/.test(source.treeDigest ?? '')) throw new Error('SOURCE_DEPLOYMENT_UNKNOWN');

@@ -3,9 +3,16 @@ import { SourceManagementService } from './source-management-service.js';
 import { auditLogManager } from '../audit/audit-log.js';
 const actor = { userId: 1, username: 'admin', permissions: ['admin:*'], roles: [], instanceScopes: {}, requestId: 'request', sessionVersion: 1 };
 describe('source management authorization', () => {
+  it('keeps reader authorization and explicit model sharing even without deployment binding', async () => {
+    const config = { baseUrl: 'http://gitlab.internal', repositoryPath: 'group/repo', allowedPaths: [], allowModelContent: false };
+    const service = new SourceManagementService(() => ({ execute: vi.fn(async () => [[{ config_value: JSON.stringify(config) }], []]) }), [config.baseUrl]);
+    await expect(service.inspect({ ...actor, permissions: [] }, 'manifest')).rejects.toThrow('SOURCE_READ_FORBIDDEN');
+    await expect(service.inspect(actor, 'manifest', {}, true)).rejects.toThrow('SOURCE_MODEL_EGRESS_DENIED');
+  });
   it('invalidates snapshots when current directory or project access narrows', async () => {
     const config = { baseUrl: 'https://gitlab.example.test', repositoryPath: 'group/project', allowedPaths: ['src/public/'], allowModelContent: true };
-    const service = new SourceManagementService(() => ({ execute: vi.fn(async () => [[{ config_value: JSON.stringify(config) }], []]) }), [config.baseUrl]);
+    const reference = { releaseId: 'r', commitSha: 'a'.repeat(40), treeDigest: 'b'.repeat(64) };
+    const service = new SourceManagementService(() => ({ execute: vi.fn(async (_sql, values) => [[{ config_value: JSON.stringify(values[0] === 'source.gitlab' ? config : reference) }], []]) }), [config.baseUrl]);
     vi.spyOn(service as any, 'deployment').mockReturnValue({ releaseId: 'r', commitSha: 'a'.repeat(40), treeDigest: 'b'.repeat(64) });
     const snapshots = { manifest: vi.fn(async () => ({ projectId: 'group/project', files: [{ path: 'src/private/a.ts' }] })), read: vi.fn() };
     vi.spyOn(service as any, 'snapshots').mockReturnValue(snapshots);

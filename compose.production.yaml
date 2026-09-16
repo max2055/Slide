@@ -62,6 +62,13 @@ services:
       AGENT_WORKSPACE: /var/lib/slide-agent
       PROMPT_VERSIONS_DIR: /var/lib/slide-agent/prompts
       PROMPT_HOT_RELOAD: "false"
+      SLIDE_GITLAB_ORIGINS: ${SLIDE_GITLAB_ORIGINS:-}
+      SLIDE_GITHUB_ORIGINS: ${SLIDE_GITHUB_ORIGINS:-https://github.com}
+      SLIDE_SOURCE_SIGNING_KEY: ${SLIDE_SOURCE_SIGNING_KEY:-}
+      SLIDE_SOURCE_ROOT: /var/lib/slide-agent/source-snapshots
+      SLIDE_RELEASE_ID: ${SLIDE_RELEASE_ID:-}
+      SLIDE_COMMIT_SHA: ${SLIDE_COMMIT_SHA:-}
+      SLIDE_SOURCE_DIGEST: ${SLIDE_SOURCE_DIGEST:-}
       DB_HOST: mysql
       DB_PORT: "3306"
       DB_USER: slide

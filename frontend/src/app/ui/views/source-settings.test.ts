@@ -53,3 +53,31 @@ it('saves GitLab subgroup repository paths and deploy usernames', async () => {
   view.shadowRoot!.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true })); await settle();
   expect(authFetch).toHaveBeenCalledWith('/api/platform/source/config', expect.objectContaining({ method: 'PUT', body: JSON.stringify(config) }));
 });
+it('saves a ref and shows incomplete unbound HTTP snapshots without implying deployment verification', async () => {
+  localStorage.setItem('permissions', JSON.stringify(['admin:*']));
+  const config = { provider: 'gitlab', baseUrl: 'http://gitlab.internal', repositoryPath: 'group/repo', ref: 'release', allowedPaths: [], allowModelContent: false };
+  const manifest = { releaseId: 'source-1', commitSha: 'a'.repeat(40), treeDigest: 'b'.repeat(64), files: [], signature: 'signed', completeness: 'partial', skippedFiles: [{ path: 'src/config.json', reason: 'SOURCE_SENSITIVE_CONTENT' }], verification: { status: 'repository-unbound', reason: 'SOURCE_DEPLOYMENT_UNKNOWN' } };
+  authFetch.mockImplementation(async (url: string) => ({ ok: true, text: async () => JSON.stringify(url.endsWith('/config') ? { config } : manifest) }));
+  const view = document.createElement('source-settings'); document.body.append(view); await settle();
+  const ref = view.shadowRoot!.querySelector<HTMLInputElement>('[aria-label="分支、标签或 Commit"]');
+  expect(ref).not.toBeNull(); expect(ref!.value).toBe('release');
+  ref!.value = 'main'; ref!.dispatchEvent(new Event('input'));
+  view.shadowRoot!.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true })); await settle();
+  expect(authFetch).toHaveBeenCalledWith('/api/platform/source/config', expect.objectContaining({ body: JSON.stringify({ ...config, ref: 'main' }) }));
+  const text = view.shadowRoot!.querySelector('source-manifest')!.shadowRoot!.textContent;
+  expect(text).toContain('未验证部署一致性'); expect(text).toContain('部分同步'); expect(text).toContain('src/config.json');
+});
+it('shows advisory files as retained without marking a complete snapshot partial', async () => {
+  authFetch.mockImplementation(async (url: string) => ({ ok: true, text: async () => JSON.stringify(url.endsWith('/config') ? { config: null } : {
+    releaseId: 'source-advisory', files: [{ path: 'src/config.json', bytes: 100 }], completeness: 'complete', skippedFiles: [],
+    warnings: [{ path: 'src/config.json', reason: 'SOURCE_SENSITIVE_CONTENT' }],
+    verification: { status: 'repository-unbound' },
+  }) }));
+  const view = document.createElement('source-settings'); document.body.append(view); await settle();
+  const text = view.shadowRoot!.querySelector('source-manifest')!.shadowRoot!.textContent;
+  expect(text).toContain('提示（文件已保留，1 项）');
+  expect(text).toContain('含疑似敏感信息');
+  expect(text).toContain('同步完成');
+  expect(text).not.toContain('部分同步');
+  expect(text).not.toContain('已跳过');
+});

@@ -8,7 +8,7 @@ import { permissionMatches } from '../settings-navigation.js';
 import '../components/app-form-field.js';
 import './source-manifest.js';
 
-interface SourceConfig { provider?: 'gitlab' | 'github'; baseUrl: string; repositoryPath: string; allowedPaths: string[]; allowModelContent: boolean; gitUsername?: string; httpProxy?: string; httpsProxy?: string; allProxy?: string }
+interface SourceConfig { provider?: 'gitlab' | 'github'; baseUrl: string; repositoryPath: string; ref?: string; allowedPaths: string[]; allowModelContent: boolean; gitUsername?: string; httpProxy?: string; httpsProxy?: string; allProxy?: string }
 @customElement('source-settings')
 export class SourceSettings extends LitElement {
   @state() private config: SourceConfig = { provider: 'gitlab', baseUrl: '', repositoryPath: '', allowedPaths: [], allowModelContent: false };
@@ -65,7 +65,7 @@ export class SourceSettings extends LitElement {
       if (allowedPaths.some(path => !/^[A-Za-z0-9_/-]+\/$/.test(path))) throw new Error('源码路径必须每行一个目录，并以 / 结尾');
       const response = await authFetch('/api/platform/source/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...this.config, provider: this.config.provider ?? 'gitlab', allowedPaths }) });
       const text = await response.text(); let body: any = {}; try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text }; } if (!response.ok) throw new Error(body.error ?? `SOURCE_SAVE_FAILED (${response.status})`);
-      this.config = body.config; this.message = '配置已保存';
+      this.config = body.config; this.revision++; this.message = '配置已保存';
     } catch (error) { this.error = String(error); } finally { this.busy = false; }
   }
   private async sync() {
@@ -75,22 +75,24 @@ export class SourceSettings extends LitElement {
     try {
       const response = await authFetch('/api/platform/source/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
       const text = await response.text(); let body: any = {}; try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text }; } if (!response.ok) throw new Error(body.error ?? `SOURCE_SYNC_FAILED (${response.status})`);
-      this.revision++; this.message = '源码同步完成'; this.syncStatus = '';
+      this.revision++; this.message = body.completeness === 'partial' ? `部分同步完成，已跳过 ${body.skippedFiles?.length ?? 0} 个文件或目录，详见快照清单。` : '源码同步完成'; this.syncStatus = '';
     } catch (error) { this.error = String(error); this.syncStatus = ''; } finally { this.busy = false; }
   }
   override render() {
-    return html`<h1>部署源码</h1>${this.loading ? html`<div class="skeleton" aria-label="加载源码配置"></div>` : nothing}
+    return html`<h1>源码仓库</h1>${this.loading ? html`<div class="skeleton" aria-label="加载源码配置"></div>` : nothing}
       ${this.error ? html`<p class="error" role="alert">${this.error}</p><button class="btn" @click=${this.load}>${icons['refresh-cw']} 重试加载</button>` : nothing}
       ${this.message ? html`<p role="status">${this.message}</p>` : nothing}
       <form @submit=${this.save}>
         <h2>代码仓库配置</h2>
-        <app-form-field label="代码托管平台" hint="选择源码所在的代码托管平台。同步只读取部署提交，不会写入仓库。" .inline=${true}><select aria-label="代码托管平台" .value=${this.config.provider ?? 'gitlab'} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, provider: (e.target as HTMLSelectElement).value as 'gitlab'|'github', baseUrl: (e.target as HTMLSelectElement).value === 'github' ? 'https://github.com' : '' }; }}><option value="gitlab">GitLab</option><option value="github">GitHub</option></select></app-form-field>
+        <app-form-field label="代码托管平台" hint="只读同步指定分支或提交；无需预先绑定部署版本。" .inline=${true}><select aria-label="代码托管平台" .value=${this.config.provider ?? 'gitlab'} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, provider: (e.target as HTMLSelectElement).value as 'gitlab'|'github', baseUrl: (e.target as HTMLSelectElement).value === 'github' ? 'https://github.com' : '' }; }}><option value="gitlab">GitLab</option><option value="github">GitHub</option></select></app-form-field>
         <app-form-field label="${this.config.provider === 'github' ? 'GitHub URL' : 'GitLab URL'}" hint="填写实例根地址，不要填写项目路径、查询参数或令牌。" .inline=${true}><input aria-label="${this.config.provider === 'github' ? 'GitHub URL' : 'GitLab URL'}" title="平台实例根地址" placeholder=${this.config.provider === 'github' ? 'https://github.com' : 'https://gitlab.example.com'} type="url" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.baseUrl} @input=${(e: Event) => { this.config = { ...this.config, baseUrl: (e.target as HTMLInputElement).value }; }}></app-form-field>
         ${(['httpProxy', 'httpsProxy', 'allProxy'] as const).map(key => html`<app-form-field label="${key === 'httpProxy' ? 'HTTP 代理' : key === 'httpsProxy' ? 'HTTPS 代理' : 'ALL 代理'}" .inline=${true}><input aria-label="${key}" placeholder="例如 http://127.0.0.1:7890" .value=${this.config[key] ?? ''} .disabled=${!this.editable || this.busy || this.loading} @input=${(e: Event) => { this.config = { ...this.config, [key]: (e.target as HTMLInputElement).value }; }}></app-form-field>`)}
-        <app-form-field label="仓库路径" .hint=${this.config.provider === 'github' ? '填写 owner/repository，例如 openai/example。' : '填写 group/project 或 group/subgroup/project，不要填写数字 ID 或 .git 后缀。'} .inline=${true}><input aria-label="仓库路径" title="项目数字 ID，不是项目名称" placeholder="例如 123" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.repositoryPath} @input=${(e: Event) => { this.config = { ...this.config, repositoryPath: (e.target as HTMLInputElement).value }; }}></app-form-field>
+        ${this.config.baseUrl.startsWith('http://') ? html`<p role="note">此仓库使用 HTTP，令牌与源码在内网明文传输。请使用只读访问令牌。</p>` : nothing}
+        <app-form-field label="仓库路径" .hint=${this.config.provider === 'github' ? '填写 owner/repository，例如 openai/example。' : '填写 group/project 或 group/subgroup/project，不要填写数字 ID 或 .git 后缀。'} .inline=${true}><input aria-label="仓库路径" placeholder="例如 group/project" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.repositoryPath} @input=${(e: Event) => { this.config = { ...this.config, repositoryPath: (e.target as HTMLInputElement).value }; }}></app-form-field>
+        <app-form-field label="分支、标签或 Commit" hint="留空同步仓库默认分支；完整 Commit 需在服务器上可获取。" .inline=${true}><input aria-label="分支、标签或 Commit" placeholder="例如 main 或 refs/heads/release" .value=${this.config.ref ?? ''} .disabled=${!this.editable || this.busy || this.loading} @input=${(e: Event) => { this.config = { ...this.config, ref: (e.target as HTMLInputElement).value.trim() }; }}></app-form-field>
         ${this.config.provider !== 'github' ? html`<app-form-field label="Git 用户名" hint="PAT 留空使用 oauth2；Deploy Token 请填写其用户名。" .inline=${true}><input aria-label="Git 用户名" .value=${this.config.gitUsername ?? ''} .disabled=${!this.editable || this.busy || this.loading} @input=${(e: Event) => { this.config = { ...this.config, gitUsername: (e.target as HTMLInputElement).value || undefined }; }}></app-form-field>` : nothing}
-        <app-form-field label="允许的源码路径" hint="只同步这些目录；留空表示同步全部源码。无论哪种模式都会执行大小限制与敏感信息扫描。" .inline=${true}><textarea aria-label="允许的源码路径" title="每行一个目录前缀，并以 / 结尾" placeholder="每行一个目录，例如：&#10;apps/db-ops-api/src/&#10;frontend/src/" .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.allowedPaths.join('\n')} @input=${(e: Event) => { this.config = { ...this.config, allowedPaths: (e.target as HTMLTextAreaElement).value.split('\n') }; }}></textarea></app-form-field>
-        <app-form-field label="模型读取" hint="开启后，Agent 可在已允许目录内读取经过安全扫描的源码片段；令牌和未授权文件仍不可见。" .inline=${true}><label class="permission-control" for="allow-model-content"><input aria-label="允许模型读取源码内容" id="allow-model-content" type="checkbox" .checked=${this.config.allowModelContent} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, allowModelContent: (e.target as HTMLInputElement).checked }; }}><strong>允许模型读取源码内容</strong></label></app-form-field>
+        <app-form-field label="允许的源码路径" hint="留空同步全部源码。疑似敏感内容仅提示并保留；较大文件按片段读取，快照总容量上限为 32MiB。" .inline=${true}><textarea aria-label="允许的源码路径" title="每行一个目录前缀，并以 / 结尾" placeholder="每行一个目录，例如：&#10;apps/db-ops-api/src/&#10;frontend/src/" .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.allowedPaths.join('\n')} @input=${(e: Event) => { this.config = { ...this.config, allowedPaths: (e.target as HTMLTextAreaElement).value.split('\n') }; }}></textarea></app-form-field>
+        <app-form-field label="模型读取" hint="开启后，Agent 可读取允许目录内的已同步源码片段，包括带敏感内容提示的原文；Git 访问令牌不会提供给模型。" .inline=${true}><label class="permission-control" for="allow-model-content"><input aria-label="允许模型读取源码内容" id="allow-model-content" type="checkbox" .checked=${this.config.allowModelContent} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, allowModelContent: (e.target as HTMLInputElement).checked }; }}><strong>允许模型读取源码内容</strong></label></app-form-field>
         ${this.editable ? html`<div class="action-row"><div class="action-content"><button class="btn-primary" type="submit" .disabled=${this.busy || this.loading}>${icons.save} 保存配置</button></div></div>` : nothing}
       </form>
       ${this.editable ? html`<section class="sync-section">
