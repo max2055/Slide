@@ -341,6 +341,99 @@ describe('DirectAdapter', () => {
     });
   });
 
+  describe('WS ingress regressions', () => {
+    const clients: WebSocket[] = [];
+    afterEach(() => {
+      for (const client of clients) client.terminate();
+      clients.length = 0;
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      vi.unstubAllEnvs();
+    });
+
+    async function connect(authenticateAccessToken = vi.fn().mockResolvedValue({ userId: 1 })) {
+      vi.stubEnv('AGENT_WS_PORT', '0');
+      vi.stubEnv('AGENT_WS_AUTH_TIMEOUT_MS', '1000');
+      vi.stubEnv('JWT_SECRET_KEY', 'test-secret-for-ws-ingress');
+      const adapter = new DirectAdapter({
+        tools: new ToolRegistry(), llmProvider: new MockLLMProvider(),
+        actorContextService: { authenticateAccessToken, revalidateActor: vi.fn().mockImplementation(async actor => actor) },
+      });
+      adaptersToCleanup.push(adapter);
+      await adapter.start();
+      const server = (adapter as any).wsServer;
+      if (!server.address()) await new Promise<void>(resolve => server.once('listening', resolve));
+      const client = new WebSocket(`ws://127.0.0.1:${server.address().port}`);
+      clients.push(client);
+      await new Promise<void>((resolve, reject) => { client.once('open', resolve); client.once('error', reject); });
+      const socket = [...server.clients][0] as WebSocket;
+      const handle = (value: unknown) => Promise.resolve(socket.listeners('message')[0].call(socket, Buffer.from(JSON.stringify(value))));
+      return { client, socket, handle, authenticateAccessToken };
+    }
+
+    it.each([null, [], 'text', 1, true, {}, { type: 42 }])('rejects invalid message envelopes: %j', async value => {
+      const { socket, handle, authenticateAccessToken } = await connect();
+      const send = vi.spyOn(socket, 'send');
+      await expect(handle(value)).resolves.toBeUndefined();
+      expect(send).toHaveBeenCalledWith(JSON.stringify({ type: 'error', error: 'Invalid message envelope' }));
+      expect(authenticateAccessToken).not.toHaveBeenCalled();
+      await handle({ type: 'auth', token: 'test-token' });
+      expect(send).toHaveBeenCalledWith(JSON.stringify({ type: 'auth_ok' }));
+    });
+
+    it('contains handler failures to one connection without leaking exception text', async () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const record = vi.spyOn(platformLogs, 'record');
+      const { socket, handle } = await connect();
+      await handle({ type: 'auth', token: 'test-token' });
+      vi.spyOn(socket, 'send').mockImplementationOnce(() => { throw new Error('private-token-in-error'); });
+      const close = vi.spyOn(socket, 'close');
+      await expect(handle({ type: 'unknown' })).resolves.toBeUndefined();
+      expect(close).toHaveBeenCalledWith(1011, 'Message handling failed');
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'message.error', errorCode: 'WS_MESSAGE_HANDLER_ERROR' }));
+      expect(JSON.stringify(error.mock.calls)).not.toContain('private-token-in-error');
+      const healthy = await connect();
+      const send = vi.spyOn(healthy.socket, 'send');
+      await healthy.handle({ type: 'auth', token: 'test-token' });
+      expect(send).toHaveBeenCalledWith(JSON.stringify({ type: 'auth_ok' }));
+    });
+
+    it.each(['unauthenticated', 'authenticating'])('expires %s connections and ignores late auth results', async state => {
+      let resolveAuth!: (actor: any) => void;
+      const authenticate = vi.fn(() => new Promise<any>(resolve => { resolveAuth = resolve; }));
+      const { socket, handle } = await connect(authenticate);
+      const send = vi.spyOn(socket, 'send');
+      const close = vi.spyOn(socket, 'close');
+      const pending = state === 'authenticating' ? handle({ type: 'auth', token: 'test-token' }) : undefined;
+      await vi.waitFor(() => expect(close).toHaveBeenCalledWith(4001, 'Authentication timeout'), { timeout: 2000 });
+      if (pending) { resolveAuth({ userId: 1 }); await pending; }
+      expect(send).not.toHaveBeenCalledWith(JSON.stringify({ type: 'auth_ok' }));
+    });
+
+    it('keeps authenticated connections open after the auth deadline', async () => {
+      const { socket, handle } = await connect();
+      await handle({ type: 'auth', token: 'test-token' });
+      await new Promise(resolve => setTimeout(resolve, 1100));
+      expect(socket.readyState).toBe(WebSocket.OPEN);
+    });
+
+    it('correlates protocol errors with connection endpoints and retains ws error codes', async () => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const record = vi.spyOn(platformLogs, 'record');
+      const { client } = await connect();
+      const opened = record.mock.calls.find(([entry]) => entry.eventType === 'connection.opened')![0];
+      const closed = new Promise<number>(resolve => client.once('close', resolve));
+      // Raw bytes deliberately bypass WS framing; strict ws validation must still reject them.
+      (client as any)._socket.write(Buffer.from([0x16, 0x03, 0x01, 0x00, 0x00]));
+      expect(await closed).toBe(1002);
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'connection.error', correlationId: opened.correlationId, errorCode: 'WS_ERR_UNEXPECTED_RSV_2_3' }));
+      const connected = JSON.parse(log.mock.calls.find(([label]) => label === '[DirectAdapter] WS client connected')![1] as string);
+      expect(connected).toMatchObject({ connectionId: opened.correlationId, remotePort: expect.any(Number), localPort: expect.any(Number) });
+      expect(error).toHaveBeenCalledWith('[DirectAdapter] WS error:', expect.stringContaining(opened.correlationId!));
+    });
+  });
+
   describe('start()', () => {
     const TEST_WS_PORT = 28992;
 
