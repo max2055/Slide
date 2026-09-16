@@ -480,8 +480,8 @@ export class LLMConfigPage extends LitElement {
     return html`
       <div style="display:flex;flex-direction:column;height:100%">
         <div class="page-header">
-          <h1>模型配置</h1>
-          <p>管理 AI 提供商：添加、编辑、启停、测试连接</p>
+          <h1>${this.activeTab === 'scenes' ? '场景分配' : '模型配置'}</h1>
+          <p>${this.activeTab === 'scenes' ? '为不同场景分配提供商和模型，未单独分配时跟随全局默认' : '管理 AI 提供商：添加、编辑、启停、测试连接'}</p>
         </div>
         <div class="shell ${this.activeTab === 'scenes' ? 'scenes' : ''}" style="flex:1">
           ${this.activeTab === "scenes" ? "" : this._renderSidebar()}
@@ -514,7 +514,6 @@ export class LLMConfigPage extends LitElement {
 
   private _renderScenes() {
     return html`
-      <h2>场景分配</h2>
       <p class="form-hint">未单独分配的场景跟随全局默认。全局默认在提供商详情中设置。健康检查的规则评分不调用模型。</p>
       ${this.sceneMessage ? html`<p role="alert" class="msg msg-err">${this.sceneMessage}</p>
         <button class="btn" @click=${this._loadScenes}>重新加载</button>` : ''}
