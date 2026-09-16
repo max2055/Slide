@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile, symlink, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SourceSnapshotService, assertSourceContent } from './source-snapshot-service.js';
+import { SourceSnapshotService, assertSourceContent, sourceContentWarnings, MAX_SNAPSHOT_BYTES } from './source-snapshot-service.js';
 
 const roots: string[] = [];
 const commit = 'a'.repeat(40);
@@ -23,6 +23,7 @@ describe('source snapshot boundary', () => {
       { path: 'src/template.yaml', content: 'template: [unfinished' },
     ];
     const manifest = await service.publish({ releaseId: 'advisory', commitSha: commit, projectId: 'group/repo' }, files);
+    expect(await service.publish({ releaseId: 'advisory', commitSha: commit, projectId: 'group/repo' }, files)).toEqual(manifest);
     expect(manifest).toMatchObject({ completeness: 'complete', skippedFiles: [], warnings: [
       { path: 'src/config.json', reason: 'SOURCE_SENSITIVE_CONTENT' },
       { path: 'src/large.ts', reason: 'SOURCE_LARGE_FILE' },
@@ -42,7 +43,7 @@ describe('source snapshot boundary', () => {
     expect(manifest.projectId).toBe('max2055/Slide');
   });
 
-  it('blocks JSON, YAML and escaped sensitive configuration keys', () => {
+  it('marks JSON, YAML and escaped sensitive configuration keys without blocking content', () => {
     for (const [path, content] of [
       ['src/config.json', '{"password":"dummy-sensitive-value"}'],
       ['src/config.yaml', 'password: dummy-sensitive-value'],
@@ -52,10 +53,14 @@ describe('source snapshot boundary', () => {
       ['src/config.json', '{"pass\\u0077ord":"dummy-sensitive-value"}'],
       ['src/config.yaml', 'auth:\n  token: |\n    dummy-sensitive-value'],
       ['src/config.ts', 'const token = `dummy-sensitive-value`;'],
-    ]) expect(() => assertSourceContent(content, path)).toThrow('SOURCE_SENSITIVE_CONTENT');
+      ['src/config.ts', 'const url = "postgres://fixture:example@db:5432/test";'],
+    ]) {
+      expect(() => assertSourceContent(content, path)).not.toThrow();
+      expect(sourceContentWarnings(content, path)).toContain('SOURCE_SENSITIVE_CONTENT');
+    }
   });
   it('does not treat ordinary dependency names ending in token as secrets', () => {
-    expect(() => assertSourceContent('{"jsonwebtoken":"^9.0.2"}', 'package.json')).not.toThrow();
+    expect(sourceContentWarnings('{"jsonwebtoken":"^9.0.2"}', 'package.json')).toEqual([]);
   });
   it('makes identical release publication idempotent but rejects replacement', async () => {
     const { service, manifest } = await setup();
@@ -100,10 +105,15 @@ describe('source snapshot boundary', () => {
     parsed.signature = '0'.repeat(64); await chmod(path, 0o600); await writeFile(path, JSON.stringify(parsed));
     await expect(service.manifest('release-1', binding)).rejects.toThrow('SOURCE_SNAPSHOT_UNTRUSTED');
   });
-  it('rejects sensitive files, secret literals, duplicate paths and symbolic links', async () => {
+  it('keeps path, binary, resource, duplicate and symlink boundaries', async () => {
     const { root, service, manifest } = await setup(); const identity = { releaseId: 'release-2', commitSha: commit, projectId: '7' };
     await expect(service.publish(identity, [{ path: '.env', content: 'value' }])).rejects.toThrow('SOURCE_PATH_INVALID');
-    await expect(service.publish(identity, [{ path: 'src/a.ts', content: 'const password = "sensitive-example";' }])).rejects.toThrow('SOURCE_SENSITIVE_CONTENT');
+    await expect(service.publish(identity, [{ path: 'src/a.ts', content: '\0binary' }])).rejects.toThrow('SOURCE_BINARY_FILE');
+    await expect(service.publish(identity, [{ path: 'src/a.ts', content: 'x'.repeat(MAX_SNAPSHOT_BYTES + 1) }])).rejects.toThrow('SOURCE_FILE_TOO_LARGE');
+    await expect(service.publish(identity, [
+      { path: 'src/a.ts', content: 'x'.repeat(MAX_SNAPSHOT_BYTES / 2 + 1) },
+      { path: 'src/b.ts', content: 'x'.repeat(MAX_SNAPSHOT_BYTES / 2) },
+    ])).rejects.toThrow('SOURCE_SNAPSHOT_TOO_LARGE');
     await expect(service.publish(identity, [{ path: 'src/a.ts', content: '' }, { path: 'src/a.ts', content: '' }])).rejects.toThrow('SOURCE_DUPLICATE_PATH');
     await rm(join(root, 'release-1', 'src/example.ts')); await symlink('/etc/hosts', join(root, 'release-1', 'src/example.ts'));
     await expect(service.read('release-1', { commitSha: commit, treeDigest: manifest.treeDigest }, 'src/example.ts', 1, 1)).rejects.toThrow('SOURCE_SNAPSHOT_UNTRUSTED');

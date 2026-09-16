@@ -92,7 +92,7 @@ export class GitSourceConnector {
             content = await readFile(full, 'utf8'); assertSourceContent(content, path);
           } catch (error) {
             const reason = error instanceof Error ? error.message : '';
-            if (!['SOURCE_PATH_INVALID', 'SOURCE_FILE_TOO_LARGE', 'SOURCE_SENSITIVE_CONTENT', 'SOURCE_CONFIG_UNSCANNABLE'].includes(reason)) throw error;
+            if (!['SOURCE_PATH_INVALID', 'SOURCE_FILE_TOO_LARGE', 'SOURCE_BINARY_FILE'].includes(reason)) throw error;
             skippedFiles.push({ path, reason }); continue;
           }
           total += Buffer.byteLength(content);

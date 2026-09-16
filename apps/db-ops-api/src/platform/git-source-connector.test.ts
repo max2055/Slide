@@ -101,7 +101,7 @@ it('rejects expired credentials before starting Git', async () => {
   expect(run).not.toHaveBeenCalled();
 });
 
-it('reports unscannable files without returning their contents', async () => {
+it('retains unscannable text for advisory scanning at publication', async () => {
   const previous = run.getMockImplementation()!;
   run.mockImplementation((command, args, options) => {
     const result = previous(command, args, options);
@@ -109,15 +109,15 @@ it('reports unscannable files without returning their contents', async () => {
     return result;
   });
   const result = await new GitSourceConnector([config.baseUrl]).fetchFiles(config);
-  expect(result.skippedFiles).toEqual([{ path: 'src/broken.json', reason: 'SOURCE_CONFIG_UNSCANNABLE' }]);
-  expect(JSON.stringify(result)).not.toContain('{unscannable');
+  expect(result.skippedFiles).toEqual([]);
+  expect(result.files).toContainEqual({ path: 'src/broken.json', content: '{unscannable' });
 });
 
 it('fails when every selected file is rejected and cleans the working copy', async () => {
   const previous = run.getMockImplementation()!;
   run.mockImplementation((command, args, options) => {
     const result = previous(command, args, options);
-    if (args.includes('checkout')) writeFileSync(join(options.cwd, 'src/a.ts'), 'const password = "fixture-sensitive-value";');
+    if (args.includes('checkout')) writeFileSync(join(options.cwd, 'src/a.ts'), '\0binary');
     return result;
   });
   await expect(new GitSourceConnector([config.baseUrl]).fetchFiles(config)).rejects.toThrow('SOURCE_FILE_COUNT_INVALID');

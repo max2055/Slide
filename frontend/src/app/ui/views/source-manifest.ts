@@ -5,12 +5,14 @@ import { authFetch } from '../../../api/index.js';
 interface Manifest {
   releaseId: string; commitSha: string; treeDigest: string; files: Array<{ path: string; digest: string; bytes: number }>; signature: string;
   completeness?: 'complete' | 'partial'; skippedFiles?: Array<{ path: string; reason: string }>;
+  warnings?: Array<{ path: string; reason: string }>;
   verification?: { status: 'repository-unbound' | 'deployment-verified'; reason?: string };
   repository?: { origin: string; ref: string };
 }
 const reasons: Record<string, string> = {
-  SOURCE_SENSITIVE_CONTENT: '含疑似敏感信息', SOURCE_FILE_TOO_LARGE: '文件过大或非文本内容',
-  SOURCE_CONFIG_UNSCANNABLE: '配置文件无法安全解析', SOURCE_PATH_INVALID: '不在可读源码范围', SOURCE_SYMLINK_SKIPPED: '符号链接',
+  SOURCE_SENSITIVE_CONTENT: '含疑似敏感信息', SOURCE_FILE_TOO_LARGE: '超过快照容量上限',
+  SOURCE_LARGE_FILE: '较大文件，已保留，可按片段读取', SOURCE_BINARY_FILE: '非文本内容',
+  SOURCE_CONFIG_UNSCANNABLE: '配置文件无法解析，已保留原文', SOURCE_PATH_INVALID: '不在可读源码范围', SOURCE_SYMLINK_SKIPPED: '符号链接',
   SOURCE_DEPLOYMENT_UNKNOWN: '未提供完整部署版本信息', SOURCE_COMMIT_MISMATCH: '仓库提交与部署提交不同',
   SOURCE_TREE_MISMATCH: '源码范围或内容与部署记录不同', SOURCE_SNAPSHOT_PARTIAL: '部分文件已跳过',
 };
@@ -51,6 +53,7 @@ export class SourceManifestView extends LitElement {
         ${m.verification?.reason ? html`<p>${reasons[m.verification.reason] ?? m.verification.reason}。源码可用于理解实现，不能证明实际运行行为。</p>` : nothing}
         <dl><dt>快照</dt><dd>${m.releaseId}</dd><dt>Commit</dt><dd>${m.commitSha}</dd>${m.repository ? html`<dt>分支或引用</dt><dd>${m.repository.ref}</dd>` : nothing}<dt>Tree digest</dt><dd>${m.treeDigest}</dd><dt>签名</dt><dd>${m.signature}</dd></dl>
         ${m.skippedFiles?.length ? html`<details open><summary>已跳过 (${m.skippedFiles.length})</summary>${m.skippedFiles.map(file => html`<p>${file.path} · ${reasons[file.reason] ?? file.reason}</p>`)}</details>` : nothing}
+        ${m.warnings?.length ? html`<details open><summary>提示（文件已保留，${m.warnings.length} 项）</summary>${m.warnings.map(file => html`<p>${file.path} · ${reasons[file.reason] ?? file.reason}</p>`)}</details>` : nothing}
         <details><summary>文件 (${m.files.length})</summary>${m.files.map(file => html`<p>${file.path} · ${file.bytes} B<br><code>${file.digest}</code></p>`)}</details>` : nothing}`;
   }
 }

@@ -48,3 +48,15 @@ Real HTTP integration uses a local authenticated Git smart-HTTP fixture and temp
 - Both typechecks, production frontend build/CSP, API contract check, qualification matrix, secret scan, dependency audit and deployment security checks passed. Lint exited successfully with existing repository warnings; no errors.
 - Inaccessible internal GitLab, live MySQL-backed sync, full image rebuild and production switching were not exercised.
 - No hard budget set; actual token/cost telemetry unavailable. Zero delegated agents. Original dirty user worktree remains unchanged.
+
+## User-directed adjustment (v3)
+
+The user requested relaxing sensitive-content and oversized-file rejection for an internal repository controlled by the same development/operations team. This supersedes v1/v2 per-file content rejection:
+
+- Retain sensitive-pattern matches and unscannable configuration as original text; record signed advisory warnings without blocking publication, reads or deployment comparison.
+- Replace the 512 KiB hard cutoff with an advisory large-file marker. A single file may use the existing 32 MiB aggregate snapshot budget. Keep the total/count limit, binary/path/symlink checks, signatures and 200-line/16-KiB region output limits.
+- Keep the Git authentication token outside persisted data/logs/Agent results. Existing explicit model sharing also covers flagged repository content; explain that in the UI.
+- Advisory warnings do not set partial status. Show retained-file warnings separately from actual omissions. Region reads include their own warnings; other tool source envelopes include the count.
+- The large-file regression exposed quadratic scanning of long lowercase runs in the URL detector. Anchor URI schemes at a token boundary to retain advisory scanning without that failure.
+- Extend the existing PR; no deployment or image build. Same scope boundary and no hard budget; telemetry remains unavailable and no agents delegated.
+- v3 validation: RED reproduced SOURCE_SENSITIVE_CONTENT during publication. GREEN covers retained original text, >512-KiB reads/search/symbols, idempotence, signed warning tamper rejection, binary/aggregate limits and the real HTTP sync flow. Full API suite 250 files / 2,109 tests and frontend suite 69 files / 407 tests passed; both typechecks, two Chromium viewport tests, build/CSP, source secret scan, API contracts and focused lint passed. Target internal GitLab and live MySQL remain untested.

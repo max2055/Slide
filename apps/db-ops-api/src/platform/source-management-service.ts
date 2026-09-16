@@ -139,7 +139,7 @@ export class SourceManagementService {
       await this.executor().execute('REPLACE INTO system_config (config_key, config_value) VALUES (?, ?)', [this.snapshotKey(config), JSON.stringify(reference)]);
       reportStage();
       const verification = this.verification(manifest);
-      await auditLogManager.logToolCall({ userId: String(actor.userId), username: actor.username, toolName: 'source_sync', toolParams: { ...reference, verification, completeness: manifest.completeness, skippedCount: fetched.skippedFiles.length }, result: 'success' });
+      await auditLogManager.logToolCall({ userId: String(actor.userId), username: actor.username, toolName: 'source_sync', toolParams: { ...reference, verification, completeness: manifest.completeness, skippedCount: fetched.skippedFiles.length, warningCount: manifest.warnings?.length ?? 0 }, result: 'success' });
       console.info('[source-sync]', { stage, elapsedMs: Date.now() - startedAt, commitSha: manifest.commitSha, files: manifest.files.length, skipped: fetched.skippedFiles.length });
       return { ...manifest, verification };
     } catch (error) {
@@ -161,11 +161,13 @@ export class SourceManagementService {
       if (model && !config.allowModelContent) throw new Error('SOURCE_MODEL_EGRESS_DENIED');
       const snapshots = this.snapshots(); const manifest = await this.current(config, snapshots);
       const source = { releaseId: manifest.releaseId, commitSha: manifest.commitSha, treeDigest: manifest.treeDigest,
-        completeness: manifest.completeness ?? 'complete', verification: this.verification(manifest), interpretation: 'implementation-intent' as const };
+        completeness: manifest.completeness ?? 'complete', warningCount: manifest.warnings?.length ?? 0,
+        verification: this.verification(manifest), interpretation: 'implementation-intent' as const };
       const result = mode === 'manifest' ? { ...manifest, verification: source.verification }
         : mode === 'search' ? { matches: await snapshots.search(manifest.releaseId, manifest, args.query as string), source }
         : mode === 'symbol' ? { matches: await snapshots.symbols(manifest.releaseId, manifest, args.name as string), source }
-        : { ...await snapshots.read(manifest.releaseId, manifest, args.path as string, args.startLine as number, args.endLine as number), source };
+        : { ...await snapshots.read(manifest.releaseId, manifest, args.path as string, args.startLine as number, args.endLine as number),
+          warnings: (manifest.warnings ?? []).filter(warning => warning.path === args.path), source };
       await auditLogManager.logToolCall({ ...audit, toolParams: source, result: 'success' });
       return result;
     } catch (error) {

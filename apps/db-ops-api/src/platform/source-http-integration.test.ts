@@ -22,7 +22,8 @@ it('syncs approved HTTP Git refs without deployment binding, reads partial snaps
   git('checkout', '-b', 'release');
   writeFileSync(join(repo, 'src/a.ts'), 'export const selected = 2;\n');
   writeFileSync(join(repo, 'src/private.json'), '{"password":"fixture-sensitive-value"}');
-  writeFileSync(join(repo, 'src/large.ts'), 'x'.repeat(512 * 1024 + 1));
+  writeFileSync(join(repo, 'src/large.ts'), 'export const large = true;\n' + '// padding\n'.repeat(60_000));
+  writeFileSync(join(repo, 'src/binary.ts'), '\0binary fixture');
   git('add', '.'); git('commit', '-m', 'release'); const commit = git('rev-parse', 'HEAD');
   git('checkout', 'main');
   const token = 'one-use-test-credential';
@@ -80,14 +81,20 @@ it('syncs approved HTTP Git refs without deployment binding, reads partial snaps
     const sync = await call('sync', { token });
     expect(sync.status, JSON.stringify(sync.body)).toBe(200);
     expect(sync.body).toMatchObject({ commitSha: commit, completeness: 'partial', verification: { status: 'repository-unbound', reason: 'SOURCE_DEPLOYMENT_UNKNOWN' } });
-    expect(sync.body.files.map((file: any) => file.path)).toEqual(['src/a.ts']);
-    expect(sync.body.skippedFiles).toEqual(expect.arrayContaining([
-      { path: 'src/private.json', reason: 'SOURCE_SENSITIVE_CONTENT' }, { path: 'src/large.ts', reason: 'SOURCE_FILE_TOO_LARGE' },
-    ]));
+    expect(sync.body.files.map((file: any) => file.path)).toEqual(['src/a.ts', 'src/large.ts', 'src/private.json']);
+    expect(sync.body.skippedFiles).toEqual([{ path: 'src/binary.ts', reason: 'SOURCE_BINARY_FILE' }]);
+    expect(sync.body.warnings).toEqual([
+      { path: 'src/large.ts', reason: 'SOURCE_LARGE_FILE' }, { path: 'src/private.json', reason: 'SOURCE_SENSITIVE_CONTENT' },
+    ]);
     expect(JSON.stringify(sync.body)).not.toContain('fixture-sensitive-value');
     expect(await call('manifest')).toMatchObject({ status: 200, body: { releaseId: sync.body.releaseId, commitSha: commit } });
     expect(await call('region?path=src/a.ts&startLine=1&endLine=1')).toMatchObject({ status: 200, body: { content: 'export const selected = 2;', source: { commitSha: commit, completeness: 'partial', verification: { status: 'repository-unbound' } } } });
-    expect(await call('region?path=src/private.json&startLine=1&endLine=1')).toMatchObject({ status: 403 });
+    expect(await call('region?path=src/private.json&startLine=1&endLine=1')).toMatchObject({ status: 200, body: {
+      content: '{"password":"fixture-sensitive-value"}', warnings: [{ path: 'src/private.json', reason: 'SOURCE_SENSITIVE_CONTENT' }],
+      source: { warningCount: 2 },
+    } });
+    expect(await call('region?path=src/large.ts&startLine=1&endLine=1')).toMatchObject({ status: 200, body: { content: 'export const large = true;' } });
+    expect(await call('region?path=src/binary.ts&startLine=1&endLine=1')).toMatchObject({ status: 403 });
     expect(await call('search?query=selected')).toMatchObject({ status: 200, body: { matches: [{ path: 'src/a.ts' }], source: { commitSha: commit } } });
     expect(await call('symbol?name=selected')).toMatchObject({ status: 200, body: { matches: [{ name: 'selected' }], source: { commitSha: commit } } });
     expect(await call('sync', { token })).toMatchObject({ status: 200, body: { releaseId: sync.body.releaseId } });

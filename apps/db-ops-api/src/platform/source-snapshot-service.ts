@@ -16,10 +16,12 @@ export interface SourceManifest extends SourceIdentity {
   signature: string;
   completeness?: 'complete' | 'partial';
   skippedFiles?: SkippedSourceFile[];
+  warnings?: Array<{ path: string; reason: string }>;
 }
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-export const MAX_FILE_BYTES = 512 * 1024;
 export const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
+// One text file may use the entire snapshot budget; 512 KiB is advisory only.
+export const MAX_FILE_BYTES = MAX_SNAPSHOT_BYTES;
 export const MAX_FILES = 20000;
 
 function releaseName(value: string): string {
@@ -32,9 +34,12 @@ export function assertSourcePath(path: string): void {
     || /(^|\/)(node_modules|dist|coverage|secrets)(\/|$)/i.test(path)
     || !/\.(ts|tsx|js|mjs|cjs|json|sql|yaml|yml|sh|md|html|css)$/.test(path)) throw new Error('SOURCE_PATH_INVALID');
 }
-export function assertSourceContent(content: string, path = ''): void {
-  if (Buffer.byteLength(content) > MAX_FILE_BYTES || content.includes('\0')) throw new Error('SOURCE_FILE_TOO_LARGE');
-  if (/-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:glpat-|gh[pousr]_|sk-(?:ant-)?)[a-zA-Z0-9_-]{16,}|(?<![A-Za-z0-9_-])(?:password|passwd|secret|token|api[_-]?key)["']?\s*[:=]\s*["'`][^"'`\r\n]{4,}["'`]|[a-z]+:\/\/[^\s/:]+:[^\s/@]+@/i.test(content)) throw new Error('SOURCE_SENSITIVE_CONTENT');
+export function assertSourceContent(content: string, _path = ''): void {
+  if (Buffer.byteLength(content) > MAX_FILE_BYTES) throw new Error('SOURCE_FILE_TOO_LARGE');
+  if (content.includes('\0')) throw new Error('SOURCE_BINARY_FILE');
+}
+function scanSourceContent(content: string, path: string): void {
+  if (/-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:glpat-|gh[pousr]_|sk-(?:ant-)?)[a-zA-Z0-9_-]{16,}|(?<![A-Za-z0-9_-])(?:password|passwd|secret|token|api[_-]?key)["']?\s*[:=]\s*["'`][^"'`\r\n]{4,}["'`]|(?<![a-zA-Z0-9+.-])[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s/:]+:[^\s/@]+@/i.test(content)) throw new Error('SOURCE_SENSITIVE_CONTENT');
   if (/\.(json|ya?ml)$/.test(path)) {
     let parsed: unknown;
     try { parsed = path.endsWith('.json') ? JSON.parse(content) : parseYaml(content, { maxAliasCount: 0 }); }
@@ -48,8 +53,21 @@ export function assertSourceContent(content: string, path = ''): void {
         visit(child);
       }
     };
-    visit(parsed);
+    try { visit(parsed); }
+    catch (error) {
+      if (error instanceof Error && error.message === 'SOURCE_SENSITIVE_CONTENT') throw error;
+      throw new Error('SOURCE_CONFIG_UNSCANNABLE');
+    }
   }
+}
+export function sourceContentWarnings(content: string, path: string): string[] {
+  const warnings = Buffer.byteLength(content) > 512 * 1024 ? ['SOURCE_LARGE_FILE'] : [];
+  try { scanSourceContent(content, path); }
+  catch (error) {
+    if (!(error instanceof Error) || !['SOURCE_SENSITIVE_CONTENT', 'SOURCE_CONFIG_UNSCANNABLE'].includes(error.message)) throw error;
+    warnings.push(error.message);
+  }
+  return warnings;
 }
 export function describeSourceFiles(input: SourceFile[]) {
   return [...input].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
@@ -71,18 +89,21 @@ export class SourceSnapshotService {
     }
     if (!input.length || input.length + skippedFiles.length > MAX_FILES) throw new Error('SOURCE_FILE_COUNT_INVALID');
     const paths = new Set<string>(); let total = 0;
+    const warnings: NonNullable<SourceManifest['warnings']> = [];
     for (const file of input) {
       assertSourcePath(file.path);
       try { assertSourceContent(file.content, file.path); }
       catch (error) { console.error('[source-snapshot] rejected file', file.path, error instanceof Error ? error.message : 'SOURCE_CONTENT_INVALID'); throw error; }
       if (paths.has(file.path)) throw new Error('SOURCE_DUPLICATE_PATH'); paths.add(file.path);
       total += Buffer.byteLength(file.content);
+      if (total > MAX_SNAPSHOT_BYTES) throw new Error('SOURCE_SNAPSHOT_TOO_LARGE');
+      warnings.push(...sourceContentWarnings(file.content, file.path).map(reason => ({ path: file.path, reason })));
     }
     if (total > MAX_SNAPSHOT_BYTES) throw new Error('SOURCE_SNAPSHOT_TOO_LARGE');
     const sorted = input;
     const files = describeSourceFiles(input);
     const unsigned = { schemaVersion: 1 as const, ...identity, treeDigest: hash(JSON.stringify(files)), createdAt: new Date().toISOString(), files,
-      completeness: skippedFiles.length ? 'partial' as const : 'complete' as const, skippedFiles };
+      completeness: skippedFiles.length ? 'partial' as const : 'complete' as const, skippedFiles, warnings };
     const manifest = { ...unsigned, signature: this.sign(unsigned) };
     if (Buffer.byteLength(JSON.stringify(manifest)) > 2 * 1024 * 1024) throw new Error('SOURCE_SNAPSHOT_TOO_LARGE');
     await mkdir(this.root, { recursive: true, mode: 0o700 });
@@ -100,7 +121,8 @@ export class SourceSnapshotService {
       if (['EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) {
         const existing = await this.manifest(identity.releaseId, manifest);
         if (existing.projectId !== identity.projectId || JSON.stringify(existing.repository) !== JSON.stringify(identity.repository)
-          || JSON.stringify(existing.skippedFiles ?? []) !== JSON.stringify(skippedFiles)) throw new Error('SOURCE_SNAPSHOT_UNTRUSTED');
+          || JSON.stringify(existing.skippedFiles ?? []) !== JSON.stringify(skippedFiles)
+          || JSON.stringify(existing.warnings ?? []) !== JSON.stringify(warnings)) throw new Error('SOURCE_SNAPSHOT_UNTRUSTED');
         for (const file of existing.files) await this.content(identity.releaseId, file);
         return existing;
       }
