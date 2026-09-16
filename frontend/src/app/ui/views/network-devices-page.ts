@@ -424,7 +424,7 @@ export class NetworkDevicesPage extends LitElement {
       .resource-toolbar { margin-bottom: 0; }
       .field { box-sizing:border-box; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--card); color:var(--text); padding:var(--space-sm) var(--space-md); }
       .actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:var(--space-xs); }
-      .link-button { border:0; padding:0; color:var(--accent); background:transparent; cursor:pointer; font:inherit; text-align:left; }
+      .link-button { border:0; padding:0; color:var(--accent-text); background:transparent; cursor:pointer; font:inherit; text-align:left; }
       .loading, .error { padding:var(--space-xl); color:var(--muted); text-align:center; }
       .error { color:var(--danger); }
       .device-form { display:grid; gap:var(--space-lg); max-width:760px; margin:0 auto; --app-form-field-label-width:160px; }

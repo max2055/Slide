@@ -20,17 +20,17 @@ export interface ButtonPalette {
 
 export const DEFAULT_PALETTE: ButtonPalette = {
   primaryBg: "#409eff",
-  primaryColor: "#ffffff",
+  primaryColor: "#10243a",
   primaryBorder: "#409eff",
   secondaryBg: "#f1f3f5",
   secondaryColor: "#3c3c43",
   secondaryBorder: "#e5e5ea",
-  ghostColor: "#6e6e73",
-  ghostHoverColor: "#409eff",
+  ghostColor: "#3c3c43",
+  ghostHoverColor: "#265f99",
   ghostHoverBg: "#eceef0",
-  dangerBg: "#f87171",
+  dangerBg: "#b91c1c",
   dangerColor: "#ffffff",
-  dangerBorder: "#f87171",
+  dangerBorder: "#b91c1c",
 };
 
 const TOKEN_MAP: Record<keyof ButtonPalette, string> = {

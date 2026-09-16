@@ -19,7 +19,7 @@ export const sharedBtnStyles = css`
     white-space: nowrap;
     transition: all 0.15s var(--ease-out);
   }
-  .btn-ghost:hover { color: var(--btn-ghost-hover-color, var(--accent)); border-color: var(--border); background: var(--btn-ghost-hover-bg, var(--bg-hover)); }
+  .btn-ghost:hover { color: var(--btn-ghost-hover-color, var(--accent-text)); border-color: var(--border); background: var(--btn-ghost-hover-bg, var(--bg-hover)); }
   .btn-ghost:active { transform: translateY(0px); background: var(--bg-hover); }
   .btn-ghost:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; }
 
@@ -46,7 +46,7 @@ export const sharedBtnStyles = css`
   .btn-primary:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; box-shadow: none; transform: none; }
   .btn-primary.btn-danger { background: var(--btn-danger-bg, var(--danger)); border-color: var(--btn-danger-border, var(--danger)); color: var(--btn-danger-color, #fff); }
   .btn-primary.btn-danger:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.1), 0 0 0 3px var(--danger-subtle); }
-  .btn-primary.btn-success { background: var(--ok); border-color: var(--ok); }
+  .btn-primary.btn-success { background: var(--ok); border-color: var(--ok); color: var(--ok-foreground); }
   .btn-primary.btn-success:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.1), 0 0 0 3px var(--ok-subtle); }
 
   .btn {
@@ -77,7 +77,7 @@ export const sharedBtnStyles = css`
     border-radius: var(--radius-sm);
     transition: all 0.15s var(--ease-out);
   }
-  .btn-icon:hover { color: var(--accent); background: var(--accent-subtle); border-color: color-mix(in srgb, var(--accent) 20%, transparent); }
+  .btn-icon:hover { color: var(--accent-text); background: var(--accent-subtle); border-color: color-mix(in srgb, var(--accent) 20%, transparent); }
   .btn-icon:active { transform: scale(0.95); }
   .btn-icon:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; }
 
@@ -99,7 +99,7 @@ export const sharedBtnStyles = css`
   .btn-sm:active { transform: translateY(0); }
   .btn-sm:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; transform: none; }
   .btn-sm.danger { color: var(--danger); border-color: var(--danger); }
-  .btn-sm.danger:hover { background: var(--danger); color: #fff; box-shadow: 0 2px 4px var(--danger-subtle); }
+  .btn-sm.danger:hover { background: var(--danger); color: var(--danger-foreground); box-shadow: 0 2px 4px var(--danger-subtle); }
 
   .btn-xs {
     display: inline-flex; align-items: center; gap: 3px;
@@ -129,6 +129,6 @@ export const sharedBtnStyles = css`
     cursor: pointer;
     transition: all 0.15s var(--ease-out);
   }
-  .btn-danger-outline:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+  .btn-danger-outline:hover { background: var(--danger); color: var(--danger-foreground); border-color: var(--danger); }
   .btn-danger-outline:active { transform: translateY(0px); }
 `;

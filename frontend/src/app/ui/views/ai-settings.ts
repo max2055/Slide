@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * AI 分析配置页面
  * 管理 AI 自动分析的启用开关、分析级别、实例白名单和时间窗口
@@ -27,7 +28,7 @@ export class AiSettingsPage extends LitElement {
   @state() private _instances: { id: number; name: string }[] = [];
   @state() private _instanceDropdownOpen = false;
   @state() private _instanceSearch = "";
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
 
     :host { display: block; max-width: 800px; }
     .page-header { margin-bottom: 24px; }
@@ -52,7 +53,7 @@ export class AiSettingsPage extends LitElement {
     /* Severity pills */
     .checkbox-group { display: flex; gap: 8px; flex-wrap: wrap; }
     .checkbox-label { padding: 6px 14px; border-radius: 999px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: var(--bg-elevated); color: var(--muted); transition: 0.15s; }
-    .checkbox-label.active { background: var(--accent-subtle); color: var(--accent); border-color: var(--accent); }
+    .checkbox-label.active { background: var(--accent-subtle); color: var(--accent-text); border-color: var(--accent); }
 
     /* Form input */
     .form-input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; background: var(--card); color: var(--text); box-sizing: border-box; }
@@ -60,8 +61,8 @@ export class AiSettingsPage extends LitElement {
 
     /* Tags */
     .cfg-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-    .cfg-tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: var(--radius-sm); font-size: 12px; background: var(--accent-subtle); color: var(--accent); }
-    .cfg-tag button { background: none; border: none; cursor: pointer; font-size: 14px; color: var(--accent); padding: 0; margin: 0; line-height: 1; opacity: 0.7; }
+    .cfg-tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: var(--radius-sm); font-size: 12px; background: var(--accent-subtle); color: var(--accent-text); }
+    .cfg-tag button { background: none; border: none; cursor: pointer; font-size: 14px; color: var(--accent-text); padding: 0; margin: 0; line-height: 1; opacity: 1; }
     .cfg-tag button:hover { opacity: 1; }
 
     /* Time window row */

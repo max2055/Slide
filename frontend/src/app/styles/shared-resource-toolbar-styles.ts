@@ -47,7 +47,7 @@ export const sharedResourceToolbarStyles = css`
     transform: translateY(-50%);
     color: var(--muted);
     display: flex;
-    opacity: 0.6;
+    opacity: 1;
   }
 
   .resource-toolbar .filter-select,

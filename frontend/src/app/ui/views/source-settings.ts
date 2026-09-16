@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
@@ -20,7 +21,7 @@ export class SourceSettings extends LitElement {
   @state() private revision = 0;
   @state() private permissions: Set<string> = new Set();
   private readonly permissionsHandler = () => { this.readPermissions(); };
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; min-width: 0; color: var(--text); }
     h1 { font-size: 22px; color: var(--text-strong); margin: 0 0 var(--space-lg); }
     h2 { font-size: 16px; color: var(--text-strong); margin: 0 0 var(--space-lg); }

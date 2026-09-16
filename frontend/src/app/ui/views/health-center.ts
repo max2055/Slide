@@ -126,7 +126,7 @@ export class HealthCenterPage extends LitElement {
       .truth-value { color: var(--text-strong); font-weight: 700; font-size: 16px; display: block; margin-top: 4px; }
       .truth-reason { color: var(--muted); font-size: 11px; display: block; margin-top: 4px; overflow-wrap: anywhere; }
       .truth-refs { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-top: var(--space-xs); }
-      .resource-link { display: inline-flex; align-items: center; gap: var(--space-xs); padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 12px; }
+      .resource-link { display: inline-flex; align-items: center; gap: var(--space-xs); padding: 0; border: 0; background: none; color: var(--accent-text); cursor: pointer; font-size: 12px; }
       .resource-link svg { width: 12px; height: 12px; }
       .resource-link:hover { text-decoration: underline; }
       .truth-dimension.critical .truth-value { color: var(--danger); }
@@ -148,7 +148,7 @@ export class HealthCenterPage extends LitElement {
       .issue-card .ic-detail td { padding: 4px 10px 4px 0; color: var(--text); }
       .issue-card .ic-detail .pct-over { color: var(--danger, #ef4444); font-weight: 600; }
       .issue-card .ic-actions { margin-top: 10px; }
-      .issue-card .ic-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--accent, #409eff); cursor: pointer; background: none; border: none; padding: 0; }
+      .issue-card .ic-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--accent-text); cursor: pointer; background: none; border: none; padding: 0; }
       .issue-card .ic-link:hover { text-decoration: underline; }
 
       /* ── Check table ─────────────────────────────── */
@@ -177,11 +177,11 @@ export class HealthCenterPage extends LitElement {
       .detail-box th { text-align: left; font-weight: 600; color: var(--muted); padding: 3px 10px 3px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
       .detail-box td { padding: 4px 10px 4px 0; }
       .detail-box .pct-over { color: var(--danger, #ef4444); font-weight: 600; }
-      .expand-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--accent, #409eff); cursor: pointer; background: none; border: none; padding: 4px 0; margin-top: 4px; }
+      .expand-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--accent-text); cursor: pointer; background: none; border: none; padding: 4px 0; margin-top: 4px; }
       .expand-btn:hover { text-decoration: underline; }
 
       /* ── Recommendation link ─────────────────────── */
-      .rec-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--accent, #409eff); cursor: pointer; background: none; border: none; padding: 0; margin-top: 4px; }
+      .rec-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--accent-text); cursor: pointer; background: none; border: none; padding: 0; margin-top: 4px; }
       .rec-link:hover { text-decoration: underline; }
 
       .loading, .error-state { padding: 48px; text-align: center; color: var(--muted); }

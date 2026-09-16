@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
@@ -76,7 +77,7 @@ export class FeishuNotificationSettings extends LitElement {
   @state() testing = false;
   @state() error = '';
 
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; max-width: 760px; }
     h1 { margin: 0 0 var(--space-xs); color: var(--text-strong); font-size: var(--text-2xl); }
     .intro { margin: 0 0 var(--space-xl); color: var(--muted); font-size: var(--text-base); }

@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * Metric Registry Viewer — card-based metric definition browser + CRUD
  */
@@ -38,7 +39,7 @@ export class MetricRegistryViewer extends LitElement {
   @state() private formMsg: string | null = null;
   @state() private saving = false;
   @state() private showDeleteConfirm: MetricDefinition | null = null;
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
 
     :host { display: block; }
     .page { padding: 0; }

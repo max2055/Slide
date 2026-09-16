@@ -167,12 +167,12 @@ export class AIAnalysisResult extends LitElement {
 
     .source-tag.auto {
       background: rgba(64, 158, 255, 0.12);
-      color: var(--accent);
+      color: var(--accent-text);
     }
 
     .source-tag.manual {
       background: rgba(59, 130, 246, 0.12);
-      color: #3b82f6;
+      color: var(--info);
     }
   `];
 

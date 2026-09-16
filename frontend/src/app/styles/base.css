@@ -1,6 +1,7 @@
 /* Tokens are imported from tokens.css (single source of truth for all design tokens) */
 @import "./tokens.css";
 @import "./utilities.css";
+@import "./shared-field-styles.css";
 
 * {
   box-sizing: border-box;
@@ -35,7 +36,7 @@ slide-app {
 }
 
 a {
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: underline;
   text-underline-offset: 2px;
 }

@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
@@ -27,7 +28,7 @@ export class ResourceRecovery extends LitElement {
   private readonly permissionsHandler = (event?: Event) => {
     try { const p = (event as CustomEvent)?.detail?.permissions ?? JSON.parse(localStorage.getItem('permissions') ?? '[]'); this.editable = p.includes('*') || p.includes('admin:*'); } catch { this.editable = false; }
   };
-  static styles = [sharedBtnStyles, resourceEvidenceFormStyles];
+  static styles = [sharedFieldStyles, sharedBtnStyles, resourceEvidenceFormStyles];
   override connectedCallback() { super.connectedCallback(); this.permissionsHandler(); window.addEventListener('slide-permissions-loaded', this.permissionsHandler); }
   override disconnectedCallback() { this.requestVersion++; this.verificationVersion++; window.removeEventListener('slide-permissions-loaded', this.permissionsHandler); super.disconnectedCallback(); }
   protected override willUpdate(changed: Map<string, unknown>) {

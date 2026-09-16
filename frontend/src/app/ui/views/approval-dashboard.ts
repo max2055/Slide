@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
@@ -54,11 +55,11 @@ interface OperationEvent { toState: string; reasonCode: string; metadata?: Recor
 
 @customElement("approval-dashboard")
 export class ApprovalDashboard extends LitElement {
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; padding: var(--space-xl); }
     .tabs { display: flex; gap: var(--space-xs); margin-bottom: 16px; border-bottom: 1px solid var(--border, #e5e7eb); }
     .tab { padding: 10px var(--space-xl); font-size: var(--text-md); cursor: pointer; border: none; background: none; color: var(--muted, #6b7280); border-bottom: 2px solid transparent; }
-    .tab.active { color: var(--accent, #3b82f6); border-bottom-color: var(--accent, #3b82f6); }
+    .tab.active { color: var(--accent-text); border-bottom-color: var(--accent, #3b82f6); }
     .card { background: var(--card, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-md); padding: var(--space-lg); margin-bottom: 12px; }
     .card:hover { border-color: var(--border-strong, #d1d1d6); }
     .card.selected { background: var(--accent-subtle, rgba(64,158,255,0.08)); border-color: var(--accent, #3b82f6); }
@@ -85,7 +86,7 @@ export class ApprovalDashboard extends LitElement {
     .ai-badge { font-size: var(--text-xs); padding: var(--space-xs) var(--space-sm); background: var(--bg-elevated, #f9fafb); border-radius: var(--radius-sm); color: var(--muted, #6b7280); }
     .loading { padding: 40px; text-align: center; color: var(--muted, #6b7280); }
     .detail-header { display: flex; align-items: center; gap: var(--space-md); margin-bottom: 20px; }
-    .back-link { color: var(--accent, #409eff); cursor: pointer; font-size: var(--text-md); text-decoration: none; }
+    .back-link { color: var(--accent-text); cursor: pointer; font-size: var(--text-md); text-decoration: none; }
     .back-link:hover { text-decoration: underline; }
     .detail-title { font-size: var(--text-xl); font-weight: 600; color: var(--text-strong, #1a1a1e); margin: 0; }
 

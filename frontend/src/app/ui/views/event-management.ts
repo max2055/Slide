@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
@@ -59,7 +60,7 @@ interface EventLog {
 
 @customElement("event-management-page")
 export class EventManagementPage extends LitElement {
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -182,7 +183,7 @@ export class EventManagementPage extends LitElement {
     }
 
     .tab.active {
-      color: var(--accent) !important;
+      color: var(--accent-text) !important;
       border-bottom-color: var(--accent) !important;
     }
 
@@ -906,11 +907,11 @@ export class EventManagementPage extends LitElement {
         ${e.status !== "closed" ? html`
           <div class="action-bar">
             ${e.status === "open" ? html`<button class="btn btn-primary" @click=${this._startInvestigation} ?disabled=${this.actionLoading}>开始调查</button>` : nothing}
-            <button class="btn" @click=${this._triggerRCA} ?disabled=${this.rcaLoading} style="border-color:var(--accent);color:var(--accent);">${this.rcaLoading ? "分析中..." : "AI 根因分析"}</button>
+            <button class="btn" @click=${this._triggerRCA} ?disabled=${this.rcaLoading} style="border-color:var(--accent);color:var(--accent-text);">${this.rcaLoading ? "分析中..." : "AI 根因分析"}</button>
             ${this.rcaResult && this.rcaResult.eventId === Number(this.selectedEvent?.id) ? html`
               <span style="font-size:12px;color:var(--ok);margin-left:8px;">已触发 ${this.rcaResult.analysisIds.length} 个分析</span>
               ${this.rcaResult.sessionKeys.map((sk: string) => html`
-                <a href="#" @click=${(e: Event) => { e.preventDefault(); this._navigateToChat(sk); }} style="font-size:11px;color:var(--accent);margin-left:4px;">查看 →</a>
+                <a href="#" @click=${(e: Event) => { e.preventDefault(); this._navigateToChat(sk); }} style="font-size:11px;color:var(--accent-text);margin-left:4px;">查看 →</a>
               `)}
               <button class="btn" style="font-size:var(--text-xs);margin-left:var(--space-sm);padding:var(--space-xs) var(--space-sm);" @click=${this._clearRCAResult}>清除</button>
             ` : nothing}

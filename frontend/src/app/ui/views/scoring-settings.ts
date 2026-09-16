@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * Scoring Settings — instance health score dimension weights
  */
@@ -23,7 +24,7 @@ export class ScoringSettingsPage extends LitElement {
   @state() private saving = false;
   @state() private error: string | null = null;
   @state() private ok: string | null = null;
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
 
     :host { display: block; max-width: 800px; }
     .page-header { margin-bottom: 24px; }
@@ -37,7 +38,7 @@ export class ScoringSettingsPage extends LitElement {
     .dim-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
     .dim-slider { flex: 1; }
     .dim-slider input[type="range"] { width: 100%; accent-color: var(--accent); }
-    .dim-value { width: 48px; text-align: right; font-size: 16px; font-weight: 700; color: var(--accent); flex-shrink: 0; }
+    .dim-value { width: 48px; text-align: right; font-size: 16px; font-weight: 700; color: var(--accent-text); flex-shrink: 0; }
 
     .total-bar { display: flex; align-items: center; justify-content: space-between; padding: 14px 0 0; margin-top: 8px; border-top: 1px solid var(--border); }
     .total-label { font-size: 13px; font-weight: 600; color: var(--text); }

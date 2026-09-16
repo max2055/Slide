@@ -91,9 +91,16 @@ export class MetricChart extends LitElement {
   private _chart: EChartsType | null = null;
   private _resizeObserver: ResizeObserver | null = null;
   private _rafId: number | null = null;
+  private _themeObserver: MutationObserver | null = null;
 
   override connectedCallback() {
     super.connectedCallback();
+    // Canvas colors do not inherit CSS updates when the user switches themes.
+    this._themeObserver = new MutationObserver(() => this._updateChart());
+    this._themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme-mode", "style"],
+    });
     // Re-initialize when component is re-inserted into DOM (e.g. tab switch)
     // Only if _chartContainer exists (set in firstUpdated)
     if (this._chartContainer && !this._chart && this.timeData.length > 0 && this.series.length > 0) {
@@ -131,6 +138,8 @@ export class MetricChart extends LitElement {
 
   override disconnectedCallback() {
     super.disconnectedCallback();
+    this._themeObserver?.disconnect();
+    this._themeObserver = null;
     if (this._rafId) {
       cancelAnimationFrame(this._rafId);
       this._rafId = null;
@@ -189,6 +198,10 @@ export class MetricChart extends LitElement {
       }
 
       const hasThresholds = this.thresholds && this.thresholds.length > 0;
+      const style = getComputedStyle(this);
+      const text = style.getPropertyValue("--text").trim();
+      const muted = style.getPropertyValue("--muted").trim();
+      const border = style.getPropertyValue("--border").trim();
 
       const seriesOptions = this.series.map((s, index) => {
         const base: Record<string, unknown> = {
@@ -236,19 +249,19 @@ export class MetricChart extends LitElement {
       const option: EChartsOption = {
         tooltip: {
           trigger: "axis",
-          backgroundColor: "rgba(0, 0, 0, 0.8)",
-          borderColor: "#333",
-          textStyle: { color: "#fff", fontSize: 12 },
+          backgroundColor: style.getPropertyValue("--popover").trim(),
+          borderColor: border,
+          textStyle: { color: text, fontSize: 12 },
           axisPointer: {
             type: "line",
-            lineStyle: { color: "#666", type: "dashed" },
+            lineStyle: { color: muted, type: "dashed" },
           },
         },
         legend: {
           data: this.series.map((s) => s.name),
           top: 0,
           right: 10,
-          textStyle: { fontSize: 12 },
+          textStyle: { color: text, fontSize: 12 },
           itemWidth: 12,
           itemHeight: 8,
         },
@@ -262,9 +275,9 @@ export class MetricChart extends LitElement {
           type: "category",
           data: this.timeData,
           boundaryGap: false,
-          axisLine: { lineStyle: { color: "#ccc" } },
+          axisLine: { lineStyle: { color: border } },
           axisLabel: {
-            color: "#888",
+            color: muted,
             fontSize: 11,
             interval: 'auto',
             rotate: this.timeData.length > 20 ? 30 : 0,
@@ -279,14 +292,15 @@ export class MetricChart extends LitElement {
         yAxis: {
           type: "value",
           name: this.yAxisLabel || undefined,
+          nameTextStyle: { color: muted },
           min: this.percentage ? 0 : undefined,
           max: this.percentage ? this.yAxisMax : undefined,
           axisLabel: {
-            color: "#888",
+            color: muted,
             fontSize: 11,
             formatter: this.percentage ? "{value}%" : "{value}",
           },
-          splitLine: { lineStyle: { color: "#eee", type: "dashed" } },
+          splitLine: { lineStyle: { color: border, type: "dashed" } },
           axisLine: { show: false },
         },
         series: seriesOptions,

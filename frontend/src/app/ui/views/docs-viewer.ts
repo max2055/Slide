@@ -70,7 +70,7 @@ export class DocsViewerPage extends LitElement {
       margin: 10px 4px 0; color: var(--muted); font-size: 13px;
     }
     .docs-content blockquote { border-left: 3px solid var(--border); margin: 16px 0; padding: 4px 16px; color: var(--muted); }
-    .docs-content a { color: var(--accent); text-decoration: none; }
+    .docs-content a { color: var(--accent-text); text-decoration: none; }
     .docs-content a:hover { text-decoration: underline; }
     .docs-content .doc-toc {
       display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

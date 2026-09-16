@@ -93,7 +93,7 @@ export class AppDataTable extends LitElement {
           cursor: pointer;
         }
         .data-table th.sortable:hover {
-          color: var(--accent);
+          color: var(--accent-text);
         }
         .data-table th .sort-indicator {
           display: inline-block;

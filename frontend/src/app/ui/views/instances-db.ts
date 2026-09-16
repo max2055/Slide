@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { sharedResourceToolbarStyles } from "../../styles/shared-resource-toolbar-styles.ts";
@@ -80,7 +81,7 @@ function hasStoredPermission(required: string): boolean {
 
 @customElement("instances-page")
 export class InstancesPage extends LitElement {
-  static styles = [sharedBtnStyles, sharedResourceToolbarStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, sharedResourceToolbarStyles, css`
     :host {
       display: block;
       animation: fade-in 0.25s var(--ease-out);
@@ -180,7 +181,7 @@ export class InstancesPage extends LitElement {
       display: inline-block;
       margin-left: 2px;
       font-size: 10px;
-      opacity: 0.4;
+      opacity: 1;
     }
     .sort-arrow.active {
       opacity: 1;
@@ -448,7 +449,7 @@ export class InstancesPage extends LitElement {
       width: 48px;
       height: 48px;
       margin: 0 auto var(--space-md);
-      opacity: 0.6;
+      opacity: 1;
       color: var(--warn);
       display: flex;
       align-items: center;

@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { apiClient } from '../../../api/index.js';
@@ -20,7 +21,7 @@ export class SessionSettingsPage extends LitElement {
   @state() private saving = false;
   @state() private fieldError = '';
 
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; width: min(100%, 48rem); color: var(--text); }
     .page-header { margin-bottom: var(--space-xl); }
     .page-header h1 { margin: 0 0 var(--space-xs); color: var(--text-strong); font-size: var(--text-xl); }

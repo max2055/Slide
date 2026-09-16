@@ -163,7 +163,7 @@ export class SettingsShell extends LitElement {
 
     .content-tab.active {
       border-bottom-color: var(--accent);
-      color: var(--accent);
+      color: var(--accent-text);
       font-weight: 600;
     }
 

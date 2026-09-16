@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
@@ -51,7 +52,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 @customElement("users-management")
 export class UsersManagement extends LitElement {
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host {
       display: block;
       animation: fade-in 0.25s var(--ease-out);
@@ -128,22 +129,22 @@ export class UsersManagement extends LitElement {
 
     .role-badge.admin {
       background: rgba(239, 68, 68, 0.12);
-      color: #ef4444;
+      color: var(--danger);
     }
 
     .role-badge.dba {
       background: rgba(59, 130, 246, 0.12);
-      color: #3b82f6;
+      color: var(--info);
     }
 
     .role-badge.developer {
       background: rgba(34, 197, 94, 0.12);
-      color: #22c55e;
+      color: var(--ok);
     }
 
     .role-badge.analyst {
       background: rgba(168, 85, 247, 0.12);
-      color: #a855f7;
+      color: color-mix(in srgb, #a855f7 55%, var(--text-strong));
     }
 
     .role-badge.viewer {
@@ -153,7 +154,7 @@ export class UsersManagement extends LitElement {
 
     .role-badge.auditor {
       background: rgba(245, 158, 11, 0.12);
-      color: #f59e0b;
+      color: var(--warn);
     }
 
 

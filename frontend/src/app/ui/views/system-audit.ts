@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { apiClient } from '../../../api/index.js';
@@ -58,7 +59,7 @@ export class SystemAuditPage extends LitElement {
   @state() private endTime = '';
   private readonly limit = 25;
 
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; min-width: 0; color: var(--text); }
     .page-header, .filters, .pagination, .dialog-grid { display: flex; }
     .page-header { align-items: center; justify-content: space-between; gap: var(--space-lg); margin-bottom: var(--space-xl); }

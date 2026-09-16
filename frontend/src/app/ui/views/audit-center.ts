@@ -36,7 +36,7 @@ export class AuditCenterPage extends LitElement {
     }
     .tab:hover { color: var(--text); }
     .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    .tab.active { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
+    .tab.active { border-bottom-color: var(--accent); color: var(--accent-text); font-weight: 600; }
   `;
 
   override connectedCallback(): void {

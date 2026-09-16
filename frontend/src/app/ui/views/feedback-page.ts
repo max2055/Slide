@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { apiClient } from '../../../api/index.js';
@@ -47,7 +48,7 @@ export class FeedbackPage extends LitElement {
   @state() private copiedId: number | null = null;
   private copyResetTimer: number | undefined;
 
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; }
     .page-header {
       display: flex;
@@ -87,7 +88,7 @@ export class FeedbackPage extends LitElement {
     .description-toggle {
       margin-top: var(--space-xs);
       padding-inline: 0;
-      --btn-ghost-color: var(--accent);
+      --btn-ghost-color: var(--accent-text);
     }
     .description-toggle svg { width: 1em; height: 1em; }
     .serial {
@@ -116,7 +117,7 @@ export class FeedbackPage extends LitElement {
       opacity: var(--disabled-opacity, 0.45);
     }
     .status-select--pending { color: var(--muted-strong); }
-    .status-select--accepted { color: var(--accent); }
+    .status-select--accepted { color: var(--accent-text); }
     .status-select--resolved { color: var(--ok); }
     .actions {
       display: inline-flex;

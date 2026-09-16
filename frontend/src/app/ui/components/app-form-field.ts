@@ -105,7 +105,7 @@ export class AppFormField extends LitElement {
         }
         .form-hint {
           font-size: var(--text-xs, 11px);
-          color: #999;
+          color: var(--muted);
           margin-top: 6px;
           line-height: 1.4;
         }

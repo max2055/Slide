@@ -105,7 +105,7 @@
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-muted));
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.01em;
@@ -327,7 +327,7 @@
 .chart-toggle .toggle-btn.active {
   border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
   background: var(--accent-subtle);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -358,7 +358,7 @@
 
 .usage-query-input::placeholder {
   color: var(--muted);
-  opacity: 0.7;
+  opacity: 1;
 }
 
 .usage-query-actions {
@@ -741,7 +741,7 @@ details.usage-filter-select summary::-webkit-details-marker,
   color: var(--muted);
   font-size: 9px;
   cursor: help;
-  opacity: 0.7;
+  opacity: 1;
   transition: opacity 0.15s var(--ease-out);
 }
 
@@ -1389,7 +1389,7 @@ details.usage-filter-select summary::-webkit-details-marker,
 }
 
 .timeseries-summary__range {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 

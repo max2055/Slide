@@ -1,0 +1,6 @@
+/* Keep placeholder hints readable; disabled controls retain their own opacity. */
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}

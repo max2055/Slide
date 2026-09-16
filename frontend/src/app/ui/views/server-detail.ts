@@ -80,7 +80,7 @@ export class ServerDetailPage extends LitElement {
       border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap;
     }
     .tab:hover { color:var(--text); }
-    .tab.active { color:var(--accent);border-bottom-color:var(--accent); }
+    .tab.active { color:var(--accent-text);border-bottom-color:var(--accent); }
 
     /* Summary cards grid */
     .summary-grid {
@@ -118,7 +118,7 @@ export class ServerDetailPage extends LitElement {
       font-size:var(--text-sm);font-weight:500;color:var(--muted);background:var(--secondary);
       cursor:pointer;transition:all 0.15s ease;
     }
-    .range-btn:hover { border-color:var(--accent);color:var(--accent); }
+    .range-btn:hover { border-color:var(--accent);color:var(--accent-text); }
     .range-btn.active { background:var(--accent);color:var(--accent-foreground);border-color:var(--accent); }
 
     /* Config section */

@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, property, state } from "lit/decorators.js";
@@ -44,7 +45,7 @@ export class RbacAdminPage extends LitElement {
   @state() private error: string | null = null;
   @state() private hasAccess = false;
 
-  static styles = [sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; animation: fade-in 0.25s var(--ease-out); }
     @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -74,7 +75,7 @@ export class RbacAdminPage extends LitElement {
     }
     .sub-tab:hover { color: var(--text); background: var(--bg-hover); }
     .sub-tab--active {
-      color: var(--accent);
+      color: var(--accent-text);
       font-weight: 600;
     }
     .sub-tab--active::after {
