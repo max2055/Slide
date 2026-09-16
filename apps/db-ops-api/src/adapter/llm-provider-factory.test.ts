@@ -5,12 +5,12 @@ import { llmService } from '../llm-service.js';
 import { dbConnection } from '../db-connection.js';
 import { llmDatabaseService } from '../llm-database-service.js';
 
-const config = { name: 'proxy', enabled: true, deployment_type: 'api', api_format: 'anthropic-messages', default_model: 'test-model', api_base_url: 'https://proxy.invalid' } as any;
+const config = { name: 'proxy', enabled: true, is_default: true, supports_function_call: true, deployment_type: 'api', api_format: 'anthropic-messages', default_model: 'test-model', api_base_url: 'https://proxy.invalid' } as any;
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 describe('configured provider consistency', () => {
   it('uses the same explicit Anthropic endpoint/key/model without mutating the environment', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'old-key'); vi.stubEnv('ANTHROPIC_MODEL', 'old-model');
-    const agent = await createConfiguredAgentProvider({ getEnabledProviders: async () => [config], getProviderApiKey: async () => 'configured-key' });
+    const agent = await createConfiguredAgentProvider({ getSceneBindings: async () => [], getAllProviders: async () => [config], getProviderApiKey: async () => 'configured-key' });
     const service = createServiceProviderClient(config, 'configured-key');
     expect(agent.getDefaultModel()).toBe(service.config.default_model);
     expect((agent as any).client.baseURL).toBe(service.client!.baseURL);
@@ -19,12 +19,12 @@ describe('configured provider consistency', () => {
   });
   it('does not revive env credentials after every provider is disabled', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'old-key');
-    const agent = await createConfiguredAgentProvider({ getEnabledProviders: async () => [], getProviderApiKey: vi.fn() });
-    await expect(agent.chat([], [])).rejects.toThrow('LLM_PROVIDER_NOT_CONFIGURED');
+    const agent = await createConfiguredAgentProvider({ getSceneBindings: async () => [], getAllProviders: async () => [], getProviderApiKey: vi.fn() });
+    await expect(agent.chat([], [])).rejects.toThrow('未配置提供商或全局默认');
   });
   it('supports a keyless local provider and its OpenAI-compatible endpoint', async () => {
     const key = vi.fn().mockResolvedValue(null);
-    const agent = await createConfiguredAgentProvider({ getEnabledProviders: async () => [{ ...config, api_format: null, deployment_type: 'local', api_base_url: 'http://localhost:11434/' }], getProviderApiKey: key });
+    const agent = await createConfiguredAgentProvider({ getSceneBindings: async () => [], getAllProviders: async () => [{ ...config, api_format: null, deployment_type: 'local', api_base_url: 'http://localhost:11434/' }], getProviderApiKey: key });
     expect((agent as any).client.baseURL).toBe('http://localhost:11434/v1');
     expect((agent as any).client.apiKey).toBe('ollama');
     expect(key).toHaveBeenCalledWith(config.name);
@@ -32,6 +32,8 @@ describe('configured provider consistency', () => {
   it.each(['openai-completions', 'anthropic-messages'])('preserves stored local credentials for %s across agent, service and connection tests', async api_format => {
     const provider = { ...config, deployment_type: 'local', api_format };
     vi.spyOn(llmDatabaseService, 'getEnabledProviders').mockResolvedValue([provider]);
+    vi.spyOn(llmDatabaseService, 'getAllProviders').mockResolvedValue([provider]);
+    vi.spyOn(llmDatabaseService, 'getSceneBindings').mockResolvedValue([]);
     vi.spyOn(llmDatabaseService, 'getProviderByName').mockResolvedValue(provider);
     vi.spyOn(llmDatabaseService, 'getProviderApiKey').mockResolvedValue('local-gateway-key');
 
@@ -49,6 +51,8 @@ describe('configured provider consistency', () => {
   it.each([null, ''])('falls back only when a local OpenAI endpoint has no key (%s)', async apiKey => {
     const provider = { ...config, deployment_type: 'local', api_format: 'openai-completions' };
     vi.spyOn(llmDatabaseService, 'getEnabledProviders').mockResolvedValue([provider]);
+    vi.spyOn(llmDatabaseService, 'getAllProviders').mockResolvedValue([provider]);
+    vi.spyOn(llmDatabaseService, 'getSceneBindings').mockResolvedValue([]);
     vi.spyOn(llmDatabaseService, 'getProviderApiKey').mockResolvedValue(apiKey);
     const agent = await createConfiguredAgentProvider(llmDatabaseService);
     expect((agent as any).client.apiKey).toBe('ollama');
@@ -56,7 +60,7 @@ describe('configured provider consistency', () => {
     expect((llmService as any).providerClients.get(provider.name).client.apiKey).toBe('ollama');
   });
   it('does not skip a misconfigured selected provider in favor of another', async () => {
-    await expect(createConfiguredAgentProvider({ getEnabledProviders: async () => [config, { ...config, name: 'other' }], getProviderApiKey: async () => null })).rejects.toThrow('LLM_CREDENTIAL_NOT_CONFIGURED');
+    await expect(createConfiguredAgentProvider({ getSceneBindings: async () => [], getAllProviders: async () => [config, { ...config, name: 'other' }], getProviderApiKey: async () => null })).rejects.toThrow('LLM_CREDENTIAL_NOT_CONFIGURED');
   });
   it('does not select another protocol for an unsupported format', () => {
     expect(() => createServiceProviderClient({ ...config, api_format: 'google-generative-ai' }, 'key')).toThrow('LLM_API_FORMAT_UNSUPPORTED');

@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock llmService
 vi.mock('./llm-service.js', () => ({
   llmService: {
-    chat: vi.fn(),
+    chatWithTracking: vi.fn(),
   },
 }));
 
@@ -29,7 +29,7 @@ describe('106-04: sql-generator', () => {
   });
 
   it('returns SQL for valid mysql description', async () => {
-    vi.mocked(llmService.chat).mockResolvedValue({
+    vi.mocked(llmService.chatWithTracking).mockResolvedValue({
       success: true,
       content: 'SELECT COUNT(*) as val FROM information_schema.PROCESSLIST',
     });
@@ -44,7 +44,7 @@ describe('106-04: sql-generator', () => {
     const result = await generateCollectionSql('mysql', '');
     expect(result.error).toBeDefined();
     expect(result.sql).toBeUndefined();
-    expect(llmService.chat).not.toHaveBeenCalled();
+    expect(llmService.chatWithTracking).not.toHaveBeenCalled();
   });
 
   it('returns error when description is whitespace-only', async () => {
@@ -54,7 +54,7 @@ describe('106-04: sql-generator', () => {
   });
 
   it('Generated SQL passes validateSqlIsSelectOnly()', async () => {
-    vi.mocked(llmService.chat).mockResolvedValue({
+    vi.mocked(llmService.chatWithTracking).mockResolvedValue({
       success: true,
       content: 'SELECT COUNT(*) as val FROM information_schema.PROCESSLIST',
     });
@@ -68,7 +68,7 @@ describe('106-04: sql-generator', () => {
   });
 
   it('returns error when LLM call fails', async () => {
-    vi.mocked(llmService.chat).mockResolvedValue({
+    vi.mocked(llmService.chatWithTracking).mockResolvedValue({
       success: false,
       error: 'API 调用失败',
     });
@@ -99,14 +99,15 @@ describe('106-04: sql-generator', () => {
   });
 
   it('calls LLM with proper system prompt for mysql', async () => {
-    vi.mocked(llmService.chat).mockResolvedValue({
+    vi.mocked(llmService.chatWithTracking).mockResolvedValue({
       success: true,
       content: 'SELECT COUNT(*) as val FROM PROCESSLIST',
     });
 
     await generateCollectionSql('mysql', '监控活跃连接数');
-    expect(llmService.chat).toHaveBeenCalledTimes(1);
-    const messages = vi.mocked(llmService.chat).mock.calls[0][0];
+    expect(llmService.chatWithTracking).toHaveBeenCalledTimes(1);
+    const messages = vi.mocked(llmService.chatWithTracking).mock.calls[0][0];
+    expect(vi.mocked(llmService.chatWithTracking).mock.calls[0][1]).toEqual({ purpose: 'sql_analysis' });
     expect(messages.length).toBe(2);
     expect(messages[0].role).toBe('system');
     expect(messages[0].content).toContain('MySQL');

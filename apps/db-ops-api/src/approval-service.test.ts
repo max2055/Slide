@@ -23,7 +23,7 @@ vi.mock('./sql-executor', () => ({
 
 vi.mock('./llm-service', () => ({
   llmService: {
-    chat: vi.fn(),
+    chatWithTracking: vi.fn(),
   },
 }));
 
@@ -37,7 +37,7 @@ describe('ApprovalService', () => {
     mockPool.execute.mockReset();
     mockPool.query.mockReset();
     (sqlExecutor.executeSql as ReturnType<typeof vi.fn>).mockReset();
-    (llmService.chat as ReturnType<typeof vi.fn>).mockReset();
+    (llmService.chatWithTracking as ReturnType<typeof vi.fn>).mockReset();
     mockPool.execute.mockResolvedValue([{}, null] as any);
   });
 
@@ -267,7 +267,7 @@ describe('ApprovalService', () => {
         .mockResolvedValueOnce([{ insertId: 5 }, null] as any)      // INSERT approval_requests
         .mockResolvedValueOnce([{}, null] as any);             // writeEvent submitted
 
-      (llmService.chat as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (llmService.chatWithTracking as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
       await approvalService.submitForApproval({
         instance_id: 1,
@@ -287,7 +287,7 @@ describe('ApprovalService', () => {
         .mockResolvedValueOnce([{}, null] as any)             // writeEvent submitted
         .mockResolvedValueOnce([{}, null] as any);            // writeEvent ai_reviewed
 
-      (llmService.chat as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (llmService.chatWithTracking as ReturnType<typeof vi.fn>).mockResolvedValue({
         content: '{"risk_level":"critical","recommendation":"reject","reasoning":"Dangerous DROP"}',
       });
 

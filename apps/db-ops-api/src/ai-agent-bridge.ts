@@ -110,7 +110,7 @@ export async function dispatchOrReuse(
   void (async () => {
     try {
       const engine = await getAgentEngine();
-      const result = await engine.invoke(params.sessionKey, fullMessage, basePrompt, { analysisId });
+      const result = await engine.invoke(params.sessionKey, fullMessage, basePrompt, { analysisId, purpose: params.type });
       const record = await aiAnalysisDatabaseService.getAnalysisById(analysisId);
       if (record?.status === 'completed' || record?.status === 'failed') return;
       const reason = result.stopReason === 'completed'

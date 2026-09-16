@@ -1,3 +1,4 @@
+import { registerLLMSceneRoutes } from './src/llm/scene-routes.js';
 import { capacityInstanceIds } from './src/capacity-scope.js';
 /**
  * Slide - Database Operations API Server
@@ -687,6 +688,8 @@ async function start() {
 
   await registerInstanceListRoutes(fastify, verifyToken);
 
+  await registerLLMSceneRoutes(fastify, verifyToken, requirePermission('llm:manage'));
+
   // ========== LLM 配置管理 API (CRUD) ==========
 
   async function reloadChatProvider(): Promise<void> {
@@ -783,6 +786,7 @@ async function start() {
       const provider = await llmDatabaseService.getProviderById(Number(id));
       if (!provider) return reply.code(404).send({ error: '提供商不存在' });
       const result = await llmDatabaseService.setDefaultProvider(provider.name);
+      await llmService.reloadConfig();
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: '设置默认失败：' + error.message });

@@ -150,6 +150,7 @@ export interface DirectAdapterOptions {
   /** Builds an actor-bound registry so LLM calls cannot supply their own identity. */
   toolsForActor?: (actor: ActorContext) => ToolRegistry;
   llmProvider: import('@slide/agent-core').LLMProvider;
+  providerForPurpose?: (purpose?: string) => Promise<import('@slide/agent-core').LLMProvider>;
   workspace?: string;              // workspace root path (defaults to process.cwd())
   sessionManager?: SessionManager; // optional, created from workspace if not provided
   contextBuilder?: ContextBuilder; // optional, created from workspace if not provided
@@ -163,6 +164,7 @@ export interface DirectAdapterOptions {
 
 export class DirectAdapter implements IAgentEngine {
   private runner: AgentRunner;
+  private providerForPurpose?: DirectAdapterOptions['providerForPurpose'];
   private registry: ToolRegistry;
   private toolsForActor?: (actor: ActorContext) => ToolRegistry;
   private provider: import('@slide/agent-core').LLMProvider;
@@ -182,6 +184,7 @@ export class DirectAdapter implements IAgentEngine {
 
   constructor(opts: DirectAdapterOptions) {
     this.runner = new AgentRunner(opts.llmProvider);
+    this.providerForPurpose = opts.providerForPurpose;
     this.registry = opts.tools;
     this.toolsForActor = opts.toolsForActor;
     this.provider = opts.llmProvider;
@@ -747,11 +750,6 @@ export class DirectAdapter implements IAgentEngine {
     // Get or create session via SessionManager (D-07)
     const session = this.sessionManager.getOrCreate(sessionKey);
 
-    // Checkpoint restore at turn start (D-17): recover from crashed turns
-    if (session.metadata && 'runtime_checkpoint' in session.metadata) {
-      this.runner._restoreRuntimeCheckpoint(session as any);
-    }
-
     // Capture history before adding this turn. ContextBuilder appends the
     // current user message itself, so including the just-added entry would
     // send the same question to the model twice.
@@ -763,7 +761,6 @@ export class DirectAdapter implements IAgentEngine {
     const sessMeta = _actor
       ? await chatDatabaseService.getSessionMetadata(_actor, sessionKey)
       : null;
-    const sessModel = (sessMeta?.model as string) || undefined;
     const sessThinkingLevel = (sessMeta?.thinkingLevel as string) || undefined;
     const reasoningEffort = normalizeThinkingLevel(sessThinkingLevel);
 
@@ -792,10 +789,13 @@ export class DirectAdapter implements IAgentEngine {
     const hook = mapHookEventToChatEvent({}, onEvent, thinkingHolder, streamHolder);
 
     try {
-      const result = await this.runner.run({
+      const provider = this.providerForPurpose ? await this.providerForPurpose('chat') : this.provider;
+      const runner = this.providerForPurpose ? new AgentRunner(provider) : this.runner;
+      if (session.metadata && 'runtime_checkpoint' in session.metadata) runner._restoreRuntimeCheckpoint(session as any);
+      const result = await runner.run({
         initialMessages: contextMessages as Message[],
         tools: _actor && this.toolsForActor ? this.toolsForActor(_actor) : new ToolRegistry(),
-        model: sessModel || this.provider.getDefaultModel(),
+        model: provider.getDefaultModel(),
         maxIterations: this.runtimeLimits.maxIterations,
         maxToolResultChars: this.runtimeLimits.maxToolResultChars,
         temperature: 0.0,
@@ -929,12 +929,14 @@ export class DirectAdapter implements IAgentEngine {
     if (options?.signal?.aborted) cancel();
     const timeout = setTimeout(() => controller.abort(new Error('ANALYSIS_TIMED_OUT')), this.runtimeLimits.runTimeoutMs);
     try {
-      const result = await this.runner.run({
+      const provider = this.providerForPurpose ? await this.providerForPurpose(options?.purpose || 'default') : this.provider;
+      const runner = this.providerForPurpose ? new AgentRunner(provider) : this.runner;
+      const result = await runner.run({
         initialMessages: messages,
         // A generic background invoke receives no tools. Analysis runs receive
         // one completion tool bound to the operator-created analysis record.
         tools: analysisCompletionTools(options?.analysisId),
-        model: this.provider.getDefaultModel(),
+        model: provider.getDefaultModel(),
         maxIterations: 8,
         maxToolResultChars: 20000,
         temperature: 0.0,

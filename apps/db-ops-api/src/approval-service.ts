@@ -92,10 +92,9 @@ class ApprovalService {
     // LLM 风险评估
     let aiRecommendation = null;
     try {
-      const llmResult = await llmService.chat(
+      const llmResult = await llmService.chatWithTracking(
         [{ role: 'user', content: sql_text }],
-        undefined, undefined, 0.1, 4096,
-        '你是数据库安全审核专家。评估以下 SQL 的风险等级（low/medium/high/critical），给出建议（approve/reject）和理由。只返回 JSON: {"risk_level":"...","recommendation":"...","reasoning":"..."}',
+        { purpose: 'sql_approval', temperature: 0.1, maxTokens: 4096, system: '你是数据库安全审核专家。评估以下 SQL 的风险等级（low/medium/high/critical），给出建议（approve/reject）和理由。只返回 JSON: {"risk_level":"...","recommendation":"...","reasoning":"..."}' },
       );
       if (llmResult?.content) {
         const jsonMatch = llmResult.content.match(/\{[\s\S]*\}/);
