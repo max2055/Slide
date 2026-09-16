@@ -1,4 +1,5 @@
 import { html, nothing } from "lit";
+import { readCachedPermissions, renderPermissionsError } from "./permissions.ts";
 import {
   buildAgentMainSessionKey,
   parseAgentSessionKey,
@@ -198,8 +199,7 @@ function resolveAssistantAvatarUrl(state: AppViewState): string | undefined {
 
 function loadPermissionsFromStorage(): Set<string> | null {
   try {
-    const stored = localStorage.getItem('permissions');
-    if (stored) return new Set(JSON.parse(stored));
+    return readCachedPermissions();
   } catch {}
   return null;
 }
@@ -480,6 +480,7 @@ export function renderApp(state: AppViewState) {
         </aside>
       </div>
       <main class="content ${isChat ? "content--chat" : ""}">
+        ${renderPermissionsError(state)}
         ${state.updateAvailable &&
         state.updateAvailable.latestVersion !== state.updateAvailable.currentVersion &&
         !isUpdateBannerDismissed(state.updateAvailable)
