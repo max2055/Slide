@@ -43,7 +43,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     items: [
       { id: "branding", label: "品牌", path: "/settings/platform/branding", icon: "palette" },
       { id: "appearance", label: "外观", path: "/settings/platform/appearance", icon: "spark" },
-      { id: "source", label: "部署源码", path: "/settings/platform/source", icon: "code", requiredPermission: "config:view" },
+      { id: "source", label: "源码仓库", path: "/settings/platform/source", icon: "code", requiredPermission: "config:view" },
       { id: "notifications", label: "通知通道", path: "/settings/platform/notifications", icon: "bell", requiredPermission: "admin:*" },
     ],
   },

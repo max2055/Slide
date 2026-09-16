@@ -21,7 +21,7 @@ RUN mkdir -p /opt/oracle \
 FROM node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS production
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libaio1 tini \
+  && apt-get install -y --no-install-recommends libaio1 tini git ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
   && addgroup --system --gid 10001 slide \
   && adduser --system --disabled-login --no-create-home --uid 10001 --ingroup slide slide \

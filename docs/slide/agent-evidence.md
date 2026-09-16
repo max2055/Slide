@@ -2,7 +2,7 @@
 
 ## Navigation and authority
 
-Database instances, servers and network devices remain equal resource categories. Operations adds Cross-resource Diagnosis (`/resource-diagnosis`); the four navigation groups, combined alerts/events, and historical Agent sessions retain their existing meanings. Platform health embeds runtime observations. Settings > Platform > Deployment Source (`/settings/platform/source`) configures GitLab.
+Database instances, servers and network devices remain equal resource categories. Operations adds Cross-resource Diagnosis (`/resource-diagnosis`); the four navigation groups, combined alerts/events, and historical Agent sessions retain their existing meanings. Platform health embeds runtime observations. Settings > Platform > Source Repository (`/settings/platform/source`) configures GitLab or GitHub.
 
 Resource evidence and decisions are owned by the authenticated user and require current resource permission on every read. Resource-specific invariant and recovery policies require administrator permission. Platform logs and source inspection require `config:view`; source configuration and synchronization require administrator permission. Existing operational permissions, SQL classification and approvals are unchanged. No new operational commands, automatic remediation, historical PR replay, or automatic policy learning are introduced.
 
@@ -28,28 +28,39 @@ The structured adapter records actual API responses, Agent run outcomes, WS life
 
 The runtime ring is process-local: at most 10,000 entries, one hour of queryable retention, 100 aggregate groups, and ten example correlation IDs per group. Restart gaps, overflow, missing data, stale data and unknown outcomes are explicit. This is not a durable central log archive or distributed tracing system. A crashed API cannot attest to its own health: retain an independent process/uptime monitor. Uninstrumented dependencies remain unknown, never implicitly healthy.
 
-## GitLab deployment binding
+## Repository source synchronization
 
-The Agent never receives GitLab credentials and never clones or executes a repository. An administrator supplies a single-use token for synchronization; existing encrypted credential references carry it to the bounded connector. Only operator-approved HTTPS origins are permitted, redirects are rejected, commit SHA is immutable, and synchronization has a 120-second total deadline and 15-second per-request timeout.
+Settings > Platform > Source Repository (`/settings/platform/source`) supports GitLab and GitHub repository paths (for example `group/subgroup/project`, not numeric project IDs). Configure a branch, tag or full Commit SHA; leaving ref blank fetches remote HEAD. The connector records the actual fetched commit and checks out that exact commit. Full SHA fetching remains dependent on the server allowing that object; using a branch/tag avoids that requirement.
 
-Operator configuration:
+The Agent never receives Git credentials or executes repository code. An administrator supplies a token for a single sync request; it is cleared from the form and never stored in configuration, snapshots or Git argv. Credentials use a command-scoped Git HTTP header. Ambient Git config, credential helpers and proxy variables are ignored; only the task's configured HTTP/HTTPS proxy (or fallback ALL proxy) is used. Redirects are rejected: configure the canonical repository origin.
+
+### Minimal operator configuration
 
 | Variable | Purpose |
 | --- | --- |
-| `SLIDE_GITLAB_ORIGINS` | Comma-separated exact HTTPS origins approved by the operator |
-| `SLIDE_SOURCE_ROOT` | Private local snapshot directory; default `./data/source-snapshots` relative to API working directory |
-| `SLIDE_SOURCE_SIGNING_KEY` | Operator-managed signing secret, at least 32 bytes, never sent to the model |
-| `SLIDE_RELEASE_MANIFEST` | Absolute path to the release artifact's `RELEASE.json` |
-| `SLIDE_RELEASE_ID`, `SLIDE_COMMIT_SHA`, `SLIDE_SOURCE_DIGEST` | Alternative complete deployment identity; partial overrides are rejected |
-| `SLIDE_SOURCE_PATHS` | Build-time directory prefixes, comma-separated; must match the configured GitLab scope |
+| `SLIDE_GITLAB_ORIGINS` | Comma-separated exact origins, including scheme and port; e.g. `http://gitlab.internal:8080` |
+| `SLIDE_GITHUB_ORIGINS` | Additional approved origins; defaults to `https://github.com` |
+| `SLIDE_SOURCE_SIGNING_KEY` | Stable operator-managed secret of at least 32 bytes; never sent to the model |
+| `SLIDE_SOURCE_ROOT` | Private writable directory for signed snapshots and temporary Git checkouts. Default outside Compose: `./data/source-snapshots` |
+| `SLIDE_RELEASE_MANIFEST` | Optional path to a mounted release `RELEASE.json` for deployment comparison |
+| `SLIDE_RELEASE_ID`, `SLIDE_COMMIT_SHA`, `SLIDE_SOURCE_DIGEST` | Optional complete deployment identity instead of a manifest |
+| `SLIDE_SOURCE_PATHS` | Optional build-time prefixes for generating the comparison digest |
 
-Build with `SLIDE_SOURCE_PATHS=apps/db-ops-api/src/evidence/ pnpm release:artifact`, substituting the reviewed source directories for the actual deployment. The build reads files from the artifact's exact Git commit and adds a source binding to `RELEASE.json`. Set `SLIDE_RELEASE_MANIFEST` to that artifact's manifest in the API deployment. Leaving `SLIDE_SOURCE_PATHS` unset preserves ordinary releases but leaves source inspection unavailable until a complete binding is supplied. The frontend build also embeds its commit ID.
+Production Compose passes origins and signing key into the API and stores snapshots/checkouts under `/var/lib/slide-agent/source-snapshots` on the existing private agent-state volume. The API image installs Git and CA certificates. The signing key is required only when using source functionality; enabling it does not require rebuilding with deployment metadata. Keep the same key across restarts; changing it invalidates existing signatures and requires resynchronization. For HTTP, the explicitly approved internal network carries the token and repository bytes without transport encryption; there is no additional UI override.
 
-Configure URL, numeric GitLab project ID and directory prefixes in Deployment Source, then synchronize with a read-only token. The configured GitLab commit must contain the same bytes as the built commit. Sensitive or unscannable configuration files fail synchronization rather than being silently rewritten; use reviewed source-only paths. JSON/YAML are parsed for secret-bearing configuration keys, source literals and common token/private-key patterns are checked. This is defense in depth, not a guarantee that every possible secret encoding or personal datum is detected: keep repository secret scanning and operator review.
+### Status instead of deployment gates
 
-Snapshots are bounded to 4,000 files, 32 MiB total and 512 KiB per file. Manifest HMAC, deployment/file digests, directory restrictions and symlink checks protect reads. Identical re-synchronization is idempotent; changed content cannot replace an existing release. Narrowing allowed directories or changing project invalidates incompatible snapshots. Source snippets are at most 200 lines/16 KiB. Source calls share a 30/minute budget and two concurrent readers per API process; HTTP also uses the existing expensive-operation limit.
+Sync and reads work without a release manifest. Missing/malformed deployment information or differing commit/tree digest produces `verification.status=repository-unbound` with a reason. A complete snapshot with matching commit and tree digest produces `deployment-verified`. A different commit remains unbound even if the file bytes match. These statuses never block otherwise valid repository synchronization or reads. Neither `SLIDE_SOURCE_ALLOW_DRIFT` nor `SLIDE_SOURCE_ALLOW_UNSAFE` is needed or consulted in this flow.
 
-Model source sharing defaults off. Enabling it permits only bounded source tool results, not uploading the repository. Source text is untrusted implementation intent, not an instruction or proof of runtime behavior. The snapshot signing key, manifest path and writable parent directory are trusted deployment assets; protect them with filesystem access controls.
+Each snapshot has its own immutable `source-...` ID, independent of deployment release ID. Identical synchronization is idempotent; a new branch head creates a new snapshot. Active selection is keyed by origin, provider, repository path, ref and directory scope. Changing those settings requires sync for that selection; it cannot silently serve the previous repository's files. Existing deployment-only snapshots lack origin/ref identity and require one resync after upgrade; old files are not deleted. Operators should monitor persistent volume usage and retain/remove obsolete snapshots according to their needs; automatic retention is not included.
+
+Sensitive, unscannable, oversized, unsupported files and symlinks are skipped. Other safe files remain available, with `completeness=partial` and signed `skippedFiles` paths/reasons in the manifest and UI. Excluded directories are reported once for the directory, not recursively enumerated. If no safe files remain, synchronization fails. Files outside configured directory prefixes are out of scope, not omissions. JSON/YAML configuration keys, source literals and common token/private-key patterns are checked. Scanning is defense in depth, not a guarantee against every secret encoding; maintain repository secret scanning and review.
+
+Selected scanning is bounded to 20,000 entries (including directories), 32 MiB of accepted content and 512 KiB per file; the signed manifest is at most 2 MiB. Git commands and scanning share a 120-second deadline capped by credential expiry. The checkout is temporary and removed on success or failure. These limits bound snapshot processing, not the size of the downloaded Git pack/checkout: keep adequate free space in the persistent volume.
+
+Manifest HMAC, internal tree digest, per-file digests, path restrictions and symlink checks remain mandatory. Deployment comparison is separate from integrity verification. Repository metadata, completeness and omissions are signed on disk; the response's `verification` field is computed from current deployment configuration and is not part of that signature. Source snippets are at most 200 lines/16 KiB; source calls share a 30/minute budget and two concurrent readers per API process.
+
+Model sharing defaults off. Enabling it permits bounded source tool results, not repository upload. Search, symbol and region results carry snapshot identity, completeness and deployment status. Source text is untrusted implementation intent, never an instruction or proof of actual runtime behavior. Protect the signing key and snapshot directory using filesystem permissions. Existing administrator/read permissions remain unchanged.
 
 ## Qualification
 

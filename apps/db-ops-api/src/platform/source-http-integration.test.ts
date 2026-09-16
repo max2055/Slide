@@ -65,7 +65,8 @@ it('syncs approved HTTP Git refs without deployment binding, reads partial snaps
   });
   vi.spyOn(auditLogManager, 'logToolCall').mockResolvedValue(undefined as any);
   vi.spyOn(auditLogManager, 'logConfigChange').mockResolvedValue(undefined as any);
-  const service = new SourceManagementService(() => ({ execute }), [origin]);
+  const alternateOrigin = origin.replace('127.0.0.1', 'localhost');
+  const service = new SourceManagementService(() => ({ execute }), [origin, alternateOrigin]);
   const app = Fastify();
   await registerSourceRoutes(app, async request => { (request as any).user = { userId: 1, username: 'admin', permissions: ['admin:*'] }; }, service);
   const api = await app.listen({ port: 0, host: '127.0.0.1' });
@@ -116,6 +117,13 @@ it('syncs approved HTTP Git refs without deployment binding, reads partial snaps
     const clean = await call('sync', { token }); expect(clean).toMatchObject({ status: 200, body: { commitSha: baseCommit, completeness: 'complete' } });
     vi.stubEnv('SLIDE_COMMIT_SHA', baseCommit); vi.stubEnv('SLIDE_SOURCE_DIGEST', clean.body.treeDigest);
     expect(await call('manifest')).toMatchObject({ status: 200, body: { verification: { status: 'deployment-verified' } } });
+    vi.stubEnv('SLIDE_SOURCE_DIGEST', 'c'.repeat(64));
+    expect(await call('manifest')).toMatchObject({ status: 200, body: { verification: { status: 'repository-unbound', reason: 'SOURCE_TREE_MISMATCH' } } });
+    await call('config', { ...config, ref: 'main', baseUrl: alternateOrigin }, 'PUT');
+    expect(await call('manifest')).toMatchObject({ status: 409, body: { error: 'SOURCE_NOT_SYNCED' } });
+    await call('config', { ...config, ref: 'main', allowedPaths: ['src/public/'] }, 'PUT');
+    expect(await call('manifest')).toMatchObject({ status: 409, body: { error: 'SOURCE_NOT_SYNCED' } });
+    await call('config', { ...config, ref: 'main' }, 'PUT');
     expect(await call('sync', { token: 'bad-token' })).toMatchObject({ status: 400, body: { error: 'SOURCE_CREDENTIAL_INVALID' } });
     redirect = true;
     expect(await call('sync', { token })).toMatchObject({ body: { error: 'SOURCE_UPSTREAM_UNAVAILABLE' } });

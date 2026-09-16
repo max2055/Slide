@@ -14,7 +14,11 @@ import { auditLogManager } from '../audit/audit-log.js';
 const remote = vi.hoisted(() => ({ path: '' }));
 vi.mock('node:child_process', async importOriginal => {
   const actual = await importOriginal<typeof import('node:child_process')>();
-  return { ...actual, execFileSync: (command: string, args: string[], options: any) => actual.execFileSync(command, args.map(arg => arg === 'https://gitlab.example.test/group/subgroup/repo.git' ? `file://${remote.path}` : arg), options) };
+  const { promisify } = await import('node:util');
+  const run = promisify(actual.execFile);
+  return { ...actual, execFile: Object.assign(vi.fn(), { [promisify.custom]: (command: string, args: string[], options: any) =>
+    run(command, args.map(arg => arg === 'https://gitlab.example.test/group/subgroup/repo.git' ? `file://${remote.path}` : arg),
+      { ...options, env: { ...options.env, GIT_ALLOW_PROTOCOL: 'file' } }) }) };
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 it('syncs a non-tip commit through HTTP routes, publishes manifest, reads it and repeats sync', async () => {
@@ -34,17 +38,17 @@ it('syncs a non-tip commit through HTTP routes, publishes manifest, reads it and
     const treeDigest = createHash('sha256').update(JSON.stringify(describeSourceFiles([{ path: 'src/a.ts', content }]))).digest('hex');
     vi.stubEnv('SLIDE_SOURCE_ROOT', join(root, 'snapshots')); vi.stubEnv('SLIDE_SOURCE_SIGNING_KEY', 'fixture-signing-key-'.repeat(3));
     vi.stubEnv('SLIDE_SOURCE_ALLOW_DRIFT', 'false'); vi.stubEnv('SLIDE_SOURCE_ALLOW_UNSAFE', 'false');
-    let stored = '';
+    const stored = new Map<string, string>();
     const execute = vi.fn(async (sql: string, values?: string[]) => {
-      if (sql.startsWith('REPLACE')) { stored = values![1]; return [[], []]; }
-      return [[{ config_value: stored }], []];
+      if (sql.startsWith('REPLACE')) { stored.set(values![0], values![1]); return [[], []]; }
+      return [stored.has(values![0]) ? [{ config_value: stored.get(values![0]) }] : [], []];
     });
     const service = new SourceManagementService(() => ({ execute }), ['https://gitlab.example.test']);
     vi.spyOn(service as any, 'deployment').mockReturnValue({ releaseId: 'fixture-release', commitSha, treeDigest });
     vi.spyOn(auditLogManager, 'logToolCall').mockResolvedValue(undefined as any);
     vi.spyOn(auditLogManager, 'logConfigChange').mockResolvedValue(undefined as any);
     await registerSourceRoutes(app, async request => { (request as any).user = { userId: 1, username: 'admin', permissions: ['admin:*'] }; }, service);
-    const config = await app.inject({ method: 'PUT', url: '/api/platform/source/config', payload: { provider: 'gitlab', baseUrl: 'https://gitlab.example.test', repositoryPath: 'group/subgroup/repo', allowedPaths: ['src/'], allowModelContent: false } });
+    const config = await app.inject({ method: 'PUT', url: '/api/platform/source/config', payload: { provider: 'gitlab', baseUrl: 'https://gitlab.example.test', repositoryPath: 'group/subgroup/repo', ref: commitSha, allowedPaths: ['src/'], allowModelContent: false } });
     expect(config.statusCode).toBe(200);
     for (let i = 0; i < 2; i++) {
       const sync = await app.inject({ method: 'POST', url: '/api/platform/source/sync', payload: { token: 'one-use-fixture' } });

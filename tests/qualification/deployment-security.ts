@@ -82,6 +82,11 @@ for (const source of volumeSources(api)) {
 requireInvariant(volumeSources(api).every((source) => source !== '.' && source !== root), 'api must not mount the repository');
 requireInvariant(environment(api).AGENT_WORKSPACE === '/var/lib/slide-agent', 'api must use the dedicated Agent state volume');
 requireInvariant(environment(api).PROMPT_VERSIONS_DIR === '/var/lib/slide-agent/prompts', 'api must persist prompts in the Agent state volume');
+requireInvariant(environment(api).SLIDE_SOURCE_ROOT === '/var/lib/slide-agent/source-snapshots', 'source sync must use the writable Agent state volume');
+requireInvariant(String(environment(api).SLIDE_GITLAB_ORIGINS).includes('SLIDE_GITLAB_ORIGINS'), 'api must receive operator-approved GitLab origins');
+requireInvariant(String(environment(api).SLIDE_SOURCE_SIGNING_KEY).includes('SLIDE_SOURCE_SIGNING_KEY'), 'api must receive the optional source signing key');
+const apiDockerfile = await fs.readFile(path.join(root, 'apps/db-ops-api/Dockerfile'), 'utf8');
+requireInvariant(/apt-get install[^\n]*\bgit\b/.test(apiDockerfile.split('AS production')[1] ?? ''), 'production source connector requires Git in the API image');
 requireInvariant(
   list(promptStorageInit.volumes).includes('agent-state:/var/lib/slide-agent'),
   'prompt storage initializer and api must share the Agent state volume',

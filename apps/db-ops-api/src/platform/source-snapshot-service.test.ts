@@ -43,6 +43,18 @@ describe('source snapshot boundary', () => {
     expect(await service.publish(identity, [{ path: 'src/example.ts', content: 'export function inspect() { return 1; }\n' }])).toEqual(manifest);
     await expect(service.publish(identity, [{ path: 'src/example.ts', content: 'changed' }])).rejects.toThrow('SOURCE_SNAPSHOT_UNTRUSTED');
   });
+  it('signs repository identity and omissions even without a deployment binding', async () => {
+    const { root, service } = await setup();
+    const identity = { releaseId: 'partial', commitSha: commit, projectId: 'group/repo',
+      repository: { origin: 'http://gitlab.internal', provider: 'gitlab', ref: 'main', allowedPaths: ['src/'] } };
+    const manifest = await service.publish(identity, [{ path: 'src/a.ts', content: 'export const safe = true;' }],
+      [{ path: 'src/private.json', reason: 'SOURCE_SENSITIVE_CONTENT' }]);
+    expect(await service.manifest('partial')).toEqual(manifest);
+    const path = join(root, 'partial', 'manifest.json');
+    await chmod(path, 0o600);
+    await writeFile(path, JSON.stringify({ ...manifest, completeness: 'complete', skippedFiles: [] }));
+    await expect(service.manifest('partial')).rejects.toThrow('SOURCE_SNAPSHOT_UNTRUSTED');
+  });
   it('reads version-bound snippets and locates TypeScript symbols without execution', async () => {
     const { service, manifest } = await setup();
     const binding = { commitSha: commit, treeDigest: manifest.treeDigest };

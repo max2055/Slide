@@ -6,17 +6,21 @@ import ts from 'typescript';
 import { parse as parseYaml } from 'yaml';
 
 export interface SourceBinding { commitSha: string; treeDigest: string }
-export interface SourceIdentity { releaseId: string; commitSha: string; projectId: string }
+export interface SourceRepository { origin: string; provider: string; ref: string; allowedPaths: string[] }
+export interface SkippedSourceFile { path: string; reason: string }
+export interface SourceIdentity { releaseId: string; commitSha: string; projectId: string; repository?: SourceRepository }
 export interface SourceFile { path: string; content: string }
 export interface SourceManifest extends SourceIdentity {
   schemaVersion: 1; treeDigest: string; createdAt: string;
   files: Array<{ path: string; digest: string; bytes: number }>;
   signature: string;
+  completeness?: 'complete' | 'partial';
+  skippedFiles?: SkippedSourceFile[];
 }
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-const MAX_FILE_BYTES = 512 * 1024;
-const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
-const MAX_FILES = 20000;
+export const MAX_FILE_BYTES = 512 * 1024;
+export const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
+export const MAX_FILES = 20000;
 
 function releaseName(value: string): string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(value)) throw new Error('SOURCE_RELEASE_INVALID');
@@ -59,17 +63,17 @@ export class SourceSnapshotService {
   private sign(manifest: Omit<SourceManifest, 'signature'>): string {
     return createHmac('sha256', this.signingKey).update(JSON.stringify(manifest)).digest('hex');
   }
-  async publish(identity: SourceIdentity, input: SourceFile[]): Promise<SourceManifest> {
+  async publish(identity: SourceIdentity, input: SourceFile[], skippedFiles: SkippedSourceFile[] = []): Promise<SourceManifest> {
     releaseName(identity.releaseId);
     if (!/^[a-f0-9]{40}$/.test(identity.commitSha) || !identity.projectId) throw new Error('SOURCE_IDENTITY_INVALID');
     if (!/^\d{1,20}$/.test(identity.projectId)) {
       try { assertRepositoryPath(identity.projectId); } catch { throw new Error('SOURCE_IDENTITY_INVALID'); }
     }
-    if (!input.length || input.length > MAX_FILES) throw new Error('SOURCE_FILE_COUNT_INVALID');
+    if (!input.length || input.length + skippedFiles.length > MAX_FILES) throw new Error('SOURCE_FILE_COUNT_INVALID');
     const paths = new Set<string>(); let total = 0;
     for (const file of input) {
       assertSourcePath(file.path);
-      try { if (process.env.SLIDE_SOURCE_ALLOW_UNSAFE !== 'true') assertSourceContent(file.content, file.path); }
+      try { assertSourceContent(file.content, file.path); }
       catch (error) { console.error('[source-snapshot] rejected file', file.path, error instanceof Error ? error.message : 'SOURCE_CONTENT_INVALID'); throw error; }
       if (paths.has(file.path)) throw new Error('SOURCE_DUPLICATE_PATH'); paths.add(file.path);
       total += Buffer.byteLength(file.content);
@@ -77,8 +81,10 @@ export class SourceSnapshotService {
     if (total > MAX_SNAPSHOT_BYTES) throw new Error('SOURCE_SNAPSHOT_TOO_LARGE');
     const sorted = input;
     const files = describeSourceFiles(input);
-    const unsigned = { schemaVersion: 1 as const, ...identity, treeDigest: hash(JSON.stringify(files)), createdAt: new Date().toISOString(), files };
+    const unsigned = { schemaVersion: 1 as const, ...identity, treeDigest: hash(JSON.stringify(files)), createdAt: new Date().toISOString(), files,
+      completeness: skippedFiles.length ? 'partial' as const : 'complete' as const, skippedFiles };
     const manifest = { ...unsigned, signature: this.sign(unsigned) };
+    if (Buffer.byteLength(JSON.stringify(manifest)) > 2 * 1024 * 1024) throw new Error('SOURCE_SNAPSHOT_TOO_LARGE');
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const staging = await mkdtemp(join(this.root, '.staging-'));
     try {
@@ -93,7 +99,8 @@ export class SourceSnapshotService {
       await rm(staging, { recursive: true, force: true });
       if (['EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) {
         const existing = await this.manifest(identity.releaseId, manifest);
-        if (existing.projectId !== identity.projectId) throw new Error('SOURCE_SNAPSHOT_UNTRUSTED');
+        if (existing.projectId !== identity.projectId || JSON.stringify(existing.repository) !== JSON.stringify(identity.repository)
+          || JSON.stringify(existing.skippedFiles ?? []) !== JSON.stringify(skippedFiles)) throw new Error('SOURCE_SNAPSHOT_UNTRUSTED');
         for (const file of existing.files) await this.content(identity.releaseId, file);
         return existing;
       }
@@ -110,14 +117,15 @@ export class SourceSnapshotService {
     if (!actual.startsWith(root + sep)) throw new Error('SOURCE_SNAPSHOT_UNTRUSTED');
     return actual;
   }
-  async manifest(releaseId: string, binding: SourceBinding): Promise<SourceManifest> {
+  async manifest(releaseId: string, binding?: SourceBinding): Promise<SourceManifest> {
     try {
       const path = await this.checkedFile(releaseId, 'manifest.json');
       if ((await lstat(path)).size > 2 * 1024 * 1024) throw new Error('SOURCE_SNAPSHOT_UNTRUSTED');
       const manifest = JSON.parse(await readFile(path, 'utf8')) as SourceManifest;
       const { signature, ...unsigned } = manifest;
       if (!/^[a-f0-9]{64}$/.test(signature) || !timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(this.sign(unsigned), 'hex'))
-        || manifest.schemaVersion !== 1 || manifest.releaseId !== releaseId || manifest.commitSha !== binding.commitSha || manifest.treeDigest !== binding.treeDigest
+        || manifest.schemaVersion !== 1 || manifest.releaseId !== releaseId
+        || (binding && (manifest.commitSha !== binding.commitSha || manifest.treeDigest !== binding.treeDigest))
         || manifest.treeDigest !== hash(JSON.stringify(manifest.files))) throw new Error('SOURCE_SNAPSHOT_UNTRUSTED');
       return manifest;
     } catch { throw new Error('SOURCE_SNAPSHOT_UNTRUSTED'); }
@@ -130,7 +138,7 @@ export class SourceSnapshotService {
       if (size !== file.bytes || size > MAX_FILE_BYTES) throw new Error('SOURCE_SNAPSHOT_UNTRUSTED');
       const content = await readFile(path, 'utf8');
       if (hash(content) !== file.digest) throw new Error('SOURCE_SNAPSHOT_UNTRUSTED');
-      if (process.env.SLIDE_SOURCE_ALLOW_UNSAFE !== 'true') assertSourceContent(content, file.path); return content;
+      assertSourceContent(content, file.path); return content;
     } catch { throw new Error('SOURCE_SNAPSHOT_UNTRUSTED'); }
   }
   async read(releaseId: string, binding: SourceBinding, path: string, startLine: number, endLine: number) {

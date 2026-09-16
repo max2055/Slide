@@ -29,3 +29,22 @@ The user approved the preceding assessment and requested implementation and a PR
 6. Commit implementation, push branch and create PR against main with results and deployment requirements. Verify the remote PR and leave merge to the user.
 
 Real HTTP integration uses a local authenticated Git smart-HTTP fixture and temporary snapshots. It is not a claim of validation against the user's inaccessible internal GitLab.
+
+## Implementation adjustments (v2)
+
+- Legacy deployment-only manifests lack origin/ref identity. Instead of reusing them after an origin change, require one resync into the new repository snapshot format; existing files remain untouched. This supersedes the v1 legacy fallback clause.
+- A runtime check of the existing local API image found no Git executable. Install Git/CA certificates in the production stage and add a deployment regression check.
+- The production root filesystem is read-only and /tmp is a 64 MiB tmpfs. Use the existing private writable source directory for temporary checkouts as well as snapshots; clean checkout directories in finally. No image build or deployment is included.
+- Empty optional Compose deployment overrides must not mask a supplied manifest. Nonempty partial overrides still produce an unbound status.
+- Save refreshes the manifest view so a changed repository/ref cannot leave a stale snapshot displayed. Existing tool names stay stable; search/symbol responses now wrap matches with source identity/status.
+
+## Validation evidence
+
+- Baseline source suite: 40 tests passed; RED commit reproduced blocked HTTP/ref and missing UI ref control.
+- Implementation full API suite: 250 files / 2,107 tests passed; full frontend suite: 69 files / 406 tests passed.
+- Final affected platform/tool suite: 14 files / 66 tests passed, including deployment override, digest mismatch, origin/scope isolation and ref validation.
+- Real HTTP Git integration: POST sync 200, actual Commit matches, signed manifest persisted, GET manifest 200, safe region/search/symbol reads, repeat sync and changed branch head. Checks partial/unbound states, denied credentials, redirects, tampering and stale scope/origin rejection.
+- Chromium interaction tests passed at 390px and 1280px: save HTTP/ref config, sync, clear token, show skipped paths and partial/unbound labels, refresh after ref changes. Browser API responses are fixtures.
+- Both typechecks, production frontend build/CSP, API contract check, qualification matrix, secret scan, dependency audit and deployment security checks passed. Lint exited successfully with existing repository warnings; no errors.
+- Inaccessible internal GitLab, live MySQL-backed sync, full image rebuild and production switching were not exercised.
+- No hard budget set; actual token/cost telemetry unavailable. Zero delegated agents. Original dirty user worktree remains unchanged.

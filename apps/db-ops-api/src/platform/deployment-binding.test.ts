@@ -5,6 +5,10 @@ import { createHash } from 'node:crypto';
 
 describe('release source binding', () => {
   const commit = 'a'.repeat(40);
+  it('allows a mounted manifest when optional Compose overrides are all empty', () => {
+    const source = { releaseId: 'release-1', commitSha: commit, treeDigest: 'b'.repeat(64) };
+    expect(resolveDeploymentBinding({ SLIDE_RELEASE_ID: '', SLIDE_COMMIT_SHA: '', SLIDE_SOURCE_DIGEST: '' }, { source })).toEqual(source);
+  });
   it('uses the exact same stable file digest as source synchronization', () => {
     const files = [{ path: 'src/z.ts', content: 'export const z = 1;' }, { path: 'src/A.ts', content: 'export const a = 1;' }];
     const binding = createSourceBinding('release-1', commit, ['src/'], files);
