@@ -23,9 +23,37 @@ describe('configured provider consistency', () => {
     await expect(agent.chat([], [])).rejects.toThrow('LLM_PROVIDER_NOT_CONFIGURED');
   });
   it('supports a keyless local provider and its OpenAI-compatible endpoint', async () => {
-    const key = vi.fn();
+    const key = vi.fn().mockResolvedValue(null);
     const agent = await createConfiguredAgentProvider({ getEnabledProviders: async () => [{ ...config, api_format: null, deployment_type: 'local', api_base_url: 'http://localhost:11434/' }], getProviderApiKey: key });
-    expect((agent as any).client.baseURL).toBe('http://localhost:11434/v1'); expect(key).not.toHaveBeenCalled();
+    expect((agent as any).client.baseURL).toBe('http://localhost:11434/v1');
+    expect((agent as any).client.apiKey).toBe('ollama');
+    expect(key).toHaveBeenCalledWith(config.name);
+  });
+  it.each(['openai-completions', 'anthropic-messages'])('preserves stored local credentials for %s across agent, service and connection tests', async api_format => {
+    const provider = { ...config, deployment_type: 'local', api_format };
+    vi.spyOn(llmDatabaseService, 'getEnabledProviders').mockResolvedValue([provider]);
+    vi.spyOn(llmDatabaseService, 'getProviderByName').mockResolvedValue(provider);
+    vi.spyOn(llmDatabaseService, 'getProviderApiKey').mockResolvedValue('local-gateway-key');
+
+    const agent = await createConfiguredAgentProvider(llmDatabaseService);
+    const connectionTest = createServiceProviderClient(provider, 'local-gateway-key');
+    expect.soft((agent as any).client.apiKey).toBe(connectionTest.client!.apiKey);
+    expect((agent as any).client.baseURL).toBe(connectionTest.client!.baseURL);
+    expect(agent.getDefaultModel()).toBe(provider.default_model);
+
+    expect(await llmService.initialize()).toBe(true);
+    expect.soft((llmService as any).providerClients.get(provider.name).client.apiKey).toBe('local-gateway-key');
+    expect(await llmService.configureProvider(provider.name)).toBe(true);
+    expect.soft((llmService as any).providerClients.get(provider.name).client.apiKey).toBe('local-gateway-key');
+  });
+  it.each([null, ''])('falls back only when a local OpenAI endpoint has no key (%s)', async apiKey => {
+    const provider = { ...config, deployment_type: 'local', api_format: 'openai-completions' };
+    vi.spyOn(llmDatabaseService, 'getEnabledProviders').mockResolvedValue([provider]);
+    vi.spyOn(llmDatabaseService, 'getProviderApiKey').mockResolvedValue(apiKey);
+    const agent = await createConfiguredAgentProvider(llmDatabaseService);
+    expect((agent as any).client.apiKey).toBe('ollama');
+    expect(await llmService.initialize()).toBe(true);
+    expect((llmService as any).providerClients.get(provider.name).client.apiKey).toBe('ollama');
   });
   it('does not skip a misconfigured selected provider in favor of another', async () => {
     await expect(createConfiguredAgentProvider({ getEnabledProviders: async () => [config, { ...config, name: 'other' }], getProviderApiKey: async () => null })).rejects.toThrow('LLM_CREDENTIAL_NOT_CONFIGURED');

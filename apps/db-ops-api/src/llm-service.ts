@@ -100,8 +100,7 @@ class LLMService {
    * 创建 Provider 客户端
    */
   private async createClient(provider: LLMProvider): Promise<ProviderClient | null> {
-    const apiKey = provider.deployment_type === 'local'
-      ? null : await llmDatabaseService.getProviderApiKey(provider.name);
+    const apiKey = await llmDatabaseService.getProviderApiKey(provider.name);
     return createServiceProviderClient(provider, apiKey);
   }
 

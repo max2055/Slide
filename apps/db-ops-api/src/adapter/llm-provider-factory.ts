@@ -13,7 +13,7 @@ export async function createConfiguredAgentProvider(store: ProviderStore): Promi
     const unavailable = async (): Promise<never> => { throw new Error('LLM_PROVIDER_NOT_CONFIGURED'); };
     return { getDefaultModel: () => 'unconfigured', chat: unavailable, chatStream: unavailable };
   }
-  const apiKey = provider.deployment_type === 'local' ? null : await store.getProviderApiKey(provider.name);
+  const apiKey = await store.getProviderApiKey(provider.name);
   const connection = resolveProviderConnection(provider, apiKey);
   if (connection.format === 'anthropic-messages') return new AnthropicProvider(connection);
   const baseURL = connection.format === 'ollama'
