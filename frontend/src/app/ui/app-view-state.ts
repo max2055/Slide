@@ -53,6 +53,8 @@ export type AppViewState = {
   themeOrder: ThemeName[];
   hello: Record<string, unknown> | null;
   slideVersion: string | null;
+  permissionsLoading?: boolean;
+  permissionsError?: string | null;
   lastError: string | null;
   lastErrorCode: string | null;
   eventLog: EventLogEntry[];

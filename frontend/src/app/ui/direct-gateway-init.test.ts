@@ -97,7 +97,7 @@ describe('initChatClient', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(String(fetch.mock.calls[0][0])).toBe('/api/agents');
     expect(String(fetch.mock.calls[1][0])).toMatch(/^\/api\/sessions\?/);
-    expect(permissions).toHaveBeenCalledWith('/api/auth/permissions', expect.any(Object));
+    expect(permissions).toHaveBeenCalledExactlyOnceWith('/api/auth/permissions');
     expect(host.agentsLoading).toBe(false);
     expect(host.sessionsLoading).toBe(false);
     expect(host.connected).toBe(true);
@@ -123,6 +123,49 @@ describe('initChatClient', () => {
     expect(host.agentsList).toEqual(agents);
     expect(host.agentsSelectedId).toBe('agent-1');
     expect(host.sessionsResult).toEqual(sessions);
+  });
+
+  it.each([
+    ['HTTP failure', () => Promise.resolve(new Response('["users:manage"]', { status: 500 }))],
+    ['invalid JSON', () => Promise.resolve(new Response('{'))],
+    ['error object', () => Promise.resolve(Response.json({ error: 'failed' }))],
+    ['mixed array', () => Promise.resolve(Response.json(['users:view', 42]))],
+    ['network failure', () => Promise.reject(new TypeError('Failed to fetch'))],
+  ])('does not cache or announce %s and exposes a recoverable error', async (_name, response) => {
+    vi.spyOn(api.apiClient, 'fetchResponseWithAuth').mockImplementation((url) =>
+      url === '/api/auth/permissions' ? response() : Promise.resolve(Response.json({ agents: [], sessions: [] })),
+    );
+    const loaded = vi.fn();
+    window.addEventListener('slide-permissions-loaded', loaded);
+    try {
+      const host: Record<string, unknown> = { client: null, connected: false };
+      initChatClient(host);
+      await vi.waitFor(() => expect(MockWebSocket.latest?.frames.length).toBeGreaterThan(0));
+      MockWebSocket.latest?.receive({ type: 'auth_ok' });
+      await vi.waitFor(() => expect(host.permissionsError).toBeTruthy());
+      expect(localStorage.getItem('permissions')).toBeNull();
+      expect(loaded).not.toHaveBeenCalled();
+      expect(host.connected).toBe(true);
+      initChatClient(host);
+      await vi.waitFor(() => expect(MockWebSocket.latest?.frames.length).toBeGreaterThan(0));
+      MockWebSocket.latest?.receive({ type: 'auth_ok' });
+      expect(vi.mocked(api.apiClient.fetchResponseWithAuth).mock.calls.filter(([url]) => url === '/api/auth/permissions')).toHaveLength(1);
+    } finally {
+      window.removeEventListener('slide-permissions-loaded', loaded);
+    }
+  });
+
+  it('replaces a corrupt initialization cache with validated permissions', async () => {
+    localStorage.setItem('permissions', '{"error":"old failure"}');
+    vi.spyOn(api.apiClient, 'fetchResponseWithAuth').mockImplementation((url) => Promise.resolve(
+      Response.json(url === '/api/auth/permissions' ? ['servers:view'] : { agents: [], sessions: [] }),
+    ));
+    const host: Record<string, unknown> = { client: null, connected: false };
+    initChatClient(host);
+    await vi.waitFor(() => expect(MockWebSocket.latest?.frames.length).toBeGreaterThan(0));
+    MockWebSocket.latest?.receive({ type: 'auth_ok' });
+    await vi.waitFor(() => expect(host.userPermissions).toEqual(new Set(['servers:view'])));
+    expect(localStorage.getItem('permissions')).toBe('["servers:view"]');
   });
 
   it('continues with JWT WebSocket login when device identity import fails', async () => {

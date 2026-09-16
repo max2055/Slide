@@ -11,6 +11,7 @@
  * @slide/direct-adapter integration
  */
 
+import { loadPermissions, readCachedPermissions } from './permissions.ts';
 import { generateUUID } from './uuid.ts';
 import type { DeviceIdentity } from './device-identity.ts';
 
@@ -997,21 +998,15 @@ export function initChatClient(host: Record<string, unknown>): void {
       if (state === 'connected') {
         host.connected = true;
         host.lastError = null;
+        if (!host.permissionsError && !readCachedPermissions()) {
+          void loadPermissions(host);
+        }
         const loadState = async () => {
           // Each loader owns its error state and resolves after handled failures.
           await loadAgents(host as unknown as AgentsState);
           await loadSessions(host as unknown as SessionsState, {
             activeMinutes: CHAT_SESSIONS_ACTIVE_MINUTES,
           });
-          const token = apiClient.getToken();
-          if (token && !localStorage.getItem('permissions')) {
-            apiClient.fetchResponseWithAuth('/api/auth/permissions', {
-              headers: { 'Authorization': `Bearer ${token}` }
-            }).then(r => r.json()).then((perms: string[]) => {
-              localStorage.setItem('permissions', JSON.stringify(perms));
-              window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: perms } }));
-            }).catch(() => {});
-          }
           refreshActiveTab(host as unknown as Parameters<typeof refreshActiveTab>[0]);
         };
         loadState();

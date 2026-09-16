@@ -15,6 +15,7 @@ import {
   handleFirstUpdated,
   handleUpdated,
 } from "./app-lifecycle.ts";
+import { readCachedPermissions } from "./permissions.ts";
 import { renderApp } from "./app-render.ts";
 import { switchChatSession } from "./app-render.helpers.ts";
 import {
@@ -118,6 +119,8 @@ export class SlideApp extends LitElement {
   @state() themeResolved: ResolvedTheme = "dark";
   @state() themeOrder: ThemeName[] = this.buildThemeOrder(this.theme);
   @state() hello: Record<string, unknown> | null = null;
+  @state() permissionsLoading = false;
+  @state() permissionsError: string | null = null;
   @state() lastError: string | null = null;
   @state() lastErrorCode: string | null = null;
   @state() eventLog: EventLogEntry[] = [];
@@ -445,8 +448,7 @@ export class SlideApp extends LitElement {
 
     // Initialize permissions from localStorage cache (AUTH-05)
     try {
-      const stored = localStorage.getItem('permissions');
-      if (stored) this.userPermissions = new Set(JSON.parse(stored));
+      this.userPermissions = readCachedPermissions();
     } catch { /* ignore corrupt data */ }
   }
 
@@ -525,6 +527,7 @@ export class SlideApp extends LitElement {
     // Listen for permissions being loaded after login (AUTH-05)
     window.addEventListener('slide-permissions-loaded', ((e: CustomEvent) => {
       this.userPermissions = new Set(e.detail.permissions);
+      this.permissionsError = null;
       this.requestUpdate();
     }) as EventListener);
     window.addEventListener('slide-settings-change', ((e: CustomEvent) => {
@@ -555,6 +558,8 @@ export class SlideApp extends LitElement {
     }
     clearExpiredChatState(this as unknown as Record<string, unknown>);
     this.hello = null;
+    this.permissionsError = null;
+    this.userPermissions = null;
     localStorage.removeItem('token');
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('permissions');
