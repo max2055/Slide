@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   auditSql: vi.fn(),
   recordSecurityEvent: vi.fn(),
   authorizeApproval: vi.fn(),
+  beginIntent: vi.fn(),
+  finishIntent: vi.fn(),
 }));
 
 vi.mock('./database-service', () => ({
@@ -31,6 +33,10 @@ vi.mock('./security/security-event-service', () => ({
   securityEventService: { record: mocks.recordSecurityEvent },
 }));
 
+vi.mock('./audit/sql-execution-intent.js', () => ({
+  sqlExecutionIntent: { begin: mocks.beginIntent, finish: mocks.finishIntent },
+}));
+
 import { sqlExecutor } from './sql-executor.js';
 
 describe('SqlExecutor security controls', () => {
@@ -39,6 +45,9 @@ describe('SqlExecutor security controls', () => {
     mocks.ensureConnectionAlive.mockResolvedValue(true);
     mocks.authorizeApproval.mockResolvedValue(false);
     mocks.recordSecurityEvent.mockResolvedValue(undefined);
+    mocks.beginIntent.mockResolvedValue(undefined);
+    mocks.finishIntent.mockResolvedValue(undefined);
+    mocks.auditSql.mockResolvedValue(undefined);
   });
 
   it('runs PostgreSQL reads in a read-only transaction with a mandatory timeout and server-side row cap', async () => {
@@ -131,5 +140,47 @@ describe('SqlExecutor security controls', () => {
 
     expect(result).toMatchObject({ success: false, error: expect.stringContaining(reason) });
     expect(query).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('durable mutation boundary', () => {
+  const grant = { approvalRequestId: 1, reviewerId: 2, operationId: 'operation-1' };
+  let query: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.authorizeApproval.mockResolvedValue(true);
+    mocks.ensureConnectionAlive.mockResolvedValue(true);
+    mocks.beginIntent.mockResolvedValue(undefined);
+    mocks.finishIntent.mockResolvedValue(undefined);
+    mocks.auditSql.mockResolvedValue(undefined);
+    query = vi.fn().mockResolvedValue([{ affectedRows: 1 }, []]);
+    mocks.getConnection.mockReturnValue({ name: 'target', db_type: 'mysql',
+      pool: { getConnection: vi.fn().mockResolvedValue({ query, release: vi.fn() }) } });
+  });
+  it('does not dispatch SQL when durable intent storage fails', async () => {
+    mocks.beginIntent.mockRejectedValue(new Error('CONTROL_UNAVAILABLE'));
+    const result = await sqlExecutor.executeSql(1, 'DELETE FROM users', { approvalGrant: grant });
+    expect(result.success).toBe(false);
+    expect(query).not.toHaveBeenCalled();
+  });
+  it('persists intent and result even without userId', async () => {
+    const result = await sqlExecutor.executeSql(1, 'DELETE FROM users', { approvalGrant: grant });
+    expect(result.success).toBe(true);
+    expect(mocks.beginIntent).toHaveBeenCalledOnce();
+    expect(mocks.finishIntent).toHaveBeenCalledOnce();
+    expect(mocks.auditSql).toHaveBeenCalledOnce();
+    expect(query).not.toHaveBeenCalledWith(expect.stringContaining('max_execution_time'));
+  });
+  it('reports acknowledged SQL with failed audit as uncertain and never retryable', async () => {
+    mocks.auditSql.mockRejectedValue(new Error('audit down'));
+    const result = await sqlExecutor.executeSql(1, 'DELETE FROM users', { approvalGrant: grant });
+    expect(query).toHaveBeenCalledWith('DELETE FROM users');
+    expect(result).toMatchObject({ success: false, executionState: 'unknown', retryable: false, operationId: grant.operationId });
+  });
+  it('reports a lost result write as uncertain', async () => {
+    mocks.finishIntent.mockRejectedValue(new Error('control down'));
+    const result = await sqlExecutor.executeSql(1, 'DELETE FROM users', { approvalGrant: grant });
+    expect(result).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
   });
 });
