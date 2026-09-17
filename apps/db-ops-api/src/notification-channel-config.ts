@@ -225,6 +225,14 @@ export function validateNotificationChannelConfig(
   if (!isNotificationChannelType(type)) {
     return invalid(undefined, '不支持的通知渠道类型', 'NOTIFICATION_CHANNEL_TYPE_INVALID');
   }
+  const raw = asRecord(config);
+  if (raw && (raw.idempotency_contract !== undefined || raw.idempotency_retention_seconds !== undefined)) {
+    if (type !== 'webhook' || raw.idempotency_contract !== 'receiver-deduplicates'
+      || !Number.isSafeInteger(raw.idempotency_retention_seconds) || Number(raw.idempotency_retention_seconds) < 1
+      || Number(raw.idempotency_retention_seconds) > 604800) {
+      return invalid('idempotency_contract', '幂等契约仅适用于 webhook，需明确接收端去重及 1-604800 秒保留期', 'NOTIFICATION_CHANNEL_CONFIG_INVALID');
+    }
+  }
   if (type === 'email') return validateEmailConfig(config, options);
   if (!asRecord(config)) return invalid(undefined, '通知渠道 config 必须是对象', 'NOTIFICATION_CHANNEL_CONFIG_INVALID');
   return { valid: true, config: { ...(config as Record<string, unknown>) } };

@@ -111,3 +111,13 @@ describe('email notification channel configuration', () => {
     expect(result).toMatchObject({ valid: false, code: 'NOTIFICATION_CHANNEL_TYPE_INVALID' });
   });
 });
+
+
+it('requires explicit webhook deduplication contract with bounded retention', () => {
+  expect(validateNotificationChannelConfig('webhook', { idempotency_contract: 'receiver-deduplicates', idempotency_retention_seconds: 60 }).valid).toBe(true);
+  for (const value of [0, -1, 604801, '60', NaN]) {
+    expect(validateNotificationChannelConfig('webhook', { idempotency_contract: 'receiver-deduplicates', idempotency_retention_seconds: value }).valid).toBe(false);
+  }
+  expect(validateNotificationChannelConfig('webhook', { idempotency_retention_seconds: 60 }).valid).toBe(false);
+  expect(validateNotificationChannelConfig('email', { idempotency_contract: 'receiver-deduplicates', idempotency_retention_seconds: 60 }).valid).toBe(false);
+});

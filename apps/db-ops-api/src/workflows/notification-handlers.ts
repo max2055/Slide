@@ -2,78 +2,70 @@ import type { JobRegistry } from './job-registry.js';
 import type { notificationDatabaseService as NotificationDatabase } from '../notification-database-service.js';
 import type { NotificationService } from '../notification-service.js';
 import type { reportDatabaseService as ReportDatabase } from '../report-database-service.js';
+import { validateNotificationChannelConfig } from '../notification-channel-config.js';
 import { isAlertEligibleForChannel } from './notification-dispatch.js';
+import { deliveryIdentity, deliveryStore, type DeliveryGate, type DeliveryRequest } from './delivery-store.js';
 
-/** Shared registration keeps production delivery and cancellation probes on the same handlers. */
+/** All durable external effects pass through the business gate, including replay. */
 export function registerNotificationHandlers(
   registry: JobRegistry,
-  notificationDatabaseService: Pick<typeof NotificationDatabase, 'getAlertById' | 'getChannelById' | 'recordDeliveryAttempt'>,
-  notificationService: Pick<NotificationService, 'deliverAlertToChannel' | 'send'>,
-  reportDatabaseService: Pick<typeof ReportDatabase, 'getReportById' | 'recordNotificationDelivery'>,
+  notificationDatabaseService: Pick<typeof NotificationDatabase, 'getAlertById' | 'getChannelById'>,
+  notificationService: Pick<NotificationService, 'send' | 'buildMessage'>,
+  reportDatabaseService: Pick<typeof ReportDatabase, 'getReportById'>,
+  gate: DeliveryGate = deliveryStore,
 ): void {
-  registry.register('notification.deliver', async (payload, job, { signal }) => {
-    const alertId = Number(payload.alertId);
-    const channelId = Number(payload.channelId);
-    if (!Number.isSafeInteger(alertId) || !Number.isSafeInteger(channelId)) throw new Error('NOTIFICATION_PAYLOAD_INVALID');
-    signal.throwIfAborted();
-    const [alert, channel] = await Promise.all([
-      notificationDatabaseService.getAlertById(alertId),
-      notificationDatabaseService.getChannelById(channelId),
-    ]);
-    if (!alert || !channel || !channel.enabled || !isAlertEligibleForChannel(alert, channel)) return;
-    signal.throwIfAborted();
-    await notificationDatabaseService.recordDeliveryAttempt({ job_id: job.id, alert_id: alertId, channel_id: channelId, attempt_number: job.attempts, status: 'started' });
-    try {
+  for (const type of ['notification.deliver', 'report.notify']) {
+    registry.register(type, async (_payload, job, context) => {
+      const { signal } = context;
+      const identity = deliveryIdentity(job);
       signal.throwIfAborted();
-      await notificationService.deliverAlertToChannel(alert, channel, signal);
+      let request: DeliveryRequest | null = await gate.snapshot(identity.key);
+      if (request) {
+        const currentChannel = await notificationDatabaseService.getChannelById(identity.channelId);
+        signal.throwIfAborted();
+        if (!currentChannel?.enabled) throw new Error('DELIVERY_CHANNEL_DISABLED');
+      }
+      if (!request) {
+        try {
+          const [source, channel] = await Promise.all([
+            identity.kind === 'notification' ? notificationDatabaseService.getAlertById(identity.sourceId) : reportDatabaseService.getReportById(identity.sourceId),
+            notificationDatabaseService.getChannelById(identity.channelId),
+          ]);
+          signal.throwIfAborted();
+          if (source && channel?.enabled && (identity.kind !== 'notification' || isAlertEligibleForChannel(source as any, channel))) {
+            const validation = validateNotificationChannelConfig(channel.type, channel.config);
+            if (validation.valid === false) throw new Error(validation.code);
+            if (channel.type !== 'email' && !channel.config.webhook_url) throw new Error('WEBHOOK_CONFIGURATION_INVALID');
+            request = {
+              channel,
+              message: identity.kind === 'notification'
+                ? notificationService.buildMessage(channel.type, source as any, (source as any).instance_name, (source as any).instance_host)
+                : { type: 'scheduled_report', report: { id: source.id, name: (source as any).name, type: (source as any).type, format: (source as any).format, status: (source as any).status }, downloadPath: `/api/reports/${source.id}/download` },
+            };
+          }
+        } catch (error) {
+          signal.throwIfAborted();
+          await gate.preflightFailed(job, context);
+          throw error;
+        }
+      }
       signal.throwIfAborted();
-      await notificationDatabaseService.recordDeliveryAttempt({ job_id: job.id, alert_id: alertId, channel_id: channelId, attempt_number: job.attempts, status: 'sent' });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      signal.throwIfAborted();
-      await notificationDatabaseService.recordDeliveryAttempt({ job_id: job.id, alert_id: alertId, channel_id: channelId, attempt_number: job.attempts, status: 'failed', error_code: message.slice(0, 128), error_message: message });
-      throw error;
-    }
-  });
-  registry.register('report.notify', async (payload, job, { signal }) => {
-    const reportId = Number(payload.reportId);
-    const channelId = Number(payload.channelId);
-    if (!Number.isSafeInteger(reportId) || reportId <= 0 || !Number.isSafeInteger(channelId) || channelId <= 0) {
-      throw new Error('REPORT_NOTIFICATION_PAYLOAD_INVALID');
-    }
-    signal.throwIfAborted();
-    const [report, channel] = await Promise.all([
-      reportDatabaseService.getReportById(reportId),
-      notificationDatabaseService.getChannelById(channelId),
-    ]);
-    if (!report || !channel || !channel.enabled) {
-      signal.throwIfAborted();
-      await reportDatabaseService.recordNotificationDelivery({
-        jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'skipped', errorCode: 'REPORT_OR_CHANNEL_UNAVAILABLE',
-      });
-      return;
-    }
-    signal.throwIfAborted();
-    await reportDatabaseService.recordNotificationDelivery({
-      jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'started',
+      const claim = await gate.acquire(job, context, request);
+      if (!claim) return;
+      try {
+        signal.throwIfAborted();
+        // One transport invocation only. SMTP and ordinary webhooks have no receiver deduplication contract.
+        const sendSignal = claim.retryDeadline === undefined ? signal
+          : AbortSignal.any([signal, AbortSignal.timeout(Math.max(0, claim.retryDeadline - Date.now()))]);
+        const result = await notificationService.send(claim.request.channel, claim.request.message, sendSignal, claim.key, claim.retryDeadline);
+        signal.throwIfAborted();
+        if (!result.success) throw new Error('DELIVERY_TRANSPORT_UNCERTAIN');
+        await gate.finish(job, context, claim, 'sent');
+      } catch (error) {
+        // If ownership or DB availability was lost, leave sending durable. Recovery interprets it as unknown.
+        if (!signal.aborted) await gate.finish(job, context, claim, 'unknown', 'DELIVERY_OUTCOME_UNCERTAIN').catch(() => {});
+        throw error;
+      }
     });
-    signal.throwIfAborted();
-    const result = await notificationService.send(channel, {
-      type: 'scheduled_report',
-      report: { id: report.id, name: report.name, type: report.type, format: report.format, status: report.status },
-      downloadPath: `/api/reports/${report.id}/download`,
-    }, signal);
-    if (!result.success) {
-      signal.throwIfAborted();
-      await reportDatabaseService.recordNotificationDelivery({
-        jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'failed',
-        errorCode: result.error?.slice(0, 128), errorMessage: result.error,
-      });
-      throw new Error(result.error || 'REPORT_NOTIFICATION_FAILED');
-    }
-    signal.throwIfAborted();
-    await reportDatabaseService.recordNotificationDelivery({
-      jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'sent',
-    });
-  });
+  }
 }

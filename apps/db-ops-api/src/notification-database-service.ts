@@ -7,6 +7,8 @@ import type { NotificationChannelType } from './notification-channel-config.js';
 
 export interface NotificationChannelConfig {
   webhook_url?: string;
+  idempotency_contract?: 'receiver-deduplicates';
+  idempotency_retention_seconds?: number;
   secret?: string;
   secret_encrypted?: string;
   severity?: string;
