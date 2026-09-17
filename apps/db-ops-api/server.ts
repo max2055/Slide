@@ -108,6 +108,7 @@ import { classifySql } from './src/sql-validator.js';
 import { PersistentOperationService } from './src/operations/operation-service.js';
 import { MigrationRunner } from './src/migrations/runner.js';
 import { WorkerLease } from './src/lifecycle/worker-lease.js';
+import { registerDeliveryRoutes } from './src/workflows/delivery-routes.js';
 import { registerNotificationHandlers } from './src/workflows/notification-handlers.js';
 import { JobRegistry } from './src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.js';
@@ -3703,6 +3704,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
     }
   });
+
+  registerDeliveryRoutes(fastify, { verifyToken, requirePermission });
 
   // 获取通知记录
   fastify.get('/api/notification/records', {

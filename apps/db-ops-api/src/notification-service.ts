@@ -176,7 +176,7 @@ export class NotificationService {
     signal?.throwIfAborted();
     if (!channel.enabled) return;
     const message = this.buildMessage(channel.type, alert, alert.instance_name, alert.instance_host);
-    const result = await this.sendWithRetry(channel, message, 1, signal);
+    const result = await this.send(channel, message, signal);
     if (!result.success) throw new Error(result.error || 'NOTIFICATION_DELIVERY_FAILED');
     signal?.throwIfAborted();
     const recorded = await notificationDatabaseService.recordNotification({
@@ -383,14 +383,15 @@ export class NotificationService {
   /**
    * 发送通知
    */
-  async send(channel: NotificationChannel, message: any, signal?: AbortSignal): Promise<{ success: boolean; error?: string }> {
+  async send(channel: NotificationChannel, message: any, signal?: AbortSignal, businessKey?: string, retryDeadline?: number): Promise<{ success: boolean; error?: string }> {
     signal?.throwIfAborted();
     if (channel.type === 'email') {
       if (!this.isValidEmailConfiguration(channel.config)) {
         return { success: false, error: 'EMAIL_CONFIGURATION_INVALID' };
       }
       try {
-        await this.sendEmail(channel.config, message, channel.id, ...(signal ? [signal] : []));
+        if (businessKey) await this.sendEmail(channel.config, message, channel.id, signal, businessKey);
+        else await this.sendEmail(channel.config, message, channel.id, ...(signal ? [signal] : []));
         signal?.throwIfAborted();
         return { success: true };
       } catch {
@@ -412,7 +413,11 @@ export class NotificationService {
       const payload = channel.type === 'feishu' && secret
         ? signFeishuWebhookPayload(message, secret)
         : message;
-      const response = await this.postJsonToVerifiedTarget(url, target.addresses, payload, ...(signal ? [signal] : []));
+      if (retryDeadline !== undefined && Date.now() >= retryDeadline) throw new Error('DELIVERY_RETENTION_EXPIRED');
+      const stableKey = channel.type === 'webhook' && channel.config.idempotency_contract === 'receiver-deduplicates' ? businessKey : undefined;
+      const response = stableKey
+        ? await this.postJsonToVerifiedTarget(url, target.addresses, payload, signal, stableKey)
+        : await this.postJsonToVerifiedTarget(url, target.addresses, payload, ...(signal ? [signal] : []));
 
       signal?.throwIfAborted();
       if (response.statusCode >= 300 && response.statusCode < 400) {
@@ -450,6 +455,7 @@ export class NotificationService {
     message: { subject?: string; text?: string },
     channelId?: number,
     signal?: AbortSignal,
+    businessKey?: string,
   ): Promise<void> {
     signal?.throwIfAborted();
     const port = Number(config.smtp_port);
@@ -484,6 +490,7 @@ export class NotificationService {
     try {
       signal?.throwIfAborted();
       await transport.sendMail({
+        ...(businessKey ? { messageId: `<${crypto.createHash('sha256').update(businessKey).digest('hex')}@slide.local>` } : {}),
         from: config.from!,
         to: config.to!,
         subject: message.subject || '数据库运维助手通知',
@@ -507,7 +514,7 @@ export class NotificationService {
   }
 
   /** Pin requests to validated DNS results while retaining TLS hostname verification. */
-  private postJsonToVerifiedTarget(urlText: string, addresses: string[], message: unknown, signal?: AbortSignal): Promise<{ statusCode: number; body: string }> {
+  private postJsonToVerifiedTarget(urlText: string, addresses: string[], message: unknown, signal?: AbortSignal, businessKey?: string): Promise<{ statusCode: number; body: string }> {
     signal?.throwIfAborted();
     const url = new URL(urlText);
     const payload = JSON.stringify(message);
@@ -517,7 +524,7 @@ export class NotificationService {
         signal,
         protocol: 'https:', hostname: url.hostname, port: 443,
         path: `${url.pathname}${url.search}`, method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...(businessKey ? { 'Idempotency-Key': businessKey } : {}) },
         servername: url.hostname, rejectUnauthorized: true,
         lookup: createPinnedLookup(address),
       }, (response) => {

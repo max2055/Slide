@@ -26,7 +26,13 @@ export class MysqlWorkflowStore implements WorkflowStore {
     const [result] = await this.pool().execute<{ affectedRows: number }>(
       `UPDATE workflow_jobs SET state = 'queued', attempts = 0, available_at = NOW(),
        lease_owner = NULL, lease_expires_at = NULL, last_error = NULL
-       WHERE id = ? AND state = 'dead_letter'`, [jobId],
+       WHERE id = ? AND state = 'dead_letter'
+       AND job_type IN ('notification.deliver', 'report.notify')
+       AND NOT EXISTS (SELECT 1 FROM notification_delivery_states d
+         WHERE d.business_key = CONCAT(IF(workflow_jobs.job_type = 'notification.deliver', 'notification:', 'report:'),
+           JSON_UNQUOTE(JSON_EXTRACT(workflow_jobs.payload, IF(workflow_jobs.job_type = 'notification.deliver', '$.alertId', '$.reportId'))),
+           ':', JSON_UNQUOTE(JSON_EXTRACT(workflow_jobs.payload, '$.channelId')))
+         AND d.state IN ('sending', 'unknown'))`, [jobId],
     );
     return Number(result.affectedRows) === 1;
   }
@@ -40,7 +46,7 @@ export class MysqlWorkflowStore implements WorkflowStore {
     const safeLimit = Math.min(Math.max(Number.isFinite(limit) ? Math.floor(limit) : 50, 1), 200);
     const [rows] = await this.pool().execute<Array<any>>(
       `SELECT id, job_type AS type, payload, attempts, last_error AS lastError, created_at AS createdAt
-       FROM workflow_jobs WHERE state = 'dead_letter' AND job_type = 'notification.deliver'
+       FROM workflow_jobs WHERE state = 'dead_letter' AND job_type IN ('notification.deliver', 'report.notify')
        ORDER BY updated_at DESC LIMIT ${safeLimit}`,
     );
     return rows.map((row) => ({ ...row, payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload }));
