@@ -1,3 +1,4 @@
+import { registerHealthRoutes } from './src/health-routes.js';
 import { registerLLMSceneRoutes } from './src/llm/scene-routes.js';
 import { capacityInstanceIds } from './src/capacity-scope.js';
 /**
@@ -52,7 +53,6 @@ import { API_BODY_LIMIT, expensiveOperationRateLimitConfig, loginRateLimitConfig
 import {
   AdapterCapabilitiesResponseSchema,
   ErrorResponseSchema,
-  HealthResponseSchema,
   ServerDiagnosticsSchema,
   CollectServerDiagnosticsResponseSchema,
 } from './src/contracts/public-api.js';
@@ -295,42 +295,7 @@ async function start() {
   await registerHttpSecurity(fastify);
   await registerSystemAuditRoutes(fastify, verifyToken);
 
-  // 健康检查
-  fastify.get('/api/health', { schema: { response: { 200: HealthResponseSchema } } }, async (request, reply) => {
-    reply.send({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-    });
-  });
-
-  // 详细健康检查共享一个短时快照，避免页面重复查询纳管资源与一致性数据。
-  fastify.get('/api/health/overview', { preHandler: [verifyToken, requirePermission('config:view')] }, async (request, reply) => {
-    try {
-      const { refresh } = request.query as { refresh?: string };
-      return reply.send(await consistencyChecker.healthOverview(refresh === 'true'));
-    } catch (err: any) {
-      return reply.code(500).send({ error: err.message });
-    }
-  });
-
-  fastify.get('/api/health/consistency', { preHandler: [verifyToken, requirePermission('config:view')] }, async (request, reply) => {
-    try {
-      const { refresh } = request.query as { refresh?: string };
-      const { truth: _truth, ...consistency } = await consistencyChecker.healthOverview(refresh === 'true');
-      return reply.send(consistency);
-    } catch (err: any) {
-      return reply.code(500).send({ error: err.message });
-    }
-  });
-
-  fastify.get('/api/health/readiness', { preHandler: [verifyToken, requirePermission('config:view')] }, async (request, reply) => {
-    try {
-      const { refresh } = request.query as { refresh?: string };
-      return reply.send((await consistencyChecker.healthOverview(refresh === 'true')).truth);
-    } catch (err: any) {
-      return reply.code(500).send({ error: err.message });
-    }
-  });
+  registerHealthRoutes(fastify, verifyToken);
 
   // 手动触发容量采集（认证保护）
   fastify.post('/api/monitor/collect-capacity', {
