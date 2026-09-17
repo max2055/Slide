@@ -1,4 +1,4 @@
-import { registerReportScheduleHandler } from './src/workflows/report-schedule-handler.js';
+import { registerWorkflowHandlers } from './src/workflows/register-workflow-handlers.js';
 import { registerHealthRoutes } from './src/health-routes.js';
 import { registerLLMSceneRoutes } from './src/llm/scene-routes.js';
 import { capacityInstanceIds } from './src/capacity-scope.js';
@@ -110,7 +110,6 @@ import { PersistentOperationService } from './src/operations/operation-service.j
 import { MigrationRunner } from './src/migrations/runner.js';
 import { WorkerLease } from './src/lifecycle/worker-lease.js';
 import { registerDeliveryRoutes } from './src/workflows/delivery-routes.js';
-import { registerNotificationHandlers } from './src/workflows/notification-handlers.js';
 import { JobRegistry } from './src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.js';
 import { createNotificationDispatchJob, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
@@ -5439,7 +5438,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const workflowStore = new MysqlWorkflowStore(() => dbConnection.getPool() as any);
   notificationWorkflowStore = workflowStore;
   const workflowRegistry = new JobRegistry();
-  workflowRegistry.register('fault.diagnose-unhealthy', async () => { await faultDiagnosisService.diagnoseUnhealthyInstances(); });
   const notificationScheduler = new NotificationDispatchScheduler(notificationDatabaseService, notificationService, workflowStore);
   const enqueueNotificationDispatch = async (availableAt = new Date()) => {
     await workflowStore.enqueue(createNotificationDispatchJob(availableAt));
@@ -5455,29 +5453,16 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     consistencyChecker,
     alertDatabaseService,
   );
-  workflowRegistry.register('capacity.collect', async () => { await monitorCollector.collectCapacityNow(); });
-  workflowRegistry.register('baseline.cleanup', async () => { await baselineCalculator.cleanupOldBaselines(); });
-  workflowRegistry.register('alert.evaluate', async () => { await alertEngine.triggerEvaluation(); });
-  workflowRegistry.register('capacity.consistency', async (_payload, _job, { signal }) => {
-    signal.throwIfAborted();
-    await workflowStore.enqueue(createCapacityConsistencyJob(new Date(Date.now() + 300_000)));
-    signal.throwIfAborted();
-    await capacityConsistencyMonitor.runOnce(signal);
+  registerWorkflowHandlers(workflowRegistry, {
+    faultDiagnosisService, monitorCollector, baselineCalculator, alertEngine,
+    workflowStore, capacityConsistencyMonitor, notificationScheduler, enqueueNotificationDispatch,
+    reportSchedule: {
+      reportConfigService, serverReportService, reportService,
+      enqueueReportSchedule, enqueueReportNotifications,
+      createOccurrenceStore: () => new MysqlReportOccurrenceStore(() => dbConnection.getPool() as any),
+    },
+    notificationDatabaseService, notificationService, reportDatabaseService,
   });
-  registerReportScheduleHandler(workflowRegistry, {
-    reportConfigService, serverReportService, reportService,
-    enqueueReportSchedule, enqueueReportNotifications,
-    createOccurrenceStore: () => new MysqlReportOccurrenceStore(() => dbConnection.getPool() as any),
-  });
-  workflowRegistry.register('notification.dispatch', async (_payload, _job, { signal }) => {
-    signal.throwIfAborted();
-    await notificationScheduler.enqueuePending(signal);
-    // The next durable tick is committed before this job is completed. A
-    // restart therefore resumes the current or next tick without an in-memory timer.
-    signal.throwIfAborted();
-    await enqueueNotificationDispatch(new Date(Date.now() + 10_000));
-  });
-  registerNotificationHandlers(workflowRegistry, notificationDatabaseService, notificationService, reportDatabaseService);
   const workflowRuntime = new WorkerRuntime(workflowStore, workflowWorkerId);
   stopWorkflow = async () => await workflowRuntime.shutdown();
   await enqueueNotificationDispatch();
