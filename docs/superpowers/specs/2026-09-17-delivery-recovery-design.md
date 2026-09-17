@@ -1,4 +1,4 @@
-MAX-54 投递恢复设计草案（待审批）
+MAX-54 投递恢复设计（2026-09-17 Max 已批准）
 
 基线：2026-09-17 fetch 后 origin/main@3481e9f。主线已有 MAX-53 的 JobExecutionContext（signal、workerId、fencingToken）及 notification-handlers.ts；不应按旧工作树重新实现取消机制。
 
@@ -36,4 +36,4 @@ SMTP、现有未确认去重能力的机器人 webhook：禁用持久投递路�
 - 查询/恢复：权限、理由、版本冲突、unknown replay 禁止绕过及审计可追踪。
 - 开发运行 focused checks，模块边界运行受影响测试，最终候选运行一次必要集成 gate。禁止向真实联系人发送，不以 mock 测试冒充真实数据库或接收端验收。
 
-实施停止条件：设计审批尚未取得；进入实施后仅在必要凭证/环境无法恢复、授权边界或明确预算限制时暂停受影响步骤。当前仅完成源码复核与方案整理，未修改业务代码、未运行验收测试。
+实施停止条件：必要凭证/环境无法恢复、授权边界或明确预算限制时暂停受影响步骤。批准记录：MAX-54 评论 01a0ad69-57ac-730d-952e-c54a1ba0b7aa；实施验收见 docs/slide/validation/max-54/acceptance.md。
