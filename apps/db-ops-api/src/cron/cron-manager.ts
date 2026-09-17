@@ -188,7 +188,9 @@ export class CronManager {
           tool_events: result.toolEvents,
           usage: result.usage,
           stop_reason: result.stopReason,
-          cancellation_pending: result.cancellationPending,
+          partial_trace: result.cancellationPending
+            ? JSON.stringify({ cancellation_pending: true, outcome: 'unknown', scheduling: 'blocked_until_settled' })
+            : undefined,
           duration_ms: durationMs,
         },
       );

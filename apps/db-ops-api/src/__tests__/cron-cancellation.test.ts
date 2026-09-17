@@ -1,11 +1,12 @@
 // Regression adapted from the 2026-09-16 audit Cron overlap probe.
 import { afterEach, expect, it, vi } from 'vitest';
 import { AgentRunner, ToolRegistry } from '@slide/agent-core';
-import type { LLMProvider, ToolExecutionContext } from '@slide/agent-core';
+import type { LLMProvider, Tool } from '@slide/agent-core';
 import { CronExecutor } from '../cron/cron-executor.js';
 import { CronManager } from '../cron/cron-manager.js';
 vi.mock('../db-connection', () => ({ dbConnection: { getPool: () => null } }));
 vi.mock('../sql-executor', () => ({ sqlExecutor: {} }));
+type ToolExecutionContext = NonNullable<Parameters<Tool['execute']>[1]>;
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); });
 const done = { content: 'done', finishReason: 'stop', usage: {}, shouldExecuteTools: false, hasToolCalls: false, toolCalls: [] };
 function gate() {
@@ -15,7 +16,7 @@ function gate() {
 }
 function setup(execute?: (_args: Record<string, unknown>, context?: ToolExecutionContext) => Promise<string>, chat?: LLMProvider['chat']) {
   const tools = new ToolRegistry();
-  if (execute) tools.register({ name: 'probe', description: 'isolated counter', parameters: { type: 'object', properties: {} }, execute });
+  if (execute) tools.register({ name: 'probe', description: 'isolated counter', readOnly: true, concurrencySafe: false, exclusive: false, parameters: { type: 'object', properties: {} }, execute });
   const provider = { getDefaultModel: () => 'probe', chat: chat ?? vi.fn(async (messages) => {
     if (!execute || messages.some(m => m.role === 'tool')) return done;
     return { ...done, content: null, finishReason: 'tool_calls', shouldExecuteTools: true, hasToolCalls: true,

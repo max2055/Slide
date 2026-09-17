@@ -86,7 +86,7 @@ describe('actor tool policy', () => {
     const handler = vi.fn(async () => ({ success: true }));
     const result = await executeToolWithPolicy(
       actor(['admin'], ['instance:view']), tool({ handler }), {},
-      async () => ({ type: 'global' }), undefined,
+      async () => ({ type: 'none' }), undefined,
       { record: async () => { controller.abort(); } }, undefined,
       { signal: controller.signal },
     );
