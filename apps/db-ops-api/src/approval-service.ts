@@ -217,7 +217,7 @@ class ApprovalService {
       await pool.execute(
         'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ?, execution_result = ?, rollback_info = ? WHERE id = ?',
         [status, review.reviewed_by || null, review.notes || null,
-         JSON.stringify(execResult.success ? execResult : { error: execResult.error }), JSON.stringify(rollbackInfo), requestId]
+         JSON.stringify(execResult), JSON.stringify(rollbackInfo), requestId]
       );
       await this.writeEvent(requestId, 'approved', { execute_after_approve: true }, review.reviewed_by);
       if (execResult.success) {

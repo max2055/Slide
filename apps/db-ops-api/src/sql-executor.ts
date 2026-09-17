@@ -2,6 +2,7 @@
  * SQL 执行服务
  * 安全执行 SQL 查询，支持 SELECT 直接执行、DDL/DML 走审批流
  */
+import { sqlExecutionIntent } from './audit/sql-execution-intent.js';
 import { databaseService } from './database-service';
 import { auditLogManager } from './audit/audit-log';
 import { classifySql } from './sql-validator.js';
@@ -50,6 +51,9 @@ class SqlExecutor {
     truncated?: boolean;
     duration_ms?: number;
     error?: string;
+    executionState?: 'succeeded' | 'unknown' | 'not_started';
+    operationId?: string;
+    retryable?: false;
   }> {
     const startTime = Date.now();
     let approvalAuthorized = false;
@@ -116,6 +120,17 @@ class SqlExecutor {
       }
     }
 
+    const isMutation = reclassification.commandType !== 'read';
+    const operationId = context?.approvalGrant?.operationId;
+    if (isMutation) {
+      try {
+        await sqlExecutionIntent.begin({ instanceId, sql, database: context?.database, userId: context?.userId }, context!.approvalGrant!);
+      } catch (error: any) {
+        return { success: false, executionState: 'not_started', operationId, retryable: false,
+          error: `SQL_INTENT_REJECTED: ${error.message}; inspect operation before any retry` };
+      }
+    }
+    let targetAcknowledged = false;
     try {
       let result: any;
       const isReadOnly = reclassification.commandType === 'read';
@@ -126,7 +141,8 @@ class SqlExecutor {
           const connection = await conn.pool!.getConnection();
           let transactionStarted = false;
           try {
-            await connection.query(`SET SESSION max_execution_time = ${timeoutMs}`);
+            // MySQL max_execution_time bounds SELECT only, not DML/DDL.
+            if (isReadOnly) await connection.query(`SET SESSION max_execution_time = ${timeoutMs}`);
             if (isReadOnly) await connection.query(`SET SESSION sql_select_limit = ${MAX_SQL_ROWS + 1}`);
             if (context?.database) {
               const escapedDb = context.database.replace(/`/g, '``');
@@ -146,7 +162,7 @@ class SqlExecutor {
             if (transactionStarted) await connection.query('ROLLBACK').catch(() => undefined);
             throw error;
           } finally {
-            await connection.query('SET SESSION max_execution_time = 0').catch(() => undefined);
+            if (isReadOnly) await connection.query('SET SESSION max_execution_time = 0').catch(() => undefined);
             if (isReadOnly) await connection.query('SET SESSION sql_select_limit = DEFAULT').catch(() => undefined);
             connection.release();
           }
@@ -215,6 +231,7 @@ class SqlExecutor {
         return { success: false, error: `不支持的数据库类型: ${conn.db_type}` };
       }
 
+      targetAcknowledged = true;
       const duration_ms = Date.now() - startTime;
       const allRows = Array.isArray(result.rows) ? result.rows : [];
       const truncated = isReadOnly && allRows.length > MAX_SQL_ROWS;
@@ -224,11 +241,11 @@ class SqlExecutor {
         : Object.keys(rows[0] || {});
 
       // 审计记录
-      if (context?.userId) {
+      if (context?.userId || isMutation) {
         try {
           await auditLogManager.logSqlExecution({
-            userId: context.userId,
-            username: context.username || 'unknown',
+            userId: context?.userId || String(context!.approvalGrant!.reviewerId),
+            username: context?.username || 'unknown',
             instanceId,
             instanceName: conn.name,
             dbType: conn.db_type,
@@ -236,20 +253,27 @@ class SqlExecutor {
             durationMs: duration_ms,
             status: 'success',
             rowCount: rows.length,
-            ipAddress: context.ipAddress,
-            approvalRequestId: context.approvalGrant?.approvalRequestId,
+            ipAddress: context?.ipAddress,
+            approvalRequestId: context?.approvalGrant?.approvalRequestId,
           });
-        } catch { /* audit non-blocking */ }
+        } catch (error) { if (isMutation) throw error; }
       }
 
-      return { success: true, columns, rows, rowCount: rows.length, truncated, duration_ms };
+      if (isMutation) await sqlExecutionIntent.finish(operationId!, 'succeeded', { duration_ms, targetAcknowledged: true });
+      return { success: true, columns, rows, rowCount: rows.length, truncated, duration_ms,
+        ...(isMutation ? { executionState: 'succeeded' as const, operationId, retryable: false as const } : {}) };
     } catch (error: any) {
+      if (isMutation) {
+        await sqlExecutionIntent.finish(operationId!, 'unknown', { targetAcknowledged, error: 'SQL_EXECUTION_OR_AUDIT_FAILED' }).catch(() => undefined);
+        return { success: false, executionState: 'unknown', operationId, retryable: false,
+          error: 'SQL_OUTCOME_REQUIRES_RECONCILIATION: SQL may have committed; do not retry; inspect durable intent and target database' };
+      }
       const duration_ms = Date.now() - startTime;
-      if (context?.userId) {
+      if (context?.userId || isMutation) {
         try {
           await auditLogManager.logSqlExecution({
-            userId: context.userId,
-            username: context.username || 'unknown',
+            userId: context?.userId || String(context!.approvalGrant!.reviewerId),
+            username: context?.username || 'unknown',
             instanceId,
             instanceName: conn.name,
             dbType: conn.db_type,
@@ -257,8 +281,8 @@ class SqlExecutor {
             durationMs: duration_ms,
             status: 'error',
             errorMessage: error.message,
-            ipAddress: context.ipAddress,
-            approvalRequestId: context.approvalGrant?.approvalRequestId,
+            ipAddress: context?.ipAddress,
+            approvalRequestId: context?.approvalGrant?.approvalRequestId,
           });
         } catch { /* audit non-blocking */ }
       }
