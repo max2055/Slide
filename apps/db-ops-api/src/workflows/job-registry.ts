@@ -1,3 +1,4 @@
+import { workflowExecution } from './execution-context.js';
 import type { ClaimedJob, JobExecutionContext } from './worker-runtime.js';
 
 export type TypedJobHandler = (payload: Record<string, unknown>, job: ClaimedJob, context: JobExecutionContext) => Promise<void>;
@@ -14,7 +15,7 @@ export class JobRegistry {
     const handler = this.handlers.get(job.type);
     if (!handler) throw new Error(`WORKFLOW_HANDLER_UNSUPPORTED:${job.type}`);
     context.signal.throwIfAborted();
-    await handler(job.payload, job, context);
+    await workflowExecution.run(context, () => handler(job.payload, job, context));
     context.signal.throwIfAborted();
   }
 }

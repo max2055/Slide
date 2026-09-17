@@ -1,3 +1,4 @@
+import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 告警引擎服务
  * 集成维护窗口、静默期检查的告警评估和创建。
@@ -95,6 +96,7 @@ class AlertEngine {
    */
   async evaluateAndCreateAlerts(): Promise<{ evaluated: number; triggered: number }> {
     this.evaluatedCount++;
+    assertWorkflowActive();
     const triggeredAlerts = await evaluateAllRules();
 
     // 更新统计
@@ -103,24 +105,29 @@ class AlertEngine {
     // 为每个触发的告警创建记录（检查维护窗口和静默期）
     for (const alert of triggeredAlerts) {
       try {
+        assertWorkflowActive();
         await this.createAlertFromRule(alert);
       } catch (error) {
+        assertWorkflowActive();
         console.error('创建告警记录失败:', error);
       }
     }
 
     // 事件聚合：将同一实例同一时间段的同类告警聚合为事件
     try {
+      assertWorkflowActive();
       const aggregationResult = await eventAggregator.aggregate();
       if (aggregationResult.eventsCreated > 0) {
         console.log(`📦 事件聚合: 创建 ${aggregationResult.eventsCreated} 个事件, 聚合 ${aggregationResult.alertsAggregated} 条告警`);
       }
     } catch (error) {
+      assertWorkflowActive();
       console.error('事件聚合失败:', error);
     }
 
     // 自动恢复：检查所有活跃告警的指标是否已恢复到健康范围，是则自动解决
     try {
+      assertWorkflowActive();
       const activeAlerts = await alertDatabaseService.getActiveAlerts();
       for (const alert of activeAlerts) {
         try {
@@ -129,41 +136,52 @@ class AlertEngine {
           const ruleId = alert.tags?.rule_id;
           if (!ruleId) continue;
 
+          assertWorkflowActive();
           const rule = await alertDatabaseService.getRuleById(ruleId);
           if (!rule) continue;
 
           // 使用与触发对称的持续时间检查：需要持续健康才恢复
           // 并加载该规则的 macros（包括模板和实例覆盖）
           const duration = (rule.duration_seconds as number) || 60;
+          assertWorkflowActive();
           const macros = await resolveMacrosForRule(rule);
+          assertWorkflowActive();
           const recovered = await checkRecoveryDuration(alert.instance_id, rule, duration, macros);
           if (recovered) {
+            assertWorkflowActive();
             await alertDatabaseService.resolveAlert(alert.id);
             console.log(`[AlertEngine] Auto-resolved alert #${alert.id} (${alert.metric_name} recovered for ${duration}s)`);
             // 联动事件：如果此告警所属事件的所有成员都已恢复，则自动 resolve 事件
+            assertWorkflowActive();
             await alertEventService.autoResolveByAlert(alert.id).catch(err =>
               console.warn(`[AlertEngine] Event auto-resolve check failed for alert #${alert.id}:`, err)
             );
           }
         } catch (err) {
+          assertWorkflowActive();
           console.warn(`[AlertEngine] Recovery check failed for alert #${alert.id}:`, err);
         }
       }
     } catch (error) {
+      assertWorkflowActive();
       console.warn('[AlertEngine] Auto-recovery loop failed:', error);
     }
 
     // 服务器告警规则评估（独立于 DB 实例评估）
     try {
+      assertWorkflowActive();
       await serverAlertEvaluator.evaluateServerRules();
     } catch (error) {
+      assertWorkflowActive();
       console.error('[AlertEngine] Server rule evaluation failed:', error);
     }
 
     // 服务器不可达检测
     try {
+      assertWorkflowActive();
       await serverAlertEvaluator.checkUnreachable();
     } catch (error) {
+      assertWorkflowActive();
       console.error('[AlertEngine] Server unreachable check failed:', error);
     }
 
@@ -171,8 +189,10 @@ class AlertEngine {
     // read from the dedicated observation table and preserve interface
     // dimensions in alert tags.
     try {
+      assertWorkflowActive();
       await networkDeviceAlertEvaluator.evaluateNetworkDeviceRules();
     } catch (error) {
+      assertWorkflowActive();
       console.error('[AlertEngine] Network-device rule evaluation failed:', error);
     }
 
@@ -196,6 +216,7 @@ class AlertEngine {
     const { rule, instanceId, instanceName, currentValue, thresholdUsed, triggeredLevel } = alertData;
 
     // 1. 检查维护窗口
+    assertWorkflowActive();
     const mwCheck = await maintenanceWindowService.isActiveMaintenanceWindow(instanceId);
     if (mwCheck.active && mwCheck.window?.suppress_evaluation) {
       console.log(`🔇 维护窗口跳过评估: ${rule.name} on instance ${instanceName} (${mwCheck.window.name})`);
@@ -204,6 +225,7 @@ class AlertEngine {
     }
 
     // 2. 检查静默期
+    assertWorkflowActive();
     const isSilenced = await alertSilenceService.isSilenced(instanceId, rule.metric_name);
     if (isSilenced) {
       console.log(`⏭️ 静默跳过: ${rule.name} on instance ${instanceName}`);
@@ -213,8 +235,10 @@ class AlertEngine {
 
     // 3. 去重：检查是否存在未解决的相同告警，存在则 touch 而不是创建新记录
     // availability 告警的 rule_id 为 0，也需要去重
+    assertWorkflowActive();
     const existing = await alertDatabaseService.findActiveAlert(instanceId, rule.metric_name, rule.id);
     if (existing) {
+      assertWorkflowActive();
       await alertDatabaseService.touchAlert(existing.id, currentValue);
       console.log(`[AlertEngine] Dedup: touching existing alert #${existing.id} (${rule.metric_name}=${currentValue}), skipping new alert`);
       return;
@@ -256,6 +280,7 @@ class AlertEngine {
       tags.maintenance_window = true;
     }
 
+    assertWorkflowActive();
     const result = await alertDatabaseService.createAlert({
       instance_id: instanceId,
       alert_type: typeMap[rule.metric_name] || 'performance',
@@ -273,6 +298,7 @@ class AlertEngine {
     // 7. 创建告警后，为该实例+指标设置静默期（使用规则配置的静默时长，默认 5 分钟）
     const silenceDuration = (rule.silence_minutes as number) ?? 5;
     if (result.success && result.alertId) {
+      assertWorkflowActive();
       await alertSilenceService.silence(instanceId, rule.metric_name, silenceDuration, result.alertId);
     }
 

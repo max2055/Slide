@@ -1,15 +1,15 @@
 import type { JobRegistry } from './job-registry.js';
-import type { NotificationDatabaseService } from '../notification-database-service.js';
+import type { notificationDatabaseService as NotificationDatabase } from '../notification-database-service.js';
 import type { NotificationService } from '../notification-service.js';
-import type { ReportDatabaseService } from '../report-database-service.js';
+import type { reportDatabaseService as ReportDatabase } from '../report-database-service.js';
 import { isAlertEligibleForChannel } from './notification-dispatch.js';
 
 /** Shared registration keeps production delivery and cancellation probes on the same handlers. */
 export function registerNotificationHandlers(
   registry: JobRegistry,
-  notificationDatabaseService: Pick<NotificationDatabaseService, 'getAlertById' | 'getChannelById' | 'recordDeliveryAttempt'>,
+  notificationDatabaseService: Pick<typeof NotificationDatabase, 'getAlertById' | 'getChannelById' | 'recordDeliveryAttempt'>,
   notificationService: Pick<NotificationService, 'deliverAlertToChannel' | 'send'>,
-  reportDatabaseService: Pick<ReportDatabaseService, 'getReportById' | 'recordNotificationDelivery'>,
+  reportDatabaseService: Pick<typeof ReportDatabase, 'getReportById' | 'recordNotificationDelivery'>,
 ): void {
   registry.register('notification.deliver', async (payload, job, { signal }) => {
     const alertId = Number(payload.alertId);

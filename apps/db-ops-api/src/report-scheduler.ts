@@ -1,3 +1,4 @@
+import { assertWorkflowActive } from './workflows/execution-context.js';
 import { CronTime } from 'cron';
 import type { ReportConfig } from './report-config-database-service.js';
 import type { WorkflowJobInput } from './workflows/worker-runtime.js';
@@ -49,8 +50,11 @@ export class ReportScheduler {
   constructor(private readonly configs: { getEnabledConfigs(): Promise<ReportConfig[]> }, private readonly occurrences: ReportOccurrenceStore) {}
   async claimDue(now = new Date()): Promise<ReportOccurrence[]> {
     const due: ReportOccurrence[] = [];
+    assertWorkflowActive();
     for (const config of await this.configs.getEnabledConfigs()) {
+      assertWorkflowActive();
       const occurrence = nextReportOccurrence(config, await this.occurrences.lastOccurrence(config.id), now);
+      assertWorkflowActive();
       if (occurrence && await this.occurrences.claim(occurrence)) due.push(occurrence);
     }
     return due;
@@ -68,6 +72,7 @@ export class MysqlReportOccurrenceStore implements ReportOccurrenceStore {
     const pool = this.pool();
     const [insert] = await pool.execute<{ affectedRows: number }>('INSERT IGNORE INTO report_schedule_occurrences (config_id, occurrence_at, state) VALUES (?, ?, \'running\')', [occurrence.configId, occurrence.occurrenceAt]);
     if (Number(insert.affectedRows) === 1) return true;
+    assertWorkflowActive();
     const [retry] = await pool.execute<{ affectedRows: number }>('UPDATE report_schedule_occurrences SET state = \'running\', last_error = NULL WHERE config_id = ? AND occurrence_at = ? AND state = \'failed\'', [occurrence.configId, occurrence.occurrenceAt]);
     return Number(retry.affectedRows) === 1;
   }

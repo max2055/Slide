@@ -1,3 +1,4 @@
+import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 报表生成服务
  */
@@ -260,10 +261,12 @@ class ReportService {
 
     try {
       // 创建报表记录（状态：pending）
+      assertWorkflowActive();
       const instance = await instanceDatabaseService.getInstanceById(instanceId);
       const instanceName = instance?.name || `Instance-${instanceId}`;
       const reportName = `${instanceName} - 健康检查报告`;
 
+      assertWorkflowActive();
       report = await reportDatabaseService.createReport({
         name: reportName,
         type: 'health',
@@ -273,10 +276,12 @@ class ReportService {
       });
 
       // 收集健康指标
+      assertWorkflowActive();
       const metrics = await this.collectHealthMetrics(instanceId);
 
       // 生成 HTML 内容
       const generatedAt = new Date().toISOString();
+      assertWorkflowActive();
       const htmlContent = await this.renderTemplate('health', {
         title: '健康检查报告',
         instanceName,
@@ -296,6 +301,7 @@ class ReportService {
       };
 
       // 更新报表状态为 completed
+      assertWorkflowActive();
       await reportDatabaseService.updateReportStatus(
         report.id,
         'completed',
@@ -304,15 +310,19 @@ class ReportService {
       );
 
       // 返回最新报表
+      assertWorkflowActive();
       return (await reportDatabaseService.getReportById(report.id))!;
     } catch (error: any) {
+      assertWorkflowActive();
       console.error('生成健康检查报告失败:', error);
       // 如果报表已创建，更新状态为 failed
       try {
         if (report) {
+          assertWorkflowActive();
           await reportDatabaseService.updateReportStatus(report.id, 'failed');
         }
       } catch (innerError: any) {
+        assertWorkflowActive();
         console.error('更新报表失败状态时出错:', innerError.message);
       }
       throw error;
@@ -331,10 +341,12 @@ class ReportService {
     let report: Report | null = null;
 
     try {
+      assertWorkflowActive();
       const instance = await instanceDatabaseService.getInstanceById(instanceId);
       const instanceName = instance?.name || `Instance-${instanceId}`;
       const reportName = `${instanceName} - 性能分析报告`;
 
+      assertWorkflowActive();
       report = await reportDatabaseService.createReport({
         name: reportName,
         type: 'performance',
@@ -344,10 +356,12 @@ class ReportService {
       });
 
       // 收集性能指标
+      assertWorkflowActive();
       const metrics = await this.collectPerformanceMetrics(instanceId, topN);
 
       // 生成 HTML 内容
       const generatedAt = new Date().toISOString();
+      assertWorkflowActive();
       const htmlContent = await this.renderTemplate('performance', {
         title: '性能分析报告',
         instanceName,
@@ -366,6 +380,7 @@ class ReportService {
         analysis: this.generatePerformanceAnalysis(metrics),
       };
 
+      assertWorkflowActive();
       await reportDatabaseService.updateReportStatus(
         report.id,
         'completed',
@@ -373,14 +388,18 @@ class ReportService {
         reportData
       );
 
+      assertWorkflowActive();
       return (await reportDatabaseService.getReportById(report.id))!;
     } catch (error: any) {
+      assertWorkflowActive();
       console.error('生成性能分析报告失败:', error);
       try {
         if (report) {
+          assertWorkflowActive();
           await reportDatabaseService.updateReportStatus(report.id, 'failed');
         }
       } catch (innerError: any) {
+        assertWorkflowActive();
         console.error('更新报表失败状态时出错:', innerError.message);
       }
       throw error;
@@ -399,10 +418,12 @@ class ReportService {
     let report: Report | null = null;
 
     try {
+      assertWorkflowActive();
       const instance = await instanceDatabaseService.getInstanceById(instanceId);
       const instanceName = instance?.name || `Instance-${instanceId}`;
       const reportName = `${instanceName} - 慢查询分析报告`;
 
+      assertWorkflowActive();
       report = await reportDatabaseService.createReport({
         name: reportName,
         type: 'slow_query',
@@ -412,10 +433,12 @@ class ReportService {
       });
 
       // 收集慢查询数据
+      assertWorkflowActive();
       const slowQueries = await metricsDatabaseService.getSlowQueries(instanceId, topN);
 
       // 生成 HTML 内容
       const generatedAt = new Date().toISOString();
+      assertWorkflowActive();
       const htmlContent = await this.renderTemplate('slow-query', {
         title: '慢查询分析报告',
         instanceName,
@@ -435,6 +458,7 @@ class ReportService {
         recommendations: this.generateSlowQueryRecommendations(slowQueries),
       };
 
+      assertWorkflowActive();
       await reportDatabaseService.updateReportStatus(
         report.id,
         'completed',
@@ -442,14 +466,18 @@ class ReportService {
         reportData
       );
 
+      assertWorkflowActive();
       return (await reportDatabaseService.getReportById(report.id))!;
     } catch (error: any) {
+      assertWorkflowActive();
       console.error('生成慢查询报告失败:', error);
       try {
         if (report) {
+          assertWorkflowActive();
           await reportDatabaseService.updateReportStatus(report.id, 'failed');
         }
       } catch (innerError: any) {
+        assertWorkflowActive();
         console.error('更新报表失败状态时出错:', innerError.message);
       }
       throw error;
@@ -467,10 +495,12 @@ class ReportService {
     let report: Report | null = null;
 
     try {
+      assertWorkflowActive();
       const instance = await instanceDatabaseService.getInstanceById(instanceId);
       const instanceName = instance?.name || `Instance-${instanceId}`;
       const reportName = `${instanceName} - 容量规划报告`;
 
+      assertWorkflowActive();
       report = await reportDatabaseService.createReport({
         name: reportName,
         type: 'capacity',
@@ -480,10 +510,12 @@ class ReportService {
       });
 
       // 收集容量数据
+      assertWorkflowActive();
       const capacityData = await this.collectCapacityData(instanceId);
 
       // 生成 HTML 内容
       const generatedAt = new Date().toISOString();
+      assertWorkflowActive();
       const htmlContent = await this.renderTemplate('capacity', {
         title: '容量规划报告',
         instanceName,
@@ -502,6 +534,7 @@ class ReportService {
         forecast: this.generateCapacityForecast(capacityData),
       };
 
+      assertWorkflowActive();
       await reportDatabaseService.updateReportStatus(
         report.id,
         'completed',
@@ -509,14 +542,18 @@ class ReportService {
         reportData
       );
 
+      assertWorkflowActive();
       return (await reportDatabaseService.getReportById(report.id))!;
     } catch (error: any) {
+      assertWorkflowActive();
       console.error('生成容量规划报告失败:', error);
       try {
         if (report) {
+          assertWorkflowActive();
           await reportDatabaseService.updateReportStatus(report.id, 'failed');
         }
       } catch (innerError: any) {
+        assertWorkflowActive();
         console.error('更新报表失败状态时出错:', innerError.message);
       }
       throw error;

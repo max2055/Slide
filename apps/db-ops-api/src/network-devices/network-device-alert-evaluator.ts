@@ -1,3 +1,4 @@
+import { assertWorkflowActive } from '../workflows/execution-context.js';
 import { dbConnection } from '../db-connection.js';
 import { alertDatabaseService, type AlertRule } from '../alert-database-service.js';
 import { metricRegistry } from '../metric-registry.js';
@@ -53,6 +54,7 @@ function parseDimensions(value: unknown): Record<string, string> | undefined {
     const dimensions = Object.fromEntries(Object.entries(parsed).filter(([, item]) => typeof item === 'string')) as Record<string, string>;
     return canonicalDimensions(dimensions);
   } catch {
+    assertWorkflowActive();
     return undefined;
   }
 }
@@ -64,6 +66,7 @@ function sameDimensions(left?: Record<string, string>, right?: Record<string, st
     a = canonicalDimensions(left) ?? {};
     b = canonicalDimensions(right) ?? {};
   } catch {
+    assertWorkflowActive();
     return false;
   }
   const aKeys = Object.keys(a);
@@ -154,12 +157,15 @@ export class NetworkDeviceAlertEvaluator {
     const firingKeys = new Set<string>();
     const freshKeys = new Set<string>();
     try {
+      assertWorkflowActive();
       const allRules = await alertDatabaseService.getAlertRules(true) as AlertRuleLike[];
       const rules = allRules.filter((rule) => rule.enabled && rule.target_type === 'network_device') as NetworkDeviceAlertRule[];
       if (rules.length === 0) return { evaluated, triggered, skipped };
+      assertWorkflowActive();
       const devices = await this.store.getCollectionEnabledDevices();
       for (const device of devices) {
         if (device.collectionEnabled === false) continue;
+        assertWorkflowActive();
         const observations = latestObservations(this.withReachabilityObservation(device, await this.store.getLatestObservations(device.id)));
         for (const rule of rules) {
           if (rule.network_device_id != null && Number(rule.network_device_id) !== device.id) continue;
@@ -171,6 +177,7 @@ export class NetworkDeviceAlertEvaluator {
             try {
               compiled = compileAlertRule(rule, 'network_device', macroContext(rule.metric_name));
             } catch {
+              assertWorkflowActive();
               skipped++;
               continue;
             }
@@ -180,15 +187,19 @@ export class NetworkDeviceAlertEvaluator {
             const currentValue = Number(observation.value);
             const level = evaluateLevel(rule, compiled, currentValue);
             if (!level) continue;
+            assertWorkflowActive();
             if (!(await this.durationMet(device.id, rule, observation, compiled))) continue;
             triggered++;
             firingKeys.add(identity);
+            assertWorkflowActive();
             await this.persistAlert(device, rule, observation, level, currentValue, compiled);
           }
         }
       }
+      assertWorkflowActive();
       await this.resolveRecoveredAlerts(firingKeys, freshKeys);
     } catch (error) {
+      assertWorkflowActive();
       // A failed query must never be converted into an alert. Keep the
       // evaluator available for the next cycle and expose only a stable count.
       console.error('[NetworkDeviceAlertEvaluator] evaluation failed:', error instanceof Error ? error.message : String(error));
@@ -226,6 +237,7 @@ export class NetworkDeviceAlertEvaluator {
     if (duration === 0 || current.synthetic) return true;
     const now = this.clock();
     const from = new Date(now.getTime() - duration * 1_000);
+    assertWorkflowActive();
     const history = await this.store.getObservationHistory(deviceId, rule.metric_name, current.dimensions, from, this.historyLimit);
     if (history.length === 0) return false;
     const valid = history.filter((observation) => isFreshObservation(observation, now));
@@ -239,6 +251,7 @@ export class NetworkDeviceAlertEvaluator {
     const listActive = (alertDatabaseService as any).getActiveAlerts as undefined | (() => Promise<any[]>);
     const resolve = (alertDatabaseService as any).resolveAlert as undefined | ((alertId: number) => Promise<unknown>);
     if (!listActive || !resolve) return;
+    assertWorkflowActive();
     const active = await listActive();
     for (const alert of active ?? []) {
       if (alert?.target_type !== 'network_device' || alert?.network_device_id == null) continue;
@@ -256,6 +269,7 @@ export class NetworkDeviceAlertEvaluator {
       const key = `${Number(alert.network_device_id)}:${ruleId}:${alert.metric_name}:${JSON.stringify(canonicalDimensions(dimensions) ?? {})}`;
       // Unknown or stale evidence must not resolve an alert. Only a fresh
       // sample that no longer matches the rule is sufficient.
+      assertWorkflowActive();
       if (freshKeys.has(key) && !firingKeys.has(key)) await resolve(Number(alert.id));
     }
   }
@@ -264,11 +278,14 @@ export class NetworkDeviceAlertEvaluator {
     let dimensions: Record<string, string> | undefined;
     try { dimensions = canonicalDimensions(observation.dimensions); } catch { return; }
     const finder = (alertDatabaseService as any).findActiveNetworkDeviceAlert as undefined | ((deviceId: number, metricId: string, ruleId: number, dimensions?: Record<string, string>) => Promise<unknown>);
+    assertWorkflowActive();
     const existing = finder ? await finder(device.id, rule.metric_name, rule.id, dimensions) : null;
     if (existing && typeof (alertDatabaseService as any).touchAlert === 'function') {
+      assertWorkflowActive();
       await alertDatabaseService.touchAlert((existing as any).id, currentValue);
       return;
     }
+    assertWorkflowActive();
     await (alertDatabaseService as any).createAlert({
       target_type: 'network_device',
       network_device_id: device.id,
@@ -301,6 +318,7 @@ export class MysqlNetworkDeviceAlertStore implements NetworkDeviceAlertStore {
 
   async getCollectionEnabledDevices(): Promise<NetworkDeviceAlertDevice[]> {
     const pool = this.pool();
+    assertWorkflowActive();
     const [rows] = await pool.execute(
       'SELECT id, name, label, host, status, collection_enabled AS collectionEnabled FROM network_devices WHERE collection_enabled = 1 ORDER BY id',
     );
@@ -309,6 +327,7 @@ export class MysqlNetworkDeviceAlertStore implements NetworkDeviceAlertStore {
 
   async getLatestObservations(deviceId: number): Promise<NetworkDeviceAlertObservation[]> {
     const pool = this.pool();
+    assertWorkflowActive();
     const [rows] = await pool.execute(
       `SELECT metric_id AS metricId, metric_value AS value, dimensions, observed_at AS observedAt,
               valid_until AS validUntil, quality, reason
@@ -320,6 +339,7 @@ export class MysqlNetworkDeviceAlertStore implements NetworkDeviceAlertStore {
 
   async getObservationHistory(deviceId: number, metricId: string, dimensions: Record<string, string> | undefined, from: Date, limit: number): Promise<NetworkDeviceAlertObservation[]> {
     const pool = this.pool();
+    assertWorkflowActive();
     const [rows] = await pool.execute(
       `SELECT metric_id AS metricId, metric_value AS value, dimensions, observed_at AS observedAt,
               valid_until AS validUntil, quality, reason

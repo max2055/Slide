@@ -1,3 +1,4 @@
+import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * Server Alert Evaluator
  *
@@ -73,6 +74,7 @@ class ServerAlertEvaluator {
 
     try {
       // 1. Fetch enabled server alert rules (target_type='server') via shared API
+      assertWorkflowActive();
       const allRules = await alertDatabaseService.getAlertRules(true);
       const rules = allRules.filter(r => r.target_type === 'server');
 
@@ -83,6 +85,7 @@ class ServerAlertEvaluator {
       const serverRules = rules as unknown as ServerAlertRuleRaw[];
 
       // 2. Get all collection-enabled servers
+      assertWorkflowActive();
       const servers = await serverDatabaseService.getCollectionEnabledServers();
       if (servers.length === 0) {
         return;
@@ -112,6 +115,7 @@ class ServerAlertEvaluator {
         const server = servers.find((s) => s.id === serverId);
         if (!server) continue;
 
+        assertWorkflowActive();
         const latestMetrics = await this._getLatestMetrics(serverId);
         if (latestMetrics.length === 0) {
           continue; // No metrics yet for this server, skip
@@ -154,17 +158,21 @@ class ServerAlertEvaluator {
 
             const level = evaluateCompiledRule(compileAlertRule(rule as any, 'server'), currentValue);
             if (!level) continue;
+            assertWorkflowActive();
             if (!await this._durationMet(serverId, rule, currentValue)) continue;
 
             // Check for existing active alert (dedup)
+            assertWorkflowActive();
             const existing = await alertDatabaseService.findActiveServerAlert(
               serverId, rule.metric_name, rule.id,
             );
             if (existing) {
               // Touch existing alert with updated value
               try {
+                assertWorkflowActive();
                 await alertDatabaseService.touchAlert(existing.id, currentValue);
               } catch {
+                assertWorkflowActive();
                 // Non-critical: touch failures are logged internally
               }
               continue;
@@ -177,6 +185,7 @@ class ServerAlertEvaluator {
             const dimensionText = dimensions ? `（${Object.entries(dimensions).map(([key, value]) => `${key}=${value}`).join(', ')}）` : '';
             const message = `服务器指标 "${rule.metric_name}"${dimensionText} 当前值为 ${currentValue}，超过阈值 ${rule.threshold}；采集时间 ${collectedAt ?? 'unknown'}`;
 
+            assertWorkflowActive();
             await alertDatabaseService.createAlert({
               server_id: serverId,
               alert_type: 'performance',
@@ -200,11 +209,13 @@ class ServerAlertEvaluator {
 
             console.log(`[ServerAlertEvaluator] Created alert: ${title} (server #${serverId})`);
           } catch (ruleErr) {
+            assertWorkflowActive();
             console.error(`[ServerAlertEvaluator] Error evaluating rule #${rule.id} for server #${serverId}:`, ruleErr);
           }
         }
       }
     } catch (error) {
+      assertWorkflowActive();
       console.error('[ServerAlertEvaluator] evaluateServerRules failed:', error);
     }
   }
@@ -223,6 +234,7 @@ class ServerAlertEvaluator {
 
     try {
       // 1. Check if any server alert rules exist
+      assertWorkflowActive();
       const [ruleCount] = await pool.execute(
         `SELECT COUNT(*) AS cnt FROM alert_rules WHERE enabled = 1 AND target_type = 'server'`,
       ) as any;
@@ -231,6 +243,7 @@ class ServerAlertEvaluator {
       }
 
       // 2. Find servers unreachable for more than 10 minutes
+      assertWorkflowActive();
       const [servers] = await pool.execute(
         `SELECT id, host, label, status, last_check_at
          FROM servers
@@ -247,6 +260,7 @@ class ServerAlertEvaluator {
       for (const server of servers) {
         try {
           // 3. Check for existing active unreachable alert (dedup)
+          assertWorkflowActive();
           const existing = await alertDatabaseService.findActiveServerAlert(
             server.id, 'unreachable', 0,
           );
@@ -259,6 +273,7 @@ class ServerAlertEvaluator {
           const title = `[ERROR] 服务器不可达 - ${label}`;
           const message = `服务器 ${server.host} (${label}) 已超过 10 分钟不可达，请检查网络连接或服务器状态。`;
 
+          assertWorkflowActive();
           await alertDatabaseService.createAlert({
             server_id: server.id,
             alert_type: 'availability',
@@ -281,10 +296,12 @@ class ServerAlertEvaluator {
 
           console.log(`[ServerAlertEvaluator] Created unreachable alert for server #${server.id} (${server.host})`);
         } catch (serverErr) {
+          assertWorkflowActive();
           console.error(`[ServerAlertEvaluator] Error checking unreachable for server #${server.id}:`, serverErr);
         }
       }
     } catch (error) {
+      assertWorkflowActive();
       console.error('[ServerAlertEvaluator] checkUnreachable failed:', error);
     }
   }

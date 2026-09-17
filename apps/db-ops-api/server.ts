@@ -111,7 +111,7 @@ import { WorkerLease } from './src/lifecycle/worker-lease.js';
 import { registerNotificationHandlers } from './src/workflows/notification-handlers.js';
 import { JobRegistry } from './src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.js';
-import { createNotificationDispatchJob, isAlertEligibleForChannel, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
+import { createNotificationDispatchJob, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
 import { createReportNotificationJob, createReportScheduleJob, MysqlReportOccurrenceStore, ReportScheduler } from './src/report-scheduler.js';
 import { assertCreatableDatabaseType, listAdapterCapabilities } from './src/adapters/capability-matrix.js';
 import { approvalService } from './src/approval-service.js';
@@ -5450,6 +5450,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   let cronManager: CronManager | undefined;
   let engine: any;
+  let stopWorkflow: (() => Promise<boolean>) | undefined;
   let workflowTimer: ReturnType<typeof setInterval> | undefined;
   const startWorkers = async () => {
   await initializeControlPlane();
@@ -5529,6 +5530,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
   registerNotificationHandlers(workflowRegistry, notificationDatabaseService, notificationService, reportDatabaseService);
   const workflowRuntime = new WorkerRuntime(workflowStore, workflowWorkerId);
+  stopWorkflow = async () => await workflowRuntime.shutdown();
   await enqueueNotificationDispatch();
   await enqueueReportSchedule();
   await workflowStore.enqueue(createCapacityConsistencyJob());
@@ -5655,7 +5657,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       shuttingDown = true;
       clearInterval(heartbeat);
       if (workflowTimer) clearInterval(workflowTimer);
-      if (!await workflowRuntime.shutdown()) console.error('[WorkerRuntime] WORKFLOW_SHUTDOWN_TIMEOUT');
+      if (stopWorkflow && !await stopWorkflow()) console.error('[WorkerRuntime] WORKFLOW_SHUTDOWN_TIMEOUT');
       monitorCollector.stop();
       networkDeviceCollector.stop();
       await configBackupScheduler.stop();
