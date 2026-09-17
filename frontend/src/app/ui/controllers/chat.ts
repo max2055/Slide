@@ -355,9 +355,21 @@ export async function sendChatMessage(
   state.chatStream = "";
   state.chatStreamStartedAt = now;
 
+  const sendSessionKey = state.sessionKey;
+  const sending = requestChatSend(state, { message: msg, attachments, runId });
+  const pendingRunId = state.chatRunId;
+  let updateSendingState = true;
   try {
-    return await requestChatSend(state, { message: msg, attachments, runId });
+    return await sending;
   } catch (err) {
+    // An expired send belongs to its original session, even after navigation.
+    if (err instanceof ChatAcceptanceTimeoutError && (
+      state.chatRunId !== pendingRunId
+      || (state.sessionKey !== sendSessionKey && state.sessionKey !== err.getSessionKey())
+    )) {
+      updateSendingState = false;
+      return null;
+    }
     const error = formatConnectError(err);
     state.chatRunId = null;
     state.chatStream = null;
@@ -373,7 +385,7 @@ export async function sendChatMessage(
     ];
     return null;
   } finally {
-    state.chatSending = false;
+    if (updateSendingState) state.chatSending = false;
   }
 }
 
