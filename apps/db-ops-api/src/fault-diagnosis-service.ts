@@ -256,12 +256,16 @@ export class FaultDiagnosisService {
   }
 
   private monitorCompletion(analysisId: number, pendingKey: string): void {
+    if (workflowExecution.getStore()?.signal.aborted) {
+      this.pendingDiagnoses.delete(pendingKey);
+      return;
+    }
     void Promise.resolve()
       .then(() => this.dependencies.analysisStore.waitForCompletion(analysisId, 120_000))
       .then((record) => record?.status === 'completed' || record?.status === 'failed')
       .catch(() => false)
       .then((terminal) => {
-        if (terminal) {
+        if (terminal || workflowExecution.getStore()?.signal.aborted) {
           this.pendingDiagnoses.delete(pendingKey);
           return;
         }
