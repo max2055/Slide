@@ -204,11 +204,11 @@ describe('109-04: DirectGatewayClient', () => {
     const request = client.sendChat('session-1', 'hello');
     const result = request.catch((error: Error) => error.message);
     const original = socket.frames.at(-1);
-    await vi.advanceTimersByTimeAsync(45_000);
-    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toEqual([original, original, original]);
-    expect(await result).toContain('消息接收状态未知');
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(3);
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toEqual([original, original, original, original]);
+    expect(await result).toContain('发送结果尚未确认');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(4);
     client.disconnect();
   });
 
@@ -239,7 +239,7 @@ describe('109-04: DirectGatewayClient', () => {
     client.disconnect();
   });
 
-  it('preserves the confirmation retry budget across reconnects', async () => {
+  it('preserves the total confirmation deadline across reconnects', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(1);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -252,9 +252,9 @@ describe('109-04: DirectGatewayClient', () => {
     socket.closeWith(1006, '');
     await vi.advanceTimersByTimeAsync(1000);
     socket.receive({ type: 'auth_ok' });
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(await result).toContain('消息接收状态未知');
-    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(await result).toContain('发送结果尚未确认');
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(2);
     client.disconnect();
   });
 

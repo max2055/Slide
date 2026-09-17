@@ -22,6 +22,28 @@ describe('unconfirmed chat UI', () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it('releases waiting state again when a manual retry also expires', async () => {
+    const retry = vi.fn();
+    const error = new ChatAcceptanceTimeoutError('message-1', retry, () => '');
+    retry.mockRejectedValue(error);
+    const host = state(vi.fn().mockRejectedValue(error));
+    await sendChatMessage(host, 'hello');
+    await sendChatMessage(host, 'hello');
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(host.chatSending).toBe(false);
+    expect(host.chatRunId).toBeNull();
+    expect(host.lastError).toContain('发送结果尚未确认');
+  });
+
+  it('clears uncertainty and adopts late acceptance for the same session', async () => {
+    const host = state(vi.fn().mockRejectedValue(new ChatAcceptanceTimeoutError('message-1', vi.fn(), () => 'assigned')));
+    await sendChatMessage(host, 'hello');
+    handleDirectAdapterEvent(host as any, { type: 'run.started', messageId: 'message-1', sessionKey: 'assigned', runId: 'server-run' });
+    expect(host.lastError).toBeNull();
+    expect(host.sessionKey).toBe('assigned');
+    expect(host.chatRunId).toBe('server-run');
+  });
+
   it('does not adopt a late session allocation after the user changed sessions', async () => {
     const request = vi.fn().mockRejectedValue(new ChatAcceptanceTimeoutError('message-1', vi.fn(), () => 'assigned'));
     const host = state(request);
