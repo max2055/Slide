@@ -164,6 +164,12 @@ describe('durable mutation boundary', () => {
     expect(result.success).toBe(false);
     expect(query).not.toHaveBeenCalled();
   });
+  it('keeps a duplicate operation outcome uncertain rather than implying it never ran', async () => {
+    mocks.beginIntent.mockRejectedValue(new Error('SQL_OPERATION_ALREADY_RECORDED_RECONCILE_DO_NOT_RETRY'));
+    expect(await sqlExecutor.executeSql(1, 'DELETE FROM users', { approvalGrant: grant }))
+      .toMatchObject({ executionState: 'unknown', retryable: false });
+    expect(query).not.toHaveBeenCalled();
+  });
   it('persists intent and result even without userId', async () => {
     const result = await sqlExecutor.executeSql(1, 'DELETE FROM users', { approvalGrant: grant });
     expect(result.success).toBe(true);
