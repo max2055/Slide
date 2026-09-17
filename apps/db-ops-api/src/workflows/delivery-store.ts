@@ -77,7 +77,7 @@ export class MysqlDeliveryStore implements DeliveryGate {
         serialized ? encryptData(serialized) : null, serialized ? createHash('sha256').update(serialized).digest('hex') : null]);
       const [rows] = await c.execute<any[]>('SELECT *, idempotent_until > NOW(3) AS can_retry, TIMESTAMPDIFF(MICROSECOND,NOW(3),idempotent_until) DIV 1000 AS retry_remaining_ms FROM notification_delivery_states WHERE business_key = ? FOR UPDATE', [identity.key]);
       const row = rows[0];
-      if (['ready', 'retryable'].includes(row.state) && !row.attempt_id) {
+      if (['ready', 'retryable'].includes(row.state) && !row.attempt_id && row.error_code !== 'RECOVERY_RETRY') {
         // Upgrade safety: old accepted or uncertain sends must not become fresh sends.
         const [legacy] = await c.execute<any[]>(`SELECT status FROM ${attemptTable(identity.kind)}
           WHERE ${sourceColumn(identity.kind)} = ? AND channel_id = ?
