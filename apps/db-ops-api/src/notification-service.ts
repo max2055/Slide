@@ -2,6 +2,7 @@
  * 通知推送服务
  * 每 10 秒轮询 alerts 表，发现未推送的告警，匹配通知渠道，格式化消息并发送
  */
+import { setTimeout as delay } from 'node:timers/promises';
 import { CronJob } from 'cron';
 import * as crypto from 'crypto';
 import * as https from 'node:https';
@@ -171,11 +172,13 @@ export class NotificationService {
 
   /** Sends one durable workflow delivery attempt. Failures intentionally
    * propagate to WorkerRuntime so its persistent retry/dead-letter policy owns recovery. */
-  async deliverAlertToChannel(alert: PendingAlert, channel: NotificationChannel): Promise<void> {
+  async deliverAlertToChannel(alert: PendingAlert, channel: NotificationChannel, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     if (!channel.enabled) return;
     const message = this.buildMessage(channel.type, alert, alert.instance_name, alert.instance_host);
-    const result = await this.sendWithRetry(channel, message);
+    const result = await this.sendWithRetry(channel, message, 1, signal);
     if (!result.success) throw new Error(result.error || 'NOTIFICATION_DELIVERY_FAILED');
+    signal?.throwIfAborted();
     const recorded = await notificationDatabaseService.recordNotification({
       alert_id: alert.id,
       channel_id: channel.id,
@@ -380,15 +383,17 @@ export class NotificationService {
   /**
    * 发送通知
    */
-  async send(channel: NotificationChannel, message: any): Promise<{ success: boolean; error?: string }> {
+  async send(channel: NotificationChannel, message: any, signal?: AbortSignal): Promise<{ success: boolean; error?: string }> {
+    signal?.throwIfAborted();
     if (channel.type === 'email') {
       if (!this.isValidEmailConfiguration(channel.config)) {
         return { success: false, error: 'EMAIL_CONFIGURATION_INVALID' };
       }
       try {
-        await this.sendEmail(channel.config, message, channel.id);
+        await this.sendEmail(channel.config, message, channel.id, ...(signal ? [signal] : []));
         return { success: true };
       } catch {
+        signal?.throwIfAborted();
         return { success: false, error: 'EMAIL_DELIVERY_FAILED' };
       }
     }
@@ -400,12 +405,13 @@ export class NotificationService {
 
     try {
       const target = await resolveOutboundTarget(webhookUrl);
+      signal?.throwIfAborted();
       const secret = this.getWebhookSecret(channel.config);
       const url = channel.type === 'dingtalk' ? this.buildSignedUrl(webhookUrl, secret) : webhookUrl;
       const payload = channel.type === 'feishu' && secret
         ? signFeishuWebhookPayload(message, secret)
         : message;
-      const response = await this.postJsonToVerifiedTarget(url, target.addresses, payload);
+      const response = await this.postJsonToVerifiedTarget(url, target.addresses, payload, ...(signal ? [signal] : []));
 
       if (response.statusCode >= 300 && response.statusCode < 400) {
         return { success: false, error: 'OUTBOUND_REDIRECT_DENIED' };
@@ -427,6 +433,7 @@ export class NotificationService {
 
       return { success: true };
     } catch (error: any) {
+      signal?.throwIfAborted();
       if (error instanceof OutboundPolicyError) return { success: false, error: error.reasonCode };
       return { success: false, error: 'OUTBOUND_REQUEST_FAILED' };
     }
@@ -440,7 +447,9 @@ export class NotificationService {
     config: NotificationChannel['config'],
     message: { subject?: string; text?: string },
     channelId?: number,
+    signal?: AbortSignal,
   ): Promise<void> {
+    signal?.throwIfAborted();
     const port = Number(config.smtp_port);
     let auth: { user: string; pass: string } | { type: 'OAuth2'; user: string; accessToken: string };
     if (config.smtp_auth === 'oauth2') {
@@ -449,6 +458,7 @@ export class NotificationService {
           clientId: config.oauth2_client_id!,
           refreshToken: decryptData(config.oauth2_refresh_token_encrypted!),
       });
+      signal?.throwIfAborted();
       if (oauth.refreshToken && channelId !== undefined) {
         const persisted = await notificationDatabaseService.updateOAuth2RefreshToken(channelId, oauth.refreshToken);
         if (!persisted.success) throw new Error('OAUTH_REFRESH_TOKEN_PERSIST_FAILED');
@@ -457,6 +467,7 @@ export class NotificationService {
     } else {
       auth = { user: config.smtp_username!, pass: this.getSmtpPassword(config) };
     }
+    signal?.throwIfAborted();
     const transport = nodemailer.createTransport({
       host: config.smtp_host!,
       port,
@@ -465,12 +476,17 @@ export class NotificationService {
       auth,
       tls: { minVersion: 'TLSv1.2' },
     });
-    await transport.sendMail({
+    try {
+      signal?.throwIfAborted();
+      await transport.sendMail({
       from: config.from!,
       to: config.to!,
       subject: message.subject || '数据库运维助手通知',
       text: message.text || '',
-    });
+      });
+    } finally {
+      transport.close();
+    }
   }
 
   private getSmtpPassword(config: NotificationChannel['config']): string {
@@ -486,12 +502,14 @@ export class NotificationService {
   }
 
   /** Pin requests to validated DNS results while retaining TLS hostname verification. */
-  private postJsonToVerifiedTarget(urlText: string, addresses: string[], message: unknown): Promise<{ statusCode: number; body: string }> {
+  private postJsonToVerifiedTarget(urlText: string, addresses: string[], message: unknown, signal?: AbortSignal): Promise<{ statusCode: number; body: string }> {
+    signal?.throwIfAborted();
     const url = new URL(urlText);
     const payload = JSON.stringify(message);
     const address = addresses[0];
     return new Promise((resolve, reject) => {
       const request = https.request({
+        signal,
         protocol: 'https:', hostname: url.hostname, port: 443,
         path: `${url.pathname}${url.search}`, method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
@@ -516,12 +534,15 @@ export class NotificationService {
   async sendWithRetry(
     channel: NotificationChannel,
     message: any,
-    attempt: number = 1
+    attempt: number = 1,
+    signal?: AbortSignal,
   ): Promise<{ success: boolean; error?: string }> {
+    signal?.throwIfAborted();
     const maxAttempts = 3;
 
     try {
-      const result = await this.send(channel, message);
+      const result = await this.send(channel, message, ...(signal ? [signal] : []));
+      signal?.throwIfAborted();
       if (result.success) {
         return result;
       }
@@ -531,20 +552,21 @@ export class NotificationService {
       }
 
       // 指数退避
-      const delay = 5000 * Math.pow(3, attempt - 1);
-      console.log(`⏳ 发送失败，${delay / 1000}s 后重试（第 ${attempt + 1} 次）: ${channel.name}`);
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      const delayMs = 5000 * Math.pow(3, attempt - 1);
+      console.log(`⏳ 发送失败，${delayMs / 1000}s 后重试（第 ${attempt + 1} 次）: ${channel.name}`);
+      await delay(delayMs, undefined, { signal });
 
-      return this.sendWithRetry(channel, message, attempt + 1);
+      return this.sendWithRetry(channel, message, attempt + 1, signal);
     } catch (error: any) {
+      signal?.throwIfAborted();
       if (attempt >= maxAttempts) {
         return { success: false, error: `重试 ${maxAttempts} 次后仍失败: ${error.message}` };
       }
 
-      const delay = 5000 * Math.pow(3, attempt - 1);
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      const delayMs = 5000 * Math.pow(3, attempt - 1);
+      await delay(delayMs, undefined, { signal });
 
-      return this.sendWithRetry(channel, message, attempt + 1);
+      return this.sendWithRetry(channel, message, attempt + 1, signal);
     }
   }
 
