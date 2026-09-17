@@ -328,4 +328,3 @@ function resolveSessionScopedOptionLabel(
 
   return base;
 }
-
