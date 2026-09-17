@@ -31,7 +31,7 @@ CI 保留 pull_request(main) 与 workflow_dispatch，新增 push(main)，无路�
 gh api 'repos/max2055/Slide/rulesets?includes_parents=true' > rulesets-before.json
 gh api repos/max2055/Slide/rules/branches/main > effective-before.json
 # 仅获批准后执行，并保存返回的 ID
-gh api --method POST repos/max2055/Slide/rulesets --input docs/operations/main-protection/ruleset.json > ruleset-created.json
+gh api --method POST repos/max2055/Slide/rulesets --input docs/slide/operations/main-protection/ruleset.json > ruleset-created.json
 # 将下方 RULESET_ID 替换为返回的数字 ID
 gh api repos/max2055/Slide/rulesets/RULESET_ID
 gh api repos/max2055/Slide/rules/branches/main
