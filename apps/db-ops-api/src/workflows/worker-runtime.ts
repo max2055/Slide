@@ -91,16 +91,43 @@ export class MysqlWorkflowStore implements WorkflowStore {
   }
   private pool(): SqlPool { const pool = this.poolProvider(); if (!pool) throw new Error('WORKFLOW_STORE_UNAVAILABLE'); return pool; }
 }
+export interface JobExecutionContext { readonly signal: AbortSignal; readonly workerId: string; readonly fencingToken: number; }
+
 export class WorkerRuntime {
   private runInFlight = false;
+  private stopped = false;
+  private controller?: AbortController;
+  private activeRun?: Promise<void>;
+
+  /** Bounded drain. A non-cooperative handler remains quarantined until it settles. */
+  async shutdown(timeoutMs = 5_000): Promise<boolean> {
+    this.stopped = true;
+    this.controller?.abort(new Error('WORKFLOW_SHUTDOWN'));
+    if (!this.activeRun) return true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        this.activeRun.then(() => true),
+        new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), timeoutMs); }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
   constructor(private readonly store: WorkflowStore, readonly workerId: string, private readonly leaseSeconds = 30) {}
   async claim(): Promise<ClaimedJob | null> { return this.store.claim(this.workerId, this.leaseSeconds); }
   async heartbeat(job: ClaimedJob): Promise<boolean> { return this.store.heartbeat(job.id, this.workerId, job.fencingToken, this.leaseSeconds); }
-  async runOnce(handler: (job: ClaimedJob) => Promise<void>, now = Date.now()): Promise<'idle' | WorkflowState> {
+  async runOnce(handler: (job: ClaimedJob, context: JobExecutionContext) => Promise<void>, now = Date.now()): Promise<'idle' | WorkflowState> {
+    if (this.stopped) return 'cancelled';
     if (this.runInFlight) return 'running';
     this.runInFlight = true;
+    const controller = new AbortController();
+    this.controller = controller;
+    let release!: () => void;
+    this.activeRun = new Promise<void>(resolve => { release = resolve; });
     try {
       const job = await this.claim();
+      if (controller.signal.aborted) return 'cancelled';
       if (!job) return 'idle';
       platformLogs.record({ component: 'queue', eventType: 'job.claimed', status: 'ok', correlationId: job.id });
 
@@ -113,23 +140,35 @@ export class WorkerRuntime {
       const markLeaseLost = () => {
         if (leaseLost) return;
         leaseLost = true;
+        controller.abort(new Error('WORKFLOW_LEASE_LOST'));
         platformLogs.record({ component: 'queue', eventType: 'job.lease_lost', status: 'unknown', correlationId: job.id, errorCode: 'WORKFLOW_LEASE_LOST' });
         heartbeatStopped = true;
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         console.error(`[WorkerRuntime] WORKFLOW_LEASE_LOST:${job.id}`);
       };
+      const stopHeartbeat = () => {
+        heartbeatStopped = true;
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+      };
+      controller.signal.addEventListener('abort', stopHeartbeat, { once: true });
       const heartbeat = () => {
         if (heartbeatStopped || heartbeatInFlight) return;
         let heartbeatTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
+        let onAbort!: () => void;
+        const cancelled = new Promise<boolean>(resolve => {
+          onAbort = () => resolve(true);
+          controller.signal.addEventListener('abort', onAbort, { once: true });
+        });
         const heartbeatTimeout = new Promise<boolean>((resolve) => {
           heartbeatTimeoutTimer = setTimeout(() => resolve(false), heartbeatTimeoutMs);
           heartbeatTimeoutTimer.unref?.();
         });
-        heartbeatInFlight = Promise.race([this.heartbeat(job), heartbeatTimeout])
-          .then((renewed) => { if (!renewed) markLeaseLost(); })
-          .catch(() => markLeaseLost())
+        heartbeatInFlight = Promise.race([this.heartbeat(job), heartbeatTimeout, cancelled])
+          .then((renewed) => { if (!renewed && !controller.signal.aborted) markLeaseLost(); })
+          .catch(() => { if (!controller.signal.aborted) markLeaseLost(); })
           .finally(() => {
             if (heartbeatTimeoutTimer) clearTimeout(heartbeatTimeoutTimer);
+            controller.signal.removeEventListener('abort', onAbort);
             heartbeatInFlight = null;
           });
       };
@@ -141,7 +180,7 @@ export class WorkerRuntime {
         let handlerFailed = false;
         let handlerError: unknown;
         try {
-          await handler(job);
+          await handler(job, { signal: controller.signal, workerId: this.workerId, fencingToken: job.fencingToken });
         } catch (error) {
           handlerFailed = true;
           handlerError = error;
@@ -151,7 +190,7 @@ export class WorkerRuntime {
         clearInterval(heartbeatTimer);
         const pendingHeartbeat = heartbeatInFlight;
         if (pendingHeartbeat) await pendingHeartbeat;
-        if (leaseLost) return 'retry';
+        if (controller.signal.aborted) return leaseLost ? 'retry' : 'cancelled';
 
         if (!handlerFailed) {
           const complete = await this.store.complete(job.id, this.workerId, job.fencingToken);
@@ -163,14 +202,17 @@ export class WorkerRuntime {
         platformLogs.record({ component: 'queue', eventType: recorded ? retryAt ? 'job.retry' : 'job.dead_letter' : 'job.lease_lost', status: recorded ? 'failed' : 'unknown', correlationId: job.id, errorCode: 'WORKFLOW_HANDLER_FAILED' });
         return retryAt ? 'retry' : 'dead_letter';
       } finally {
-        heartbeatStopped = true;
-        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        stopHeartbeat();
+        controller.signal.removeEventListener('abort', stopHeartbeat);
       }
     } catch (error) {
       platformLogs.record({ component: 'queue', eventType: 'worker.error', status: 'failed', errorCode: 'WORKFLOW_STORE_OR_HANDLER_ERROR' });
       throw error;
     } finally {
       this.runInFlight = false;
+      this.controller = undefined;
+      this.activeRun = undefined;
+      release();
     }
   }
 }
