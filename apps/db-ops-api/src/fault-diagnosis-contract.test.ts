@@ -95,7 +95,9 @@ describe('manual fault diagnosis route contract', () => {
   });
 
   it('keeps automatic diagnosis exclusively behind a typed workflow registered before the worker starts', () => {
-    const registration = "workflowRegistry.register('fault.diagnose-unhealthy', async () => { await faultDiagnosisService.diagnoseUnhealthyInstances(); });";
+    const registration = 'registerWorkflowHandlers(workflowRegistry, {';
+    const registrationSource = readFileSync(resolve(sourceRoot, 'workflows/register-workflow-handlers.ts'), 'utf8');
+    expect(registrationSource).toContain("registry.register('fault.diagnose-unhealthy', async () => { await faultDiagnosisService.diagnoseUnhealthyInstances(); });");
     const registryConstruction = 'const workflowRegistry = new JobRegistry();';
     const workerConstruction = 'const workflowRuntime = new WorkerRuntime';
     const workerStart = 'workflowTimer = setInterval';
@@ -111,7 +113,8 @@ describe('manual fault diagnosis route contract', () => {
       const matches = readFileSync(path, 'utf8').match(/\bdiagnoseUnhealthyInstances\b/g) ?? [];
       return matches.length > 0 ? [{ file: relative(sourceRoot, path), references: matches.length }] : [];
     });
-    expect(references).toEqual([{ file: '../server.ts', references: 1 }]);
+    // One dependency declaration and one invocation, both confined to the registrar.
+    expect(references).toEqual([{ file: 'workflows/register-workflow-handlers.ts', references: 2 }]);
   });
 
   it('migrates and recovery-seeds only the legacy fault diagnosis row to the typed handler', () => {
