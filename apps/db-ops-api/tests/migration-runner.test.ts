@@ -279,4 +279,32 @@ describe('external migration repair acknowledgement', () => {
     expect(entry.status).toBe('failed');
     expect(entry.error).toBe('original DDL failure');
   });
+
+  it('keeps the deprecated alias guarded and records a successful confirmation', async () => {
+    const { id, directory, pool, validators, verify } = await fixture();
+    await new MigrationRunner(pool, directory, validators).repair(id, ' operator ', ' fixed externally ');
+    expect(verify).toHaveBeenCalledOnce();
+    expect(pool.entries.get(id).status).toBe('completed');
+    expect(JSON.parse(pool.entries.get(id).error)).toMatchObject({ actor: 'operator', reason: 'fixed externally' });
+  });
+
+  it('rejects oversized audit evidence without truncation or changing the failed entry', async () => {
+    const { id, directory, pool, validators } = await fixture();
+    await expect(new MigrationRunner(pool, directory, validators)
+      .repair(id, 'operator', '修复'.repeat(12000))).rejects.toThrow('ledger capacity');
+    expect(pool.entries.get(id).status).toBe('failed');
+    expect(pool.entries.get(id).error).toBe('original DDL failure');
+    expect(pool.released).toBe(1);
+  });
+
+  it('does not report success if the guarded ledger update loses its failed state', async () => {
+    const { id, directory, pool, validators, verify } = await fixture();
+    // Simulate an external writer that does not respect the advisory lock.
+    verify.mockImplementationOnce(async () => { pool.entries.get(id).status = 'running'; });
+    await expect(new MigrationRunner(pool, directory, validators)
+      .repair(id, 'operator', 'fixed')).rejects.toThrow('changed during repair verification');
+    expect(pool.entries.get(id).error).toBe('original DDL failure');
+    expect(pool.released).toBe(1);
+  });
+
 });
