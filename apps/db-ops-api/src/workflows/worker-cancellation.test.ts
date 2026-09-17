@@ -75,3 +75,22 @@ it('does not invoke a handler if shutdown wins a pending claim', async () => {
   expect(await closing).toBe(true);
   expect(handler).not.toHaveBeenCalled();
 });
+
+it('does not accumulate uncancellable renewal requests after a heartbeat timeout', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  let renew!: (value: boolean) => void;
+  const { worker, store } = setup(() => new Promise(resolve => { renew = resolve; }));
+  const run = worker.runOnce(async (_job, { signal }) => {
+    await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+  });
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(await run).toBe('retry');
+  for (let i = 0; i < 10; i++) expect(await worker.runOnce(async () => {})).toBe('running');
+  expect(store.claim).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+  renew(true);
+  await vi.advanceTimersByTimeAsync(0);
+  store.claim.mockResolvedValue(null as any);
+  expect(await worker.runOnce(async () => {})).toBe('idle');
+});
