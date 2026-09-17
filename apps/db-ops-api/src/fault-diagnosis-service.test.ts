@@ -986,3 +986,20 @@ describe('FaultDiagnosisService', () => {
     });
   });
 });
+
+it('does not start another diagnosis step after the workflow is cancelled', async () => {
+  const { JobRegistry } = await import('./workflows/job-registry.js');
+  const deps = dependencies();
+  const controller = new AbortController();
+  deps.listActiveInstances.mockImplementation(async () => {
+    controller.abort(new Error('WORKFLOW_LEASE_LOST'));
+    return [{ id: 7 }];
+  });
+  const registry = new JobRegistry();
+  registry.register('fault.diagnose-unhealthy', async () => { await new FaultDiagnosisService(deps).diagnoseUnhealthyInstances(); });
+  await expect(registry.execute({ id: 'f1', type: 'fault.diagnose-unhealthy', payload: {}, attempts: 1, maxAttempts: 3, fencingToken: 1 }, {
+    signal: controller.signal, workerId: 'a', fencingToken: 1,
+  })).rejects.toThrow('WORKFLOW_LEASE_LOST');
+  expect(deps.checkHealth).not.toHaveBeenCalled();
+  expect(deps.dispatch).not.toHaveBeenCalled();
+});
