@@ -20,7 +20,7 @@ export class SqlExecutionIntentStore {
       const [rows] = await connection.execute<any[]>(
         'SELECT target_database FROM approval_requests WHERE id = ? FOR UPDATE', [grant.approvalRequestId]);
       if (!rows.length || (rows[0].target_database || '') !== (command.database || '') ||
-          !await authorizeApprovedSqlExecution(connection, grant, command)) {
+          !await authorizeApprovedSqlExecution({ execute: (sql, values) => connection.execute(sql, values as (string | number | null)[]) }, grant, command)) {
         throw new Error('SQL_INTENT_APPROVAL_INVALID');
       }
       await connection.execute(

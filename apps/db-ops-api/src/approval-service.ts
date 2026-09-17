@@ -208,6 +208,13 @@ class ApprovalService {
           reviewerId: Number(review.reviewed_by || 0),
         },
       });
+      if (execResult.executionState === 'unknown') {
+        // Keep approval and operation claimed. A failed audit is not a rollback.
+        await pool.execute('UPDATE approval_requests SET execution_result = ? WHERE id = ?',
+          [JSON.stringify(execResult), requestId]);
+        await this.writeEvent(requestId, 'reconciliation_required', execResult, review.reviewed_by);
+        return { success: false, error: execResult.error, execution_result: execResult };
+      }
       const status = execResult.success ? 'executed' : 'execution_failed';
       const rollbackInfo = {
         available: false,
