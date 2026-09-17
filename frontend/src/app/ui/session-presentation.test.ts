@@ -6,7 +6,7 @@ import {
 
 const row = (key: string, extra = {}) => ({ key, kind: 'direct' as const, updatedAt: null, ...extra });
 const groups = (rows: ReturnType<typeof row>[], current = '', state = {}) =>
-  resolveSessionOptionGroups(state as any, current, { sessions: rows } as any);
+  resolveSessionOptionGroups(state, current, { sessions: rows });
 const labels = (result: ReturnType<typeof groups>) => result.flatMap(g => g.options.map(o => o.label));
 
 // Characterization expectations captured against main before extraction.
@@ -44,7 +44,7 @@ describe('session presentation compatibility', () => {
   ])('detects cron key %s', (key, expected) => expect(isCronSessionKey(key)).toBe(expected));
 
   it('handles null/empty lists and appends a missing current session', () => {
-    expect(resolveSessionOptionGroups({} as any, '', null)).toEqual([]);
+    expect(resolveSessionOptionGroups({}, '', null)).toEqual([]);
     expect(groups([])).toEqual([]);
     expect(groups([], 'agent:a:missing')).toEqual([{ id: 'agent:a', label: 'a', options: [
       { key: 'agent:a:missing', title: 'agent:a:missing', scopeLabel: 'missing', label: 'missing' },
@@ -102,9 +102,9 @@ describe('session presentation compatibility', () => {
     const state = Object.freeze({ sessionsHideCron: false,
       agentsList: Object.freeze({ agents: Object.freeze([Object.freeze({ id: 'a', name: 'Alpha' })]) }) });
     const before = JSON.stringify({ sessions, state });
-    const first = resolveSessionOptionGroups(state as any, '', sessions as any);
+    const first = resolveSessionOptionGroups(state, '', sessions);
     first[0].options[0].label = 'changed';
-    expect(labels(resolveSessionOptionGroups(state as any, '', sessions as any))).toEqual(['Same · x', 'Same · y']);
+    expect(labels(resolveSessionOptionGroups(state, '', sessions))).toEqual(['Same · x', 'Same · y']);
     expect(JSON.stringify({ sessions, state })).toBe(before);
   });
 });
