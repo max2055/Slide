@@ -5,6 +5,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
+import { MySqlNonceStore } from './nonce-store.js';
 import { authenticateRequest } from './request-auth.js';
 import { SandboxJobHistory } from './job-history.js';
 import { JobConcurrencyLimiter } from './job-concurrency.js';
@@ -163,18 +164,34 @@ async function restrictedNetworkAvailable(): Promise<boolean> {
   }
 }
 
-const server = http.createServer(async (request, response) => {
-  if (request.method === 'GET' && request.url === '/health') return send(response, 200, { status: 'ok', activeJobs: concurrencyLimiter.active });
-  if (request.method === 'GET' && request.url === '/v1/status') {
-    const body = Buffer.alloc(0);
-    const authenticated = authenticateRequest({
-      secret,
+const nonceStore = MySqlNonceStore.fromEnvironment();
+const cleanupTimer = setInterval(() => {
+  nonceStore.cleanup().catch(() => console.error('[SandboxController] nonce cleanup unavailable'));
+}, 60_000);
+cleanupTimer.unref();
+
+async function authenticate(request: http.IncomingMessage, response: http.ServerResponse, body: Buffer): Promise<boolean> {
+  try {
+    const valid = await authenticateRequest({
+      store: nonceStore, secret,
       timestamp: request.headers['x-slide-timestamp'] as string | undefined,
       nonce: request.headers['x-slide-nonce'] as string | undefined,
       signature: request.headers['x-slide-signature'] as string | undefined,
       body,
     });
-    if (!authenticated) return send(response, 401, { error: 'Unauthorized' });
+    if (!valid) send(response, 401, { error: 'Unauthorized' });
+    return valid;
+  } catch {
+    send(response, 503, { error: 'SANDBOX_AUTH_STORE_UNAVAILABLE' });
+    return false;
+  }
+}
+
+const server = http.createServer(async (request, response) => {
+  if (request.method === 'GET' && request.url === '/health') return send(response, 200, { status: 'ok', activeJobs: concurrencyLimiter.active });
+  if (request.method === 'GET' && request.url === '/v1/status') {
+    const body = Buffer.alloc(0);
+    if (!await authenticate(request, response, body)) return;
     const restrictedNetworkReady = await restrictedNetworkAvailable();
     return send(response, 200, {
       status: 'ok',
@@ -202,14 +219,7 @@ const server = http.createServer(async (request, response) => {
   } catch (error) {
     return send(response, 413, { error: error instanceof Error ? error.message : 'REQUEST_INVALID' });
   }
-  const authenticated = authenticateRequest({
-    secret,
-    timestamp: request.headers['x-slide-timestamp'] as string | undefined,
-    nonce: request.headers['x-slide-nonce'] as string | undefined,
-    signature: request.headers['x-slide-signature'] as string | undefined,
-    body,
-  });
-  if (!authenticated) return send(response, 401, { error: 'Unauthorized' });
+  if (!await authenticate(request, response, body)) return;
   const concurrencyLease = concurrencyLimiter.tryAcquire();
   if (!concurrencyLease) return send(response, 429, { error: 'SANDBOX_CONCURRENCY_LIMIT' });
 
