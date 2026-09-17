@@ -41,3 +41,22 @@ describe('AlertRCAService', () => {
     expect(await service.analyzeAlert(123)).toMatchObject({ success: false });
   });
 });
+
+it('releases the RCA lock when workflow cancellation interrupts an awaited step', async () => {
+  const { workflowExecution } = await import('./workflows/execution-context.js');
+  const { aiAnalysisDatabaseService } = await import('./ai-analysis-database-service.js');
+  const service = new AlertRCAService();
+  const controller = new AbortController();
+  vi.spyOn(service as any, '_getAlertById').mockResolvedValue({ id: 991, instance_id: 7, level: 'warning' });
+  const lookup = vi.spyOn(aiAnalysisDatabaseService, 'getAnalysisList').mockImplementation(async () => {
+    controller.abort(new Error('WORKFLOW_LEASE_LOST'));
+    return [];
+  });
+  try {
+    await expect(workflowExecution.run({ signal: controller.signal, workerId: 'a', fencingToken: 1 }, () => service.analyzeAlert(991))).rejects.toThrow('WORKFLOW_LEASE_LOST');
+    lookup.mockRejectedValue(new Error('RECOVERY_PROBE'));
+    await expect(service.analyzeAlert(991)).rejects.toThrow('RECOVERY_PROBE');
+  } finally {
+    vi.restoreAllMocks();
+  }
+});
