@@ -513,7 +513,7 @@ export class DirectAdapter implements IAgentEngine {
             if (idempotencyKey && messageId) {
               pendingMessages.set(messageId, idempotencyKey);
               try {
-                const existingRun = await agentRunService.findByIdempotencyKey(
+                let existingRun = await agentRunService.findByIdempotencyKey(
                   messageActor.userId,
                   idempotencyKey,
                 );
@@ -525,6 +525,14 @@ export class DirectAdapter implements IAgentEngine {
                   }
                   await chatDatabaseService.authorizeSession(messageActor, existingRun.sessionId, 'append');
                   subscribeToSession(existingRun.sessionId);
+                  try {
+                    existingRun = await agentRunService.recoverCompletion(existingRun);
+                  } catch {
+                    ws.send(JSON.stringify({ type: 'run.snapshot', run: existingRun, messageId, sessionKey: existingRun.sessionId }));
+                    ws.send(JSON.stringify({ type: 'error', code: 'COMPLETION_STORAGE_FAILED', retryable: true,
+                      error: '回答保存未确认，请重试或重连恢复。', runId: existingRun.id, sessionKey: existingRun.sessionId }));
+                    return;
+                  }
                   ws.send(JSON.stringify({
                     type: 'run.snapshot',
                     run: existingRun,
@@ -549,6 +557,7 @@ export class DirectAdapter implements IAgentEngine {
             const runTimeout = setTimeout(() => controller.abort(), this.runtimeLimits.runTimeoutMs);
 
             let persistentRun: { run: AgentRun; created: boolean } | undefined;
+            let completionAttempted = false;
             try {
               if (!sessionKey) {
                 const created = await chatDatabaseService.createSession(messageActor, { title: '新会话' });
@@ -567,6 +576,8 @@ export class DirectAdapter implements IAgentEngine {
                   return;
                 }
                 sessionKey = persistentRun.run.sessionId;
+                await chatDatabaseService.authorizeSession(messageActor, sessionKey, 'append');
+                persistentRun.run = await agentRunService.recoverCompletion(persistentRun.run);
                 subscribeToSession(sessionKey);
                 ws.send(JSON.stringify({
                   type: 'run.snapshot',
@@ -591,37 +602,38 @@ export class DirectAdapter implements IAgentEngine {
               // Authorization succeeds before the connection joins broadcasts.
               subscribeToSession(sessionKey);
 
-              const chatResult = await this.chat(sessionKey, userMessage, async (event) => {
-                // Persist assistant's final response BEFORE sending to client,
-                // so the history API returns the complete conversation.
-                let outgoingEvent: ChatEvent = event;
-                if (event.type === 'complete' && event.finalContent) {
-                  try {
-                    // Embed thinking as <think> tags in the content for DB storage.
-                    // The API parses these back into structured content blocks.
-                    const thinking = (event as any).thinkingContent as string | undefined;
-                    const dbContent = thinking
-                      ? `<think>${thinking}</think>\n\n${event.finalContent}`
-                      : event.finalContent;
-                    const messageSequence = await chatDatabaseService.addMessage(messageActor, sessionKey, {
-                      messageId: `msg_${randomUUID()}_asst`,
-                      role: 'assistant',
-                      content: dbContent,
-                    });
-                    outgoingEvent = { ...event, messageSequence };
-                  } catch (dbErr) {
-                    console.error('[DirectAdapter] Failed to persist assistant message:', dbErr instanceof Error ? dbErr.message : String(dbErr));
-                  }
-                }
+              let completionEvent: Extract<ChatEvent, { type: 'complete' }> | undefined;
+              const chatResult = await this.chat(sessionKey, userMessage, (event) => {
+                // The chat callback is synchronous. Hold completion until the
+                // durable commit below, rather than starting an unawaited write.
+                if (event.type === 'complete') { completionEvent = event; return; }
                 sendToSession(sessionKey, {
-                  ...outgoingEvent,
+                  ...event,
                   ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
                 });
-                }, messageActor, controller.signal, idempotencyKey);
-              if (persistentRun) {
-                const terminal = chatResult.stopReason === 'completed'
-                  ? 'completed'
-                  : chatResult.stopReason === 'max_iterations' ? 'partial'
+              }, messageActor, controller.signal, idempotencyKey);
+              if (chatResult.stopReason === 'completed') {
+                completionAttempted = true;
+                const event = completionEvent ?? { type: 'complete' as const, finalContent: chatResult.finalContent || undefined };
+                if (persistentRun) {
+                  const committed = await agentRunService.complete(persistentRun.run, event);
+                  sendToSession(sessionKey, { type: 'run.snapshot', run: committed, messageId, sessionKey });
+                  if (committed.state === 'completed') {
+                    sendToSession(sessionKey, { ...(committed.result as { event: ChatEvent }).event, runId: committed.id, sessionKey });
+                  }
+                } else {
+                  if (event.finalContent || event.thinkingContent) {
+                    const content = event.thinkingContent
+                      ? `<think>${event.thinkingContent}</think>\n\n${event.finalContent || ''}` : event.finalContent!;
+                    event.messageSequence = await chatDatabaseService.addMessage(messageActor, sessionKey, {
+                      messageId: `msg_${randomUUID()}_asst`, role: 'assistant', content,
+                    });
+                  }
+                  sendToSession(sessionKey, { ...event });
+                }
+              }
+              if (persistentRun && chatResult.stopReason !== 'completed') {
+                const terminal = chatResult.stopReason === 'max_iterations' ? 'partial'
                   : chatResult.stopReason === 'cancelled' ? 'cancelled'
                   : chatResult.stopReason === 'timed_out' ? 'timed_out'
                   : 'failed';
@@ -633,12 +645,19 @@ export class DirectAdapter implements IAgentEngine {
               // A failed chat retains its run record so replay returns the terminal snapshot.
               if (persistentRun?.created) {
                 try {
-                  await agentRunService.finish(persistentRun.run.id, 'failed', undefined, { message: errorMsg });
+                  if (completionAttempted) await agentRunService.failUnstagedCompletion(persistentRun.run.id);
+                  else await agentRunService.finish(persistentRun.run.id, 'failed', undefined, { message: errorMsg });
                   this.activeRuns.delete(persistentRun.run.id);
                 } catch { /* preserve the original request failure */ }
               }
-              ws.send(JSON.stringify({ type: 'error', error: errorMsg }));
+              const failure = { type: 'error', error: completionAttempted ? '回答保存未确认，请重试或重连恢复。' : errorMsg,
+                ...(completionAttempted ? { code: 'COMPLETION_STORAGE_FAILED', retryable: true } : {}),
+                ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
+              };
+              if (this.sessionSubscribers.get(sessionKey)?.has(ws)) sendToSession(sessionKey, failure);
+              else if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(failure));
             } finally {
+              if (persistentRun?.created) this.activeRuns.delete(persistentRun.run.id);
               clearTimeout(runTimeout);
               this.runLimiter.release(messageActor.userId);
               if (messageId) pendingMessages.delete(messageId);
@@ -690,6 +709,20 @@ export class DirectAdapter implements IAgentEngine {
                   this.sessionSubscribers.set(watchKey, new Set());
                 }
                 this.sessionSubscribers.get(watchKey)!.add(ws);
+                // Refresh/reconnect need not retain the original request key.
+                for (const pending of await agentRunService.pendingCompletions(connectionActor.userId, watchKey)) {
+                  try {
+                    const recovered = await agentRunService.recoverCompletion(pending);
+                    sendToSession(watchKey, { type: 'run.snapshot', run: recovered, messageId: recovered.messageId, sessionKey: watchKey });
+                    if (recovered.state === 'completed') {
+                      sendToSession(watchKey, { ...(recovered.result as { event: ChatEvent }).event, runId: recovered.id, sessionKey: watchKey });
+                    }
+                  } catch {
+                    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'run.snapshot', run: pending, messageId: pending.messageId, sessionKey: watchKey }));
+                    sendToSession(watchKey, { type: 'error', code: 'COMPLETION_STORAGE_FAILED', retryable: true,
+                      error: '回答保存未确认，请重试或重连恢复。', runId: pending.id, sessionKey: watchKey });
+                  }
+                }
               } catch {
                 ws.send(JSON.stringify({ type: 'error', error: 'Chat session not found' }));
               }
