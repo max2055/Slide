@@ -98,16 +98,17 @@ export class WorkerRuntime {
   private stopped = false;
   private controller?: AbortController;
   private activeRun?: Promise<void>;
+  private pendingRenewal?: Promise<void>;
 
   /** Bounded drain. A non-cooperative handler remains quarantined until it settles. */
   async shutdown(timeoutMs = 5_000): Promise<boolean> {
     this.stopped = true;
     this.controller?.abort(new Error('WORKFLOW_SHUTDOWN'));
-    if (!this.activeRun) return true;
+    if (!this.activeRun && !this.pendingRenewal) return true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
-        this.activeRun.then(() => true),
+        Promise.all([this.activeRun, this.pendingRenewal]).then(() => true),
         new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), timeoutMs); }),
       ]);
     } finally {
@@ -119,7 +120,7 @@ export class WorkerRuntime {
   async heartbeat(job: ClaimedJob): Promise<boolean> { return this.store.heartbeat(job.id, this.workerId, job.fencingToken, this.leaseSeconds); }
   async runOnce(handler: (job: ClaimedJob, context: JobExecutionContext) => Promise<void>, now = Date.now()): Promise<'idle' | WorkflowState> {
     if (this.stopped) return 'cancelled';
-    if (this.runInFlight) return 'running';
+    if (this.runInFlight || this.pendingRenewal) return 'running';
     this.runInFlight = true;
     const controller = new AbortController();
     this.controller = controller;
@@ -163,7 +164,11 @@ export class WorkerRuntime {
           heartbeatTimeoutTimer = setTimeout(() => resolve(false), heartbeatTimeoutMs);
           heartbeatTimeoutTimer.unref?.();
         });
-        heartbeatInFlight = Promise.race([this.heartbeat(job), heartbeatTimeout, cancelled])
+        const renewal = this.heartbeat(job);
+        // The DB driver cannot cancel this request. Keep the runtime quarantined
+        // after timeout until it settles, rather than accumulating pending queries.
+        this.pendingRenewal = renewal.then(() => {}, () => {}).finally(() => { this.pendingRenewal = undefined; });
+        heartbeatInFlight = Promise.race([renewal, heartbeatTimeout, cancelled])
           .then((renewed) => { if (!renewed && !controller.signal.aborted) markLeaseLost(); })
           .catch(() => { if (!controller.signal.aborted) markLeaseLost(); })
           .finally(() => {
