@@ -47,16 +47,19 @@ export class NotificationDispatchScheduler {
     private readonly newId: () => string = randomUUID,
   ) {}
 
-  async enqueuePending(): Promise<number> {
+  async enqueuePending(signal?: AbortSignal): Promise<number> {
+    signal?.throwIfAborted();
     const [alerts, channels] = await Promise.all([
       this.source.getPendingAlerts(),
       this.source.getEnabledChannels(),
     ]);
     let enqueued = 0;
     for (const alert of alerts) {
+      signal?.throwIfAborted();
       for (const channel of this.router.routeAlert(alert, channels)) {
         if (!isAlertEligibleForChannel(alert, channel)) continue;
         if (await this.source.hasSuccessfulDelivery?.(alert.id, channel.id)) continue;
+        signal?.throwIfAborted();
         await this.workflow.enqueue({
           id: this.newId(),
           type: 'notification.deliver',

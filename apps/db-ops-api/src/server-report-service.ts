@@ -1,3 +1,4 @@
+import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * Server Report Service
  *
@@ -279,9 +280,11 @@ export class ServerReportService {
    */
   async generateAndPersist(serverIds?: number[]): Promise<{ success: boolean; reportId?: number; error?: string }> {
     try {
+      assertWorkflowActive();
       const reportData = await this.generateReport(serverIds);
       const htmlContent = this.generateHtml(reportData);
 
+      assertWorkflowActive();
       const report = await reportDatabaseService.createReport({
         name: `服务器巡检报告 - ${new Date().toISOString().substring(0, 10)}`,
         type: 'server_health',
@@ -295,6 +298,7 @@ export class ServerReportService {
 
       return { success: true, reportId: report.id };
     } catch (error: any) {
+      assertWorkflowActive();
       return { success: false, error: error.message };
     }
   }

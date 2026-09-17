@@ -1,3 +1,4 @@
+import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 告警事件聚合服务
  * 将同一实例同一时间段的同类告警聚合为同一事件，减少告警疲劳。
@@ -38,6 +39,7 @@ class EventAggregator {
       // Phase 1: 查找候选已有事件
       // 查找 10 分钟内还有活动的 open/investigating 事件，
       // 新告警如果属于同一 instance+type+metric 则可能被吸收
+      assertWorkflowActive();
       const [existingEvents] = await pool.execute(
         `SELECT e.id, e.event_id, e.instance_id, e.source_type, e.severity,
                 MAX(m.created_at) AS last_alert_at,
@@ -66,6 +68,7 @@ class EventAggregator {
       }
 
       // Phase 2: 获取未聚合告警（按 key + created_at 排序）
+      assertWorkflowActive();
       const [alerts] = await pool.execute(
         `SELECT a.id, a.instance_id, a.alert_type, a.metric_name, a.level, a.created_at
          FROM alerts a
@@ -199,6 +202,7 @@ class EventAggregator {
             eventId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
             const title = `告警事件: ${group.alert_type} on Instance ${group.instance_id}`;
 
+            assertWorkflowActive();
             const [eventResult] = await pool.execute(
               `INSERT INTO alert_events (event_id, title, description, instance_id, source_type, severity, status)
                VALUES (?, ?, ?, ?, ?, ?, 'open')`,
@@ -211,6 +215,7 @@ class EventAggregator {
 
           // 关联告警（两种路径共用）
           for (const alertId of group.alert_ids) {
+            assertWorkflowActive();
             await pool.execute(
               `INSERT INTO alert_event_members (event_id, alert_id, role)
                VALUES (?, ?, 'triggered')`,
@@ -219,6 +224,7 @@ class EventAggregator {
           }
 
           // 事件日志（两种路径共用）
+          assertWorkflowActive();
           await pool.execute(
             `INSERT INTO alert_event_logs (event_id, action, details, created_at)
              VALUES (?, 'note_added', ?, NOW())`,
@@ -230,20 +236,24 @@ class EventAggregator {
           );
 
           // 自动触发首个告警的 RCA（两种路径共用）
+          assertWorkflowActive();
           const analysisConfig = await aiAnalysisConfigService.getConfig();
           if (analysisConfig.enabled) {
+            assertWorkflowActive();
             await alertRCAService.analyzeAlert(group.alert_ids[0], 'auto');
           }
 
           if (isNewEvent) eventsCreated++;
           alertsAggregated += group.alert_ids.length;
         } catch (error) {
+          assertWorkflowActive();
           console.error(`聚合事件失败 [实例 ${group.instance_id}]:`, error);
         }
       }
 
       return { eventsCreated, alertsAggregated };
     } catch (error) {
+      assertWorkflowActive();
       console.error('事件聚合失败:', error);
       return { eventsCreated: 0, alertsAggregated: 0 };
     }

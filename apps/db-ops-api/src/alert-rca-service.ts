@@ -1,3 +1,4 @@
+import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 告警根因分析服务 (Alert Root Cause Analysis)
  * 当告警触发时，自动收集上下文数据并生成根因分析报告
@@ -39,6 +40,7 @@ class AlertRCAService {
     trigger: 'manual' | 'auto' = 'auto'
   ): Promise<{ success: boolean; analysisId?: number; sessionKey?: string; error?: string; status?: string }> {
     // a. 获取告警详情
+    assertWorkflowActive();
     const alert = await this._getAlertById(alertId);
     if (!alert) {
       return { success: false, error: `告警 ${alertId} 不存在` };
@@ -75,6 +77,7 @@ class AlertRCAService {
 
     try {
       // e. 去重检查：15 分钟内相同 alert+instance 的分析
+      assertWorkflowActive();
       const existing = await aiAnalysisDatabaseService.getAnalysisList({
         analysis_type: 'alert_rca',
         status: 'running',
@@ -90,6 +93,7 @@ class AlertRCAService {
         return { success: true, analysisId: recentRunning.id, sessionKey: (recentRunning as any).session_key };
       }
 
+      assertWorkflowActive();
       const completedCache = await aiAnalysisDatabaseService.getAnalysisList({
         analysis_type: 'alert_rca',
         status: 'completed',
@@ -106,6 +110,7 @@ class AlertRCAService {
       }
 
       // f. 创建分析记录 (lock held)
+      assertWorkflowActive();
       const createResult = await aiAnalysisDatabaseService.createAnalysis({
         analysis_type: 'alert_rca',
         instance_id: instanceId,
@@ -122,12 +127,15 @@ class AlertRCAService {
       const sessionKey = `rca-${subjectType}-${alertId}-${analysisId}`;
 
       // f2. 回填 session_key
+      assertWorkflowActive();
       await aiAnalysisDatabaseService.setSessionKey(analysisId, sessionKey);
 
       // g. 更新状态为 running
+      assertWorkflowActive();
       await aiAnalysisDatabaseService.updateStatus(analysisId, 'running');
 
       // h. 通过 Agent 执行分析（await 确保 session 先创建）
+      assertWorkflowActive();
       await dispatchOrReuse({
         type: 'alert_rca',
         cacheKey: `rca:${alertId}:${subjectType}:${subjectId}`,
@@ -149,6 +157,7 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
 
 请基于以上已持久化的告警事实分析根因、明确证据边界并给出修复建议。当前后台分析仅提供 slide_complete_analysis 工具；不要调用其他工具。完成后必须调用该工具保存结果。`,
       }).catch((err) => {
+        assertWorkflowActive();
         console.error(`[RCA] Agent 分析 ${analysisId} 失败:`, err);
         aiAnalysisDatabaseService.failAnalysis(analysisId, err.message).catch(() => {});
       });
@@ -159,6 +168,7 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
       return { success: true, analysisId, sessionKey, status: 'queued' };
     } catch (err) {
       releaseLock();
+      assertWorkflowActive();
       throw err;
     }
   }

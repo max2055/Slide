@@ -1,3 +1,4 @@
+import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 定时监控采集服务
  *
@@ -440,15 +441,18 @@ class MonitorCollector {
 
   private async collectCapacity() {
     try {
+      assertWorkflowActive();
       const instances = await instanceDatabaseService.getAllInstances();
       for (const inst of instances) {
         if (inst.status !== 'active') continue;
         try {
+          assertWorkflowActive();
           const capacity = await databaseService.getCapacityInfo(inst.id);
           if (capacity && capacity.total_size_gb !== undefined) {
             const totalTableCount = capacity.databases
               ? capacity.databases.reduce((sum: number, db: any) => sum + (db.table_count || 0), 0)
               : 0;
+            assertWorkflowActive();
             await metricsDatabaseService.recordCapacity({
               instance_id: inst.id,
               total_size_gb: capacity.total_size_gb,
@@ -461,10 +465,12 @@ class MonitorCollector {
             } as any);
           }
         } catch (error) {
+          assertWorkflowActive();
           console.error(`采集实例 ${inst.name} 容量失败:`, error);
         }
       }
     } catch (error) {
+      assertWorkflowActive();
       console.error('容量采集失败:', error);
     }
   }

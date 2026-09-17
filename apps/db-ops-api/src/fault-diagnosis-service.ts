@@ -1,3 +1,4 @@
+import { assertWorkflowActive, workflowExecution } from './workflows/execution-context.js';
 /**
  * Fault diagnosis orchestration.
  * Evidence is collected under the requesting actor before any analysis row is created.
@@ -55,11 +56,13 @@ export class FaultDiagnosisService {
   }
 
   async diagnoseUnhealthyInstances(): Promise<number[]> {
+    assertWorkflowActive();
     const instances = await this.dependencies.listActiveInstances();
     const analysisIds: number[] = [];
     const failedInstanceIds: number[] = [];
     for (const instance of instances) {
       try {
+        assertWorkflowActive();
         const health = await this.dependencies.checkHealth(instance.id);
         if (!health || health.status === 'healthy') continue;
         const actor: ActorContext = Object.freeze({
@@ -77,6 +80,7 @@ export class FaultDiagnosisService {
           instanceScopes: Object.freeze({ [instance.id]: 'read-only' as const }),
           requestId: `fault-diagnosis:${instance.id}:${this.dependencies.randomUUID()}`,
         });
+        assertWorkflowActive();
         const result = await this.diagnose(actor, instance.id, 'auto');
         if (result.status === 'in_progress') continue;
         if (result.success && result.analysisId !== undefined) {
@@ -85,6 +89,7 @@ export class FaultDiagnosisService {
           failedInstanceIds.push(instance.id);
         }
       } catch {
+        assertWorkflowActive();
         failedInstanceIds.push(instance.id);
       }
     }
@@ -108,14 +113,17 @@ export class FaultDiagnosisService {
     let releasePendingOnReturn = true;
 
     try {
+      assertWorkflowActive();
       const diagnosticContext = await this.dependencies.contextCollector.collect(actor, instanceId);
       if (diagnosticContext.subject?.type !== 'instance' || diagnosticContext.subject.id !== instanceId) {
         throw new Error('DIAGNOSTIC_CONTEXT_SUBJECT_MISMATCH');
       }
 
+      assertWorkflowActive();
       const cached = await this.dependencies.analysisStore.findByCacheKey(cacheKey);
       if (cached?.result) return { success: true, analysisId: cached.id };
 
+      assertWorkflowActive();
       const active = await this.dependencies.analysisStore.findActiveFaultDiagnosis({
         instanceId,
         triggerType: trigger,
@@ -126,10 +134,12 @@ export class FaultDiagnosisService {
         const state: PendingDiagnosisState = active.sessionKey ? 'dispatched' : 'failure_unconfirmed';
         this.pendingDiagnoses.set(pendingKey, state);
         releasePendingOnReturn = false;
+        assertWorkflowActive();
         this.monitorCompletion(active.id, pendingKey);
         return pendingDiagnosisResult(state);
       }
 
+      assertWorkflowActive();
       const createResult = await this.dependencies.analysisStore.createAnalysis({
         analysis_type: 'fault_diagnosis',
         instance_id: instanceId,
@@ -141,10 +151,12 @@ export class FaultDiagnosisService {
       }
       const analysisId = createResult.analysisId;
 
+      assertWorkflowActive();
       const running = await this.dependencies.analysisStore.updateStatus(analysisId, 'running');
       if (!running.success) {
         const error = running.error || 'UPDATE_ANALYSIS_STATUS_FAILED';
         releasePendingOnReturn = false;
+        assertWorkflowActive();
         await this.persistFailureOrMonitor(analysisId, pendingKey, error);
         return { success: false, error };
       }
@@ -155,6 +167,7 @@ export class FaultDiagnosisService {
       const environment = stringMetadata(instance, 'environment') || 'unknown';
       const sessionKey = `diagnosis-${analysisId}`;
       try {
+        assertWorkflowActive();
         await this.dependencies.dispatch({
           type: 'fault_diagnosis',
           cacheKey,
@@ -167,20 +180,24 @@ export class FaultDiagnosisService {
             + `(${databaseType}, ${environment}) 的故障证据。缺失证据必须保持未知；完成后保存结构化诊断结果。`,
         });
       } catch (error) {
+        assertWorkflowActive();
         const message = error instanceof Error ? error.message : String(error);
         console.error(`[FaultDiagnosis] Agent 诊断 ${analysisId} 失败:`, message);
         releasePendingOnReturn = false;
+        assertWorkflowActive();
         await this.persistFailureOrMonitor(analysisId, pendingKey, message);
         return { success: false, error: message };
       }
 
       let markerConfirmed = false;
       try {
+        assertWorkflowActive();
         markerConfirmed = await this.dependencies.analysisStore.markDispatched(analysisId, sessionKey);
       } catch {}
       if (!markerConfirmed) {
         this.pendingDiagnoses.set(pendingKey, 'failure_unconfirmed');
         releasePendingOnReturn = false;
+        assertWorkflowActive();
         this.monitorCompletion(analysisId, pendingKey);
         return {
           success: false,
@@ -191,11 +208,12 @@ export class FaultDiagnosisService {
 
       this.pendingDiagnoses.set(pendingKey, 'dispatched');
       releasePendingOnReturn = false;
+      assertWorkflowActive();
       this.monitorCompletion(analysisId, pendingKey);
 
       return { success: true, analysisId, status: 'queued' };
     } finally {
-      if (releasePendingOnReturn) this.pendingDiagnoses.delete(pendingKey);
+      if (releasePendingOnReturn || workflowExecution.getStore()?.signal.aborted) this.pendingDiagnoses.delete(pendingKey);
     }
   }
 
@@ -238,12 +256,16 @@ export class FaultDiagnosisService {
   }
 
   private monitorCompletion(analysisId: number, pendingKey: string): void {
+    if (workflowExecution.getStore()?.signal.aborted) {
+      this.pendingDiagnoses.delete(pendingKey);
+      return;
+    }
     void Promise.resolve()
       .then(() => this.dependencies.analysisStore.waitForCompletion(analysisId, 120_000))
       .then((record) => record?.status === 'completed' || record?.status === 'failed')
       .catch(() => false)
       .then((terminal) => {
-        if (terminal) {
+        if (terminal || workflowExecution.getStore()?.signal.aborted) {
           this.pendingDiagnoses.delete(pendingKey);
           return;
         }

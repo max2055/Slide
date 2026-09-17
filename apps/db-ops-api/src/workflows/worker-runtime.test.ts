@@ -169,7 +169,7 @@ describe('lease, fencing and dead letter', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('times out a hung heartbeat and allows the runtime to claim again', async () => {
+  it('times out a hung heartbeat and resumes claims only after the DB request settles', async () => {
     vi.useFakeTimers();
     const job: ClaimedJob = { id: 'hung-heartbeat', type: 'fault.diagnose-unhealthy', payload: {}, attempts: 1, maxAttempts: 3, fencingToken: 5 };
     const jobs: Array<ClaimedJob | null> = [job, null];
@@ -199,12 +199,14 @@ describe('lease, fencing and dead letter', () => {
     expect(vi.getTimerCount()).toBe(0);
 
     const secondHandler = vi.fn(async () => {});
-    await expect(worker.runOnce(secondHandler)).resolves.toBe('idle');
-    expect(claim).toHaveBeenCalledTimes(2);
+    await expect(worker.runOnce(secondHandler)).resolves.toBe('running');
+    expect(claim).toHaveBeenCalledTimes(1);
     expect(secondHandler).not.toHaveBeenCalled();
 
     rejectHeartbeat(new Error('LATE_HEARTBEAT_FAILURE'));
     await vi.advanceTimersByTimeAsync(0);
+    await expect(worker.runOnce(secondHandler)).resolves.toBe('idle');
+    expect(claim).toHaveBeenCalledTimes(2);
     expect(log).toHaveBeenCalledTimes(1);
     expect(complete).not.toHaveBeenCalled();
     expect(fail).not.toHaveBeenCalled();

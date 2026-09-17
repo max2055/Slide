@@ -33,9 +33,11 @@ export class CapacityConsistencyMonitor {
     private readonly alerts: AlertWriter,
   ) {}
 
-  async runOnce(): Promise<ConsistencyCheck> {
+  async runOnce(signal?: AbortSignal): Promise<ConsistencyCheck> {
+    signal?.throwIfAborted();
     const check = await this.checker._checkCapacitySumMatch();
     const activeIds = await this.activeAlertIds();
+    signal?.throwIfAborted();
     if (check.status === 'pass') {
       await Promise.all(activeIds.map((id) => this.alerts.resolveAlert(id)));
       return check;

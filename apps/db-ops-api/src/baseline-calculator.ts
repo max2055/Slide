@@ -1,3 +1,4 @@
+import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 基线计算服务 - 使用历史指标数据计算统计基线
  *
@@ -235,11 +236,13 @@ class BaselineCalculator {
     }
 
     try {
+      assertWorkflowActive();
       await pool.execute(
         `DELETE FROM metric_baselines WHERE computed_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
         [retentionDays]
       );
     } catch (error) {
+      assertWorkflowActive();
       console.error('清理过期基线失败:', error);
     }
   }

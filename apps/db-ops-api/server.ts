@@ -108,9 +108,10 @@ import { classifySql } from './src/sql-validator.js';
 import { PersistentOperationService } from './src/operations/operation-service.js';
 import { MigrationRunner } from './src/migrations/runner.js';
 import { WorkerLease } from './src/lifecycle/worker-lease.js';
+import { registerNotificationHandlers } from './src/workflows/notification-handlers.js';
 import { JobRegistry } from './src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.js';
-import { createNotificationDispatchJob, isAlertEligibleForChannel, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
+import { createNotificationDispatchJob, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
 import { createReportNotificationJob, createReportScheduleJob, MysqlReportOccurrenceStore, ReportScheduler } from './src/report-scheduler.js';
 import { assertCreatableDatabaseType, listAdapterCapabilities } from './src/adapters/capability-matrix.js';
 import { approvalService } from './src/approval-service.js';
@@ -5449,7 +5450,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   let cronManager: CronManager | undefined;
   let engine: any;
+  let stopWorkflow: (() => Promise<boolean>) | undefined;
   let workflowTimer: ReturnType<typeof setInterval> | undefined;
+  fastify.addHook('onClose', async () => {
+    if (workflowTimer) clearInterval(workflowTimer);
+    if (stopWorkflow && !await stopWorkflow()) console.error('[WorkerRuntime] WORKFLOW_SHUTDOWN_TIMEOUT');
+  });
   const startWorkers = async () => {
   await initializeControlPlane();
   // 初始化 Agent Engine 并启动 WS 传输层
@@ -5483,97 +5489,56 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   workflowRegistry.register('capacity.collect', async () => { await monitorCollector.collectCapacityNow(); });
   workflowRegistry.register('baseline.cleanup', async () => { await baselineCalculator.cleanupOldBaselines(); });
   workflowRegistry.register('alert.evaluate', async () => { await alertEngine.triggerEvaluation(); });
-  workflowRegistry.register('capacity.consistency', async () => {
+  workflowRegistry.register('capacity.consistency', async (_payload, _job, { signal }) => {
+    signal.throwIfAborted();
     await workflowStore.enqueue(createCapacityConsistencyJob(new Date(Date.now() + 300_000)));
-    await capacityConsistencyMonitor.runOnce();
+    signal.throwIfAborted();
+    await capacityConsistencyMonitor.runOnce(signal);
   });
-  workflowRegistry.register('report.schedule', async () => {
+  workflowRegistry.register('report.schedule', async (_payload, _job, { signal }) => {
     // Commit the successor before generating reports so a restart cannot
     // silently stop all scheduled report processing.
+    signal.throwIfAborted();
     await enqueueReportSchedule(new Date(Date.now() + 60_000));
     const occurrences = new MysqlReportOccurrenceStore(() => dbConnection.getPool() as any);
     const scheduler = new ReportScheduler(reportConfigService, occurrences);
+    signal.throwIfAborted();
     for (const occurrence of await scheduler.claimDue()) {
       try {
+        signal.throwIfAborted();
         const config = await reportConfigService.getConfigById(occurrence.configId);
         if (!config) throw new Error('REPORT_CONFIG_NOT_FOUND');
+        signal.throwIfAborted();
         const reportId = config.type === 'server_health'
           ? (await serverReportService.generateAndPersist(config.server_id ? [config.server_id] : undefined)).reportId
           : (await reportService.generateReport(config.type as any, config.instance_id, { format: config.format as any })).id;
         if (!reportId) throw new Error('REPORT_GENERATION_FAILED');
+        signal.throwIfAborted();
         await occurrences.complete(occurrence, reportId);
+        signal.throwIfAborted();
         await enqueueReportNotifications(reportId, config.notification_channel_ids);
       } catch (error) {
+        signal.throwIfAborted();
         await occurrences.fail(occurrence, error instanceof Error ? error : new Error(String(error)));
         throw error;
       }
     }
   });
-  workflowRegistry.register('notification.dispatch', async () => {
-    await notificationScheduler.enqueuePending();
+  workflowRegistry.register('notification.dispatch', async (_payload, _job, { signal }) => {
+    signal.throwIfAborted();
+    await notificationScheduler.enqueuePending(signal);
     // The next durable tick is committed before this job is completed. A
     // restart therefore resumes the current or next tick without an in-memory timer.
+    signal.throwIfAborted();
     await enqueueNotificationDispatch(new Date(Date.now() + 10_000));
   });
-  workflowRegistry.register('notification.deliver', async (payload, job) => {
-    const alertId = Number(payload.alertId);
-    const channelId = Number(payload.channelId);
-    if (!Number.isSafeInteger(alertId) || !Number.isSafeInteger(channelId)) throw new Error('NOTIFICATION_PAYLOAD_INVALID');
-    const [alert, channel] = await Promise.all([
-      notificationDatabaseService.getAlertById(alertId),
-      notificationDatabaseService.getChannelById(channelId),
-    ]);
-    if (!alert || !channel || !channel.enabled || !isAlertEligibleForChannel(alert, channel)) return;
-    await notificationDatabaseService.recordDeliveryAttempt({ job_id: job.id, alert_id: alertId, channel_id: channelId, attempt_number: job.attempts, status: 'started' });
-    try {
-      await notificationService.deliverAlertToChannel(alert, channel);
-      await notificationDatabaseService.recordDeliveryAttempt({ job_id: job.id, alert_id: alertId, channel_id: channelId, attempt_number: job.attempts, status: 'sent' });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await notificationDatabaseService.recordDeliveryAttempt({ job_id: job.id, alert_id: alertId, channel_id: channelId, attempt_number: job.attempts, status: 'failed', error_code: message.slice(0, 128), error_message: message });
-      throw error;
-    }
-  });
-  workflowRegistry.register('report.notify', async (payload, job) => {
-    const reportId = Number(payload.reportId);
-    const channelId = Number(payload.channelId);
-    if (!Number.isSafeInteger(reportId) || reportId <= 0 || !Number.isSafeInteger(channelId) || channelId <= 0) {
-      throw new Error('REPORT_NOTIFICATION_PAYLOAD_INVALID');
-    }
-    const [report, channel] = await Promise.all([
-      reportDatabaseService.getReportById(reportId),
-      notificationDatabaseService.getChannelById(channelId),
-    ]);
-    if (!report || !channel || !channel.enabled) {
-      await reportDatabaseService.recordNotificationDelivery({
-        jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'skipped', errorCode: 'REPORT_OR_CHANNEL_UNAVAILABLE',
-      });
-      return;
-    }
-    await reportDatabaseService.recordNotificationDelivery({
-      jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'started',
-    });
-    const result = await notificationService.send(channel, {
-      type: 'scheduled_report',
-      report: { id: report.id, name: report.name, type: report.type, format: report.format, status: report.status },
-      downloadPath: `/api/reports/${report.id}/download`,
-    });
-    if (!result.success) {
-      await reportDatabaseService.recordNotificationDelivery({
-        jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'failed',
-        errorCode: result.error?.slice(0, 128), errorMessage: result.error,
-      });
-      throw new Error(result.error || 'REPORT_NOTIFICATION_FAILED');
-    }
-    await reportDatabaseService.recordNotificationDelivery({
-      jobId: job.id, reportId, channelId, attemptNumber: job.attempts, status: 'sent',
-    });
-  });
+  registerNotificationHandlers(workflowRegistry, notificationDatabaseService, notificationService, reportDatabaseService);
   const workflowRuntime = new WorkerRuntime(workflowStore, workflowWorkerId);
+  stopWorkflow = async () => await workflowRuntime.shutdown();
   await enqueueNotificationDispatch();
   await enqueueReportSchedule();
   await workflowStore.enqueue(createCapacityConsistencyJob());
-  workflowTimer = setInterval(() => { void workflowRuntime.runOnce((job) => workflowRegistry.execute(job)).catch((error) => console.error('Workflow worker failed:', error)); }, 1_000);
+  workflowTimer = setInterval(() => { void workflowRuntime.runOnce((job, context) => workflowRegistry.execute(job, context)).catch((error) => console.error('Workflow worker failed:', error)); }, 1_000);
 
   // 启动监控采集
   monitorCollector.start();
@@ -5696,6 +5661,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       shuttingDown = true;
       clearInterval(heartbeat);
       if (workflowTimer) clearInterval(workflowTimer);
+      if (stopWorkflow && !await stopWorkflow()) console.error('[WorkerRuntime] WORKFLOW_SHUTDOWN_TIMEOUT');
       monitorCollector.stop();
       networkDeviceCollector.stop();
       await configBackupScheduler.stop();
