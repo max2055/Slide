@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { MigrationConnection, MigrationLedgerEntry, MigrationPool, SqlMigration } from './types.js';
+import type { MigrationConnection, MigrationLedgerEntry, MigrationPool, MigrationRepairVerifications, SqlMigration } from './types.js';
 import { assertSchemaInvariants } from './invariants.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -114,7 +114,11 @@ export function statementsForExecution(migration: SqlMigration): string[] {
 }
 
 export class MigrationRunner {
-  constructor(private readonly pool: MigrationPool, private readonly directory = defaultDirectory) {}
+  constructor(
+    private readonly pool: MigrationPool,
+    private readonly directory = defaultDirectory,
+    private readonly repairVerifications: MigrationRepairVerifications = {},
+  ) {}
 
   async inspect(): Promise<MigrationLedgerEntry[]> {
     await this.ensureLedger();
@@ -156,17 +160,54 @@ export class MigrationRunner {
     }
   }
 
+  /** @deprecated Use acknowledgeExternallyRepairedMigration; identical guarded contract. */
   async repair(id: string, actor: string, reason: string): Promise<void> {
+    return this.acknowledgeExternallyRepairedMigration(id, actor, reason);
+  }
+
+  /**
+   * Confirms externally completed schema/data repair. Never executes migration SQL.
+   * Requires global invariants AND a trusted, checksum-bound specific verifier.
+   * Missing verifiers fail closed; this is not a public API or a DDL retry facility.
+   */
+  async acknowledgeExternallyRepairedMigration(id: string, actor: string, reason: string): Promise<void> {
     if (!actor.trim() || !reason.trim()) throw new MigrationError('Repair requires actor and reason');
     const migrations = await loadMigrations(this.directory);
     const migration = migrations.find((item) => item.id === id);
     if (!migration) throw new MigrationError(`Unknown migration ${id}`);
-    const [result] = await this.pool.query<{ affectedRows: number }>(
-      `UPDATE app_schema_migrations SET status = 'completed', error = ?, finished_at = NOW()
-       WHERE migration_id = ? AND status = 'failed'`,
-      [`repair by ${actor}: ${reason}`, id],
-    );
-    if (!Number(result.affectedRows)) throw new MigrationError(`Migration ${id} is not failed`);
+    const connection = await this.pool.getConnection();
+    try {
+      const [locks] = await connection.query<Array<{ locked: number }>>('SELECT GET_LOCK(?, 30) AS locked', [lockName]);
+      if (Number(locks[0]?.locked) !== 1) throw new MigrationError('Could not acquire migration lock');
+      try {
+        const [rows] = await connection.query<MigrationLedgerEntry[]>(
+          'SELECT migration_id, checksum, status, statement_index, error FROM app_schema_migrations WHERE migration_id = ?', [id],
+        );
+        const recorded = rows[0];
+        if (!recorded || recorded.status !== 'failed') throw new MigrationError(`Migration ${id} is not failed`);
+        if (!isMigrationChecksumAccepted(id, recorded.checksum, migration.checksum)) {
+          throw new MigrationError(`Checksum mismatch for ${id}`);
+        }
+        const verification = Object.hasOwn(this.repairVerifications, id) ? this.repairVerifications[id] : undefined;
+        if (!verification || verification.checksum !== recorded.checksum) {
+          throw new MigrationError(`Migration ${id} requires checksum-bound repair verification`);
+        }
+        await assertSchemaInvariants(connection);
+        await verification.verify(connection);
+        const audit = JSON.stringify({
+          action: 'acknowledgeExternallyRepairedMigration', actor: actor.trim(), reason: reason.trim(),
+          checksum: recorded.checksum, previousError: recorded.error,
+        });
+        // TEXT is limited in bytes, not JS characters; never silently truncate audit evidence.
+        if (Buffer.byteLength(audit, 'utf8') > 65535) throw new MigrationError('Repair audit record exceeds ledger capacity');
+        const [result] = await connection.query<{ affectedRows: number }>(
+          `UPDATE app_schema_migrations SET status = 'completed', error = ?, finished_at = NOW()
+           WHERE migration_id = ? AND status = 'failed' AND checksum = ?`,
+          [audit, id, recorded.checksum],
+        );
+        if (Number(result.affectedRows) !== 1) throw new MigrationError(`Migration ${id} changed during repair verification`);
+      } finally { await connection.query('SELECT RELEASE_LOCK(?)', [lockName]); }
+    } finally { connection.release(); }
   }
 
   private async runLocked(connection: MigrationConnection): Promise<void> {

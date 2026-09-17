@@ -23,3 +23,13 @@ export interface MigrationConnection extends MigrationQuery {
 export interface MigrationPool extends MigrationQuery {
   getConnection(): Promise<MigrationConnection>;
 }
+
+/** Trusted, read-only postconditions reviewed for one exact recorded revision.
+ * Must throw unless ALL schema/data effects of that migration are present.
+ */
+export interface MigrationRepairVerification {
+  readonly checksum: string;
+  readonly verify: (connection: MigrationQuery) => Promise<void>;
+}
+
+export type MigrationRepairVerifications = Readonly<Record<string, MigrationRepairVerification>>;
