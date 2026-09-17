@@ -1,8 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ sync: vi.fn(), apply: vi.fn() }));
+const mocks = vi.hoisted(() => ({ sync: vi.fn(), apply: vi.fn(), detach: vi.fn() }));
 vi.mock('./storage.ts', () => ({ syncPreferencesFromServer: mocks.sync }));
-vi.mock('./app-settings.ts', () => ({ applySettings: mocks.apply }));
-import { syncUserPreferences } from './app-lifecycle.ts';
+vi.mock('./app-settings.ts', () => ({ applySettings: mocks.apply, detachThemeListener: mocks.detach }));
+import { syncUserPreferences, handleDisconnected } from './app-lifecycle.ts';
 afterEach(() => vi.clearAllMocks());
 it.each([false, true])('applies bootstrap settings only before a local edit (edited=%s)', async edited => {
   let finish!: (value: any) => void;
@@ -19,4 +19,23 @@ it.each([false, true])('applies bootstrap settings only before a local edit (edi
     expect(mocks.apply).not.toHaveBeenCalled();
     expect(host.settings.username).toBe('admin');
   } else expect(mocks.apply).toHaveBeenCalledWith(host, { username: '', theme: 'knot' });
+});
+
+it('disconnect invalidates pending connects and releases listeners, client and observer', () => {
+  const popStateHandler = vi.fn();
+  const disconnect = vi.fn();
+  const observerDisconnect = vi.fn();
+  const host = { connectGeneration: 2, connected: true, client: { disconnect },
+    popStateHandler, topbarObserver: { disconnect: observerDisconnect } } as any;
+  window.addEventListener('popstate', popStateHandler);
+  handleDisconnected(host);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+  expect(popStateHandler).not.toHaveBeenCalled();
+  expect(host.connectGeneration).toBe(3);
+  expect(host.connected).toBe(false);
+  expect(host.client).toBeNull();
+  expect(host.topbarObserver).toBeNull();
+  expect(disconnect).toHaveBeenCalledOnce();
+  expect(observerDisconnect).toHaveBeenCalledOnce();
+  expect(mocks.detach).toHaveBeenCalledWith(host);
 });
