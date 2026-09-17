@@ -1,3 +1,4 @@
+import { registerReportScheduleHandler } from './src/workflows/report-schedule-handler.js';
 import { registerHealthRoutes } from './src/health-routes.js';
 import { registerLLMSceneRoutes } from './src/llm/scene-routes.js';
 import { capacityInstanceIds } from './src/capacity-scope.js';
@@ -113,7 +114,7 @@ import { registerNotificationHandlers } from './src/workflows/notification-handl
 import { JobRegistry } from './src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.js';
 import { createNotificationDispatchJob, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
-import { createReportNotificationJob, createReportScheduleJob, MysqlReportOccurrenceStore, ReportScheduler } from './src/report-scheduler.js';
+import { createReportNotificationJob, createReportScheduleJob, MysqlReportOccurrenceStore } from './src/report-scheduler.js';
 import { assertCreatableDatabaseType, listAdapterCapabilities } from './src/adapters/capability-matrix.js';
 import { approvalService } from './src/approval-service.js';
 import { databaseLogService } from './src/database-log-service.js';
@@ -5463,34 +5464,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     signal.throwIfAborted();
     await capacityConsistencyMonitor.runOnce(signal);
   });
-  workflowRegistry.register('report.schedule', async (_payload, _job, { signal }) => {
-    // Commit the successor before generating reports so a restart cannot
-    // silently stop all scheduled report processing.
-    signal.throwIfAborted();
-    await enqueueReportSchedule(new Date(Date.now() + 60_000));
-    const occurrences = new MysqlReportOccurrenceStore(() => dbConnection.getPool() as any);
-    const scheduler = new ReportScheduler(reportConfigService, occurrences);
-    signal.throwIfAborted();
-    for (const occurrence of await scheduler.claimDue()) {
-      try {
-        signal.throwIfAborted();
-        const config = await reportConfigService.getConfigById(occurrence.configId);
-        if (!config) throw new Error('REPORT_CONFIG_NOT_FOUND');
-        signal.throwIfAborted();
-        const reportId = config.type === 'server_health'
-          ? (await serverReportService.generateAndPersist(config.server_id ? [config.server_id] : undefined)).reportId
-          : (await reportService.generateReport(config.type as any, config.instance_id, { format: config.format as any })).id;
-        if (!reportId) throw new Error('REPORT_GENERATION_FAILED');
-        signal.throwIfAborted();
-        await occurrences.complete(occurrence, reportId);
-        signal.throwIfAborted();
-        await enqueueReportNotifications(reportId, config.notification_channel_ids);
-      } catch (error) {
-        signal.throwIfAborted();
-        await occurrences.fail(occurrence, error instanceof Error ? error : new Error(String(error)));
-        throw error;
-      }
-    }
+  registerReportScheduleHandler(workflowRegistry, {
+    reportConfigService, serverReportService, reportService,
+    enqueueReportSchedule, enqueueReportNotifications,
+    createOccurrenceStore: () => new MysqlReportOccurrenceStore(() => dbConnection.getPool() as any),
   });
   workflowRegistry.register('notification.dispatch', async (_payload, _job, { signal }) => {
     signal.throwIfAborted();
