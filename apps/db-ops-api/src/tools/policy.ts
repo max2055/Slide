@@ -9,6 +9,8 @@ import type { ApprovalConsumeOptions, ApprovalConsumeResult, ApprovalRequestOpti
 import { agentToolAuditService, type AgentToolAuditRecord } from '../security/agent-tool-audit-service.js';
 import { agentSecurityPolicyService } from '../security/agent-security-policy-service.js';
 import { classifyExecuteCodeRisk, type ExecuteCodeRisk } from '../security/execute-code-risk.js';
+import { AgentToolApprovalExecution, type ApprovalExecution } from '../security/agent-tool-approval-execution.js';
+import type { AuditExecutor } from '../security/agent-tool-audit-service.js';
 import { agentExecutionConfigService } from '../security/agent-execution-config-service.js';
 
 /** Backward-compatible catalog filtering helpers. Runtime authorization uses decideToolPolicy. */
@@ -125,6 +127,12 @@ export function decideToolPolicy(
 }
 
 export interface ToolApprovalAuthorizer {
+  authorize?(
+    actor: ActorContext, tool: AnyAgentTool, args: Record<string, unknown>, resource: ToolPolicyResource,
+    options: ApprovalConsumeOptions | undefined,
+    audit: (outcome: ApprovalConsumeResult, connection: AuditExecutor) => Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<ApprovalExecution>;
   consume(
     actor: ActorContext,
     tool: AnyAgentTool,
@@ -153,10 +161,16 @@ export interface ToolExecutionOptions {
 }
 
 export interface ToolAuditRecorder {
-  record(record: AgentToolAuditRecord): Promise<void>;
+  record(record: AgentToolAuditRecord, transaction?: AuditExecutor): Promise<void>;
 }
 
 const persistentApprovalAuthorizer: ToolApprovalAuthorizer = {
+  async authorize(actor, tool, args, resource, options, audit, signal) {
+    const binding = getAgentToolApprovalService().binding(actor, tool, args, resource);
+    return new AgentToolApprovalExecution().authorize(
+      String(args.approvalId), binding.bindingHash, actor.userId, actor.requestId, options, audit, signal,
+    );
+  },
   async consume(actor, tool, args, resource, options): Promise<boolean | ApprovalConsumeResult> {
     const approvalId = typeof args.approvalId === 'string' ? args.approvalId : '';
     if (!approvalId) return false;
@@ -201,30 +215,55 @@ export async function executeToolWithPolicy(
   const approvalOptions: ApprovalConsumeOptions | undefined = risk?.requiresApproval
     ? { sessionKey: executionOptions?.sessionKey, riskLevel: risk.level }
     : undefined;
-  const approvalOutcome = actor && approvalRequired && typeof args.approvalId === 'string'
-    ? await approvalAuthorizer.consume(actor, tool, args, resource, approvalOptions)
-    : false;
-  const approvalConsumed = typeof approvalOutcome === 'boolean' ? approvalOutcome : approvalOutcome.approved;
   const agentPolicy = agentId ? agentSecurityPolicyService.get(agentId) : undefined;
   const agentDecision = agentId && security
     ? agentSecurityPolicyService.evaluateTool(agentId, tool.name, security.effect, resource)
     : { allowed: true };
   let decision = agentDecision.allowed
-    ? decideToolPolicy(actor, tool, args, resource, approvalConsumed, approvalRequired)
+    ? decideToolPolicy(actor, tool, args, resource, true, approvalRequired)
     : deny(agentDecision.reasonCode!, actor, tool, args, resource);
-  if (!approvalConsumed && typeof approvalOutcome !== 'boolean' && approvalOutcome.failure) {
-    decision = { ...decision, reasonCode: approvalOutcome.failure };
-  }
   if (risk) {
     decision = { ...decision, riskLevel: risk.level, approvalScope: risk.scope };
   }
+  let execution: ApprovalExecution | undefined;
+  const cancelled = (): { decision: PolicyDecision; result: ToolResult } => policyResult(decision, {
+    success: false, errorCode: 'TOOL_EXECUTION_CANCELLED', error: 'Tool execution cancelled before handler start',
+  });
+  if (executionOptions?.signal?.aborted) return cancelled();
+  const applyApproval = (outcome: boolean | ApprovalConsumeResult) => {
+    const approved = typeof outcome === 'boolean' ? outcome : outcome.approved;
+    if (!approved) decision = {
+      ...decision, allow: false,
+      reasonCode: typeof outcome !== 'boolean' && outcome.failure ? outcome.failure : 'INVALID_APPROVAL',
+    };
+  };
   if (actor) {
     try {
-      await auditRecorder.record({ phase: 'decision', actor, decision, args, agentId, agentPolicy });
-    } catch {
+      if (decision.allow && approvalRequired && approvalAuthorizer.authorize) {
+        execution = await approvalAuthorizer.authorize(actor, tool, args, resource, approvalOptions,
+          async (outcome, connection) => {
+            applyApproval(outcome);
+            await auditRecorder.record({ phase: 'decision', actor, decision, args, agentId, agentPolicy }, connection);
+          }, executionOptions?.signal);
+        applyApproval(execution);
+      } else {
+        // Nonpersistent authorizers (e.g. embedded/test adapters) must still audit
+        // before spending. The persistent path above commits both atomically.
+        await auditRecorder.record({ phase: 'decision', actor, decision, args, agentId, agentPolicy });
+        if (executionOptions?.signal?.aborted) return cancelled();
+        if (decision.allow && approvalRequired) {
+          applyApproval(await approvalAuthorizer.consume(actor, tool, args, resource, approvalOptions));
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === 'TOOL_EXECUTION_CANCELLED') return cancelled();
       if (decision.allow) {
         decision = deny('AUDIT_UNAVAILABLE', actor, tool, args, resource);
-        return policyResult(decision, { success: false, errorCode: decision.reasonCode, error: 'Tool access denied' });
+        return policyResult(decision, {
+          success: false, errorCode: decision.reasonCode, error: 'Tool access denied',
+          ...(approvalRequired ? { data: { approvalId: args.approvalId, requestId: actor.requestId,
+            recovery: 'check-approval-and-execution-intent-before-retry' } } : {}),
+        });
       }
     }
   }
@@ -300,16 +339,28 @@ export async function executeToolWithPolicy(
     progressCallback: executionOptions?.progressCallback,
   };
   let result: ToolResult;
+  if (context.signal?.aborted) {
+    try {
+      await execution?.releaseBeforeHandler?.();
+    } catch {
+      return policyResult(decision, {
+        success: false, errorCode: 'AUDIT_UNAVAILABLE', error: 'Approval recovery unavailable; reconcile execution before retry',
+        data: { executionId: execution?.executionId, handlerStarted: false, recovery: 'reconcile-before-new-approval' },
+      });
+    }
+    return cancelled();
+  }
+  // No asynchronous boundary between the last cancellation check and handler entry.
+  // Once entered, a throw may follow a side effect: never refund automatically.
   try {
-    result = context.signal?.aborted
-      ? { success: false, errorCode: 'TOOL_EXECUTION_CANCELLED', error: 'Tool execution cancelled before handler start' }
-      : await tool.handler(args, context);
+    result = await tool.handler(args, context);
   } catch {
     console.error(`[AgentTool] Handler failed for ${tool.name}`);
     result = { success: false, errorCode: 'TOOL_EXECUTION_FAILED', error: 'Tool execution failed' };
   }
   try {
     await auditRecorder.record({ phase: 'result', actor, decision, args, result, agentId, agentPolicy });
+    await execution?.finish?.();
   } catch (error) {
     console.error('[AgentToolAudit] Failed to persist tool result:', error);
     if (tool.name === 'execute_code') {

@@ -5,7 +5,7 @@ import type { PolicyDecision, ToolResult } from '../tools/types.js';
 import { redactSensitiveData } from './sensitive-data.js';
 import type { AgentSecurityPolicy } from './agent-security-policy-service.js';
 
-interface AuditExecutor {
+export interface AuditExecutor {
   execute(sql: string, values?: unknown[]): Promise<[any, unknown?]>;
 }
 
@@ -115,8 +115,8 @@ export class AgentToolAuditService {
     private readonly executorProvider: () => AuditExecutor | null = () => dbConnection.getPool() as AuditExecutor | null,
   ) {}
 
-  async record(record: AgentToolAuditRecord): Promise<void> {
-    const executor = this.executorProvider();
+  async record(record: AgentToolAuditRecord, transaction?: AuditExecutor): Promise<void> {
+    const executor = transaction ?? this.executorProvider();
     if (!executor) throw new Error('AGENT_TOOL_AUDIT_STORE_UNAVAILABLE');
     const security = getToolSecurityDefinition(record.decision.tool);
     const auditArgs = record.decision.tool === 'execute_code'

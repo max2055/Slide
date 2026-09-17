@@ -25,6 +25,25 @@ const tool = (overrides: Partial<AnyAgentTool> = {}): AnyAgentTool => ({
 describe('actor tool policy', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it.each(['permission', 'scope', 'audit'] as const)('does not spend an approval on %s failure', async (failure) => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: true, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const consume = vi.fn(async () => true);
+    const handler = vi.fn(async () => ({ success: true }));
+    const result = await executeToolWithPolicy(
+      failure === 'permission' ? actor(['viewer']) : actor(['operator'], ['instance:read']),
+      tool({ requiresApproval: true, handler }),
+      { approvalId: '42' },
+      async () => failure === 'scope' ? { type: 'instance', instanceId: 12 } : { type: 'none' },
+      { consume },
+      { record: async () => { if (failure === 'audit') throw new Error('offline'); } },
+    );
+    expect(result.result.success).toBe(false);
+    expect(handler).not.toHaveBeenCalled();
+    expect(consume).not.toHaveBeenCalled();
+  });
+
   it('keeps execute_code available without a pending approval when the admin approval switch is off', async () => {
     vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
       approvalEnabled: false,
