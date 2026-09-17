@@ -37,3 +37,41 @@ it.each(['false', 'error', 'timeout'])('propagates %s renewal cancellation throu
   expect(store.fail).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it('quarantines an uncooperative handler, drains shutdown boundedly, and ignores late renewal', async () => {
+  vi.useFakeTimers();
+  let renew!: (value: boolean) => void;
+  const { worker, store } = setup(() => new Promise(resolve => { renew = resolve; }));
+  let finish!: () => void;
+  let signal!: AbortSignal;
+  const run = worker.runOnce(async (_job, context) => {
+    signal = context.signal;
+    await new Promise<void>(resolve => { finish = resolve; });
+  });
+  await vi.advanceTimersByTimeAsync(1000);
+  const closing = worker.shutdown(25);
+  expect(signal.aborted).toBe(true);
+  await vi.advanceTimersByTimeAsync(25);
+  expect(await closing).toBe(false);
+  expect(await worker.runOnce(async () => {})).toBe('cancelled');
+  renew(true);
+  finish();
+  expect(await run).toBe('cancelled');
+  expect(await worker.shutdown()).toBe(true);
+  expect(store.complete).not.toHaveBeenCalled();
+  expect(store.fail).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('does not invoke a handler if shutdown wins a pending claim', async () => {
+  const { worker, store } = setup(async () => true);
+  let claim!: (value: typeof job) => void;
+  store.claim.mockImplementation(() => new Promise(resolve => { claim = resolve; }));
+  const handler = vi.fn();
+  const run = worker.runOnce(handler);
+  const closing = worker.shutdown();
+  claim(job);
+  expect(await run).toBe('cancelled');
+  expect(await closing).toBe(true);
+  expect(handler).not.toHaveBeenCalled();
+});
