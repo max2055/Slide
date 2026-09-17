@@ -193,6 +193,9 @@ export interface AgentRunSpec {
   injectionCallback?: ((limit?: number) => Promise<Message[]>) | null;
   llmTimeoutS?: number;
   signal?: AbortSignal;
+  /** Observe the actual provider request, which may outlive cancellation of the run.
+   * Synchronous lifecycle observer; must not throw or leave rejections unhandled. */
+  onProviderRequest?: (request: Promise<LLMResponse>) => void;
   /** Stable caller-supplied key for idempotent side-effecting tools. */
   idempotencyKey?: string;
   /** Progress emitted by a long-running tool operation. */

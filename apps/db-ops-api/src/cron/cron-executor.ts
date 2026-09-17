@@ -4,12 +4,11 @@
  * 封装 @slide/agent-core 的 AgentRunner.run()，提供 cron 专用执行模式：
  * - 使用 DirectAdapter 的 AgentRunner（非 Gateway），满足 D-07
  * - 每次执行创建唯一 sessionKey (cron:{jobId}:{timestamp})，满足 D-04
- * - 5 分钟超时通过 llmTimeoutS: 300 和 catch 块 partial_trace 保存实现，满足 D-06
+ * - 超时取消并返回 partial trace；executionSettled 标记底层请求与工具实际收敛
  * - CronHook 在 afterIteration 中收集 ToolEvent[]，满足 D-02 多轮执行追踪
  */
 import { AgentRunner, NoopHook, ToolRegistry } from '@slide/agent-core';
 import type {
-  AgentHook,
   AgentHookContext,
   ToolEvent,
   Message,
@@ -29,6 +28,13 @@ export class CronHook extends NoopHook {
 }
 
 // ── CronExecutor — Agent 驱动的 cron 执行器 ──
+
+export type CronExecutionResult = AgentRunResult & {
+  structuredResult?: Record<string, unknown> | null;
+  /** Always resolves, only after the runner AND actual provider requests settle. */
+  executionSettled: Promise<void>;
+  cancellationPending: boolean;
+};
 
 export class CronExecutor {
   private readonly runtimeLimits = loadAgentRuntimeLimits();
@@ -51,12 +57,31 @@ export class CronExecutor {
     taskDescription: string,
     timeoutSeconds: number = 300,
     outputSchema?: Record<string, unknown> | null,
-  ): Promise<AgentRunResult & { structuredResult?: Record<string, unknown> | null }> {
+  ): Promise<CronExecutionResult> {
     const sessionKey = `cron:${jobId}:${Date.now()}`;
     const hook = new CronHook();
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    let pendingOperations = 0;
+    let runSettled = false;
+    let resolveSettled!: () => void;
+    const executionSettled = new Promise<void>(resolve => { resolveSettled = resolve; });
+    const maybeSettled = () => {
+      if (runSettled && pendingOperations === 0) resolveSettled();
+    };
+    const timeoutError = new Error(`Cron 任务执行超时（${timeoutSeconds}s）；已请求取消，未收敛操作结果不确定`);
 
     try {
-      const runPromise = this.runner.run({
+      // Start the deadline before the runner, including its internal provider deadline.
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(timeoutError);
+          controller.abort(timeoutError);
+        }, timeoutSeconds * 1000);
+      });
+      const runPromise = Promise.resolve().then(() => this.runner.run({
         initialMessages: [
           { role: 'system', content: this.buildSystemPrompt(taskDescription, outputSchema) },
           { role: 'user', content: taskDescription },
@@ -73,14 +98,18 @@ export class CronExecutor {
         llmTimeoutS: timeoutSeconds,
         failOnToolError: false,
         sessionKey,
-      });
-
-      // 硬超时：即使 Agent 多轮 tool-call 循环，总 wall-clock 时间也不超过 timeoutSeconds
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error(`Cron 任务执行超时（${timeoutSeconds}s）`)), timeoutSeconds * 1000);
-      });
+        signal: controller.signal,
+        onProviderRequest: request => {
+          pendingOperations++;
+          const finish = () => { pendingOperations--; maybeSettled(); };
+          request.then(finish, finish);
+        },
+      }));
+      const finishRun = () => { runSettled = true; maybeSettled(); };
+      runPromise.then(finishRun, finishRun);
 
       const result = await Promise.race([runPromise, timeoutPromise]);
+      if (timedOut) throw timeoutError;
 
       // Extract structured result from agent output
       const structuredResult = this.extractStructuredResult(result.finalContent, hook.events);
@@ -92,9 +121,11 @@ export class CronExecutor {
         usage: result.usage,
         stopReason: result.stopReason,
         error: result.error,
-        toolEvents: hook.events,
+        toolEvents: [...hook.events],
         hadInjections: result.hadInjections,
         structuredResult,
+        executionSettled,
+        cancellationPending: !runSettled || pendingOperations > 0,
       };
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -103,12 +134,16 @@ export class CronExecutor {
         messages: [],
         toolsUsed: [],
         usage: {},
-        stopReason: errorMessage.includes('超时') ? 'timeout' : 'error',
+        stopReason: timedOut ? 'timeout' : 'error',
         error: errorMessage,
-        toolEvents: hook.events,
+        toolEvents: [...hook.events],
         hadInjections: false,
         structuredResult: null,
+        executionSettled,
+        cancellationPending: !runSettled || pendingOperations > 0,
       };
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -158,7 +193,7 @@ ${schemaStr}
 TASK: ${task}
 ${schemaBlock}
 ## 执行约束
-- 执行时间上限：5 分钟（超时将自动终止，请尽快完成任务）
+- 执行超时后将请求取消，不再启动新工具；已启动操作可能仍需等待底层结束
 - 工具调用失败时自动重试（最多 2 次）
 - 自主执行，不需要请求用户确认
 - 任务完成时务必调用 slide_complete_cron 工具保存结果

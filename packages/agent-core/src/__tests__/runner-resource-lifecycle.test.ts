@@ -28,3 +28,26 @@ describe('runner request resources', () => {
     expect((await pending).stopReason).toBe('cancelled'); expect(signal!.aborted).toBe(true); expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+it.each([false, true])('reports actual provider settlement after run cancellation (streaming=%s)', async streaming => {
+  vi.useFakeTimers();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const chat = vi.fn(async () => { await gate; return { ...response }; });
+  const provider = { chat, chatStream: chat, getDefaultModel: () => 'test' } as unknown as LLMProvider;
+  const controller = new AbortController();
+  const hook = new NoopHook();
+  hook.wantsStreaming = () => streaming;
+  let settled = false;
+  const observed = vi.fn((request: Promise<unknown>) => { void request.then(() => { settled = true; }); });
+  const pending = new AgentRunner(provider).run({ ...spec(), hook, signal: controller.signal, onProviderRequest: observed });
+  await vi.advanceTimersByTimeAsync(0);
+  controller.abort();
+  expect((await pending).stopReason).toBe('cancelled');
+  expect(observed).toHaveBeenCalledTimes(1);
+  expect(settled).toBe(false);
+  release();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(settled).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
+});

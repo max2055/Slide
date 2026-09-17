@@ -132,6 +132,7 @@ export class CronManager {
     this.runningFlags.add(config.id);
     const startTime = Date.now();
     let logId: number | null = null;
+    let executionSettled: Promise<void> | undefined;
 
     try {
       if (config.handler_key) {
@@ -172,6 +173,7 @@ export class CronManager {
         config.output_schema,
       );
 
+      executionSettled = result.executionSettled;
       const durationMs = Date.now() - startTime;
       const status = result.error ? 'error'
         : result.stopReason === 'max_iterations' ? 'partial'
@@ -186,6 +188,9 @@ export class CronManager {
           tool_events: result.toolEvents,
           usage: result.usage,
           stop_reason: result.stopReason,
+          partial_trace: result.cancellationPending
+            ? JSON.stringify({ cancellation_pending: true, outcome: 'unknown', scheduling: 'blocked_until_settled' })
+            : undefined,
           duration_ms: durationMs,
         },
       );
@@ -201,7 +206,13 @@ export class CronManager {
       }
       await this.jobService.updateRunResult(config.id, 'error');
     } finally {
-      this.runningFlags.delete(config.id);
+      // Reporting a timeout must not release ownership of an in-flight operation.
+      // Do not await here: non-cooperative operations must not hang the caller/logging.
+      if (executionSettled) {
+        void executionSettled.then(() => this.runningFlags.delete(config.id));
+      } else {
+        this.runningFlags.delete(config.id);
+      }
     }
   }
 

@@ -78,6 +78,22 @@ describe('actor tool policy', () => {
     });
   });
 
+  it('does not start a handler when cancellation arrives during policy audit', async () => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: false, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const controller = new AbortController();
+    const handler = vi.fn(async () => ({ success: true }));
+    const result = await executeToolWithPolicy(
+      actor(['admin'], ['instance:view']), tool({ handler }), {},
+      async () => ({ type: 'none' }), undefined,
+      { record: async () => { controller.abort(); } }, undefined,
+      { signal: controller.signal },
+    );
+    expect(handler).not.toHaveBeenCalled();
+    expect(result.result).toMatchObject({ success: false, errorCode: 'TOOL_EXECUTION_CANCELLED' });
+  });
+
   it('keeps database discovery available without approval when the execution approval switch is off', async () => {
     vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
       approvalEnabled: false,

@@ -53,7 +53,7 @@ const EMPTY_FINAL_RESPONSE_MESSAGE = "[No response — task may have completed.]
 
 // ── Timeout helper ──
 
-function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutS: number, signal?: AbortSignal): Promise<T> {
+function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutS: number, signal?: AbortSignal, onRequest?: (request: Promise<T>) => void): Promise<T> {
   const controller = new AbortController();
   return new Promise<T>((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -75,10 +75,12 @@ function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutS
       reject(error);
       controller.abort(error);
     }, timeoutS * 1000);
-    Promise.resolve().then(() => {
+    const request = Promise.resolve().then(() => {
       controller.signal.throwIfAborted();
       return operation(controller.signal);
-    }).then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+    });
+    request.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+    onRequest?.(request);
   });
 }
 
@@ -505,7 +507,7 @@ export class AgentRunner {
             : parseFloat(process.env.NANOBOT_STREAM_IDLE_TIMEOUT_S || '0') || undefined,
           signal,
         }
-      ), 0, spec.signal);
+      ), 0, spec.signal, spec.onProviderRequest);
     }
 
     // Non-streaming: wrap with wall-clock timeout
@@ -520,6 +522,7 @@ export class AgentRunner {
       }),
       timeoutS,
       spec.signal,
+      spec.onProviderRequest,
     );
   }
 
@@ -1253,6 +1256,7 @@ async function requestFinalizationRetry(
       }),
       timeoutS,
       spec.signal,
+      spec.onProviderRequest,
     );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
