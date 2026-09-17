@@ -2,7 +2,7 @@ import { resetToolStream } from "../app-tool-stream.ts";
 import { extractText } from "../chat/message-extract.ts";
 import { reconcileChatRunLifecycle } from "../chat/run-lifecycle.ts";
 import { formatConnectError } from "../connect-error.ts";
-import type { DirectGatewayClient } from "../direct-gateway.ts";
+import { ChatAcceptanceTimeoutError, type DirectGatewayClient } from "../direct-gateway.ts";
 import { normalizeLowercaseStringOrEmpty } from "../string-coerce.ts";
 import type { ChatAttachment } from "../ui-types.ts";
 import { generateUUID } from "../uuid.ts";
@@ -197,17 +197,58 @@ function buildApiAttachments(attachments?: ChatAttachment[]) {
     : undefined;
 }
 
+type UnconfirmedChat = {
+  sessionKey: string;
+  payload: string;
+  runId: string;
+  error: ChatAcceptanceTimeoutError;
+};
+const unconfirmedChats = new WeakMap<ChatState, UnconfirmedChat[]>();
+
+/** Late acceptance clears the retry draft without stealing a different session/run. */
+export function confirmChatSend(state: ChatState, messageId?: string, accepted = true): boolean {
+  const attempts = unconfirmedChats.get(state) ?? [];
+  const attempt = attempts.find((item) => item.error.messageId === messageId);
+  if (!attempt) return true;
+  if (accepted) unconfirmedChats.set(state, attempts.filter((item) => item !== attempt));
+  const sameSession = state.sessionKey === attempt.sessionKey || state.sessionKey === attempt.error.getSessionKey();
+  const sameRun = !state.chatRunId || state.chatRunId === attempt.runId;
+  if (accepted && sameSession && sameRun) state.lastError = null;
+  return sameSession && sameRun;
+}
+
 async function requestChatSend(
   state: ChatState,
   params: { message: string; attachments?: ChatAttachment[]; runId: string },
-) {
-  await state.client!.request("chat.send", {
-    sessionKey: state.sessionKey,
-    message: params.message,
-    deliver: false,
-    idempotencyKey: params.runId,
-    attachments: buildApiAttachments(params.attachments),
-  });
+): Promise<string> {
+  const sessionKey = state.sessionKey;
+  const attachments = buildApiAttachments(params.attachments);
+  const payload = JSON.stringify({ message: params.message, attachments });
+  const attempts = unconfirmedChats.get(state) ?? [];
+  const previous = attempts.find((item) => item.payload === payload
+    && (item.sessionKey === sessionKey || item.error.getSessionKey() === sessionKey));
+  const runId = previous?.runId ?? params.runId;
+  if (previous && state.chatRunId === params.runId) state.chatRunId = runId;
+  try {
+    if (previous) {
+      await previous.error.retry();
+    } else {
+      await state.client!.request("chat.send", {
+        sessionKey, message: params.message, deliver: false,
+        idempotencyKey: runId, attachments,
+      });
+    }
+    unconfirmedChats.set(state, (unconfirmedChats.get(state) ?? []).filter((item) => item !== previous));
+    return runId;
+  } catch (error) {
+    if (error instanceof ChatAcceptanceTimeoutError) {
+      unconfirmedChats.set(state, [
+        ...(unconfirmedChats.get(state) ?? []).filter((item) => item !== previous),
+        { sessionKey, payload, runId, error },
+      ]);
+    }
+    throw error;
+  }
 }
 
 type AssistantMessageNormalizationOptions = {
@@ -314,10 +355,21 @@ export async function sendChatMessage(
   state.chatStream = "";
   state.chatStreamStartedAt = now;
 
+  const sendSessionKey = state.sessionKey;
+  const sending = requestChatSend(state, { message: msg, attachments, runId });
+  const pendingRunId = state.chatRunId;
+  let updateSendingState = true;
   try {
-    await requestChatSend(state, { message: msg, attachments, runId });
-    return runId;
+    return await sending;
   } catch (err) {
+    // An expired send belongs to its original session, even after navigation.
+    if (err instanceof ChatAcceptanceTimeoutError && (
+      state.chatRunId !== pendingRunId
+      || (state.sessionKey !== sendSessionKey && state.sessionKey !== err.getSessionKey())
+    )) {
+      updateSendingState = false;
+      return null;
+    }
     const error = formatConnectError(err);
     state.chatRunId = null;
     state.chatStream = null;
@@ -333,7 +385,7 @@ export async function sendChatMessage(
     ];
     return null;
   } finally {
-    state.chatSending = false;
+    if (updateSendingState) state.chatSending = false;
   }
 }
 
@@ -353,8 +405,7 @@ export async function sendDetachedChatMessage(
   state.lastError = null;
   const runId = generateUUID();
   try {
-    await requestChatSend(state, { message: msg, attachments, runId });
-    return runId;
+    return await requestChatSend(state, { message: msg, attachments, runId });
   } catch (err) {
     state.lastError = formatConnectError(err);
     return null;

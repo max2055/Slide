@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as directGateway from './direct-gateway.ts';
-import { DirectGatewayClient } from './direct-gateway.ts';
+import { ChatAcceptanceTimeoutError, DirectGatewayClient } from './direct-gateway.ts';
 import type {
   AdapterChatEvent,
   AdapterSessionCreatedEvent,
@@ -204,11 +204,11 @@ describe('109-04: DirectGatewayClient', () => {
     const request = client.sendChat('session-1', 'hello');
     const result = request.catch((error: Error) => error.message);
     const original = socket.frames.at(-1);
-    await vi.advanceTimersByTimeAsync(45_000);
-    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toEqual([original, original, original]);
-    expect(await result).toContain('消息接收状态未知');
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(3);
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toEqual([original, original, original, original]);
+    expect(await result).toContain('发送结果尚未确认');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(4);
     client.disconnect();
   });
 
@@ -239,7 +239,7 @@ describe('109-04: DirectGatewayClient', () => {
     client.disconnect();
   });
 
-  it('preserves the confirmation retry budget across reconnects', async () => {
+  it('preserves the total confirmation deadline across reconnects', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(1);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -252,9 +252,9 @@ describe('109-04: DirectGatewayClient', () => {
     socket.closeWith(1006, '');
     await vi.advanceTimersByTimeAsync(1000);
     socket.receive({ type: 'auth_ok' });
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(await result).toContain('消息接收状态未知');
-    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(await result).toContain('发送结果尚未确认');
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(2);
     client.disconnect();
   });
 
@@ -330,10 +330,10 @@ describe('109-04: DirectGatewayClient', () => {
     const client = new DirectGatewayClient({ onEvent, onStateChange });
     client.connect();
     const sent = client.sendChat('session-1', 'queued');
-    expect((client as any).pendingMessages).toHaveLength(1);
+    expect(socket.frames.some(frame => frame.type === 'chat.send')).toBe(false);
 
     client.connect();
-    expect((client as any).pendingMessages).toHaveLength(1);
+    expect(socket.frames.some(frame => frame.type === 'chat.send')).toBe(false);
     socket.receive({ type: 'auth_ok' });
     acknowledgeLastChat(socket);
     await sent;
@@ -355,7 +355,7 @@ describe('109-04: DirectGatewayClient', () => {
 
     socket.closeWith(4001, 'Unauthorized');
     await expect(request).rejects.toThrow('登录已失效，请重新登录。');
-    expect((client as any).pendingMessages).toHaveLength(0);
+    expect(socket.frames.some(frame => frame.type === 'chat.send')).toBe(false);
     expect(onStateChange).toHaveBeenCalledWith('auth_failed');
   });
 
@@ -450,6 +450,96 @@ describe('109-04: DirectGatewayClient', () => {
 
     await expect(request).rejects.toThrow(error);
     expect(onStateChange).toHaveBeenCalledWith(state);
+  });
+
+  it.each([false, true])('bounds acceptance from enqueue while authenticated=%s', async (authenticated) => {
+    vi.useFakeTimers();
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    if (authenticated) socket.receive({ type: 'auth_ok' });
+    const result = client.sendChat('one', 'hello').catch(error => error);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await result).toBeInstanceOf(ChatAcceptanceTimeoutError);
+    expect((await result).message).toContain('发送结果尚未确认');
+    const count = socket.frames.length;
+    socket.receive({ type: 'auth_ok' });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(socket.frames).toHaveLength(count);
+    client.disconnect();
+  });
+
+  it('does not replay after a disconnect crosses the original deadline', async () => {
+    vi.useFakeTimers();
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange, chatAcceptTimeoutMs: 20_000 });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+    const result = client.sendChat('one', 'hello').catch(error => error);
+    await vi.advanceTimersByTimeAsync(14_000);
+    socket.closeWith(1006, 'lost');
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(await result).toBeInstanceOf(ChatAcceptanceTimeoutError);
+    socket.receive({ type: 'auth_ok' });
+    expect(socket.frames.filter(frame => frame.type === 'chat.send')).toHaveLength(0);
+    client.disconnect();
+  });
+
+  it('checks the deadline before replay even when background timers have not fired', async () => {
+    vi.useFakeTimers();
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange, chatAcceptTimeoutMs: 100 });
+    client.connect();
+    const result = client.sendChat('one', 'hello').catch(error => error);
+    vi.setSystemTime(Date.now() + 101);
+    socket.receive({ type: 'auth_ok' });
+    expect(await result).toBeInstanceOf(ChatAcceptanceTimeoutError);
+    expect(socket.frames).toHaveLength(0);
+    client.disconnect();
+  });
+
+  it('retries the original identity and attachments with a late assigned session', async () => {
+    vi.useFakeTimers();
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange, chatAcceptTimeoutMs: 100 });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+    const attachments = [{ type: 'image', content: 'AA==' }];
+    const result = client.sendChat(undefined, 'hello', { attachments }).catch(error => error);
+    const original = socket.frames.at(-1)!;
+    await vi.advanceTimersByTimeAsync(100);
+    const error = await result as ChatAcceptanceTimeoutError;
+    socket.receive({ type: 'session.created', messageId: original.messageId, sessionKey: 'assigned' });
+    expect(error.getSessionKey()).toBe('assigned');
+    const retried = error.retry();
+    expect(socket.frames.at(-1)).toEqual({ ...original, sessionKey: 'assigned' });
+    acknowledgeLastChat(socket);
+    await retried;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(socket.frames.filter(frame => frame.type === 'chat.send')).toHaveLength(2);
+    client.disconnect();
+  });
+
+  it.each(['run.started', 'run.snapshot'])('accepts late %s without sending again', async (type) => {
+    vi.useFakeTimers();
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange, chatAcceptTimeoutMs: 100 });
+    client.connect();
+    socket.receive({ type: 'auth_ok' });
+    const result = client.sendChat('one', 'hello').catch(error => error);
+    const original = socket.frames.at(-1)!;
+    await vi.advanceTimersByTimeAsync(100);
+    const error = await result as ChatAcceptanceTimeoutError;
+    socket.receive({ type, messageId: original.messageId,
+      runId: 'run', sessionKey: 'one', run: { id: 'run', sessionId: 'one', state: 'running' } });
+    const retry = error.retry();
+    expect(socket.frames.filter(frame => frame.type === 'chat.send')).toHaveLength(1);
+    await retry;
+    client.disconnect();
+  });
+
+  it.each([0, -1, NaN, Infinity, 2_147_483_648])('rejects invalid acceptance timeout %s', (timeout) => {
+    expect(() => new DirectGatewayClient({ onEvent, onStateChange, chatAcceptTimeoutMs: timeout })).toThrow(RangeError);
   });
 
   it('forwards session.created as a first-class adapter event', () => {
