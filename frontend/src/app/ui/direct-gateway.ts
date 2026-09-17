@@ -138,6 +138,8 @@ export class DirectGatewayClient {
   private authenticatedAt: number | null = null;
   private readonly chatAcceptTimeoutMs: number;
   private pendingChatAcknowledgements = new Map<string, PendingChatAcknowledgement>();
+  // Retain only retry identity after expiry; these entries have no timers.
+  private unconfirmedChats = new Map<string, { frame: Record<string, unknown>; accepted: boolean }>();
   private lastCloseDetails: WebSocketCloseDetails | null = null;
   private deviceIdentity: DeviceIdentity | null = null;
   private deviceAuth: { deviceId: string; publicKey: string; signature: string; timestamp: number; nonce: string } | null = null;
@@ -252,6 +254,7 @@ export class DirectGatewayClient {
     this.rejectPendingChatAcknowledgements(
       new Error('[DirectGatewayClient] disconnected before the message was accepted'),
     );
+    this.unconfirmedChats.clear();
     this.clearReconnectTimer();
     if (this.ws) {
       this.ws.onclose = null; // Prevent auto-reconnect on intentional close
@@ -406,10 +409,12 @@ export class DirectGatewayClient {
   private expireChat(messageId: string): void {
     const pending = this.pendingChatAcknowledgements.get(messageId);
     if (!pending) return;
+    const delivery = this.unconfirmedChats.get(messageId) ?? { frame: pending.frame, accepted: false };
+    this.unconfirmedChats.set(messageId, delivery);
     this.rejectChatAcknowledgement(messageId, new ChatAcceptanceTimeoutError(
       messageId,
-      () => this.queueChat(pending.frame),
-      () => pending.frame.sessionKey as string | undefined,
+      () => delivery.accepted ? Promise.resolve() : this.queueChat(delivery.frame),
+      () => delivery.frame.sessionKey as string | undefined,
     ));
   }
 
@@ -474,7 +479,9 @@ export class DirectGatewayClient {
     if (type === 'session.created') {
       const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
       const sessionKey = typeof msg.sessionKey === 'string' ? msg.sessionKey : '';
-      const pending = messageId ? this.pendingChatAcknowledgements.get(messageId) : undefined;
+      const pending = messageId
+        ? this.pendingChatAcknowledgements.get(messageId) ?? this.unconfirmedChats.get(messageId)
+        : undefined;
       if (pending && sessionKey) pending.frame.sessionKey = sessionKey;
     }
 
@@ -546,6 +553,11 @@ export class DirectGatewayClient {
   }
 
   private resolveChatAcknowledgement(messageId: string): void {
+    const delivery = this.unconfirmedChats.get(messageId);
+    if (delivery) {
+      delivery.accepted = true;
+      this.unconfirmedChats.delete(messageId);
+    }
     const pending = this.pendingChatAcknowledgements.get(messageId);
     if (!pending) return;
     if (pending.timer !== null) clearTimeout(pending.timer);
@@ -869,6 +881,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
       }
       break;
     case 'session.created': {
+      if (!confirmChatSend(host as unknown as ChatState, event.messageId, false)) break;
       const nextSessionKey = applyDirectSessionKey(host, event.sessionKey);
       if (!nextSessionKey) break;
       void loadSessions(host as unknown as SessionsState, {

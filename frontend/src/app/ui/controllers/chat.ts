@@ -206,14 +206,14 @@ type UnconfirmedChat = {
 const unconfirmedChats = new WeakMap<ChatState, UnconfirmedChat[]>();
 
 /** Late acceptance clears the retry draft without stealing a different session/run. */
-export function confirmChatSend(state: ChatState, messageId?: string): boolean {
+export function confirmChatSend(state: ChatState, messageId?: string, accepted = true): boolean {
   const attempts = unconfirmedChats.get(state) ?? [];
   const attempt = attempts.find((item) => item.error.messageId === messageId);
   if (!attempt) return true;
-  unconfirmedChats.set(state, attempts.filter((item) => item !== attempt));
+  if (accepted) unconfirmedChats.set(state, attempts.filter((item) => item !== attempt));
   const sameSession = state.sessionKey === attempt.sessionKey || state.sessionKey === attempt.error.getSessionKey();
   const sameRun = !state.chatRunId || state.chatRunId === attempt.runId;
-  if (sameSession && sameRun) state.lastError = null;
+  if (accepted && sameSession && sameRun) state.lastError = null;
   return sameSession && sameRun;
 }
 
