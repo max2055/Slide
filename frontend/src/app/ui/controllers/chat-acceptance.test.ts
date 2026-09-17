@@ -34,6 +34,26 @@ describe('unconfirmed chat UI', () => {
     expect(host.chatRunId).toBeNull();
   });
 
+  it('does not clear a newer session when the old send expires', async () => {
+    let expire!: (error: Error) => void;
+    const request = vi.fn().mockImplementation(() => new Promise((_, reject) => { expire = reject; }));
+    const host = state(request);
+    host.sessionKey = 'first';
+    const sending = sendChatMessage(host, 'hello');
+    host.sessionKey = 'other';
+    host.chatRunId = 'new-run';
+    host.chatSending = true;
+    host.chatStream = 'new stream';
+    host.chatMessages = [];
+    expire(new ChatAcceptanceTimeoutError('message-1', vi.fn(), () => 'first'));
+    await sending;
+    expect(host.chatRunId).toBe('new-run');
+    expect(host.chatSending).toBe(true);
+    expect(host.chatStream).toBe('new stream');
+    expect(host.chatMessages).toEqual([]);
+    expect(host.lastError).toBeNull();
+  });
+
   it('does not reuse an unconfirmed message in another session', async () => {
     const retry = vi.fn();
     const request = vi.fn().mockRejectedValueOnce(new ChatAcceptanceTimeoutError('message-1', retry, () => 'first'))
