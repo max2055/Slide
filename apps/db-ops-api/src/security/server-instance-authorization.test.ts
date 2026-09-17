@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const source = readFileSync(resolve(import.meta.dirname, '../../server.ts'), 'utf8');
+const source = readFileSync(resolve(import.meta.dirname, '../../server.ts'), 'utf8')
+  + readFileSync(resolve(import.meta.dirname, '../cron/cron-routes.ts'), 'utf8');
 
 function routeBlocks(prefix: string): Array<{ method: string; path: string; block: string }> {
   const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

@@ -16,6 +16,7 @@ export interface CronJobConfig {
   task_type: 'script' | 'agent';
   handler_key: string | null;
   script_id: number | null;
+  script_binding?: import('./script-policy.js').ScriptBinding | null;
   target_instance_id: number | null;
   timezone: string;
   description: string | null;

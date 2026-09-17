@@ -14,6 +14,8 @@ import { CronExecutor } from './cron-executor';
 import { sqlExecutor } from '../sql-executor';
 import { dbConnection } from '../db-connection';
 import { randomUUID } from 'node:crypto';
+import { validateBinding } from './script-policy.js';
+import { executeControlSql } from './control-sql-executor.js';
 
 export interface WorkflowEnqueuer { enqueue(input: { id: string; type: string; schemaVersion: number; payload: Record<string, unknown>; idempotencyKey: string; maxAttempts?: number; availableAt?: Date }): Promise<void>; }
 
@@ -208,25 +210,29 @@ export class CronManager {
    */
   private async executeScriptJob(config: CronJobConfig, logId: number): Promise<void> {
     if (!config.script_id) throw new Error(`任务 #${config.id} 没有绑定脚本`);
-    const { scriptService } = await import('./script-service');
-    const script = await scriptService.getScriptById(config.script_id!);
-    if (!script) throw new Error(`脚本 #${config.script_id} 不存在`);
+    const binding = validateBinding(config.script_binding, config.script_id, config.target_instance_id);
+    const audit = { script_id: binding.scriptId, sha256: binding.sha256, capability: binding.capability, authorized_by: binding.authorizedBy };
+    if (!await this.jobService.recordScriptAuthorization(logId, audit)) {
+      throw new Error('CRON_AUDIT_UNAVAILABLE');
+    }
 
     let result: { success: boolean; columns?: string[]; rows?: any[]; rowCount?: number; duration_ms?: number; error?: string };
 
-    if (config.target_instance_id) {
+    if (config.target_instance_id !== null) {
       // Per Pitfall 3: Set timeout guard before execution
       const timeoutMs = (config.timeout_seconds || 300) * 1000;
-      result = await sqlExecutor.executeSql(config.target_instance_id, script.content, {
+      result = await sqlExecutor.executeSql(config.target_instance_id, binding.content, {
         timeoutMs,
       });
     } else {
-      // Per Pitfall 4: Execute against Slide's own MySQL DB (no target instance)
-      result = await this.executeInternalSql(script.content);
+      const pool = dbConnection.getPool();
+      if (!pool) throw new Error('数据库未连接');
+      result = await executeControlSql(pool, binding, config.timeout_seconds, logId);
     }
 
     // Unified structured_result format matching agent mode
     const structuredResult = {
+      ...audit,
       success: result.success,
       rowCount: result.rowCount ?? 0,
       columns: result.columns ?? [],
@@ -246,29 +252,6 @@ export class CronManager {
     );
 
     await this.jobService.updateRunResult(config.id, status);
-  }
-
-  /**
-   * 对 Slide 自身 MySQL DB 执行 SQL（target_instance_id 为 null 时使用）
-   */
-  private async executeInternalSql(sql: string): Promise<{
-    success: boolean; columns?: string[]; rows?: any[]; rowCount?: number; duration_ms?: number; error?: string;
-  }> {
-    const startTime = Date.now();
-    try {
-      const pool = dbConnection.getPool();
-      if (!pool) return { success: false, error: '数据库未连接', duration_ms: Date.now() - startTime };
-      const [rows] = await pool.execute(sql) as any;
-      return {
-        success: true,
-        columns: rows.length > 0 ? Object.keys(rows[0]) : [],
-        rows,
-        rowCount: Array.isArray(rows) ? rows.length : 0,
-        duration_ms: Date.now() - startTime,
-      };
-    } catch (err: any) {
-      return { success: false, error: err.message, duration_ms: Date.now() - startTime };
-    }
   }
 
   /**
