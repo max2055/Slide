@@ -301,7 +301,9 @@ export async function executeToolWithPolicy(
   };
   let result: ToolResult;
   try {
-    result = await tool.handler(args, context);
+    result = context.signal?.aborted
+      ? { success: false, errorCode: 'TOOL_EXECUTION_CANCELLED', error: 'Tool execution cancelled before handler start' }
+      : await tool.handler(args, context);
   } catch {
     console.error(`[AgentTool] Handler failed for ${tool.name}`);
     result = { success: false, errorCode: 'TOOL_EXECUTION_FAILED', error: 'Tool execution failed' };
