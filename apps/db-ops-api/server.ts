@@ -5452,6 +5452,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   let engine: any;
   let stopWorkflow: (() => Promise<boolean>) | undefined;
   let workflowTimer: ReturnType<typeof setInterval> | undefined;
+  fastify.addHook('onClose', async () => {
+    if (workflowTimer) clearInterval(workflowTimer);
+    if (stopWorkflow && !await stopWorkflow()) console.error('[WorkerRuntime] WORKFLOW_SHUTDOWN_TIMEOUT');
+  });
   const startWorkers = async () => {
   await initializeControlPlane();
   // 初始化 Agent Engine 并启动 WS 传输层

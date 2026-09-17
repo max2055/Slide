@@ -391,6 +391,7 @@ export class NotificationService {
       }
       try {
         await this.sendEmail(channel.config, message, channel.id, ...(signal ? [signal] : []));
+        signal?.throwIfAborted();
         return { success: true };
       } catch {
         signal?.throwIfAborted();
@@ -413,6 +414,7 @@ export class NotificationService {
         : message;
       const response = await this.postJsonToVerifiedTarget(url, target.addresses, payload, ...(signal ? [signal] : []));
 
+      signal?.throwIfAborted();
       if (response.statusCode >= 300 && response.statusCode < 400) {
         return { success: false, error: 'OUTBOUND_REDIRECT_DENIED' };
       }
@@ -475,14 +477,17 @@ export class NotificationService {
       requireTLS: config.smtp_require_tls ?? port !== 465,
       auth,
       tls: { minVersion: 'TLSv1.2' },
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 10_000,
     });
     try {
       signal?.throwIfAborted();
       await transport.sendMail({
-      from: config.from!,
-      to: config.to!,
-      subject: message.subject || '数据库运维助手通知',
-      text: message.text || '',
+        from: config.from!,
+        to: config.to!,
+        subject: message.subject || '数据库运维助手通知',
+        text: message.text || '',
       });
     } finally {
       transport.close();

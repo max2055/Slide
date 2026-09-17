@@ -14,7 +14,7 @@ function deferred<T>() {
 }
 
 // A local SMTP recipient: no external recipients, and no mocked send/sendMail.
-async function smtpRecipient() {
+async function smtpRecipient(acknowledge?: Promise<void>) {
   const sockets = new Set<Socket>();
   const messages: string[] = [];
   const received = deferred<void>();
@@ -38,7 +38,8 @@ async function smtpRecipient() {
           received.resolve();
           body = '';
           data = false;
-          socket.write('250 accepted\r\n');
+          if (acknowledge) void acknowledge.then(() => socket.write('250 accepted\r\n'));
+          else socket.write('250 accepted\r\n');
         } else if (/^EHLO|^HELO/.test(line)) socket.write('250-localhost\r\n250 AUTH PLAIN\r\n');
         else if (/^AUTH/.test(line)) socket.write('235 authenticated\r\n');
         else if (/^DATA/.test(line)) { data = true; socket.write('354 send message\r\n'); }
@@ -133,6 +134,40 @@ it.each(['notification.deliver', 'report.notify'])('cancels stale %s before SMTP
     await first;
     await a.shutdown();
     await b.shutdown();
+    await smtp.close();
+  }
+}, 10000);
+
+it('treats SMTP already accepted before cancellation as in flight, without new audit writes or retries', async () => {
+  const acknowledgement = deferred<void>();
+  const smtp = await smtpRecipient(acknowledgement.promise);
+  const registry = new JobRegistry();
+  const service = new NotificationService();
+  const recordReport = vi.fn(async () => {});
+  registerNotificationHandlers(registry, {
+    getAlertById: async () => null,
+    getChannelById: async () => smtp.channel,
+    recordDeliveryAttempt: vi.fn(async () => {}),
+  }, service, {
+    getReportById: async () => ({ id: 1, name: 'report', type: 'health', format: 'html', status: 'completed' }) as any,
+    recordNotificationDelivery: recordReport,
+  });
+  const store = new LeaseStore('report.notify');
+  const worker = new WorkerRuntime(store, 'b', 3);
+  const run = worker.runOnce((job, context) => registry.execute(job, context));
+  try {
+    await smtp.received.promise;
+    expect(await worker.shutdown(10)).toBe(false);
+    expect(smtp.messages).toHaveLength(1); // Cancellation cannot retract recipient acceptance.
+    acknowledgement.resolve();
+    expect(await run).toBe('cancelled');
+    expect(recordReport).toHaveBeenCalledTimes(1); // started remains uncertain; no false sent/failed.
+    expect(store.terminalOwners).toEqual([]);
+    expect(await worker.shutdown()).toBe(true);
+  } finally {
+    acknowledgement.resolve();
+    await run;
+    await worker.shutdown();
     await smtp.close();
   }
 }, 10000);

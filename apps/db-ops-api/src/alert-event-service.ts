@@ -1,3 +1,4 @@
+import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 告警事件生命周期管理服务
  * 完整事件流：open → investigating → handled → resolved → closed
@@ -494,6 +495,7 @@ class AlertEventService {
 
     try {
       // Find events this alert belongs to that are still in active statuses
+      assertWorkflowActive();
       const [memberships] = await pool.execute(
         `SELECT DISTINCT m.event_id, e.status
          FROM alert_event_members m
@@ -506,6 +508,7 @@ class AlertEventService {
 
       for (const m of memberships) {
         // Check if ALL member alerts of this event are now resolved/closed
+        assertWorkflowActive();
         const [unresolved] = await pool.execute(
           `SELECT COUNT(*) AS cnt FROM alert_event_members mem
            JOIN alerts a ON a.id = mem.alert_id
@@ -515,10 +518,12 @@ class AlertEventService {
         ) as any;
 
         if (unresolved[0]?.cnt === 0) {
+          assertWorkflowActive();
           await pool.execute(
             `UPDATE alert_events SET status = 'resolved', resolved_at = NOW() WHERE id = ?`,
             [m.event_id]
           );
+          assertWorkflowActive();
           await this._logEvent(m.event_id, 'resolved', undefined, {
             action: 'auto_resolved',
             note: '所有关联告警已恢复，事件自动解决',
@@ -528,6 +533,7 @@ class AlertEventService {
         }
       }
     } catch (error) {
+      assertWorkflowActive();
       console.error('[AlertEventService] autoResolveByAlert failed:', error);
     }
   }
