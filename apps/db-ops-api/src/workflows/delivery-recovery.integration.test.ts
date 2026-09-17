@@ -310,4 +310,16 @@ describe.skipIf(!port)('delivery recovery with isolated MySQL and SMTP', () => {
     await expect(gate.acquire(retry, retryContext, frozen)).rejects.toThrow('DELIVERY_RECONCILIATION_REQUIRED');
   });
 
+  it('an explicitly approved retry can recover legacy uncertainty without a prior new-style attempt UUID', async () => {
+    const id = await enqueue();
+    await pool.execute("INSERT INTO report_notification_deliveries (workflow_job_id,report_id,channel_id,attempt_number,status) VALUES ('legacy',1,1,1,'started')");
+    const [job, context] = await claim();
+    await expect(gate.acquire(job, context, frozen)).rejects.toThrow('DELIVERY_RECONCILIATION_REQUIRED');
+    await pool.execute("UPDATE workflow_jobs SET state = 'dead_letter', lease_expires_at = NULL WHERE id = ?", [id]);
+    const view = (await gate.inspect(id))!;
+    await gate.recover(id, 7, { version: view.delivery.version, decision: 'retry', reason: 'reviewed migration', reconciliation: 'receiver cannot confirm old attempt', acceptDuplicateRisk: true });
+    const [retry, retryContext] = await claim('b');
+    expect(await gate.acquire(retry, retryContext, frozen)).not.toBeNull();
+  });
+
 });
