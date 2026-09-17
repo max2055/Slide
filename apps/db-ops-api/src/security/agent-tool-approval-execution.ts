@@ -8,6 +8,7 @@ interface Transaction extends AuditExecutor {
   commit(): Promise<void>;
   rollback(): Promise<void>;
   release(): void;
+  destroy(): void;
 }
 interface Pool { getConnection(): Promise<Transaction> }
 
@@ -25,16 +26,23 @@ export class AgentToolApprovalExecution {
   private async transaction<T>(action: (connection: Transaction) => Promise<T>): Promise<T> {
     if (!this.pool) throw new Error('AGENT_APPROVAL_STORE_UNAVAILABLE');
     const connection = await this.pool.getConnection();
+    let discarded = false;
     try {
       await connection.beginTransaction();
       const result = await action(connection);
       await connection.commit();
       return result;
     } catch (error) {
-      await connection.rollback();
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        discarded = true;
+        connection.destroy();
+        throw rollbackError;
+      }
       throw error;
     } finally {
-      connection.release();
+      if (!discarded) connection.release();
     }
   }
 

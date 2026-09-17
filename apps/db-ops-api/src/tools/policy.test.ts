@@ -35,7 +35,7 @@ describe('actor tool policy', () => {
       failure === 'permission' ? actor(['viewer']) : actor(['operator'], ['instance:read']),
       tool({ requiresApproval: true, handler }),
       { approvalId: '42' },
-      async () => failure === 'scope' ? { type: 'instance', instanceId: 12 } : { type: 'global' },
+      async () => failure === 'scope' ? { type: 'instance', instanceId: 12 } : { type: 'none' },
       { consume },
       { record: async () => { if (failure === 'audit') throw new Error('offline'); } },
     );

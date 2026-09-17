@@ -255,11 +255,15 @@ export async function executeToolWithPolicy(
           applyApproval(await approvalAuthorizer.consume(actor, tool, args, resource, approvalOptions));
         }
       }
-    } catch {
-      if (executionOptions?.signal?.aborted) return cancelled();
+    } catch (error) {
+      if (error instanceof Error && error.message === 'TOOL_EXECUTION_CANCELLED') return cancelled();
       if (decision.allow) {
         decision = deny('AUDIT_UNAVAILABLE', actor, tool, args, resource);
-        return policyResult(decision, { success: false, errorCode: decision.reasonCode, error: 'Tool access denied' });
+        return policyResult(decision, {
+          success: false, errorCode: decision.reasonCode, error: 'Tool access denied',
+          ...(approvalRequired ? { data: { approvalId: args.approvalId, requestId: actor.requestId,
+            recovery: 'check-approval-and-execution-intent-before-retry' } } : {}),
+        });
       }
     }
   }
