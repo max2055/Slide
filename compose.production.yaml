@@ -109,6 +109,9 @@ services:
       context: .
       dockerfile: apps/sandbox-controller/Dockerfile
     restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
     environment:
       SANDBOX_CONTROLLER_PORT: "3010"
       SANDBOX_CONTROLLER_SECRET: ${SANDBOX_CONTROLLER_SECRET:?SANDBOX_CONTROLLER_SECRET is required}
@@ -118,6 +121,11 @@ services:
       SANDBOX_EXECUTION_PROFILES: ${SANDBOX_EXECUTION_PROFILES:?SANDBOX_EXECUTION_PROFILES is required}
       SANDBOX_WORKSPACE_ROOT: ${SANDBOX_WORKSPACE_ROOT:?SANDBOX_WORKSPACE_ROOT is required}
       SANDBOX_MAX_CONCURRENT_JOBS: ${SANDBOX_MAX_CONCURRENT_JOBS:-4}
+      SANDBOX_NONCE_DB_HOST: mysql
+      SANDBOX_NONCE_DB_PORT: "3306"
+      SANDBOX_NONCE_DB_NAME: slide
+      SANDBOX_NONCE_DB_USER: ${SANDBOX_NONCE_DB_USER:?SANDBOX_NONCE_DB_USER is required}
+      SANDBOX_NONCE_DB_PASSWORD: ${SANDBOX_NONCE_DB_PASSWORD:?SANDBOX_NONCE_DB_PASSWORD is required}
       DOCKER_HOST: unix:///run/docker.sock
     user: "${ROOTLESS_DOCKER_UID:?ROOTLESS_DOCKER_UID is required}:${ROOTLESS_DOCKER_GID:?ROOTLESS_DOCKER_GID is required}"
     read_only: true
@@ -129,7 +137,7 @@ services:
       - ${ROOTLESS_DOCKER_SOCKET:?ROOTLESS_DOCKER_SOCKET is required}:/run/docker.sock:ro
       - ${SANDBOX_WORKSPACE_ROOT:?SANDBOX_WORKSPACE_ROOT is required}:${SANDBOX_WORKSPACE_ROOT:?SANDBOX_WORKSPACE_ROOT is required}:rw
     expose: ["3010"]
-    networks: [control]
+    networks: [control, data]
     healthcheck:
       test: [CMD, node, -e, "fetch('http://127.0.0.1:3010/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s
