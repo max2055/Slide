@@ -126,7 +126,7 @@ class SqlExecutor {
       try {
         await sqlExecutionIntent.begin({ instanceId, sql, database: context?.database, userId: context?.userId }, context!.approvalGrant!);
       } catch (error: any) {
-        return { success: false, executionState: 'not_started', operationId, retryable: false,
+        return { success: false, executionState: error.message === 'SQL_OPERATION_ALREADY_RECORDED_RECONCILE_DO_NOT_RETRY' ? 'unknown' : 'not_started', operationId, retryable: false,
           error: `SQL_INTENT_REJECTED: ${error.message}; inspect operation before any retry` };
       }
     }
