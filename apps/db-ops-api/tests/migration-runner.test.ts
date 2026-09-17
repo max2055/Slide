@@ -2,14 +2,16 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isMigrationChecksumAccepted, loadMigrations, MigrationError, MigrationRunner, splitSqlStatements, statementsForExecution } from '../src/migrations/runner.js';
 
 class FakePool {
   entries = new Map<string, any>();
   calls: string[] = [];
   lockAvailable = true;
-  async getConnection() { return { query: this.query.bind(this), release() {} }; }
+  schemaValid = true;
+  released = 0;
+  async getConnection() { return { query: this.query.bind(this), release: () => { this.released++; } }; }
   async query(sql: string, values: any[] = []): Promise<any> {
     this.calls.push(sql);
     if (sql.includes('GET_LOCK')) return [[{ locked: this.lockAvailable ? 1 : 0 }]];
@@ -21,6 +23,7 @@ class FakePool {
     if (sql.includes("config_key = 'agent_sandbox_enabled'")) {
       return [[{ config_value: 'false', value_type: 'boolean' }]];
     }
+    if (sql.includes('information_schema.COLUMNS') && !this.schemaValid) return [[]];
     if (sql.includes('information_schema.COLUMNS')) return [[
       ...['id', 'username', 'password_hash', 'session_version'].map((column_name) => ({ table_name: 'users', column_name })),
       ...['id', 'token_hash', 'user_id', 'session_version', 'revoked'].map((column_name) => ({ table_name: 'refresh_tokens', column_name })),
@@ -69,7 +72,11 @@ class FakePool {
       return [{ affectedRows: 1 }];
     }
     if (sql.startsWith('UPDATE app_schema_migrations SET status = \'completed\'')) {
-      this.entries.get(values[0]).status = 'completed';
+      const repair = sql.includes("status = 'failed'");
+      const entry = this.entries.get(values[repair ? 1 : 0]);
+      if (!entry || (repair && entry.status !== 'failed')) return [{ affectedRows: 0 }];
+      entry.status = 'completed';
+      if (repair) entry.error = values[0];
       return [{ affectedRows: 1 }];
     }
     if (sql.startsWith('UPDATE app_schema_migrations SET status = \'failed\'')) {
@@ -183,4 +190,121 @@ ALTER TABLE cron_job_logs
     pool.lockAvailable = false;
     await expect(runner.run()).rejects.toBeInstanceOf(MigrationError);
   });
+});
+
+
+describe('external migration repair acknowledgement', () => {
+  async function fixture() {
+    const id = '100_example.sql';
+    const directory = await migrationDirectory({ [id]: 'CREATE TABLE example (id INT);' });
+    const [migration] = await loadMigrations(directory);
+    const pool = new FakePool();
+    pool.entries.set(id, { migration_id: id, checksum: migration.checksum,
+      status: 'failed', statement_index: 1, error: 'original DDL failure' });
+    const verify = vi.fn(async () => {});
+    const validators = { [id]: { checksum: migration.checksum, verify } };
+    return { id, directory, migration, pool, verify, validators };
+  }
+
+  it('refuses the legacy repair shortcut without migration-specific verification', async () => {
+    const { id, directory, pool } = await fixture();
+    await expect(new MigrationRunner(pool, directory).repair(id, 'operator', 'fixed externally'))
+      .rejects.toThrow('verification');
+    expect(pool.entries.get(id).status).toBe('failed');
+  });
+
+  it('requires global and migration-specific checks and never replays DDL', async () => {
+    const { id, directory, pool, verify, validators } = await fixture();
+    const runner = new MigrationRunner(pool, directory, validators);
+    pool.schemaValid = false;
+    await expect(runner.acknowledgeExternallyRepairedMigration(id, 'operator', 'fixed externally'))
+      .rejects.toThrow('Schema invariant');
+    expect(pool.entries.get(id).status).toBe('failed');
+    pool.schemaValid = true;
+    verify.mockRejectedValueOnce(new Error('example.id missing'));
+    await expect(runner.acknowledgeExternallyRepairedMigration(id, 'operator', 'fixed externally'))
+      .rejects.toThrow('example.id missing');
+    expect(pool.entries.get(id).status).toBe('failed');
+    await runner.acknowledgeExternallyRepairedMigration(id, 'operator', 'fixed externally');
+    const entry = pool.entries.get(id);
+    expect(entry.status).toBe('completed');
+    expect(entry.statement_index).toBe(1);
+    expect(JSON.parse(entry.error)).toMatchObject({ actor: 'operator', reason: 'fixed externally',
+      previousError: 'original DDL failure', action: 'acknowledgeExternallyRepairedMigration' });
+    await runner.run();
+    expect(pool.calls.filter(sql => sql.startsWith('CREATE TABLE example'))).toHaveLength(0);
+    expect(pool.calls.filter(sql => sql.includes('RELEASE_LOCK'))).toHaveLength(4);
+    expect(pool.released).toBe(4);
+  });
+
+  it.each(['running', 'completed', 'baselined', 'absent'])('rejects %s state', async status => {
+    const { id, directory, pool, validators, verify } = await fixture();
+    if (status === 'absent') pool.entries.delete(id);
+    else pool.entries.get(id).status = status;
+    await expect(new MigrationRunner(pool, directory, validators)
+      .acknowledgeExternallyRepairedMigration(id, 'operator', 'fixed')).rejects.toThrow('not failed');
+    expect(verify).not.toHaveBeenCalled();
+    expect(pool.released).toBe(1);
+  });
+
+  it('rejects unknown IDs, blank audit fields and unavailable locks', async () => {
+    const { id, directory, pool, validators } = await fixture();
+    const runner = new MigrationRunner(pool, directory, validators);
+    await expect(runner.acknowledgeExternallyRepairedMigration('unknown.sql', 'operator', 'fixed'))
+      .rejects.toThrow('Unknown migration');
+    await expect(runner.acknowledgeExternallyRepairedMigration(id, ' ', 'fixed'))
+      .rejects.toThrow('actor and reason');
+    await expect(runner.acknowledgeExternallyRepairedMigration(id, 'operator', ' '))
+      .rejects.toThrow('actor and reason');
+    pool.lockAvailable = false;
+    await expect(runner.acknowledgeExternallyRepairedMigration(id, 'operator', 'fixed'))
+      .rejects.toThrow('Could not acquire migration lock');
+    expect(pool.entries.get(id).status).toBe('failed');
+    expect(pool.calls.filter(sql => sql.includes('RELEASE_LOCK'))).toHaveLength(0);
+  });
+
+  it('refuses checksum drift and validators for a different migration revision', async () => {
+    const { id, directory, pool, validators, verify } = await fixture();
+    const runner = new MigrationRunner(pool, directory, validators);
+    const entry = pool.entries.get(id);
+    const checksum = entry.checksum;
+    entry.checksum = 'changed';
+    await expect(runner.acknowledgeExternallyRepairedMigration(id, 'operator', 'fixed'))
+      .rejects.toThrow('Checksum mismatch');
+    entry.checksum = checksum;
+    validators[id].checksum = 'wrong revision';
+    await expect(runner.acknowledgeExternallyRepairedMigration(id, 'operator', 'fixed'))
+      .rejects.toThrow('verification');
+    expect(verify).not.toHaveBeenCalled();
+    expect(entry.status).toBe('failed');
+    expect(entry.error).toBe('original DDL failure');
+  });
+
+  it('keeps the deprecated alias guarded and records a successful confirmation', async () => {
+    const { id, directory, pool, validators, verify } = await fixture();
+    await new MigrationRunner(pool, directory, validators).repair(id, ' operator ', ' fixed externally ');
+    expect(verify).toHaveBeenCalledOnce();
+    expect(pool.entries.get(id).status).toBe('completed');
+    expect(JSON.parse(pool.entries.get(id).error)).toMatchObject({ actor: 'operator', reason: 'fixed externally' });
+  });
+
+  it('rejects oversized audit evidence without truncation or changing the failed entry', async () => {
+    const { id, directory, pool, validators } = await fixture();
+    await expect(new MigrationRunner(pool, directory, validators)
+      .repair(id, 'operator', '修复'.repeat(12000))).rejects.toThrow('ledger capacity');
+    expect(pool.entries.get(id).status).toBe('failed');
+    expect(pool.entries.get(id).error).toBe('original DDL failure');
+    expect(pool.released).toBe(1);
+  });
+
+  it('does not report success if the guarded ledger update loses its failed state', async () => {
+    const { id, directory, pool, validators, verify } = await fixture();
+    // Simulate an external writer that does not respect the advisory lock.
+    verify.mockImplementationOnce(async () => { pool.entries.get(id).status = 'running'; });
+    await expect(new MigrationRunner(pool, directory, validators)
+      .repair(id, 'operator', 'fixed')).rejects.toThrow('changed during repair verification');
+    expect(pool.entries.get(id).error).toBe('original DDL failure');
+    expect(pool.released).toBe(1);
+  });
+
 });

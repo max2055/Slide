@@ -1,4 +1,4 @@
-import type { MigrationPool } from './types.js';
+import type { MigrationQuery } from './types.js';
 
 const requiredColumns: Record<string, string[]> = {
   users: ['id', 'username', 'password_hash', 'session_version'],
@@ -98,7 +98,7 @@ const networkRequiredForeignKeys: Array<[string, string]> = [
 
 export class SchemaInvariantError extends Error {}
 
-export async function assertSchemaInvariants(pool: MigrationPool): Promise<void> {
+export async function assertSchemaInvariants(pool: MigrationQuery): Promise<void> {
   const tables = Object.keys(requiredColumns);
   const inspectedTables = [...new Set([
     ...tables,
