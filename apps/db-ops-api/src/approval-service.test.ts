@@ -41,6 +41,18 @@ describe('ApprovalService', () => {
     mockPool.execute.mockResolvedValue([{}, null] as any);
   });
 
+  it('keeps uncertain mutations executing and does not announce lifecycle failure', async () => {
+    mockPool.execute.mockResolvedValueOnce([[{ id: 1, instance_id: 1, sql_text: 'DELETE FROM x', operation_id: 'op' }]])
+      .mockResolvedValue([{}, null]);
+    const outcome = { success: false, executionState: 'unknown', retryable: false, operationId: 'op', error: 'do not retry' };
+    vi.mocked(sqlExecutor.executeSql).mockResolvedValue(outcome as any);
+    const onCompleted = vi.fn();
+    await approvalService.reviewRequest(1, { action: 'approve', reviewed_by: 1 }, { onCompleted });
+    expect(onCompleted).not.toHaveBeenCalled();
+    expect(mockPool.execute.mock.calls.some(([, values]) => values?.[0] === 'execution_failed')).toBe(false);
+    expect(mockPool.execute).toHaveBeenCalledWith(expect.stringContaining('SET execution_result'), [JSON.stringify(outcome), 1]);
+  });
+
   describe('writeEvent', () => {
     it('Test 1: should insert into approval_events with correct parameterized values', async () => {
       await (approvalService as any).writeEvent(1, 'submitted', { key: 'val' }, 42);
