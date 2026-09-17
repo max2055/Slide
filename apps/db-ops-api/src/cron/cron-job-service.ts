@@ -37,7 +37,7 @@ export class CronJobDatabaseService {
           ? `WHERE target_instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')})`
           : 'WHERE 1 = 0';
       const [rows] = await pool.execute(
-        `SELECT id, name, task_description, cron_expr, enabled, task_type, handler_key, script_id, target_instance_id, timezone, description,
+        `SELECT id, name, task_description, cron_expr, enabled, task_type, handler_key, script_id, script_binding, target_instance_id, timezone, description,
                 last_run_at, next_run_at, last_result, timeout_seconds, retry_count,
                 created_at, updated_at
          FROM cron_jobs
@@ -61,7 +61,7 @@ export class CronJobDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, task_description, cron_expr, enabled, task_type, handler_key, script_id, target_instance_id, timezone, description,
+        `SELECT id, name, task_description, cron_expr, enabled, task_type, handler_key, script_id, script_binding, target_instance_id, timezone, description,
                 last_run_at, next_run_at, last_result, timeout_seconds, retry_count,
                 created_at, updated_at
          FROM cron_jobs
@@ -84,7 +84,7 @@ export class CronJobDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, task_description, output_schema, cron_expr, enabled, task_type, handler_key, script_id, target_instance_id, timezone, description,
+        `SELECT id, name, task_description, output_schema, cron_expr, enabled, task_type, handler_key, script_id, script_binding, target_instance_id, timezone, description,
                 last_run_at, next_run_at, last_result, timeout_seconds, retry_count,
                 created_at, updated_at
          FROM cron_jobs
@@ -106,7 +106,7 @@ export class CronJobDatabaseService {
   /**
    * 更新任务配置（仅更新非 undefined 的字段）
    */
-  async updateJob(id: number, data: Partial<Pick<CronJobConfig, 'task_description' | 'cron_expr' | 'enabled' | 'task_type' | 'script_id' | 'target_instance_id' | 'timezone' | 'description' | 'timeout_seconds' | 'retry_count'>>): Promise<boolean> {
+  async updateJob(id: number, data: Partial<Pick<CronJobConfig, 'task_description' | 'cron_expr' | 'enabled' | 'task_type' | 'script_id' | 'script_binding' | 'target_instance_id' | 'timezone' | 'description' | 'timeout_seconds' | 'retry_count'>>): Promise<boolean> {
     const pool = this.getPool();
     if (!pool) throw new Error('数据库未连接');
 
@@ -132,6 +132,11 @@ export class CronJobDatabaseService {
       if (data.task_type !== undefined) {
         updates.push('task_type = ?');
         values.push(data.task_type);
+      }
+
+      if (data.script_binding !== undefined) {
+        updates.push('script_binding = ?');
+        values.push(data.script_binding === null ? null : JSON.stringify(data.script_binding));
       }
 
       if (data.script_id !== undefined) {
@@ -225,6 +230,7 @@ export class CronJobDatabaseService {
     cron_expr: string;
     task_type?: 'script' | 'agent';
     script_id?: number;
+    script_binding?: CronJobConfig['script_binding'];
     target_instance_id?: number;
     timezone?: string;
     description?: string;
@@ -236,14 +242,15 @@ export class CronJobDatabaseService {
 
     try {
       const [result] = await pool.execute(
-        `INSERT INTO cron_jobs (name, task_description, cron_expr, task_type, script_id, target_instance_id, timezone, description, timeout_seconds)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO cron_jobs (name, task_description, cron_expr, task_type, script_id, script_binding, target_instance_id, timezone, description, timeout_seconds)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           data.name,
           data.task_description,
           data.cron_expr,
           data.task_type || 'agent',
           data.script_id || null,
+          data.script_binding ? JSON.stringify(data.script_binding) : null,
           data.target_instance_id || null,
           data.timezone || 'Asia/Shanghai',
           data.description || null,
@@ -356,6 +363,17 @@ export class CronJobDatabaseService {
       console.error('创建执行日志失败:', error);
       throw error;
     }
+  }
+
+  /** Persist execution authority without marking the running log as finished. */
+  async recordScriptAuthorization(logId: number, audit: Record<string, unknown>): Promise<boolean> {
+    const pool = this.getPool();
+    if (!pool) return false;
+    const [result] = await pool.execute(
+      "UPDATE cron_job_logs SET structured_result = ? WHERE id = ? AND status = 'running'",
+      [JSON.stringify(audit), logId],
+    ) as any;
+    return result.affectedRows === 1;
   }
 
   /**

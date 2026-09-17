@@ -3,8 +3,11 @@
  * 提供 cron_scripts 表的 CRUD 操作
  */
 import mysql from 'mysql2/promise';
+import { hasInstanceAccess, hasUnrestrictedInstanceAccess } from '../auth/require-instance-access.js';
 import { dbConnection } from '../db-connection';
 import { CronScript, CreateScriptInput, UpdateScriptInput } from './types';
+
+type ScriptActor = Parameters<typeof hasInstanceAccess>[0];
 
 export class ScriptService {
   /**
@@ -87,14 +90,28 @@ export class ScriptService {
     }
   }
 
+  private async assertReferencesAccessible(id: number, actor: ScriptActor): Promise<void> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('数据库未连接');
+    // Include disabled jobs. Query errors must fail closed, never become an empty list.
+    const [rows] = await pool.execute('SELECT target_instance_id FROM cron_jobs WHERE script_id = ?', [id]);
+    for (const row of rows as Array<{ target_instance_id: number | null }>) {
+      if (!(row.target_instance_id === null ? hasUnrestrictedInstanceAccess(actor)
+        : hasInstanceAccess(actor, row.target_instance_id, 'read-write'))) {
+        throw new Error('CRON_SCRIPT_ACCESS_DENIED');
+      }
+    }
+  }
+
   /**
    * 更新脚本（直接覆盖 content，无版本历史）
    */
-  async updateScript(id: number, data: UpdateScriptInput): Promise<boolean> {
+  async updateScript(id: number, data: UpdateScriptInput, actor: ScriptActor): Promise<boolean> {
     const pool = this.getPool();
     if (!pool) throw new Error('数据库未连接');
 
     try {
+      await this.assertReferencesAccessible(id, actor);
       const updates: string[] = [];
       const values: any[] = [];
 
@@ -142,10 +159,11 @@ export class ScriptService {
   /**
    * 删除脚本
    */
-  async deleteScript(id: number): Promise<boolean> {
+  async deleteScript(id: number, actor: ScriptActor): Promise<boolean> {
     const pool = this.getPool();
     if (!pool) return false;
 
+    await this.assertReferencesAccessible(id, actor);
     try {
       const [result] = await pool.execute(
         'DELETE FROM cron_scripts WHERE id = ?',
