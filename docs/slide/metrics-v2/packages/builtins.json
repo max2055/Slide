@@ -1,0 +1,419 @@
+[
+  {
+    "package": {
+      "id": "mysql-basic",
+      "version": "1.0.0",
+      "contract_version": "1.0.0",
+      "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c",
+      "resource_type": "instance",
+      "applicability": [
+        {
+          "attribute": "db.engine",
+          "values": [
+            "mysql"
+          ]
+        },
+        {
+          "attribute": "db.version",
+          "values": [
+            "5.7",
+            "8.0",
+            "8.4"
+          ]
+        }
+      ],
+      "collectors": [
+        {
+          "id": "mysql-status",
+          "method": "sql",
+          "implementation_ref": "builtin:mysql.status.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "db.uptime_seconds",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "Uptime",
+              "input_unit": "s",
+              "output_unit": "s",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            },
+            {
+              "metric": {
+                "id": "mysql.queries.total",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "Queries",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "extensions": [
+      {
+        "id": "mysql.queries.total",
+        "semantic_version": "1.0.0",
+        "meaning": "MySQL Queries status counter: statements executed by clients and stored programs; not committed transactions.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "counter",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "cumulative",
+        "monotonic": true,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "rate"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "mysql"
+      },
+      {
+        "id": "mysql.queries.per_second",
+        "semantic_version": "1.0.0",
+        "meaning": "Rate of mysql.queries.total over a valid interval in the same database counter epoch.",
+        "unit": "count/s",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "mysql"
+      }
+    ],
+    "derived": [
+      {
+        "id": "mysql-query-rate",
+        "output": {
+          "id": "mysql.queries.per_second",
+          "semantic_version": "1.0.0"
+        },
+        "transform_version": "1.0.0",
+        "inputs": [
+          {
+            "id": "mysql.queries.total",
+            "semantic_version": "1.0.0"
+          }
+        ],
+        "operation": "rate",
+        "join": "same_resource_and_dimensions",
+        "max_skew_ms": 1000,
+        "on_missing": "null",
+        "on_zero_denominator": "null",
+        "quality_propagation": "worst_input",
+        "accuracy_propagation": "least_certain_input"
+      }
+    ],
+    "transforms": [
+      {
+        "id": "normalize",
+        "version": "1.0.0"
+      },
+      {
+        "id": "derive",
+        "version": "1.0.0"
+      }
+    ],
+    "recommendations": {
+      "interval_ms": 60000,
+      "timeout_ms": 5000,
+      "stale_after_ms": 120000,
+      "max_counter_gap_ms": 300000,
+      "max_rows": 100,
+      "enabled": true
+    },
+    "documentation": [
+      {
+        "collector_id": "mysql-status",
+        "permissions": [
+          "SHOW GLOBAL STATUS"
+        ],
+        "discovery": "singleton database status row; no database enumeration"
+      }
+    ]
+  },
+  {
+    "package": {
+      "id": "linux-basic",
+      "version": "1.0.0",
+      "contract_version": "1.0.0",
+      "digest": "sha256:706820e5789b1b853bb3fc5f9d96573b2edad33630acbc7f9f72561caca58dc6",
+      "resource_type": "server",
+      "applicability": [
+        {
+          "attribute": "os.family",
+          "values": [
+            "linux"
+          ]
+        }
+      ],
+      "collectors": [
+        {
+          "id": "linux-basic",
+          "method": "ssh",
+          "implementation_ref": "builtin:linux.basic.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "linux.uptime.seconds",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "uptime",
+              "input_unit": "s",
+              "output_unit": "s",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            },
+            {
+              "metric": {
+                "id": "linux.load.one_minute",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "load_1min",
+              "input_unit": "1",
+              "output_unit": "1",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "extensions": [
+      {
+        "id": "linux.uptime.seconds",
+        "semantic_version": "1.0.0",
+        "meaning": "Linux /proc/uptime first field: seconds since host boot, including suspend.",
+        "unit": "s",
+        "resource_type": "server",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "linux"
+      },
+      {
+        "id": "linux.load.one_minute",
+        "semantic_version": "1.0.0",
+        "meaning": "Linux /proc/loadavg one-minute runnable/uninterruptible task load average; not CPU utilization.",
+        "unit": "1",
+        "resource_type": "server",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "linux"
+      }
+    ],
+    "derived": [],
+    "transforms": [
+      {
+        "id": "normalize",
+        "version": "1.0.0"
+      }
+    ],
+    "recommendations": {
+      "interval_ms": 60000,
+      "timeout_ms": 5000,
+      "stale_after_ms": 120000,
+      "max_counter_gap_ms": 300000,
+      "max_rows": 100,
+      "enabled": true
+    },
+    "documentation": [
+      {
+        "collector_id": "linux-basic",
+        "permissions": [
+          "SSH login",
+          "read /proc/uptime and /proc/loadavg"
+        ],
+        "discovery": "singleton Linux procfs; fixed commands from ServerMetricProvider; no path parameters"
+      }
+    ]
+  },
+  {
+    "package": {
+      "id": "if-mib-basic",
+      "version": "1.0.0",
+      "contract_version": "1.0.0",
+      "digest": "sha256:03a02c7e123c2078d8851a0bf404ca98cd63225dc3eaa550550d303d8edc8029",
+      "resource_type": "network_device",
+      "applicability": [
+        {
+          "attribute": "snmp.version",
+          "values": [
+            "2",
+            "3"
+          ]
+        }
+      ],
+      "collectors": [
+        {
+          "id": "if-mib-status",
+          "method": "snmp",
+          "implementation_ref": "builtin:if_mib.status.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "network.interface.oper_up",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "ifOperStatus",
+              "input_unit": "1",
+              "output_unit": "1",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "extensions": [],
+    "derived": [],
+    "transforms": [
+      {
+        "id": "normalize",
+        "version": "1.0.0"
+      }
+    ],
+    "recommendations": {
+      "interval_ms": 60000,
+      "timeout_ms": 5000,
+      "stale_after_ms": 120000,
+      "max_counter_gap_ms": 300000,
+      "max_rows": 100,
+      "enabled": true
+    },
+    "documentation": [
+      {
+        "collector_id": "if-mib-status",
+        "permissions": [
+          "SNMP read IF-MIB ifTable"
+        ],
+        "discovery": "standard IF-MIB ifTable index; requires driver-provided interface generation; reject duplicates/overflow; all vendors; no enterprise OIDs"
+      }
+    ]
+  }
+]
