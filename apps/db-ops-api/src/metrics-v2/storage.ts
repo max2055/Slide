@@ -74,6 +74,25 @@ export class MysqlMetricStorage {
     return rows.map(row => decode<NormalizedObservation>(row.payload));
   }
 
+  /** V2 aggregation uses half-open windows and needs the last prior sample for intervals crossing from. */
+  async queryWindow(series: Series, from: string, to: string, limit = 1000): Promise<NormalizedObservation[]> {
+    boundedLimit(limit);
+    if (!Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to)) || Date.parse(to) <= Date.parse(from)
+      || Date.parse(to) - Date.parse(from) > 31 * DAY) throw new Error('STORAGE_RANGE');
+    const key = seriesHash(series);
+    const [prior] = await this.pool.execute<RowDataPacket[]>(`SELECT payload FROM metric_v2_observations FORCE INDEX (idx_metric_v2_range)
+      WHERE series_hash = ? AND stage = 'normalized' AND observed_at < ?
+      ORDER BY observed_at DESC, id DESC LIMIT 1`, [key, sqlTime(from)]);
+    const [rows] = await this.pool.execute<RowDataPacket[]>(`SELECT payload FROM metric_v2_observations FORCE INDEX (idx_metric_v2_range)
+      WHERE series_hash = ? AND stage = 'normalized' AND observed_at >= ? AND observed_at < ?
+      ORDER BY observed_at ASC, id ASC LIMIT ${limit + 1}`, [key, sqlTime(from), sqlTime(to)]);
+    if (rows.length > limit) throw new Error('QUERY_LIMIT_EXCEEDED');
+    const [next] = await this.pool.execute<RowDataPacket[]>(`SELECT payload FROM metric_v2_observations FORCE INDEX (idx_metric_v2_range)
+      WHERE series_hash = ? AND stage = 'normalized' AND observed_at >= ?
+      ORDER BY observed_at ASC, id DESC LIMIT 1`, [key, sqlTime(to)]);
+    return [...prior, ...rows, ...next].map(row => decode<NormalizedObservation>(row.payload));
+  }
+
   async evidence(id: string): Promise<{ status: 'available'; observation: StoredObservation } | { status: 'expired' | 'not_retained' }> {
     const [rows] = await this.pool.execute<RowDataPacket[]>(`SELECT payload,
       (evidence_expires_at IS NOT NULL AND evidence_expires_at <= ?) AS expired
