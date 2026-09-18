@@ -1,0 +1,14 @@
+{
+  "contract_version": "1.0.0",
+  "resource": { "type": "instance", "id": 1 },
+  "package": "mysql-basic@1.0.0",
+  "counter_start": "2026-09-01T00:00:00.000Z",
+  "first": { "Uptime": 60, "Queries": "100" },
+  "second_after_ms": 60000,
+  "second": { "Uptime": 120, "Queries": "220" },
+  "expected_rate": 2,
+  "logical_reads_per_batch": 1,
+  "outputs_per_batch": 3,
+  "global_concurrency": 4,
+  "max_attempts": 3
+}
