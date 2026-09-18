@@ -1,0 +1,17 @@
+{
+  "contract_version": "1.0.0",
+  "counter_cases": [
+    { "name": "actual-elapsed", "before": "1000", "after": "7000", "elapsed_ms": 60000, "expected": 800, "reason": "none" },
+    { "name": "counter64-above-2^53", "before": "9007199254740993", "after": "9007199254746993", "elapsed_ms": 60000, "expected": 800, "reason": "none" },
+    { "name": "counter64-near-limit", "before": "18446744073709551000", "after": "18446744073709551600", "elapsed_ms": 6000, "expected": 800, "reason": "none" },
+    { "name": "real-zero", "before": "7000", "after": "7000", "elapsed_ms": 60000, "expected": 0, "reason": "none" },
+    { "name": "fractional-seconds", "before": "100", "after": "103", "elapsed_ms": 1500, "expected": 16, "reason": "none" },
+    { "name": "long-gap", "before": "1000", "after": "7000", "elapsed_ms": 300001, "expected": null, "reason": "gap" },
+    { "name": "counter64-decrease", "before": "7000", "after": "1000", "elapsed_ms": 60000, "expected": null, "reason": "counter_reset" },
+    { "name": "proven-wrap32", "before": "4294967290", "after": "4", "bits": "32", "wrap": true, "bound": "100", "elapsed_ms": 1000, "expected": 80, "reason": "counter_wrap" },
+    { "name": "unproven-wrap32", "before": "4294967290", "after": "4", "bits": "32", "bound": "100", "elapsed_ms": 1000, "expected": null, "reason": "counter_reset" },
+    { "name": "ambiguous-multiple-wrap32", "before": "4294967290", "after": "4", "bits": "32", "wrap": true, "bound": "8589934592", "elapsed_ms": 1000, "expected": null, "reason": "counter_reset" },
+    { "name": "wrap-without-bound", "before": "4294967290", "after": "4", "bits": "32", "wrap": true, "elapsed_ms": 1000, "expected": null, "reason": "counter_reset" },
+    { "name": "hidden-multiple-wrap32", "before": "10", "after": "20", "bits": "32", "bound": "8589934592", "elapsed_ms": 1000, "expected": null, "reason": "counter_reset" }
+  ]
+}
