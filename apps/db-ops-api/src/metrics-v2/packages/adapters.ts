@@ -1,7 +1,16 @@
 import type { Client } from 'ssh2';
 import type { Pool } from 'mysql2/promise';
 import type { SshSessionPool } from '../../ssh-session-pool.js';
-import serverMetricProvider from '../../server-metric-provider.js';
+import serverMetricProvider, {
+  DISKSTATS_COMMAND,
+  FILESYSTEM_BYTES_COMMAND,
+  FILESYSTEM_INODES_COMMAND,
+  FILESYSTEM_MOUNTS_COMMAND,
+  NETWORK_COMMAND,
+  parseProcDiskstatsExact,
+  parseProcNetDevExact,
+} from '../../server-metric-provider.js';
+import { parseFilesystemEvidence } from '../../linux-host-evidence-service.js';
 import { DEFAULT_HUAWEI_MIB_CATALOG } from '../../network-devices/huawei-mib-catalog.js';
 import type { SnmpClient } from '../../network-devices/snmp-client.js';
 import type { SnmpConfig, SnmpTableRow } from '../../network-devices/snmp-types.js';
@@ -26,6 +35,12 @@ export interface DriverEvidence {
   counter?: RawObservation['counter'];
   /** Stable identity for each interface generation, supplied by discovery ownership, not display name. */
   interface_epochs?: Record<string, string>;
+  /** Stable lifecycle evidence for host cumulative counters; refreshed by inventory, never inferred from a counter value. */
+  host_counter_epochs?: {
+    boot: { epoch: string; observed_at: string };
+    interfaces: Record<string, { epoch: string; observed_at: string }>;
+    devices: Record<string, { epoch: string; observed_at: string }>;
+  };
 }
 export interface DecodedRow {
   dimensions: Record<string, string>;
@@ -53,6 +68,39 @@ function uint(value: unknown): RawObservation['value'] {
   const raw = typeof value === 'bigint' ? value.toString() : typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : value;
   if (typeof raw !== 'string' || !/^(0|[1-9]\d*)$/.test(raw) || raw.length > 20 || BigInt(raw) >= (1n << 64n)) throw new AdapterError('parse_error');
   return { encoding: 'uint64', value: raw };
+}
+
+function exactCounter(value: number | string): RawObservation['value'] {
+  return uint(typeof value === 'number' ? String(value) : value);
+}
+
+function hostCounter(evidence: DriverEvidence, kind: 'interfaces' | 'devices', identity: string): NonNullable<RawObservation['counter']> {
+  const lifecycle = evidence.host_counter_epochs;
+  const member = lifecycle?.[kind][identity];
+  if (!lifecycle || !member || !lifecycle.boot.epoch || !member.epoch
+    || !Number.isFinite(Date.parse(lifecycle.boot.observed_at)) || !Number.isFinite(Date.parse(member.observed_at))) throw new AdapterError('parse_error');
+  const bootAt = new Date(lifecycle.boot.observed_at).toISOString();
+  const memberAt = new Date(member.observed_at).toISOString();
+  const observed_at = Date.parse(memberAt) > Date.parse(bootAt) ? memberAt : bootAt;
+  const epoch = `${lifecycle.boot.epoch}:${member.epoch}`;
+  if (epoch.length > 256) throw new AdapterError('parse_error');
+  return { bits: '64', start_at: bootAt, discontinuity: {
+    epoch, observed_at, reason: observed_at === bootAt ? 'boot' : 'source_change',
+  } };
+}
+
+/** Keep whole-device accounting domains only; layered devices remain distinct and are never spatially summed. */
+export function isHostBlockDevice(device: string): boolean {
+  if (/^(?:loop|ram|zram|fd|sr)\d+$/.test(device)) return false;
+  if (/^(?:sd|vd|xvd|hd)[a-z]+\d+$/.test(device)) return false;
+  if (/^(?:nvme\d+n\d+|mmcblk\d+|md\d+)p\d+$/.test(device)) return false;
+  return true;
+}
+
+async function fixedSsh(transport: Extract<Transport, { method: 'ssh' }>, commands: string[], timeoutMs: number) {
+  const results = await read(() => transport.pool.execCommands(transport.client, commands, { timeoutMs, maxOutputBytes: 65536 }));
+  if (results.length !== commands.length || results.some(result => result.truncated || Buffer.byteLength(result.stdout) > 65536)) throw new AdapterError('parse_error');
+  return results;
 }
 
 /** Only fixed implementation IDs reach transports. Packages never carry executable commands or OIDs. */
@@ -87,6 +135,58 @@ export async function collectFixed(id: string, transport: Transport, evidence: D
       fields[selected[i]!.name] = { encoding: 'float64', value };
     });
     return [{ dimensions: {}, fields }];
+  }
+  if (id === 'builtin:linux.host-gauges.v1' && transport.method === 'ssh') {
+    const definitions = serverMetricProvider.getDefinitions('rhel');
+    const selected = ['cpu_usage', 'memory_usage'].map(name => definitions.find(d => d.name === name));
+    if (selected.some(d => !d)) throw new AdapterError('parse_error');
+    const results = await fixedSsh(transport, selected.map(d => d!.command), timeoutMs);
+    const fields: DecodedRow['fields'] = {};
+    results.forEach((result, i) => {
+      if (result.exitCode !== 0) throw new AdapterError(/permission denied/i.test(result.stderr) ? 'permission_denied' : 'parse_error');
+      const value = selected[i]!.parse(result.stdout);
+      if (value === null || value < 0 || value > 100) throw new AdapterError('parse_error');
+      fields[selected[i]!.name] = { encoding: 'float64', value };
+    });
+    return [{ dimensions: {}, fields }];
+  }
+  if (id === 'builtin:linux.filesystem.v1' && transport.method === 'ssh') {
+    const results = await fixedSsh(transport, [FILESYSTEM_BYTES_COMMAND, FILESYSTEM_INODES_COMMAND, FILESYSTEM_MOUNTS_COMMAND], timeoutMs);
+    if (results[0].exitCode !== 0) throw new AdapterError(/permission denied/i.test(results[0].stderr) ? 'permission_denied' : 'parse_error');
+    const filesystems = parseFilesystemEvidence(results[0].stdout, results[1].exitCode === 0 ? results[1].stdout : '', results[2].exitCode === 0 ? results[2].stdout : '');
+    if (filesystems.length > maxRows) throw new AdapterError('parse_error');
+    return filesystems.map(row => ({ dimensions: { mount: row.mount, device: row.device, fs_type: row.fsType ?? 'unknown' }, fields: {
+      filesystem_used_bytes: exactCounter(row.usedBytes), filesystem_size_bytes: exactCounter(row.sizeBytes),
+    } }));
+  }
+  if (id === 'builtin:linux.network.v1' && transport.method === 'ssh') {
+    const [result] = await fixedSsh(transport, [NETWORK_COMMAND], timeoutMs);
+    if (result.exitCode !== 0) throw new AdapterError(/permission denied/i.test(result.stderr) ? 'permission_denied' : 'parse_error');
+    const rows = parseProcNetDevExact(result.stdout)
+      .filter(row => row.name === 'network_rx_bytes' || row.name === 'network_tx_bytes')
+      .filter(row => row.dimensions?.interface !== 'lo');
+    if (rows.length > maxRows) throw new AdapterError('parse_error');
+    return rows.map(row => {
+      const identity = row.dimensions!.interface!;
+      return { dimensions: { interface: identity, direction: row.name === 'network_rx_bytes' ? 'in' : 'out' },
+        fields: { network_bytes: exactCounter(row.value) }, counter: hostCounter(evidence, 'interfaces', identity) };
+    });
+  }
+  if (id === 'builtin:linux.block.v1' && transport.method === 'ssh') {
+    const [result] = await fixedSsh(transport, [DISKSTATS_COMMAND], timeoutMs);
+    if (result.exitCode !== 0) throw new AdapterError(/permission denied/i.test(result.stderr) ? 'permission_denied' : 'parse_error');
+    const grouped = new Map<string, Record<string, RawObservation['value']>>();
+    for (const row of parseProcDiskstatsExact(result.stdout)) {
+      const device = row.dimensions?.device;
+      if (!device || !isHostBlockDevice(device)) continue;
+      const fields = grouped.get(device) ?? {};
+      fields[row.name] = exactCounter(row.value); grouped.set(device, fields);
+    }
+    if (grouped.size > maxRows) throw new AdapterError('parse_error');
+    return [...grouped].map(([device, fields]) => {
+      if (!fields.disk_read_bytes || !fields.disk_write_bytes || !fields.disk_io_time_ms) throw new AdapterError('parse_error');
+      return { dimensions: { device }, fields, counter: hostCounter(evidence, 'devices', device) };
+    });
   }
   if (id === 'builtin:if_mib.status.v1' && transport.method === 'snmp') {
     const catalog = DEFAULT_HUAWEI_MIB_CATALOG.interfaces;

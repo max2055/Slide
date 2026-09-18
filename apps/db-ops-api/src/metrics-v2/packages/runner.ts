@@ -151,12 +151,18 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
   }
   for (const inputs of groups.values()) {
     if (!release.derived.length) break;
+    const present = new Set(inputs.map(input => `${input.observation.metric.id}@${input.observation.metric.semantic_version}`));
+    // A package may contain resource-, filesystem-, interface- and device-scoped collectors.
+    // Only evaluate a derived node in a dimension group that contains one of its inputs;
+    // missing siblings then become explicit unknowns without manufacturing outputs in unrelated scopes.
+    const nodes = release.derived.filter(node => node.inputs.some(input => present.has(`${input.id}@${input.semantic_version}`)));
+    if (!nodes.length) continue;
     const anchor = inputs[0].observation;
-    const targets = Object.fromEntries(release.derived.map(d => [d.id, {
+    const targets = Object.fromEntries(nodes.map(d => [d.id, {
       source: { ...anchor.source, collector_id: `derived:${d.id}`, metric_binding_id: metricBindingId(execution.binding_id, d.output.id, anchor.dimensions) },
       versions: { ...anchor.versions, transform_version: d.transform_version },
     }]));
-    const derived = executeDerived(release.derived, definitions, inputs, { anchor, context: { now: clock(), stale_after_ms: settings.stale_after_ms },
+    const derived = executeDerived(nodes, definitions, inputs, { anchor, context: { now: clock(), stale_after_ms: settings.stale_after_ms },
       targets, counter: { max_gap_ms: settings.max_counter_gap_ms }, states: result.states });
     result.observations.push(...derived.outputs); result.states = derived.states;
   }

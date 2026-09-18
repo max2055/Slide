@@ -8,7 +8,7 @@ MAX-67 基于 MAX-64 CollectorPackage 和 MAX-66 公共处理器。Monitoring Te
 
 `PackageRegistry.install()` 校验所有依赖、单位和语义签名，跨 collector/derived 检查重复输出；同一 ID/version 内容不可修改，同一包跨版本不能改变资源类型。相同内容重复安装幂等。实现只接受代码内白名单；改变固定读取/解析语义时必须新增 implementation_ref 版本，不能修改原版本实现后沿用旧包摘要。
 
-发行物 schema 和三个发行物快照见 [schemas.json](schemas.json)、[builtins.json](builtins.json)。运行覆盖和凭据引用不进入发行物；没有 `latest` 或隐式自动升级。包级 `Selection` 是用于版本选择的输入，不是另一个持久 CollectionBinding；MAX-69 将其对应到既有绑定/策略存储。
+发行物 schema 和四个发行物快照见 [schemas.json](schemas.json)、[builtins.json](builtins.json)。运行覆盖和凭据引用不进入发行物；没有 `latest` 或隐式自动升级。包级 `Selection` 是用于版本选择的输入，不是另一个持久 CollectionBinding；MAX-69 将其对应到既有绑定/策略存储。
 
 `switchVersion()` 必须明确给出 ID/version/digest，原版和目标版都必须存在。它复制保留 credential_ref 和 overrides；不修改原对象，不把新推荐值写入用户配置。用户显式设置优先于推荐值，未覆盖项使用所选版本推荐；如果保留的覆盖违反目标版时序约束，明确拒绝升级，不能静默删除覆盖。降级使用同一方法。旧发行物没有删除 API，可以继续固定/回退。
 
@@ -19,8 +19,9 @@ MAX-67 基于 MAX-64 CollectorPackage 和 MAX-66 公共处理器。Monitoring Te
 | mysql-basic@1.0.0 | MySQL 5.7、8.0、8.4；不宣称 MariaDB 或其他版本兼容 | 复用 MySQLProvider 的 `SHOW GLOBAL STATUS` Queries/Uptime 固定批量查询；只读单实例，无库枚举；需 SHOW GLOBAL STATUS 权限 | Uptime → Canonical db.uptime_seconds；Queries → Extension mysql.queries.total（精确 uint64）；公共 derive@1.0.0 的 rate → mysql.queries.per_second |
 | linux-basic@1.0.0 | os.family=linux，具备 Linux procfs | 复用 ServerMetricProvider 的固定 uptime/load_1min 命令与解析；单资源，无输入路径；普通 SSH 登录与 procfs 读取权限 | linux.uptime.seconds / linux.load.one_minute；公共 normalize@1.0.0；load 不是 CPU 百分比 |
 | if-mib-basic@1.0.0 | SNMP v2/v3 标准 IF-MIB，各厂商 | 复用 SnmpClient 和现有标准 MIB catalog 的 ifTable；按 ifIndex 发现；需只读 IF-MIB 视图 | Canonical network.interface.oper_up；1→1，2→0，其他合法枚举→unknown/null；维度为 if_index/interface_epoch |
+| linux-host@1.0.0 | os.family=linux；驱动提供 boot/interface/device epoch | 复用 ServerMetricProvider 的固定 top/free/df/findmnt/procfs 命令和解析；无输入命令或路径 | Host CPU/内存 Extension、Canonical filesystem/network、Linux block Counter；公共 normalize/derive/Counter/query；完整口径见 [../host/README.md](../host/README.md) |
 
-这是三种协议的首批代表包，不表示已迁移所有历史指标或所有数据库引擎。未知厂家与 Huawei 均只读取标准 `1.3.6.1.2.1.2.2`，没有 enterprise/private OID。SNMP agent 的 sysUpTime 不映射为数据库或设备真实启动时长。旧 MySQL CPU heuristic 不映射为 Canonical CPU 利用率。所有 Extension 使用相同 Observation schema、单位、维度、质量和类型校验及公共处理器。
+这是三种协议的首批代表包，不表示已迁移所有历史指标或所有数据库引擎。未知厂家与 Huawei 均只读取标准 `1.3.6.1.2.1.2.2`，没有 enterprise/private OID。SNMP agent 的 sysUpTime 不映射为数据库或设备真实启动时长。旧 MySQL CPU heuristic 不映射为 Canonical CPU 利用率，Host CPU/内存也不归因给单个数据库。所有 Extension 使用相同 Observation schema、单位、维度、质量和类型校验及公共处理器。
 
 推荐 60s 周期、5s 单读取超时、120s stale、300s 最大 counter gap、最多 100 行。运行覆盖允许启停、上述时序和 max_rows；周期 1s～24h，读取超时 250ms～30s，max_rows 1～100。实际单读取超时取覆盖值与 CollectorDefinition 上限的较小值；SSH 两条固定读取各自受限，SNMP 重试语义由已有客户端配置控制。没有包提供的路径/SQL/OID 参数。
 
