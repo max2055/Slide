@@ -145,6 +145,7 @@ import { registerNetworkDeviceRoutes } from './src/network-devices/network-devic
 import { networkDeviceCollector } from './src/network-devices/network-device-collector.js';
 import { configBackupScheduler } from './src/network-devices/config-backup-scheduler.js';
 import { registerResourceRoutes } from './src/resources/resource-routes.js';
+import { registerMetricPolicyRoutes } from './src/metrics-v2/policy/routes.js';
 import { registerEvidenceRoutes } from './src/evidence/evidence-api.js';
 import { registerEvidenceEvaluationRoutes } from './src/evidence/evidence-evaluation-api.js';
 import { installPlatformObservation } from './src/platform/platform-observation-service.js';
@@ -323,6 +324,7 @@ async function start() {
   await registerDeviceAuthRoutes(fastify, verifyToken);
   await registerNetworkDeviceRoutes(fastify, verifyToken);
   await registerResourceRoutes(fastify, verifyToken);
+  await registerMetricPolicyRoutes(fastify, verifyToken);
   await installPlatformObservation(fastify, verifyToken);
   await registerSourceRoutes(fastify, verifyToken);
   await registerEvidenceRoutes(fastify, verifyToken);
