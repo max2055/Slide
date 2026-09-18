@@ -163,14 +163,25 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
   }
   for (const inputs of groups.values()) {
     if (!release.derived.length) break;
+    const present = new Set(inputs.map(input => `${input.observation.metric.id}@${input.observation.metric.semantic_version}`));
     const anchor = inputs[0].observation;
-    // A package can mix instance gauges and database-scoped counters. Do not broadcast
-    // database formulas onto the singleton instance group (or invent database identity).
-    const nodes = release.derived.filter(node => {
+    // Include downstream formulas reached from this group's inputs, but only at their output scope.
+    const candidates = release.derived.filter(node => {
       const keys = definitions.find(d => d.id === node.output.id && d.semantic_version === node.output.semantic_version)!.dimensions.keys;
       return keys.every(k => !k.required || Object.hasOwn(anchor.dimensions, k.name))
         && Object.keys(anchor.dimensions).every(name => keys.some(k => k.name === name));
     });
+    const selected = new Set<string>();
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const node of candidates) {
+        if (selected.has(node.id) || !node.inputs.some(input => present.has(`${input.id}@${input.semantic_version}`))) continue;
+        selected.add(node.id);
+        present.add(`${node.output.id}@${node.output.semantic_version}`);
+        changed = true;
+      }
+    }
+    const nodes = candidates.filter(node => selected.has(node.id));
     if (!nodes.length) continue;
     const targets = Object.fromEntries(nodes.map(d => [d.id, {
       source: { ...anchor.source, collector_id: `derived:${d.id}`, metric_binding_id: metricBindingId(execution.binding_id, d.output.id, anchor.dimensions) },

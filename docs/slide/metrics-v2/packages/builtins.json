@@ -415,5 +415,509 @@
         "discovery": "standard IF-MIB ifTable index; requires driver-provided interface generation; reject duplicates/overflow; all vendors; no enterprise OIDs"
       }
     ]
+  },
+  {
+    "package": {
+      "id": "linux-host",
+      "version": "1.0.0",
+      "contract_version": "1.0.0",
+      "digest": "sha256:f33494b0b6ee55a9112920f4ba6be3cf878179a94744718db7537e8af9e40856",
+      "resource_type": "server",
+      "applicability": [
+        {
+          "attribute": "os.family",
+          "values": [
+            "linux"
+          ]
+        }
+      ],
+      "collectors": [
+        {
+          "id": "linux-host-gauges",
+          "method": "ssh",
+          "implementation_ref": "builtin:linux.host-gauges.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "linux.cpu.user_system_percent",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "cpu_usage",
+              "input_unit": "%",
+              "output_unit": "%",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            },
+            {
+              "metric": {
+                "id": "linux.memory.used_percent",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "memory_usage",
+              "input_unit": "%",
+              "output_unit": "%",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "linux-filesystem",
+          "method": "ssh",
+          "implementation_ref": "builtin:linux.filesystem.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "medium",
+          "mappings": [
+            {
+              "metric": {
+                "id": "host.filesystem.used_bytes",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "filesystem_used_bytes",
+              "input_unit": "By",
+              "output_unit": "By",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            },
+            {
+              "metric": {
+                "id": "host.filesystem.size_bytes",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "filesystem_size_bytes",
+              "input_unit": "By",
+              "output_unit": "By",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "linux-network",
+          "method": "ssh",
+          "implementation_ref": "builtin:linux.network.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "host.network.bytes_total",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "network_bytes",
+              "input_unit": "By",
+              "output_unit": "By",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "linux-block",
+          "method": "ssh",
+          "implementation_ref": "builtin:linux.block.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "linux.block.read_bytes_total",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "disk_read_bytes",
+              "input_unit": "By",
+              "output_unit": "By",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            },
+            {
+              "metric": {
+                "id": "linux.block.write_bytes_total",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "disk_write_bytes",
+              "input_unit": "By",
+              "output_unit": "By",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            },
+            {
+              "metric": {
+                "id": "linux.block.io_time_ms_total",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "disk_io_time_ms",
+              "input_unit": "ms",
+              "output_unit": "ms",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "extensions": [
+      {
+        "id": "linux.cpu.user_system_percent",
+        "semantic_version": "1.0.0",
+        "meaning": "Linux top user plus system CPU percentage over its sampling interval; denominator is total logical CPU time, not a database process share.",
+        "unit": "%",
+        "resource_type": "server",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "linux"
+      },
+      {
+        "id": "linux.memory.used_percent",
+        "semantic_version": "1.0.0",
+        "meaning": "Linux free used memory divided by MemTotal; used is MemTotal minus MemAvailable and excludes no database-specific attribution.",
+        "unit": "%",
+        "resource_type": "server",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "linux"
+      },
+      {
+        "id": "linux.block.read_bytes_total",
+        "semantic_version": "1.0.0",
+        "meaning": "Cumulative bytes read from one Linux block accounting device in the current device epoch.",
+        "unit": "By",
+        "resource_type": "server",
+        "scope": "resource",
+        "kind": "counter",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "cumulative",
+        "monotonic": true,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [
+            {
+              "name": "device",
+              "meaning": "device stable resource-local identity",
+              "required": true
+            }
+          ],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "rate"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "linux"
+      },
+      {
+        "id": "linux.block.write_bytes_total",
+        "semantic_version": "1.0.0",
+        "meaning": "Cumulative bytes written to one Linux block accounting device in the current device epoch.",
+        "unit": "By",
+        "resource_type": "server",
+        "scope": "resource",
+        "kind": "counter",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "cumulative",
+        "monotonic": true,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [
+            {
+              "name": "device",
+              "meaning": "device stable resource-local identity",
+              "required": true
+            }
+          ],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "rate"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "linux"
+      },
+      {
+        "id": "linux.block.io_time_ms_total",
+        "semantic_version": "1.0.0",
+        "meaning": "Cumulative milliseconds with I/O in progress for one Linux block accounting device in the current device epoch.",
+        "unit": "ms",
+        "resource_type": "server",
+        "scope": "resource",
+        "kind": "counter",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "cumulative",
+        "monotonic": true,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [
+            {
+              "name": "device",
+              "meaning": "device stable resource-local identity",
+              "required": true
+            }
+          ],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "rate"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "linux"
+      },
+      {
+        "id": "linux.filesystem.used_ratio",
+        "semantic_version": "1.0.0",
+        "meaning": "Filesystem used bytes divided by total bytes; not df capacity percent based on non-reserved capacity.",
+        "unit": "1",
+        "resource_type": "server",
+        "scope": "filesystem",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [
+            {
+              "name": "mount",
+              "meaning": "mount stable resource-local identity",
+              "required": true
+            },
+            {
+              "name": "device",
+              "meaning": "device stable resource-local identity",
+              "required": true
+            },
+            {
+              "name": "fs_type",
+              "meaning": "fs_type stable resource-local identity",
+              "required": true
+            }
+          ],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "linux"
+      }
+    ],
+    "derived": [
+      {
+        "id": "linux-filesystem-used-ratio",
+        "output": {
+          "id": "linux.filesystem.used_ratio",
+          "semantic_version": "1.0.0"
+        },
+        "transform_version": "1.0.0",
+        "inputs": [
+          {
+            "id": "host.filesystem.used_bytes",
+            "semantic_version": "1.0.0"
+          },
+          {
+            "id": "host.filesystem.size_bytes",
+            "semantic_version": "1.0.0"
+          }
+        ],
+        "operation": "ratio",
+        "join": "same_resource_and_dimensions",
+        "max_skew_ms": 1000,
+        "on_missing": "null",
+        "on_zero_denominator": "null",
+        "quality_propagation": "worst_input",
+        "accuracy_propagation": "least_certain_input"
+      }
+    ],
+    "transforms": [
+      {
+        "id": "normalize",
+        "version": "1.0.0"
+      },
+      {
+        "id": "derive",
+        "version": "1.0.0"
+      }
+    ],
+    "recommendations": {
+      "interval_ms": 60000,
+      "timeout_ms": 5000,
+      "stale_after_ms": 120000,
+      "max_counter_gap_ms": 300000,
+      "max_rows": 100,
+      "enabled": true
+    },
+    "documentation": [
+      {
+        "collector_id": "linux-host-gauges",
+        "permissions": [
+          "SSH login",
+          "run fixed top and free commands from ServerMetricProvider"
+        ],
+        "discovery": "singleton Linux host gauges; no process or database attribution; no command or path parameters"
+      },
+      {
+        "collector_id": "linux-filesystem",
+        "permissions": [
+          "SSH login",
+          "run fixed df and findmnt commands"
+        ],
+        "discovery": "mounted filesystems returned by bounded df output; mount, device and filesystem type remain separate dimensions"
+      },
+      {
+        "collector_id": "linux-network",
+        "permissions": [
+          "SSH login",
+          "read /proc/net/dev"
+        ],
+        "discovery": "bounded non-loop interfaces; interface and direction stay separate and require driver lifecycle epochs"
+      },
+      {
+        "collector_id": "linux-block",
+        "permissions": [
+          "SSH login",
+          "read /proc/diskstats"
+        ],
+        "discovery": "bounded whole-device accounting rows; partitions and memory/loop devices excluded; layered devices remain distinct and require driver lifecycle epochs"
+      }
+    ]
   }
 ]

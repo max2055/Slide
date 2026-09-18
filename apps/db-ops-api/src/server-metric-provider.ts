@@ -17,6 +17,11 @@ export interface MetricSample {
   dimensions: MetricDimensions | null;
 }
 
+export interface ExactMetricSample extends Omit<MetricSample, 'value'> {
+  /** Decimal string preserves cumulative counters above Number.MAX_SAFE_INTEGER. */
+  value: string;
+}
+
 export interface ProcessSample {
   pid: number;
   command: string;
@@ -47,6 +52,9 @@ const SECTOR_BYTES = 512;
 
 const NETWORK_COMMAND = 'LC_ALL=C LANG=C cat /proc/net/dev';
 const DISKSTATS_COMMAND = 'LC_ALL=C LANG=C cat /proc/diskstats';
+const FILESYSTEM_BYTES_COMMAND = 'LC_ALL=C LANG=C df -P -B1';
+const FILESYSTEM_INODES_COMMAND = 'LC_ALL=C LANG=C df -Pi';
+const FILESYSTEM_MOUNTS_COMMAND = 'LC_ALL=C LANG=C findmnt -rn -o SOURCE,TARGET,FSTYPE';
 const PROCESS_COUNT_COMMAND = 'LC_ALL=C LANG=C ps -e --no-headers | wc -l';
 const PROCESS_LIST_COMMAND = 'LC_ALL=C LANG=C ps -eo pid=,comm=,pcpu=,pmem= --sort=-pcpu | head -n 20';
 
@@ -87,6 +95,13 @@ function finiteInteger(value: string): number | null {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
+function unsignedCounter(value: string): string | null {
+  if (!/^\d+$/.test(value.trim())) return null;
+  const parsed = BigInt(value);
+  if (parsed >= 1n << 64n) return null;
+  return parsed.toString();
+}
+
 function scalar(stdout: string): number | null {
   return finiteNumber(stdout.trim().split(/\s+/)[0] ?? '');
 }
@@ -97,8 +112,8 @@ function percent(stdout: string): number | null {
 }
 
 /** Parse Linux /proc/net/dev into stable per-interface samples. */
-export function parseProcNetDev(stdout: string): MetricSample[] {
-  const samples: MetricSample[] = [];
+export function parseProcNetDevExact(stdout: string): ExactMetricSample[] {
+  const samples: ExactMetricSample[] = [];
   const seen = new Set<string>();
   for (const line of stdout.split(/\r?\n/).slice(0, MAX_INTERFACES + 2)) {
     // Data rows have one colon and sixteen whitespace-delimited counters;
@@ -122,7 +137,7 @@ export function parseProcNetDev(stdout: string): MetricSample[] {
     const parsed = values.map(([name, direction, raw]) => ({
       name,
       direction,
-      value: finiteInteger(raw),
+      value: unsignedCounter(raw),
     }));
     if (parsed.some((entry) => entry.value === null)) continue;
     seen.add(iface);
@@ -137,35 +152,52 @@ export function parseProcNetDev(stdout: string): MetricSample[] {
   return samples;
 }
 
+export function parseProcNetDev(stdout: string): MetricSample[] {
+  return parseProcNetDevExact(stdout).flatMap(sample => {
+    const value = Number(sample.value);
+    return Number.isSafeInteger(value) ? [{ ...sample, value }] : [];
+  });
+}
+
 /** Alias used by callers that refer to the proc file by name. */
 export const parseNetworkInterfaceStats = parseProcNetDev;
 
 /** Parse /proc/diskstats into byte and I/O-time samples. */
-export function parseProcDiskstats(stdout: string): MetricSample[] {
-  const samples: MetricSample[] = [];
+export function parseProcDiskstatsExact(stdout: string): ExactMetricSample[] {
+  const samples: ExactMetricSample[] = [];
   const seen = new Set<string>();
   for (const line of stdout.split(/\r?\n/).slice(0, MAX_DEVICES)) {
     const fields = line.trim().split(/\s+/);
     if (fields.length < 14) continue;
     const device = boundedToken(fields[2]);
     if (!device || seen.has(device) || seen.size >= MAX_DEVICES || !/^[-_.A-Za-z0-9]+$/.test(device)) continue;
-    const numbers = fields.slice(3, 14).map(finiteInteger);
+    const numbers = fields.slice(3, 14).map(unsignedCounter);
     if (numbers.some((value) => value === null)) continue;
     // Linux fields: reads completed, merged, sectors read, time read,
     // writes completed, merged, sectors written, time written, in-flight,
     // time doing I/O, weighted time doing I/O.
-    const sectorsRead = numbers[2]!;
-    const sectorsWritten = numbers[6]!;
+    const sectorsRead = BigInt(numbers[2]!);
+    const sectorsWritten = BigInt(numbers[6]!);
     const ioTimeMs = numbers[9]!;
+    const readBytes = sectorsRead * BigInt(SECTOR_BYTES);
+    const writeBytes = sectorsWritten * BigInt(SECTOR_BYTES);
+    if (readBytes >= 1n << 64n || writeBytes >= 1n << 64n) continue;
     seen.add(device);
     const dimensions = canonicalDimensions({ device });
     samples.push(
-      { name: 'disk_read_bytes', value: sectorsRead * SECTOR_BYTES, dimensions },
-      { name: 'disk_write_bytes', value: sectorsWritten * SECTOR_BYTES, dimensions },
+      { name: 'disk_read_bytes', value: readBytes.toString(), dimensions },
+      { name: 'disk_write_bytes', value: writeBytes.toString(), dimensions },
       { name: 'disk_io_time_ms', value: ioTimeMs, dimensions },
     );
   }
-  return samples.filter((sample) => Number.isSafeInteger(sample.value) || Number.isFinite(sample.value));
+  return samples;
+}
+
+export function parseProcDiskstats(stdout: string): MetricSample[] {
+  return parseProcDiskstatsExact(stdout).flatMap(sample => {
+    const value = Number(sample.value);
+    return Number.isSafeInteger(value) ? [{ ...sample, value }] : [];
+  });
 }
 
 export const parseDiskStats = parseProcDiskstats;
@@ -236,7 +268,7 @@ const baseDefinitions = (osType: string): MetricDefinition[] => [
   { name: 'load_5min', command: "LC_ALL=C LANG=C cat /proc/loadavg | awk '{print $2}'", parse: scalar, osType, unit: 'load', aggregation: 'avg', higherIsWorse: true },
   { name: 'load_15min', command: "LC_ALL=C LANG=C cat /proc/loadavg | awk '{print $3}'", parse: scalar, osType, unit: 'load', aggregation: 'avg', higherIsWorse: true },
   { name: 'uptime', command: "LC_ALL=C LANG=C cat /proc/uptime | awk '{print $1}'", parse: scalar, osType, unit: 'seconds', aggregation: 'last', higherIsWorse: false },
-  { name: 'disk_detail', command: 'LC_ALL=C LANG=C df -P -B1', parse: () => null, osType, unit: 'bytes', aggregation: 'last' },
+  { name: 'disk_detail', command: FILESYSTEM_BYTES_COMMAND, parse: () => null, osType, unit: 'bytes', aggregation: 'last' },
   ...(['network_rx_bytes', 'network_tx_bytes', 'network_rx_errors', 'network_tx_errors', 'network_rx_drops', 'network_tx_drops'] as const).map((name) => ({
     name,
     command: NETWORK_COMMAND,
@@ -312,4 +344,13 @@ class ServerMetricProvider {
 
 const serverMetricProvider = new ServerMetricProvider();
 export default serverMetricProvider;
-export { ServerMetricProvider, NETWORK_COMMAND, DISKSTATS_COMMAND, PROCESS_COUNT_COMMAND, PROCESS_LIST_COMMAND };
+export {
+  ServerMetricProvider,
+  NETWORK_COMMAND,
+  DISKSTATS_COMMAND,
+  FILESYSTEM_BYTES_COMMAND,
+  FILESYSTEM_INODES_COMMAND,
+  FILESYSTEM_MOUNTS_COMMAND,
+  PROCESS_COUNT_COMMAND,
+  PROCESS_LIST_COMMAND,
+};
