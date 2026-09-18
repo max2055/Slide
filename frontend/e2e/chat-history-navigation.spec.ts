@@ -42,6 +42,22 @@ test('old turns render on demand, highlight accurately, and streaming does not s
   await expect(page.getByText('新增流式回复', { exact: true })).toBeVisible();
 });
 
+test('clicking a visible tick keeps the ruler still; manual transcript scrolling follows', async ({ page }) => {
+  const ruler = page.locator('chat-history-nav nav');
+  const ticks = page.locator('chat-history-nav .tick');
+  await ruler.evaluate((el) => { el.scrollTop = 1100; });
+  const before = await ruler.evaluate((el) => el.scrollTop);
+  await ticks.nth(115).click();
+  await expect(page.locator('[data-chat-turn="msg:230"]')).toHaveClass(/chat-history-highlight/);
+  await expect(ticks.nth(115)).toHaveAttribute('aria-current', 'true');
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  expect(await ruler.evaluate((el) => el.scrollTop)).toBe(before);
+
+  await page.locator('.chat-thread').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await expect(ticks.nth(214)).toHaveAttribute('aria-current', 'true');
+  await expect.poll(() => ruler.evaluate((el) => el.scrollTop)).toBeGreaterThan(before);
+});
+
 test('manual scrolling updates the active tick; switching sessions clears preview and history selection', async ({ page }) => {
   await page.locator('chat-history-nav .tick').nth(180).click();
   await page.locator('.chat-thread').evaluate((el) => { el.scrollTop = el.scrollHeight; });
