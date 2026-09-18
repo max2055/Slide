@@ -726,6 +726,30 @@ describe('DirectAdapter', () => {
   });
 
   describe('chat()', () => {
+    it('retains partial streaming output on cancellation and awaits the terminal consumer', async () => {
+      const controller = new AbortController();
+      const provider = new MockLLMProvider();
+      vi.spyOn(provider, 'chatStream').mockImplementation(async (_m, _t, callbacks) => {
+        await callbacks.onContentDelta('partial answer');
+        controller.abort();
+        throw new Error('aborted');
+      });
+      const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: provider });
+      adaptersToCleanup.push(adapter);
+      let persisted = false;
+      const events: ChatEvent[] = [];
+      const result = await adapter.chat('partial-cancel', 'hello', async event => {
+        events.push(event);
+        if (event.type === 'cancelled') {
+          await new Promise(resolve => setTimeout(resolve, 10));
+          persisted = true;
+        }
+      }, undefined, controller.signal);
+      expect(result).toMatchObject({ finalContent: 'partial answer', stopReason: 'cancelled' });
+      expect(events.at(-1)).toMatchObject({ type: 'cancelled', finalContent: 'partial answer', stopReason: 'cancelled' });
+      expect(persisted).toBe(true);
+    });
+
     it('should produce events including at least one event', async () => {
       const adapter = createMockAdapter();
       const events: ChatEvent[] = [];
