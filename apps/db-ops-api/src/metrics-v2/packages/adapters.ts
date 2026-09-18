@@ -13,8 +13,9 @@ import serverMetricProvider, {
 import { parseFilesystemEvidence } from '../../linux-host-evidence-service.js';
 import { DEFAULT_HUAWEI_MIB_CATALOG } from '../../network-devices/huawei-mib-catalog.js';
 import type { SnmpClient } from '../../network-devices/snmp-client.js';
-import type { SnmpConfig, SnmpTableRow } from '../../network-devices/snmp-types.js';
+import type { SnmpConfig, SnmpTableRow, SnmpVarbind } from '../../network-devices/snmp-types.js';
 import type { RawObservation } from '../../contracts/metrics-v2/index.js';
+import type { SnmpDiscovery } from '../snmp/collector.js';
 import { MYSQL_STATUS_SQL } from '../../collectors/mysql-status-query.js';
 
 /** Same read-only status operation as MySQLProvider; batch once without its legacy Number/rate path. */
@@ -22,15 +23,16 @@ export { MYSQL_STATUS_SQL };
 export type Transport =
   | { method: 'sql'; pool: { query(options: { sql: string; timeout: number }): Promise<[unknown, unknown]> } }
   | { method: 'ssh'; client: Client; pool: Pick<SshSessionPool, 'execCommands'> }
-  | { method: 'snmp'; table(root: string, timeoutMs: number): Promise<SnmpTableRow[]> };
+  | { method: 'snmp'; get?(oids: string[], timeoutMs: number): Promise<SnmpVarbind[]>; table(root: string, timeoutMs: number): Promise<SnmpTableRow[]> };
 export function bindMySql(pool: Pick<Pool, 'query'>): Transport {
   return { method: 'sql', pool: { query: options => pool.query(options) } };
 }
 /** Existing SnmpClient owns configuration validation, response bounds, session closure and read allowlist. */
-export function bindSnmp(client: Pick<SnmpClient, 'table'>, config: SnmpConfig): Transport {
-  return { method: 'snmp', table: (root, timeoutMs) => client.table({ ...config, timeoutMs }, root) };
+export function bindSnmp(client: Pick<SnmpClient, 'table'> & Partial<Pick<SnmpClient, 'get'>>, config: SnmpConfig): Transport {
+  return { method: 'snmp', ...(client.get ? { get: (oids: string[], timeoutMs: number) => client.get!({ ...config, timeoutMs }, oids) } : {}), table: (root, timeoutMs) => client.table({ ...config, timeoutMs }, root) };
 }
 export interface DriverEvidence {
+  snmp?: SnmpDiscovery;
   /** Trusted startup/discontinuity evidence, retained by the driver; never invent an epoch per sample. */
   counter?: RawObservation['counter'];
   /** Stable identity for each interface generation, supplied by discovery ownership, not display name. */
@@ -43,9 +45,12 @@ export interface DriverEvidence {
   };
 }
 export interface DecodedRow {
+  observed_at?: string;
   dimensions: Record<string, string>;
   fields: Record<string, RawObservation['value']>;
   counter?: RawObservation['counter'];
+  field_evidence?: Record<string, { counter?: RawObservation['counter']; max_increment_per_second?: string; quality?: RawObservation['quality']; capability?: 'supported' | 'unsupported' | 'unknown'; error?: AdapterError['code'] }>;
+  accuracy?: Record<string, RawObservation['accuracy']>;
 }
 export class AdapterError extends Error {
   constructor(readonly code: 'permission_denied' | 'timeout' | 'connection_error' | 'parse_error') { super(code); }
@@ -55,9 +60,16 @@ export function classifyError(error: unknown): AdapterError['code'] {
   const level = error && typeof error === 'object' && 'level' in error ? error.level : undefined;
   if (level === 'client-authentication') return 'permission_denied';
   if (level === 'client-timeout') return 'timeout';
+  if (error && typeof error === 'object') {
+    // Oracle older driver errors expose errorNum; dmdb exposes errCode, not code.
+    if ('errorNum' in error && [1017, 1031].includes(Number(error.errorNum))) return 'permission_denied';
+    if ('errorNum' in error && Number(error.errorNum) === 1013) return 'timeout';
+    if ('errCode' in error && Number(error.errCode) === -551) return 'permission_denied';
+    if ('errCode' in error && [20009, 20010, 20017].includes(Number(error.errCode))) return 'timeout';
+  }
   const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : error instanceof Error ? error.message : '';
-  if (['ER_ACCESS_DENIED_ERROR', 'ER_SPECIFIC_ACCESS_DENIED_ERROR', 'ER_TABLEACCESS_DENIED_ERROR', 'EACCES', 'SNMP_AUTH_FAILED', 'SSH_AUTH_FAILED', 'SSH_AUTHENTICATION_FAILED'].includes(code)) return 'permission_denied';
-  if (['ETIMEDOUT', 'PROTOCOL_SEQUENCE_TIMEOUT', 'SNMP_TIMEOUT', 'SSH_COMMAND_TIMEOUT'].includes(code)) return 'timeout';
+  if (['ER_ACCESS_DENIED_ERROR', 'ER_SPECIFIC_ACCESS_DENIED_ERROR', 'ER_TABLEACCESS_DENIED_ERROR', 'EACCES', 'SNMP_AUTH_FAILED', 'SSH_AUTH_FAILED', 'SSH_AUTHENTICATION_FAILED', '42501', 'ORA-01031', 'ORA-01017'].includes(code)) return 'permission_denied';
+  if (['ETIMEDOUT', 'PROTOCOL_SEQUENCE_TIMEOUT', 'SNMP_TIMEOUT', 'SSH_COMMAND_TIMEOUT', '57014', 'ORA-01013', 'DPI-1067'].includes(code)) return 'timeout';
   if (['SNMP_RESPONSE_INVALID', 'SNMP_RESPONSE_LIMIT', 'SSH_COMMAND_OUTPUT_LIMIT', 'SSH_COMMAND_PROTOCOL_ERROR'].includes(code)) return 'parse_error';
   return 'connection_error';
 }
@@ -105,6 +117,13 @@ async function fixedSsh(transport: Extract<Transport, { method: 'ssh' }>, comman
 
 /** Only fixed implementation IDs reach transports. Packages never carry executable commands or OIDs. */
 export async function collectFixed(id: string, transport: Transport, evidence: DriverEvidence, timeoutMs: number, maxRows: number): Promise<DecodedRow[]> {
+  if (id.startsWith('builtin:snmp.') && transport.method === 'snmp' && evidence.snmp) {
+    return evidence.snmp.collect(id, transport, timeoutMs, maxRows);
+  }
+  if (id.startsWith('builtin:database.')) {
+    const { collectDatabase } = await import('../database/collector.js');
+    return collectDatabase(id, transport, evidence, timeoutMs);
+  }
   if (id === 'builtin:mysql.status.v1' && transport.method === 'sql') {
     const [response] = await read(() => transport.pool.query({ sql: MYSQL_STATUS_SQL, timeout: timeoutMs }));
     if (!Array.isArray(response) || response.length !== 2) throw new AdapterError('parse_error');

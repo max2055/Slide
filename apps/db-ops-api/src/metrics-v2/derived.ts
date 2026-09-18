@@ -13,6 +13,7 @@ export interface DerivedExecution {
   context: Evaluation;
   targets: Record<string, { source: Observation['source']; versions: Observation['versions'] }>;
   counter: Omit<CounterOptions, 'context'>;
+  counter_bounds?: ReadonlyMap<string, string>;
   states?: ReadonlyMap<string, CounterState>;
 }
 const refKey = (ref: { id: string; semantic_version: string }): string => `${ref.id}@${ref.semantic_version}`;
@@ -73,7 +74,7 @@ export function executeDerived(nodesInput: DerivedMetric[], definitions: MetricD
           t.versions.contract, t.versions.package_id, t.versions.package_version, t.versions.config_revision]);
       }).sort()]);
       const transition = processCounter(input, definition(node.inputs[0]), d, 'rate', initialStates.get(key) ?? null,
-        { ...execution.counter, processing_revision: processingRevision, context: execution.context });
+        { ...execution.counter, ...(execution.counter_bounds?.has(key) ? { max_increment_per_second: execution.counter_bounds.get(key) } : {}), processing_revision: processingRevision, context: execution.context });
       if (transition.state) states.set(key, transition.state);
       result = transition.output;
       result.observation.source = structuredClone(target.source);

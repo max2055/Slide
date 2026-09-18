@@ -79,7 +79,7 @@ function normalizeError(error: unknown): SnmpClientError {
   if (lower.includes('timeout') || lower.includes('timed out')) {
     return new SnmpClientError('SNMP_TIMEOUT', 'SNMP request timed out', { cause: error });
   }
-  if (lower.includes('auth') || lower.includes('usm') || lower.includes('security')) {
+  if (lower.includes('auth') || lower.includes('usm') || lower.includes('security') || /\bnoaccess\b/.test(lower)) {
     return new SnmpClientError('SNMP_AUTH_FAILED', 'SNMP authentication failed', { cause: error });
   }
   return new SnmpClientError('SNMP_RESPONSE_INVALID', 'Invalid SNMP response', { cause: error });

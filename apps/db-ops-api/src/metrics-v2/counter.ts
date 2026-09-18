@@ -81,6 +81,10 @@ export function processCounter(input: Observation, definition: MetricDefinition,
     if (compare(rawDelta, bound) > 0) return finish({ status: 'unknown', reason: 'counter_reset' }, null, true, true);
   } else if (wrapEvidence) return finish({ status: 'unknown', reason: 'counter_reset' }, null, true, true);
   if (rawDelta.numerator < 0n) return finish({ status: 'unknown', reason: 'counter_reset' }, null, true, true);
+  if (options.max_increment_per_second !== undefined
+    && compare(rawDelta, rational(BigInt(options.max_increment_per_second) * BigInt(elapsed), 1000n)) > 0) {
+    return finish({ status: 'unknown', reason: 'counter_reset' }, null, true, true);
+  }
   // Equivalent to converting both endpoints before subtraction, with exact rational intermediates.
   let value = multiply(rawDelta, factor);
   if (operation === 'rate') value = divide(value, rational(BigInt(elapsed), 1000n));

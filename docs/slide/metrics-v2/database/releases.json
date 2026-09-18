@@ -1,0 +1,1902 @@
+[
+  {
+    "package": {
+      "id": "mysql-representative",
+      "version": "1.0.0",
+      "contract_version": "1.0.0",
+      "digest": "sha256:c785f27645ad4dd658b7212a8edbdfc719f6a69135e5fec799f625714bb45460",
+      "resource_type": "instance",
+      "applicability": [
+        {
+          "attribute": "db.engine",
+          "values": [
+            "mysql"
+          ]
+        },
+        {
+          "attribute": "db.version",
+          "values": [
+            "5.7",
+            "8.0",
+            "8.4"
+          ]
+        }
+      ],
+      "collectors": [
+        {
+          "id": "mysql-status",
+          "method": "sql",
+          "implementation_ref": "builtin:mysql.status.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "db.uptime_seconds",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "Uptime",
+              "input_unit": "s",
+              "output_unit": "s",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            },
+            {
+              "metric": {
+                "id": "mysql.queries.total",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "Queries",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "mysql-connections",
+          "method": "sql",
+          "implementation_ref": "builtin:database.mysql.connections.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "mysql.processlist.count",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "connections",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "mysql-limit",
+          "method": "sql",
+          "implementation_ref": "builtin:database.mysql.limit.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "mysql.connections.limit",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "capacity",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "mysql-transactions",
+          "method": "sql",
+          "implementation_ref": "builtin:database.mysql.transactions.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "mysql.transaction_commands.commit_total",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "Com_commit",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            },
+            {
+              "metric": {
+                "id": "mysql.transaction_commands.rollback_total",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "Com_rollback",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "mysql-size",
+          "method": "sql",
+          "implementation_ref": "builtin:database.mysql.size.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "high",
+          "mappings": [
+            {
+              "metric": {
+                "id": "mysql.tables.estimated_allocated_bytes",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "bytes",
+              "input_unit": "By",
+              "output_unit": "By",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "extensions": [
+      {
+        "id": "mysql.processlist.count",
+        "semantic_version": "1.0.0",
+        "meaning": "Rows visible in information_schema.PROCESSLIST, including idle sessions; requires PROCESS for complete instance scope.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "mysql"
+      },
+      {
+        "id": "mysql.connections.limit",
+        "semantic_version": "1.0.0",
+        "meaning": "Configured MySQL max_connections; not an operating-system process limit.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "mysql"
+      },
+      {
+        "id": "mysql.transaction_commands.commit_total",
+        "semantic_version": "1.0.0",
+        "meaning": "Com_commit explicit COMMIT commands; excludes implicit autocommit transactions.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "counter",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "cumulative",
+        "monotonic": true,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "rate"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "mysql"
+      },
+      {
+        "id": "mysql.transaction_commands.rollback_total",
+        "semantic_version": "1.0.0",
+        "meaning": "Com_rollback explicit ROLLBACK commands; not all aborted transactions.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "counter",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "cumulative",
+        "monotonic": true,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "rate"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "mysql"
+      },
+      {
+        "id": "mysql.tables.estimated_allocated_bytes",
+        "semantic_version": "1.0.0",
+        "meaning": "Estimated data_length plus index_length across visible non-system schemas; engine allocation statistics, not logical data bytes or host disk capacity.",
+        "unit": "By",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "mysql"
+      },
+      {
+        "id": "mysql.transaction_commands.commit_rate",
+        "semantic_version": "1.0.0",
+        "meaning": "Per-second rate of mysql.transaction_commands.commit_total, only within a valid counter epoch.",
+        "unit": "count/s",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "mysql"
+      },
+      {
+        "id": "mysql.transaction_commands.rollback_rate",
+        "semantic_version": "1.0.0",
+        "meaning": "Per-second rate of mysql.transaction_commands.rollback_total, only within a valid counter epoch.",
+        "unit": "count/s",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "mysql"
+      },
+      {
+        "id": "mysql.transaction_commands.completed_rate",
+        "semantic_version": "1.0.0",
+        "meaning": "Sum of separately reset-checked explicit COMMIT and ROLLBACK command rates; excludes implicit autocommit.",
+        "unit": "count/s",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "mysql"
+      },
+      {
+        "id": "mysql.queries.total",
+        "semantic_version": "1.0.0",
+        "meaning": "MySQL Queries status counter: statements executed by clients and stored programs; not committed transactions.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "counter",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "cumulative",
+        "monotonic": true,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "rate"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "mysql"
+      },
+      {
+        "id": "mysql.queries.per_second",
+        "semantic_version": "1.0.0",
+        "meaning": "Rate of mysql.queries.total over a valid interval in the same database counter epoch.",
+        "unit": "count/s",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "mysql"
+      }
+    ],
+    "derived": [
+      {
+        "id": "mysql.transaction_commands.commit_rate",
+        "output": {
+          "id": "mysql.transaction_commands.commit_rate",
+          "semantic_version": "1.0.0"
+        },
+        "transform_version": "1.0.0",
+        "inputs": [
+          {
+            "id": "mysql.transaction_commands.commit_total",
+            "semantic_version": "1.0.0"
+          }
+        ],
+        "operation": "rate",
+        "join": "same_resource_and_dimensions",
+        "max_skew_ms": 1000,
+        "on_missing": "null",
+        "on_zero_denominator": "null",
+        "quality_propagation": "worst_input",
+        "accuracy_propagation": "least_certain_input"
+      },
+      {
+        "id": "mysql.transaction_commands.rollback_rate",
+        "output": {
+          "id": "mysql.transaction_commands.rollback_rate",
+          "semantic_version": "1.0.0"
+        },
+        "transform_version": "1.0.0",
+        "inputs": [
+          {
+            "id": "mysql.transaction_commands.rollback_total",
+            "semantic_version": "1.0.0"
+          }
+        ],
+        "operation": "rate",
+        "join": "same_resource_and_dimensions",
+        "max_skew_ms": 1000,
+        "on_missing": "null",
+        "on_zero_denominator": "null",
+        "quality_propagation": "worst_input",
+        "accuracy_propagation": "least_certain_input"
+      },
+      {
+        "id": "mysql.transaction_commands.completed_rate",
+        "output": {
+          "id": "mysql.transaction_commands.completed_rate",
+          "semantic_version": "1.0.0"
+        },
+        "transform_version": "1.0.0",
+        "inputs": [
+          {
+            "id": "mysql.transaction_commands.commit_rate",
+            "semantic_version": "1.0.0"
+          },
+          {
+            "id": "mysql.transaction_commands.rollback_rate",
+            "semantic_version": "1.0.0"
+          }
+        ],
+        "operation": "sum",
+        "join": "same_resource_and_dimensions",
+        "max_skew_ms": 1000,
+        "on_missing": "null",
+        "on_zero_denominator": "null",
+        "quality_propagation": "worst_input",
+        "accuracy_propagation": "least_certain_input"
+      },
+      {
+        "id": "mysql-query-rate",
+        "output": {
+          "id": "mysql.queries.per_second",
+          "semantic_version": "1.0.0"
+        },
+        "transform_version": "1.0.0",
+        "inputs": [
+          {
+            "id": "mysql.queries.total",
+            "semantic_version": "1.0.0"
+          }
+        ],
+        "operation": "rate",
+        "join": "same_resource_and_dimensions",
+        "max_skew_ms": 1000,
+        "on_missing": "null",
+        "on_zero_denominator": "null",
+        "quality_propagation": "worst_input",
+        "accuracy_propagation": "least_certain_input"
+      }
+    ],
+    "transforms": [
+      {
+        "id": "normalize",
+        "version": "1.0.0"
+      },
+      {
+        "id": "derive",
+        "version": "1.0.0"
+      }
+    ],
+    "recommendations": {
+      "interval_ms": 60000,
+      "timeout_ms": 5000,
+      "stale_after_ms": 120000,
+      "max_counter_gap_ms": 300000,
+      "max_rows": 100,
+      "enabled": true
+    },
+    "documentation": [
+      {
+        "collector_id": "mysql-status",
+        "permissions": [
+          "SHOW GLOBAL STATUS"
+        ],
+        "discovery": "singleton database status row; no database enumeration"
+      },
+      {
+        "collector_id": "mysql-connections",
+        "permissions": [
+          "PROCESS for all sessions"
+        ],
+        "discovery": "singleton in the authorized instance/container; no schema enumeration"
+      },
+      {
+        "collector_id": "mysql-limit",
+        "permissions": [
+          "read global max_connections"
+        ],
+        "discovery": "singleton in the authorized instance/container; no schema enumeration"
+      },
+      {
+        "collector_id": "mysql-transactions",
+        "permissions": [
+          "SHOW GLOBAL STATUS"
+        ],
+        "discovery": "singleton in the authorized instance/container; no schema enumeration"
+      },
+      {
+        "collector_id": "mysql-size",
+        "permissions": [
+          "metadata visibility for all non-system schemas"
+        ],
+        "discovery": "singleton in the authorized instance/container; no schema enumeration"
+      }
+    ]
+  },
+  {
+    "package": {
+      "id": "postgresql-representative",
+      "version": "1.0.0",
+      "contract_version": "1.0.0",
+      "digest": "sha256:4e151be2bc645f4b19964d2d5c7173537e8ed3a274dbfc49823f323b2f84d37c",
+      "resource_type": "instance",
+      "applicability": [
+        {
+          "attribute": "db.engine",
+          "values": [
+            "postgresql"
+          ]
+        },
+        {
+          "attribute": "db.version",
+          "values": [
+            "16.4"
+          ]
+        }
+      ],
+      "collectors": [
+        {
+          "id": "postgresql-connections",
+          "method": "sql",
+          "implementation_ref": "builtin:database.postgresql.connections.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "postgresql.activity.count",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "connections",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "postgresql-limit",
+          "method": "sql",
+          "implementation_ref": "builtin:database.postgresql.limit.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "postgresql.connections.limit",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "capacity",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "postgresql-transactions",
+          "method": "sql",
+          "implementation_ref": "builtin:database.postgresql.transactions.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "postgresql.transactions.commit_total",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "commits",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            },
+            {
+              "metric": {
+                "id": "postgresql.transactions.rollback_total",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "rollbacks",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "postgresql-size",
+          "method": "sql",
+          "implementation_ref": "builtin:database.postgresql.size.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "high",
+          "mappings": [
+            {
+              "metric": {
+                "id": "postgresql.database.disk_bytes",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "bytes",
+              "input_unit": "By",
+              "output_unit": "By",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "extensions": [
+      {
+        "id": "postgresql.activity.count",
+        "semantic_version": "1.0.0",
+        "meaning": "Cluster pg_stat_activity backend rows, including background and idle backends; not MySQL connections.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "postgresql"
+      },
+      {
+        "id": "postgresql.connections.limit",
+        "semantic_version": "1.0.0",
+        "meaning": "Configured max_connections client connection limit; not capacity for all pg_stat_activity backend rows.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "postgresql"
+      },
+      {
+        "id": "postgresql.transactions.commit_total",
+        "semantic_version": "1.0.0",
+        "meaning": "Current database xact_commit, including autocommit transactions; epoch includes pg_stat_database.stats_reset.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "counter",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "cumulative",
+        "monotonic": true,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [
+            {
+              "name": "database",
+              "meaning": "database stable resource-local identity",
+              "required": true
+            }
+          ],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "rate"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "postgresql"
+      },
+      {
+        "id": "postgresql.transactions.rollback_total",
+        "semantic_version": "1.0.0",
+        "meaning": "Current database xact_rollback; epoch includes pg_stat_database.stats_reset.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "counter",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "cumulative",
+        "monotonic": true,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [
+            {
+              "name": "database",
+              "meaning": "database stable resource-local identity",
+              "required": true
+            }
+          ],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "rate"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "postgresql"
+      },
+      {
+        "id": "postgresql.database.disk_bytes",
+        "semantic_version": "1.0.0",
+        "meaning": "pg_database_size of the bound current database including its physical files; not logical row size or host disk usage.",
+        "unit": "By",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [
+            {
+              "name": "database",
+              "meaning": "database stable resource-local identity",
+              "required": true
+            }
+          ],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "postgresql"
+      },
+      {
+        "id": "postgresql.transactions.commit_rate",
+        "semantic_version": "1.0.0",
+        "meaning": "Per-second rate of postgresql.transactions.commit_total, only within a valid counter epoch.",
+        "unit": "count/s",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [
+            {
+              "name": "database",
+              "meaning": "database stable resource-local identity",
+              "required": true
+            }
+          ],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "postgresql"
+      },
+      {
+        "id": "postgresql.transactions.rollback_rate",
+        "semantic_version": "1.0.0",
+        "meaning": "Per-second rate of postgresql.transactions.rollback_total, only within a valid counter epoch.",
+        "unit": "count/s",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [
+            {
+              "name": "database",
+              "meaning": "database stable resource-local identity",
+              "required": true
+            }
+          ],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "postgresql"
+      },
+      {
+        "id": "postgresql.transactions.completed_rate",
+        "semantic_version": "1.0.0",
+        "meaning": "Sum of separately reset-checked xact_commit and xact_rollback rates in the bound current database.",
+        "unit": "count/s",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [
+            {
+              "name": "database",
+              "meaning": "database stable resource-local identity",
+              "required": true
+            }
+          ],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "postgresql"
+      }
+    ],
+    "derived": [
+      {
+        "id": "postgresql.transactions.commit_rate",
+        "output": {
+          "id": "postgresql.transactions.commit_rate",
+          "semantic_version": "1.0.0"
+        },
+        "transform_version": "1.0.0",
+        "inputs": [
+          {
+            "id": "postgresql.transactions.commit_total",
+            "semantic_version": "1.0.0"
+          }
+        ],
+        "operation": "rate",
+        "join": "same_resource_and_dimensions",
+        "max_skew_ms": 1000,
+        "on_missing": "null",
+        "on_zero_denominator": "null",
+        "quality_propagation": "worst_input",
+        "accuracy_propagation": "least_certain_input"
+      },
+      {
+        "id": "postgresql.transactions.rollback_rate",
+        "output": {
+          "id": "postgresql.transactions.rollback_rate",
+          "semantic_version": "1.0.0"
+        },
+        "transform_version": "1.0.0",
+        "inputs": [
+          {
+            "id": "postgresql.transactions.rollback_total",
+            "semantic_version": "1.0.0"
+          }
+        ],
+        "operation": "rate",
+        "join": "same_resource_and_dimensions",
+        "max_skew_ms": 1000,
+        "on_missing": "null",
+        "on_zero_denominator": "null",
+        "quality_propagation": "worst_input",
+        "accuracy_propagation": "least_certain_input"
+      },
+      {
+        "id": "postgresql.transactions.completed_rate",
+        "output": {
+          "id": "postgresql.transactions.completed_rate",
+          "semantic_version": "1.0.0"
+        },
+        "transform_version": "1.0.0",
+        "inputs": [
+          {
+            "id": "postgresql.transactions.commit_rate",
+            "semantic_version": "1.0.0"
+          },
+          {
+            "id": "postgresql.transactions.rollback_rate",
+            "semantic_version": "1.0.0"
+          }
+        ],
+        "operation": "sum",
+        "join": "same_resource_and_dimensions",
+        "max_skew_ms": 1000,
+        "on_missing": "null",
+        "on_zero_denominator": "null",
+        "quality_propagation": "worst_input",
+        "accuracy_propagation": "least_certain_input"
+      }
+    ],
+    "transforms": [
+      {
+        "id": "normalize",
+        "version": "1.0.0"
+      },
+      {
+        "id": "derive",
+        "version": "1.0.0"
+      }
+    ],
+    "recommendations": {
+      "interval_ms": 60000,
+      "timeout_ms": 5000,
+      "stale_after_ms": 120000,
+      "max_counter_gap_ms": 300000,
+      "max_rows": 100,
+      "enabled": true
+    },
+    "documentation": [
+      {
+        "collector_id": "postgresql-connections",
+        "permissions": [
+          "read pg_stat_activity"
+        ],
+        "discovery": "singleton in the authorized instance/container; no schema enumeration"
+      },
+      {
+        "collector_id": "postgresql-limit",
+        "permissions": [
+          "read max_connections"
+        ],
+        "discovery": "singleton in the authorized instance/container; no schema enumeration"
+      },
+      {
+        "collector_id": "postgresql-transactions",
+        "permissions": [
+          "read pg_stat_database",
+          "driver startup and stats_reset evidence"
+        ],
+        "discovery": "one row for the bound current database; database name required"
+      },
+      {
+        "collector_id": "postgresql-size",
+        "permissions": [
+          "pg_database_size for bound database"
+        ],
+        "discovery": "one row for the bound current database; database name required"
+      }
+    ]
+  },
+  {
+    "package": {
+      "id": "oracle-representative",
+      "version": "1.0.0",
+      "contract_version": "1.0.0",
+      "digest": "sha256:6cf602995e5303fd97dd11e4a0f149764a145e4d1224e6cd05cb32dbd8714993",
+      "resource_type": "instance",
+      "applicability": [
+        {
+          "attribute": "db.engine",
+          "values": [
+            "oracle"
+          ]
+        },
+        {
+          "attribute": "db.version",
+          "values": [
+            "19.3"
+          ]
+        }
+      ],
+      "collectors": [
+        {
+          "id": "oracle-connections",
+          "method": "sql",
+          "implementation_ref": "builtin:database.oracle.connections.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "oracle.sessions.count",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "connections",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "oracle-limit",
+          "method": "sql",
+          "implementation_ref": "builtin:database.oracle.limit.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "oracle.processes.limit",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "capacity",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "oracle-transactions",
+          "method": "sql",
+          "implementation_ref": "builtin:database.oracle.transactions.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "oracle.transactions.commit_total",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "commits",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "extensions": [
+      {
+        "id": "oracle.sessions.count",
+        "semantic_version": "1.0.0",
+        "meaning": "V$SESSION rows including background and idle sessions in the bound Oracle container.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "oracle"
+      },
+      {
+        "id": "oracle.processes.limit",
+        "semantic_version": "1.0.0",
+        "meaning": "Oracle processes parameter: process limit, not session or client connection capacity.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "oracle"
+      },
+      {
+        "id": "oracle.transactions.commit_total",
+        "semantic_version": "1.0.0",
+        "meaning": "V$SYSSTAT user commits in the bound instance/container; excludes rollbacks.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "counter",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "cumulative",
+        "monotonic": true,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "rate"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "oracle"
+      },
+      {
+        "id": "oracle.transactions.commit_rate",
+        "semantic_version": "1.0.0",
+        "meaning": "Per-second rate of oracle.transactions.commit_total, only within a valid counter epoch.",
+        "unit": "count/s",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "oracle"
+      }
+    ],
+    "derived": [
+      {
+        "id": "oracle.transactions.commit_rate",
+        "output": {
+          "id": "oracle.transactions.commit_rate",
+          "semantic_version": "1.0.0"
+        },
+        "transform_version": "1.0.0",
+        "inputs": [
+          {
+            "id": "oracle.transactions.commit_total",
+            "semantic_version": "1.0.0"
+          }
+        ],
+        "operation": "rate",
+        "join": "same_resource_and_dimensions",
+        "max_skew_ms": 1000,
+        "on_missing": "null",
+        "on_zero_denominator": "null",
+        "quality_propagation": "worst_input",
+        "accuracy_propagation": "least_certain_input"
+      }
+    ],
+    "transforms": [
+      {
+        "id": "normalize",
+        "version": "1.0.0"
+      },
+      {
+        "id": "derive",
+        "version": "1.0.0"
+      }
+    ],
+    "recommendations": {
+      "interval_ms": 60000,
+      "timeout_ms": 5000,
+      "stale_after_ms": 120000,
+      "max_counter_gap_ms": 300000,
+      "max_rows": 100,
+      "enabled": true
+    },
+    "documentation": [
+      {
+        "collector_id": "oracle-connections",
+        "permissions": [
+          "SELECT V_$SESSION"
+        ],
+        "discovery": "singleton in the authorized instance/container; no schema enumeration"
+      },
+      {
+        "collector_id": "oracle-limit",
+        "permissions": [
+          "SELECT V_$PARAMETER"
+        ],
+        "discovery": "singleton in the authorized instance/container; no schema enumeration"
+      },
+      {
+        "collector_id": "oracle-transactions",
+        "permissions": [
+          "SELECT V_$SYSSTAT",
+          "driver instance startup evidence"
+        ],
+        "discovery": "singleton in the authorized instance/container; no schema enumeration"
+      }
+    ]
+  },
+  {
+    "package": {
+      "id": "dameng-representative",
+      "version": "1.0.0",
+      "contract_version": "1.0.0",
+      "digest": "sha256:31233e023684a7cce35fda30abbd265733029daea506d5b3cecdaa15876684ec",
+      "resource_type": "instance",
+      "applicability": [
+        {
+          "attribute": "db.engine",
+          "values": [
+            "dameng"
+          ]
+        },
+        {
+          "attribute": "db.version",
+          "values": [
+            "8.1"
+          ]
+        }
+      ],
+      "collectors": [
+        {
+          "id": "dameng-connections",
+          "method": "sql",
+          "implementation_ref": "builtin:database.dameng.connections.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "dameng.sessions.count",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "connections",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "dameng-limit",
+          "method": "sql",
+          "implementation_ref": "builtin:database.dameng.limit.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "dameng.sessions.limit",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "capacity",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "dameng-transactions",
+          "method": "sql",
+          "implementation_ref": "builtin:database.dameng.transactions.v1",
+          "timeout_ms": 5000,
+          "estimated_cost": "low",
+          "mappings": [
+            {
+              "metric": {
+                "id": "dameng.transactions.commit_total",
+                "semantic_version": "1.0.0"
+              },
+              "raw_field": "commits",
+              "input_unit": "count",
+              "output_unit": "count",
+              "transform_version": "1.0.0",
+              "steps": [
+                "decode",
+                "normalize"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "extensions": [
+      {
+        "id": "dameng.sessions.count",
+        "semantic_version": "1.0.0",
+        "meaning": "DM V$SESSIONS rows; not operating-system processes.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "dameng"
+      },
+      {
+        "id": "dameng.sessions.limit",
+        "semantic_version": "1.0.0",
+        "meaning": "DM max_sessions configured session capacity; no synthetic default on missing value.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "dameng"
+      },
+      {
+        "id": "dameng.transactions.commit_total",
+        "semantic_version": "1.0.0",
+        "meaning": "DM transaction commit count; excludes rollbacks and is not SQL execution count.",
+        "unit": "count",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "counter",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "cumulative",
+        "monotonic": true,
+        "value_type": "uint64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "rate"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "dameng"
+      },
+      {
+        "id": "dameng.transactions.commit_rate",
+        "semantic_version": "1.0.0",
+        "meaning": "Per-second rate of dameng.transactions.commit_total, only within a valid counter epoch.",
+        "unit": "count/s",
+        "resource_type": "instance",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "diagnostic"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active",
+        "category": "extension",
+        "namespace": "dameng"
+      }
+    ],
+    "derived": [
+      {
+        "id": "dameng.transactions.commit_rate",
+        "output": {
+          "id": "dameng.transactions.commit_rate",
+          "semantic_version": "1.0.0"
+        },
+        "transform_version": "1.0.0",
+        "inputs": [
+          {
+            "id": "dameng.transactions.commit_total",
+            "semantic_version": "1.0.0"
+          }
+        ],
+        "operation": "rate",
+        "join": "same_resource_and_dimensions",
+        "max_skew_ms": 1000,
+        "on_missing": "null",
+        "on_zero_denominator": "null",
+        "quality_propagation": "worst_input",
+        "accuracy_propagation": "least_certain_input"
+      }
+    ],
+    "transforms": [
+      {
+        "id": "normalize",
+        "version": "1.0.0"
+      },
+      {
+        "id": "derive",
+        "version": "1.0.0"
+      }
+    ],
+    "recommendations": {
+      "interval_ms": 60000,
+      "timeout_ms": 5000,
+      "stale_after_ms": 120000,
+      "max_counter_gap_ms": 300000,
+      "max_rows": 100,
+      "enabled": true
+    },
+    "documentation": [
+      {
+        "collector_id": "dameng-connections",
+        "permissions": [
+          "SELECT V$SESSIONS"
+        ],
+        "discovery": "singleton in the authorized instance/container; no schema enumeration"
+      },
+      {
+        "collector_id": "dameng-limit",
+        "permissions": [
+          "SELECT V$PARAMETER"
+        ],
+        "discovery": "singleton in the authorized instance/container; no schema enumeration"
+      },
+      {
+        "collector_id": "dameng-transactions",
+        "permissions": [
+          "SELECT V$SYSSTAT",
+          "driver instance startup evidence"
+        ],
+        "discovery": "singleton in the authorized instance/container; no schema enumeration"
+      }
+    ]
+  }
+]

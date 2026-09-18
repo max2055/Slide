@@ -1,0 +1,24 @@
+{
+  "kind": "synthetic driver response fixtures, not captured production evidence",
+  "observed_at": "2026-09-01T00:01:00.000Z",
+  "start_at": "2026-09-01T00:00:00.000Z",
+  "engines": [
+    { "engine": "mysql", "version": "8.4.6", "rows": {
+      "status": [{"Variable_name":"Uptime","Value":"60"},{"Variable_name":"Queries","Value":"9007199254740993"}],
+      "connections": [{"connections":3}], "limit": [{"capacity":"151"}],
+      "transactions": [{"Variable_name":"Com_commit","Value":"9007199254740993"},{"Variable_name":"Com_rollback","Value":"4"}],
+      "size": [{"bytes":"32768"}]
+    } },
+    { "engine": "postgresql", "version": "16.4", "rows": {
+      "connections": [{"connections":"3"}], "limit": [{"capacity":"100"}],
+      "transactions": [{"database":"fixture_db","commits":"9007199254740993","rollbacks":"4"}],
+      "size": [{"database":"fixture_db","bytes":"8388608"}]
+    } },
+    { "engine": "oracle", "version": "19.3.0.0.0", "rows": {
+      "connections": [[3]], "limit": [["300"]], "transactions": [["9007199254740993"]]
+    } },
+    { "engine": "dameng", "version": "8.1.3.140", "rows": {
+      "connections": [[3]], "limit": [["500"]], "transactions": [["9007199254740993"]]
+    } }
+  ]
+}

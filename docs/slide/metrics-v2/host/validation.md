@@ -39,6 +39,20 @@
 
 剩余限制：生产调度依赖 CollectorAccess 注入 boot/interface/device 的权威生命周期 epoch；仓库目前没有真实接入方实现，因此此处的现场测试由测试清单构造首次设备 epoch，重启和同名重现由固定 fixture 测试证明，而不是生产 inventory 联动。`linux.block.io_time_ms_total` 保留为精确累计 `ms` observation；已冻结语义查询契约仅支持 `By`/`count` counter 的 rate 模式，因此本项未扩张公共单位契约以暴露其 `ms/s` 速率。
 
+### 最新 main 整合复验
+
+在提交 PR 后，`main` 合入 MAX-71（`222f577`）与 MAX-73（`5b48e0f`）。`runner.ts` 的派生计算合并同时保留输入依赖闭包、输出维度匹配与 Counter 增量上限；前两项分别防止遗漏多级派生，以及将数据库/文件系统公式扩散到其他维度。
+
+| 命令 | 结果 |
+| --- | --- |
+| `corepack pnpm --filter slide-api exec vitest run src/metrics-v2/packages src/metrics-v2/database/database.test.ts src/metrics-v2/snmp/collector.test.ts src/metrics-v2/processor.test.ts src/metrics-v2/query.test.ts tests/phase-94-docs-structure.test.ts` | 7 文件通过、1 跳过；201 项通过、1 项隔离 MySQL 跳过 |
+| `METRICS_V2_TEST_MYSQL_PORT=33306 corepack pnpm --filter slide-api exec vitest run src/metrics-v2/database/database.mysql.test.ts src/metrics-v2/snmp/snmp.mysql.test.ts --maxWorkers=1` | 隔离 MySQL 8.4.11：2 文件、3 项通过，6.33s |
+| `METRICS_V2_TEST_MYSQL_PORT=33306 METRICS_V2_TEST_SSH_PORT=32222 METRICS_V2_TEST_SSH_PASSWORD=<隔离容器临时凭证> corepack pnpm --filter slide-api exec vitest run src/metrics-v2/packages/host.mysql.test.ts` | 隔离 Ubuntu SSH → MySQL → 查询：1/1 通过，4.57s；测试后恢复容器账号原密码哈希 |
+| `corepack pnpm --filter slide-api typecheck` 与 `corepack pnpm --filter slide-api exec tsx src/metrics-v2/packages/export.ts --check` | 均通过 |
+| `corepack pnpm --filter slide-api test` | 整合后的全量门禁：273 文件通过、11 跳过；2564 项通过、99 跳过，13.02s |
+| `corepack pnpm --filter slide-api exec vitest run tests/phase-94-docs-structure.test.ts` | 目录门禁 11/11 通过 |
+| `corepack pnpm lint` | 0 error，263 个仓库既有 warning |
+
 ### 回退
 
 代码回退删除 `linux-host` release、对应固定 adapter 分支和多维度派生选择修正，并恢复包导出快照；无新数据库 migration。旧 `server_metrics` 与旧 API 未删除，可继续运行。
