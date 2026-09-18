@@ -28,12 +28,16 @@
 | `METRICS_V2_TEST_MYSQL_PORT=33306 pnpm --filter slide-api exec vitest run src/metrics-v2/policy/store.mysql.test.ts -t 'full migration succeeds and rerun preserves ledger and legacy data'` | 未放宽超时，1/1 通过（2.58s）；确认前项是并发冷启动时序，不是断言失败 |
 | `pnpm --filter slide-api exec tsx src/metrics-v2/packages/export.ts --check` | 包 schema、发行物快照与 digest 一致 |
 | `pnpm --filter slide-api typecheck` | 通过 |
-| `pnpm --filter slide-api test` | 271 文件通过、9 跳过；2502 项通过、96 跳过 |
+| `corepack pnpm --filter slide-api test` | 最终全量门禁：271 文件通过、9 跳过；2502 项通过、96 跳过，13.65s；隔离现场另行 opt-in 运行 |
+| `METRICS_V2_TEST_MYSQL_PORT=33306 METRICS_V2_TEST_SSH_PORT=32222 METRICS_V2_TEST_SSH_PASSWORD=<隔离容器临时凭证> corepack pnpm --filter slide-api exec vitest run src/metrics-v2/packages/host.mysql.test.ts` | Ubuntu SSH 真实采集→MySQL 存储→语义查询：1/1 通过，5.00s；首次查询路径修正后通过 |
+| `corepack pnpm lint` | 0 error，263 个仓库既有 warning（未扩大本项范围） |
 | `git diff --check` | 通过 |
 
 环境与开销：宿主为 Darwin 27.0.0 arm64，不能作为 Linux 主机；隔离 MySQL 为 Docker MySQL 8.4.11。合成包测试观测到完整样本 4 个 collector invocation、7 条固定命令，CPU/内存/文件系统/网络/块设备统一输出。全量测试约 13.92s；这些数字不是远程 Linux 网络开销。
 
-隔离 Linux SSH → V2 MySQL 存储 →语义查询仍未通过：已增加 opt-in `host.mysql.test.ts` 作为现场验证入口，但本轮环境没有可认证的 Linux SSH 目标；一次性 Oracle Linux 容器缺少 sshd/procps，仓库安装未完成。该测试保持 skip，fixture 与 Docker exec 均未冒充现场结果。因此本项必需现场验收未满足，Issue 应保持 blocked，而非 in_review。
+隔离现场使用 Docker Ubuntu 24.04 arm64（Linux 7.0.12-linuxkit、procps-ng 4.0.4、GNU coreutils 9.4、OpenSSH 9.6p1）SSH 容器及独立 MySQL 8.4.11 容器，仅映射本机 loopback。测试对容器建立真实 SSH 连接，执行固定命令并记录输出；CPU、内存、文件系统与网络/块设备 observation 经 V2 存储后逐项查询，累计字节 counter 再次现场采样并校验语义速率。完整闭环约 5.00s（含 MySQL migration），不代表生产网络时延或调度器吞吐。测试入口直接连接限定的 loopback 容器，因为正式 SSH 目标策略拒绝 loopback；未更改正式目标策略。
+
+剩余限制：生产调度依赖 CollectorAccess 注入 boot/interface/device 的权威生命周期 epoch；仓库目前没有真实接入方实现，因此此处的现场测试由测试清单构造首次设备 epoch，重启和同名重现由固定 fixture 测试证明，而不是生产 inventory 联动。`linux.block.io_time_ms_total` 保留为精确累计 `ms` observation；已冻结语义查询契约仅支持 `By`/`count` counter 的 rate 模式，因此本项未扩张公共单位契约以暴露其 `ms/s` 速率。
 
 ### 回退
 

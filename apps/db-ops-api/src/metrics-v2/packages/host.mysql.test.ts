@@ -1,6 +1,6 @@
 import mysql, { type Pool } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Client } from 'ssh2';
+import { Client } from 'ssh2';
 import { MigrationRunner } from '../../migrations/runner.js';
 import type { MigrationPool } from '../../migrations/types.js';
 import serverMetricProvider, { parseProcDiskstatsExact, parseProcNetDevExact } from '../../server-metric-provider.js';
@@ -34,7 +34,11 @@ describe.skipIf(!mysqlPort || !sshPort || !sshPassword)('Linux host SSH to V2 My
   });
 
   it('collects a real isolated Linux host, stores Normalized Observations and queries them', async () => {
-    const client = await sshSessionPool.getConnection('127.0.0.1', sshPort, 'fixture', 'password', sshPassword!);
+    // This opt-in fixture targets only a loopback-mapped container. Production
+    // SshSessionPool deliberately denies loopback destinations.
+    const client = new Client();
+    await new Promise<void>((resolve, reject) => client.once('ready', resolve).once('error', reject)
+      .connect({ host: '127.0.0.1', port: sshPort, username: 'fixture', password: sshPassword!, readyTimeout: 5000 }));
     const observedAt = new Date().toISOString();
     const inventory = await sshSessionPool.execCommands(client, [
       'LC_ALL=C LANG=C cat /proc/sys/kernel/random/boot_id',
@@ -63,8 +67,6 @@ describe.skipIf(!mysqlPort || !sshPort || !sshPassword)('Linux host SSH to V2 My
       evidence: { host_counter_epochs: { boot: { epoch: inventory[0].stdout.trim(), observed_at: observedAt }, interfaces, devices } },
       resolve: async () => transport,
     });
-    sshSessionPool.releaseConnection(client);
-
     expect(result.attempts.every(attempt => attempt.status === 'succeeded')).toBe(true);
     const definitions = registry.catalog({ id: release.package.id, version: release.package.version, digest: release.package.digest });
     const storage = new MysqlMetricStorage(pool);
@@ -74,14 +76,57 @@ describe.skipIf(!mysqlPort || !sshPort || !sshPassword)('Linux host SSH to V2 My
     const cpu = result.observations.find(output => output.observation.metric.id === 'linux.cpu.user_system_percent')!.observation;
     const rawCpu = calls.find(call => call.commands.some(command => command.includes('top -bn1')))!.stdout[0];
     expect(cpu.value).toEqual({ encoding: 'float64', value: serverMetricProvider.parseMetric('cpu_usage', rawCpu) });
-    const definition = definitions.find(candidate => candidate.id === cpu.metric.id)!;
-    const queried = await new SemanticQueryService(storage, async () => true).query({
-      definition, series: [{ resource_type: cpu.resource_type, resource_id: cpu.resource_id, metric: cpu.metric, dimensions: cpu.dimensions }],
-      from: new Date(Date.parse(observedAt) - 1000).toISOString(), to: new Date(Date.parse(observedAt) + 1000).toISOString(),
-      now: new Date(Date.parse(observedAt) + 1000).toISOString(), interval_ms: 60_000, max_gap_ms: 300_000,
-      stale_after_ms: 120_000, mode: 'last', space: 'none',
+    for (const metricId of ['linux.cpu.user_system_percent', 'linux.memory.used_percent', 'host.filesystem.used_bytes',
+      'linux.filesystem.used_ratio']) {
+      const observation = result.observations.find(output => output.observation.metric.id === metricId)?.observation;
+      expect(observation, `${metricId} must be collected from Linux`).toBeDefined();
+      const definition = definitions.find(candidate => candidate.id === metricId)!;
+      const queried = await new SemanticQueryService(storage, async () => true).query({
+        definition, series: [{ resource_type: observation!.resource_type, resource_id: observation!.resource_id,
+          metric: observation!.metric, dimensions: observation!.dimensions }],
+        from: new Date(Date.parse(observedAt) - 1000).toISOString(), to: new Date(Date.parse(observedAt) + 1000).toISOString(),
+        now: new Date(Date.parse(observedAt) + 1000).toISOString(), interval_ms: 60_000, max_gap_ms: 300_000,
+        stale_after_ms: 120_000, mode: 'last', space: 'none',
+      });
+      expect(queried[0]).toMatchObject({ quality: { status: observation!.quality.status }, sample_count: 1 });
+      if (observation!.value?.encoding === 'float64') {
+        expect(queried[0].value?.encoding).toBe('float64');
+        expect((queried[0].value as { value: number }).value).toBeCloseTo(observation!.value.value, 12);
+      } else {
+        expect(queried[0].value).toEqual(observation!.value);
+      }
+    }
+    const secondAt = new Date().toISOString();
+    const second = await runPackage(registry, {
+      package: { id: release.package.id, version: release.package.version, digest: release.package.digest },
+      credential_ref: 'credential:qualification-host', overrides: {},
+    }, {
+      resource: { id: 'host-qualification', type: 'server', attributes: { 'os.family': { value: 'linux', observed_at: secondAt, source: 'qualification' } } },
+      binding_id: 'binding-host-qualification', attempt_id: 'attempt-host-qualification-2', config_revision: 1, observed_at: secondAt,
+      evidence: { host_counter_epochs: { boot: { epoch: inventory[0].stdout.trim(), observed_at: observedAt }, interfaces, devices } },
+      resolve: async () => transport,
     });
-    expect(queried[0]).toMatchObject({ value: cpu.value, quality: { status: 'good' }, sample_count: 1 });
+    expect(second.attempts.every(attempt => attempt.status === 'succeeded')).toBe(true);
+    for (const output of second.observations) {
+      await storage.write(output.observation, definitions.find(definition => definition.id === output.observation.metric.id)!);
+    }
+    for (const metricId of ['host.network.bytes_total', 'linux.block.read_bytes_total']) {
+      const observation = result.observations.find(output => output.observation.metric.id === metricId)?.observation;
+      expect(observation, `${metricId} must be collected from Linux`).toBeDefined();
+      const definition = definitions.find(candidate => candidate.id === metricId)!;
+      const series = { resource_type: observation!.resource_type, resource_id: observation!.resource_id,
+        metric: observation!.metric, dimensions: observation!.dimensions };
+      const stored = await storage.queryWindow(series, observedAt, secondAt);
+      expect(stored[0].value).toEqual(observation!.value);
+      const [rate] = await new SemanticQueryService(storage, async () => true).query({
+        definition, series: [series], from: observedAt, to: secondAt, now: secondAt,
+        interval_ms: 60_000, max_gap_ms: 300_000, stale_after_ms: 120_000, mode: 'rate', space: 'none',
+      });
+      expect(rate).toMatchObject({ quality: { status: 'good' } });
+      expect(rate.value?.encoding).toBe('float64');
+      expect((rate.value as { value: number }).value).toBeGreaterThanOrEqual(0);
+    }
+    client.end();
     expect(result.observations.every(output => output.observation.resource_type === 'server')).toBe(true);
   }, 120_000);
 });
