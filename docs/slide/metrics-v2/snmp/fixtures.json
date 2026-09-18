@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "at": "2026-09-01T00:00:00.000Z",
+  "uptime_ticks": 100000,
+  "ifTable": [{ "index": "1", "values": { "1": 1, "2": "test-port-1", "5": 1000000000, "6": "020000000001", "7": 1, "8": 1, "10": 1000, "16": 2000, "14": 1, "20": 2, "13": 3, "19": 4 } }],
+  "ifXTable": [{ "index": "1", "values": { "1": "port-1", "6": "9007199254740993", "10": "18014398509481986", "15": 1000, "19": 0 } }],
+  "second_delta": { "rx": 7500000, "tx": 15000000 },
+  "expected_bits_per_second": { "rx": 1000000, "tx": 2000000 },
+  "existing_vendor_fixture": {
+    "fixtureVersion": "vrp-test-1",
+    "firmwarePattern": "^V8R21",
+    "vendorMetrics": {
+      "cpu": { "oid": "1.3.6.1.4.1.2011.6.3.1.1.4.1.5.0", "unit": "percent", "scale": 1 },
+      "memory": { "oid": "1.3.6.1.4.1.2011.6.3.1.1.4.1.7.0", "unit": "percent", "scale": 0.1 }
+    }
+  },
+  "boundary": "Synthetic, sanitized values; private OIDs copied from existing huawei-adapter.test.ts vrp-test-1 only. No vendor hardware compatibility claim."
+}

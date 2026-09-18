@@ -28,6 +28,12 @@ function session(overrides: Partial<SnmpSession> = {}): SnmpSession {
 }
 
 describe('SnmpClient', () => {
+  it.each(['NoAccess: 1.3.6.1.2.1.1.3.0', 'AuthorizationError: denied'])('classifies SNMP access errors: %s', async message => {
+    const active = session({ get: async () => { throw new Error(message); } });
+    await expect(new SnmpClient(() => active).get(baseConfig, ['1.3.6.1.2.1.1.3.0']))
+      .rejects.toMatchObject({ code: 'SNMP_AUTH_FAILED' });
+    expect(active.close).toHaveBeenCalledTimes(1);
+  });
   it('maps an authPriv v3 config and closes the session after a GET', async () => {
     const active = session();
     const factory = vi.fn(async (config: SnmpV3Config) => {

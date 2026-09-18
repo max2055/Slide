@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
-  CapabilitySchema, ResourceSchema, TimestampSchema, observationIdentity, validateAttempt, validateObservationBatch,
+  CapabilitySchema, ResourceSchema, TimestampSchema, observationIdentity, seriesIdentity, validateAttempt, validateObservationBatch,
   type Capability, type CollectionAttempt, type RawObservation, type Resource,
 } from '../../contracts/metrics-v2/index.js';
 import { normalize, executeDerived, type Computation, type CounterState } from '../index.js';
@@ -49,13 +49,14 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
   release.derived = release.derived.filter(d => selected(d.output));
   p.collectors = p.collectors.filter(c => !execution.collector_ids || execution.collector_ids.includes(c.id));
   for (const c of p.collectors) c.mappings = c.mappings.filter(m => selected(m.metric));
+  const bounds = new Map<string, string>();
   const shared = new Map<string, Promise<DecodedRow[]>>();
   const check = async () => { execution.signal?.throwIfAborted(); await execution.before_request?.(); execution.signal?.throwIfAborted(); };
   // Guard every transport call, including adapters that issue several reads.
   const guarded = (t: Transport): Transport => {
     if (!execution.signal && !execution.before_request) return t;
     if (t.method === 'sql') return { method: 'sql', pool: { query: async options => { await check(); return t.pool.query(options); } } };
-    if (t.method === 'snmp') return { method: 'snmp', table: async (root, timeout) => { await check(); return t.table(root, timeout); } };
+    if (t.method === 'snmp') return { method: 'snmp', ...(t.get ? { get: async (oids: string[], timeout: number) => { await check(); return t.get!(oids, timeout); } } : {}), table: async (root, timeout) => { await check(); return t.table(root, timeout); } };
     return { ...t, pool: { execCommands: async (client, commands, options) => {
       const results = [];
       for (const command of commands) { await check(); results.push(...await t.pool.execCommands(client, [command], options)); }
@@ -91,6 +92,7 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
     validateAttempt(attempt);
     let error: CollectionAttempt['error'] = null;
     let outputs: Computation[] = [];
+    const fieldCapabilities = new Map<string, Array<'supported' | 'unsupported' | 'unknown'>>();
     let transport: Transport;
     try { transport = guarded(await execution.resolve(selection.credential_ref, resource, collector.method)); await check(); }
     catch (failure) { error = classifyError(failure); }
@@ -103,24 +105,32 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
         const rows = await shared.get(key)!;
         execution.signal?.throwIfAborted();
         if (rows.length > settings.max_rows || new Set(rows.map(r => stable(r.dimensions))).size !== rows.length) throw new Error('DUPLICATE_OR_EXCESS_ROWS');
+        const discovered = new Set(rows.map(row => stable(row.dimensions)));
+        for (const [key, state] of result.states) {
+          if (state.baseline.source.collector_id === collector.id && !discovered.has(stable(state.baseline.dimensions))) result.states.delete(key);
+        }
         const collectedAt = TimestampSchema.parse(clock());
         for (const row of rows) for (const mapping of collector.mappings) {
           try {
             const definition = definitions.find(d => d.id === mapping.metric.id && d.semantic_version === mapping.metric.semantic_version)!;
             const value = row.fields[mapping.raw_field];
+            const detail = row.field_evidence?.[mapping.raw_field];
+            if (detail?.error) error = detail.error;
+            if (detail?.capability) fieldCapabilities.set(mapping.raw_field, [...(fieldCapabilities.get(mapping.raw_field) ?? []), detail.capability]);
             if (value === undefined) throw new Error('MISSING_FIELD');
             const raw: RawObservation = { id: 'pending', stage: 'raw', resource_type: resource.type, resource_id: resource.id,
-              metric: mapping.metric, dimensions: row.dimensions, observed_at: at, collected_at: collectedAt, stored_at: null,
+              metric: mapping.metric, dimensions: row.dimensions, observed_at: row.observed_at ?? at, collected_at: collectedAt, stored_at: null,
               unit: mapping.input_unit, value, raw_field: mapping.raw_field,
-              quality: value === null ? { status: 'unknown', reason: 'source_error' } : { status: 'good', reason: 'none' }, accuracy: value === null ? 'unknown' : row.accuracy?.[mapping.raw_field] ?? 'exact', production: 'measured',
+              quality: detail?.quality ?? (value === null ? { status: 'unknown', reason: 'source_error' } : { status: 'good', reason: 'none' }), accuracy: value === null ? 'unknown' : row.accuracy?.[mapping.raw_field] ?? 'exact', production: 'measured',
               source: { binding_id: execution.binding_id, metric_binding_id: metricBindingId(execution.binding_id, mapping.metric.id, row.dimensions), collector_id: collector.id, attempt_id: attempt.id },
               versions: { contract: p.contract_version, package_id: p.id, package_version: p.version, transform_version: mapping.transform_version, config_revision: execution.config_revision },
-              ...(definition.kind === 'counter' ? { counter: row.counter } : {}),
+              ...(definition.kind === 'counter' ? { counter: detail?.counter ?? row.counter } : {}),
             };
             raw.id = observationIdentity(raw);
             const output = normalize(raw, definition, { now: collectedAt, stale_after_ms: settings.stale_after_ms });
             validateObservationBatch([output.observation], definitions);
             outputs.push(output);
+            if (detail?.max_increment_per_second) bounds.set(seriesIdentity(output.observation), detail.max_increment_per_second);
           } catch { error = 'parse_error'; }
         }
         validateObservationBatch(outputs.map(o => o.observation), definitions);
@@ -137,11 +147,13 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
     validateAttempt(attempt); result.attempts.push(attempt); result.observations.push(...outputs);
     for (const mapping of collector.mappings) {
       const mappingError = outputs.some(o => stable(o.observation.metric) === stable(mapping.metric)) ? null : error;
+      const fieldStatuses = fieldCapabilities.get(mapping.raw_field);
+      const fieldStatus = fieldStatuses?.every(s => s === 'unsupported') ? 'unsupported' : fieldStatuses?.some(s => s !== 'supported') ? 'unknown' : undefined;
       const previous = execution.previous_capabilities?.find(c => c.resource_id === resource.id && stable(c.metric) === stable(mapping.metric) && c.method === collector.method);
       if (mappingError === 'timeout' && previous && Date.parse(previous.evaluated_at) <= Date.parse(at) && Date.parse(previous.valid_until) > Date.parse(at)) {
         result.capabilities.push(CapabilitySchema.parse(previous));
-      } else result.capabilities.push(capability(mapping.metric, collector.method, mappingError ? 'unknown' : 'supported', [...basis,
-        { kind: mappingError === 'permission_denied' || !mappingError ? 'permission' : 'method', evidence: mappingError ?? 'fixed_read_succeeded' }]));
+      } else result.capabilities.push(capability(mapping.metric, collector.method, fieldStatus ?? (mappingError ? 'unknown' : 'supported'), [...basis,
+        { kind: mappingError === 'permission_denied' || !mappingError ? 'permission' : 'method', evidence: mappingError ?? fieldStatus ?? 'fixed_read_succeeded' }]));
     }
   }
   const groups = new Map<string, Computation[]>();
@@ -165,7 +177,7 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
       versions: { ...anchor.versions, transform_version: d.transform_version },
     }]));
     const derived = executeDerived(nodes, definitions, inputs, { anchor, context: { now: clock(), stale_after_ms: settings.stale_after_ms },
-      targets, counter: { max_gap_ms: settings.max_counter_gap_ms }, states: result.states });
+      targets, counter: { max_gap_ms: settings.max_counter_gap_ms }, states: result.states, counter_bounds: bounds });
     result.observations.push(...derived.outputs); result.states = derived.states;
   }
   for (const node of release.derived) {
