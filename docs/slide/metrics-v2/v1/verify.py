@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[2]
+ROOT = HERE.parents[3]
 BASE = ROOT / 'apps/db-ops-api/src'
 BASELINE = 'f9c1de747890a10d059765aac32712fa4e270372'
 

@@ -1,6 +1,6 @@
 # 验收记录 v1
 
-2026-09-18，源码基线 `f9c1de747890a10d059765aac32712fa4e270372`。本项仅新增 `docs/metrics-v2/v1/`。分支/交付提交和 PR 链接记录在 MAX-63 最终评论（避免文件自引用提交 hash）。
+2026-09-18，源码基线 `f9c1de747890a10d059765aac32712fa4e270372`。本项仅新增 `docs/slide/metrics-v2/v1/`。分支/交付提交和 PR 链接记录在 MAX-63 最终评论（避免文件自引用提交 hash）。
 
 |验收项|证据|结果|
 |---|---|---|
@@ -16,7 +16,7 @@
 执行命令（仓库根目录）：
 
 ```text
-python3 docs/metrics-v2/v1/verify.py
+python3 docs/slide/metrics-v2/v1/verify.py
 PASS: 64 registry identities; 65 provider cases; 70 realtime fields; 55 referenced files; 3 resource fixtures; mapping coverage, source paths, arithmetic and negative cases
 git diff --cached --check
 无输出，退出码 0
@@ -27,3 +27,12 @@ git diff --cached --check
 可选验证未执行：真实引擎/网络设备回放、部署库自定义定义导出、生产访问日志消费方核验。它们不是本项代表fixture盘点的阻塞；不据此声称运行时已支持V2。fixture的gap阈值300秒仅为样例策略，不提前冻结MAX-64/66的全局阈值。
 
 回退：撤回本目录新增提交；无需回滚schema、服务或配置。合并 main 前下游依赖未满足；本项交付后等待审阅，不等待 MAX-64 实现。
+
+## CI 目录兼容修复（2026-09-18）
+
+PR #74 的 backend CI 因新增目录不符合现有文档归档规则失败；产物已迁移至 `docs/slide/metrics-v2/v1/`，同步更新命令路径及校验脚本的仓库根目录定位，保留原目录门禁。
+
+- 修复前本地复现 `phase-94-docs-structure.test.ts` 的同一失败。
+- 修复后 `pnpm --filter slide-api exec vitest run tests/phase-94-docs-structure.test.ts`：11/11 通过。
+- `python3 docs/slide/metrics-v2/v1/verify.py`：原盘点与 fixture 校验通过。
+- `pnpm --filter slide-api test`：261 个测试文件通过、4 个跳过；2267 项通过、55 项跳过。

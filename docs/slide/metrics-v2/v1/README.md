@@ -14,7 +14,7 @@
 
 ## 产物与阅读方式
 
-`mapping.md` 是逐项语义映射（包含旧 ID、类型、单位、来源、成本、作用域/维度、分类及处置理由）；`consumers.md` 是消费方与兼容边界；`inventory.json` 是源码提取的注册表、provider 分支、实时字段及引用位置快照；`fixtures.json` 是三类代表和正反例。运行 `python3 docs/metrics-v2/v1/verify.py` 交叉校验；`--refresh` 仅在审核新基线时重建源码快照，不自动修改人工语义决策。
+`mapping.md` 是逐项语义映射（包含旧 ID、类型、单位、来源、成本、作用域/维度、分类及处置理由）；`consumers.md` 是消费方与兼容边界；`inventory.json` 是源码提取的注册表、provider 分支、实时字段及引用位置快照；`fixtures.json` 是三类代表和正反例。运行 `python3 docs/slide/metrics-v2/v1/verify.py` 交叉校验；`--refresh` 仅在审核新基线时重建源码快照，不自动修改人工语义决策。
 
 源码快照覆盖仓库内置实现，不声称覆盖部署数据库中用户创建的 `collection_sqls`/`compute_expr`。自定义定义必须逐部署导出后按 Extension 审核；未知 SQL 不按旧 ID 自动升级为 Canonical。成本为源码推导的查询/命令次数与复杂度，**不是实测延迟**。
 
