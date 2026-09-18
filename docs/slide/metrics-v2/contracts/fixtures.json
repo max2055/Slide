@@ -1,0 +1,1335 @@
+{
+  "contract_version": "1.0.0",
+  "synthetic": true,
+  "definitions": [
+    {
+      "category": "canonical",
+      "id": "db.uptime_seconds",
+      "semantic_version": "1.0.0",
+      "meaning": "Elapsed seconds since database instance startup; not management-agent uptime.",
+      "resource_type": "instance",
+      "unit": "s",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "core"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "float64",
+      "dimensions": {
+        "keys": [],
+        "max_series_per_resource": 100,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active"
+    },
+    {
+      "category": "canonical",
+      "id": "host.filesystem.used_bytes",
+      "semantic_version": "1.0.0",
+      "meaning": "Filesystem used bytes reported by df; excludes available and reserved free space.",
+      "resource_type": "server",
+      "unit": "By",
+      "scope": "filesystem",
+      "kind": "gauge",
+      "roles": [
+        "core"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "mount",
+            "meaning": "mount stable resource-local identity",
+            "required": true
+          },
+          {
+            "name": "device",
+            "meaning": "device stable resource-local identity",
+            "required": true
+          },
+          {
+            "name": "fs_type",
+            "meaning": "fs_type stable resource-local identity",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 100,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active"
+    },
+    {
+      "category": "canonical",
+      "id": "host.filesystem.size_bytes",
+      "semantic_version": "1.0.0",
+      "meaning": "Filesystem total bytes reported by df including reserved capacity.",
+      "resource_type": "server",
+      "unit": "By",
+      "scope": "filesystem",
+      "kind": "gauge",
+      "roles": [
+        "core"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "mount",
+            "meaning": "mount stable resource-local identity",
+            "required": true
+          },
+          {
+            "name": "device",
+            "meaning": "device stable resource-local identity",
+            "required": true
+          },
+          {
+            "name": "fs_type",
+            "meaning": "fs_type stable resource-local identity",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 100,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active"
+    },
+    {
+      "category": "canonical",
+      "id": "host.network.bytes_total",
+      "semantic_version": "1.0.0",
+      "meaning": "Cumulative bytes transferred by interface and direction in the current counter epoch.",
+      "resource_type": "server",
+      "unit": "By",
+      "scope": "interface",
+      "kind": "counter",
+      "roles": [
+        "core"
+      ],
+      "temporality": "cumulative",
+      "monotonic": true,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "interface",
+            "meaning": "interface stable resource-local identity",
+            "required": true
+          },
+          {
+            "name": "direction",
+            "meaning": "direction stable resource-local identity",
+            "required": true,
+            "allowed_values": [
+              "in",
+              "out"
+            ]
+          }
+        ],
+        "max_series_per_resource": 100,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "rate"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active"
+    },
+    {
+      "category": "canonical",
+      "id": "network.interface.traffic_bps",
+      "semantic_version": "1.0.0",
+      "meaning": "Directional bits per second over a valid interval of the same IF-MIB interface generation.",
+      "resource_type": "network_device",
+      "unit": "bit/s",
+      "scope": "interface",
+      "kind": "gauge",
+      "roles": [
+        "core"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "float64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "if_index",
+            "meaning": "if_index stable resource-local identity",
+            "required": true
+          },
+          {
+            "name": "interface_epoch",
+            "meaning": "interface_epoch stable resource-local identity",
+            "required": true
+          },
+          {
+            "name": "direction",
+            "meaning": "direction stable resource-local identity",
+            "required": true,
+            "allowed_values": [
+              "in",
+              "out"
+            ]
+          }
+        ],
+        "max_series_per_resource": 100,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active"
+    },
+    {
+      "category": "canonical",
+      "id": "network.interface.oper_up",
+      "semantic_version": "1.0.0",
+      "meaning": "IF-MIB operStatus up=1, down=0; all other enumerants unknown.",
+      "resource_type": "network_device",
+      "unit": "1",
+      "scope": "interface",
+      "kind": "gauge",
+      "roles": [
+        "core"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "float64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "if_index",
+            "meaning": "if_index stable resource-local identity",
+            "required": true
+          },
+          {
+            "name": "interface_epoch",
+            "meaning": "interface_epoch stable resource-local identity",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 100,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active"
+    },
+    {
+      "category": "extension",
+      "id": "mysql.cpu.heuristic_percent",
+      "semantic_version": "1.0.0",
+      "meaning": "Legacy MySQL CPU heuristic including baseline; not host CPU utilization.",
+      "resource_type": "instance",
+      "unit": "%",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "float64",
+      "dimensions": {
+        "keys": [],
+        "max_series_per_resource": 100,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "namespace": "mysql"
+    },
+    {
+      "category": "extension",
+      "id": "linux.filesystem.used_ratio",
+      "semantic_version": "1.0.0",
+      "meaning": "df used bytes divided by total bytes; not df percent based on non-reserved capacity.",
+      "resource_type": "server",
+      "unit": "1",
+      "scope": "filesystem",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "float64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "mount",
+            "meaning": "mount stable resource-local identity",
+            "required": true
+          },
+          {
+            "name": "device",
+            "meaning": "device stable resource-local identity",
+            "required": true
+          },
+          {
+            "name": "fs_type",
+            "meaning": "fs_type stable resource-local identity",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 100,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "namespace": "linux"
+    }
+  ],
+  "resources": [
+    {
+      "id": "db-1",
+      "type": "instance",
+      "attributes": {
+        "db.version": {
+          "value": "8.0.fixture",
+          "observed_at": "2026-09-01T00:01:00Z",
+          "source": "inventory"
+        },
+        "db.engine": {
+          "value": "mysql",
+          "observed_at": "2026-09-01T00:01:00Z",
+          "source": "inventory"
+        }
+      }
+    },
+    {
+      "id": "host-1",
+      "type": "server",
+      "attributes": {
+        "os.family": {
+          "value": "linux",
+          "observed_at": "2026-09-01T00:01:00Z",
+          "source": "inventory"
+        }
+      }
+    },
+    {
+      "id": "net-1",
+      "type": "network_device",
+      "attributes": {
+        "device.model": {
+          "value": "synthetic-switch",
+          "observed_at": "2026-09-01T00:01:00Z",
+          "source": "inventory"
+        }
+      }
+    }
+  ],
+  "observations": [
+    {
+      "id": "sha256:8622046c0a905882a0d56c203acf32ce861d94bc8c84395018571f940d16f9aa",
+      "stage": "normalized",
+      "resource_type": "instance",
+      "resource_id": "db-1",
+      "metric": {
+        "id": "db.uptime_seconds",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {},
+      "observed_at": "2026-09-01T00:01:00Z",
+      "collected_at": "2026-09-01T00:01:00Z",
+      "stored_at": "2026-09-01T00:01:02Z",
+      "unit": "s",
+      "value": {
+        "encoding": "float64",
+        "value": 3600
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "accuracy": "exact",
+      "production": "measured",
+      "source": {
+        "binding_id": "cb-db-1",
+        "metric_binding_id": "mb-db.uptime_seconds",
+        "collector_id": "fixture",
+        "attempt_id": "attempt-1"
+      },
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "lineage": [
+        {
+          "id": "sha256:5381d044c18a7b67a8b7a28907149e1e902ed050bb4fab28ed54cc2992c3efbc",
+          "stage": "raw"
+        }
+      ]
+    },
+    {
+      "id": "sha256:d80c429b0a607d4ab49ddc3fb6c8ccd1e819a723d44c3c76e7304dccb8fb434f",
+      "stage": "normalized",
+      "resource_type": "server",
+      "resource_id": "host-1",
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {
+        "mount": "/data",
+        "device": "/dev/fixture1",
+        "fs_type": "ext4"
+      },
+      "observed_at": "2026-09-01T00:01:00Z",
+      "collected_at": "2026-09-01T00:01:00Z",
+      "stored_at": "2026-09-01T00:01:02Z",
+      "unit": "By",
+      "value": {
+        "encoding": "uint64",
+        "value": "268435456"
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "accuracy": "exact",
+      "production": "measured",
+      "source": {
+        "binding_id": "cb-host-1",
+        "metric_binding_id": "mb-host.filesystem.used_bytes",
+        "collector_id": "fixture",
+        "attempt_id": "attempt-1"
+      },
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "lineage": [
+        {
+          "id": "raw-host.filesystem.used_bytes",
+          "stage": "raw"
+        }
+      ]
+    },
+    {
+      "id": "sha256:bc7af21d9f830d7b0a27b14285578ce4955529754e7e72778a56ce8f257e42fc",
+      "stage": "normalized",
+      "resource_type": "server",
+      "resource_id": "host-1",
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {
+        "mount": "/data",
+        "device": "/dev/fixture1",
+        "fs_type": "ext4"
+      },
+      "observed_at": "2026-09-01T00:01:00Z",
+      "collected_at": "2026-09-01T00:01:00Z",
+      "stored_at": "2026-09-01T00:01:02Z",
+      "unit": "By",
+      "value": {
+        "encoding": "uint64",
+        "value": "1073741824"
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "accuracy": "exact",
+      "production": "measured",
+      "source": {
+        "binding_id": "cb-host-1",
+        "metric_binding_id": "mb-host.filesystem.size_bytes",
+        "collector_id": "fixture",
+        "attempt_id": "attempt-1"
+      },
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "lineage": [
+        {
+          "id": "raw-host.filesystem.size_bytes",
+          "stage": "raw"
+        }
+      ]
+    },
+    {
+      "id": "sha256:ca5a4b6c002b9a4208b0646c569b729cec1bded6dec7cf8a7fc8058c17541cc9",
+      "stage": "normalized",
+      "resource_type": "server",
+      "resource_id": "host-1",
+      "metric": {
+        "id": "host.network.bytes_total",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {
+        "interface": "fixture0",
+        "direction": "in"
+      },
+      "observed_at": "2026-09-01T00:01:00Z",
+      "collected_at": "2026-09-01T00:01:00Z",
+      "stored_at": "2026-09-01T00:01:02Z",
+      "unit": "By",
+      "value": {
+        "encoding": "uint64",
+        "value": "9007199254746993"
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "accuracy": "exact",
+      "production": "measured",
+      "source": {
+        "binding_id": "cb-host-1",
+        "metric_binding_id": "mb-host.network.bytes_total",
+        "collector_id": "fixture",
+        "attempt_id": "attempt-1"
+      },
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "counter": {
+        "start_at": "2026-09-01T00:00:00Z",
+        "bits": "64"
+      },
+      "lineage": [
+        {
+          "id": "raw-host.network.bytes_total",
+          "stage": "raw"
+        }
+      ]
+    },
+    {
+      "id": "sha256:45e20c009241bd67c77c5c4d25f939604d2b128dbcd2d177b98bf12695afd6e1",
+      "stage": "normalized",
+      "resource_type": "network_device",
+      "resource_id": "net-1",
+      "metric": {
+        "id": "network.interface.traffic_bps",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {
+        "if_index": "7",
+        "interface_epoch": "boot1-port7",
+        "direction": "in"
+      },
+      "observed_at": "2026-09-01T00:01:00Z",
+      "collected_at": "2026-09-01T00:01:00Z",
+      "stored_at": "2026-09-01T00:01:02Z",
+      "unit": "bit/s",
+      "value": {
+        "encoding": "float64",
+        "value": 800
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "accuracy": "exact",
+      "production": "derived",
+      "source": {
+        "binding_id": "cb-net-1",
+        "metric_binding_id": "mb-network.interface.traffic_bps",
+        "collector_id": "fixture",
+        "attempt_id": "attempt-1"
+      },
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "lineage": [
+        {
+          "id": "raw-network.interface.traffic_bps",
+          "stage": "raw"
+        }
+      ]
+    },
+    {
+      "id": "sha256:598ef628863201fb3bfed0f7716b54694fcfdfeb461a0d68948235b1d3c84eb3",
+      "stage": "normalized",
+      "resource_type": "network_device",
+      "resource_id": "net-1",
+      "metric": {
+        "id": "network.interface.oper_up",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {
+        "if_index": "7",
+        "interface_epoch": "boot1-port7"
+      },
+      "observed_at": "2026-09-01T00:01:00Z",
+      "collected_at": "2026-09-01T00:01:00Z",
+      "stored_at": "2026-09-01T00:01:02Z",
+      "unit": "1",
+      "value": {
+        "encoding": "float64",
+        "value": 1
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "accuracy": "exact",
+      "production": "measured",
+      "source": {
+        "binding_id": "cb-net-1",
+        "metric_binding_id": "mb-network.interface.oper_up",
+        "collector_id": "fixture",
+        "attempt_id": "attempt-1"
+      },
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "lineage": [
+        {
+          "id": "raw-network.interface.oper_up",
+          "stage": "raw"
+        }
+      ]
+    },
+    {
+      "id": "sha256:a304490b3b3ed3be39a6de2ef57590c34b5f7e15e173ddd9a5012d2569ca0795",
+      "stage": "normalized",
+      "resource_type": "instance",
+      "resource_id": "db-1",
+      "metric": {
+        "id": "mysql.cpu.heuristic_percent",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {},
+      "observed_at": "2026-09-01T00:01:00Z",
+      "collected_at": "2026-09-01T00:01:00Z",
+      "stored_at": "2026-09-01T00:01:02Z",
+      "unit": "%",
+      "value": {
+        "encoding": "float64",
+        "value": 20
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "accuracy": "estimated",
+      "production": "measured",
+      "source": {
+        "binding_id": "cb-db-1",
+        "metric_binding_id": "mb-mysql.cpu.heuristic_percent",
+        "collector_id": "fixture",
+        "attempt_id": "attempt-1"
+      },
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "lineage": [
+        {
+          "id": "raw-mysql.cpu.heuristic_percent",
+          "stage": "raw"
+        }
+      ]
+    },
+    {
+      "id": "sha256:8524ecf4ed0a946000cdf75de15d4310ab4e98be43067942609c140064f8bf70",
+      "stage": "normalized",
+      "resource_type": "server",
+      "resource_id": "host-1",
+      "metric": {
+        "id": "linux.filesystem.used_ratio",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {
+        "mount": "/data",
+        "device": "/dev/fixture1",
+        "fs_type": "ext4"
+      },
+      "observed_at": "2026-09-01T00:01:00Z",
+      "collected_at": "2026-09-01T00:01:00Z",
+      "stored_at": "2026-09-01T00:01:02Z",
+      "unit": "1",
+      "value": {
+        "encoding": "float64",
+        "value": 0.25
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "accuracy": "exact",
+      "production": "derived",
+      "source": {
+        "binding_id": "cb-host-1",
+        "metric_binding_id": "mb-linux.filesystem.used_ratio",
+        "collector_id": "fixture",
+        "attempt_id": "attempt-1"
+      },
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "lineage": [
+        {
+          "id": "sha256:d80c429b0a607d4ab49ddc3fb6c8ccd1e819a723d44c3c76e7304dccb8fb434f",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:bc7af21d9f830d7b0a27b14285578ce4955529754e7e72778a56ce8f257e42fc",
+          "stage": "normalized"
+        }
+      ]
+    }
+  ],
+  "rawObservation": {
+    "id": "sha256:5381d044c18a7b67a8b7a28907149e1e902ed050bb4fab28ed54cc2992c3efbc",
+    "stage": "raw",
+    "resource_type": "instance",
+    "resource_id": "db-1",
+    "metric": {
+      "id": "db.uptime_seconds",
+      "semantic_version": "1.0.0"
+    },
+    "dimensions": {},
+    "observed_at": "2026-09-01T00:01:00Z",
+    "collected_at": "2026-09-01T00:01:00Z",
+    "stored_at": "2026-09-01T00:01:02Z",
+    "unit": "s",
+    "value": {
+      "encoding": "float64",
+      "value": 3600
+    },
+    "quality": {
+      "status": "good",
+      "reason": "none"
+    },
+    "accuracy": "exact",
+    "production": "measured",
+    "source": {
+      "binding_id": "cb-db-1",
+      "metric_binding_id": "mb-db.uptime_seconds",
+      "collector_id": "fixture",
+      "attempt_id": "attempt-1"
+    },
+    "versions": {
+      "contract": "1.0.0",
+      "package_id": "fixture",
+      "package_version": "1.0.0",
+      "transform_version": "1.0.0",
+      "config_revision": 1
+    },
+    "raw_field": "Uptime"
+  },
+  "profile": {
+    "id": "database-core",
+    "version": "1.0.0",
+    "resource_type": "instance",
+    "owner": "product",
+    "columns": [
+      {
+        "key": "uptime",
+        "label": "运行时长",
+        "metric": {
+          "id": "db.uptime_seconds",
+          "semantic_version": "1.0.0"
+        }
+      }
+    ]
+  },
+  "collectorPackage": {
+    "id": "mysql-basic",
+    "version": "1.0.0",
+    "contract_version": "1.0.0",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "resource_type": "instance",
+    "applicability": [
+      {
+        "attribute": "db.engine",
+        "values": [
+          "mysql"
+        ]
+      }
+    ],
+    "collectors": [
+      {
+        "id": "mysql-status",
+        "method": "sql",
+        "implementation_ref": "builtin:mysql.status",
+        "timeout_ms": 1000,
+        "estimated_cost": "low",
+        "mappings": [
+          {
+            "metric": {
+              "id": "db.uptime_seconds",
+              "semantic_version": "1.0.0"
+            },
+            "raw_field": "Uptime",
+            "input_unit": "s",
+            "output_unit": "s",
+            "transform_version": "1.0.0",
+            "steps": [
+              "decode",
+              "normalize"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "collection": {
+    "id": "cb-db",
+    "resource_id": "db-1",
+    "resource_type": "instance",
+    "package": {
+      "id": "mysql-basic",
+      "version": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "policy_id": "default",
+    "policy_revision": 1,
+    "config_revision": 1,
+    "enabled": true
+  },
+  "policy": {
+    "id": "default",
+    "revision": 1,
+    "enabled": true,
+    "interval_ms": 60000,
+    "timeout_ms": 1000,
+    "stale_after_ms": 120000,
+    "max_counter_gap_ms": 300000,
+    "max_concurrency": 2,
+    "max_series_per_resource": 100
+  },
+  "metricBinding": {
+    "id": "mb-db",
+    "collection_binding_id": "cb-db",
+    "resource_id": "db-1",
+    "metric": {
+      "id": "db.uptime_seconds",
+      "semantic_version": "1.0.0"
+    },
+    "dimensions": {},
+    "enabled": true,
+    "source": {
+      "kind": "collector",
+      "collector_id": "mysql-status",
+      "raw_field": "Uptime"
+    }
+  },
+  "capability": {
+    "resource_id": "db-1",
+    "metric": {
+      "id": "db.uptime_seconds",
+      "semantic_version": "1.0.0"
+    },
+    "status": "supported",
+    "method": "sql",
+    "basis": [
+      {
+        "kind": "version",
+        "evidence": "MySQL 8.0 Uptime exists"
+      },
+      {
+        "kind": "permission",
+        "evidence": "SHOW GLOBAL STATUS permitted"
+      }
+    ],
+    "evaluated_at": "2026-09-01T00:00:00Z",
+    "valid_until": "2026-09-02T00:00:00Z"
+  },
+  "timeoutAttempt": {
+    "id": "attempt-timeout",
+    "resource_id": "db-1",
+    "binding_id": "cb-db",
+    "collector_id": "mysql-status",
+    "config_revision": 1,
+    "started_at": "2026-09-01T00:01:00Z",
+    "ended_at": "2026-09-01T00:01:01Z",
+    "status": "failed",
+    "error": "timeout",
+    "observation_ids": []
+  },
+  "derived": {
+    "id": "fs-ratio",
+    "output": {
+      "id": "linux.filesystem.used_ratio",
+      "semantic_version": "1.0.0"
+    },
+    "transform_version": "1.0.0",
+    "inputs": [
+      {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      }
+    ],
+    "operation": "ratio",
+    "join": "same_resource_and_dimensions",
+    "max_skew_ms": 1000,
+    "on_missing": "null",
+    "on_zero_denominator": "null",
+    "quality_propagation": "worst_input",
+    "accuracy_propagation": "least_certain_input"
+  },
+  "invalidExamples": [
+    {
+      "name": "illegal-unit",
+      "validator": "definition",
+      "expected": "schema",
+      "input": {
+        "category": "canonical",
+        "id": "db.uptime_seconds",
+        "semantic_version": "1.0.0",
+        "meaning": "Elapsed seconds since database instance startup; not management-agent uptime.",
+        "resource_type": "instance",
+        "unit": "GB",
+        "scope": "resource",
+        "kind": "gauge",
+        "roles": [
+          "core"
+        ],
+        "temporality": "instant",
+        "monotonic": false,
+        "value_type": "float64",
+        "dimensions": {
+          "keys": [],
+          "max_series_per_resource": 100,
+          "max_value_length": 128,
+          "overflow": "reject"
+        },
+        "aggregation": {
+          "time": [
+            "last",
+            "min",
+            "max",
+            "mean"
+          ],
+          "space": [
+            "none"
+          ],
+          "missing": "preserve_null",
+          "min_coverage": 1,
+          "quantiles": "not_applicable"
+        },
+        "lifecycle": "active"
+      }
+    },
+    {
+      "name": "unit-conflict",
+      "validator": "observation",
+      "expected": "UNIT_CONFLICT",
+      "input": {
+        "id": "sha256:8622046c0a905882a0d56c203acf32ce861d94bc8c84395018571f940d16f9aa",
+        "stage": "normalized",
+        "resource_type": "instance",
+        "resource_id": "db-1",
+        "metric": {
+          "id": "db.uptime_seconds",
+          "semantic_version": "1.0.0"
+        },
+        "dimensions": {},
+        "observed_at": "2026-09-01T00:01:00Z",
+        "collected_at": "2026-09-01T00:01:00Z",
+        "stored_at": "2026-09-01T00:01:02Z",
+        "unit": "ms",
+        "value": {
+          "encoding": "float64",
+          "value": 3600
+        },
+        "quality": {
+          "status": "good",
+          "reason": "none"
+        },
+        "accuracy": "exact",
+        "production": "measured",
+        "source": {
+          "binding_id": "cb-db-1",
+          "metric_binding_id": "mb-db.uptime_seconds",
+          "collector_id": "fixture",
+          "attempt_id": "attempt-1"
+        },
+        "versions": {
+          "contract": "1.0.0",
+          "package_id": "fixture",
+          "package_version": "1.0.0",
+          "transform_version": "1.0.0",
+          "config_revision": 1
+        },
+        "lineage": [
+          {
+            "id": "sha256:5381d044c18a7b67a8b7a28907149e1e902ed050bb4fab28ed54cc2992c3efbc",
+            "stage": "raw"
+          }
+        ]
+      }
+    },
+    {
+      "name": "resource-identity-conflict",
+      "validator": "observation",
+      "expected": "OBSERVATION_IDENTITY",
+      "input": {
+        "id": "sha256:8622046c0a905882a0d56c203acf32ce861d94bc8c84395018571f940d16f9aa",
+        "stage": "normalized",
+        "resource_type": "server",
+        "resource_id": "db-1",
+        "metric": {
+          "id": "db.uptime_seconds",
+          "semantic_version": "1.0.0"
+        },
+        "dimensions": {},
+        "observed_at": "2026-09-01T00:01:00Z",
+        "collected_at": "2026-09-01T00:01:00Z",
+        "stored_at": "2026-09-01T00:01:02Z",
+        "unit": "s",
+        "value": {
+          "encoding": "float64",
+          "value": 3600
+        },
+        "quality": {
+          "status": "good",
+          "reason": "none"
+        },
+        "accuracy": "exact",
+        "production": "measured",
+        "source": {
+          "binding_id": "cb-db-1",
+          "metric_binding_id": "mb-db.uptime_seconds",
+          "collector_id": "fixture",
+          "attempt_id": "attempt-1"
+        },
+        "versions": {
+          "contract": "1.0.0",
+          "package_id": "fixture",
+          "package_version": "1.0.0",
+          "transform_version": "1.0.0",
+          "config_revision": 1
+        },
+        "lineage": [
+          {
+            "id": "sha256:5381d044c18a7b67a8b7a28907149e1e902ed050bb4fab28ed54cc2992c3efbc",
+            "stage": "raw"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-quality-enum",
+      "validator": "observation",
+      "expected": "schema",
+      "input": {
+        "id": "sha256:8622046c0a905882a0d56c203acf32ce861d94bc8c84395018571f940d16f9aa",
+        "stage": "normalized",
+        "resource_type": "instance",
+        "resource_id": "db-1",
+        "metric": {
+          "id": "db.uptime_seconds",
+          "semantic_version": "1.0.0"
+        },
+        "dimensions": {},
+        "observed_at": "2026-09-01T00:01:00Z",
+        "collected_at": "2026-09-01T00:01:00Z",
+        "stored_at": "2026-09-01T00:01:02Z",
+        "unit": "s",
+        "value": {
+          "encoding": "float64",
+          "value": 3600
+        },
+        "quality": {
+          "status": "perfect",
+          "reason": "none"
+        },
+        "accuracy": "exact",
+        "production": "measured",
+        "source": {
+          "binding_id": "cb-db-1",
+          "metric_binding_id": "mb-db.uptime_seconds",
+          "collector_id": "fixture",
+          "attempt_id": "attempt-1"
+        },
+        "versions": {
+          "contract": "1.0.0",
+          "package_id": "fixture",
+          "package_version": "1.0.0",
+          "transform_version": "1.0.0",
+          "config_revision": 1
+        },
+        "lineage": [
+          {
+            "id": "sha256:5381d044c18a7b67a8b7a28907149e1e902ed050bb4fab28ed54cc2992c3efbc",
+            "stage": "raw"
+          }
+        ]
+      }
+    },
+    {
+      "name": "incompatible-contract",
+      "validator": "observation",
+      "expected": "CONTRACT_VERSION",
+      "input": {
+        "id": "sha256:8622046c0a905882a0d56c203acf32ce861d94bc8c84395018571f940d16f9aa",
+        "stage": "normalized",
+        "resource_type": "instance",
+        "resource_id": "db-1",
+        "metric": {
+          "id": "db.uptime_seconds",
+          "semantic_version": "1.0.0"
+        },
+        "dimensions": {},
+        "observed_at": "2026-09-01T00:01:00Z",
+        "collected_at": "2026-09-01T00:01:00Z",
+        "stored_at": "2026-09-01T00:01:02Z",
+        "unit": "s",
+        "value": {
+          "encoding": "float64",
+          "value": 3600
+        },
+        "quality": {
+          "status": "good",
+          "reason": "none"
+        },
+        "accuracy": "exact",
+        "production": "measured",
+        "source": {
+          "binding_id": "cb-db-1",
+          "metric_binding_id": "mb-db.uptime_seconds",
+          "collector_id": "fixture",
+          "attempt_id": "attempt-1"
+        },
+        "versions": {
+          "contract": "2.0.0",
+          "package_id": "fixture",
+          "package_version": "1.0.0",
+          "transform_version": "1.0.0",
+          "config_revision": 1
+        },
+        "lineage": [
+          {
+            "id": "sha256:5381d044c18a7b67a8b7a28907149e1e902ed050bb4fab28ed54cc2992c3efbc",
+            "stage": "raw"
+          }
+        ]
+      }
+    },
+    {
+      "name": "incompatible-semantics",
+      "validator": "catalog",
+      "expected": "IDENTITY_SEMANTIC_CONFLICT",
+      "input": [
+        {
+          "category": "canonical",
+          "id": "db.uptime_seconds",
+          "semantic_version": "1.0.0",
+          "meaning": "Elapsed seconds since database instance startup; not management-agent uptime.",
+          "resource_type": "instance",
+          "unit": "s",
+          "scope": "resource",
+          "kind": "gauge",
+          "roles": [
+            "core"
+          ],
+          "temporality": "instant",
+          "monotonic": false,
+          "value_type": "float64",
+          "dimensions": {
+            "keys": [],
+            "max_series_per_resource": 100,
+            "max_value_length": 128,
+            "overflow": "reject"
+          },
+          "aggregation": {
+            "time": [
+              "last",
+              "min",
+              "max",
+              "mean"
+            ],
+            "space": [
+              "none"
+            ],
+            "missing": "preserve_null",
+            "min_coverage": 1,
+            "quantiles": "not_applicable"
+          },
+          "lifecycle": "active"
+        },
+        {
+          "category": "canonical",
+          "id": "db.uptime_seconds",
+          "semantic_version": "2.0.0",
+          "meaning": "management subsystem uptime",
+          "resource_type": "instance",
+          "unit": "s",
+          "scope": "resource",
+          "kind": "gauge",
+          "roles": [
+            "core"
+          ],
+          "temporality": "instant",
+          "monotonic": false,
+          "value_type": "float64",
+          "dimensions": {
+            "keys": [],
+            "max_series_per_resource": 100,
+            "max_value_length": 128,
+            "overflow": "reject"
+          },
+          "aggregation": {
+            "time": [
+              "last",
+              "min",
+              "max",
+              "mean"
+            ],
+            "space": [
+              "none"
+            ],
+            "missing": "preserve_null",
+            "min_coverage": 1,
+            "quantiles": "not_applicable"
+          },
+          "lifecycle": "active"
+        }
+      ]
+    }
+  ]
+}
