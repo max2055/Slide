@@ -41,3 +41,21 @@
 硬预算未设定。实际 raw input、cached input、output、总吞吐和费用遥测不可用，未用内部计数冒充实测。主代理 1、子代理 0、最大深度 0、并发峰值 1。
 
 回退：撤回新增 `apps/db-ops-api/src/contracts/metrics-v2/` 与 `docs/slide/metrics-v2/contracts/`；无运行时接线、数据库迁移或生产配置变化。PR 合并前不能宣称下游 main 依赖已满足。
+
+## CI 修复复验
+
+PR #76 首轮 CI（run `35311703522`）失败于 recovery-qualification 的
+`assert-failover.ts`：任务已被旧 owner 领取，但 1 秒租约在后续查询时已到期，
+`lease_expires_at` 与数据库 `NOW()` 同为 `2026-09-18T05:42:33Z`，返回空 claim。
+本次不是 MAX-63 的文档目录问题；契约产物已位于 `docs/slide/metrics-v2/`。
+
+接管 fixture 改用 30 秒租约，并只对本测试的记录显式设置可领取/已到期时间，
+移除固定 sleep；保留活跃租约排他、接管 token 递增、旧 owner 拒绝及新 owner 完成断言。
+未修改生产租约实现或放宽目录门禁。
+
+- `bash scripts/qualification/run-environment.sh failover`：隔离 MySQL 8.4，101 项迁移、bootstrap、lease takeover 和 workflow fencing 通过，容器退出清理成功。
+- `pnpm --filter slide-api exec vitest run tests/phase-94-docs-structure.test.ts src/contracts/metrics-v2/contracts.test.ts`：70/70 通过。
+- `git diff --check`：通过。
+
+以上为本地复验；远端 CI 状态以当前 PR head 的 checks 为准。回退该修复可撤回
+`tests/qualification/assert-failover.ts` 的测试改动，无生产数据迁移。
