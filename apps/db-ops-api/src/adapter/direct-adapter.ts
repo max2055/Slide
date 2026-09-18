@@ -17,6 +17,7 @@
  *     └── WebSocketServer (minimal WS transport on AGENT_WS_PORT)
  */
 
+import { ChatResponse } from './chat-response.js';
 import { WebSocketServer, WebSocket } from 'ws';
 import { platformLogs } from '../platform/structured-log-evidence-adapter.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -554,7 +555,7 @@ export class DirectAdapter implements IAgentEngine {
             }
 
             const controller = new AbortController();
-            const runTimeout = setTimeout(() => controller.abort(), this.runtimeLimits.runTimeoutMs);
+            const runTimeout = setTimeout(() => controller.abort(new Error('CHAT_TIMED_OUT')), this.runtimeLimits.runTimeoutMs);
 
             let persistentRun: { run: AgentRun; created: boolean } | undefined;
             let completionAttempted = false;
@@ -603,10 +604,21 @@ export class DirectAdapter implements IAgentEngine {
               subscribeToSession(sessionKey);
 
               let completionEvent: Extract<ChatEvent, { type: 'complete' }> | undefined;
-              const chatResult = await this.chat(sessionKey, userMessage, (event) => {
-                // The chat callback is synchronous. Hold completion until the
-                // durable commit below, rather than starting an unawaited write.
+              const response = new ChatResponse();
+              const chatResult = await this.chat(sessionKey, userMessage, async (event) => {
+                response.observe(event);
+                // Normal completion uses the durable commit and replay path below.
                 if (event.type === 'complete') { completionEvent = event; return; }
+                if (event.type === 'cancelled' || event.type === 'error') {
+                  const assistant = response.message();
+                  if (assistant) {
+                    event = { ...event, messageSequence: await chatDatabaseService.addMessage(messageActor, sessionKey, {
+                      messageId: `msg_${randomUUID()}_asst`,
+                      role: 'assistant',
+                      ...assistant,
+                    }) };
+                  }
+                }
                 sendToSession(sessionKey, {
                   ...event,
                   ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
@@ -845,6 +857,7 @@ export class DirectAdapter implements IAgentEngine {
     const streamHolder: { text: string } = { text: '' };
     const hook = mapHookEventToChatEvent({}, onEvent, thinkingHolder, streamHolder);
 
+    let terminalEmitted = false;
     try {
       const provider = this.providerForPurpose ? await this.providerForPurpose('chat') : this.provider;
       const runner = this.providerForPurpose ? new AgentRunner(provider) : this.runner;
@@ -873,14 +886,16 @@ export class DirectAdapter implements IAgentEngine {
       // Embed reasoning as <think> tags in the session/DB content string.
       // The frontend uses extractThinking() to render it as a collapsible section.
       // The API parses <think> tags back into structured content blocks.
+      const stopReason = result.stopReason === 'cancelled' && signal?.reason?.message === 'CHAT_TIMED_OUT'
+        ? 'timed_out' : result.stopReason;
+      // Failed runner results may contain synthetic error text, not an assistant reply.
+      const cleanContent = stopReason === 'completed' ? (result.finalContent || '') : streamHolder.text;
       const thinkingContent = thinkingHolder.text || undefined;
       const displayContent = thinkingContent
-        ? `<think>${thinkingContent}</think>\n\n${result.finalContent || ''}`
-        : (result.finalContent || '');
-      const cleanContent = result.finalContent || '';
+        ? `<think>${thinkingContent}</think>\n\n${cleanContent}`
+        : cleanContent;
 
-      // On success: push assistant response (with thinking tags for persistence),
-      // clear checkpoint, save session
+      // Keep partial replies in the session context as well as database history.
       if (displayContent) {
         const extra: any = {};
         if (thinkingContent) extra.reasoning_content = thinkingContent;
@@ -894,18 +909,23 @@ export class DirectAdapter implements IAgentEngine {
 
       await this.sessionManager.save(session);
 
-      if (result.stopReason === 'completed') {
-        onEvent({ type: 'complete', finalContent: cleanContent || undefined, thinkingContent });
-      } else if (result.stopReason === 'cancelled') {
-        onEvent({ type: 'cancelled' });
+      terminalEmitted = true;
+      const terminalContent = { finalContent: cleanContent || undefined, thinkingContent, stopReason };
+      if (stopReason === 'completed') {
+        await onEvent({ type: 'complete', ...terminalContent });
+      } else if (stopReason === 'cancelled') {
+        await onEvent({ type: 'cancelled', ...terminalContent });
       } else {
-        onEvent({ type: 'error', error: result.error || `Agent run ended: ${result.stopReason}` });
+        await onEvent({ type: 'error', error: result.error || `Agent run ended: ${stopReason}`, ...terminalContent });
       }
-      return { finalContent: cleanContent || null, usage: result.usage, stopReason: result.stopReason };
+      return { finalContent: cleanContent || null, thinkingContent, usage: result.usage, stopReason };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      // Checkpoint remains in metadata for next turn to restore
-      onEvent({ type: 'error', error: errorMessage });
+      // Do not emit a second terminal event if persistence or delivery failed.
+      if (!terminalEmitted) {
+        await onEvent({ type: 'error', error: errorMessage, stopReason: 'error',
+          finalContent: streamHolder.text || undefined, thinkingContent: thinkingHolder.text || undefined });
+      }
       throw err;
     }
   }
