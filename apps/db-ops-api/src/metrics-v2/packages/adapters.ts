@@ -4,8 +4,9 @@ import type { SshSessionPool } from '../../ssh-session-pool.js';
 import serverMetricProvider from '../../server-metric-provider.js';
 import { DEFAULT_HUAWEI_MIB_CATALOG } from '../../network-devices/huawei-mib-catalog.js';
 import type { SnmpClient } from '../../network-devices/snmp-client.js';
-import type { SnmpConfig, SnmpTableRow } from '../../network-devices/snmp-types.js';
+import type { SnmpConfig, SnmpTableRow, SnmpVarbind } from '../../network-devices/snmp-types.js';
 import type { RawObservation } from '../../contracts/metrics-v2/index.js';
+import type { SnmpDiscovery } from '../snmp/collector.js';
 import { MYSQL_STATUS_SQL } from '../../collectors/mysql-status-query.js';
 
 /** Same read-only status operation as MySQLProvider; batch once without its legacy Number/rate path. */
@@ -13,24 +14,27 @@ export { MYSQL_STATUS_SQL };
 export type Transport =
   | { method: 'sql'; pool: { query(options: { sql: string; timeout: number }): Promise<[unknown, unknown]> } }
   | { method: 'ssh'; client: Client; pool: Pick<SshSessionPool, 'execCommands'> }
-  | { method: 'snmp'; table(root: string, timeoutMs: number): Promise<SnmpTableRow[]> };
+  | { method: 'snmp'; get?(oids: string[], timeoutMs: number): Promise<SnmpVarbind[]>; table(root: string, timeoutMs: number): Promise<SnmpTableRow[]> };
 export function bindMySql(pool: Pick<Pool, 'query'>): Transport {
   return { method: 'sql', pool: { query: options => pool.query(options) } };
 }
 /** Existing SnmpClient owns configuration validation, response bounds, session closure and read allowlist. */
-export function bindSnmp(client: Pick<SnmpClient, 'table'>, config: SnmpConfig): Transport {
-  return { method: 'snmp', table: (root, timeoutMs) => client.table({ ...config, timeoutMs }, root) };
+export function bindSnmp(client: Pick<SnmpClient, 'table'> & Partial<Pick<SnmpClient, 'get'>>, config: SnmpConfig): Transport {
+  return { method: 'snmp', ...(client.get ? { get: (oids: string[], timeoutMs: number) => client.get!({ ...config, timeoutMs }, oids) } : {}), table: (root, timeoutMs) => client.table({ ...config, timeoutMs }, root) };
 }
 export interface DriverEvidence {
+  snmp?: SnmpDiscovery;
   /** Trusted startup/discontinuity evidence, retained by the driver; never invent an epoch per sample. */
   counter?: RawObservation['counter'];
   /** Stable identity for each interface generation, supplied by discovery ownership, not display name. */
   interface_epochs?: Record<string, string>;
 }
 export interface DecodedRow {
+  observed_at?: string;
   dimensions: Record<string, string>;
   fields: Record<string, RawObservation['value']>;
   counter?: RawObservation['counter'];
+  field_evidence?: Record<string, { counter?: RawObservation['counter']; max_increment_per_second?: string; quality?: RawObservation['quality']; capability?: 'supported' | 'unsupported' | 'unknown'; error?: AdapterError['code'] }>;
 }
 export class AdapterError extends Error {
   constructor(readonly code: 'permission_denied' | 'timeout' | 'connection_error' | 'parse_error') { super(code); }
@@ -57,6 +61,9 @@ function uint(value: unknown): RawObservation['value'] {
 
 /** Only fixed implementation IDs reach transports. Packages never carry executable commands or OIDs. */
 export async function collectFixed(id: string, transport: Transport, evidence: DriverEvidence, timeoutMs: number, maxRows: number): Promise<DecodedRow[]> {
+  if (id.startsWith('builtin:snmp.') && transport.method === 'snmp' && evidence.snmp) {
+    return evidence.snmp.collect(id, transport, timeoutMs, maxRows);
+  }
   if (id === 'builtin:mysql.status.v1' && transport.method === 'sql') {
     const [response] = await read(() => transport.pool.query({ sql: MYSQL_STATUS_SQL, timeout: timeoutMs }));
     if (!Array.isArray(response) || response.length !== 2) throw new AdapterError('parse_error');
