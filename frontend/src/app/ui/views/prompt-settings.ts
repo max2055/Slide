@@ -45,6 +45,8 @@ export class PromptSettingsPage extends LitElement {
   @state() private showEditor = false;
   @state() private showOptimizeDialog = false;
   @state() private optimizeResult = '';
+  @state() private optimizeError = '';
+  private optimizeController: AbortController | null = null;
 
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; animation: fade-in 0.25s var(--ease-out); }
@@ -174,22 +176,51 @@ export class PromptSettingsPage extends LitElement {
     this.selectedType = type;
     this.optimizeFocus = '';
     this.optimizeResult = '';
+    this.optimizeError = '';
     this.showOptimizeDialog = true;
+  }
+
+  closeOptimize() {
+    this.optimizeController?.abort();
+    this.optimizeController = null;
+    this.optimizing = false;
+    this.showOptimizeDialog = false;
+    this.optimizeResult = '';
+    this.optimizeError = '';
   }
 
   async runOptimize() {
     if (!this.selectedType) return;
     this.optimizing = true;
     this.optimizeResult = '';
+    this.optimizeError = '';
+    const controller = new AbortController();
+    this.optimizeController = controller;
     try {
       const res = await apiClient.post<any>(`/ai/prompts/${this.selectedType.type}/optimize`, {
         focus: this.optimizeFocus || undefined,
-      });
-      this.optimizeResult = res.analysis || '无返回结果';
+      }, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(50_000)]) });
+      if (controller.signal.aborted) return;
+      if (!res.analysis) throw new Error('模型未返回优化结果');
+      this.optimizeResult = res.analysis;
     } catch (err) {
-      this.optimizeResult = `优化失败：${(err as Error).message}`;
+      if (controller.signal.aborted) return;
+      const message = (err as Error).message;
+      const json = message.match(/^HTTP \d+: (\{.*\})$/s);
+      let detail = message;
+      if (json) {
+        try { detail = JSON.parse(json[1]).error || message; } catch { /* keep original error */ }
+      } else if (message.includes('<html')) {
+        detail = '服务响应超时，请稍后重试';
+      } else if ((err as Error).name === 'TimeoutError') {
+        detail = '请求超时，请稍后重试';
+      }
+      this.optimizeError = `优化失败：${detail}`;
     } finally {
-      this.optimizing = false;
+      if (this.optimizeController === controller) {
+        this.optimizing = false;
+        this.optimizeController = null;
+      }
     }
   }
 
@@ -304,10 +335,10 @@ export class PromptSettingsPage extends LitElement {
       ` : ''}
 
       ${this.showOptimizeDialog ? html`
-        <app-dialog .open=${true} size="xl" title="AI 优化提示词 — ${TYPE_LABELS[this.selectedType!.type] || this.selectedType!.type}" @app-dialog-close=${() => { this.showOptimizeDialog = false; this.optimizeResult = ''; }}>
+        <app-dialog .open=${true} size="xl" title="AI 优化提示词 — ${TYPE_LABELS[this.selectedType!.type] || this.selectedType!.type}" @app-dialog-close=${this.closeOptimize}>
           <div style="padding:var(--space-md);">
             <div class="editor-toolbar">
-              <span class="editor-info">将使用项目的 AI Agent 分析当前提示词并给出优化建议</span>
+              <span class="editor-info">分析当前提示词并给出优化建议</span>
             </div>
             <div style="margin-bottom:var(--space-md);">
               <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:4px;">优化重点（可选）</label>
@@ -317,6 +348,7 @@ export class PromptSettingsPage extends LitElement {
               ${this.optimizing ? 'AI 分析中...' : '开始优化'}
             </button>
 
+            ${this.optimizeError ? html`<div role="alert" class="optimize-result">${this.optimizeError}</div>` : ''}
             ${this.optimizeResult ? html`
               <div class="optimize-result">${this.optimizeResult}</div>
               <div style="margin-top:var(--space-md);text-align:right;">

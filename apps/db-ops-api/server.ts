@@ -131,6 +131,7 @@ import { agentManagementService } from './src/agent-management-service.js';
 import { startSessionCleanup, stopSessionCleanup } from './src/session-cleanup.js';
 import { loadPredefinedSkills, skillRegistry } from './src/skills/loader.js';
 import { promptManager } from './src/prompts/prompt-manager.js';
+import { optimizePromptContent } from './src/prompts/optimize.js';
 import { serverDatabaseService } from './src/server-database-service.js';
 import { serverReportService } from './src/server-report-service.js';
 import serverCollector from './src/server-collector.js';
@@ -1221,10 +1222,10 @@ async function start() {
       const { content } = request.body as { content: string };
       if (!content) return reply.code(400).send({ error: '内容不能为空' });
       const ok = await promptManager.setVersionContent(type, version, content);
-      if (!ok) return reply.code(404).send({ error: '版本不存在或保存失败' });
+      if (!ok) return reply.code(404).send({ error: '版本不存在' });
       return { ok: true, type, version, length: content.length };
     } catch (error: any) {
-      reply.code(500).send({ error: '保存提示词失败：' + error.message });
+      reply.code(500).send({ error: '保存提示词失败：' + (error.code || error.message), detail: error.message });
     }
   });
 
@@ -1235,10 +1236,9 @@ async function start() {
       const { content } = request.body as { content: string };
       if (!content) return reply.code(400).send({ error: '内容不能为空' });
       const result = await promptManager.createVersion(type, content);
-      if (!result) return reply.code(500).send({ error: '创建版本失败' });
       return { ok: true, ...result, type };
     } catch (error: any) {
-      reply.code(500).send({ error: '创建版本失败：' + error.message });
+      reply.code(500).send({ error: '创建版本失败：' + (error.code || error.message), detail: error.message });
     }
   });
 
@@ -1277,10 +1277,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 2. 给出优化后的完整提示词（直接可用）
 3. 用一句话说明优化要点`;
 
-      const engine = await getAgentEngine();
-      const sessionKey = `prompt-optimize-${type}-${Date.now()}`;
-      const result = await engine.invoke(sessionKey, optimizePrompt);
-      const optimizedContent = result.content || '';
+      const optimizedContent = await optimizePromptContent(optimizePrompt);
 
       return {
         ok: true,
@@ -1289,7 +1286,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         currentVersion: v,
       };
     } catch (error: any) {
-      reply.code(500).send({ error: 'AI 优化失败：' + error.message });
+      reply.code(error.name === 'TimeoutError' ? 408 : 500).send({ error: 'AI 优化失败：' + error.message });
     }
   });
 
