@@ -1,0 +1,23 @@
+{
+  "synthetic": true,
+  "at": "2026-09-01T00:01:00.000Z",
+  "counter_start": "2026-09-01T00:00:00.000Z",
+  "mysql": {
+    "first": [{"Variable_name":"Queries","Value":"9007199254740993"},{"Variable_name":"Uptime","Value":"60"}],
+    "second": [{"Variable_name":"Queries","Value":"9007199254741003"},{"Variable_name":"Uptime","Value":"62"}],
+    "versions": [
+      {"engine":"mysql","version":"5.7.44","decision":"attempted"},
+      {"engine":"mysql","version":"8.0.40","decision":"attempted"},
+      {"engine":"mysql","version":"8.4.2","decision":"attempted"},
+      {"engine":"mysql","version":"5.6.51","decision":"unsupported"},
+      {"engine":"mysql","version":"9.0.1","decision":"unsupported"},
+      {"engine":"mariadb","version":"10.6.1","decision":"unsupported"}
+    ]
+  },
+  "ssh": {"uptime":"3600.25\n","load_1min":"0.50\n"},
+  "snmp": {
+    "vendors": ["huawei", "cisco", "unknown-vendor"],
+    "rows": [{"index":"7","values":{"8":1}},{"index":"8","values":{"8":2}},{"index":"9","values":{"8":3}}],
+    "epochs": {"7":"boot1-port7","8":"boot1-port8","9":"boot1-port9"}
+  }
+}
