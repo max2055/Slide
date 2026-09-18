@@ -116,6 +116,7 @@ export class PackageRegistry {
     this.releases.set(`${p.id}@${p.version}`, structuredClone(r));
     return structuredClone(r);
   }
+  list(): PackageRelease[] { return structuredClone([...this.releases.values()]); }
   get(pin: Selection['package']): PackageRelease {
     const r = this.releases.get(`${pin.id}@${pin.version}`);
     requireRule(r && r.package.digest === pin.digest, 'PACKAGE_PIN');

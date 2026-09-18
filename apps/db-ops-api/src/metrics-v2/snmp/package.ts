@@ -58,5 +58,5 @@ export function createSnmpPackage(vendor?: HuaweiMibCatalog) {
   builtinReleases().forEach(r => registry.install(r));
   registry.install(release);
   const pin = { id: release.package.id, version: release.package.version, digest: release.package.digest };
-  return { registry, release, pin };
+  return { registry, release, pin, specs };
 }

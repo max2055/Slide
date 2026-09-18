@@ -51,7 +51,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     id: "monitoring",
     label: "监控与分析",
     items: [
-      { id: "metrics", label: "指标定义", path: "/settings/monitoring/metrics", icon: "puzzle", requiredPermission: "metric:view" },
+      { id: "metrics", label: "指标与采集", path: "/settings/monitoring/metrics", icon: "puzzle", requiredPermission: "metric:view", views: [{ id: "catalog", label: "指标目录" }, { id: "packages", label: "采集包" }, { id: "policies", label: "采集策略" }, { id: "legacy", label: "旧指标目录" }] },
       {
         id: "analysis",
         label: "分析策略",
@@ -135,7 +135,7 @@ export const LEGACY_SETTINGS_PATHS: Readonly<Record<string, LegacySettingsTarget
   "/agent-tools": { pageId: "capabilities", view: "tools" },
   "/agent-security-policy": { pageId: "security", view: "policy" },
   "/agent-sandbox": { pageId: "security", view: "sandbox" },
-  "/metric-registry": { pageId: "metrics" },
+  "/metric-registry": { pageId: "metrics", view: "legacy" },
   "/users": { pageId: "users", view: "accounts" },
   "/rbac": { pageId: "users", view: "roles" },
   "/settings/branding": { pageId: "branding" },

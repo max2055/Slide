@@ -80,7 +80,7 @@ function stableError(error: unknown): string {
   return 'SNMP_RESPONSE_INVALID';
 }
 
-function toSnmpConfig(target: NetworkDeviceCollectionTarget, credentials: NetworkDeviceCredentials, authorizedHost = target.host): SnmpConfig {
+export function toSnmpConfig(target: NetworkDeviceCollectionTarget, credentials: NetworkDeviceCredentials, authorizedHost = target.host): SnmpConfig {
   if (credentials.protocol === 'snmpv2c') {
     if (!credentials.community) throw Object.assign(new Error('SNMP_AUTH_FAILED'), { code: 'SNMP_AUTH_FAILED' });
     return { version: 2, host: authorizedHost, port: target.snmpPort, community: credentials.community };

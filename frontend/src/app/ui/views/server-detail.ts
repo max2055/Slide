@@ -1,3 +1,4 @@
+import "../components/metric-configuration.js";
 import { returnToDashboard } from './dashboard-model.js';
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
@@ -594,6 +595,7 @@ export class ServerDetailPage extends LitElement {
         <div class="tabs">
           ${[
             { key: "overview", label: "概览" },
+            { key: "collection", label: "采集配置" },
             { key: "metrics", label: "指标" },
             { key: "config", label: "配置" },
             { key: "diagnostics", label: "诊断" },
@@ -615,6 +617,7 @@ export class ServerDetailPage extends LitElement {
   }
 
   private _renderTabContent() {
+    if (this.activeTab === "collection") return html`<metric-configuration resourceType="server" .resourceId=${this.serverId}></metric-configuration>`;
     switch (this.activeTab) {
       case "overview": return this._renderOverview();
       case "metrics": return this._renderMetrics();

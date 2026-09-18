@@ -1,0 +1,12 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>指标配置隔离验收</title>
+<style>:root{--text:#263445;--text-strong:#172536;--muted:#536579;--border:#bcc9d6;--accent:#409eff;--bg:#fff;--space-xs:4px;--space-sm:8px;--space-md:16px;--space-lg:24px;--space-xl:32px;--radius-sm:4px;--radius-md:8px;--radius-lg:12px}body{margin:16px;font:14px system-ui}*{box-sizing:border-box}</style>
+<body><script type="module">
+import '/src/app/ui/views/settings-shell.ts';
+import '/src/app/ui/components/metric-configuration.ts';
+import '/src/app/ui/components/app-toast-container.ts';
+localStorage.setItem('permissions', JSON.stringify(['*']));
+const mode = new URL(location.href).searchParams.get('mode');
+if (mode === 'settings') { history.replaceState({},'', '/settings/monitoring/metrics?view=packages'); document.body.append(document.createElement('settings-shell')); }
+else { const el = document.createElement('metric-configuration'); el.resourceId=1; document.body.append(el); }
+document.body.append(document.createElement('app-toast-container'));
+</script></body></html>
