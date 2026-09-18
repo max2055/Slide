@@ -1,0 +1,37 @@
+{
+  "version": "1.0.0",
+  "interval_ms": 10000,
+  "gauge": {
+    "seconds": [0, 10, 30],
+    "values": [2, 4, 8],
+    "sample_mean": 4.666666666666667,
+    "weighted_mean": 4.5,
+    "weighted_buckets": [3, 6]
+  },
+  "counter": {
+    "seconds": [0, 10, 20, 30, 40],
+    "values": [100, 140, 5, 35, 75],
+    "reset_at_second": 20,
+    "window_seconds": [5, 35],
+    "valid_increment": 70,
+    "covered_seconds": 20,
+    "rate": 3.5,
+    "bucket_rates": [4, 3, 3.5]
+  },
+  "ratio": {
+    "numerators": [1, 5, 9],
+    "denominators": [2, 10, 10],
+    "ratio": 0.6818181818181818
+  },
+  "state": {
+    "seconds": [0, 10, 20],
+    "values": [1, 0, 1],
+    "window_seconds": [5, 30],
+    "up_ms": 15000
+  },
+  "histogram": {
+    "bounds": [10, "+Inf"],
+    "cumulative_counts": [[1, 2], [3, 5], [4, 8]],
+    "merged_interval_count": 6
+  }
+}
