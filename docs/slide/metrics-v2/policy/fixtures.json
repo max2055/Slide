@@ -1,0 +1,401 @@
+{
+  "synthetic": true,
+  "at": "2026-09-18T00:00:00.000Z",
+  "resource": {
+    "type": "instance",
+    "id": "1",
+    "attributes": {
+      "db.engine": {
+        "value": "mysql",
+        "observed_at": "2026-09-18T00:00:00.000Z",
+        "source": "fixture"
+      },
+      "db.version": {
+        "value": "8.0.46",
+        "observed_at": "2026-09-18T00:00:00.000Z",
+        "source": "fixture"
+      }
+    }
+  },
+  "capabilities": [
+    {
+      "resource_id": "1",
+      "metric": {
+        "id": "db.uptime_seconds",
+        "semantic_version": "1.0.0"
+      },
+      "method": "sql",
+      "status": "supported",
+      "basis": [
+        {
+          "kind": "permission",
+          "evidence": "fixed_read_succeeded"
+        }
+      ],
+      "evaluated_at": "2026-09-18T00:00:00.000Z",
+      "valid_until": "2026-09-19T00:00:00.000Z"
+    },
+    {
+      "resource_id": "1",
+      "metric": {
+        "id": "mysql.queries.total",
+        "semantic_version": "1.0.0"
+      },
+      "method": "sql",
+      "status": "supported",
+      "basis": [
+        {
+          "kind": "permission",
+          "evidence": "fixed_read_succeeded"
+        }
+      ],
+      "evaluated_at": "2026-09-18T00:00:00.000Z",
+      "valid_until": "2026-09-19T00:00:00.000Z"
+    }
+  ],
+  "initial_request": {
+    "expected_revision": 0,
+    "package": {
+      "id": "mysql-basic",
+      "version": "1.0.0",
+      "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+    }
+  },
+  "result": {
+    "plan": {
+      "binding": {
+        "id": "instance:1",
+        "resource_id": "1",
+        "resource_type": "instance",
+        "package": {
+          "id": "mysql-basic",
+          "version": "1.0.0",
+          "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+        },
+        "policy_id": "resource:instance:1",
+        "policy_revision": 1,
+        "config_revision": 1,
+        "enabled": true
+      },
+      "policy": {
+        "id": "resource:instance:1",
+        "revision": 1,
+        "enabled": true,
+        "interval_ms": 60000,
+        "timeout_ms": 5000,
+        "stale_after_ms": 120000,
+        "max_counter_gap_ms": 300000,
+        "max_concurrency": 1,
+        "max_series_per_resource": 100
+      },
+      "resolved_at": "2026-09-18T00:00:00.000Z",
+      "entries": [
+        {
+          "binding": {
+            "id": "instance:1:db.uptime_seconds",
+            "collection_binding_id": "instance:1",
+            "resource_id": "1",
+            "metric": {
+              "id": "db.uptime_seconds",
+              "semantic_version": "1.0.0"
+            },
+            "dimensions": {},
+            "enabled": true,
+            "source": {
+              "kind": "collector",
+              "collector_id": "mysql-status",
+              "raw_field": "Uptime"
+            }
+          },
+          "capability": {
+            "resource_id": "1",
+            "metric": {
+              "id": "db.uptime_seconds",
+              "semantic_version": "1.0.0"
+            },
+            "status": "supported",
+            "method": "sql",
+            "basis": [
+              {
+                "kind": "permission",
+                "evidence": "fixed_read_succeeded"
+              }
+            ],
+            "evaluated_at": "2026-09-18T00:00:00.000Z",
+            "valid_until": "2026-09-19T00:00:00.000Z"
+          },
+          "decision": "collect"
+        },
+        {
+          "binding": {
+            "id": "instance:1:mysql.queries.total",
+            "collection_binding_id": "instance:1",
+            "resource_id": "1",
+            "metric": {
+              "id": "mysql.queries.total",
+              "semantic_version": "1.0.0"
+            },
+            "dimensions": {},
+            "enabled": true,
+            "source": {
+              "kind": "collector",
+              "collector_id": "mysql-status",
+              "raw_field": "Queries"
+            }
+          },
+          "capability": {
+            "resource_id": "1",
+            "metric": {
+              "id": "mysql.queries.total",
+              "semantic_version": "1.0.0"
+            },
+            "status": "supported",
+            "method": "sql",
+            "basis": [
+              {
+                "kind": "permission",
+                "evidence": "fixed_read_succeeded"
+              }
+            ],
+            "evaluated_at": "2026-09-18T00:00:00.000Z",
+            "valid_until": "2026-09-19T00:00:00.000Z"
+          },
+          "decision": "collect"
+        },
+        {
+          "binding": {
+            "id": "instance:1:mysql.queries.per_second",
+            "collection_binding_id": "instance:1",
+            "resource_id": "1",
+            "metric": {
+              "id": "mysql.queries.per_second",
+              "semantic_version": "1.0.0"
+            },
+            "dimensions": {},
+            "enabled": true,
+            "source": {
+              "kind": "derived",
+              "derived_id": "mysql-query-rate"
+            }
+          },
+          "capability": {
+            "resource_id": "1",
+            "metric": {
+              "id": "mysql.queries.per_second",
+              "semantic_version": "1.0.0"
+            },
+            "status": "supported",
+            "method": "derived",
+            "basis": [
+              {
+                "kind": "method",
+                "evidence": "capability_not_probed"
+              },
+              {
+                "kind": "permission",
+                "evidence": "fixed_read_succeeded"
+              }
+            ],
+            "evaluated_at": "2026-09-18T00:00:00.000Z",
+            "valid_until": "2026-09-18T00:02:00.000Z"
+          },
+          "decision": "derive"
+        }
+      ]
+    },
+    "settings": {
+      "interval_ms": 60000,
+      "timeout_ms": 5000,
+      "stale_after_ms": 120000,
+      "max_counter_gap_ms": 300000,
+      "max_rows": 100,
+      "enabled": true,
+      "max_concurrency": 1,
+      "max_series_per_resource": 100
+    },
+    "sources": {
+      "interval_ms": {
+        "layer": "package",
+        "id": "mysql-basic@1.0.0"
+      },
+      "timeout_ms": {
+        "layer": "package",
+        "id": "mysql-basic@1.0.0"
+      },
+      "stale_after_ms": {
+        "layer": "package",
+        "id": "mysql-basic@1.0.0"
+      },
+      "max_counter_gap_ms": {
+        "layer": "package",
+        "id": "mysql-basic@1.0.0"
+      },
+      "max_rows": {
+        "layer": "package",
+        "id": "mysql-basic@1.0.0"
+      },
+      "enabled": {
+        "layer": "package",
+        "id": "mysql-basic@1.0.0"
+      },
+      "max_concurrency": {
+        "layer": "platform",
+        "id": "metrics-v2-limits-v1"
+      },
+      "max_series_per_resource": {
+        "layer": "platform",
+        "id": "metrics-v2-limits-v1"
+      }
+    },
+    "platform_limits": {
+      "min_interval_ms": 1000,
+      "max_interval_ms": 86400000,
+      "min_timeout_ms": 250,
+      "max_timeout_ms": 30000,
+      "max_rows": 100,
+      "max_concurrency": 16,
+      "max_series_per_resource": 10000
+    },
+    "metric_templates": [
+      {
+        "metric": {
+          "id": "db.uptime_seconds",
+          "semantic_version": "1.0.0"
+        },
+        "source": {
+          "kind": "collector",
+          "collector_id": "mysql-status",
+          "raw_field": "Uptime"
+        },
+        "enabled": true,
+        "required_dimensions": [],
+        "capability": {
+          "resource_id": "1",
+          "metric": {
+            "id": "db.uptime_seconds",
+            "semantic_version": "1.0.0"
+          },
+          "status": "supported",
+          "method": "sql",
+          "basis": [
+            {
+              "kind": "permission",
+              "evidence": "fixed_read_succeeded"
+            }
+          ],
+          "evaluated_at": "2026-09-18T00:00:00.000Z",
+          "valid_until": "2026-09-19T00:00:00.000Z"
+        },
+        "decision": "collect"
+      },
+      {
+        "metric": {
+          "id": "mysql.queries.total",
+          "semantic_version": "1.0.0"
+        },
+        "source": {
+          "kind": "collector",
+          "collector_id": "mysql-status",
+          "raw_field": "Queries"
+        },
+        "enabled": true,
+        "required_dimensions": [],
+        "capability": {
+          "resource_id": "1",
+          "metric": {
+            "id": "mysql.queries.total",
+            "semantic_version": "1.0.0"
+          },
+          "status": "supported",
+          "method": "sql",
+          "basis": [
+            {
+              "kind": "permission",
+              "evidence": "fixed_read_succeeded"
+            }
+          ],
+          "evaluated_at": "2026-09-18T00:00:00.000Z",
+          "valid_until": "2026-09-19T00:00:00.000Z"
+        },
+        "decision": "collect"
+      },
+      {
+        "metric": {
+          "id": "mysql.queries.per_second",
+          "semantic_version": "1.0.0"
+        },
+        "source": {
+          "kind": "derived",
+          "derived_id": "mysql-query-rate"
+        },
+        "enabled": true,
+        "required_dimensions": [],
+        "capability": {
+          "resource_id": "1",
+          "metric": {
+            "id": "mysql.queries.per_second",
+            "semantic_version": "1.0.0"
+          },
+          "method": "derived",
+          "status": "supported",
+          "basis": [
+            {
+              "kind": "method",
+              "evidence": "capability_not_probed"
+            },
+            {
+              "kind": "permission",
+              "evidence": "fixed_read_succeeded"
+            }
+          ],
+          "evaluated_at": "2026-09-18T00:00:00.000Z",
+          "valid_until": "2026-09-18T00:02:00.000Z"
+        },
+        "decision": "derive"
+      }
+    ],
+    "metric_sources": {
+      "db.uptime_seconds@1.0.0": {
+        "layer": "package",
+        "id": "mysql-basic@1.0.0"
+      },
+      "mysql.queries.total@1.0.0": {
+        "layer": "package",
+        "id": "mysql-basic@1.0.0"
+      },
+      "mysql.queries.per_second@1.0.0": {
+        "layer": "package",
+        "id": "mysql-basic@1.0.0"
+      }
+    },
+    "dependencies": [
+      {
+        "metric": "mysql.queries.per_second@1.0.0",
+        "requires": [
+          "mysql.queries.total@1.0.0"
+        ]
+      }
+    ],
+    "collector_timeouts": [
+      {
+        "collector_id": "mysql-status",
+        "timeout_ms": 5000,
+        "source": {
+          "layer": "package",
+          "id": "mysql-basic@1.0.0"
+        }
+      }
+    ],
+    "impact": {
+      "estimate": true,
+      "request_unit": "logical_reads",
+      "estimated_series_upper_bound": 3,
+      "active_collectors": [
+        "mysql-status"
+      ],
+      "requests_per_hour_estimate": 60,
+      "disabled_metrics": [],
+      "unavailable_metrics": []
+    }
+  }
+}
