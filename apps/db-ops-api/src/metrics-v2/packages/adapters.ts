@@ -31,6 +31,7 @@ export interface DecodedRow {
   dimensions: Record<string, string>;
   fields: Record<string, RawObservation['value']>;
   counter?: RawObservation['counter'];
+  accuracy?: Record<string, RawObservation['accuracy']>;
 }
 export class AdapterError extends Error {
   constructor(readonly code: 'permission_denied' | 'timeout' | 'connection_error' | 'parse_error') { super(code); }
@@ -40,9 +41,16 @@ export function classifyError(error: unknown): AdapterError['code'] {
   const level = error && typeof error === 'object' && 'level' in error ? error.level : undefined;
   if (level === 'client-authentication') return 'permission_denied';
   if (level === 'client-timeout') return 'timeout';
+  if (error && typeof error === 'object') {
+    // Oracle older driver errors expose errorNum; dmdb exposes errCode, not code.
+    if ('errorNum' in error && [1017, 1031].includes(Number(error.errorNum))) return 'permission_denied';
+    if ('errorNum' in error && Number(error.errorNum) === 1013) return 'timeout';
+    if ('errCode' in error && Number(error.errCode) === -551) return 'permission_denied';
+    if ('errCode' in error && [20009, 20010, 20017].includes(Number(error.errCode))) return 'timeout';
+  }
   const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : error instanceof Error ? error.message : '';
-  if (['ER_ACCESS_DENIED_ERROR', 'ER_SPECIFIC_ACCESS_DENIED_ERROR', 'ER_TABLEACCESS_DENIED_ERROR', 'EACCES', 'SNMP_AUTH_FAILED', 'SSH_AUTH_FAILED', 'SSH_AUTHENTICATION_FAILED'].includes(code)) return 'permission_denied';
-  if (['ETIMEDOUT', 'PROTOCOL_SEQUENCE_TIMEOUT', 'SNMP_TIMEOUT', 'SSH_COMMAND_TIMEOUT'].includes(code)) return 'timeout';
+  if (['ER_ACCESS_DENIED_ERROR', 'ER_SPECIFIC_ACCESS_DENIED_ERROR', 'ER_TABLEACCESS_DENIED_ERROR', 'EACCES', 'SNMP_AUTH_FAILED', 'SSH_AUTH_FAILED', 'SSH_AUTHENTICATION_FAILED', '42501', 'ORA-01031', 'ORA-01017'].includes(code)) return 'permission_denied';
+  if (['ETIMEDOUT', 'PROTOCOL_SEQUENCE_TIMEOUT', 'SNMP_TIMEOUT', 'SSH_COMMAND_TIMEOUT', '57014', 'ORA-01013', 'DPI-1067'].includes(code)) return 'timeout';
   if (['SNMP_RESPONSE_INVALID', 'SNMP_RESPONSE_LIMIT', 'SSH_COMMAND_OUTPUT_LIMIT', 'SSH_COMMAND_PROTOCOL_ERROR'].includes(code)) return 'parse_error';
   return 'connection_error';
 }
@@ -57,6 +65,10 @@ function uint(value: unknown): RawObservation['value'] {
 
 /** Only fixed implementation IDs reach transports. Packages never carry executable commands or OIDs. */
 export async function collectFixed(id: string, transport: Transport, evidence: DriverEvidence, timeoutMs: number, maxRows: number): Promise<DecodedRow[]> {
+  if (id.startsWith('builtin:database.')) {
+    const { collectDatabase } = await import('../database/collector.js');
+    return collectDatabase(id, transport, evidence, timeoutMs);
+  }
   if (id === 'builtin:mysql.status.v1' && transport.method === 'sql') {
     const [response] = await read(() => transport.pool.query({ sql: MYSQL_STATUS_SQL, timeout: timeoutMs }));
     if (!Array.isArray(response) || response.length !== 2) throw new AdapterError('parse_error');
