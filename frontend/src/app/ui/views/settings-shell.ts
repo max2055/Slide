@@ -13,6 +13,7 @@ import {
 } from "../settings-navigation.ts";
 import "../components/app-empty-state.js";
 import "./source-settings.js";
+import "./metric-settings.js";
 
 function readPermissions(): Set<string> | null {
   try {
@@ -375,7 +376,7 @@ export class SettingsShell extends LitElement {
       case "branding": return html`<branding-settings></branding-settings>`;
       case "appearance": return html`<appearance-settings></appearance-settings>`;
       case "notifications": return html`<feishu-notification-settings></feishu-notification-settings>`;
-      case "metrics": return html`<metric-registry-viewer></metric-registry-viewer>`;
+      case "metrics": return html`<metric-settings .view=${this.activeView || "catalog"}></metric-settings>`;
       case "analysis": return this.activeView === "scoring"
         ? html`<scoring-settings-page></scoring-settings-page>`
         : html`<ai-settings-page></ai-settings-page>`;

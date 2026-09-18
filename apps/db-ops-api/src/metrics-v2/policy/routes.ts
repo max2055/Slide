@@ -17,6 +17,7 @@ export async function registerMetricPolicyRoutes(app: FastifyInstance, verifyTok
     { method: 'GET', url: `${root}/resources/:type/:id/audit`, run: (a, p) => service.audits(a, ref(p)) },
     { method: 'POST', url: `${root}/resources/:type/:id/preview`, run: (a, p, b) => service.changeBinding(a, ref(p), b, false) },
     { method: 'POST', url: `${root}/resources/:type/:id/publish`, run: (a, p, b) => service.changeBinding(a, ref(p), b, true) },
+    { method: 'GET', url: `${root}/groups/:id/access`, run: (a, p) => service.groupPermissions(a, p.id) },
     { method: 'GET', url: `${root}/groups/:id`, run: (a, p) => service.group(a, p.id) },
     { method: 'POST', url: `${root}/groups/:id/preview`, run: (a, p, b) => service.changeGroup(a, p.id, b, false) },
     { method: 'POST', url: `${root}/groups/:id/publish`, run: (a, p, b) => service.changeGroup(a, p.id, b, true) },

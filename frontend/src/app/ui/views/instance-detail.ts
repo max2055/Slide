@@ -1,3 +1,4 @@
+import "../components/metric-configuration.js";
 import { returnToDashboard } from './dashboard-model.js';
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
@@ -387,9 +388,9 @@ export class InstanceDetailPage extends LitElement {
 
 
         <div class="tabs">
-          ${["overview","metrics","topsql","trend","health","sessions","capacity","schema","indexes","sqlaudit","logs","qan","diagnosis"].map(t => html`
+          ${["overview","collection","metrics","topsql","trend","health","sessions","capacity","schema","indexes","sqlaudit","logs","qan","diagnosis"].map(t => html`
             <button class="tab ${this.activeTab === t ? "active" : ""}" @click=${() => this._setTab(t)}>
-              ${({ overview:"概览", metrics:"实时监控", topsql:"慢查询", trend:"趋势", health:"健康评分", sessions:"会话", capacity:"容量", schema:"表结构", indexes:"索引", sqlaudit:"SQL 审核", logs:"日志", qan:"查询分析", diagnosis:"AI 诊断" } as Record<string,string>)[t]}
+              ${({ overview:"概览", collection:"采集配置", metrics:"实时监控", topsql:"慢查询", trend:"趋势", health:"健康评分", sessions:"会话", capacity:"容量", schema:"表结构", indexes:"索引", sqlaudit:"SQL 审核", logs:"日志", qan:"查询分析", diagnosis:"AI 诊断" } as Record<string,string>)[t]}
               ${t === "topsql" && this.slowQueries.length > 0 ? html`<span class="tab-badge">${this.slowQueries.length}</span>` : ""}
               ${t === "sessions" && this.sessions.length > 0 ? html`<span class="tab-badge">${this.sessions.length}</span>` : ""}
             </button>
@@ -440,6 +441,7 @@ export class InstanceDetailPage extends LitElement {
   }
 
   private _renderTabContent() {
+    if (this.activeTab === "collection") return html`<metric-configuration resourceType="instance" .resourceId=${this.instanceId}></metric-configuration>`;
     switch (this.activeTab) {
       case "overview": return html`<instance-overview-tab .instance=${this.instance} .metrics=${this.metrics} .metricRegistry=${this._filteredRegistry} .overviewHistory=${this.overviewHistory} .metricsHistory=${this.metricsHistory}></instance-overview-tab>`;
       case "metrics": return html`<instance-metrics-tab .metricRegistry=${this._filteredRegistry} .metrics=${this.metrics} .metricsHistory=${this.metricsHistory}></instance-metrics-tab>`;

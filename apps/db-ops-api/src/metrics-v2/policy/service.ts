@@ -1,9 +1,8 @@
 import type { ActorContext } from '../../auth/actor-context.js';
 import { canManageResource, canReadResource, MysqlResourceRelationStore } from '../../resources/resource-service.js';
-import { dbConnection } from '../../db-connection.js';
+import { configurationInventory } from '../config/inventory.js';
 import { type Resource } from '../../contracts/metrics-v2/index.js';
-import { MysqlMetricStorage } from '../storage.js';
-import { createBuiltinRegistry } from '../packages/builtins.js';
+import { createConfigurationRegistry } from '../config/registry.js';
 import { type PackageRegistry, stable } from '../packages/model.js';
 import { type PolicyStore, type PolicyTransaction, MysqlPolicyStore } from './store.js';
 import { BindingChangeSchema, GroupChangeSchema, PolicyIdSchema, RefSchema, type Ref, type Group,
@@ -15,7 +14,7 @@ export class PolicyService {
   constructor(private readonly store: PolicyStore, private readonly registry: PackageRegistry,
     private readonly resources: PolicyResources, private readonly clock = () => new Date().toISOString()) {}
 
-  private async authorize(actor: ActorContext, ref: Ref, write: boolean): Promise<void> {
+  async assertAccess(actor: ActorContext, ref: Ref, write: boolean): Promise<void> {
     RefSchema.parse(ref);
     rule(write ? canManageResource(actor, ref) : canReadResource(actor, ref), 'POLICY_FORBIDDEN', 403);
     rule(await this.resources.exists(ref), 'POLICY_RESOURCE_NOT_FOUND', 404);
@@ -23,7 +22,7 @@ export class PolicyService {
   private async groupAccess(actor: ActorContext, tx: PolicyTransaction, id: string, write: boolean): Promise<Published[]> {
     const members = await tx.members(id);
     if (!members.length) rule(actor.permissions.includes('*'), 'POLICY_FORBIDDEN', 403);
-    for (const member of members) await this.authorize(actor, member.binding.resource, write);
+    for (const member of members) await this.assertAccess(actor, member.binding.resource, write);
     return members;
   }
   private async resolve(tx: PolicyTransaction, binding: Binding, group: Group | null, previous: Published | null, at: string): Promise<Published> {
@@ -35,15 +34,15 @@ export class PolicyService {
     } };
   }
   async binding(actor: ActorContext, ref: Ref): Promise<Published> {
-    await this.authorize(actor, ref, false);
+    await this.assertAccess(actor, ref, false);
     return this.store.transaction(async tx => { const result = await tx.binding(ref); rule(result, 'POLICY_NOT_FOUND', 404); return result; });
   }
   async audits(actor: ActorContext, ref: Ref) {
-    await this.authorize(actor, ref, true);
+    await this.assertAccess(actor, ref, true);
     return this.store.transaction(tx => tx.audits(refKey(ref)));
   }
   async effective(actor: ActorContext, ref: Ref) {
-    await this.authorize(actor, ref, false);
+    await this.assertAccess(actor, ref, false);
     return this.store.transaction(async tx => {
       const published = await tx.binding(ref); rule(published, 'POLICY_NOT_FOUND', 404);
       const resource = await this.resources.inventory(ref) ?? { type: ref.type, id: String(ref.id), attributes: {} };
@@ -64,8 +63,15 @@ export class PolicyService {
       return group;
     });
   }
+  async groupPermissions(actor: ActorContext, id: string) {
+    PolicyIdSchema.parse(id);
+    return this.store.transaction(async tx => {
+      const members = await this.groupAccess(actor, tx, id, false);
+      return { can_manage: members.length ? members.every(member => canManageResource(actor, member.binding.resource)) : actor.permissions.includes('*') };
+    });
+  }
   async changeBinding(actor: ActorContext, ref: Ref, input: unknown, publish: boolean) {
-    await this.authorize(actor, ref, true);
+    await this.assertAccess(actor, ref, true);
     const change = BindingChangeSchema.parse(input);
     return this.store.transaction(async tx => {
       const previous = await tx.binding(ref);
@@ -126,10 +132,7 @@ export class PolicyService {
 }
 
 const resourceStore = new MysqlResourceRelationStore();
-export const policyService = new PolicyService(new MysqlPolicyStore(), createBuiltinRegistry(), {
+export const policyService = new PolicyService(new MysqlPolicyStore(), createConfigurationRegistry(), {
   exists: ref => resourceStore.exists(ref),
-  inventory: async ref => {
-    const pool = dbConnection.getPool(); rule(pool, 'POLICY_STORE_UNAVAILABLE', 503);
-    return new MysqlMetricStorage(pool).inventory(ref.type, String(ref.id));
-  },
+  inventory: configurationInventory,
 });
