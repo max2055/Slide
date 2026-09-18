@@ -742,6 +742,9 @@ describe('DirectAdapter', () => {
         run: { id: 'provider-failure-run', actorId: actor.userId, sessionId: 'ws-provider-failure-session', messageId: 'failure-message', idempotencyKey: 'failure-key', state: 'running' },
       });
       const finish = vi.spyOn(agentRunService, 'finish').mockResolvedValue(true);
+      const complete = vi.spyOn(agentRunService, 'complete').mockImplementation(async (run, event) => ({
+        ...run, state: 'completed', result: { event: { ...event, messageSequence: 1 } },
+      }));
       const provider = new MockLLMProvider();
       vi.spyOn(provider, 'chatStream').mockImplementation(async (_m, _t, callbacks, options) => {
         await callbacks.onContentDelta('partial answer');
@@ -789,13 +792,22 @@ describe('DirectAdapter', () => {
             reject(error);
           });
         });
-        expect(addMessage).toHaveBeenCalledTimes(2);
-        expect(addMessage).toHaveBeenLastCalledWith(actor, 'ws-provider-failure-session', expect.objectContaining({
-          role: 'assistant', content: stopReason === 'completed' ? 'final answer' : 'partial answer',
-          metadata: expect.objectContaining({ interrupted: stopReason !== 'completed', stopReason }),
-        }));
+        if (stopReason === 'completed') {
+          expect(addMessage).toHaveBeenCalledTimes(1);
+          expect(complete).toHaveBeenCalledTimes(1);
+          expect(complete).toHaveBeenCalledWith(expect.objectContaining({ id: 'provider-failure-run' }),
+            expect.objectContaining({ type: 'complete', finalContent: 'final answer' }));
+          expect(finish).not.toHaveBeenCalled();
+        } else {
+          expect(complete).not.toHaveBeenCalled();
+          expect(addMessage).toHaveBeenCalledTimes(2);
+          expect(addMessage).toHaveBeenLastCalledWith(actor, 'ws-provider-failure-session', expect.objectContaining({
+            role: 'assistant', content: 'partial answer',
+            metadata: expect.objectContaining({ interrupted: true, stopReason }),
+          }));
+          expect(finish).toHaveBeenCalledWith('provider-failure-run', stopReason === 'error' ? 'failed' : stopReason, { stopReason });
+        }
         expect(events.at(-1)).toMatchObject({ type: stopReason === 'completed' ? 'complete' : 'error', messageSequence: 1, stopReason });
-        expect(finish).toHaveBeenCalledWith('provider-failure-run', stopReason === 'error' ? 'failed' : stopReason, { stopReason });
       } finally {
         metadata.mockRestore();
         createSession.mockRestore();
@@ -803,6 +815,7 @@ describe('DirectAdapter', () => {
         findByIdempotencyKey.mockRestore();
         claim.mockRestore();
         finish.mockRestore();
+        complete.mockRestore();
         if (previousPort === undefined) delete process.env.AGENT_WS_PORT;
         else process.env.AGENT_WS_PORT = previousPort;
         if (previousSecret === undefined) delete process.env.JWT_SECRET_KEY;
