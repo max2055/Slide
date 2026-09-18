@@ -1,3 +1,4 @@
+import "../components/semantic-metrics.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
@@ -742,7 +743,7 @@ export class ServersPage extends LitElement {
               : html`<span>未启用筛选</span>`}
           </div>
           ${rows.length > 0
-            ? html`<app-data-table .columns=${columns} .rows=${rows}></app-data-table>`
+            ? html`<semantic-core-list resourceType="server" .resources=${this._filteredServers}></semantic-core-list><app-data-table .columns=${columns} .rows=${rows}></app-data-table>`
             : html`<app-empty-state title="无匹配服务器" description="尝试更换搜索关键词" icon="search"></app-empty-state>`}
         </div>
 

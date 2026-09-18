@@ -1,3 +1,4 @@
+import { metricConsumerService } from '../metrics-v2/consumers/runtime.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { canReadResource, resourceService } from './resource-service.js';
 import type { Observation, ResourceDetail, ResourceRef, ResourceRelation, ResourceType } from './types.js';
@@ -10,6 +11,7 @@ import { publicInstanceDto, publicNetworkDeviceDto, publicServerDto } from '../s
 import { observationService } from './observation-service.js';
 
 export interface ResourceDiagnosticDependencies {
+  semantic?(ref: ResourceRef, actor: ActorContext): Promise<unknown>;
   list(actor: ActorContext): Promise<ResourceDetail[]>;
   detail(ref: ResourceRef, actor: ActorContext): Promise<ResourceDetail | null>;
   observations(ref: ResourceRef, actor: ActorContext, options?: { metricIds?: string[]; limit?: number }): Promise<Observation[]>;
@@ -18,6 +20,7 @@ export interface ResourceDiagnosticDependencies {
 }
 
 export interface ResourceDiagnosticPack {
+  semanticMetrics?: unknown;
   schemaVersion: 1;
   subject: ResourceRef;
   collectedAt: string;
@@ -121,6 +124,10 @@ function safeJsonBytes(value: unknown): number {
 }
 
 function trimPack(pack: ResourceDiagnosticPack, maxBytes: number): ResourceDiagnosticPack {
+  if (pack.semanticMetrics && Buffer.byteLength(JSON.stringify(pack.semanticMetrics)) > maxBytes / 2) {
+    pack.semanticMetrics = { status: 'unknown', error: 'SEMANTIC_EVIDENCE_LIMIT', next_action: 'query_metrics for a narrower window' };
+    pack.gaps.push({ scope: 'observation', code: 'SEMANTIC_EVIDENCE_LIMIT' }); pack.truncated = true;
+  }
   if (safeJsonBytes(pack) <= maxBytes) return pack;
   pack.truncated = true;
   pack.gaps.push({ scope: 'diagnostic', code: 'EVIDENCE_PACK_TRUNCATED' });
@@ -549,7 +556,13 @@ export class ResourceDiagnosticService {
     if (!observations.length) gaps.push({ scope: 'observation', code: 'OBSERVATIONS_EMPTY' });
     if (!relations.length) gaps.push({ scope: 'relation', code: 'RELATIONS_EMPTY' });
     if (!alerts.length) gaps.push({ scope: 'alert', code: 'ALERTS_EMPTY' });
+    let semanticMetrics: unknown;
+    if (this.dependencies.semantic) {
+      try { semanticMetrics = await this.dependencies.semantic(ref, actor); }
+      catch { semanticMetrics = { status: 'unknown', error: 'METRIC_QUERY_UNAVAILABLE' }; gaps.push({ scope: 'observation', code: 'SEMANTIC_METRICS_UNAVAILABLE' }); }
+    }
     return trimPack({
+      semanticMetrics,
       schemaVersion: 1,
       subject: ref,
       collectedAt,
@@ -671,6 +684,7 @@ async function defaultAlerts(ref: ResourceRef, actor: ActorContext, limit = MAX_
 }
 
 export const resourceDiagnosticService = new ResourceDiagnosticService({
+  semantic: (ref, actor) => metricConsumerService.query(actor, { resource: ref, view: 'core' }),
   list: defaultList,
   detail: async (ref, actor) => resourceService.detail(actor, ref),
   observations: defaultObservations,

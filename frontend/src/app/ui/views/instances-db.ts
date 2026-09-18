@@ -1,3 +1,4 @@
+import "../components/semantic-metrics.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
@@ -637,6 +638,7 @@ export class InstancesPage extends LitElement {
 
     return html`
       <div class="page">
+        <semantic-core-list resourceType="instance" .resources=${this.filteredInstances}></semantic-core-list>
         <!-- 实例列表卡片 -->
         <div class="card">
           <div class="toolbar resource-toolbar">

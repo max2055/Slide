@@ -16,7 +16,7 @@ type RawRule = { target_type?: AlertTargetType; metric_name: string; operator: A
 
 export function compileAlertRule(rule: RawRule, targetType: AlertTargetType, macros: Record<string, number> = {}): CompiledAlertRule {
   if (rule.target_type && rule.target_type !== targetType) throw new Error('ALERT_RULE_TARGET_MISMATCH');
-  if (!/^[a-z][a-z0-9_]{0,127}$/.test(rule.metric_name)) throw new Error('ALERT_RULE_METRIC_INVALID');
+  if (!/^[a-z][a-z0-9_.]{0,127}$/.test(rule.metric_name)) throw new Error('ALERT_RULE_METRIC_INVALID');
   if (!['>', '<', '>=', '<=', '=', '!='].includes(rule.operator)) throw new Error('ALERT_RULE_OPERATOR_INVALID');
   const thresholds: Partial<Record<AlertLevel, number>> = {};
   for (const level of ['warning', 'error', 'critical'] as const) {

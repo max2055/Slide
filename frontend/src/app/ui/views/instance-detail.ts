@@ -1,3 +1,4 @@
+import "../components/semantic-metrics.js";
 import "../components/metric-configuration.js";
 import { returnToDashboard } from './dashboard-model.js';
 import { LitElement, html, css, nothing } from "lit";
@@ -443,9 +444,9 @@ export class InstanceDetailPage extends LitElement {
   private _renderTabContent() {
     if (this.activeTab === "collection") return html`<metric-configuration resourceType="instance" .resourceId=${this.instanceId}></metric-configuration>`;
     switch (this.activeTab) {
-      case "overview": return html`<instance-overview-tab .instance=${this.instance} .metrics=${this.metrics} .metricRegistry=${this._filteredRegistry} .overviewHistory=${this.overviewHistory} .metricsHistory=${this.metricsHistory}></instance-overview-tab>`;
-      case "metrics": return html`<instance-metrics-tab .metricRegistry=${this._filteredRegistry} .metrics=${this.metrics} .metricsHistory=${this.metricsHistory}></instance-metrics-tab>`;
-      case "trend": return html`<instance-trend-chart .trendData=${this.trendData} .loading=${this.trendLoading} .activePeriod=${this.trendTab} .metricRegistry=${this._filteredRegistry} @period-change=${this._onPeriodChange}></instance-trend-chart>`;
+      case "overview": return html`<semantic-metrics resourceType="instance" .resourceId=${this.instanceId}></semantic-metrics><details><summary>旧版概览（兼容口径）</summary><instance-overview-tab .instance=${this.instance} .metrics=${this.metrics} .metricRegistry=${this._filteredRegistry} .overviewHistory=${this.overviewHistory} .metricsHistory=${this.metricsHistory}></instance-overview-tab></details>`;
+      case "metrics": return html`<semantic-metrics resourceType="instance" .resourceId=${this.instanceId}></semantic-metrics>`;
+      case "trend": return html`<semantic-metrics resourceType="instance" .resourceId=${this.instanceId}></semantic-metrics><details><summary>旧版趋势（兼容口径）</summary><instance-trend-chart .trendData=${this.trendData} .loading=${this.trendLoading} .activePeriod=${this.trendTab} .metricRegistry=${this._filteredRegistry} @period-change=${this._onPeriodChange}></instance-trend-chart></details>`;
       case "health": return html`<health-score-tab .instanceId=${this.instanceId}></health-score-tab>`;
       case "topsql": return this._renderTopSQL();
       case "sessions": return this._renderSessions();
@@ -456,7 +457,7 @@ export class InstanceDetailPage extends LitElement {
       case "logs": return html`<database-log-tab .instanceId=${this.instanceId}></database-log-tab>`;
       case "qan": return html`<query-analysis-tab .instanceId=${this.instanceId}></query-analysis-tab>`;
       case "diagnosis": return this._renderDiagnosisHistory();
-      default: return html`<instance-overview-tab .instance=${this.instance} .metrics=${this.metrics} .metricRegistry=${this._filteredRegistry} .overviewHistory=${this.overviewHistory} .metricsHistory=${this.metricsHistory}></instance-overview-tab>`;
+      default: return html`<details><summary>旧版概览（兼容口径）</summary><instance-overview-tab .instance=${this.instance} .metrics=${this.metrics} .metricRegistry=${this._filteredRegistry} .overviewHistory=${this.overviewHistory} .metricsHistory=${this.metricsHistory}></instance-overview-tab></details>`;
     }
   }
 

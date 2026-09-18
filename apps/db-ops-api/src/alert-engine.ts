@@ -142,7 +142,7 @@ class AlertEngine {
 
           // 使用与触发对称的持续时间检查：需要持续健康才恢复
           // 并加载该规则的 macros（包括模板和实例覆盖）
-          const duration = (rule.duration_seconds as number) || 60;
+          const duration = (rule as typeof rule & { recovery_seconds?: number }).recovery_seconds ?? rule.duration_seconds ?? 60;
           assertWorkflowActive();
           const macros = await resolveMacrosForRule(rule);
           assertWorkflowActive();
@@ -211,6 +211,7 @@ class AlertEngine {
     instanceName: string;
     currentValue: number;
     thresholdUsed?: number;
+    semanticMigration?: unknown;
     triggeredLevel?: 'warning' | 'error' | 'critical';
   }): Promise<void> {
     const { rule, instanceId, instanceName, currentValue, thresholdUsed, triggeredLevel } = alertData;
@@ -270,6 +271,7 @@ class AlertEngine {
     const message = `指标 "${rule.metric_name}" 当前值为 ${currentValue}，超过阈值 ${threshold} (${rule.operator} ${threshold})`;
 
     const tags: any = {
+      semantic_migration: alertData.semanticMigration,
       rule_id: rule.id,
       rule_name: rule.name,
       auto_generated: true,

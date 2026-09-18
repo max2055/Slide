@@ -1,3 +1,4 @@
+import { evaluateOperationalRule } from './metrics-v2/consumers/operational.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * Server Alert Evaluator
@@ -29,6 +30,7 @@ interface ServerAlertRuleRaw {
   threshold: number;
   threshold_template: any;
   duration_seconds: number;
+  recovery_seconds?: number;
   severity: string;
   enabled: boolean;
   silence_minutes: number;
@@ -117,9 +119,7 @@ class ServerAlertEvaluator {
 
         assertWorkflowActive();
         const latestMetrics = await this._getLatestMetrics(serverId);
-        if (latestMetrics.length === 0) {
-          continue; // No metrics yet for this server, skip
-        }
+
 
         // Build metric lookup map
         const metricMap = new Map<string, number>();
@@ -152,14 +152,28 @@ class ServerAlertEvaluator {
                 selectedRecordedAt = new Date(matching.recorded_at);
               } else currentValue = undefined;
             }
+            const semantic = await evaluateOperationalRule({ type: 'server', id: serverId }, rule as any, rule.duration_seconds);
+            if (semantic.handled) {
+              if (!semantic.level || semantic.value === null) {
+                const recovery = await evaluateOperationalRule({ type: 'server', id: serverId }, rule as any,
+                  rule.recovery_seconds ?? rule.duration_seconds);
+                if (recovery.recovery) {
+                  assertWorkflowActive();
+                  const existing = await alertDatabaseService.findActiveServerAlert(serverId, rule.metric_name, rule.id);
+                  if (existing) { assertWorkflowActive(); await alertDatabaseService.resolveAlert(existing.id); }
+                }
+                continue;
+              }
+              currentValue = semantic.value; selectedDimensions = semantic.dimensions; selectedRecordedAt = undefined;
+            }
             if (currentValue === undefined) {
               continue; // Metric not collected for this server
             }
 
-            const level = evaluateCompiledRule(compileAlertRule(rule as any, 'server'), currentValue);
+            const level = semantic.handled ? semantic.level : evaluateCompiledRule(compileAlertRule(rule as any, 'server'), currentValue);
             if (!level) continue;
             assertWorkflowActive();
-            if (!await this._durationMet(serverId, rule, currentValue)) continue;
+            if (!semantic.handled && !await this._durationMet(serverId, rule, currentValue)) continue;
 
             // Check for existing active alert (dedup)
             assertWorkflowActive();
@@ -198,6 +212,7 @@ class ServerAlertEvaluator {
               metric_value: String(currentValue),
               threshold_value: String(rule.threshold),
               tags: {
+                semantic_migration: semantic.migration,
                 rule_id: rule.id,
                 rule_name: rule.name,
                 target_type: 'server',
