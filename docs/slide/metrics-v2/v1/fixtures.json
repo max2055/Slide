@@ -1,0 +1,65 @@
+{
+  "version": "1.0.0-candidate.1",
+  "synthetic": true,
+  "purpose": "源码口径的合成脱敏样例；expected 是候选语义，不是当前运行时已通过 V2 的证明",
+  "resources": [
+    {
+      "resource_type": "instance",
+      "resource_id": "fixture-db-1",
+      "semantic_version": "1.0.0-candidate.1",
+      "source": "database-service.ts SHOW GLOBAL STATUS Uptime; collectors/dameng-memory.ts V$MEM_POOL",
+      "legacy_ids": ["uptime_seconds", "memory_usage"],
+      "candidate_ids": ["db.uptime_seconds", "dameng.memory.pool_used_percent"],
+      "dimensions": {},
+      "observed_at": "2026-09-01T00:01:00Z",
+      "raw": {"Uptime": 3600, "pool_total": 1048576, "pool_used": 262144},
+      "expected": {"db.uptime_seconds": 3600, "dameng.memory.pool_used_percent": 25},
+      "attributes": {"mysql_fixture": {"db.engine": "mysql", "db.version": "8.0.fixture"}, "dameng_fixture": {"db.engine": "dameng", "db.version": "8.fixture"}},
+      "notes": "两个独立引擎样例共享该fixture文件而非同一生产实例；uptime是gauge，memory是E且不是host内存；分母缺失/0时规范化应unknown/null"
+    },
+    {
+      "resource_type": "server",
+      "resource_id": "fixture-host-1",
+      "semantic_version": "1.0.0-candidate.1",
+      "source": "server-collector.ts filesystem samples; server-metric-provider.ts /proc/net/dev",
+      "legacy_ids": ["filesystem_used_bytes", "network_rx_bytes"],
+      "candidate_ids": ["host.filesystem.used_bytes", "host.network.bytes_total"],
+      "dimensions": {"mount": "/data", "device": "/dev/fixture1", "fs_type": "ext4"},
+      "observed_at": "2026-09-01T00:01:00Z",
+      "raw": {"filesystem": {"size": 1073741824, "used": 268435456, "available": 751619276}, "network": {"interface": "eth-fixture", "direction": "rx", "previous": "1000", "current": "7000", "elapsed_seconds": 60}},
+      "expected": {"host.filesystem.used_bytes": 268435456, "host.network.bytes_total": "7000", "network_dimensions": {"interface": "eth-fixture", "direction": "in"}, "comparable_traffic_bps": 800},
+      "notes": "文件系统保留空间导致size不等于used+available；不得把已有百分比当used/size；不同方向、接口不可合并身份"
+    },
+    {
+      "resource_type": "network_device",
+      "resource_id": "fixture-network-1",
+      "semantic_version": "1.0.0-candidate.1",
+      "source": "huawei-mib-catalog.ts standard IF-MIB; huawei-adapter.ts interface counters",
+      "legacy_ids": ["interface_in_bps", "interface_oper_status"],
+      "candidate_ids": ["network.interface.traffic_bps", "network.interface.oper_up"],
+      "dimensions": {"if_index": "7", "interface": "fixture-port", "direction": "in"},
+      "counter_cases": [
+        {"name": "ifInOctets32", "bits": 32, "previous": "1000", "current": "7000", "elapsed_seconds": 60, "reason": "valid", "expected_bps": 800},
+        {"name": "ifHCInOctets64", "bits": 64, "previous": "9007199254740993", "current": "9007199254746993", "elapsed_seconds": 60, "reason": "valid", "expected_bps": 800},
+        {"name": "reset", "bits": 64, "previous": "7000", "current": "12", "elapsed_seconds": 60, "reason": "counter_reset", "expected_bps": null},
+        {"name": "baseline", "bits": 32, "previous": "0", "current": "7000", "elapsed_seconds": 0, "reason": "counter_baseline", "expected_bps": null},
+        {"name": "gap", "bits": 32, "previous": "1000", "current": "7000", "elapsed_seconds": 3600, "reason": "gap_exceeds_fixture_policy_300s", "expected_bps": null}
+      ],
+      "utilization_cases": [
+        {"direction": "in", "bps": 800, "speed_bps": 1000, "expected_percent": 80},
+        {"direction": "out", "bps": 200, "speed_bps": 1000, "expected_percent": 20},
+        {"direction": "in", "bps": 800, "speed_bps": null, "expected_percent": null},
+        {"direction": "in", "bps": 800, "speed_bps": 0, "expected_percent": null},
+        {"direction": "in", "bps": 800, "speed_bps": 4294967295, "invalid_denominator": "ifSpeed_saturated", "expected_percent": null}
+      ],
+      "status_cases": [{"raw": 1, "expected": 1}, {"raw": 2, "expected": 0}, {"raw": 3, "expected": null}],
+      "vendor_extension": {"legacy_id": "device_cpu_percent", "candidate_id": "huawei.device.cpu_percent", "expected_value": null, "reason": "mib_unsupported"},
+      "notes": "只使用标准MIB，不配置厂商OID；utilization候选未实现，不是新增必采指标；Counter64十进制字符串保持精度"
+    }
+  ],
+  "non_mappable": [
+    {"left_semantics": "mysql Queries statement executions", "right_semantics": "postgresql xact_commit committed transactions", "same_numeric_rate": 10, "mapping_allowed": false, "reason": "计数对象不同，不能统一db.qps"},
+    {"left_semantics": "mysql table data_length+index_length estimate", "right_semantics": "postgresql pg_database_size allocated disk", "same_numeric_bytes": 1073741824, "mapping_allowed": false, "reason": "作用域和空间口径不同，不能统一逻辑db.size_bytes"},
+    {"left_semantics": "mysql PROCESSLIST rows", "right_semantics": "oracle V$SESSION rows including background sessions", "same_numeric_count": 12, "mapping_allowed": false, "reason": "连接/会话对象不同"}
+  ]
+}

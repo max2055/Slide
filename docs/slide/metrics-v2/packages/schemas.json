@@ -1,0 +1,753 @@
+{
+  "PackageRelease": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "package": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+          },
+          "contract_version": {
+            "type": "string",
+            "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "resource_type": {
+            "type": "string",
+            "enum": [
+              "instance",
+              "server",
+              "network_device"
+            ]
+          },
+          "applicability": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "attribute": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "values": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "attribute",
+                "values"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "collectors": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "sql",
+                    "ssh",
+                    "snmp"
+                  ]
+                },
+                "implementation_ref": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "timeout_ms": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "estimated_cost": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                },
+                "mappings": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "metric": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+                          },
+                          "semantic_version": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "semantic_version"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "raw_field": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "input_unit": {
+                        "type": "string",
+                        "enum": [
+                          "1",
+                          "By",
+                          "s",
+                          "ms",
+                          "%",
+                          "bit/s",
+                          "By/s",
+                          "count",
+                          "count/s"
+                        ]
+                      },
+                      "output_unit": {
+                        "type": "string",
+                        "enum": [
+                          "1",
+                          "By",
+                          "s",
+                          "ms",
+                          "%",
+                          "bit/s",
+                          "By/s",
+                          "count",
+                          "count/s"
+                        ]
+                      },
+                      "transform_version": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+                      },
+                      "steps": {
+                        "minItems": 2,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "decode",
+                            "unit_convert",
+                            "counter_delta",
+                            "rate",
+                            "derive",
+                            "normalize"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "metric",
+                      "raw_field",
+                      "input_unit",
+                      "output_unit",
+                      "transform_version",
+                      "steps"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "method",
+                "implementation_ref",
+                "timeout_ms",
+                "estimated_cost",
+                "mappings"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "contract_version",
+          "digest",
+          "resource_type",
+          "applicability",
+          "collectors"
+        ],
+        "additionalProperties": false
+      },
+      "extensions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+            },
+            "semantic_version": {
+              "type": "string",
+              "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+            },
+            "meaning": {
+              "type": "string",
+              "minLength": 1
+            },
+            "unit": {
+              "type": "string",
+              "enum": [
+                "1",
+                "By",
+                "s",
+                "ms",
+                "%",
+                "bit/s",
+                "By/s",
+                "count",
+                "count/s"
+              ]
+            },
+            "resource_type": {
+              "type": "string",
+              "enum": [
+                "instance",
+                "server",
+                "network_device"
+              ]
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "resource",
+                "database",
+                "filesystem",
+                "interface"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "gauge",
+                "counter",
+                "histogram",
+                "summary"
+              ]
+            },
+            "roles": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "core",
+                  "diagnostic",
+                  "capacity",
+                  "slo"
+                ]
+              }
+            },
+            "temporality": {
+              "type": "string",
+              "enum": [
+                "instant",
+                "cumulative",
+                "delta"
+              ]
+            },
+            "monotonic": {
+              "type": "boolean"
+            },
+            "value_type": {
+              "type": "string",
+              "enum": [
+                "float64",
+                "int64",
+                "uint64",
+                "histogram",
+                "summary"
+              ]
+            },
+            "dimensions": {
+              "type": "object",
+              "properties": {
+                "keys": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "meaning": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "required": {
+                        "type": "boolean"
+                      },
+                      "allowed_values": {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "meaning",
+                      "required"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "max_series_per_resource": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "max_value_length": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1024
+                },
+                "overflow": {
+                  "type": "string",
+                  "const": "reject"
+                }
+              },
+              "required": [
+                "keys",
+                "max_series_per_resource",
+                "max_value_length",
+                "overflow"
+              ],
+              "additionalProperties": false
+            },
+            "aggregation": {
+              "type": "object",
+              "properties": {
+                "time": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "last",
+                      "min",
+                      "max",
+                      "mean",
+                      "sum",
+                      "rate",
+                      "merge",
+                      "quantile"
+                    ]
+                  }
+                },
+                "space": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "sum",
+                      "min",
+                      "max",
+                      "weighted_mean",
+                      "merge"
+                    ]
+                  }
+                },
+                "missing": {
+                  "type": "string",
+                  "const": "preserve_null"
+                },
+                "min_coverage": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "quantiles": {
+                  "type": "string",
+                  "enum": [
+                    "not_applicable",
+                    "from_merged_histogram",
+                    "non_mergeable"
+                  ]
+                }
+              },
+              "required": [
+                "time",
+                "space",
+                "missing",
+                "min_coverage",
+                "quantiles"
+              ],
+              "additionalProperties": false
+            },
+            "lifecycle": {
+              "type": "string",
+              "enum": [
+                "active",
+                "deprecated"
+              ]
+            },
+            "replacement_id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+            },
+            "category": {
+              "type": "string",
+              "const": "extension"
+            },
+            "namespace": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*$"
+            }
+          },
+          "required": [
+            "id",
+            "semantic_version",
+            "meaning",
+            "unit",
+            "resource_type",
+            "scope",
+            "kind",
+            "roles",
+            "temporality",
+            "monotonic",
+            "value_type",
+            "dimensions",
+            "aggregation",
+            "lifecycle",
+            "category",
+            "namespace"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "derived": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+                },
+                "semantic_version": {
+                  "type": "string",
+                  "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+                }
+              },
+              "required": [
+                "id",
+                "semantic_version"
+              ],
+              "additionalProperties": false
+            },
+            "transform_version": {
+              "type": "string",
+              "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+            },
+            "inputs": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+                  },
+                  "semantic_version": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+                  }
+                },
+                "required": [
+                  "id",
+                  "semantic_version"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "operation": {
+              "type": "string",
+              "enum": [
+                "difference",
+                "rate",
+                "ratio",
+                "sum",
+                "scale"
+              ]
+            },
+            "factor": {
+              "type": "number"
+            },
+            "join": {
+              "type": "string",
+              "const": "same_resource_and_dimensions"
+            },
+            "max_skew_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "on_missing": {
+              "type": "string",
+              "const": "null"
+            },
+            "on_zero_denominator": {
+              "type": "string",
+              "const": "null"
+            },
+            "quality_propagation": {
+              "type": "string",
+              "const": "worst_input"
+            },
+            "accuracy_propagation": {
+              "type": "string",
+              "const": "least_certain_input"
+            }
+          },
+          "required": [
+            "id",
+            "output",
+            "transform_version",
+            "inputs",
+            "operation",
+            "join",
+            "max_skew_ms",
+            "on_missing",
+            "on_zero_denominator",
+            "quality_propagation",
+            "accuracy_propagation"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "transforms": {
+        "minItems": 1,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "enum": [
+                "normalize",
+                "derive"
+              ]
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+            }
+          },
+          "required": [
+            "id",
+            "version"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "recommendations": {
+        "type": "object",
+        "properties": {
+          "interval_ms": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 86400000
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 250,
+            "maximum": 30000
+          },
+          "stale_after_ms": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "max_counter_gap_ms": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "max_rows": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "interval_ms",
+          "timeout_ms",
+          "stale_after_ms",
+          "max_counter_gap_ms",
+          "max_rows",
+          "enabled"
+        ],
+        "additionalProperties": false
+      },
+      "documentation": {
+        "minItems": 1,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "collector_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "permissions": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "discovery": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "collector_id",
+            "permissions",
+            "discovery"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "package",
+      "extensions",
+      "derived",
+      "transforms",
+      "recommendations",
+      "documentation"
+    ],
+    "additionalProperties": false
+  },
+  "Selection": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "package": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "digest"
+        ],
+        "additionalProperties": false
+      },
+      "credential_ref": {
+        "type": "string",
+        "pattern": "^credential:[A-Za-z0-9_-]{1,128}$"
+      },
+      "overrides": {
+        "type": "object",
+        "properties": {
+          "interval_ms": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 86400000
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 250,
+            "maximum": 30000
+          },
+          "stale_after_ms": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "max_counter_gap_ms": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "max_rows": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "package",
+      "credential_ref",
+      "overrides"
+    ],
+    "additionalProperties": false
+  }
+}

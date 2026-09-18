@@ -6,11 +6,11 @@ import { AnthropicProvider } from './llm-provider.js';
 
 type ProviderStore = Pick<typeof llmDatabaseService, 'getAllProviders' | 'getSceneBindings' | 'getProviderApiKey'>;
 
-export async function createConfiguredAgentProvider(store: ProviderStore, purpose = 'chat'): Promise<AgentProvider> {
+export async function createConfiguredAgentProvider(store: ProviderStore, purpose = 'chat', requiresFunctionCall = true): Promise<AgentProvider> {
   let provider;
   let model;
   try {
-    ({ provider, model } = await resolveSceneModel(store, purpose, { requiresFunctionCall: true }));
+    ({ provider, model } = await resolveSceneModel(store, purpose, { requiresFunctionCall }));
   } catch (error) {
     if (!(error instanceof LLMConfigurationError)) throw error;
     // Keep configuration repair available at bootstrap; requests fail with the exact error.

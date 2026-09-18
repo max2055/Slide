@@ -723,9 +723,132 @@ describe('DirectAdapter', () => {
         else process.env.JWT_SECRET_KEY = previousSecret;
       }
     }, 10_000);
+    it.each(['error', 'timed_out', 'completed'])('persists partial output before delivering WS terminal %s', async (stopReason) => {
+      const port = 28994;
+      const previousPort = process.env.AGENT_WS_PORT;
+      const previousSecret = process.env.JWT_SECRET_KEY;
+      process.env.AGENT_WS_PORT = String(port);
+      process.env.JWT_SECRET_KEY = 'test-websocket-secret-that-is-long-enough';
+      const actor: ActorContext = Object.freeze({
+        userId: 74, username: 'ws-failure-user', roles: Object.freeze(['viewer']), permissions: Object.freeze([]),
+        sessionVersion: 1, instanceScopes: Object.freeze({}), requestId: 'ws-provider-failure-test',
+      });
+      const metadata = vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
+      const createSession = vi.spyOn(chatDatabaseService, 'createSession').mockResolvedValue({ session_id: 'ws-provider-failure-session' } as any);
+      const addMessage = vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
+      const findByIdempotencyKey = vi.spyOn(agentRunService, 'findByIdempotencyKey').mockResolvedValue(null);
+      const claim = vi.spyOn(agentRunService, 'claim').mockResolvedValue({
+        created: true,
+        run: { id: 'provider-failure-run', actorId: actor.userId, sessionId: 'ws-provider-failure-session', messageId: 'failure-message', idempotencyKey: 'failure-key', state: 'running' },
+      });
+      const finish = vi.spyOn(agentRunService, 'finish').mockResolvedValue(true);
+      const complete = vi.spyOn(agentRunService, 'complete').mockImplementation(async (run, event) => ({
+        ...run, state: 'completed', result: { event: { ...event, messageSequence: 1 } },
+      }));
+      const provider = new MockLLMProvider();
+      vi.spyOn(provider, 'chatStream').mockImplementation(async (_m, _t, callbacks, options) => {
+        await callbacks.onContentDelta('partial answer');
+        if (stopReason === 'timed_out') {
+          await new Promise<void>(resolve => options?.signal?.addEventListener('abort', () => resolve(), { once: true }));
+        }
+        if (stopReason !== 'completed') throw new Error('provider interrupted');
+        return { content: 'final answer', finishReason: 'stop', toolCalls: [], usage: {}, shouldExecuteTools: false, hasToolCalls: false };
+      });
+      const adapter = new DirectAdapter({
+        tools: new ToolRegistry(),
+        llmProvider: provider,
+        actorContextService: {
+          authenticateAccessToken: vi.fn().mockResolvedValue(actor),
+          revalidateActor: vi.fn().mockResolvedValue(actor),
+        },
+      });
+      (adapter as any).runtimeLimits = { ...(adapter as any).runtimeLimits, runTimeoutMs: 100 };
+      adaptersToCleanup.push(adapter);
+
+      try {
+        await adapter.start();
+        const events = await new Promise<Array<Record<string, unknown>>>((resolve, reject) => {
+          const received: Array<Record<string, unknown>> = [];
+          const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+          const timeout = setTimeout(() => {
+            ws.close();
+            reject(new Error('WebSocket provider failure test timed out'));
+          }, 5_000);
+          ws.on('open', () => ws.send(JSON.stringify({ type: 'auth', token: 'failure-token' })));
+          ws.on('message', (raw) => {
+            const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+            received.push(message);
+            if (message.type === 'auth_ok') {
+              ws.send(JSON.stringify({ type: 'chat.send', message: 'trigger provider failure', messageId: 'failure-message', idempotencyKey: 'failure-key' }));
+            }
+            if (message.type === 'error' || message.type === 'complete') {
+              clearTimeout(timeout);
+              ws.close();
+              resolve(received);
+            }
+          });
+          ws.on('error', (error) => {
+            clearTimeout(timeout);
+            reject(error);
+          });
+        });
+        if (stopReason === 'completed') {
+          expect(addMessage).toHaveBeenCalledTimes(1);
+          expect(complete).toHaveBeenCalledTimes(1);
+          expect(complete).toHaveBeenCalledWith(expect.objectContaining({ id: 'provider-failure-run' }),
+            expect.objectContaining({ type: 'complete', finalContent: 'final answer' }));
+          expect(finish).not.toHaveBeenCalled();
+        } else {
+          expect(complete).not.toHaveBeenCalled();
+          expect(addMessage).toHaveBeenCalledTimes(2);
+          expect(addMessage).toHaveBeenLastCalledWith(actor, 'ws-provider-failure-session', expect.objectContaining({
+            role: 'assistant', content: 'partial answer',
+            metadata: expect.objectContaining({ interrupted: true, stopReason }),
+          }));
+          expect(finish).toHaveBeenCalledWith('provider-failure-run', stopReason === 'error' ? 'failed' : stopReason, { stopReason });
+        }
+        expect(events.at(-1)).toMatchObject({ type: stopReason === 'completed' ? 'complete' : 'error', messageSequence: 1, stopReason });
+      } finally {
+        metadata.mockRestore();
+        createSession.mockRestore();
+        addMessage.mockRestore();
+        findByIdempotencyKey.mockRestore();
+        claim.mockRestore();
+        finish.mockRestore();
+        complete.mockRestore();
+        if (previousPort === undefined) delete process.env.AGENT_WS_PORT;
+        else process.env.AGENT_WS_PORT = previousPort;
+        if (previousSecret === undefined) delete process.env.JWT_SECRET_KEY;
+        else process.env.JWT_SECRET_KEY = previousSecret;
+      }
+    }, 10_000);
   });
 
   describe('chat()', () => {
+    it('retains partial streaming output on cancellation and awaits the terminal consumer', async () => {
+      const controller = new AbortController();
+      const provider = new MockLLMProvider();
+      vi.spyOn(provider, 'chatStream').mockImplementation(async (_m, _t, callbacks) => {
+        await callbacks.onContentDelta('partial answer');
+        controller.abort();
+        throw new Error('aborted');
+      });
+      const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: provider });
+      adaptersToCleanup.push(adapter);
+      let persisted = false;
+      const events: ChatEvent[] = [];
+      const result = await adapter.chat('partial-cancel', 'hello', async event => {
+        events.push(event);
+        if (event.type === 'cancelled') {
+          await new Promise(resolve => setTimeout(resolve, 10));
+          persisted = true;
+        }
+      }, undefined, controller.signal);
+      expect(result).toMatchObject({ finalContent: 'partial answer', stopReason: 'cancelled' });
+      expect(events.at(-1)).toMatchObject({ type: 'cancelled', finalContent: 'partial answer', stopReason: 'cancelled' });
+      expect(persisted).toBe(true);
+    });
+
     it('should produce events including at least one event', async () => {
       const adapter = createMockAdapter();
       const events: ChatEvent[] = [];

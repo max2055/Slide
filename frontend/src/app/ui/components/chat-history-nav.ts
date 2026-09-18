@@ -22,6 +22,7 @@ export class ChatHistoryNav extends LitElement {
   private highlightTimer?: ReturnType<typeof setTimeout>;
   private highlighted?: HTMLElement;
   private jumpVersion = 0;
+  private historyJumpInProgress = false;
   private pointerY: number | null = null;
 
   override disconnectedCallback() {
@@ -38,6 +39,7 @@ export class ChatHistoryNav extends LitElement {
     clearTimeout(this.highlightTimer);
     this.highlighted?.classList.remove("chat-history-highlight");
     this.jumpVersion++;
+    this.historyJumpInProgress = false;
   }
 
   protected override updated(changed: PropertyValues) {
@@ -95,7 +97,7 @@ export class ChatHistoryNav extends LitElement {
       if (key !== this.activeKey) {
         this.activeKey = key;
         // Follow transcript scrolling only while the user is not browsing the ruler.
-        if (this.hovered < 0) {
+        if (this.hovered < 0 && !this.historyJumpInProgress) {
           const index = this.turns.findIndex((turn) => turn.key === key);
           const button = this.renderRoot.querySelectorAll<HTMLElement>(".tick")[index];
           const ruler = this.renderRoot.querySelector<HTMLElement>("nav");
@@ -128,22 +130,29 @@ export class ChatHistoryNav extends LitElement {
 
   async navigate(turn: HistoryTurn) {
     const version = ++this.jumpVersion;
+    this.historyJumpInProgress = true;
     this.close();
-    if (this.thread) this.thread.dataset.historyReading = "true";
-    this.onNavigate?.(turn);
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    if (version !== this.jumpVersion || !this.isConnected || !this.thread) return;
-    this.refreshAnchors();
-    const target = this.anchors.find((anchor) => anchor.dataset.chatTurn === turn.key);
-    if (!target) return;
-    // Set position immediately so scheduled streaming scrolls cannot win the race.
-    this.thread.scrollTop += target.getBoundingClientRect().top - this.thread.getBoundingClientRect().top - 8;
-    this.activeKey = turn.key;
-    this.highlighted?.classList.remove("chat-history-highlight");
-    clearTimeout(this.highlightTimer);
-    this.highlighted = target;
-    target.classList.add("chat-history-highlight");
-    this.highlightTimer = setTimeout(() => target.classList.remove("chat-history-highlight"), 1600);
+    try {
+      if (this.thread) this.thread.dataset.historyReading = "true";
+      this.onNavigate?.(turn);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (version !== this.jumpVersion || !this.isConnected || !this.thread) return;
+      this.refreshAnchors();
+      const target = this.anchors.find((anchor) => anchor.dataset.chatTurn === turn.key);
+      if (!target) return;
+      // Set position immediately so scheduled streaming scrolls cannot win the race.
+      this.thread.scrollTop += target.getBoundingClientRect().top - this.thread.getBoundingClientRect().top - 8;
+      this.activeKey = turn.key;
+      this.highlighted?.classList.remove("chat-history-highlight");
+      clearTimeout(this.highlightTimer);
+      this.highlighted = target;
+      target.classList.add("chat-history-highlight");
+      this.highlightTimer = setTimeout(() => target.classList.remove("chat-history-highlight"), 1600);
+      // Let the scroll event and the resulting position/layout callbacks finish before following again.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    } finally {
+      if (version === this.jumpVersion) this.historyJumpInProgress = false;
+    }
   }
 
   private keydown(event: KeyboardEvent, index: number) {

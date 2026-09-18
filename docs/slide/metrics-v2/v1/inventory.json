@@ -1,0 +1,2250 @@
+{
+  "version": "1.0.0-candidate.1",
+  "source_baseline": "f9c1de747890a10d059765aac32712fa4e270372",
+  "source_sha256": {
+    "apps/db-ops-api/server.ts": "72163379fc6367639b02dd2e799e642704ac1c912cba8b5b252e86c3350f37af",
+    "apps/db-ops-api/src/ai-agent-bridge.ts": "46791ddbf5d76a91fca3e85d66339e2403560ba0f1254905b19c12df8820b5c4",
+    "apps/db-ops-api/src/alert-engine.ts": "aebd7f42f89a81993a87c2456a63c89dc4eaa3bddcd188630606abe34d014785",
+    "apps/db-ops-api/src/alert-evaluator.ts": "22518ed42c319e0309289ef604a82e8f6e67a6100c41b04e91191216104513bc",
+    "apps/db-ops-api/src/alert-rule-template-service.ts": "316bc036399346b54c901443b4e12056f53cde91d6c3c1d237ddf65cf77ae1bd",
+    "apps/db-ops-api/src/baseline-calculator.ts": "796eaaaecb2c950573fd6b66b1f60a5199d28e3ca7221c36673b05d974211549",
+    "apps/db-ops-api/src/capacity-predictor.ts": "3076aa48acdc666ab7a69edc32b28049923517fbb013201fa874b19d5c3cf705",
+    "apps/db-ops-api/src/collector.ts": "cc25b8c8f4cea0ad8cd475f929c542422ebd4adaa73a4b333ef79beb3d753611",
+    "apps/db-ops-api/src/collectors/base-provider.ts": "775a3386c176f34b7409d20496138136477ce80d1a4b7eedbfdd46c3b6964d05",
+    "apps/db-ops-api/src/collectors/custom-sql.provider.ts": "183e25f285b756ae248ada7a59c204c53b9269a7eb767770242dec60be0df28d",
+    "apps/db-ops-api/src/collectors/dameng-memory.ts": "822ca26c1c60c0f34445c1dcd57c7378db808fbdfbbbec4fd59ff03c01c35e47",
+    "apps/db-ops-api/src/collectors/dameng.provider.ts": "162e8c86c4939123f2caf19df19df0d3f11be932eb868a748b4cfbfcbb473847",
+    "apps/db-ops-api/src/collectors/mysql.provider.ts": "bae4531db36183fe3a0c7c7afa200e3903739bdf95e32dee4344449784373313",
+    "apps/db-ops-api/src/collectors/oracle.provider.ts": "7ad8eb4155cccc23c6a6c4d1cce73a59340a4709ea5f5d4c2a306cfc8354d0e2",
+    "apps/db-ops-api/src/collectors/postgresql.provider.ts": "57b29b67e5c8bb5225db0c379dd547ba4aa8e860b8e30b24aa02b6aacdfcfb49",
+    "apps/db-ops-api/src/consistency-checker.ts": "f2ae0d155d807acbc3d10490af83e9c026c55752b21e98ed1264e25c27a76280",
+    "apps/db-ops-api/src/contracts/generate-public-api.ts": "60d1f2df1e6149e0478892fa52f1c190667789f55f526b98e5c961884f844db1",
+    "apps/db-ops-api/src/contracts/public-api.ts": "c3d7291ec825ab2a03645524f05728cde99594e538a13e60c431f0f7e12c9af0",
+    "apps/db-ops-api/src/database-service.ts": "e79f31c468f6c8261a5ff2e28477599811238ce2bac9f9c1e992910d709d9690",
+    "apps/db-ops-api/src/instance-database-service.ts": "512a6681c8a41f24aadecf4d2cb05642a0d90508564e770081ce79c3778d2113",
+    "apps/db-ops-api/src/instance-diagnostic-context-service.ts": "90a36cfe7c752c3cc0a8d91f3d95096a8526f79f1a588d26ac238f3e7672eeb5",
+    "apps/db-ops-api/src/linux-host-evidence-service.ts": "3ce2fd197ba02a1c39f9630e22039618c5868a7f9ee6dca2af51be33bdf19b60",
+    "apps/db-ops-api/src/metric-database-service.ts": "d41d2628d74919fa99b2d6f60ce5b47efecb76b1367a23e9d6333313e754cfdd",
+    "apps/db-ops-api/src/metric-registry.ts": "730cb3472ff2cbde37bab0a41531060e09510df6f461c9a4d8411edfca0e9dcf",
+    "apps/db-ops-api/src/metrics-database-service.ts": "b8b06d20619c00aa88b6a6a83c2bec067df3d74f7a572022ebc9d2b5db46dcbc",
+    "apps/db-ops-api/src/migrations/invariants.ts": "6b42ab6f0cb5b2c8d28d05f380b681d763128390b8fb717a68f9a04d7dfe985e",
+    "apps/db-ops-api/src/monitor-collector.ts": "24b7218dddcb0aced850e411ef95aa8153a7bc7e2dad7c65ac1326c1d9793ea6",
+    "apps/db-ops-api/src/network-devices/huawei-adapter.ts": "85f78866496238189fda7cf5412bba62edd623b720864131281e53a1e311d5d7",
+    "apps/db-ops-api/src/network-devices/huawei-mib-catalog.ts": "d727599c0116f111b20f1c279693049e7bfb47c0e02876fb929a8456df2b6723",
+    "apps/db-ops-api/src/network-devices/network-device-alert-evaluator.ts": "8781dd7a82545395868e59a6b6586e7b47844e5c278d0d12b470200ea95179d4",
+    "apps/db-ops-api/src/network-devices/network-device-collector.ts": "7fa1783f50e90d64d74c8d805e33d279ef8f0323836990125f65b30c93f57760",
+    "apps/db-ops-api/src/network-devices/network-device-routes.ts": "1926094dffb475fb88075ca03c12479c59227a8770ceac4d421cd6bbfac8d547",
+    "apps/db-ops-api/src/report-service.ts": "8e72edb9345d90e06713f205fbe9ae343eb31970e062c57b1f1ea1e1896a25a6",
+    "apps/db-ops-api/src/resources/observation-service.ts": "e9d78cdfa596f6ba910b7236a950fcb1d759c116b08385f3ecaafb61585d61a7",
+    "apps/db-ops-api/src/resources/resource-diagnostic-service.ts": "e68fbec0378c008e6bdb3d62dca231863a6c5fe30834841a898693d52632b17e",
+    "apps/db-ops-api/src/resources/resource-routes.ts": "f2ce9448c392680e11daa1bcbb40434839d8503421d5c520a541a5534d6114d0",
+    "apps/db-ops-api/src/scoring-service.ts": "922f9eb73307d8b952475d438b7757fc5ad3ebdffea25d6fab13b068662803f7",
+    "apps/db-ops-api/src/security/public-dto.ts": "0de3c8f47452517cb202512d099f400b3093efaf9754a2091df3d1fe4604c9de",
+    "apps/db-ops-api/src/server-alert-evaluator.ts": "c74772fe67affd3b1c6e966f8c0d01d447802adb9f5180b30f4f656038cde365",
+    "apps/db-ops-api/src/server-collector.ts": "f80e0f3a542693fbc741b7f20e2d3319b0bb5030ccae79f072df837061625654",
+    "apps/db-ops-api/src/server-diagnostic-service.ts": "0117c7dde413cab488dee46bb338f5119f30d3abb26b528c23d6359a4412dd72",
+    "apps/db-ops-api/src/server-metric-provider.ts": "a1affedcd4ecce217ce6c5f6b0778b4cb52da7748d9add746d65b7f1c05c236f",
+    "apps/db-ops-api/src/server-report-service.ts": "e0292e90f0ca8a89d6cfe1c249a6fe30a5499e4c435cf3459bb313ef678b1bf0",
+    "apps/db-ops-api/src/skills/generated/check_health/tools.ts": "068f634a7d16a46065c0d89d83bf96571ba6a3c0871dc353e4333ef3e1ac40c6",
+    "apps/db-ops-api/src/tools/generated/slide-self-mgmt/server_tools.ts": "e511357bdf9f7354bfc85fb494496056fb45f6f8c34efc5cbb04722fbae97372",
+    "apps/db-ops-api/src/tools/ops/get_instance_summary.ts": "9ce5be7263cc6bc5dbd16c8327879160b86cfffa813d4fc374a6e521620d8663",
+    "apps/db-ops-api/src/tools/ops/query_metrics.ts": "9271803993ca617ec5004dc8eddc84890750a82be698fad8e7a0dcd1118359fc",
+    "apps/db-ops-api/src/tools/security-catalog.ts": "46af88cb04aee7c13e30efef8a91ae3c51bab430fc34e2d02e3ea93b8ebe09f0",
+    "frontend/src/api/generated/public-api.ts": "ac1e1b7ac7b077f25194d36c41b433a91da11a43b171d8e2e915aa92cf53dd8a",
+    "frontend/src/app/i18n/locales/operations-overview.ts": "1174ef21e6388177fc8b264ee483c136e56cc5e7f2e07d7249deda6318ba9f97",
+    "frontend/src/app/ui/components/instance-host-summary.ts": "9ca92ac98aa0e0c708fb15faee3969a70adde755e654fa3ffcf3b633f309e8b0",
+    "frontend/src/app/ui/components/instance-overview-tab.ts": "0ebeb2b24fce793d1dbb1fc1be7852137103dca569c73f138b60e3bd342ed028",
+    "frontend/src/app/ui/views/alerts.ts": "722e55dc980c87310a13c1a59dcfc52c8bc6ef52bee6c57459d3e3b7ecf28993",
+    "frontend/src/app/ui/views/dashboard-model.ts": "35e2c59bf6617dcd565c91e0cf323bbf837ec9af6ad15e95aed29530a50b4af6",
+    "frontend/src/app/ui/views/dashboard.ts": "c1d1d5aaf69325cd5f268976b0790c6a83cff1bffc7ab1de428b3d6c1b9158f6",
+    "frontend/src/app/ui/views/health-score-tab.ts": "e495f7eb9916f416fef182cfc9dd1babe0662f188bec5953fbba3c1200f9e5f7",
+    "frontend/src/app/ui/views/instance-detail.ts": "470dc48d9059bacdb67f779f67d637a5c1738e7420b4a37ccdd2c770a25482c9",
+    "frontend/src/app/ui/views/instances-db.ts": "815e544bba8920e3b2fc20a61c84c1ba29bcc939a44b32f6fab8d952b85aaaeb",
+    "frontend/src/app/ui/views/metric-registry.ts": "1d695a6679bf22894cfb58ea5aa1b8cad18db6cb60082a1686727a8162c9ca50",
+    "frontend/src/app/ui/views/network-device-detail.ts": "588b65386124ed0b5db06a41e9714754a55f83c434f26747ca426e1771366978",
+    "frontend/src/app/ui/views/network-device-labels.ts": "2537216c893ff99d8b99f6fffa4cd84b21582ec1f505cf82e446eb6fafcbaad0",
+    "frontend/src/app/ui/views/server-detail.ts": "3685574ee93c725e572ccf9039e297543cbd239574cfc4fff915e1d4994ed002",
+    "frontend/src/app/ui/views/servers-page.ts": "0f3b1dc8f7d14beb2419d310641929a448339b12d5b32d72633ec466594dd965"
+  },
+  "registry": [
+    {
+      "id": "aborted_connects",
+      "target_type": "instance",
+      "unit": "count",
+      "declared_kind": "unspecified",
+      "aggregation": "sum",
+      "default_interval_seconds": 60,
+      "default_collected": true,
+      "engines": [
+        "mysql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 351
+    },
+    {
+      "id": "aborted_connects_rate",
+      "target_type": "instance",
+      "unit": "ops/s",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 30,
+      "default_collected": true,
+      "engines": [
+        "mysql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 363
+    },
+    {
+      "id": "autovacuum_count",
+      "target_type": "instance",
+      "unit": "count",
+      "declared_kind": "unspecified",
+      "aggregation": "sum",
+      "default_interval_seconds": 300,
+      "default_collected": false,
+      "engines": [
+        "postgresql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 436
+    },
+    {
+      "id": "buffer_pool_hit_rate",
+      "target_type": "instance",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 30,
+      "default_collected": true,
+      "engines": [
+        "mysql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 266
+    },
+    {
+      "id": "cache_hit_ratio",
+      "target_type": "instance",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 30,
+      "default_collected": true,
+      "engines": [
+        "postgresql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 400
+    },
+    {
+      "id": "connections",
+      "target_type": "instance",
+      "unit": "count",
+      "declared_kind": "unspecified",
+      "aggregation": "max",
+      "default_interval_seconds": 30,
+      "default_collected": true,
+      "engines": [
+        "mysql",
+        "postgresql",
+        "dameng",
+        "oracle"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 218
+    },
+    {
+      "id": "connections_used",
+      "target_type": "instance",
+      "unit": "count",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 30,
+      "default_collected": true,
+      "engines": [
+        "postgresql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 412
+    },
+    {
+      "id": "cpu_usage",
+      "target_type": "instance",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 30,
+      "default_collected": true,
+      "engines": [
+        "mysql",
+        "postgresql",
+        "dameng",
+        "oracle"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 182
+    },
+    {
+      "id": "data_size_gb",
+      "target_type": "instance",
+      "unit": "GB",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [
+        "mysql",
+        "postgresql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 461
+    },
+    {
+      "id": "dead_tuples",
+      "target_type": "instance",
+      "unit": "count",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 60,
+      "default_collected": true,
+      "engines": [
+        "postgresql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 388
+    },
+    {
+      "id": "deadlock_count",
+      "target_type": "instance",
+      "unit": "count",
+      "declared_kind": "unspecified",
+      "aggregation": "max",
+      "default_interval_seconds": 60,
+      "default_collected": true,
+      "engines": [
+        "oracle"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 498
+    },
+    {
+      "id": "disk_usage",
+      "target_type": "instance",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [
+        "mysql",
+        "postgresql",
+        "dameng",
+        "oracle"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 206
+    },
+    {
+      "id": "handler_read_rnd_next",
+      "target_type": "instance",
+      "unit": "count",
+      "declared_kind": "unspecified",
+      "aggregation": "sum",
+      "default_interval_seconds": 60,
+      "default_collected": true,
+      "engines": [
+        "mysql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 303
+    },
+    {
+      "id": "handler_read_rnd_next_rate",
+      "target_type": "instance",
+      "unit": "ops/s",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 30,
+      "default_collected": true,
+      "engines": [
+        "mysql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 315
+    },
+    {
+      "id": "health_score",
+      "target_type": "instance",
+      "unit": "score",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 60,
+      "default_collected": false,
+      "engines": [
+        "mysql",
+        "postgresql",
+        "dameng",
+        "oracle"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 278
+    },
+    {
+      "id": "idx_scan_ratio",
+      "target_type": "instance",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 60,
+      "default_collected": true,
+      "engines": [
+        "postgresql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 376
+    },
+    {
+      "id": "key_blocks_usage",
+      "target_type": "instance",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 30,
+      "default_collected": true,
+      "engines": [
+        "mysql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 327
+    },
+    {
+      "id": "memory_usage",
+      "target_type": "instance",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 30,
+      "default_collected": true,
+      "engines": [
+        "mysql",
+        "postgresql",
+        "dameng",
+        "oracle"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 194
+    },
+    {
+      "id": "open_files",
+      "target_type": "instance",
+      "unit": "count",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 60,
+      "default_collected": true,
+      "engines": [
+        "mysql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 339
+    },
+    {
+      "id": "qps",
+      "target_type": "instance",
+      "unit": "ops/s",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 30,
+      "default_collected": true,
+      "engines": [
+        "mysql",
+        "postgresql",
+        "dameng",
+        "oracle"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 230
+    },
+    {
+      "id": "replication_lag_seconds",
+      "target_type": "instance",
+      "unit": "seconds",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 30,
+      "default_collected": true,
+      "engines": [
+        "postgresql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 448
+    },
+    {
+      "id": "sga_hit_rate",
+      "target_type": "instance",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 30,
+      "default_collected": true,
+      "engines": [
+        "oracle"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 486
+    },
+    {
+      "id": "slow_queries",
+      "target_type": "instance",
+      "unit": "count",
+      "declared_kind": "unspecified",
+      "aggregation": "sum",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [
+        "mysql",
+        "postgresql",
+        "oracle"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 254
+    },
+    {
+      "id": "table_open_cache_hit_rate",
+      "target_type": "instance",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 30,
+      "default_collected": true,
+      "engines": [
+        "mysql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 291
+    },
+    {
+      "id": "tablespace_usage",
+      "target_type": "instance",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [
+        "oracle"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 474
+    },
+    {
+      "id": "tps",
+      "target_type": "instance",
+      "unit": "ops/s",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 30,
+      "default_collected": true,
+      "engines": [
+        "mysql",
+        "postgresql",
+        "dameng",
+        "oracle"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 242
+    },
+    {
+      "id": "vacuum_count",
+      "target_type": "instance",
+      "unit": "count",
+      "declared_kind": "unspecified",
+      "aggregation": "sum",
+      "default_interval_seconds": 300,
+      "default_collected": false,
+      "engines": [
+        "postgresql"
+      ],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 424
+    },
+    {
+      "id": "device_cpu_percent",
+      "target_type": "network_device",
+      "unit": "%",
+      "declared_kind": "gauge",
+      "aggregation": "avg",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 744
+    },
+    {
+      "id": "device_memory_percent",
+      "target_type": "network_device",
+      "unit": "%",
+      "declared_kind": "gauge",
+      "aggregation": "avg",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 760
+    },
+    {
+      "id": "device_reachability",
+      "target_type": "network_device",
+      "unit": "state",
+      "declared_kind": "gauge",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 714
+    },
+    {
+      "id": "device_temperature_celsius",
+      "target_type": "network_device",
+      "unit": "°C",
+      "declared_kind": "gauge",
+      "aggregation": "avg",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 776
+    },
+    {
+      "id": "device_uptime_seconds",
+      "target_type": "network_device",
+      "unit": "seconds",
+      "declared_kind": "gauge",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 730
+    },
+    {
+      "id": "interface_drop_rate",
+      "target_type": "network_device",
+      "unit": "drops/s",
+      "declared_kind": "counter",
+      "aggregation": "avg",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 824
+    },
+    {
+      "id": "interface_error_rate",
+      "target_type": "network_device",
+      "unit": "errors/s",
+      "declared_kind": "counter",
+      "aggregation": "avg",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 808
+    },
+    {
+      "id": "interface_in_bps",
+      "target_type": "network_device",
+      "unit": "bits/s",
+      "declared_kind": "counter",
+      "aggregation": "avg",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 840
+    },
+    {
+      "id": "interface_oper_status",
+      "target_type": "network_device",
+      "unit": "state",
+      "declared_kind": "gauge",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 792
+    },
+    {
+      "id": "interface_out_bps",
+      "target_type": "network_device",
+      "unit": "bits/s",
+      "declared_kind": "counter",
+      "aggregation": "avg",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 854
+    },
+    {
+      "id": "cpu_usage",
+      "target_type": "server",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 511
+    },
+    {
+      "id": "disk_io_time_ms",
+      "target_type": "server",
+      "unit": "ms",
+      "declared_kind": "counter",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 175
+    },
+    {
+      "id": "disk_read_bytes",
+      "target_type": "server",
+      "unit": "bytes",
+      "declared_kind": "counter",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 173
+    },
+    {
+      "id": "disk_usage",
+      "target_type": "server",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 565
+    },
+    {
+      "id": "disk_write_bytes",
+      "target_type": "server",
+      "unit": "bytes",
+      "declared_kind": "counter",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 174
+    },
+    {
+      "id": "filesystem_available_bytes",
+      "target_type": "server",
+      "unit": "bytes",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 605
+    },
+    {
+      "id": "filesystem_inode_usage",
+      "target_type": "server",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 618
+    },
+    {
+      "id": "filesystem_size_bytes",
+      "target_type": "server",
+      "unit": "bytes",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 579
+    },
+    {
+      "id": "filesystem_used_bytes",
+      "target_type": "server",
+      "unit": "bytes",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 592
+    },
+    {
+      "id": "load_15min",
+      "target_type": "server",
+      "unit": "load",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 659
+    },
+    {
+      "id": "load_1min",
+      "target_type": "server",
+      "unit": "load",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 632
+    },
+    {
+      "id": "load_5min",
+      "target_type": "server",
+      "unit": "load",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 646
+    },
+    {
+      "id": "memory_total",
+      "target_type": "server",
+      "unit": "bytes",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 552
+    },
+    {
+      "id": "memory_usage",
+      "target_type": "server",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 525
+    },
+    {
+      "id": "memory_used",
+      "target_type": "server",
+      "unit": "bytes",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 539
+    },
+    {
+      "id": "network_rx_bytes",
+      "target_type": "server",
+      "unit": "bytes",
+      "declared_kind": "gauge",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 167
+    },
+    {
+      "id": "network_rx_drops",
+      "target_type": "server",
+      "unit": "count",
+      "declared_kind": "counter",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 171
+    },
+    {
+      "id": "network_rx_errors",
+      "target_type": "server",
+      "unit": "count",
+      "declared_kind": "counter",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 169
+    },
+    {
+      "id": "network_tx_bytes",
+      "target_type": "server",
+      "unit": "bytes",
+      "declared_kind": "gauge",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 168
+    },
+    {
+      "id": "network_tx_drops",
+      "target_type": "server",
+      "unit": "count",
+      "declared_kind": "counter",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 172
+    },
+    {
+      "id": "network_tx_errors",
+      "target_type": "server",
+      "unit": "count",
+      "declared_kind": "counter",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 170
+    },
+    {
+      "id": "os_type",
+      "target_type": "server",
+      "unit": "string",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 3600,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 699
+    },
+    {
+      "id": "process_count",
+      "target_type": "server",
+      "unit": "count",
+      "declared_kind": "gauge",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 176
+    },
+    {
+      "id": "swap_usage",
+      "target_type": "server",
+      "unit": "%",
+      "declared_kind": "unspecified",
+      "aggregation": "avg",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 672
+    },
+    {
+      "id": "top_processes_cpu",
+      "target_type": "server",
+      "unit": "%",
+      "declared_kind": "gauge",
+      "aggregation": "max",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 177
+    },
+    {
+      "id": "top_processes_memory",
+      "target_type": "server",
+      "unit": "%",
+      "declared_kind": "gauge",
+      "aggregation": "max",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 178
+    },
+    {
+      "id": "uptime",
+      "target_type": "server",
+      "unit": "seconds",
+      "declared_kind": "unspecified",
+      "aggregation": "last",
+      "default_interval_seconds": 300,
+      "default_collected": true,
+      "engines": [],
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "line": 686
+    }
+  ],
+  "provider_cases": [
+    {
+      "engine": "mysql",
+      "id": "connections",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 21
+    },
+    {
+      "engine": "mysql",
+      "id": "cpu_usage",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 28
+    },
+    {
+      "engine": "mysql",
+      "id": "memory_usage",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 40
+    },
+    {
+      "engine": "mysql",
+      "id": "disk_usage",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 49
+    },
+    {
+      "engine": "mysql",
+      "id": "data_size_gb",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 57
+    },
+    {
+      "engine": "mysql",
+      "id": "qps",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 64
+    },
+    {
+      "engine": "mysql",
+      "id": "tps",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 72
+    },
+    {
+      "engine": "mysql",
+      "id": "slow_queries",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 81
+    },
+    {
+      "engine": "mysql",
+      "id": "buffer_pool_hit_rate",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 88
+    },
+    {
+      "engine": "mysql",
+      "id": "threads_running",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 98
+    },
+    {
+      "engine": "mysql",
+      "id": "threads_connected",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 105
+    },
+    {
+      "engine": "mysql",
+      "id": "bytes_received",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 112
+    },
+    {
+      "engine": "mysql",
+      "id": "bytes_sent",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 119
+    },
+    {
+      "engine": "mysql",
+      "id": "queries_total",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 126
+    },
+    {
+      "engine": "mysql",
+      "id": "commits_total",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 133
+    },
+    {
+      "engine": "mysql",
+      "id": "rollbacks_total",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 140
+    },
+    {
+      "engine": "mysql",
+      "id": "table_open_cache_hit_rate",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 147
+    },
+    {
+      "engine": "mysql",
+      "id": "handler_read_rnd_next",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 157
+    },
+    {
+      "engine": "mysql",
+      "id": "handler_read_rnd_next_rate",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 164
+    },
+    {
+      "engine": "mysql",
+      "id": "key_blocks_usage",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 172
+    },
+    {
+      "engine": "mysql",
+      "id": "open_files",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 182
+    },
+    {
+      "engine": "mysql",
+      "id": "aborted_connects",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 189
+    },
+    {
+      "engine": "mysql",
+      "id": "aborted_connects_rate",
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "line": 196
+    },
+    {
+      "engine": "postgresql",
+      "id": "connections",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 20
+    },
+    {
+      "engine": "postgresql",
+      "id": "cpu_usage",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 27
+    },
+    {
+      "engine": "postgresql",
+      "id": "memory_usage",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 39
+    },
+    {
+      "engine": "postgresql",
+      "id": "disk_usage",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 48
+    },
+    {
+      "engine": "postgresql",
+      "id": "data_size_gb",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 49
+    },
+    {
+      "engine": "postgresql",
+      "id": "qps",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 57
+    },
+    {
+      "engine": "postgresql",
+      "id": "tps",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 65
+    },
+    {
+      "engine": "postgresql",
+      "id": "slow_queries",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 74
+    },
+    {
+      "engine": "postgresql",
+      "id": "cache_hit_ratio",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 77
+    },
+    {
+      "engine": "postgresql",
+      "id": "cache_hit_rate",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 78
+    },
+    {
+      "engine": "postgresql",
+      "id": "idx_scan_ratio",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 96
+    },
+    {
+      "engine": "postgresql",
+      "id": "dead_tuples",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 105
+    },
+    {
+      "engine": "postgresql",
+      "id": "connections_used",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 112
+    },
+    {
+      "engine": "postgresql",
+      "id": "connections_max",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 119
+    },
+    {
+      "engine": "postgresql",
+      "id": "vacuum_count",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 126
+    },
+    {
+      "engine": "postgresql",
+      "id": "autovacuum_count",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 137
+    },
+    {
+      "engine": "postgresql",
+      "id": "replication_lag_seconds",
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "line": 148
+    },
+    {
+      "engine": "oracle",
+      "id": "connections",
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "line": 20
+    },
+    {
+      "engine": "oracle",
+      "id": "connections_max",
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "line": 27
+    },
+    {
+      "engine": "oracle",
+      "id": "cpu_usage",
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "line": 34
+    },
+    {
+      "engine": "oracle",
+      "id": "memory_usage",
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "line": 46
+    },
+    {
+      "engine": "oracle",
+      "id": "disk_usage",
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "line": 74
+    },
+    {
+      "engine": "oracle",
+      "id": "tablespace_usage",
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "line": 75
+    },
+    {
+      "engine": "oracle",
+      "id": "qps",
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "line": 92
+    },
+    {
+      "engine": "oracle",
+      "id": "tps",
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "line": 104
+    },
+    {
+      "engine": "oracle",
+      "id": "slow_queries",
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "line": 115
+    },
+    {
+      "engine": "oracle",
+      "id": "sga_hit_rate",
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "line": 118
+    },
+    {
+      "engine": "oracle",
+      "id": "deadlock_count",
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "line": 132
+    },
+    {
+      "engine": "oracle",
+      "id": "active_sessions",
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "line": 143
+    },
+    {
+      "engine": "oracle",
+      "id": "sga_size_mb",
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "line": 150
+    },
+    {
+      "engine": "oracle",
+      "id": "pga_size_mb",
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "line": 161
+    },
+    {
+      "engine": "dameng",
+      "id": "connections",
+      "path": "apps/db-ops-api/src/collectors/dameng.provider.ts",
+      "line": 27
+    },
+    {
+      "engine": "dameng",
+      "id": "connections_max",
+      "path": "apps/db-ops-api/src/collectors/dameng.provider.ts",
+      "line": 34
+    },
+    {
+      "engine": "dameng",
+      "id": "cpu_usage",
+      "path": "apps/db-ops-api/src/collectors/dameng.provider.ts",
+      "line": 41
+    },
+    {
+      "engine": "dameng",
+      "id": "memory_usage",
+      "path": "apps/db-ops-api/src/collectors/dameng.provider.ts",
+      "line": 53
+    },
+    {
+      "engine": "dameng",
+      "id": "disk_usage",
+      "path": "apps/db-ops-api/src/collectors/dameng.provider.ts",
+      "line": 57
+    },
+    {
+      "engine": "dameng",
+      "id": "qps",
+      "path": "apps/db-ops-api/src/collectors/dameng.provider.ts",
+      "line": 61
+    },
+    {
+      "engine": "dameng",
+      "id": "tps",
+      "path": "apps/db-ops-api/src/collectors/dameng.provider.ts",
+      "line": 72
+    },
+    {
+      "engine": "dameng",
+      "id": "slow_queries",
+      "path": "apps/db-ops-api/src/collectors/dameng.provider.ts",
+      "line": 83
+    },
+    {
+      "engine": "dameng",
+      "id": "dm_buffer_hit_rate",
+      "path": "apps/db-ops-api/src/collectors/dameng.provider.ts",
+      "line": 86
+    },
+    {
+      "engine": "dameng",
+      "id": "dm_lock_wait",
+      "path": "apps/db-ops-api/src/collectors/dameng.provider.ts",
+      "line": 94
+    },
+    {
+      "engine": "dameng",
+      "id": "dm_deadlock_count",
+      "path": "apps/db-ops-api/src/collectors/dameng.provider.ts",
+      "line": 112
+    }
+  ],
+  "realtime_fields": [
+    {
+      "id": "cpu_usage",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 71
+    },
+    {
+      "id": "memory_usage",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 72
+    },
+    {
+      "id": "disk_usage",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 73
+    },
+    {
+      "id": "connections",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 74
+    },
+    {
+      "id": "max_connections",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 75
+    },
+    {
+      "id": "qps",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 76
+    },
+    {
+      "id": "tps",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 77
+    },
+    {
+      "id": "active_transactions",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 78
+    },
+    {
+      "id": "slow_queries",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 79
+    },
+    {
+      "id": "db_type",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 80
+    },
+    {
+      "id": "innodb_buffer_pool_hit_rate",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 82
+    },
+    {
+      "id": "innodb_row_lock_time_avg",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 83
+    },
+    {
+      "id": "innodb_deadlocks",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 84
+    },
+    {
+      "id": "tmp_table_on_disk",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 85
+    },
+    {
+      "id": "thread_cache_hit_rate",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 86
+    },
+    {
+      "id": "replication_lag",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 87
+    },
+    {
+      "id": "replication_status",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 88
+    },
+    {
+      "id": "uptime_seconds",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 89
+    },
+    {
+      "id": "version",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 90
+    },
+    {
+      "id": "cache_hit_rate",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 92
+    },
+    {
+      "id": "xact_commit",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 93
+    },
+    {
+      "id": "xact_rollback",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 94
+    },
+    {
+      "id": "tup_returned",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 95
+    },
+    {
+      "id": "tup_fetched",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 96
+    },
+    {
+      "id": "tup_inserted",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 97
+    },
+    {
+      "id": "tup_updated",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 98
+    },
+    {
+      "id": "tup_deleted",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 99
+    },
+    {
+      "id": "blk_read",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 100
+    },
+    {
+      "id": "blk_hit",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 101
+    },
+    {
+      "id": "temp_files",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 102
+    },
+    {
+      "id": "deadlock_count",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 103
+    },
+    {
+      "id": "lock_wait_count",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 104
+    },
+    {
+      "id": "pga_cache_hit_rate",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 106
+    },
+    {
+      "id": "library_cache_hit_rate",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 107
+    },
+    {
+      "id": "shared_pool_hit_rate",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 108
+    },
+    {
+      "id": "enqueue_deadlocks",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 109
+    },
+    {
+      "id": "tablespace_usage_percent",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 110
+    },
+    {
+      "id": "active_sessions",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 111
+    },
+    {
+      "id": "sga_size_mb",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 112
+    },
+    {
+      "id": "pga_size_mb",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 113
+    },
+    {
+      "id": "dm_buffer_hit_rate",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 115
+    },
+    {
+      "id": "dm_lock_wait",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 116
+    },
+    {
+      "id": "dm_deadlock_count",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 117
+    },
+    {
+      "id": "dm_paged_memory_usage",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 118
+    },
+    {
+      "id": "dm_os_memory_usage",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 119
+    },
+    {
+      "id": "table_open_cache_hit_rate",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 121
+    },
+    {
+      "id": "buffer_pool_hit_rate",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 122
+    },
+    {
+      "id": "cache_hit_ratio",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 123
+    },
+    {
+      "id": "handler_read_rnd_next",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 124
+    },
+    {
+      "id": "handler_read_rnd_next_rate",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 125
+    },
+    {
+      "id": "key_blocks_usage",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 126
+    },
+    {
+      "id": "open_files",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 127
+    },
+    {
+      "id": "aborted_connects",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 128
+    },
+    {
+      "id": "aborted_connects_rate",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 129
+    },
+    {
+      "id": "idx_scan_ratio",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 131
+    },
+    {
+      "id": "dead_tuples",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 132
+    },
+    {
+      "id": "connections_used",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 133
+    },
+    {
+      "id": "connections_max",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 134
+    },
+    {
+      "id": "vacuum_count",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 135
+    },
+    {
+      "id": "autovacuum_count",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 136
+    },
+    {
+      "id": "replication_lag_seconds",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 137
+    },
+    {
+      "id": "data_size_gb",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 139
+    },
+    {
+      "id": "is_estimated",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 140
+    },
+    {
+      "id": "queries_total",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 142
+    },
+    {
+      "id": "commits_total",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 143
+    },
+    {
+      "id": "rollbacks_total",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 144
+    },
+    {
+      "id": "threads_running",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 647
+    },
+    {
+      "id": "threads_connected",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 648
+    },
+    {
+      "id": "bytes_received",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 642
+    },
+    {
+      "id": "bytes_sent",
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "line": 643
+    }
+  ],
+  "references": [
+    {
+      "path": "apps/db-ops-api/src/ai-agent-bridge.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        169
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/alert-engine.ts",
+      "category": "alert",
+      "lines": [
+        257,
+        263
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/alert-evaluator.ts",
+      "category": "alert",
+      "lines": [
+        148,
+        155,
+        162,
+        166,
+        184,
+        193,
+        202,
+        211,
+        212,
+        215,
+        216,
+        218,
+        227,
+        231,
+        251,
+        261,
+        362,
+        381,
+        382,
+        383
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/alert-rule-template-service.ts",
+      "category": "alert",
+      "lines": [
+        69
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/baseline-calculator.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        86,
+        120,
+        263
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/capacity-predictor.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        31,
+        36,
+        59
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/collector.ts",
+      "category": "producer",
+      "lines": [
+        4,
+        17,
+        19,
+        35,
+        82
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/collectors/dameng.provider.ts",
+      "category": "producer",
+      "lines": [
+        41
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/collectors/mysql.provider.ts",
+      "category": "producer",
+      "lines": [
+        28
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/collectors/oracle.provider.ts",
+      "category": "producer",
+      "lines": [
+        34
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/collectors/postgresql.provider.ts",
+      "category": "producer",
+      "lines": [
+        27
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/consistency-checker.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        55,
+        62,
+        245
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/contracts/generate-public-api.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        41,
+        228
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/contracts/public-api.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        302
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "category": "producer",
+      "lines": [
+        71,
+        159,
+        397,
+        409,
+        615,
+        824,
+        1024,
+        1169,
+        1506,
+        1520,
+        1671,
+        1754,
+        1776,
+        1793,
+        2001,
+        2010,
+        2034,
+        2215,
+        2224
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/instance-database-service.ts",
+      "category": "producer",
+      "lines": [
+        26,
+        143,
+        189,
+        216,
+        387,
+        689,
+        721,
+        740,
+        757,
+        773,
+        846
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/instance-diagnostic-context-service.ts",
+      "category": "agent",
+      "lines": [
+        15,
+        25,
+        98,
+        411,
+        559,
+        560,
+        563
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/metric-registry.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        183,
+        279,
+        512,
+        593,
+        715
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics-database-service.ts",
+      "category": "producer",
+      "lines": [
+        8,
+        22,
+        115,
+        157,
+        158,
+        170,
+        217,
+        230,
+        269,
+        272,
+        284,
+        303,
+        308,
+        326,
+        343,
+        366,
+        380,
+        392,
+        427,
+        472,
+        498,
+        506,
+        548
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/migrations/invariants.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        12,
+        52,
+        73,
+        74,
+        88
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/monitor-collector.ts",
+      "category": "producer",
+      "lines": [
+        29,
+        57,
+        148,
+        195,
+        301,
+        380,
+        391
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/network-devices/network-device-alert-evaluator.ts",
+      "category": "alert",
+      "lines": [
+        96,
+        223,
+        334,
+        346
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/network-devices/network-device-collector.ts",
+      "category": "producer",
+      "lines": [
+        30,
+        319
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/network-devices/network-device-routes.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        238
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/report-service.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        21,
+        27,
+        68,
+        70,
+        74,
+        97,
+        589,
+        600,
+        606,
+        618,
+        629,
+        635,
+        657,
+        761
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/resources/observation-service.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        43,
+        56,
+        65,
+        71,
+        76,
+        81,
+        86,
+        93,
+        103
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/resources/resource-diagnostic-service.ts",
+      "category": "agent",
+      "lines": [
+        381,
+        382,
+        383,
+        452,
+        621,
+        627,
+        628,
+        631,
+        635
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/resources/resource-routes.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        52
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/security/public-dto.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        85
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/server-alert-evaluator.ts",
+      "category": "alert",
+      "lines": [
+        319,
+        322,
+        364
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/server-collector.ts",
+      "category": "producer",
+      "lines": [
+        26,
+        32,
+        52,
+        410
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/server-diagnostic-service.ts",
+      "category": "agent",
+      "lines": [
+        458,
+        522
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/server-metric-provider.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        206
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/server-report-service.ts",
+      "category": "query-contract-score-report",
+      "lines": [
+        32,
+        136,
+        139,
+        165,
+        166,
+        189,
+        206,
+        236,
+        476
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/skills/generated/check_health/tools.ts",
+      "category": "agent",
+      "lines": [
+        13
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/tools/generated/slide-self-mgmt/server_tools.ts",
+      "category": "agent",
+      "lines": [
+        68
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/tools/ops/get_instance_summary.ts",
+      "category": "agent",
+      "lines": [
+        62,
+        95
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/tools/ops/query_metrics.ts",
+      "category": "agent",
+      "lines": [
+        14,
+        32,
+        113,
+        178,
+        276
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/src/tools/security-catalog.ts",
+      "category": "agent",
+      "lines": [
+        36
+      ]
+    },
+    {
+      "path": "frontend/src/api/generated/public-api.ts",
+      "category": "frontend",
+      "lines": [
+        85
+      ]
+    },
+    {
+      "path": "frontend/src/app/i18n/locales/operations-overview.ts",
+      "category": "frontend",
+      "lines": [
+        18
+      ]
+    },
+    {
+      "path": "frontend/src/app/ui/components/instance-host-summary.ts",
+      "category": "frontend",
+      "lines": [
+        173
+      ]
+    },
+    {
+      "path": "frontend/src/app/ui/components/instance-overview-tab.ts",
+      "category": "frontend",
+      "lines": [
+        21,
+        247
+      ]
+    },
+    {
+      "path": "frontend/src/app/ui/views/alerts.ts",
+      "category": "frontend",
+      "lines": [
+        1150,
+        1981
+      ]
+    },
+    {
+      "path": "frontend/src/app/ui/views/dashboard-model.ts",
+      "category": "frontend",
+      "lines": [
+        19,
+        20,
+        43
+      ]
+    },
+    {
+      "path": "frontend/src/app/ui/views/dashboard.ts",
+      "category": "frontend",
+      "lines": [
+        283
+      ]
+    },
+    {
+      "path": "frontend/src/app/ui/views/health-score-tab.ts",
+      "category": "frontend",
+      "lines": [
+        10,
+        30,
+        38,
+        457,
+        459,
+        539
+      ]
+    },
+    {
+      "path": "frontend/src/app/ui/views/instance-detail.ts",
+      "category": "frontend",
+      "lines": [
+        22,
+        23,
+        197,
+        198,
+        238,
+        264
+      ]
+    },
+    {
+      "path": "frontend/src/app/ui/views/instances-db.ts",
+      "category": "frontend",
+      "lines": [
+        714,
+        740,
+        914
+      ]
+    },
+    {
+      "path": "frontend/src/app/ui/views/metric-registry.ts",
+      "category": "frontend",
+      "lines": [
+        107,
+        153,
+        166
+      ]
+    },
+    {
+      "path": "frontend/src/app/ui/views/network-device-detail.ts",
+      "category": "frontend",
+      "lines": [
+        131,
+        235
+      ]
+    },
+    {
+      "path": "frontend/src/app/ui/views/network-device-labels.ts",
+      "category": "frontend",
+      "lines": [
+        2
+      ]
+    },
+    {
+      "path": "frontend/src/app/ui/views/server-detail.ts",
+      "category": "frontend",
+      "lines": [
+        271,
+        357,
+        409,
+        493,
+        661,
+        830,
+        837,
+        838
+      ]
+    },
+    {
+      "path": "frontend/src/app/ui/views/servers-page.ts",
+      "category": "frontend",
+      "lines": [
+        257,
+        500,
+        591
+      ]
+    },
+    {
+      "path": "apps/db-ops-api/server.ts",
+      "category": "api",
+      "lines": [
+        916,
+        919,
+        1563,
+        1572,
+        1575,
+        1618,
+        1621,
+        1638,
+        1689,
+        2185,
+        2196,
+        2217,
+        4756,
+        4768,
+        4784,
+        4795,
+        4832,
+        4862,
+        4896,
+        4901,
+        5517,
+        5567
+      ]
+    }
+  ]
+}

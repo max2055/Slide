@@ -77,6 +77,42 @@ describe('chat ownership handler boundary', () => {
     expect(result).toMatchObject({ sessionKey: 'server-generated-key', finalContent: 'answer' });
   });
 
+  it.each(['cancelled', 'timed_out', 'error', 'max_iterations', 'tool_error', 'empty_final_response'])(
+    'persists streamed partial output and reasoning for %s', async (stopReason) => {
+      mocks.chat.mockImplementationOnce(async (_key, _message, emit) => {
+        emit({ type: 'thinking_delta', delta: 'reason' });
+        emit({ type: 'text_delta', delta: 'part' });
+        emit({ type: 'text_delta', delta: 'partial answer' });
+        emit({ type: stopReason === 'cancelled' ? 'cancelled' : 'error', stopReason });
+        return { finalContent: null, stopReason };
+      });
+      await handleChatSend(actor, { sessionKey: 's', message: 'hello' });
+      expect(mocks.addMessage).toHaveBeenCalledTimes(2);
+      expect(mocks.addMessage).toHaveBeenLastCalledWith(actor, 's', expect.objectContaining({
+        role: 'assistant', content: '<think>reason</think>\n\npartial answer',
+        metadata: expect.objectContaining({ interrupted: true, stopReason }),
+      }));
+    },
+  );
+
+  it('saves reasoning-only output when the engine throws', async () => {
+    mocks.chat.mockImplementationOnce(async (_key, _message, emit) => {
+      emit({ type: 'thinking_delta', delta: 'reason' });
+      throw new Error('broken');
+    });
+    await expect(handleChatSend(actor, { sessionKey: 's', message: 'hello' })).rejects.toThrow('broken');
+    expect(mocks.addMessage).toHaveBeenLastCalledWith(actor, 's', expect.objectContaining({
+      role: 'assistant', content: '<think>reason</think>\n\n',
+      metadata: expect.objectContaining({ interrupted: true, stopReason: 'error' }),
+    }));
+  });
+
+  it('does not create an empty assistant message', async () => {
+    mocks.chat.mockResolvedValueOnce({ finalContent: null, stopReason: 'cancelled' });
+    await handleChatSend(actor, { sessionKey: 's', message: 'hello' });
+    expect(mocks.addMessage).toHaveBeenCalledTimes(1);
+  });
+
   it('loads history through the same actor-scoped repository boundary', async () => {
     await handleChatHistory(actor, { sessionKey: 'shared-session', limit: 10 });
 

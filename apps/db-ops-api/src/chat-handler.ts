@@ -14,6 +14,7 @@
  */
 
 import { chatDatabaseService } from './chat-database-service.js';
+import { ChatResponse } from './adapter/chat-response.js';
 import { getAgentEngine } from './adapter/get-agent-engine.js';
 import type { ChatEvent, ChatResult } from './adapter/types.js';
 import type { ActorContext } from './auth/actor-context.js';
@@ -83,26 +84,24 @@ export async function handleChatSend(
   // Get agent engine and send message
   const engine = await getAgentEngine();
 
-  const result = await (engine.chat as any)(sessionKey, message, (event: ChatEvent) => {
-    // Forward event to caller if provided
-    if (onEvent) {
-      onEvent(event);
-    }
-  }, actor) as ChatResult;
-
-  // Save assistant response
-  if (result.finalContent) {
-    await chatDatabaseService.addMessage(
-      actor,
-      sessionKey,
-      {
+  const response = new ChatResponse();
+  let result: ChatResult | undefined;
+  try {
+    result = await (engine.chat as any)(sessionKey, message, (event: ChatEvent) => {
+      response.observe(event);
+      onEvent?.(event);
+    }, actor) as ChatResult;
+  } finally {
+    // Also save the observed stream when the engine throws before returning.
+    const assistant = response.message(result);
+    if (assistant) {
+      await chatDatabaseService.addMessage(actor, sessionKey, {
         messageId: assistantMessageId,
         role: 'assistant',
-        content: result.finalContent,
-        metadata: { usage: result.usage },
+        ...assistant,
         parentId: userMessageId,
-      },
-    );
+      });
+    }
   }
 
   return { ...result, sessionKey };

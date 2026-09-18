@@ -8,6 +8,7 @@ import { BaseMetricProvider, calculateCounterRate } from './base-provider.js';
 import type { DatabaseConnection } from '../database-service.js';
 import type { MetricDefinition } from '../metric-registry.js';
 import type { RowDataPacket } from 'mysql2/promise';
+import { MYSQL_STATUS_SQL } from './mysql-status-query.js';
 
 export class MySQLProvider extends BaseMetricProvider {
   readonly name = 'MySQL Provider';
@@ -63,7 +64,7 @@ export class MySQLProvider extends BaseMetricProvider {
 
         case 'qps': {
           const [statusResult] = await instance.pool.query<RowDataPacket[]>(
-            "SHOW GLOBAL STATUS WHERE Variable_name IN ('Queries', 'Uptime')"
+            MYSQL_STATUS_SQL
           );
           const queries = Number(statusResult.find((r: any) => r.Variable_name === 'Queries')?.Value) || 0;
           return calculateCounterRate(instance, 'qps', queries);

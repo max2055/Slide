@@ -39,12 +39,16 @@ export interface ToolErrorEvent {
   error: string;
 }
 
-export interface CompleteEvent {
-  type: 'complete';
+export interface ChatTerminalContent {
   finalContent?: string;
   thinkingContent?: string;
+  stopReason?: string;
   /** Monotonic chat_messages.id assigned by the shared database. */
   messageSequence?: number;
+}
+
+export interface CompleteEvent extends ChatTerminalContent {
+  type: 'complete';
 }
 
 export interface ToolProgressEvent {
@@ -62,12 +66,12 @@ export interface ThinkingEndEvent {
   type: 'thinking_end';
 }
 
-export interface ErrorEvent {
+export interface ErrorEvent extends ChatTerminalContent {
   type: 'error';
   error: string;
 }
 
-export interface CancelledEvent {
+export interface CancelledEvent extends ChatTerminalContent {
   type: 'cancelled';
 }
 
@@ -109,6 +113,7 @@ export interface AgentFeatureCapability {
 // ── Chat result ──
 
 export interface ChatResult {
+  thinkingContent?: string;
   /** Final assistant content, null if no response */
   finalContent: string | null;
   /** Token usage stats (input/output tokens) */
