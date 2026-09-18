@@ -10,6 +10,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -43,7 +44,7 @@ export class PromptManager {
 
   constructor(options: PromptManagerOptions = {}) {
     const configuredVersionsDir = options.versionsDir ?? process.env.PROMPT_VERSIONS_DIR?.trim();
-    this.versionsDir = configuredVersionsDir || BUNDLED_VERSIONS_DIR;
+    this.versionsDir = configuredVersionsDir || path.join(process.env.AGENT_WORKSPACE?.trim() || path.join(homedir(), '.slide'), 'prompts');
     this.bundledVersionsDir = options.bundledVersionsDir ?? BUNDLED_VERSIONS_DIR;
   }
 
@@ -110,14 +111,15 @@ export class PromptManager {
 
   private async prepareVersionsDirectory(): Promise<void> {
     if (this.versionsDir === this.bundledVersionsDir) {
-      if (!fs.existsSync(this.versionsDir)) {
-        console.warn(`[PromptManager] 提示词目录不存在：${this.versionsDir}`);
-        await fs.promises.mkdir(this.versionsDir, { recursive: true });
-      }
-      return;
+      throw new Error('提示词写入目录不能与内置只读目录相同');
     }
-
-    await fs.promises.mkdir(this.versionsDir, { recursive: true });
+    try {
+      await fs.promises.mkdir(this.versionsDir, { recursive: true });
+      await fs.promises.access(this.versionsDir, fs.constants.W_OK);
+    } catch (error) {
+      const cause = error as NodeJS.ErrnoException;
+      throw new Error(`提示词写入目录不可用：${this.versionsDir} (${cause.code || cause.message})`, { cause: error });
+    }
   }
 
   private countEntries(): number {
@@ -218,42 +220,32 @@ export class PromptManager {
     const entry = versions.find(e => e.version === version);
     if (!entry) return false;
 
-    // 写回文件
-    try {
-      await fs.promises.writeFile(path.join(this.versionsDir, entry.fileName), content, 'utf-8');
-      entry.content = content;
-      entry.length = content.length;
-      console.log(`[PromptManager] 已保存 ${entry.fileName} (${content.length} chars)`);
-      return true;
-    } catch (err) {
-      console.error(`[PromptManager] 写回文件失败：${entry.fileName}`, err);
-      return false;
-    }
+    await fs.promises.writeFile(path.join(this.versionsDir, entry.fileName), content, 'utf-8');
+    entry.content = content;
+    entry.length = content.length;
+    console.log(`[PromptManager] 已保存 ${entry.fileName} (${content.length} chars)`);
+    return true;
   }
 
   /**
    * 创建新版本
    */
-  async createVersion(type: string, content: string): Promise<{ version: number; fileName: string } | null> {
+  async createVersion(type: string, content: string): Promise<{ version: number; fileName: string }> {
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(type)) throw new Error('提示词类型无效');
     const versions = this.prompts.get(type);
     const maxVersion = versions ? Math.max(...versions.map(v => v.version)) : 0;
     const newVersion = maxVersion + 1;
     const fileName = `${type}-v${newVersion}.md`;
 
     const fullPath = path.join(this.versionsDir, fileName);
-    try {
-      await fs.promises.writeFile(fullPath, content, 'utf-8');
-      const entry: PromptVersion = { version: newVersion, content, length: content.length, fileName };
-      if (!this.prompts.has(type)) {
-        this.prompts.set(type, []);
-      }
-      this.prompts.get(type)!.push(entry);
-      console.log(`[PromptManager] 已创建 ${fileName} (${content.length} chars)`);
-      return { version: newVersion, fileName };
-    } catch (err) {
-      console.error(`[PromptManager] 创建版本文件失败：${fileName}`, err);
-      return null;
+    await fs.promises.writeFile(fullPath, content, 'utf-8');
+    const entry: PromptVersion = { version: newVersion, content, length: content.length, fileName };
+    if (!this.prompts.has(type)) {
+      this.prompts.set(type, []);
     }
+    this.prompts.get(type)!.push(entry);
+    console.log(`[PromptManager] 已创建 ${fileName} (${content.length} chars)`);
+    return { version: newVersion, fileName };
   }
 
   // ══════════════ 热重载 ══════════════

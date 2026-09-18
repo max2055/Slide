@@ -22,6 +22,47 @@ afterEach(async () => {
 });
 
 describe('PromptManager persistent version directory', () => {
+  it('defaults to the agent workspace instead of the bundled code directory', async () => {
+    const workspace = await createTemporaryDirectory();
+    const previous = process.env.AGENT_WORKSPACE;
+    const previousDir = process.env.PROMPT_VERSIONS_DIR;
+    process.env.AGENT_WORKSPACE = workspace;
+    delete process.env.PROMPT_VERSIONS_DIR;
+    try {
+      const manager = new PromptManager();
+      expect(manager.getVersionsDir()).toBe(join(workspace, 'prompts'));
+      await manager.initialize();
+      await expect(manager.createVersion('alert-rca', 'runtime version')).resolves.toMatchObject({ version: 3 });
+      await expect(readFile(join(workspace, 'prompts', 'alert-rca-v3.md'), 'utf-8')).resolves.toBe('runtime version');
+    } finally {
+      if (previous === undefined) delete process.env.AGENT_WORKSPACE;
+      else process.env.AGENT_WORKSPACE = previous;
+      if (previousDir === undefined) delete process.env.PROMPT_VERSIONS_DIR;
+      else process.env.PROMPT_VERSIONS_DIR = previousDir;
+    }
+  });
+
+  it('fails at startup when the runtime directory is not writable', async () => {
+    const root = await createTemporaryDirectory();
+    const file = join(root, 'file');
+    await writeFile(file, 'not a directory');
+    const manager = new PromptManager({ versionsDir: join(file, 'prompts') });
+    await expect(manager.initialize()).rejects.toThrow('提示词写入目录不可用');
+  });
+
+  it('propagates write failures without mutating the loaded version', async () => {
+    const root = await createTemporaryDirectory();
+    const bundledDirectory = join(root, 'bundled');
+    const versionsDirectory = join(root, 'persistent');
+    await mkdir(bundledDirectory);
+    await writeFile(join(bundledDirectory, 'alert-rca-v1.md'), 'original');
+    const manager = new PromptManager({ bundledVersionsDir: bundledDirectory, versionsDir: versionsDirectory });
+    await manager.initialize();
+    await rm(versionsDirectory, { recursive: true });
+    await expect(manager.setVersionContent('alert-rca', 1, 'edit')).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(manager.createVersion('alert-rca', 'new')).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(manager.getVersionContent('alert-rca', 1)).toBe('original');
+  });
   it('loads bundled prompts and creates versions outside a read-only bundle', async () => {
     const root = await createTemporaryDirectory();
     const bundledDirectory = join(root, 'bundled');
