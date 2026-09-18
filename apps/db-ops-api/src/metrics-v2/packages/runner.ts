@@ -121,7 +121,7 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
             const raw: RawObservation = { id: 'pending', stage: 'raw', resource_type: resource.type, resource_id: resource.id,
               metric: mapping.metric, dimensions: row.dimensions, observed_at: row.observed_at ?? at, collected_at: collectedAt, stored_at: null,
               unit: mapping.input_unit, value, raw_field: mapping.raw_field,
-              quality: detail?.quality ?? (value === null ? { status: 'unknown', reason: 'source_error' } : { status: 'good', reason: 'none' }), accuracy: value === null ? 'unknown' : 'exact', production: 'measured',
+              quality: detail?.quality ?? (value === null ? { status: 'unknown', reason: 'source_error' } : { status: 'good', reason: 'none' }), accuracy: value === null ? 'unknown' : row.accuracy?.[mapping.raw_field] ?? 'exact', production: 'measured',
               source: { binding_id: execution.binding_id, metric_binding_id: metricBindingId(execution.binding_id, mapping.metric.id, row.dimensions), collector_id: collector.id, attempt_id: attempt.id },
               versions: { contract: p.contract_version, package_id: p.id, package_version: p.version, transform_version: mapping.transform_version, config_revision: execution.config_revision },
               ...(definition.kind === 'counter' ? { counter: detail?.counter ?? row.counter } : {}),
@@ -164,11 +164,14 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
   for (const inputs of groups.values()) {
     if (!release.derived.length) break;
     const anchor = inputs[0].observation;
+    // A package can mix instance gauges and database-scoped counters. Do not broadcast
+    // database formulas onto the singleton instance group (or invent database identity).
     const nodes = release.derived.filter(node => {
-      const definition = definitions.find(d => d.id === node.output.id && d.semantic_version === node.output.semantic_version)!;
-      return definition.dimensions.keys.filter(k => k.required).every(k => k.name in anchor.dimensions)
-        && Object.keys(anchor.dimensions).every(k => definition.dimensions.keys.some(d => d.name === k));
+      const keys = definitions.find(d => d.id === node.output.id && d.semantic_version === node.output.semantic_version)!.dimensions.keys;
+      return keys.every(k => !k.required || Object.hasOwn(anchor.dimensions, k.name))
+        && Object.keys(anchor.dimensions).every(name => keys.some(k => k.name === name));
     });
+    if (!nodes.length) continue;
     const targets = Object.fromEntries(nodes.map(d => [d.id, {
       source: { ...anchor.source, collector_id: `derived:${d.id}`, metric_binding_id: metricBindingId(execution.binding_id, d.output.id, anchor.dimensions) },
       versions: { ...anchor.versions, transform_version: d.transform_version },
