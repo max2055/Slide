@@ -1,0 +1,12 @@
+{
+  "resource": {"type": "instance", "id": 1},
+  "window": {"from": "2026-09-18T00:01:00.000Z", "to": "2026-09-18T00:02:00.000Z"},
+  "observed_at": "2026-09-18T00:01:30.000Z",
+  "metric": "db.uptime_seconds",
+  "value": 3600,
+  "unit": "s",
+  "coverage": 1,
+  "threshold": 3000,
+  "duration_seconds": 60,
+  "cases": ["missing", "stale", "estimated", "invalid_denominator", "permission_denied", "timeout", "unknown_metric", "template_switch", "unauthorized"]
+}

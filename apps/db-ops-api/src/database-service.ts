@@ -1,3 +1,4 @@
+import { migrateOperationalChecks } from './metrics-v2/consumers/operational.js';
 /**
  * 数据库服务模块 - 真实的数据库连接和数据采集
  */
@@ -1497,6 +1498,7 @@ class DatabaseService {
       if (healthResult) {
         // 通过评分服务计算四维度加权评分
         try {
+          healthResult.checks = await migrateOperationalChecks(id, healthResult.checks);
           const weights = await scoringConfigService.getWeights();
           const { dimensions, total, checks: scoredChecks } = calculateDimensionScores(healthResult.checks, conn.db_type, weights);
           // No successful connectivity observation means no evidence for a

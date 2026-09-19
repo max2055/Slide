@@ -1,3 +1,4 @@
+import { evaluateOperationalRule } from '../metrics-v2/consumers/operational.js';
 import { assertWorkflowActive } from '../workflows/execution-context.js';
 import { dbConnection } from '../db-connection.js';
 import { alertDatabaseService, type AlertRule } from '../alert-database-service.js';
@@ -169,6 +170,22 @@ export class NetworkDeviceAlertEvaluator {
         const observations = latestObservations(this.withReachabilityObservation(device, await this.store.getLatestObservations(device.id)));
         for (const rule of rules) {
           if (rule.network_device_id != null && Number(rule.network_device_id) !== device.id) continue;
+          const semantic = await evaluateOperationalRule({ type: 'network_device', id: device.id }, rule, rule.duration_seconds, macroContext(rule.metric_name));
+          if (semantic.handled) {
+            evaluated++;
+            const identity = alertIdentity(device.id, rule, semantic.dimensions ?? undefined);
+            if (semantic.level && semantic.value !== null) {
+              firingKeys.add(identity); triggered++;
+              await this.persistAlert(device, rule, { metricId: rule.metric_name, value: semantic.value, dimensions: semantic.dimensions ?? undefined, quality: 'good',
+                observedAt: this.clock(), validUntil: null, reason: JSON.stringify(semantic.migration) }, semantic.level,
+                semantic.value, compileAlertRule(rule, 'network_device', macroContext(rule.metric_name)));
+            } else {
+              const recovery = await evaluateOperationalRule({ type: 'network_device', id: device.id }, rule,
+                rule.recovery_seconds ?? rule.duration_seconds, macroContext(rule.metric_name));
+              if (recovery.recovery) freshKeys.add(identity); else skipped++;
+            }
+            continue;
+          }
           const candidates = observations.filter((observation) => observation.metricId === rule.metric_name);
           for (const observation of candidates) {
             if (!isFreshObservation(observation, this.clock())) { skipped++; continue; }
@@ -197,7 +214,7 @@ export class NetworkDeviceAlertEvaluator {
         }
       }
       assertWorkflowActive();
-      await this.resolveRecoveredAlerts(firingKeys, freshKeys);
+      await this.resolveRecoveredAlerts(firingKeys, freshKeys, rules);
     } catch (error) {
       assertWorkflowActive();
       // A failed query must never be converted into an alert. Keep the
@@ -247,7 +264,7 @@ export class NetworkDeviceAlertEvaluator {
       && evaluateLevel(rule, compiled, Number(current.value)) !== null;
   }
 
-  private async resolveRecoveredAlerts(firingKeys: Set<string>, freshKeys: Set<string>): Promise<void> {
+  private async resolveRecoveredAlerts(firingKeys: Set<string>, freshKeys: Set<string>, rules: NetworkDeviceAlertRule[]): Promise<void> {
     const listActive = (alertDatabaseService as any).getActiveAlerts as undefined | (() => Promise<any[]>);
     const resolve = (alertDatabaseService as any).resolveAlert as undefined | ((alertId: number) => Promise<unknown>);
     if (!listActive || !resolve) return;
@@ -270,6 +287,12 @@ export class NetworkDeviceAlertEvaluator {
       // Unknown or stale evidence must not resolve an alert. Only a fresh
       // sample that no longer matches the rule is sufficient.
       assertWorkflowActive();
+      const rule = rules.find(r => r.id === ruleId);
+      if (rule) {
+        const semantic = await evaluateOperationalRule({ type: 'network_device', id: Number(alert.network_device_id) },
+          { ...rule, dimensions }, rule.recovery_seconds ?? rule.duration_seconds, macroContext(rule.metric_name));
+        if (semantic.handled) { if (semantic.recovery) await resolve(Number(alert.id)); continue; }
+      }
       if (freshKeys.has(key) && !firingKeys.has(key)) await resolve(Number(alert.id));
     }
   }
@@ -303,6 +326,7 @@ export class NetworkDeviceAlertEvaluator {
         rule_name: rule.name,
         target_type: 'network_device',
         auto_generated: true,
+        semantic_migration: observation.reason?.startsWith('{"version"') ? observation.reason : undefined,
         ...(dimensions ? { dimensions } : {}),
       },
     });

@@ -51,7 +51,7 @@ export function resolveToolResourceFromArgs(
   // Cross-resource read tools carry an explicit, typed reference rather than
   // pretending every target is a database instance. Resolve it before the
   // handler so Agent policy/audit records retain the concrete subject.
-  if (['list_resources', 'get_resource_observations', 'get_resource_relations', 'diagnose_resource'].includes(toolName)
+  if (['list_resources', 'get_resource_observations', 'get_resource_relations', 'diagnose_resource', 'query_metrics'].includes(toolName)
     && hasOwn(args, 'resourceType')) {
     const resourceType = args.resourceType;
     const resourceId = positiveInteger(args.resourceId);

@@ -1,3 +1,4 @@
+import { evaluateOperationalRule } from './metrics-v2/consumers/operational.js';
 /**
  * 告警规则评估器
  * 支持静态阈值、动态基线阈值、参数化宏变量（${var}），真实持续时间检查，动态实例发现。
@@ -152,6 +153,8 @@ export async function checkDuration(
   rule: AlertRule,
   seconds: number = 60
 ): Promise<boolean> {
+  const semantic = await evaluateOperationalRule({ type: 'instance', id: instanceId }, rule, seconds);
+  if (semantic.handled) return semantic.level !== null;
   // 无持续时间要求时直接返回 true，无需查询 metrics_history
   if (seconds <= 0) return true;
 
@@ -208,6 +211,8 @@ export async function checkRecoveryDuration(
   seconds: number = 60,
   macros?: Record<string, number>
 ): Promise<boolean> {
+  const semantic = await evaluateOperationalRule({ type: 'instance', id: instanceId }, rule, seconds, macros);
+  if (semantic.handled) return semantic.recovery;
   // health_score 是状态型指标（存 database_instances 表），恢复检查直接读当前值
   if (rule.metric_name === 'health_score') {
     try {
@@ -334,6 +339,7 @@ export async function evaluateAllRules(): Promise<
     instanceName: string;
     currentValue: number;
     thresholdUsed: number;
+    semanticMigration?: unknown;
   }>
 > {
   const triggeredAlerts: Array<{
@@ -342,6 +348,7 @@ export async function evaluateAllRules(): Promise<
     instanceName: string;
     currentValue: number;
     thresholdUsed: number;
+    semanticMigration?: unknown;
     triggeredLevel?: 'warning' | 'error' | 'critical';
   }> = [];
 
@@ -376,6 +383,14 @@ export async function evaluateAllRules(): Promise<
           if (!rule.instance_ids.includes(instance.id)) {
             continue;
           }
+        }
+
+        const semantic = await evaluateOperationalRule({ type: 'instance', id: instance.id }, rule, rule.duration_seconds,
+          await resolveMacrosForRule(rule));
+        if (semantic.handled) {
+          if (semantic.level && semantic.value !== null) triggeredAlerts.push({ rule, instanceId: instance.id,
+            instanceName: instance.name, currentValue: semantic.value, thresholdUsed: rule.threshold, triggeredLevel: semantic.level, semanticMigration: semantic.migration });
+          continue;
         }
 
         // health_score 存在 database_instances 表而非 metrics_history 表，需特判

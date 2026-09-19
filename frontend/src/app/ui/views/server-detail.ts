@@ -1,3 +1,4 @@
+import "../components/semantic-metrics.js";
 import "../components/metric-configuration.js";
 import { returnToDashboard } from './dashboard-model.js';
 import { LitElement, html, css, nothing } from "lit";
@@ -617,10 +618,11 @@ export class ServerDetailPage extends LitElement {
   }
 
   private _renderTabContent() {
+    if (this.activeTab === "overview") return html`<semantic-metrics resourceType="server" .resourceId=${this.serverId}></semantic-metrics><details><summary>旧版概览（兼容口径）</summary>${this._renderOverview()}</details>`;
     if (this.activeTab === "collection") return html`<metric-configuration resourceType="server" .resourceId=${this.serverId}></metric-configuration>`;
     switch (this.activeTab) {
       case "overview": return this._renderOverview();
-      case "metrics": return this._renderMetrics();
+      case "metrics": return html`<semantic-metrics resourceType="server" .resourceId=${this.serverId}></semantic-metrics><details><summary>旧版趋势（兼容口径）</summary>${this._renderMetrics()}</details>`;
       case "config": return this._renderConfig();
       case "diagnostics": return this._renderDiagnosticSection(null);
       case "network": return this._renderDiagnosticSection("network");

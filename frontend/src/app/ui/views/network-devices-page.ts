@@ -1,3 +1,4 @@
+import "../components/semantic-metrics.js";
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { authFetch } from "../../../api/index.js";
@@ -477,7 +478,7 @@ export class NetworkDevicesPage extends LitElement {
           <span class="resource-result-count">共 ${filtered.length} 台网络设备</span>
           ${this.activeFilterCount > 0 ? html`<span class="resource-filter-state">已启用 ${this.activeFilterCount} 项筛选</span>` : html`<span>指标由后台按计划自动采集</span>`}
         </div>
-        ${filtered.length ? html`<app-data-table class="network-device-table" .columns=${this.columns()} .rows=${this.rows()}></app-data-table>` : html`<app-empty-state title="暂无网络设备" description="添加网络设备以开始只读采集。" icon="globe"></app-empty-state>`}
+        ${filtered.length ? html`<semantic-core-list resourceType="network_device" .resources=${filtered}></semantic-core-list><app-data-table class="network-device-table" .columns=${this.columns()} .rows=${this.rows()}></app-data-table>` : html`<app-empty-state title="暂无网络设备" description="添加网络设备以开始只读采集。" icon="globe"></app-empty-state>`}
       </app-card>`}
     ${this.renderDialog()}
     ${this.renderDeleteDialog()}`;

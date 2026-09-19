@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   findActiveServerAlert: vi.fn(),
   createAlert: vi.fn(),
   touchAlert: vi.fn(),
+  resolveAlert: vi.fn(),
+  semantic: vi.fn(),
 }));
 
 vi.mock('./db-connection', () => ({
@@ -28,14 +30,18 @@ vi.mock('./alert-database-service', () => ({
     findActiveServerAlert: mocks.findActiveServerAlert,
     createAlert: mocks.createAlert,
     touchAlert: mocks.touchAlert,
+    resolveAlert: mocks.resolveAlert,
   },
 }));
+
+vi.mock('./metrics-v2/consumers/operational.js', () => ({ evaluateOperationalRule: mocks.semantic }));
 
 import { serverAlertEvaluator } from './server-alert-evaluator';
 
 describe('ServerAlertEvaluator rule contract', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.semantic.mockResolvedValue({ handled: false, migration: null });
     mocks.getCollectionEnabledServers.mockResolvedValue([
       { id: 7, label: 'server-7', host: '127.0.0.1' },
     ]);
@@ -50,6 +56,17 @@ describe('ServerAlertEvaluator rule contract', () => {
       }
       throw new Error(`Unexpected query: ${sql}`);
     });
+  });
+
+  it('requires semantic recovery evidence for the separate recovery duration', async () => {
+    mocks.getAlertRules.mockResolvedValue([{ id: 2, name: 'CPU', target_type: 'server', metric_name: 'cpu_usage',
+      operator: '>', threshold: 80, severity: 'warning', duration_seconds: 60, recovery_seconds: 120, server_id: null }]);
+    mocks.findActiveServerAlert.mockResolvedValue({ id: 99 });
+    mocks.semantic.mockResolvedValue({ handled: true, level: null, value: null, recovery: false, state: 'unknown' });
+    await serverAlertEvaluator.evaluateServerRules(); expect(mocks.resolveAlert).not.toHaveBeenCalled();
+    mocks.semantic.mockResolvedValue({ handled: true, level: null, value: 20, recovery: true, state: 'healthy' });
+    await serverAlertEvaluator.evaluateServerRules(); expect(mocks.resolveAlert).toHaveBeenCalledWith(99);
+    expect(mocks.semantic.mock.calls.some(c => c[2] === 120)).toBe(true);
   });
 
   it('uses only server rules and persists the multi-level result after duration is met', async () => {
