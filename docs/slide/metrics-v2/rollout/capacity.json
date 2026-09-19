@@ -1,0 +1,385 @@
+{
+  "evidence": "synthetic contract values; real isolated MySQL writes/reads; not collector throughput",
+  "mysql": "8.0.46",
+  "resources": 12,
+  "series": 28,
+  "dimensions_per_resource": [
+    1,
+    2,
+    4
+  ],
+  "period_seconds": 60,
+  "rounds": 10,
+  "peak_concurrency": 4,
+  "points": 280,
+  "elapsed_ms": 452.99625000000015,
+  "errors": 0,
+  "publish_pairs_per_second": 618.1066620308665,
+  "required_2x_pairs_per_second": 0.9333333333333333,
+  "write_ms": {
+    "p50": 4.033374999999978,
+    "p95": 7.9882910000001175,
+    "p99": 12.277000000000044
+  },
+  "query_ms": {
+    "p50": 0.686500000000251,
+    "p95": 1.1312920000000304,
+    "p99": 2.623291999999765
+  },
+  "bytes": [
+    {
+      "stage": "raw",
+      "points": 280,
+      "bytes": "253120"
+    },
+    {
+      "stage": "normalized",
+      "points": 280,
+      "bytes": "279720"
+    }
+  ],
+  "table_allocations": [
+    {
+      "TABLE_NAME": "metric_v2_alert_state",
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 0
+    },
+    {
+      "TABLE_NAME": "metric_v2_alert_transitions",
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 16384
+    },
+    {
+      "TABLE_NAME": "metric_v2_observations",
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 65536
+    },
+    {
+      "TABLE_NAME": "metric_v2_publications",
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 16384
+    },
+    {
+      "TABLE_NAME": "metric_v2_rollout",
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 0
+    }
+  ],
+  "capacity": {
+    "points_per_day": 40320,
+    "raw_days": 7,
+    "normalized_days": 30,
+    "tombstone_days": 23,
+    "assumed_tombstone_bytes": 128,
+    "assumed_attempt_bytes": 512,
+    "attempt_days": 7,
+    "assumed_transition_bytes": 1024,
+    "transition_days": 30,
+    "assumed_control_state_bytes_per_series": 2048,
+    "measured_index_bytes_per_pair": 351.0857142857143,
+    "projected_bytes": 3390105344.0000005,
+    "with_30_percent_headroom_and_one_backup_bytes": 8814273895
+  },
+  "differences": [
+    {
+      "evidence": "contract fixture + real MySQL",
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {
+        "mount": "/fixture-1",
+        "device": "/dev/fixture1",
+        "fs_type": "ext4"
+      },
+      "legacy_fixture_value": {
+        "encoding": "uint64",
+        "value": "268435456"
+      },
+      "raw": {
+        "encoding": "uint64",
+        "value": "268435456"
+      },
+      "normalized": {
+        "value": "268435456",
+        "encoding": "uint64"
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "observed_at": "2026-09-01T00:00:00.000Z",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "lineage": [
+        {
+          "id": "sha256:69c2f6d127b672aab7773c6b76bfbb70ea74f294c014ea15719d3d0b03176c2b",
+          "stage": "raw"
+        }
+      ],
+      "difference": 0
+    },
+    {
+      "evidence": "contract fixture + real MySQL",
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {
+        "mount": "/fixture-0",
+        "device": "/dev/fixture1",
+        "fs_type": "ext4"
+      },
+      "legacy_fixture_value": {
+        "encoding": "uint64",
+        "value": "268435456"
+      },
+      "raw": {
+        "encoding": "uint64",
+        "value": "268435456"
+      },
+      "normalized": {
+        "value": "268435456",
+        "encoding": "uint64"
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "observed_at": "2026-09-01T00:00:00.000Z",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "lineage": [
+        {
+          "id": "sha256:9cb3234f874a2be0a94942e53048439835c03a69c9745bfbddef60903f26a932",
+          "stage": "raw"
+        }
+      ],
+      "difference": 0
+    },
+    {
+      "evidence": "contract fixture + real MySQL",
+      "metric": {
+        "id": "db.uptime_seconds",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {},
+      "legacy_fixture_value": {
+        "encoding": "float64",
+        "value": 3600
+      },
+      "raw": {
+        "encoding": "float64",
+        "value": 3600
+      },
+      "normalized": {
+        "value": 3600,
+        "encoding": "float64"
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "observed_at": "2026-09-01T00:00:00.000Z",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "lineage": [
+        {
+          "id": "sha256:fcb3224c06203858f70954c9eac0d5a64661c733941322731f67c3b7a2b66e14",
+          "stage": "raw"
+        }
+      ],
+      "difference": 0
+    },
+    {
+      "evidence": "contract fixture + real MySQL",
+      "metric": {
+        "id": "network.interface.traffic_bps",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {
+        "if_index": "0",
+        "interface_epoch": "boot1-port7",
+        "direction": "in"
+      },
+      "legacy_fixture_value": {
+        "encoding": "float64",
+        "value": 800
+      },
+      "raw": {
+        "encoding": "float64",
+        "value": 800
+      },
+      "normalized": {
+        "value": 800,
+        "encoding": "float64"
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "observed_at": "2026-09-01T00:00:00.000Z",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "lineage": [
+        {
+          "id": "sha256:95cf01968dfba04d4043cbc344c92b11752c0755cb2ee211860a3aae524f2d83",
+          "stage": "raw"
+        }
+      ],
+      "difference": 0
+    },
+    {
+      "evidence": "contract fixture + real MySQL",
+      "metric": {
+        "id": "network.interface.traffic_bps",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {
+        "if_index": "3",
+        "interface_epoch": "boot1-port7",
+        "direction": "in"
+      },
+      "legacy_fixture_value": {
+        "encoding": "float64",
+        "value": 800
+      },
+      "raw": {
+        "encoding": "float64",
+        "value": 800
+      },
+      "normalized": {
+        "value": 800,
+        "encoding": "float64"
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "observed_at": "2026-09-01T00:00:00.000Z",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "lineage": [
+        {
+          "id": "sha256:59473dd1329e1bf6705aa7a9effbca25ed3f702c9cccff5ce6928a89010c2ba6",
+          "stage": "raw"
+        }
+      ],
+      "difference": 0
+    },
+    {
+      "evidence": "contract fixture + real MySQL",
+      "metric": {
+        "id": "network.interface.traffic_bps",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "boot1-port7",
+        "direction": "in"
+      },
+      "legacy_fixture_value": {
+        "encoding": "float64",
+        "value": 800
+      },
+      "raw": {
+        "encoding": "float64",
+        "value": 800
+      },
+      "normalized": {
+        "value": 800,
+        "encoding": "float64"
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "observed_at": "2026-09-01T00:00:00.000Z",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "lineage": [
+        {
+          "id": "sha256:ffa779eca0f7f1f0bb975bca01fec5e5f58c513bd4e4954207fd0fc118727040",
+          "stage": "raw"
+        }
+      ],
+      "difference": 0
+    },
+    {
+      "evidence": "contract fixture + real MySQL",
+      "metric": {
+        "id": "network.interface.traffic_bps",
+        "semantic_version": "1.0.0"
+      },
+      "dimensions": {
+        "if_index": "2",
+        "interface_epoch": "boot1-port7",
+        "direction": "in"
+      },
+      "legacy_fixture_value": {
+        "encoding": "float64",
+        "value": 800
+      },
+      "raw": {
+        "encoding": "float64",
+        "value": 800
+      },
+      "normalized": {
+        "value": 800,
+        "encoding": "float64"
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "observed_at": "2026-09-01T00:00:00.000Z",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "fixture",
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0",
+        "config_revision": 1
+      },
+      "lineage": [
+        {
+          "id": "sha256:cb569293635eac8f5691a79ad482edf6590195a9e8b555f37744c5ba51361400",
+          "stage": "raw"
+        }
+      ],
+      "difference": 0
+    }
+  ],
+  "data_preserved_on_rollback": true,
+  "persistence_gate": "go",
+  "production_gate": "not authorized"
+}

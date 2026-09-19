@@ -1,4 +1,5 @@
 import mysql, { type Pool } from 'mysql2/promise';
+import { writeFile } from 'node:fs/promises';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { MigrationRunner } from '../../migrations/runner.js';
 import type { MigrationPool } from '../../migrations/types.js';
@@ -6,7 +7,7 @@ import type { NormalizedObservation, Resource } from '../../contracts/metrics-v2
 import { MysqlWorkflowStore, WorkerRuntime } from '../../workflows/worker-runtime.js';
 import { JobRegistry } from '../../workflows/job-registry.js';
 import { createDatabaseRegistry, databaseReleases } from './catalog.js';
-import { bindMySql } from '../packages/adapters.js';
+import { bindMySql, collectFixed } from '../packages/adapters.js';
 import { MysqlMetricStorage } from '../storage.js';
 import { SemanticQueryService } from '../query.js';
 import { PolicyService } from '../policy/service.js';
@@ -14,6 +15,7 @@ import { MysqlPolicyStore } from '../policy/store.js';
 import { admin } from '../policy/test-support.js';
 import { MysqlScheduleStore } from '../scheduler/store.js';
 import { MetricScheduler } from '../scheduler/service.js';
+import { RolloutControl, type Ticket } from '../rollout/control.js';
 
 const port = Number(process.env.METRICS_V2_TEST_MYSQL_PORT);
 describe.skipIf(!port)('MAX-71 isolated MySQL collection → Worker → storage → derived → query', () => {
@@ -23,6 +25,7 @@ describe.skipIf(!port)('MAX-71 isolated MySQL collection → Worker → storage 
   let root: Pool, pool: Pool, resource: Resource, policies: PolicyService;
   let now = Date.now() - 20000;
   let startAt: string;
+  const collectorWallMs: number[] = [];
   beforeAll(async () => {
     root = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', timezone: 'Z', supportBigNumbers: true, bigNumberStrings: true });
     await root.query(`CREATE DATABASE ${database}`);
@@ -41,8 +44,10 @@ describe.skipIf(!port)('MAX-71 isolated MySQL collection → Worker → storage 
     await policies.changeBinding(admin, ref, { expected_revision: 0, package: pin, overrides: {} }, true);
   }, 120000);
   afterAll(async () => { await pool?.end(); if (root) { await root.query(`DROP DATABASE IF EXISTS ${database}`); await root.end(); } });
-  function setup() {
-    const scheduler = new MetricScheduler(new MysqlScheduleStore(pool, packages), packages, { resolve: async () => ({ resource, credential_ref: 'credential:isolated-mysql', evidence: { counter: { bits: '64', start_at: startAt } }, resolve: async () => bindMySql(pool) }) }, () => now);
+  function setup(ticket?: Ticket) {
+    const scheduler = new MetricScheduler(new MysqlScheduleStore(pool, packages, ticket), packages, { resolve: async () => ({ resource, credential_ref: 'credential:isolated-mysql', evidence: { counter: { bits: '64', start_at: startAt } }, resolve: async () => bindMySql(pool) }) }, () => now, async (...args) => {
+      const started = performance.now(); try { return await collectFixed(...args); } finally { collectorWallMs.push(performance.now() - started); }
+    });
     const registry = new JobRegistry(); scheduler.register(registry);
     const worker = new WorkerRuntime(new MysqlWorkflowStore(() => pool as never), `max71-${now}`, 30);
     return { scheduler, run: () => worker.runOnce((job, context) => registry.execute(job, context), now) };
@@ -81,5 +86,26 @@ describe.skipIf(!port)('MAX-71 isolated MySQL collection → Worker → storage 
       from: rate.observed_at, to: new Date(now + 1000).toISOString(), now: new Date(now + 1000).toISOString(), interval_ms: 60000, max_gap_ms: 300000, stale_after_ms: 120000, mode: 'last', space: 'none' });
     expect(result[0].value).toEqual(rate.value); expect(result[0].sources[0].versions.package_id).toBe('mysql-representative');
     expect((await storage.inventory('instance', '71'))?.attributes['db.version'].value).toBe(resource.attributes['db.version'].value);
+  });
+  it('opt-in Worker publishes under captured source ticket and rejects a switched generation atomically', async () => {
+    const control = new RolloutControl(pool), ticket = { source: 'v2', generation: 1, revision: 1 };
+    const prior = await outputs(), at = prior.at(-1)!.observed_at;
+    const series = prior.filter(o => o.observed_at === at);
+    for (const o of series) {
+      await control.initialize(o, { source: 'v2', read: 'v2', revision: 1, package: pin });
+      await control.applied(o, ticket);
+    }
+    now += 60000; const s = setup(ticket); expect(await s.scheduler.tick()).toBe(1); await ready(); expect(await s.run()).toBe('completed');
+    expect((await control.current(series[0])).latest).not.toBeNull();
+    const before = (await pool.query<any[]>('SELECT COUNT(*) AS n FROM metric_v2_publications'))[0][0].n;
+    expect(Number(before)).toBe(series.length);
+    await control.switch(series[0], 1, { source: 'legacy', read: 'legacy', revision: 2, package: pin });
+    now += 60000; expect(await s.scheduler.tick()).toBe(1); await ready(); expect(await s.run()).not.toBe('completed');
+    expect((await pool.query<any[]>('SELECT COUNT(*) AS n FROM metric_v2_publications'))[0][0].n).toBe(before);
+    if (process.env.MAX76_DATABASE_REPORT) await writeFile(process.env.MAX76_DATABASE_REPORT, JSON.stringify({
+      evidence: 'real isolated MySQL target + Worker + persistence; legacy counter comparison uses the same measured inputs',
+      collector_wall_ms: collectorWallMs, observations: await outputs(), events: (await pool.query('SELECT revision, code, uncertain, duration_ms, logical_reads FROM metric_v2_schedule_events'))[0],
+      unique_publisher_switch: 'passed', late_worker_batch: 'rolled back',
+    }, null, 2) + '\n');
   });
 });

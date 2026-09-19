@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { createSocket, type Socket } from 'node:dgram';
 import { once } from 'node:events';
@@ -11,7 +12,7 @@ import type { MigrationPool } from '../../migrations/types.js';
 import { MysqlWorkflowStore, WorkerRuntime } from '../../workflows/worker-runtime.js';
 import { JobRegistry } from '../../workflows/job-registry.js';
 import type { NormalizedObservation, Resource } from '../../contracts/metrics-v2/index.js';
-import { bindSnmp } from '../packages/adapters.js';
+import { bindSnmp, collectFixed } from '../packages/adapters.js';
 import { MysqlMetricStorage } from '../storage.js';
 import { SemanticQueryService } from '../query.js';
 import { PolicyService } from '../policy/service.js';
@@ -67,9 +68,12 @@ describe.skipIf(!port)('SNMP UDP → Worker → isolated MySQL → semantic quer
     await policy.changeBinding(admin, ref, { expected_revision: 0, package: pin }, true);
     const client = new SnmpClient(), discovery = new SnmpDiscovery(() => now);
     const transport = bindSnmp(client, { version: 2, host: '127.0.0.1', port: endpoint, community, retries: 0 });
+    const collectorWallMs: number[] = [];
     const scheduler = new MetricScheduler(new MysqlScheduleStore(pool, packages), packages, { resolve: async () => ({
       resource, credential_ref: 'credential:isolated-snmp', evidence: { snmp: discovery }, resolve: async () => transport,
-    }) }, () => now);
+    }) }, () => now, async (...args) => {
+      const started = performance.now(); try { return await collectFixed(...args); } finally { collectorWallMs.push(performance.now() - started); }
+    });
     const jobs = new JobRegistry(); scheduler.register(jobs);
     const queue = new MysqlWorkflowStore(() => pool as never);
     const run = async (id: string) => {
@@ -112,5 +116,11 @@ describe.skipIf(!port)('SNMP UDP → Worker → isolated MySQL → semantic quer
     expect(afterReboot.value).toBeNull(); expect(afterReboot.quality.reason).toBe('counter_baseline');
     expect(afterReboot.dimensions.interface_epoch).not.toBe(counter.dimensions.interface_epoch);
     expect(JSON.stringify(await observations())).not.toContain(community);
+    if (process.env.MAX76_SNMP_REPORT) await writeFile(process.env.MAX76_SNMP_REPORT, JSON.stringify({
+      evidence: 'simulated SNMP UDP endpoint + real Worker + MySQL; not a physical switch',
+      collector_wall_ms: collectorWallMs, expected_bits_per_second: fixture.expected_bits_per_second, observations: await observations(),
+      events: (await pool.query('SELECT revision, code, uncertain, duration_ms, logical_reads FROM metric_v2_schedule_events'))[0],
+      reboot_result: afterReboot,
+    }, null, 2) + '\n');
   }, 30000);
 });

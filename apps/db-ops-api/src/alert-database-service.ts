@@ -122,8 +122,8 @@ class AlertDatabaseService {
     metric_value?: string;
     threshold_value?: string;
     tags?: any;
-  }): Promise<{ success: boolean; alertId?: number; error?: string }> {
-    const pool = this.getPool();
+  }, connection?: mysql.PoolConnection): Promise<{ success: boolean; alertId?: number; error?: string }> {
+    const pool = connection ?? this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
     }
@@ -522,8 +522,8 @@ class AlertDatabaseService {
   /**
    * 解决告警
    */
-  async resolveAlert(alertId: number, userId?: number): Promise<{ success: boolean; error?: string }> {
-    const pool = this.getPool();
+  async resolveAlert(alertId: number, userId?: number, connection?: mysql.PoolConnection): Promise<{ success: boolean; error?: string }> {
+    const pool = connection ?? this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
     }

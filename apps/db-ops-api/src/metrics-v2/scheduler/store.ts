@@ -4,6 +4,7 @@ import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { dueMetricIds } from '../../collection-scheduler.js';
 import { MysqlWorkflowStore, type ClaimedJob, type JobExecutionContext } from '../../workflows/worker-runtime.js';
 import { MysqlMetricStorage } from '../storage.js';
+import { RolloutControl, type Ticket } from '../rollout/control.js';
 import type { PackageRegistry } from '../packages/model.js';
 import type { PackageResult } from '../packages/runner.js';
 import type { CounterState } from '../state.js';
@@ -19,7 +20,8 @@ export interface Reservation { connection: PoolConnection; release(): Promise<vo
 
 /** Short transactions share the policy publication lock. Never hold a transaction during remote IO. */
 export class MysqlScheduleStore {
-  constructor(readonly pool: Pool, private readonly registry: PackageRegistry) {}
+  constructor(readonly pool: Pool, private readonly registry: PackageRegistry,
+    private readonly rolloutTicket?: Ticket) {}
   async list(): Promise<Published[]> {
     const [rows] = await this.pool.query<RowDataPacket[]>('SELECT payload FROM metric_v2_policy_bindings ORDER BY resource_key');
     return rows.map(r => decode<Published>(r.payload));
@@ -159,7 +161,8 @@ export class MysqlScheduleStore {
         rule(observation.versions.config_revision === plan.revision && observation.resource_type === plan.resource.type
           && observation.resource_id === String(plan.resource.id), 'SCHEDULE_OUTPUT_IDENTITY');
         const definition = catalog.find(d => d.id === observation.metric.id && d.semantic_version === observation.metric.semantic_version)!;
-        await storage.write(observation, definition);
+        if (this.rolloutTicket) await new RolloutControl(this.pool, c, () => new Date(now)).publish(observation, definition, this.rolloutTicket);
+        else await storage.write(observation, definition);
       }
       for (const attempt of result.attempts) await c.execute('INSERT INTO metric_v2_attempts (id, payload, stored_at) VALUES (?, ?, ?)',
         [attempt.id, JSON.stringify(attempt), new Date(now)]);
