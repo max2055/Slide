@@ -1,0 +1,2451 @@
+{
+  "evidence": "simulated SNMP UDP endpoint + real Worker + MySQL; not a physical switch",
+  "collector_wall_ms": [
+    9.022207999999864,
+    13.709124999999858,
+    1.711290999999619,
+    8.897542000000158,
+    1.7083339999999225,
+    8.609915999999885
+  ],
+  "expected_bits_per_second": {
+    "rx": 1000000,
+    "tx": 2000000
+  },
+  "observations": [
+    {
+      "id": "sha256:da5706b123c03e43b3c1f34099eda1c4767c9ac96d2a67889b8b1d96f82352ff",
+      "unit": "bit/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.rx_bits_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:rx-octets-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_bits_per_second:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:b0bea977df932832c74655806e0bd5c04ec0b899716642c239f883d334b4fd45",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:c3086169e1ef19bcf105816662f9090a0b761e6f685afb1fd690ad6f31da6a20",
+      "unit": "1",
+      "stage": "normalized",
+      "value": {
+        "value": 1,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "network.interface.oper_up",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:network.interface.oper_up:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:99bddd942c35a571b8d06b1cafcbdb93b6f0a488829f77bfb2062cd39d1e9a8e",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:b472051c215c3309a60ff20155ef7ff3d00f53ff9c6f54f8ffe0bb29455873a1",
+      "unit": "1",
+      "stage": "normalized",
+      "value": {
+        "value": 1,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "snmp.interface.admin_up",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.admin_up:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:7a10a480512dd588cb03652e5a8fd8c866412eae7e857d49b27d218e62288f60",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:b0bea977df932832c74655806e0bd5c04ec0b899716642c239f883d334b4fd45",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "9007199254740993",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.rx_octets_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_octets_total:f8408582fc3bb798"
+      },
+      "counter": {
+        "bits": "64",
+        "discontinuity": {
+          "epoch": "bcd9abc3-c7b7-4845-8769-5d223531282d:ifCounterDiscontinuityTime=0",
+          "reason": "initial",
+          "observed_at": "2026-09-19T01:09:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:692827fb3f4ec17e161f97b097263f131dc3a6df0a0b305e21998719b3125fb0",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:9e57b226fc0f97fd8946421f6d35577952d30d471e466f6b983058a53793e086",
+      "unit": "s",
+      "stage": "normalized",
+      "value": {
+        "value": 1000,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "snmp.agent.uptime_seconds",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-system",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-system",
+        "metric_binding_id": "network_device:1:snmp.agent.uptime_seconds"
+      },
+      "lineage": [
+        {
+          "id": "sha256:98442d7b1f2c67e49e2f67241cb27df5b9c01014a7d31f5209700a89b3c8c14b",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:dadd849b5cd0a743758a528ce68b9af4e80ef1feb83bd9f4798b3af833861ebc",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.rx_discards_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:rx-discards-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_discards_per_second:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:f6b58c799e440114862268f0f55b57083ee2bd6f75db4accb56fea76c7822aef",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:dda2d6895089c14cdc6d4e13dd4f33b0a0b5e816d589d773b5c0b8d31841f5e6",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "1",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.rx_errors_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_errors_total:f8408582fc3bb798"
+      },
+      "counter": {
+        "bits": "32",
+        "discontinuity": {
+          "epoch": "bcd9abc3-c7b7-4845-8769-5d223531282d:ifCounterDiscontinuityTime=0",
+          "reason": "initial",
+          "observed_at": "2026-09-19T01:09:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:8f1133f249ea9cf9c970590c232f32f861d00718e00f5e1ae210f6b83d8315e3",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:81aa86fed8522613c3b7b38d1620bb3c73c1868e1dd8f5a8dcea9e2b87c7f96b",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.tx_errors_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:tx-errors-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_errors_per_second:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:4981a3d45c8cd0191cab24bc8c383e1649b58f40211e3cc28646921a4145e45a",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:76a3e6ea72d84f32869a5ebc37131353ca14c836b0b955474a411adcb67a58e6",
+      "unit": "bit/s",
+      "stage": "normalized",
+      "value": {
+        "value": "1000000000",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.speed_bits_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.speed_bits_per_second:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:e0c2b7075d591fc7d6f825e90d30c84dcda7bc81b5f9a6816bb4c2bceaabe3d2",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:6bbc924e6290c79f619907ec01748eaa1f0d8ca59ecc753ae975c9aeb62a0301",
+      "unit": "bit/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.tx_bits_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:tx-octets-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_bits_per_second:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:14babf204e7e9c066ec780918a3f1a8ea0a61555f8c89a9ef09a0e751c822c2b",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:ea9b4596fce669e5fe98f7d35dd4909c60c92bd0a7d9ddb0fc2d668ead3eac81",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.rx_errors_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:rx-errors-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_errors_per_second:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:dda2d6895089c14cdc6d4e13dd4f33b0a0b5e816d589d773b5c0b8d31841f5e6",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:5437d297a9098a02aa756f3df4e3bd5a29aeda2ee84a56074dc5d08c3b9ea5d1",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "4",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.tx_discards_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_discards_total:f8408582fc3bb798"
+      },
+      "counter": {
+        "bits": "32",
+        "discontinuity": {
+          "epoch": "bcd9abc3-c7b7-4845-8769-5d223531282d:ifCounterDiscontinuityTime=0",
+          "reason": "initial",
+          "observed_at": "2026-09-19T01:09:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:3aac7d2e6294df8219366abc43a3c0f724f713a827b7fc3c8357b57591ea17bd",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:4981a3d45c8cd0191cab24bc8c383e1649b58f40211e3cc28646921a4145e45a",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "2",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.tx_errors_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_errors_total:f8408582fc3bb798"
+      },
+      "counter": {
+        "bits": "32",
+        "discontinuity": {
+          "epoch": "bcd9abc3-c7b7-4845-8769-5d223531282d:ifCounterDiscontinuityTime=0",
+          "reason": "initial",
+          "observed_at": "2026-09-19T01:09:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:1d0848fd59e5b1b58a6af8e3337431909f1d6ec775e18f6a148e361bbc67e30e",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:f6b58c799e440114862268f0f55b57083ee2bd6f75db4accb56fea76c7822aef",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "3",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.rx_discards_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_discards_total:f8408582fc3bb798"
+      },
+      "counter": {
+        "bits": "32",
+        "discontinuity": {
+          "epoch": "bcd9abc3-c7b7-4845-8769-5d223531282d:ifCounterDiscontinuityTime=0",
+          "reason": "initial",
+          "observed_at": "2026-09-19T01:09:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:e4639fdb4d61348e9864108b92d07293445672bb3ae74a1a27f8a7f99fa15ef6",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:0b5a9866c13af8a377d2541c6cb302f10ee270ef3db08ae67dbda87e5cc71b4f",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.tx_discards_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:tx-discards-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_discards_per_second:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:5437d297a9098a02aa756f3df4e3bd5a29aeda2ee84a56074dc5d08c3b9ea5d1",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:14babf204e7e9c066ec780918a3f1a8ea0a61555f8c89a9ef09a0e751c822c2b",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "18014398509481986",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.tx_octets_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "979f0f03-0f8d-468a-a0b6-04fa17080bda:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_octets_total:f8408582fc3bb798"
+      },
+      "counter": {
+        "bits": "64",
+        "discontinuity": {
+          "epoch": "bcd9abc3-c7b7-4845-8769-5d223531282d:ifCounterDiscontinuityTime=0",
+          "reason": "initial",
+          "observed_at": "2026-09-19T01:09:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:92fbf5b2ba2b56c0fbf7c91cdc8b0b96b8af7a2a72d85946975fb770fb8286bf",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:09:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:40fc0dc00124f34dcd8c76ca7f952039d6e5ea7184bace5c69e9e2e66f967db9",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.rx_discards_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:rx-discards-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_discards_per_second:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:f6b58c799e440114862268f0f55b57083ee2bd6f75db4accb56fea76c7822aef",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:0d740312f3846299c3d3b178b229f5691c3a2b964da2f2e9d95b2c0612ee63b1",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_reset",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:afff6c59e6a4ca43effa6fbf6b80a6dbc1134c5ad1bab1cb53057742ddde363f",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "1",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.rx_errors_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_errors_total:f8408582fc3bb798"
+      },
+      "counter": {
+        "bits": "32",
+        "discontinuity": {
+          "epoch": "bcd9abc3-c7b7-4845-8769-5d223531282d:ifCounterDiscontinuityTime=0",
+          "reason": "initial",
+          "observed_at": "2026-09-19T01:09:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:71c8decfdd7861ef424ac82b6720326d19e767ced7eb243e411d9c8d9feb75fa",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:aff8f4efedd2f06997ee50f9fda39ad5b1d3a4fef1f9791981202b14bb83e037",
+      "unit": "s",
+      "stage": "normalized",
+      "value": {
+        "value": 1060,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "snmp.agent.uptime_seconds",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-system",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-system",
+        "metric_binding_id": "network_device:1:snmp.agent.uptime_seconds"
+      },
+      "lineage": [
+        {
+          "id": "sha256:355cdb56582ceb2f70d75ff02db7a9facbecd2468b142ebbb63a77aba2d7c838",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:0c0b2c83db5709c0e8c728d87ee5245f28ec705e3bd58bea9955f8500225733a",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.rx_errors_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:rx-errors-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_errors_per_second:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:dda2d6895089c14cdc6d4e13dd4f33b0a0b5e816d589d773b5c0b8d31841f5e6",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:afff6c59e6a4ca43effa6fbf6b80a6dbc1134c5ad1bab1cb53057742ddde363f",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_reset",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:9b573954a92c2d6b35df6710ad9f25229cb87f76d8c32bf01f4c39037fc8f335",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "9007199262240993",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.rx_octets_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_octets_total:f8408582fc3bb798"
+      },
+      "counter": {
+        "bits": "64",
+        "discontinuity": {
+          "epoch": "bcd9abc3-c7b7-4845-8769-5d223531282d:ifCounterDiscontinuityTime=0",
+          "reason": "initial",
+          "observed_at": "2026-09-19T01:09:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:7b5564e35c5f9dce2a9f5df8cd65729bad9732c9d5a2db8635ad17e888854090",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:da5c9de74ef034908726fa5d8ad26810d334958f25114d37973ca1bad6a42c8e",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.tx_discards_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:tx-discards-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_discards_per_second:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:5437d297a9098a02aa756f3df4e3bd5a29aeda2ee84a56074dc5d08c3b9ea5d1",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:7701b68cdb49d3654972df1bf9d33cacd3f18210b88cbf9d12ea7700d38b2aa5",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_reset",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:92645e37c632dc7f4d4d5c6137f6e9d0fdd20b8da04e32efb5a81e2f617bdfc1",
+      "unit": "1",
+      "stage": "normalized",
+      "value": {
+        "value": 1,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "snmp.interface.admin_up",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.admin_up:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:1def28b18a00915cb8c0b607dd5a92b6656a8417795bc705c91628f893256da3",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:01f6c56c37c74732a6822e1ba2c316d6c7a41a0c03f6a984f16500db138eff2d",
+      "unit": "bit/s",
+      "stage": "normalized",
+      "value": {
+        "value": "1000000000",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.speed_bits_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.speed_bits_per_second:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:fdc21a9ba56c786538362e6af9b3d0e6e3383659ce95fef6cfc5aa4df1a7c1dd",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:0d740312f3846299c3d3b178b229f5691c3a2b964da2f2e9d95b2c0612ee63b1",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "3",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.rx_discards_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_discards_total:f8408582fc3bb798"
+      },
+      "counter": {
+        "bits": "32",
+        "discontinuity": {
+          "epoch": "bcd9abc3-c7b7-4845-8769-5d223531282d:ifCounterDiscontinuityTime=0",
+          "reason": "initial",
+          "observed_at": "2026-09-19T01:09:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:e1f984cd8e53da833349ebdffd29bb8cf367108088f1df1cdefd8a5de8aa0374",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:0e4aec2e5befcb611fd2bfe54deed6517b7a07647cd86fff171ae95cb1f018cb",
+      "unit": "1",
+      "stage": "normalized",
+      "value": {
+        "value": 1,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "network.interface.oper_up",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:network.interface.oper_up:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:8cf8949201a02ef290bfd7162af5d98e14fce85ca236b8d5d1036364420f8bd0",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:7701b68cdb49d3654972df1bf9d33cacd3f18210b88cbf9d12ea7700d38b2aa5",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "4",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.tx_discards_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_discards_total:f8408582fc3bb798"
+      },
+      "counter": {
+        "bits": "32",
+        "discontinuity": {
+          "epoch": "bcd9abc3-c7b7-4845-8769-5d223531282d:ifCounterDiscontinuityTime=0",
+          "reason": "initial",
+          "observed_at": "2026-09-19T01:09:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:b472db0ee9bdb97134eaa51187623d966f1e148ea5f2c58813a69d2101fce1a5",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:2712aefc219727940aaf7fdafa935e83ad4dce6d9b3e5429df67bebd9dcf7b26",
+      "unit": "bit/s",
+      "stage": "normalized",
+      "value": {
+        "value": 1000000,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "snmp.interface.rx_bits_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:rx-octets-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_bits_per_second:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:b0bea977df932832c74655806e0bd5c04ec0b899716642c239f883d334b4fd45",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:9b573954a92c2d6b35df6710ad9f25229cb87f76d8c32bf01f4c39037fc8f335",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:754cb7a36a636e53f662a1430b5cb00d3d69916846bceda7be4289134cb0a0ae",
+      "unit": "bit/s",
+      "stage": "normalized",
+      "value": {
+        "value": 2000000,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "snmp.interface.tx_bits_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:tx-octets-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_bits_per_second:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:14babf204e7e9c066ec780918a3f1a8ea0a61555f8c89a9ef09a0e751c822c2b",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:4825b89245a65fdda7a3164bc738bbc6d5d7e4ed6cfd1975c43b62798a7caab4",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:cf8b2a39b048b89958337db8c2518e48f8817dcbea2cc92da94b6fd305b41d3d",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.tx_errors_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:tx-errors-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_errors_per_second:f8408582fc3bb798"
+      },
+      "lineage": [
+        {
+          "id": "sha256:4981a3d45c8cd0191cab24bc8c383e1649b58f40211e3cc28646921a4145e45a",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:33d2403906fc3b7ec32a05066a42f9e31f515f8ae3023dda006b3db2d6d60e73",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_reset",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:33d2403906fc3b7ec32a05066a42f9e31f515f8ae3023dda006b3db2d6d60e73",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "2",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.tx_errors_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_errors_total:f8408582fc3bb798"
+      },
+      "counter": {
+        "bits": "32",
+        "discontinuity": {
+          "epoch": "bcd9abc3-c7b7-4845-8769-5d223531282d:ifCounterDiscontinuityTime=0",
+          "reason": "initial",
+          "observed_at": "2026-09-19T01:09:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:2b14bc91ef9e8ac056800e4416c08ba2b97b1b716a0d4db7d63fbddb31a4514f",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:4825b89245a65fdda7a3164bc738bbc6d5d7e4ed6cfd1975c43b62798a7caab4",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "18014398524481986",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.tx_octets_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "4fe25fd7-3012-4699-8a5d-65b7f55d55c3:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_octets_total:f8408582fc3bb798"
+      },
+      "counter": {
+        "bits": "64",
+        "discontinuity": {
+          "epoch": "bcd9abc3-c7b7-4845-8769-5d223531282d:ifCounterDiscontinuityTime=0",
+          "reason": "initial",
+          "observed_at": "2026-09-19T01:09:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:13b75dc228cdf2361ebf9a69338fc3e65b261a38470bcda23178eb598e8cb479",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "a6026826-524b-4965-88f5-d9b39bc56406"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:10:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:d80ac5d951b0fac7e79edce8b45e94f027758cd28fb22b795fc9079897a505d1",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "4",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.tx_discards_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_discards_total:ca1f610d88996951"
+      },
+      "counter": {
+        "bits": "32",
+        "discontinuity": {
+          "epoch": "853218d0-bca6-4100-ae17-aa2dc90ad7c2:ifCounterDiscontinuityTime=0",
+          "reason": "boot",
+          "observed_at": "2026-09-19T01:11:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:8088b35a8f0718c4d1ce65f0dbbe6f22b21e7832ae7b0112c7f8482f3e3a7b16",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:9077c62ce1d97771b1106ab97213d64807136ffb1d95ded4599ddc806b754a1d",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "3",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.rx_discards_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_discards_total:ca1f610d88996951"
+      },
+      "counter": {
+        "bits": "32",
+        "discontinuity": {
+          "epoch": "853218d0-bca6-4100-ae17-aa2dc90ad7c2:ifCounterDiscontinuityTime=0",
+          "reason": "boot",
+          "observed_at": "2026-09-19T01:11:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:97b2ed4b35db6ad53f5d55fefabbe952d108dfdd325c52119e566b9091de02fe",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:e83dd226d60a425f8e617d184ad977248ef2b289dfd2fed422e5041ee8612ded",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "18014398524481986",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.tx_octets_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_octets_total:ca1f610d88996951"
+      },
+      "counter": {
+        "bits": "64",
+        "discontinuity": {
+          "epoch": "853218d0-bca6-4100-ae17-aa2dc90ad7c2:ifCounterDiscontinuityTime=0",
+          "reason": "boot",
+          "observed_at": "2026-09-19T01:11:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:e50cd1bbcea496dec80b6c56483b572b8818dbf79aa60f4cf8b6c1c06c350463",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:f6a4daf36c64898f38d1f549f23d208c2dbbd6cd523b86b2b743bc3e8d572571",
+      "unit": "bit/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.rx_bits_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:rx-octets-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_bits_per_second:ca1f610d88996951"
+      },
+      "lineage": [
+        {
+          "id": "sha256:d1e3840dba7101e78d32a09675bf8e9883c578447ab40c53f3ede42461a7150d",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:f6fdba9f20da728ed1e79f4e5464569bae687c4c07b2348e9c28c1966f77567c",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "1",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.rx_errors_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_errors_total:ca1f610d88996951"
+      },
+      "counter": {
+        "bits": "32",
+        "discontinuity": {
+          "epoch": "853218d0-bca6-4100-ae17-aa2dc90ad7c2:ifCounterDiscontinuityTime=0",
+          "reason": "boot",
+          "observed_at": "2026-09-19T01:11:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:0de106961e197f6942f059d80ebfb341e84ef14da566829a109c50da2c65dc5d",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:d1e3840dba7101e78d32a09675bf8e9883c578447ab40c53f3ede42461a7150d",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "9007199262240993",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.rx_octets_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_octets_total:ca1f610d88996951"
+      },
+      "counter": {
+        "bits": "64",
+        "discontinuity": {
+          "epoch": "853218d0-bca6-4100-ae17-aa2dc90ad7c2:ifCounterDiscontinuityTime=0",
+          "reason": "boot",
+          "observed_at": "2026-09-19T01:11:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:eac13f7b3eb1c9e4391cccf3fd39f5663bd84f1ca437c53e75eeffb1f0fadbab",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:d0bc3068f7a70e5091076e6a220efae2cedbff606edfb5d0616b382dbfebb0d7",
+      "unit": "1",
+      "stage": "normalized",
+      "value": {
+        "value": 1,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "snmp.interface.admin_up",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.admin_up:ca1f610d88996951"
+      },
+      "lineage": [
+        {
+          "id": "sha256:10a9ac3b52b34da605833ec3bc58660f9f585d0a40b65b415c5db71165b415f8",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:cd1092bf0ff0655953ed88c7c21215e6a6b0c1ed867dcd790cf7c30d890a805f",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.rx_discards_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:rx-discards-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_discards_per_second:ca1f610d88996951"
+      },
+      "lineage": [
+        {
+          "id": "sha256:9077c62ce1d97771b1106ab97213d64807136ffb1d95ded4599ddc806b754a1d",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:970da8829b9d7a2851b17c68f0ce1c256ec700858c37b5ab660bcb33475e3fee",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.tx_discards_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:tx-discards-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_discards_per_second:ca1f610d88996951"
+      },
+      "lineage": [
+        {
+          "id": "sha256:d80ac5d951b0fac7e79edce8b45e94f027758cd28fb22b795fc9079897a505d1",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:8a257d69f35f8a2a483c0fc43a94f97e54cb0aa35f58111f1da371fad7eb73cd",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "2",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.tx_errors_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_errors_total:ca1f610d88996951"
+      },
+      "counter": {
+        "bits": "32",
+        "discontinuity": {
+          "epoch": "853218d0-bca6-4100-ae17-aa2dc90ad7c2:ifCounterDiscontinuityTime=0",
+          "reason": "boot",
+          "observed_at": "2026-09-19T01:11:48.231Z"
+        }
+      },
+      "lineage": [
+        {
+          "id": "sha256:c05e111f3fc5bd94368ec14f124d75c50df652e691c3c501f5eb3a1b0772f784",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:869327c9dd6f5feea9a14f71c4ff7c533d310690ad96d9b82ac8830a384298e4",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.rx_errors_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:rx-errors-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.rx_errors_per_second:ca1f610d88996951"
+      },
+      "lineage": [
+        {
+          "id": "sha256:f6fdba9f20da728ed1e79f4e5464569bae687c4c07b2348e9c28c1966f77567c",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:72efaf3f29dd9c739827cc4576063167e9a4dbfd3f5c34215255cbc7ef3bc8af",
+      "unit": "bit/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.tx_bits_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:tx-octets-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_bits_per_second:ca1f610d88996951"
+      },
+      "lineage": [
+        {
+          "id": "sha256:e83dd226d60a425f8e617d184ad977248ef2b289dfd2fed422e5041ee8612ded",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:5fbbab9a521a3f1093ed1b889481b3f2f0f6cca1b3798f7dbc4e00901a4b2541",
+      "unit": "bit/s",
+      "stage": "normalized",
+      "value": {
+        "value": "1000000000",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "snmp.interface.speed_bits_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:snmp.interface.speed_bits_per_second:ca1f610d88996951"
+      },
+      "lineage": [
+        {
+          "id": "sha256:6e47fe0133100c15e313c7ada0f606f3cb85c91f5df097dc52e6a9f9217a5f54",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:2d3f32c9dd80d0a380cbb845e4b7f477e855447718272d6b0beea90c3389eddd",
+      "unit": "s",
+      "stage": "normalized",
+      "value": {
+        "value": 1,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "snmp.agent.uptime_seconds",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-system",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-system",
+        "metric_binding_id": "network_device:1:snmp.agent.uptime_seconds"
+      },
+      "lineage": [
+        {
+          "id": "sha256:64cc467a01e44b6438437e7bd5f955b1471ad4b27071d14f247125518d15f61f",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:08989dd3da38187c9959665105a31100bbbec71e6a1594ba49a807554bc64af1",
+      "unit": "1",
+      "stage": "normalized",
+      "value": {
+        "value": 1,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "network.interface.oper_up",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "snmp-interfaces",
+        "metric_binding_id": "network_device:1:network.interface.oper_up:ca1f610d88996951"
+      },
+      "lineage": [
+        {
+          "id": "sha256:114d5f29665f1c8728da990ca535fc9bed9e24e0d66b48292d306ac98063000a",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    },
+    {
+      "id": "sha256:05c1ffc5e943a3693b9068581c8296d93fd1e1ab8b895ab65cb3b366ce27b370",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "snmp.interface.tx_errors_per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+        "binding_id": "network_device:1",
+        "collector_id": "derived:tx-errors-rate",
+        "metric_binding_id": "network_device:1:snmp.interface.tx_errors_per_second:ca1f610d88996951"
+      },
+      "lineage": [
+        {
+          "id": "sha256:8a257d69f35f8a2a483c0fc43a94f97e54cb0aa35f58111f1da371fad7eb73cd",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "snmp-standard",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:48.231Z",
+      "dimensions": {
+        "if_index": "1",
+        "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+      },
+      "production": "derived",
+      "observed_at": "2026-09-19T01:11:48.231Z",
+      "resource_id": "1",
+      "collected_at": "2026-09-19T01:11:48.231Z",
+      "resource_type": "network_device"
+    }
+  ],
+  "events": [
+    {
+      "revision": 1,
+      "code": "committed",
+      "uncertain": 0,
+      "duration_ms": 0,
+      "logical_reads": 2
+    },
+    {
+      "revision": 1,
+      "code": "committed",
+      "uncertain": 0,
+      "duration_ms": 0,
+      "logical_reads": 2
+    },
+    {
+      "revision": 1,
+      "code": "committed",
+      "uncertain": 0,
+      "duration_ms": 0,
+      "logical_reads": 2
+    }
+  ],
+  "reboot_result": {
+    "id": "sha256:f6a4daf36c64898f38d1f549f23d208c2dbbd6cd523b86b2b743bc3e8d572571",
+    "unit": "bit/s",
+    "stage": "normalized",
+    "value": null,
+    "metric": {
+      "id": "snmp.interface.rx_bits_per_second",
+      "semantic_version": "1.0.0"
+    },
+    "source": {
+      "attempt_id": "acdceb07-aa28-4b06-a1db-10659374adb8:1:snmp-interfaces",
+      "binding_id": "network_device:1",
+      "collector_id": "derived:rx-octets-rate",
+      "metric_binding_id": "network_device:1:snmp.interface.rx_bits_per_second:ca1f610d88996951"
+    },
+    "lineage": [
+      {
+        "id": "sha256:d1e3840dba7101e78d32a09675bf8e9883c578447ab40c53f3ede42461a7150d",
+        "stage": "normalized"
+      }
+    ],
+    "quality": {
+      "reason": "counter_baseline",
+      "status": "unknown"
+    },
+    "accuracy": "exact",
+    "versions": {
+      "contract": "1.0.0",
+      "package_id": "snmp-standard",
+      "config_revision": 1,
+      "package_version": "1.0.0",
+      "transform_version": "1.0.0"
+    },
+    "stored_at": "2026-09-19T01:11:48.231Z",
+    "dimensions": {
+      "if_index": "1",
+      "interface_epoch": "9913ce8b-80d5-48b0-aad2-4148517c07ea"
+    },
+    "production": "derived",
+    "observed_at": "2026-09-19T01:11:48.231Z",
+    "resource_id": "1",
+    "collected_at": "2026-09-19T01:11:48.231Z",
+    "resource_type": "network_device"
+  }
+}

@@ -1,4 +1,5 @@
 import mysql, { type Pool } from 'mysql2/promise';
+import { writeFile } from 'node:fs/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from 'ssh2';
 import { MigrationRunner } from '../../migrations/runner.js';
@@ -58,6 +59,7 @@ describe.skipIf(!mysqlPort || !sshPort || !sshPassword)('Linux host SSH to V2 My
     } } };
     const registry = createBuiltinRegistry();
     const release = builtinReleases().find(candidate => candidate.package.id === 'linux-host')!;
+    const firstStarted = performance.now();
     const result = await runPackage(registry, {
       package: { id: release.package.id, version: release.package.version, digest: release.package.digest },
       credential_ref: 'credential:qualification-host', overrides: {},
@@ -67,6 +69,7 @@ describe.skipIf(!mysqlPort || !sshPort || !sshPassword)('Linux host SSH to V2 My
       evidence: { host_counter_epochs: { boot: { epoch: inventory[0].stdout.trim(), observed_at: observedAt }, interfaces, devices } },
       resolve: async () => transport,
     });
+    const firstWallMs = performance.now() - firstStarted;
     expect(result.attempts.every(attempt => attempt.status === 'succeeded')).toBe(true);
     const definitions = registry.catalog({ id: release.package.id, version: release.package.version, digest: release.package.digest });
     const storage = new MysqlMetricStorage(pool);
@@ -97,6 +100,7 @@ describe.skipIf(!mysqlPort || !sshPort || !sshPassword)('Linux host SSH to V2 My
       }
     }
     const secondAt = new Date().toISOString();
+    const secondStarted = performance.now();
     const second = await runPackage(registry, {
       package: { id: release.package.id, version: release.package.version, digest: release.package.digest },
       credential_ref: 'credential:qualification-host', overrides: {},
@@ -106,6 +110,7 @@ describe.skipIf(!mysqlPort || !sshPort || !sshPassword)('Linux host SSH to V2 My
       evidence: { host_counter_epochs: { boot: { epoch: inventory[0].stdout.trim(), observed_at: observedAt }, interfaces, devices } },
       resolve: async () => transport,
     });
+    const secondWallMs = performance.now() - secondStarted;
     expect(second.attempts.every(attempt => attempt.status === 'succeeded')).toBe(true);
     for (const output of second.observations) {
       await storage.write(output.observation, definitions.find(definition => definition.id === output.observation.metric.id)!);
@@ -128,5 +133,10 @@ describe.skipIf(!mysqlPort || !sshPort || !sshPassword)('Linux host SSH to V2 My
     }
     client.end();
     expect(result.observations.every(output => output.observation.resource_type === 'server')).toBe(true);
+    if (process.env.MAX76_HOST_REPORT) await writeFile(process.env.MAX76_HOST_REPORT, JSON.stringify({
+      evidence: 'real isolated Alpine Linux SSH target + MySQL; not a production host', raw_calls: calls, package_wall_ms: [firstWallMs, secondWallMs],
+      legacy_cpu_same_input: serverMetricProvider.parseMetric('cpu_usage', rawCpu), v2_cpu: cpu,
+      observations: [...result.observations, ...second.observations],
+    }, null, 2) + '\n');
   }, 120_000);
 });

@@ -1,0 +1,38 @@
+MAX-76 local verification, 2026-09-19
+Baseline: 6335d9a68a806b83e7e830c5648d66dfa86be933
+Branch: agent/15astra/3d235fb316ad
+
+bash scripts/qualification/run-metrics-rollout.sh
+Exit 0. Fresh dedicated containers and random loopback ports; cleaned on exit.
+Metrics/contracts: 25 files, 364 tests passed, 0 skipped.
+Docs structure: 1 file, 11 tests passed.
+
+Final UTC serialization and package rollback regression:
+METRICS_V2_TEST_MYSQL_PORT=33376 pnpm --filter slide-api exec vitest run src/metrics-v2/rollout src/metrics-v2/database/database.mysql.test.ts --maxWorkers=1
+Exit 0. 3 files, 11 tests passed. Includes MySQL connection timezone +05:30.
+
+pnpm --filter slide-api test
+Exit 0. 276 files passed, 15 skipped; 2584 tests passed, 112 skipped.
+Optional metrics tests covered separately above; unrelated external qualifications remain opt-in.
+
+pnpm --filter slide-frontend test
+Exit 0. 78 files, 523 tests passed.
+pnpm --filter @slide/agent-core test
+Exit 0. 10 files, 87 tests passed.
+
+pnpm --filter slide-api typecheck
+pnpm --filter slide-frontend typecheck
+pnpm --filter @slide/agent-core typecheck
+All exit 0; backend repeated after final affected change.
+
+pnpm --filter slide-frontend build
+Exit 0, CSP check passed. Existing large-chunk warning remains.
+pnpm lint
+Exit 0, 0 errors, 263 warnings.
+pnpm contracts:check
+Exit 0.
+pnpm qualification:matrix
+Exit 0, 37/37 findings mapped.
+
+No production changes. No external delivery exactly-once claim.
+CI results are separate and are not claimed here.

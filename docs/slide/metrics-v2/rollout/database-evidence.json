@@ -1,0 +1,1571 @@
+{
+  "evidence": "real isolated MySQL target + Worker + persistence; legacy counter comparison uses the same measured inputs",
+  "collector_wall_ms": [
+    2.8019170000002305,
+    6.0098330000000715,
+    1.6647500000003674,
+    1.953708000000006,
+    18.12241700000004,
+    1.8255840000001626,
+    4.350667000000158,
+    1.924833000000035,
+    2.2737080000001697,
+    2.4241250000000036,
+    1.6953330000001188,
+    2.049250000000029,
+    1.799167000000125,
+    2.0459999999998217,
+    2.3900409999996555,
+    1.760957999999846,
+    1.826249999999618,
+    2.087500000000091,
+    2.1237920000003214,
+    2.2494590000001153
+  ],
+  "observations": [
+    {
+      "id": "sha256:0f57bd2ff7e7ac3313190bdc547f10cb0380ab2529fd65b9832a8b2b8fa6bbe0",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "mysql.transaction_commands.completed_rate",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "3c57f3b2-8d5d-4b00-8c06-9ce7125f0f28:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "derived:mysql.transaction_commands.completed_rate",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.completed_rate"
+      },
+      "lineage": [
+        {
+          "id": "sha256:ea00eafdb0d406a49497d17f1843bfd9d7436b816c036800db2f08acc580012a",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:23605f3a579200e5dec6e40b537e8e75c78b3b80f36320007c2fa5fb0f7a5742",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:42.237Z",
+      "dimensions": {},
+      "production": "derived",
+      "observed_at": "2026-09-19T01:09:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:09:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:100b5fe5d0c8a8d4d4832f800a611790696458b9fe3cb1bd0220054d68c0c345",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "1",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.transaction_commands.rollback_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "77cf238b-362b-4120-a22a-65e502fd8855:1:mysql-transactions",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-transactions",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.rollback_total"
+      },
+      "counter": {
+        "bits": "64",
+        "start_at": "2026-09-19T01:09:19.590Z"
+      },
+      "lineage": [
+        {
+          "id": "sha256:6aa0f0f094e0d0dd89b6d65470d86c121dcea466c2a06cc6191cef03e4ef159e",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:11:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:204d19c12e26a3219a52e0d35d76b908cbe47adb09b734eeb3312c1fd34b46f8",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "71",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.transaction_commands.commit_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "74213452-3a95-4f59-8736-d6868c51c5fb:1:mysql-transactions",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-transactions",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.commit_total"
+      },
+      "counter": {
+        "bits": "64",
+        "start_at": "2026-09-19T01:09:19.590Z"
+      },
+      "lineage": [
+        {
+          "id": "sha256:3039d4fbdaef179f0f0fcc61b0cea0d3d671a95d6c5324cf5cb1256cf5f75303",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:10:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:23605f3a579200e5dec6e40b537e8e75c78b3b80f36320007c2fa5fb0f7a5742",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "mysql.transaction_commands.rollback_rate",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "3c57f3b2-8d5d-4b00-8c06-9ce7125f0f28:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "derived:mysql.transaction_commands.rollback_rate",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.rollback_rate"
+      },
+      "lineage": [
+        {
+          "id": "sha256:fdbf8997d0e4a049e6e5d382aac3be2278fd974be27922ff3ed2c650011d7d9b",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:42.237Z",
+      "dimensions": {},
+      "production": "derived",
+      "observed_at": "2026-09-19T01:09:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:09:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:3b5db9cba6d490fb64c4d5552ae7580f35b3ff441fc5b249d7a5f4fb50ddaed3",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "6799360",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.tables.estimated_allocated_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "77cf238b-362b-4120-a22a-65e502fd8855:1:mysql-size",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-size",
+        "metric_binding_id": "instance:71:mysql.tables.estimated_allocated_bytes"
+      },
+      "lineage": [
+        {
+          "id": "sha256:dfc2d674628c1a1a125222ada02a1803494f0e2f5d04501941332426a6deceb2",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "estimated",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:11:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:4f1b5cc6bc1ee774606e473b7cbaa4749aaee7387b95d4dc7d5b6969fa0694d8",
+      "unit": "s",
+      "stage": "normalized",
+      "value": {
+        "value": 35,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "db.uptime_seconds",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "3c57f3b2-8d5d-4b00-8c06-9ce7125f0f28:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-status",
+        "metric_binding_id": "instance:71:db.uptime_seconds"
+      },
+      "lineage": [
+        {
+          "id": "sha256:aa381be218449ea0f81b23de66d6a5a70eed14493eb9787595f08a140bc18fb5",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:09:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:6650598ae40a896a8494c1cf14318d031f4432bf57ed05a4788b8482c1211a8a",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "6799360",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.tables.estimated_allocated_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "3c57f3b2-8d5d-4b00-8c06-9ce7125f0f28:1:mysql-size",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-size",
+        "metric_binding_id": "instance:71:mysql.tables.estimated_allocated_bytes"
+      },
+      "lineage": [
+        {
+          "id": "sha256:47209e2821119ba3ff9cd0f9cd7021910a0a16ad33bc4a02914bfe511728b1e7",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "estimated",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:09:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:6d60bab96e59917fe677359b91901ebf9c247e6bcb9dcf92ef36eb1b700b6e82",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "3005",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.queries.total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "77cf238b-362b-4120-a22a-65e502fd8855:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-status",
+        "metric_binding_id": "instance:71:mysql.queries.total"
+      },
+      "counter": {
+        "bits": "64",
+        "start_at": "2026-09-19T01:09:19.590Z"
+      },
+      "lineage": [
+        {
+          "id": "sha256:9bcb677ec6f76717578a905970871ea73d7c861ebf9a4743fc3d181cdd312798",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:11:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:738bd04d8a77f24c70a2ca368c7dd1bafb34f738da25e5977d235d114ba28cb3",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "151",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.connections.limit",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "3c57f3b2-8d5d-4b00-8c06-9ce7125f0f28:1:mysql-limit",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-limit",
+        "metric_binding_id": "instance:71:mysql.connections.limit"
+      },
+      "lineage": [
+        {
+          "id": "sha256:eb21d2a3fa6103638648d30e0dc9f99c48a1e5b5ce46f750973aec33920a6095",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:09:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:7455bc05b201bc13c19d1bd48ec99f306a711b28050b73ba392eac0897bd9604",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "6799360",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.tables.estimated_allocated_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "74213452-3a95-4f59-8736-d6868c51c5fb:1:mysql-size",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-size",
+        "metric_binding_id": "instance:71:mysql.tables.estimated_allocated_bytes"
+      },
+      "lineage": [
+        {
+          "id": "sha256:724675be981e90290b094f6c3c8a36dbcf4caa9c140207dbf56ff98f7d6063fd",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "estimated",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:10:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:7853625e4ed6c8a219cd71c83b9ef0a361637812015d2b24d558cdfabf2cdfc0",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": {
+        "value": 0.4666666666666667,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "mysql.transaction_commands.commit_rate",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "74213452-3a95-4f59-8736-d6868c51c5fb:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "derived:mysql.transaction_commands.commit_rate",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.commit_rate"
+      },
+      "lineage": [
+        {
+          "id": "sha256:d2b6f4a761c8a4f486843201474293d2480bdb27dbff5dc24289c5cb4353c867",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:204d19c12e26a3219a52e0d35d76b908cbe47adb09b734eeb3312c1fd34b46f8",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "precision_loss",
+        "status": "partial"
+      },
+      "accuracy": "estimated",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:42.237Z",
+      "dimensions": {},
+      "production": "derived",
+      "observed_at": "2026-09-19T01:10:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:10:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:7e1efb248d027c2d75a386264d45c4a3f298983764c7c0353dd31a083112b35a",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "mysql.queries.per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "3c57f3b2-8d5d-4b00-8c06-9ce7125f0f28:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "derived:mysql-query-rate",
+        "metric_binding_id": "instance:71:mysql.queries.per_second"
+      },
+      "lineage": [
+        {
+          "id": "sha256:a2ff57f8cca1b1aadf9595aba826e90db7a02ff7ad00d75a57c673b78b8e1b34",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:42.237Z",
+      "dimensions": {},
+      "production": "derived",
+      "observed_at": "2026-09-19T01:09:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:09:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:803676416d9d7cbf4724c667692a097d88fc76b79c9c0ee1749cbb36feda06be",
+      "unit": "s",
+      "stage": "normalized",
+      "value": {
+        "value": 35,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "db.uptime_seconds",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "77cf238b-362b-4120-a22a-65e502fd8855:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-status",
+        "metric_binding_id": "instance:71:db.uptime_seconds"
+      },
+      "lineage": [
+        {
+          "id": "sha256:01c169d3be75570e59f44845a24cc91d75827cc28fc4f40354169664959235b6",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:11:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:84b2a095d88859d4dec34cedc19f788ed317d86eef24b4e7fbd1aeac5582ebbb",
+      "unit": "s",
+      "stage": "normalized",
+      "value": {
+        "value": 35,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "db.uptime_seconds",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "74213452-3a95-4f59-8736-d6868c51c5fb:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-status",
+        "metric_binding_id": "instance:71:db.uptime_seconds"
+      },
+      "lineage": [
+        {
+          "id": "sha256:dc948e224aa4657dad2088c03bf334a8e7f1362ceff5ea87788ebb3fb9b8505d",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:10:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:a2ff57f8cca1b1aadf9595aba826e90db7a02ff7ad00d75a57c673b78b8e1b34",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "2489",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.queries.total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "3c57f3b2-8d5d-4b00-8c06-9ce7125f0f28:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-status",
+        "metric_binding_id": "instance:71:mysql.queries.total"
+      },
+      "counter": {
+        "bits": "64",
+        "start_at": "2026-09-19T01:09:19.590Z"
+      },
+      "lineage": [
+        {
+          "id": "sha256:8a8b77403cb1e229e8eacd5b8ae66e4f47d8ae35983b3254375d275c39eeb247",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:09:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:acfd300887732dafe8cbbb93409d0a3d913c8f329586ce46a7026fe3491066d6",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": {
+        "value": 4.716666666666667,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "mysql.queries.per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "77cf238b-362b-4120-a22a-65e502fd8855:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "derived:mysql-query-rate",
+        "metric_binding_id": "instance:71:mysql.queries.per_second"
+      },
+      "lineage": [
+        {
+          "id": "sha256:e5a87b48a1e2d46726a82b59e05b7bce5abf8ef81eab3546aa9e290f4eb598cc",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:6d60bab96e59917fe677359b91901ebf9c247e6bcb9dcf92ef36eb1b700b6e82",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "precision_loss",
+        "status": "partial"
+      },
+      "accuracy": "estimated",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:42.237Z",
+      "dimensions": {},
+      "production": "derived",
+      "observed_at": "2026-09-19T01:11:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:11:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:ade70a2e5e97b93560e4b5de85cb8ebed7e61273324eeab1754e327638ab833b",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": {
+        "value": 0.6,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "mysql.transaction_commands.completed_rate",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "77cf238b-362b-4120-a22a-65e502fd8855:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "derived:mysql.transaction_commands.completed_rate",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.completed_rate"
+      },
+      "lineage": [
+        {
+          "id": "sha256:c127caf492fb27dd08f808ba9bb1d32d1578f02afad9699c96876d93881a2880",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:f5c2768891256a9ded456b4dc068d361363f325e5a16a05bac08b60fe2add405",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "precision_loss",
+        "status": "partial"
+      },
+      "accuracy": "estimated",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:42.237Z",
+      "dimensions": {},
+      "production": "derived",
+      "observed_at": "2026-09-19T01:11:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:11:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:b4c9035c4f878444aecbfe66f7b4c7fdacad32bc51e9f65457281dc9d3290ddb",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": {
+        "value": 0.016666666666666666,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "mysql.transaction_commands.rollback_rate",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "74213452-3a95-4f59-8736-d6868c51c5fb:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "derived:mysql.transaction_commands.rollback_rate",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.rollback_rate"
+      },
+      "lineage": [
+        {
+          "id": "sha256:fdbf8997d0e4a049e6e5d382aac3be2278fd974be27922ff3ed2c650011d7d9b",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:b8cfcbf548ef619c7628c07aa36038b2942091a229a8b7e26f7e60b7f659e34a",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "precision_loss",
+        "status": "partial"
+      },
+      "accuracy": "estimated",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:42.237Z",
+      "dimensions": {},
+      "production": "derived",
+      "observed_at": "2026-09-19T01:10:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:10:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:b5d5ba14606652b8abc0d783ab2be5c5c59ca21799d788b6ba1f2d4a55316cd4",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "4",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.processlist.count",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "3c57f3b2-8d5d-4b00-8c06-9ce7125f0f28:1:mysql-connections",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-connections",
+        "metric_binding_id": "instance:71:mysql.processlist.count"
+      },
+      "lineage": [
+        {
+          "id": "sha256:0cede4164ffef96dba668ee37c19787a0bd580d254cfdc0aa5bfca2494b2008c",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:09:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:b8cfcbf548ef619c7628c07aa36038b2942091a229a8b7e26f7e60b7f659e34a",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "1",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.transaction_commands.rollback_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "74213452-3a95-4f59-8736-d6868c51c5fb:1:mysql-transactions",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-transactions",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.rollback_total"
+      },
+      "counter": {
+        "bits": "64",
+        "start_at": "2026-09-19T01:09:19.590Z"
+      },
+      "lineage": [
+        {
+          "id": "sha256:6f1e8cc3760aaf3da6bf589c80bc0872f7f5ec326d422fab1e0fdab032ae4213",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:10:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:bb86908ff9993ee7ce1f1455aaf84d693fc9b3a80ac37a78bbc801cbbafcecf1",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "4",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.processlist.count",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "77cf238b-362b-4120-a22a-65e502fd8855:1:mysql-connections",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-connections",
+        "metric_binding_id": "instance:71:mysql.processlist.count"
+      },
+      "lineage": [
+        {
+          "id": "sha256:12e118ea008d800702dae95584fa3f809fef87e0cf4933074c4baf61c82b5e80",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:11:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:bfc152a58a6861252181c68edc76fcc599325ce4b506448effb90e2f2e7efebf",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": {
+        "value": 3.8833333333333337,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "mysql.queries.per_second",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "74213452-3a95-4f59-8736-d6868c51c5fb:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "derived:mysql-query-rate",
+        "metric_binding_id": "instance:71:mysql.queries.per_second"
+      },
+      "lineage": [
+        {
+          "id": "sha256:a2ff57f8cca1b1aadf9595aba826e90db7a02ff7ad00d75a57c673b78b8e1b34",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:e5a87b48a1e2d46726a82b59e05b7bce5abf8ef81eab3546aa9e290f4eb598cc",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "precision_loss",
+        "status": "partial"
+      },
+      "accuracy": "estimated",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:42.237Z",
+      "dimensions": {},
+      "production": "derived",
+      "observed_at": "2026-09-19T01:10:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:10:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:c127caf492fb27dd08f808ba9bb1d32d1578f02afad9699c96876d93881a2880",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": {
+        "value": 0.6,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "mysql.transaction_commands.commit_rate",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "77cf238b-362b-4120-a22a-65e502fd8855:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "derived:mysql.transaction_commands.commit_rate",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.commit_rate"
+      },
+      "lineage": [
+        {
+          "id": "sha256:204d19c12e26a3219a52e0d35d76b908cbe47adb09b734eeb3312c1fd34b46f8",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:feb08b18e716b82b118a20d2b59ca6fd215b0143e78d92a39a62414a2d342c4e",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "precision_loss",
+        "status": "partial"
+      },
+      "accuracy": "estimated",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:42.237Z",
+      "dimensions": {},
+      "production": "derived",
+      "observed_at": "2026-09-19T01:11:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:11:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:c37c805954a302ff4e8806672581c7224513979c3c92c72a8e61f6f451acb788",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "4",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.processlist.count",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "74213452-3a95-4f59-8736-d6868c51c5fb:1:mysql-connections",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-connections",
+        "metric_binding_id": "instance:71:mysql.processlist.count"
+      },
+      "lineage": [
+        {
+          "id": "sha256:de5a2355482b70fba6eba9fb5f8883f09164a90d0dcd668d1b07032e35ee41a4",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:10:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:cc75f84b20d02b93ee66a71da439a2adf769bb35428ee3175bbc6d414b845d09",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "151",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.connections.limit",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "74213452-3a95-4f59-8736-d6868c51c5fb:1:mysql-limit",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-limit",
+        "metric_binding_id": "instance:71:mysql.connections.limit"
+      },
+      "lineage": [
+        {
+          "id": "sha256:18278bcf5b4f3b4d22b1180b5b8564e644ab5b1afb9bc65862d94fa53de23f7b",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:10:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:d19dd4db0adffcba9c7e125f6355d91476a433d927651561b28c4b0721386c77",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": {
+        "value": 0.48333333333333334,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "mysql.transaction_commands.completed_rate",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "74213452-3a95-4f59-8736-d6868c51c5fb:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "derived:mysql.transaction_commands.completed_rate",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.completed_rate"
+      },
+      "lineage": [
+        {
+          "id": "sha256:7853625e4ed6c8a219cd71c83b9ef0a361637812015d2b24d558cdfabf2cdfc0",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:b4c9035c4f878444aecbfe66f7b4c7fdacad32bc51e9f65457281dc9d3290ddb",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "precision_loss",
+        "status": "partial"
+      },
+      "accuracy": "estimated",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:42.237Z",
+      "dimensions": {},
+      "production": "derived",
+      "observed_at": "2026-09-19T01:10:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:10:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:d2b6f4a761c8a4f486843201474293d2480bdb27dbff5dc24289c5cb4353c867",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "43",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.transaction_commands.commit_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "3c57f3b2-8d5d-4b00-8c06-9ce7125f0f28:1:mysql-transactions",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-transactions",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.commit_total"
+      },
+      "counter": {
+        "bits": "64",
+        "start_at": "2026-09-19T01:09:19.590Z"
+      },
+      "lineage": [
+        {
+          "id": "sha256:ed838d9b5e8dc3d0ac35daac17bccbd7990229ee04726b7a6c8448119661c1cd",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:09:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:df63bb30c7fd57dc5e5c738268e0797d621ec7055742fa293d3bc8e35b2b9e6d",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "151",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.connections.limit",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "77cf238b-362b-4120-a22a-65e502fd8855:1:mysql-limit",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-limit",
+        "metric_binding_id": "instance:71:mysql.connections.limit"
+      },
+      "lineage": [
+        {
+          "id": "sha256:ba064aa00c785c1896df9402468f24a365aefc3301d948339e1cbc96c3fdf8cc",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:11:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:e5a87b48a1e2d46726a82b59e05b7bce5abf8ef81eab3546aa9e290f4eb598cc",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "2722",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.queries.total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "74213452-3a95-4f59-8736-d6868c51c5fb:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-status",
+        "metric_binding_id": "instance:71:mysql.queries.total"
+      },
+      "counter": {
+        "bits": "64",
+        "start_at": "2026-09-19T01:09:19.590Z"
+      },
+      "lineage": [
+        {
+          "id": "sha256:a498067d94ac5b111a17840737ce2035887e48a3e51d7c5c5000933d865a8487",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:10:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:10:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:10:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:ea00eafdb0d406a49497d17f1843bfd9d7436b816c036800db2f08acc580012a",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": null,
+      "metric": {
+        "id": "mysql.transaction_commands.commit_rate",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "3c57f3b2-8d5d-4b00-8c06-9ce7125f0f28:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "derived:mysql.transaction_commands.commit_rate",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.commit_rate"
+      },
+      "lineage": [
+        {
+          "id": "sha256:d2b6f4a761c8a4f486843201474293d2480bdb27dbff5dc24289c5cb4353c867",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "counter_baseline",
+        "status": "unknown"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:42.237Z",
+      "dimensions": {},
+      "production": "derived",
+      "observed_at": "2026-09-19T01:09:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:09:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:f5c2768891256a9ded456b4dc068d361363f325e5a16a05bac08b60fe2add405",
+      "unit": "count/s",
+      "stage": "normalized",
+      "value": {
+        "value": 0,
+        "encoding": "float64"
+      },
+      "metric": {
+        "id": "mysql.transaction_commands.rollback_rate",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "77cf238b-362b-4120-a22a-65e502fd8855:1:mysql-status",
+        "binding_id": "instance:71",
+        "collector_id": "derived:mysql.transaction_commands.rollback_rate",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.rollback_rate"
+      },
+      "lineage": [
+        {
+          "id": "sha256:b8cfcbf548ef619c7628c07aa36038b2942091a229a8b7e26f7e60b7f659e34a",
+          "stage": "normalized"
+        },
+        {
+          "id": "sha256:100b5fe5d0c8a8d4d4832f800a611790696458b9fe3cb1bd0220054d68c0c345",
+          "stage": "normalized"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:42.237Z",
+      "dimensions": {},
+      "production": "derived",
+      "observed_at": "2026-09-19T01:11:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:11:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:fdbf8997d0e4a049e6e5d382aac3be2278fd974be27922ff3ed2c650011d7d9b",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "0",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.transaction_commands.rollback_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "3c57f3b2-8d5d-4b00-8c06-9ce7125f0f28:1:mysql-transactions",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-transactions",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.rollback_total"
+      },
+      "counter": {
+        "bits": "64",
+        "start_at": "2026-09-19T01:09:19.590Z"
+      },
+      "lineage": [
+        {
+          "id": "sha256:8b01ce64b2e226a713fac77f93f4d03ff984106d975873e0a599032e92f65ccc",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:09:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:09:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:09:42.237Z",
+      "resource_type": "instance"
+    },
+    {
+      "id": "sha256:feb08b18e716b82b118a20d2b59ca6fd215b0143e78d92a39a62414a2d342c4e",
+      "unit": "count",
+      "stage": "normalized",
+      "value": {
+        "value": "107",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "mysql.transaction_commands.commit_total",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "77cf238b-362b-4120-a22a-65e502fd8855:1:mysql-transactions",
+        "binding_id": "instance:71",
+        "collector_id": "mysql-transactions",
+        "metric_binding_id": "instance:71:mysql.transaction_commands.commit_total"
+      },
+      "counter": {
+        "bits": "64",
+        "start_at": "2026-09-19T01:09:19.590Z"
+      },
+      "lineage": [
+        {
+          "id": "sha256:c63a27b0b0c450dbbf18b651a12f163449302412acfe0d93ee20ed139380b7fb",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-representative",
+        "config_revision": 1,
+        "package_version": "1.0.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-09-19T01:11:42.237Z",
+      "dimensions": {},
+      "production": "measured",
+      "observed_at": "2026-09-19T01:11:42.237Z",
+      "resource_id": "71",
+      "collected_at": "2026-09-19T01:11:42.237Z",
+      "resource_type": "instance"
+    }
+  ],
+  "events": [
+    {
+      "revision": "1",
+      "code": "committed",
+      "uncertain": 0,
+      "duration_ms": "0",
+      "logical_reads": 5
+    },
+    {
+      "revision": "1",
+      "code": "committed",
+      "uncertain": 0,
+      "duration_ms": "0",
+      "logical_reads": 5
+    },
+    {
+      "revision": "1",
+      "code": "committed",
+      "uncertain": 0,
+      "duration_ms": "0",
+      "logical_reads": 5
+    },
+    {
+      "revision": "1",
+      "code": "collection_failed",
+      "uncertain": 0,
+      "duration_ms": "0",
+      "logical_reads": 5
+    }
+  ],
+  "unique_publisher_switch": "passed",
+  "late_worker_batch": "rolled back"
+}
