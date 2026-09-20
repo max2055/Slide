@@ -541,11 +541,7 @@ export class ServersPage extends LitElement {
   }
 
   private get _filteredServers(): ServerRow[] {
-    const q = this._searchQuery.trim().toLowerCase();
     return this._servers.filter((srv) =>
-      (!q || srv.host.toLowerCase().includes(q) ||
-        (srv.label ?? "").toLowerCase().includes(q) ||
-        srv.os_type.toLowerCase().includes(q)) &&
       (this._osFilter === "all" || canonicalOsKey(srv.os_type) === this._osFilter) &&
       (this._statusFilter === "all" || srv.status === this._statusFilter) &&
       (this._qualityFilter === "all" || this._serverQuality(srv.id) === this._qualityFilter) &&
@@ -599,6 +595,7 @@ export class ServersPage extends LitElement {
 
       return {
         id: srv.id, type: canonicalOsLabel(srv.os_type), version: srv.os_version,
+        searchValues: [srv.label, srv.host, srv.os_type, srv.status, this._statusLabel(srv.status)],
         host: html`
           <div style="font-weight:600;color:var(--text-strong);font-size:var(--text-md);">
             <button class="btn-ghost" @click=${() => this._navigateToDetail(srv.id)}>${srv.label || srv.host}</button><small>${srv.host}</small>
@@ -693,7 +690,7 @@ export class ServersPage extends LitElement {
               <span class="search-icon"><span style="width:14px;height:14px;display:flex;">${icons['search']}</span></span>
               <input
                 class="search-input"
-                placeholder="搜索主机、标签、操作系统..."
+                placeholder="搜索主机、标签、操作系统、版本、状态（空格组合）"
                 name="search-servers"
                 autocomplete="off"
                 .value=${this._searchQuery}
@@ -739,7 +736,7 @@ export class ServersPage extends LitElement {
               : nothing}
           </div>
           ${rows.length > 0
-            ? html`<resource-metrics-table resourceType="server" .columns=${columns} .entries=${rows} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this._navigateToDetail(e.detail.id)}></resource-metrics-table>`
+            ? html`<resource-metrics-table resourceType="server" .search=${this._searchQuery} .columns=${columns} .entries=${rows} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this._navigateToDetail(e.detail.id)}></resource-metrics-table>`
             : html`<app-empty-state title="无匹配服务器" description="尝试更换搜索关键词" icon="search"></app-empty-state>`}
         </div>
 
