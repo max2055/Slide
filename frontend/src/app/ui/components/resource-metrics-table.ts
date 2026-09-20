@@ -54,7 +54,7 @@ export class ResourceMetricsTable extends LitElement {
     this.page = Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize)));
     const queue = targets.filter(e => force || !this.rows.has(e.id));
     this.pending = queue.length > 0;
-    
+
     let cursor = 0;
     const worker = async () => {
       while (cursor < queue.length && generation === this.generation) {
