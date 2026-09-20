@@ -45,9 +45,13 @@ test('old turns render on demand, highlight accurately, and streaming does not s
 test('clicking a visible tick keeps the ruler still; manual transcript scrolling follows', async ({ page }) => {
   const ruler = page.locator('chat-history-nav nav');
   const ticks = page.locator('chat-history-nav .tick');
+  // Wait for initial transcript measurement before positioning the ruler manually.
+  await expect(ticks.nth(160)).toHaveAttribute('aria-current', 'true');
   await ruler.evaluate((el) => { el.scrollTop = 1100; });
   const before = await ruler.evaluate((el) => el.scrollTop);
-  await ticks.nth(115).click();
+  const target = await ticks.nth(115).boundingBox();
+  expect(target).not.toBeNull();
+  await page.mouse.click(target!.x + target!.width / 2, target!.y + target!.height / 2);
   await expect(page.locator('[data-chat-turn="msg:230"]')).toHaveClass(/chat-history-highlight/);
   await expect(ticks.nth(115)).toHaveAttribute('aria-current', 'true');
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -135,7 +139,7 @@ test('the application shell wires transcript scrolling and return-to-latest call
 });
 
 
-test('a short ruler is vertically centered and still previews the correct turn', async ({ page }) => {
+test('a short ruler stays centered and stationary on the first history click', async ({ page }) => {
   await page.evaluate(() => {
     const fixture = (window as any).historyFixture;
     fixture.props.messages = fixture.props.messages.slice(0, 18);
@@ -151,6 +155,16 @@ test('a short ruler is vertically centered and still previews the correct turn',
   }).toBeLessThan(2);
   await ticks.nth(4).hover();
   await expect(page.getByRole('tooltip')).toContainText('第 5 轮');
+  const before = await ticks.nth(4).boundingBox();
+  const threadBefore = await page.locator('.chat-thread').boundingBox();
+  await ticks.nth(4).click();
+  await expect(page.getByRole('button', { name: '回到最新' })).toBeVisible();
+  await expect(page.locator('[data-chat-turn="msg:8"]')).toHaveClass(/chat-history-highlight/);
+  await expect.poll(async () => (await ticks.nth(4).boundingBox())!.y).toBeCloseTo(before!.y, 0);
+  expect((await page.locator('.chat-thread').boundingBox())!.height).toBeCloseTo(threadBefore!.height, 0);
+  await page.getByRole('button', { name: '回到最新' }).click();
+  await expect(page.getByRole('button', { name: '回到最新' })).toBeHidden();
+  expect((await ticks.nth(4).boundingBox())!.y).toBeCloseTo(before!.y, 0);
 });
 
 test('opening and switching conversations wait for history and land on the latest message', async ({ page }) => {
