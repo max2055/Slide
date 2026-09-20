@@ -1,4 +1,4 @@
-import "../components/semantic-metrics.js";
+import "../components/resource-metrics-table.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
@@ -22,6 +22,7 @@ interface ServerRow {
   port: number;
   label: string | null;
   os_type: string;
+  os_version?: string | null;
   credential_type: "password" | "key";
   status: "online" | "offline" | "error" | "unreachable";
   last_check_at: string | null;
@@ -255,7 +256,7 @@ export class ServersPage extends LitElement {
     try {
       const [serversRes, metricsRes] = await Promise.all([
         authFetch("/api/servers"),
-        authFetch("/api/servers/metrics/summary"),
+        authFetch("/api/servers/metrics/summary").catch(() => null),
       ]);
       if (serversRes.status === 401) {
         showToast("请先登录", "warning");
@@ -264,7 +265,7 @@ export class ServersPage extends LitElement {
       }
       if (!serversRes.ok) throw new Error("加载服务器列表失败");
       this._servers = await serversRes.json();
-      if (metricsRes.ok) {
+      if (metricsRes?.ok) {
         this._metricSummary = await metricsRes.json();
       }
     } catch (err: any) {
@@ -572,17 +573,11 @@ export class ServersPage extends LitElement {
   private _getColumns() {
     return [
       { key: "host", label: "主机" },
-      { key: "label", label: "标签" },
-      { key: "os_type", label: "操作系统", textAlign: "center" },
+      { key: "type", label: "操作系统类型" },
+      { key: "version", label: "系统版本" },
       { key: "cpu", label: "CPU", textAlign: "center" },
       { key: "memory", label: "内存", textAlign: "center" },
-      { key: "disk", label: "磁盘", textAlign: "center" },
-      { key: "network", label: "网络流量", textAlign: "center" },
-      { key: "errors", label: "网络错误", textAlign: "center" },
-      { key: "status", label: "状态", textAlign: "center" },
-      { key: "quality", label: "采集质量", textAlign: "center" },
-      { key: "freshness", label: "证据新鲜度", textAlign: "center" },
-      { key: "last_collection", label: "上次采集", textAlign: "center" },
+      { key: "status", label: "连接状态", textAlign: "center" },
       { key: "actions", label: "操作", textAlign: "center" },
     ];
   }
@@ -603,14 +598,15 @@ export class ServersPage extends LitElement {
       const freshness = this._serverFreshness(srv);
 
       return {
+        id: srv.id, type: canonicalOsLabel(srv.os_type), version: srv.os_version,
         host: html`
           <div style="font-weight:600;color:var(--text-strong);font-size:var(--text-md);">
-            ${srv.host}
+            <button class="btn-ghost" @click=${() => this._navigateToDetail(srv.id)}>${srv.label || srv.host}</button><small>${srv.host}</small>
           </div>`,
         label: srv.label || html`<span style="color:var(--muted);">—</span>`,
         os_type: html`<app-badge variant="muted">${canonicalOsLabel(srv.os_type)}</app-badge>`,
-        cpu: html`<app-badge variant="${this._usageVariant(cpuValue)}">CPU ${cpuValue != null ? cpuValue.toFixed(1) + "%" : "--"}</app-badge>`,
-        memory: html`<app-badge variant="${this._usageVariant(memValue)}">内存 ${memValue != null ? memValue.toFixed(1) + "%" : "--"}</app-badge>`,
+        cpu: html`<small>兼容数据 · ${cpuMetric?.recorded_at || "时间未知"}</small><app-badge variant="${this._usageVariant(cpuValue)}">CPU ${cpuValue != null ? cpuValue.toFixed(1) + "%" : "--"}</app-badge>`,
+        memory: html`<small>兼容数据 · ${memMetric?.recorded_at || "时间未知"}</small><app-badge variant="${this._usageVariant(memValue)}">内存 ${memValue != null ? memValue.toFixed(1) + "%" : "--"}</app-badge>`,
         disk: html`<app-badge variant="${this._usageVariant(diskValue)}">磁盘 ${diskValue != null ? diskValue.toFixed(1) + "%" : "--"}</app-badge>`,
         network: html`<span>${rx != null || tx != null ? `${this._formatRate(rx)} / ${this._formatRate(tx)}` : "--"}</span>`,
         errors: html`<app-badge variant=${errors > 0 ? "warn" : "muted"}>${errors || "--"}</app-badge>`,
@@ -740,10 +736,10 @@ export class ServersPage extends LitElement {
             <span class="resource-result-count">共 ${rows.length} 台服务器</span>
             ${this._activeFilterCount > 0
               ? html`<span class="resource-filter-state">已启用 ${this._activeFilterCount} 项筛选</span>`
-              : html`<span>未启用筛选</span>`}
+              : nothing}
           </div>
           ${rows.length > 0
-            ? html`<semantic-core-list resourceType="server" .resources=${this._filteredServers}></semantic-core-list><app-data-table .columns=${columns} .rows=${rows}></app-data-table>`
+            ? html`<resource-metrics-table resourceType="server" .columns=${columns} .entries=${rows} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this._navigateToDetail(e.detail.id)}></resource-metrics-table>`
             : html`<app-empty-state title="无匹配服务器" description="尝试更换搜索关键词" icon="search"></app-empty-state>`}
         </div>
 

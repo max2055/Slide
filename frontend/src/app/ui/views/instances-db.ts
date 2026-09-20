@@ -1,4 +1,5 @@
-import "../components/semantic-metrics.js";
+import "../components/resource-metrics-table.js";
+import "../components/app-card.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
@@ -638,9 +639,8 @@ export class InstancesPage extends LitElement {
 
     return html`
       <div class="page">
-        <semantic-core-list resourceType="instance" .resources=${this.filteredInstances}></semantic-core-list>
         <!-- 实例列表卡片 -->
-        <div class="card">
+        <app-card>
           <div class="toolbar resource-toolbar">
             <div class="search-box">
               <span class="search-icon"><span style="width:14px;height:14px;display:flex;">${icons['search']}</span></span>
@@ -688,85 +688,20 @@ export class InstancesPage extends LitElement {
             <span class="resource-result-count">共 ${filtered.length} 个数据库实例</span>
             ${this.activeFilterCount > 0
               ? html`<span class="resource-filter-state">已启用 ${this.activeFilterCount} 项筛选</span>`
-              : html`<span>未启用筛选</span>`}
+              : nothing}
           </div>
 
-          <div class="table-container">
-            <table class="table">
-                    <colgroup>
-                      <col style="width:40px;">
-                      <col class="instance-col">
-                      <col style="width:72px;">
-                      <col class="version-col">
-                      <col style="width:90px;">
-                      <col style="width:200px;">
-                      <col style="width:82px;">
-                      <col style="width:80px;">
-                      <col class="actions-col">
-                    </colgroup>
-                    <thead>
-                      <tr>
-                        <th style="width:40px;text-align:center;">#</th>
-                        <th class="sortable" @click=${() => this._toggleSort('name')}>实例 ${this._sortArrow('name')}</th>
-                        <th class="sortable" style="width: 60px; text-align:center;" @click=${() => this._toggleSort('db_type')}>类型 ${this._sortArrow('db_type')}</th>
-                        <th class="sortable" @click=${() => this._toggleSort('db_version')}>版本 ${this._sortArrow('db_version')}</th>
-                        <th class="sortable" style="width: 72px; text-align:center;" @click=${() => this._toggleSort('data_size_gb')}>容量 ${this._sortArrow('data_size_gb')}</th>
-                        <th class="sortable" style="width: 170px; text-align:center;" @click=${() => this._toggleSort('addr')}>连接地址 ${this._sortArrow('addr')}</th>
-                        <th class="sortable" style="width: 72px; text-align:center;" @click=${() => this._toggleSort('health_status')}>健康状态 ${this._sortArrow('health_status')}</th>
-                        <th class="sortable" style="width: 56px; text-align:center;" @click=${() => this._toggleSort('health_score')}>健康分 ${this._sortArrow('health_score')}</th>
-                        <th style="width: 180px; text-align:center;">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${filtered.length > 0 ? filtered.map((inst, idx) => html`
-                        <tr class="instance-row">
-                          <td style="text-align:center;font-size:var(--text-sm);color:var(--muted);">${idx + 1}</td>
-                          <td class="instance-col"><div class="instance-name" title=${inst.name}>${inst.name}</div></td>
-                          <td style="text-align:center;">
-                            <span class="type-tag">${inst.db_type.toUpperCase()}</span>
-                          </td>
-                          <td style="text-align:center;">
-                            <span class="instance-version" title=${inst.db_version || '—'} style="font-size: var(--text-sm); color: var(--muted);">${inst.db_version || '—'}</span>
-                          </td>
-                          <td style="text-align:center;">
-                            <span style="font-size: var(--text-sm);">${inst.data_size_gb != null ? (inst.data_size_gb === 0 ? '0 GB' : inst.data_size_gb + ' GB') : '—'}</span>
-                          </td>
-                          <td style="text-align:center;">
-                            <span style="font-size: var(--text-base);">${inst.host}<span style="font-weight:500;">:${inst.port}</span></span>
-                          </td>
-                          <td style="text-align:center;">
-                            ${this._renderStatusBadge(inst.health_status)}
-                          </td>
-                          <td style="text-align:center;">
-                            ${(() => {
-                              const score = resolveHealthScoreState(inst, inst.health_score);
-                              return html`<span style="font-weight: 700; font-size: var(--text-md); color: ${score.score === null ? 'var(--muted)' : this._getHealthColor(score.score)};">${score.score ?? '未知'}</span>`;
-                            })()}
-                          </td>
-                          <td style="text-align:center;">
-                            <div class="actions">
-                              <button class="btn-sm" @click=${() => this._viewDetail(inst)}>详情</button>
-                              <button class="btn-sm" @click=${() => this._editInstance(inst)}>编辑</button>
-                              <button class="btn-sm" @click=${() => this._testConnection(inst)}>测试</button>
-                              <button class="btn-sm danger" @click=${() => this._deleteInstance(inst)}>删除</button>
-                            </div>
-                          </td>
-                        </tr>
-                      `) : html`
-                        <tr>
-                          <td colspan="9">
-                            <app-empty-state
-                              title=${this.instances.length === 0 ? "暂无数据库实例" : "没有符合条件的实例"}
-                              description=${this.instances.length === 0 ? "点击添加实例开始纳管数据库" : "尝试调整筛选条件"}
-                              icon=${this.instances.length === 0 ? "database" : "search"}
-                            ></app-empty-state>
-                          </td>
-                        </tr>
-                      `}
-                    </tbody>
-                  </table>
-                </div>
-        </div>
+          <resource-metrics-table resourceType="instance"
+            .columns=${[{ key: 'name', label: '实例' }, { key: 'type', label: '数据库类型' }, { key: 'version', label: '数据库版本' }, { key: 'address', label: '连接地址' }, { key: 'health', label: '健康' }, { key: 'capacity', label: '已用空间（兼容数据）' }, { key: 'actions', label: '操作' }]}
+            .entries=${filtered.map(inst => ({ id: inst.id, type: inst.db_type, version: inst.db_version,
+              name: html`<button class="btn-ghost" @click=${() => this._viewDetail(inst)}>${inst.name}</button>`,
+              address: `${inst.host}:${inst.port}`, health: this._renderStatusBadge(inst.health_status),
+              capacity: inst.data_size_gb == null ? '未知' : `${inst.data_size_gb} GB · 旧版数据，采集时间未知`,
+              actions: html`<div class="actions"><button class="btn" @click=${() => this._editInstance(inst)}>编辑</button><button class="btn" @click=${() => this._testConnection(inst)}>测试</button><button class="btn-ghost" @click=${() => this._deleteInstance(inst)}>删除</button></div>`
+            }))}
+            @resource-metric-open=${(e: CustomEvent<{ id: number }>) => { const inst = this.instances.find(i => i.id === e.detail.id); if (inst) this._viewDetail(inst); }}
+          ></resource-metrics-table>
+        </app-card>
       </div>
 
       ${this._renderAddDialog()}
@@ -782,8 +717,9 @@ export class InstancesPage extends LitElement {
       warning: { class: "warn", label: "警告" },
       critical: { class: "danger", label: "异常" },
       unknown: { class: "muted", label: "未知" },
+      error: { class: "danger", label: "异常" },
     };
-    const s = statusMap[status] || { class: "muted", label: status };
+    const s = statusMap[status] || { class: "muted", label: "未知" };
     return html`
       <app-badge variant="${status === 'healthy' ? 'ok' : status === 'warning' ? 'warn' : status === 'critical' ? 'danger' : 'muted'}">${s.label}</app-badge>
     `;

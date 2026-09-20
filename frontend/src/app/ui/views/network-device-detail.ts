@@ -23,7 +23,7 @@ import "../components/app-dialog.js";
 import "../components/app-empty-state.js";
 import "../components/app-form-field.js";
 
-type DetailTab = "overview" | "interfaces" | "relations" | "backups" | "collection";
+type DetailTab = "metrics" | "overview" | "interfaces" | "relations" | "backups" | "collection";
 
 function bodyOf(response: Response): Promise<Record<string, unknown>> {
   return response.json().catch(() => ({}));
@@ -88,7 +88,7 @@ export class NetworkDeviceDetail extends LitElement {
   @state() private interfaces: NetworkDeviceInterface[] = [];
   @state() private relations: NetworkDeviceRelation[] = [];
   @state() private backups: ConfigBackupSummary[] = [];
-  @state() private activeTab: DetailTab = "overview";
+  @state() private activeTab: DetailTab = new URL(location.href).searchParams.get('metricResource')?.startsWith('network_device:') ? 'metrics' : 'overview' ;
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private collecting = false;
@@ -350,8 +350,8 @@ export class NetworkDeviceDetail extends LitElement {
     </style>
     ${id === null ? html`<div class="error">网络设备 ID 无效</div>` : this.loading ? html`<div class="loading" role="status">正在加载设备数据…</div>` : this.error ? html`<div class="error" role="alert">${this.error}<br><button class="btn" type="button" @click=${this.loadContext}>重试</button></div>` : this.device ? html`<div class="page">
       <div class="header"><div class="title"><button class="btn-ghost" type="button" @click=${this.navigateBack}>${icons["chevron-left"]} 网络设备</button><h1>${this.device.label || this.device.name}</h1><div class="meta">${this.device.host}:${this.device.snmp_port} · ${this.device.vendor === "cisco" ? "Cisco" : "Huawei"} ${this.device.os_version || ""}</div></div><div class="header-actions"><app-badge variant=${qualityVariant(this.device.status === "online" ? "good" : this.device.status === "error" ? "error" : "unknown")}>${this.statusLabel(this.device.status)}</app-badge><button class="btn" type="button" @click=${this.collect} .disabled=${this.collecting}>${icons.refresh} ${this.collecting ? "采集中…" : "立即采集"}</button><button class="btn-primary" type="button" @click=${this.captureBackup} .disabled=${this.backupLoading}>${icons.save} ${this.backupLoading ? "备份中…" : "立即备份"}</button></div></div>
-      <div class="tabs">${(["overview", "interfaces", "relations", "backups", "collection"] as DetailTab[]).map((tab) => html`<button class="tab ${this.activeTab === tab ? "active" : ""}" type="button" @click=${() => (this.activeTab = tab)}>${tab === "collection" ? "采集配置" : tab === "overview" ? "概览" : tab === "interfaces" ? "接口" : tab === "relations" ? "关联资源" : "配置备份"}</button>`)}</div>
-      ${this.activeTab === "collection" ? html`<metric-configuration resourceType="network_device" .resourceId=${this.validId()}></metric-configuration>` : this.activeTab === "overview" ? html`<semantic-metrics resourceType="network_device" .resourceId=${this.validId()}></semantic-metrics><details><summary>旧版概览（兼容口径）</summary>${this.renderSummary()}</details>` : this.activeTab === "interfaces" ? this.renderInterfaces() : this.activeTab === "relations" ? this.renderRelations() : html`${this.renderBackupSchedule()}${this.renderBackups()}`}
+      <div class="tabs">${(["overview", "metrics", "interfaces", "relations", "backups", "collection"] as DetailTab[]).map((tab) => html`<button class="tab ${this.activeTab === tab ? "active" : ""}" type="button" @click=${() => { const config = this.renderRoot.querySelector("metric-configuration") as import("../components/metric-configuration.js").MetricConfiguration | null; if (config) config.confirmDiscard(() => { this.activeTab = tab; }); else this.activeTab = tab; }}>${tab === "metrics" ? "指标与趋势" : tab === "collection" ? "采集配置" : tab === "overview" ? "概览" : tab === "interfaces" ? "接口" : tab === "relations" ? "关联资源" : "配置备份"}</button>`)}</div>
+      ${this.activeTab === "collection" ? html`<metric-configuration resourceType="network_device" .resourceId=${this.validId()}></metric-configuration>` : this.activeTab === "metrics" ? html`<semantic-metrics resourceType="network_device" .resourceId=${this.validId()}></semantic-metrics>` : this.activeTab === "overview" ? html`<p>概览来自兼容采集；标准指标和质量请查看“指标与趋势”。</p>${this.renderSummary()}` : this.activeTab === "interfaces" ? this.renderInterfaces() : this.activeTab === "relations" ? this.renderRelations() : html`${this.renderBackupSchedule()}${this.renderBackups()}`}
     </div>` : nothing}
     ${this.selectedBackup ? html`<app-dialog .open=${true} size="xl" title=${`配置备份 v${this.selectedBackup.versionNo}`} @app-dialog-close=${() => (this.selectedBackup = null)}><p class="meta">备份时间 ${new Date(this.selectedBackup.collectedAt).toLocaleString()} · SHA-256 ${this.selectedBackup.contentSha256}</p><pre class="preview">${this.selectedBackup.preview}</pre><div slot="footer"><button class="btn" type="button" @click=${() => (this.selectedBackup = null)}>关闭</button></div></app-dialog>` : nothing}`;
   }

@@ -183,7 +183,7 @@ export class ServerDetailPage extends LitElement {
   @state() private metrics: MetricEntry[] = [];
   @state() private loading = true;
   @state() private error: string | null = null;
-  @state() private activeTab: string = "overview";
+  @state() private activeTab: string = new URL(location.href).searchParams.get('metricResource')?.startsWith('server:') ? 'metrics' : 'overview' ;
   @state() private activeRange: string = "1h";
   @state() private historyLoading = false;
   @state() private historyData: { time: string[]; metrics: Record<string, number[]>; dimensions?: Record<string, Record<string, unknown> | null> } | null = null;
@@ -463,6 +463,11 @@ export class ServerDetailPage extends LitElement {
   }
 
   private _setTab(tab: string) {
+    const configuration = this.renderRoot.querySelector('metric-configuration') as import('../components/metric-configuration.js').MetricConfiguration | null;
+    if (configuration) { configuration.confirmDiscard(() => this._applyTab(tab)); return; }
+    this._applyTab(tab);
+  }
+  private _applyTab(tab: string) {
     this.activeTab = tab;
     if (tab === "metrics" && this.serverId) {
       this.loadMetricHistory(this.serverId, this.activeRange);
@@ -597,7 +602,7 @@ export class ServerDetailPage extends LitElement {
           ${[
             { key: "overview", label: "概览" },
             { key: "collection", label: "采集配置" },
-            { key: "metrics", label: "指标" },
+            { key: "metrics", label: "指标与趋势" },
             { key: "config", label: "配置" },
             { key: "diagnostics", label: "诊断" },
             { key: "network", label: "网络" },
@@ -618,7 +623,7 @@ export class ServerDetailPage extends LitElement {
   }
 
   private _renderTabContent() {
-    if (this.activeTab === "overview") return html`<semantic-metrics resourceType="server" .resourceId=${this.serverId}></semantic-metrics><details><summary>旧版概览（兼容口径）</summary>${this._renderOverview()}</details>`;
+    if (this.activeTab === "overview") return html`<p>概览来自兼容采集；标准指标和质量请查看“指标与趋势”。</p>${this._renderOverview()}`;
     if (this.activeTab === "collection") return html`<metric-configuration resourceType="server" .resourceId=${this.serverId}></metric-configuration>`;
     switch (this.activeTab) {
       case "overview": return this._renderOverview();

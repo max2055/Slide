@@ -1,0 +1,2 @@
+import { defineConfig } from '@playwright/test';
+export default defineConfig({ testDir: './e2e', testMatch: ['resource-metrics.spec.ts', 'network-device-scheduling.spec.ts'], workers: 2, timeout: 15000, outputDir: './test-results-resource-metrics', use: { baseURL: 'http://127.0.0.1:5193', trace: 'retain-on-failure' }, webServer: { command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5193 --strictPort', url: 'http://127.0.0.1:5193', reuseExistingServer: false } });

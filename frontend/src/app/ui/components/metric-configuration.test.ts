@@ -43,3 +43,33 @@ it('resource switches discard stale responses', async () => {
   finish({ ok: true, json: async () => ({ affected_resources: 99 }) }); await old;
   expect(el.preview).toBeNull();
 });
+it('failed or empty trials cannot authorize publishing', async () => {
+  mock(); const el = await mount(); await el.execute('preview'); await el.execute('trial');
+  const before = authFetch.mock.calls.length; await el.execute('publish');
+  expect(authFetch.mock.calls).toHaveLength(before);
+  el.trial = { decision: 'attempted', attempts: [{ status: 'failed' }], samples: [] };
+  await el.execute('publish'); expect(authFetch.mock.calls).toHaveLength(before);
+});
+it('publishing a successful trial sends the current revision and reloads application state', async () => {
+  mock(); const el = await mount(); await el.execute('preview');
+  authFetch.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ decision: 'attempted', attempts: [{ status: 'succeeded' }], samples: [] }) }));
+  await el.execute('trial'); await el.execute('publish');
+  const call = authFetch.mock.calls.find((c: any[]) => c[0].endsWith('/publish'))!;
+  expect(JSON.parse(call[1].body).expected_revision).toBe(0);
+  expect(el.trial).toBeNull(); expect(el.dirty).toBe(false);
+});
+
+it('keeps unsaved edits until the user confirms navigation', async () => {
+  mock(); const el = await mount(); el.invalidate(); const leave = vi.fn(); el.confirmDiscard(leave); await el.updateComplete;
+  expect(leave).not.toHaveBeenCalled(); expect(el.discardPending).toBe(true);
+  [...el.shadowRoot.querySelectorAll('button')].find((b: any) => b.textContent === '放弃修改并继续').click();
+  expect(leave).toHaveBeenCalledOnce(); expect(el.dirty).toBe(false);
+});
+
+it('allows authoritative disabled trials without calling them successful collection', async () => {
+  mock(); const el = await mount();
+  el.preview = { resources: [{ resolved: { settings: { enabled: false }, sources: {}, metric_templates: [], metric_sources: {} } }] };
+  el.trial = { decision: 'disabled', attempts: [], samples: [] };
+  expect(el.publishReady()).toBe(true);
+  el.preview.resources[0].resolved.settings.enabled = true; expect(el.publishReady()).toBe(false);
+});
