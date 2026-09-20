@@ -51,7 +51,7 @@ describe("network-devices-page", () => {
     const element = document.createElement("network-devices-page") as any;
     document.body.append(element);
     await settle(element);
-    expect([...element.querySelectorAll("app-data-table .btn-sm")].map((button: HTMLButtonElement) => button.textContent?.trim())).toEqual(["详情", "编辑", "测试", "删除"]);
+    expect([...element.querySelector("resource-metrics-table").shadowRoot.querySelectorAll("app-data-table .btn-sm")].map((button: HTMLButtonElement) => button.textContent?.trim())).toEqual(["详情", "编辑", "测试", "删除"]);
     expect(element.textContent).toContain("指标由后台按计划自动采集");
   });
 

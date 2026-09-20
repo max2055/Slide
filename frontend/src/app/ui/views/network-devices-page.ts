@@ -1,4 +1,4 @@
-import "../components/semantic-metrics.js";
+import "../components/resource-metrics-table.js";
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { authFetch } from "../../../api/index.js";
@@ -337,14 +337,14 @@ export class NetworkDevicesPage extends LitElement {
 
   private columns() {
     return [
-      { key: "device", label: "设备" }, { key: "host", label: "主机" }, { key: "site", label: "站点" },
-      { key: "status", label: "状态", textAlign: "center" }, { key: "collection", label: "采集", textAlign: "center" },
-      { key: "lastCheck", label: "上次检查", textAlign: "center" }, { key: "actions", label: "操作", textAlign: "center" },
+      { key: "device", label: "设备" }, { key: "type", label: "设备类型" }, { key: "model", label: "型号" }, { key: "version", label: "系统版本" },
+      { key: "host", label: "管理地址" }, { key: "site", label: "站点" }, { key: "status", label: "设备状态" }, { key: "actions", label: "操作" },
     ];
   }
 
   private rows() {
     return this.filteredDevices().map((device) => ({
+      id: device.id, type: null, model: device.model, version: device.os_version,
       device: html`<button class="link-button" type="button" @click=${() => this.navigate(device.id)}>${device.label || device.name}</button>`,
       host: device.host,
       site: device.site || "--",
@@ -478,7 +478,7 @@ export class NetworkDevicesPage extends LitElement {
           <span class="resource-result-count">共 ${filtered.length} 台网络设备</span>
           ${this.activeFilterCount > 0 ? html`<span class="resource-filter-state">已启用 ${this.activeFilterCount} 项筛选</span>` : html`<span>指标由后台按计划自动采集</span>`}
         </div>
-        ${filtered.length ? html`<semantic-core-list resourceType="network_device" .resources=${filtered}></semantic-core-list><app-data-table class="network-device-table" .columns=${this.columns()} .rows=${this.rows()}></app-data-table>` : html`<app-empty-state title="暂无网络设备" description="添加网络设备以开始只读采集。" icon="globe"></app-empty-state>`}
+        ${filtered.length ? html`<resource-metrics-table resourceType="network_device" .columns=${this.columns()} .entries=${this.rows()} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this.navigate(e.detail.id)}></resource-metrics-table>` : html`<app-empty-state title="暂无网络设备" description="添加网络设备以开始只读采集。" icon="globe"></app-empty-state>`}
       </app-card>`}
     ${this.renderDialog()}
     ${this.renderDeleteDialog()}`;

@@ -106,7 +106,7 @@ export class InstanceDetailPage extends LitElement {
 
   @state() private instanceId: number | null = null;
   @state() private instance: InstanceDetail | null = null;
-  @state() private activeTab: string = "overview";
+  @state() private activeTab: string = new URL(location.href).searchParams.get('metricResource')?.startsWith('instance:') ? 'metrics' : 'overview' ;
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private metrics: MetricsData | null = null;
@@ -269,7 +269,12 @@ export class InstanceDetailPage extends LitElement {
   }
 
   private _goBack() { if (returnToDashboard()) return; const u = new URL(window.location.href); u.searchParams.set("tab", "instances-db"); u.searchParams.delete("id"); window.history.pushState({}, "", u); window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "instances-db" } })); }
-  private _setTab(tab: string) { this.activeTab = tab; this.loadTabData(); if (tab === "trend" && !this.trendLoaded) this.loadTrendData(this.trendTab); }
+  private _setTab(tab: string) {
+    const configuration = this.renderRoot.querySelector('metric-configuration') as import('../components/metric-configuration.js').MetricConfiguration | null;
+    if (configuration) { configuration.confirmDiscard(() => this._applyTab(tab)); return; }
+    this._applyTab(tab);
+  }
+  private _applyTab(tab: string) { this.activeTab = tab; this.loadTabData(); if (tab === "trend" && !this.trendLoaded) this.loadTrendData(this.trendTab); }
   private _toggleAutoRefresh() { this.autoRefresh = !this.autoRefresh; this.startAutoRefresh(); }
   private async _manualRefresh() { await this.refreshCurrentTab(); }
   private async _loadTopSqlData() {
@@ -389,9 +394,9 @@ export class InstanceDetailPage extends LitElement {
 
 
         <div class="tabs">
-          ${["overview","collection","metrics","topsql","trend","health","sessions","capacity","schema","indexes","sqlaudit","logs","qan","diagnosis"].map(t => html`
-            <button class="tab ${this.activeTab === t ? "active" : ""}" @click=${() => this._setTab(t)}>
-              ${({ overview:"概览", collection:"采集配置", metrics:"实时监控", topsql:"慢查询", trend:"趋势", health:"健康评分", sessions:"会话", capacity:"容量", schema:"表结构", indexes:"索引", sqlaudit:"SQL 审核", logs:"日志", qan:"查询分析", diagnosis:"AI 诊断" } as Record<string,string>)[t]}
+          ${["overview","collection","metrics","topsql","health","sessions","capacity","schema","indexes","sqlaudit","logs","qan","diagnosis"].map(t => html`
+            <button class="tab ${(this.activeTab === t || t === "metrics" && this.activeTab === "trend") ? "active" : ""}" @click=${() => this._setTab(t)}>
+              ${({ overview:"概览", collection:"采集配置", metrics:"指标与趋势", topsql:"慢查询", trend:"趋势", health:"健康评分", sessions:"会话", capacity:"容量", schema:"表结构", indexes:"索引", sqlaudit:"SQL 审核", logs:"日志", qan:"查询分析", diagnosis:"AI 诊断" } as Record<string,string>)[t]}
               ${t === "topsql" && this.slowQueries.length > 0 ? html`<span class="tab-badge">${this.slowQueries.length}</span>` : ""}
               ${t === "sessions" && this.sessions.length > 0 ? html`<span class="tab-badge">${this.sessions.length}</span>` : ""}
             </button>
@@ -444,8 +449,8 @@ export class InstanceDetailPage extends LitElement {
   private _renderTabContent() {
     if (this.activeTab === "collection") return html`<metric-configuration resourceType="instance" .resourceId=${this.instanceId}></metric-configuration>`;
     switch (this.activeTab) {
-      case "overview": return html`<semantic-metrics resourceType="instance" .resourceId=${this.instanceId}></semantic-metrics><details><summary>旧版概览（兼容口径）</summary><instance-overview-tab .instance=${this.instance} .metrics=${this.metrics} .metricRegistry=${this._filteredRegistry} .overviewHistory=${this.overviewHistory} .metricsHistory=${this.metricsHistory}></instance-overview-tab></details>`;
-      case "metrics": return html`<semantic-metrics resourceType="instance" .resourceId=${this.instanceId}></semantic-metrics>`;
+      case "overview": return html`<p>概览数据来自兼容采集；标准指标及质量请查看“指标与趋势”。</p><instance-overview-tab .instance=${this.instance} .metrics=${this.metrics} .metricRegistry=${this._filteredRegistry} .overviewHistory=${this.overviewHistory} .metricsHistory=${this.metricsHistory}></instance-overview-tab>`;
+      case "metrics":
       case "trend": return html`<semantic-metrics resourceType="instance" .resourceId=${this.instanceId}></semantic-metrics><details><summary>旧版趋势（兼容口径）</summary><instance-trend-chart .trendData=${this.trendData} .loading=${this.trendLoading} .activePeriod=${this.trendTab} .metricRegistry=${this._filteredRegistry} @period-change=${this._onPeriodChange}></instance-trend-chart></details>`;
       case "health": return html`<health-score-tab .instanceId=${this.instanceId}></health-score-tab>`;
       case "topsql": return this._renderTopSQL();
@@ -457,7 +462,7 @@ export class InstanceDetailPage extends LitElement {
       case "logs": return html`<database-log-tab .instanceId=${this.instanceId}></database-log-tab>`;
       case "qan": return html`<query-analysis-tab .instanceId=${this.instanceId}></query-analysis-tab>`;
       case "diagnosis": return this._renderDiagnosisHistory();
-      default: return html`<details><summary>旧版概览（兼容口径）</summary><instance-overview-tab .instance=${this.instance} .metrics=${this.metrics} .metricRegistry=${this._filteredRegistry} .overviewHistory=${this.overviewHistory} .metricsHistory=${this.metricsHistory}></instance-overview-tab></details>`;
+      default: return html`<details><summary>旧版概览（兼容口径）</summary><instance-overview-tab .instance=${this.instance} .metrics=${this.metrics} .metricRegistry=${this._filteredRegistry} .overviewHistory=${this.overviewHistory} .metricsHistory=${this.metricsHistory}></instance-overview-tab>`;
     }
   }
 

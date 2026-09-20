@@ -30,11 +30,6 @@ for (const width of [390, 1280]) {
       </body></html>` }));
     await page.goto('/network-schedule-fixture');
     await expect(page.getByRole('heading', { name: '测试交换机' })).toBeVisible();
-    await expect(page.getByText('标准指标与能力', { exact: true })).toBeVisible();
-    await expect(page.getByText('模板扩展指标', { exact: true })).toBeVisible();
-    await expect(page.getByText('自动采集', { exact: true })).toBeHidden();
-    await page.getByText('旧版概览（兼容口径）', { exact: true }).click();
-    await expect(page.getByText('自动采集', { exact: true })).toBeVisible();
     await expect(page.getByText('CPU 使用率', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: '配置备份', exact: true }).click();
     await expect(page.getByLabel('每日执行时间', { exact: true })).toHaveValue('00:00');

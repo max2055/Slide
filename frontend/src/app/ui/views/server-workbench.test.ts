@@ -13,11 +13,11 @@ describe("server workbench Phase 142 contract", () => {
     expect(source).not.toMatch(/value=["']Other["']/i);
   });
 
-  it("exposes quality, freshness and evidence columns in the inventory", () => {
+  it("keeps identity, OS version and connection state independent in the inventory", () => {
     const page = document.createElement("servers-page") as any;
     const columns = page._getColumns();
     expect(columns.map((column: { key: string }) => column.key)).toEqual(
-      expect.arrayContaining(["quality", "freshness"]),
+      expect.arrayContaining(["type", "version", "status"]),
     );
 
     const source = fs.readFileSync(path.resolve(__dirname, "./servers-page.ts"), "utf8");

@@ -6,6 +6,8 @@ import './app-card.js';
 import './app-data-table.js';
 import './app-empty-state.js';
 import './app-badge.js';
+import './metric-chart.js';
+import { metricName } from './resource-metric-summary.js';
 export interface MetricResult {
   definition: { id: string; category: string; meaning: string; unit: string }; state: string; capability: unknown;
   series: Array<{ dimensions: Record<string, string>; buckets: Array<{ value: { encoding: string; value?: number | string } | null;
@@ -17,10 +19,10 @@ const qualityLabels: Record<string, string> = { good: '良好', partial: '部分
 export function renderMetricValue(m: MetricResult) {
   return html`<span>${states[m.state] ?? m.state}</span>${m.series.length ? m.series.map(s => html`<div>
     ${Object.entries(s.dimensions).map(([k, v]) => `${k}=${v}`).join(' / ')}
-    ${s.buckets.map(b => html`<div title=${JSON.stringify({ definition: m.definition, ...b })}>
+    ${s.buckets.map(b => html`<div >
       <strong>${b.value && 'value' in b.value ? b.value.value : '未知'}</strong> ${b.unit}
       <div class="quality-badges">${[b.quality.status, b.freshness, b.accuracy].map(label => html`<app-badge variant=${['good', 'fresh', 'exact'].includes(label) && m.state === 'available' ? 'muted' : 'warn'}>${qualityLabels[label] ?? label}</app-badge>`)}</div>
-      <span>覆盖率 ${(b.coverage * 100).toFixed(0)}% · ${b.quality.reason}</span>
+      <span>覆盖率 ${(b.coverage * 100).toFixed(0)}%</span><details><summary>时间、质量与来源</summary><p>采集窗口 ${b.window.from} — ${b.window.to}</p><p>质量原因：${b.quality.reason}</p><pre>${JSON.stringify(b.sources, null, 2)}</pre></details>
     </div>`)}
   </div>`) : html`<span> · 暂无可用观测</span>`}`;
 }
@@ -31,12 +33,26 @@ export class SemanticMetrics extends LitElement {
   @property({ type: Number }) resourceId = 0;
   @property() from = '';
   @property() to = '';
+  @state() private selectedMetric = '';
+  @state() private hours = 1;
+  @state() private chartKeys = new Set<string>();
   @state() result: SemanticResult | null = null;
   @state() error = '';
   @state() busy = false;
   private generation = 0;
   override updated(changes: Map<string, unknown>) {
-    if (['resourceId', 'resourceType', 'from', 'to'].some(k => changes.has(k))) { this.result = null; void this.load(); }
+    if (['resourceId', 'resourceType', 'from', 'to'].some(k => changes.has(k))) {
+      this.result = null;
+      if (changes.has('resourceId') || changes.has('resourceType')) {
+        const p = new URL(location.href).searchParams;
+        if (p.get('metricResource') === `${this.resourceType}:${this.resourceId}`) {
+          this.selectedMetric = p.get('metric') ?? '';
+          const from = p.get('metricFrom'), to = p.get('metricTo');
+          if (from && to && Number.isFinite(Date.parse(from)) && Number.isFinite(Date.parse(to))) { this.from = from; this.to = to; }
+        } else this.selectedMetric = '';
+      }
+      void this.load();
+    }
   }
   override disconnectedCallback() { this.generation++; super.disconnectedCallback(); }
   async load() {
@@ -44,7 +60,7 @@ export class SemanticMetrics extends LitElement {
     this.busy = true; this.error = '';
     try {
       const response = await authFetch('/api/metrics-v2/query', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resource: { type: this.resourceType, id: this.resourceId }, view: 'all', ...(this.from && this.to ? { from: this.from, to: this.to } : {}) }) });
+        body: JSON.stringify({ resource: { type: this.resourceType, id: this.resourceId }, view: 'all', ...(this.from && this.to ? { from: this.from, to: this.to } : { from: new Date(Date.now() - this.hours * 3600000).toISOString(), to: new Date().toISOString(), bucket_ms: Math.max(60000, this.hours * 60000) }) }) });
       if (generation !== this.generation) return;
       if (!response.ok) { if ([401, 403, 404].includes(response.status)) this.result = null; throw new Error(errors(response.status)); }
       const result = await response.json();
@@ -55,15 +71,16 @@ export class SemanticMetrics extends LitElement {
   override render() {
     return html`<style>${sharedBtnStyles}
       :host { display:block; color:var(--text); } .actions { display:flex; gap:var(--space-sm); margin-block:var(--space-md); }
-      .error { color:var(--danger); } .skeleton { min-height:4rem; background:var(--border); } p,strong { overflow-wrap:anywhere; } .quality-badges { display:flex; flex-wrap:wrap; gap:var(--space-xs); } app-data-table { display:block; max-width:100%; overflow-x:auto; }
-    </style><div class="actions"><button class="btn" .disabled=${this.busy} @click=${this.load}>刷新标准指标</button>
+      .error { color:var(--danger); } .skeleton { min-height:4rem; background:var(--border); } p,strong,pre { overflow-wrap:anywhere; } pre { white-space:pre-wrap; } select { max-width:100%; color:var(--text); background:var(--bg); } .quality-badges { display:flex; flex-wrap:wrap; gap:var(--space-xs); } app-data-table { display:block; max-width:100%; overflow-x:auto; }
+    </style><div class="actions"><label>时间范围 <select aria-label="时间范围" .value=${String(this.hours)} @change=${(e: Event) => { this.hours = Number((e.target as HTMLSelectElement).value); this.from = ''; this.to = ''; void this.load(); }}><option value="1">最近 1 小时</option><option value="6">最近 6 小时</option><option value="24">最近 24 小时</option></select></label>
+      <label>指标 <select aria-label="指标" .value=${this.selectedMetric} @change=${(e: Event) => { this.selectedMetric = (e.target as HTMLSelectElement).value; }}><option value="">全部指标</option>${this.result?.metrics.map(m => html`<option value=${m.definition.id}>${metricName(m.definition.id)} · ${m.definition.id}</option>`)}</select></label><button class="btn" .disabled=${this.busy} @click=${this.load}>刷新标准指标</button>
       ${this.result ? html`<span>${this.result.window.from} — ${this.result.window.to}</span>` : nothing}</div>
       ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
       ${this.busy && !this.result ? html`<div class="skeleton" aria-label="正在读取指标"></div>` : nothing}
       ${['canonical', 'extension'].map(category => html`<app-card><span slot="header">${category === 'canonical' ? '标准指标与能力' : '模板扩展指标'}</span>
-        ${this.result?.metrics.filter(m => m.definition.category === category).length ? html`<app-data-table
+        ${this.result?.metrics.filter(m => m.definition.category === category && (!this.selectedMetric || m.definition.id === this.selectedMetric)).length ? html`<app-data-table
           .columns=${[{ key: 'metric', label: '指标与口径' }, { key: 'value', label: '观测与质量' }]}
-          .rows=${this.result.metrics.filter(m => m.definition.category === category).map(m => ({ metric: html`<strong>${m.definition.id}</strong><p>${m.definition.meaning}</p>`, value: renderMetricValue(m) }))}></app-data-table>`
+          .rows=${this.result.metrics.filter(m => m.definition.category === category && (!this.selectedMetric || m.definition.id === this.selectedMetric)).map(m => ({ metric: html`<strong>${metricName(m.definition.id)}</strong><details><summary>指标定义</summary><p>${m.definition.id}</p><p>${m.definition.meaning}</p></details>`, value: html`${renderMetricValue(m)}${m.series.map(series => html`<details @toggle=${(e: Event) => { const key = m.definition.id + JSON.stringify(series.dimensions); const next = new Set(this.chartKeys); (e.target as HTMLDetailsElement).open ? next.add(key) : next.delete(key); this.chartKeys = next; }}><summary>此维度趋势</summary>${this.chartKeys.has(m.definition.id + JSON.stringify(series.dimensions)) ? html`<metric-chart .title=${metricName(m.definition.id)} .yAxisLabel=${series.buckets[0]?.unit ?? m.definition.unit} .timeData=${series.buckets.map(b => b.window.to)} .series=${[{ name: metricName(m.definition.id), data: series.buckets.map(b => { const v = b.value?.value; const n = Number(v); return v != null && Number.isFinite(n) && Math.abs(n) <= Number.MAX_SAFE_INTEGER && b.quality.status === 'good' && b.freshness !== 'stale' ? n : null; }) }]}></metric-chart>` : nothing}<p>缺失、无效或超出安全数值精度的区间保留断点；精确值见上方。</p></details>`)}` }))}></app-data-table>`
           : html`<app-empty-state title="暂无指标证据" description="未配置或无法读取不代表无异常。"></app-empty-state>`}
       </app-card>`)}`;
   }
