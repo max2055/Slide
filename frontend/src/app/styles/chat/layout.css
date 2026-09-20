@@ -110,12 +110,16 @@
 
 /* New messages indicator - floating pill above compose */
 .chat-new-messages {
+  position: absolute;
+  bottom: var(--space-sm);
+  left: 50%;
+  transform: translateX(-50%);
   align-self: center;
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
   padding: var(--space-xs) var(--space-md);
-  margin: 8px auto;
+  margin: 0;
   font-size: var(--text-base);
   font-family: var(--font-body);
   color: var(--text);

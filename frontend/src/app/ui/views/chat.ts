@@ -1805,6 +1805,11 @@ export function renderChat(props: ChatProps) {
           <chat-history-nav .hidden=${!turns.length || props.loading || vs.searchOpen}
             .turns=${turns} .sessionKey=${props.sessionKey} .stream=${props.stream ?? ""} .onNavigate=${navigate}>
           </chat-history-nav>
+          ${props.showNewMessages || vs.historyReading
+            ? html`<button class="btn chat-new-messages" type="button" @click=${returnToLatest}>
+                ${icons['arrow-down']} 回到最新
+              </button>`
+            : nothing}
         </div>
 
         ${sidebarOpen
@@ -1874,13 +1879,6 @@ export function renderChat(props: ChatProps) {
       ${renderFallbackIndicator(props.fallbackStatus)}
       ${renderCompactionIndicator(props.compactionStatus)}
       ${renderContextNotice(activeSession, props.sessions?.defaults?.contextTokens ?? null)}
-      ${props.showNewMessages || vs.historyReading
-        ? html`
-            <button class="btn chat-new-messages" type="button" @click=${returnToLatest}>
-              ${icons['arrow-down']} 回到最新
-            </button>
-          `
-        : nothing}
 
       <!-- Input bar -->
       <div class="agent-chat__input">
