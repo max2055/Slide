@@ -92,12 +92,8 @@ export class NetworkDevicesPage extends LitElement {
   }
 
   private filteredDevices(): NetworkDevice[] {
-    const query = this.search.trim().toLowerCase();
     return this.devices.filter((device) => {
-      const matchesQuery = !query || [device.name, device.label, device.host, device.site, device.model]
-        .some((value) => String(value ?? "").toLowerCase().includes(query));
-      return matchesQuery
-        && (this.siteFilter === "all" || (device.site ?? "") === this.siteFilter)
+      return (this.siteFilter === "all" || (device.site ?? "") === this.siteFilter)
         && (this.statusFilter === "all" || device.status === this.statusFilter);
     });
   }
@@ -345,6 +341,7 @@ export class NetworkDevicesPage extends LitElement {
   private rows() {
     return this.filteredDevices().map((device) => ({
       id: device.id, type: null, model: device.model, version: device.os_version,
+      searchValues: [device.name, device.label, device.host, device.site, device.status, this.statusLabel(device.status)],
       device: html`<button class="link-button" type="button" @click=${() => this.navigate(device.id)}>${device.label || device.name}</button>`,
       host: device.host,
       site: device.site || "--",
@@ -464,7 +461,7 @@ export class NetworkDevicesPage extends LitElement {
         <div class="resource-toolbar">
           <div class="resource-search">
             <span class="search-icon">${icons.search}</span>
-            <input class="resource-search-input" aria-label="搜索网络设备" placeholder="搜索名称、主机、站点" .value=${this.search} @input=${(e: Event) => (this.search = (e.target as HTMLInputElement).value)}>
+            <input class="resource-search-input" aria-label="搜索网络设备" placeholder="搜索名称、主机、站点、类型、型号、版本、状态（空格组合）" .value=${this.search} @input=${(e: Event) => (this.search = (e.target as HTMLInputElement).value)}>
           </div>
           <select class="resource-filter" aria-label="站点筛选" .value=${this.siteFilter} @change=${(e: Event) => (this.siteFilter = (e.target as HTMLSelectElement).value)}><option value="all">全部站点</option>${sites.map((site) => html`<option value=${site}>${site}</option>`)}</select>
           <select class="resource-filter" aria-label="状态筛选" .value=${this.statusFilter} @change=${(e: Event) => (this.statusFilter = (e.target as HTMLSelectElement).value)}><option value="all">全部状态</option><option value="online">在线</option><option value="offline">离线</option><option value="unreachable">不可达</option><option value="error">异常</option></select>
@@ -478,7 +475,7 @@ export class NetworkDevicesPage extends LitElement {
           <span class="resource-result-count">共 ${filtered.length} 台网络设备</span>
           ${this.activeFilterCount > 0 ? html`<span class="resource-filter-state">已启用 ${this.activeFilterCount} 项筛选</span>` : html`<span>指标由后台按计划自动采集</span>`}
         </div>
-        ${filtered.length ? html`<resource-metrics-table resourceType="network_device" .columns=${this.columns()} .entries=${this.rows()} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this.navigate(e.detail.id)}></resource-metrics-table>` : html`<app-empty-state title="暂无网络设备" description="添加网络设备以开始只读采集。" icon="globe"></app-empty-state>`}
+        ${filtered.length ? html`<resource-metrics-table resourceType="network_device" .search=${this.search} .columns=${this.columns()} .entries=${this.rows()} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this.navigate(e.detail.id)}></resource-metrics-table>` : html`<app-empty-state title="暂无网络设备" description="添加网络设备以开始只读采集。" icon="globe"></app-empty-state>`}
       </app-card>`}
     ${this.renderDialog()}
     ${this.renderDeleteDialog()}`;

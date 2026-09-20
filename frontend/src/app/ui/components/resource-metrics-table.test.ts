@@ -46,8 +46,8 @@ it('keeps failures visible, clears revoked values and leaves health untouched', 
 it('unknown type and collection filters cover all pages, including failed rows', async () => {
   authFetch.mockImplementation(async (url: string, init: any) => url.endsWith('/attempts') ? response([]) : JSON.parse(init.body).resource.id === 24 ? response({}, 503) : response(sample()));
   const el = await mount(25); await vi.waitFor(() => expect(el.pending).toBe(false));
-  el.collection = 'query_failed'; await el.load(); expect(el.filtered.map((r: any) => r.id)).toEqual([24]);
-  el.changeFilter('type', '未知'); await vi.waitFor(() => expect(el.pending).toBe(false)); expect(el.filtered.map((r: any) => r.id)).toEqual([24]);
+  el.search = '指标加载失败'; await el.updateComplete; await vi.waitFor(() => expect(el.pending).toBe(false)); expect(el.filtered.map((r: any) => r.id)).toEqual([24]);
+  el.search = '未知 指标加载失败'; await el.updateComplete; await vi.waitFor(() => expect(el.pending).toBe(false)); expect(el.filtered.map((r: any) => r.id)).toEqual([24]);
 });
 it('success-time transport errors do not erase successful metric evidence', async () => {
   authFetch.mockImplementation(async (url: string) => { if (url.endsWith('/attempts')) throw new Error('network'); return response(sample()); });
@@ -59,4 +59,20 @@ it('disk maximum requires complete matching dimensions and sample windows', () =
   const size = structuredClone(used); size.definition.id = 'host.filesystem.size_bytes'; size.series[0].buckets[0].value.value = 100; data.metrics.push(size);
   expect(diskSummary(data)).toContain('最高 0.0%');
   size.series[0].buckets[0].window.to = '2026-09-20T00:02:00Z'; expect(diskSummary(data)).toContain('缺少同窗口完整容量');
+});
+
+it('combines search terms across metadata and ignores obsolete saved filters', async () => {
+  sessionStorage.setItem('resource-list:instance', JSON.stringify({ filters: { type: 'PostgreSQL' }, collection: 'disabled', hiddenColumns: ['version'] }));
+  authFetch.mockResolvedValue(response(sample()));
+  const el = await mount(25);
+  el.search = 'mysql 8'; await el.updateComplete;
+  expect(el.filtered).toHaveLength(13);
+  expect(el.hiddenColumns).toEqual(['version']);
+  expect(el.shadowRoot.querySelectorAll('select')).toHaveLength(0);
+  el.search = '未知'; await el.updateComplete;
+  expect(el.filtered).toHaveLength(12);
+  el.search = 'unknown-no-match'; await el.updateComplete;
+  expect(el.filtered).toHaveLength(0);
+  el.page = 2; el.search = ''; await el.updateComplete;
+  expect(el.page).toBe(1);
 });

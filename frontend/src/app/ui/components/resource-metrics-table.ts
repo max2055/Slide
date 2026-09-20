@@ -6,18 +6,19 @@ import { collectionLabels, collectionState, metricSummary, diskSummary, type Met
 import type { SemanticResult } from './semantic-metrics.js';
 import type { Column } from './app-data-table.js';
 import './app-data-table.js';
-import './app-form-field.js';
+import './app-dialog.js';
 import './app-empty-state.js';
 import './app-badge.js';
-export interface ResourceEntry { id: number; type?: string | null; version?: string | null; model?: string | null; [key: string]: unknown }
+export interface ResourceEntry { id: number; type?: string | null; version?: string | null; model?: string | null; searchValues?: unknown[]; [key: string]: unknown }
 const unknown = (value: unknown) => value == null || value === '' ? '未知' : String(value);
 @customElement('resource-metrics-table')
 export class ResourceMetricsTable extends LitElement {
   @property() resourceType = 'instance';
   @property({ attribute: false }) entries: ResourceEntry[] = [];
   @property({ attribute: false }) columns: Column[] = [];
-  @state() private filters: Record<string, string> = { type: '', version: '', model: '' };
-  @state() private collection = '';
+  @property() search = '';
+  @state() private columnsOpen = false;
+  private previousSearch = '';
   @state() private page = 1;
   @state() private rows = new Map<number, MetricRow>();
   @state() private pending = false;
@@ -30,27 +31,45 @@ export class ResourceMetricsTable extends LitElement {
     this.restoredType = this.resourceType;
     try {
       const saved = JSON.parse(sessionStorage.getItem(`resource-list:${this.resourceType}`) ?? 'null');
-      if (saved) { this.filters = saved.filters; this.collection = saved.collection; this.page = Math.max(1, Number(saved.page) || 1); this.hiddenColumns = saved.hiddenColumns ?? []; }
+      if (saved) { this.page = Math.max(1, Number(saved.page) || 1); this.hiddenColumns = saved.hiddenColumns ?? []; }
     } catch { /* Storage may be unavailable; navigation still works. */ }
   }
   @state() private hiddenColumns: string[] = [];
   override updated() {
     this.restorePreferences();
-    try { sessionStorage.setItem(`resource-list:${this.resourceType}`, JSON.stringify({ filters: this.filters, collection: this.collection, page: this.page, hiddenColumns: this.hiddenColumns })); } catch { /* Optional preference storage. */ }
+    try { sessionStorage.setItem(`resource-list:${this.resourceType}`, JSON.stringify({ page: this.page, hiddenColumns: this.hiddenColumns })); } catch { /* Optional preference storage. */ }
     const identity = `${this.resourceType}:${this.entries.map(e => [e.id, e.type, e.version, e.model].join(':')).join(',')}`;
-    if (identity !== this.identity) { this.identity = identity; this.rows = new Map(); void this.load(); }
+    const entriesChanged = identity !== this.identity;
+    const searchChanged = this.search !== this.previousSearch;
+    this.previousSearch = this.search;
+    if (searchChanged) this.page = 1;
+    if (entriesChanged) { this.identity = identity; this.rows = new Map(); }
+    if (entriesChanged || searchChanged) void this.load();
   }
   override disconnectedCallback() { this.generation++; super.disconnectedCallback(); }
-  private get candidates() { return this.entries.filter(e => Object.entries(this.filters).every(([k,v]) => !v || unknown(e[k]) === v)); }
-  private get filtered() { return this.candidates.filter(e => !this.collection || this.rows.get(e.id)?.state === this.collection); }
-  private get visible() { const filtered = this.filtered; const page = Math.min(this.page, Math.max(1, Math.ceil(filtered.length / this.pageSize))); return filtered.slice((page - 1) * this.pageSize, page * this.pageSize); }
-  private changeFilter(key: string, value: string) {
-    this.filters = { ...this.filters, [key]: value }; this.page = 1; void this.load();
+  private get terms() { return this.search.trim().toLowerCase().split(/\s+/).filter(Boolean); }
+  private isCollectionTerm(term: string) {
+    return Object.entries(collectionLabels).some(([key, label]) => key !== 'loading' && (label.toLowerCase().includes(term) || key.includes(term)));
   }
+  private matchesEntry(entry: ResourceEntry, term: string) {
+    return [unknown(entry.type), unknown(entry.version), ...(this.resourceType === 'network_device' ? [unknown(entry.model)] : []), ...(entry.searchValues ?? [])]
+      .some(value => String(value ?? '').toLowerCase().includes(term));
+  }
+  private get searchesCollection() { return this.terms.some(term => this.isCollectionTerm(term)); }
+  private get candidates() {
+    return this.entries.filter(entry => this.terms.every(term => this.matchesEntry(entry, term) || this.isCollectionTerm(term)));
+  }
+  private get filtered() {
+    return this.candidates.filter(entry => this.terms.every(term => {
+      const state = this.rows.get(entry.id)?.state;
+      return this.matchesEntry(entry, term) || Boolean(state && [state, collectionLabels[state]].some(value => value?.toLowerCase().includes(term)));
+    }));
+  }
+  private get visible() { const filtered = this.filtered; const page = Math.min(this.page, Math.max(1, Math.ceil(filtered.length / this.pageSize))); return filtered.slice((page - 1) * this.pageSize, page * this.pageSize); }
   async load(force = false) {
     const generation = ++this.generation;
     const type = this.resourceType;
-    const targets = this.collection ? this.candidates : this.visible;
+    const targets = this.searchesCollection ? this.candidates : this.visible;
     this.page = Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize)));
     const queue = targets.filter(e => force || !this.rows.has(e.id));
     this.pending = queue.length > 0;
@@ -106,18 +125,17 @@ export class ResourceMetricsTable extends LitElement {
           ${row && ['query_failed', 'forbidden', 'unavailable'].includes(row.state) ? html`<button class="btn-ghost" @click=${() => { this.rows.delete(entry.id); void this.load(); }}>重试</button>` : nothing}` };
     });
     return html`<style>${sharedBtnStyles}
-      :host { display:block; min-width:0; max-width:100%; color:var(--text); } .filters,.pages { display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center; margin-block:var(--space-md); }
-      .scroll { max-width:100%; overflow:auto; } app-data-table { min-width:65rem; } .actions { display:flex; gap:var(--space-xs); flex-wrap:wrap; } details label { display:block; } .link-button { color:var(--accent); background:none; border:none; cursor:pointer; font:inherit; } small { display:block; color:var(--muted); } .btn-ghost { text-align:left; white-space:normal; overflow-wrap:anywhere; } select { max-width:15rem; color:var(--text); background:var(--bg); padding:var(--space-sm); border:1px solid var(--border); border-radius:var(--radius-sm); } :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-    </style><div class="filters">
-      ${['type', ...(this.resourceType === 'network_device' ? ['model'] : []), 'version'].map(key => html`<app-form-field label=${({ type: '类型', model: '型号', version: '版本' }[key])!}><select aria-label=${({ type: '类型', model: '型号', version: '版本' }[key])!} .value=${this.filters[key]} @change=${(e: Event) => this.changeFilter(key, (e.target as HTMLSelectElement).value)}><option value="">全部</option>
-        ${[...new Set(this.entries.filter(e => key !== 'version' || !this.filters.type || unknown(e.type) === this.filters.type).map(e => unknown(e[key])))].sort().map(v => html`<option value=${v}>${v}</option>`)}</select></app-form-field>`)}
-      <app-form-field label="采集状态"><select aria-label="采集状态" .value=${this.collection} @change=${(e: Event) => { this.collection = (e.target as HTMLSelectElement).value; this.page = 1; void this.load(); }}><option value="">全部</option>${Object.entries(collectionLabels).filter(([k]) => k !== 'loading').map(([k,v]) => html`<option value=${k}>${v}</option>`)}</select></app-form-field>
-      <button class="btn" @click=${() => { this.filters = { type: '', model: '', version: '' }; this.collection = ''; this.page = 1; void this.load(); }}>清除筛选</button>
+      :host { display:block; min-width:0; max-width:100%; color:var(--text); } .toolbar,.pages { display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center; margin-block:var(--space-md); }
+      .scroll { max-width:100%; overflow:auto; } app-data-table { min-width:65rem; } .actions { display:flex; gap:var(--space-xs); flex-wrap:wrap; } .column-choice { display:flex; align-items:center; gap:var(--space-sm); padding-block:var(--space-xs); } .link-button { color:var(--accent); background:none; border:none; cursor:pointer; font:inherit; } small { display:block; color:var(--muted); } .btn-ghost { text-align:left; white-space:normal; overflow-wrap:anywhere; } .btn-sm { gap:var(--space-xs); padding:var(--space-xs) var(--space-sm); } :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    </style><div class="toolbar">
       <button class="btn" .disabled=${this.pending} @click=${() => this.load(true)}>刷新指标</button>
-      <details><summary>列设置</summary>${columns.filter(c => !['actions', 'name', 'host', 'device'].includes(c.key)).map(c => html`<label><input type="checkbox" .checked=${!this.hiddenColumns.includes(c.key)} @change=${(e: Event) => { this.hiddenColumns = (e.target as HTMLInputElement).checked ? this.hiddenColumns.filter(k => k !== c.key) : [...this.hiddenColumns, c.key]; }}>${c.label}</label>`)}<button class="btn" @click=${() => { this.hiddenColumns = []; }}>恢复默认</button></details>
+      <button class="btn" aria-haspopup="dialog" @click=${() => { this.columnsOpen = true; }}>列设置</button>
     </div>
-    ${this.pending && this.collection ? html`<p role="status">正在检查全部筛选资源的采集状态，结果尚未完整。</p>` : nothing}
-    ${this.filters.version && !this.entries.some(e => (!this.filters.type || unknown(e.type) === this.filters.type) && unknown(e.version) === this.filters.version) ? html`<p role="status">当前类型下没有所选版本，请清除版本筛选。</p>` : nothing}
+    <app-dialog .open=${this.columnsOpen} size="sm" title="列设置" @app-dialog-close=${() => { this.columnsOpen = false; }}>
+      ${columns.filter(c => !['actions', 'name', 'host', 'device'].includes(c.key)).map(c => html`<label class="column-choice"><input type="checkbox" .checked=${!this.hiddenColumns.includes(c.key)} @change=${(e: Event) => { this.hiddenColumns = (e.target as HTMLInputElement).checked ? this.hiddenColumns.filter(k => k !== c.key) : [...this.hiddenColumns, c.key]; }}>${c.label}</label>`)}
+      <div slot="footer"><button class="btn" @click=${() => { this.hiddenColumns = []; }}>恢复默认</button> <button class="btn-primary" @click=${() => { this.columnsOpen = false; }}>完成</button></div>
+    </app-dialog>
+    ${this.pending && this.searchesCollection ? html`<p role="status">正在检查全部搜索资源的采集状态，结果尚未完整。</p>` : nothing}
     <div class="scroll" tabindex="0" aria-label="资源表格，可横向滚动"><app-data-table .striped=${false} .dense=${true} .columns=${columns.filter(c => !this.hiddenColumns.includes(c.key))} .rows=${rows} emptyMessage="没有符合条件的资源"></app-data-table></div>
     <div class="pages"><span>筛选结果 ${this.filtered.length} / ${this.entries.length}</span><button class="btn" .disabled=${this.page <= 1} @click=${() => { this.page--; void this.load(); }}>上一页</button><span>第 ${Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize)))} 页</span><button class="btn" .disabled=${this.page * this.pageSize >= this.filtered.length} @click=${() => { this.page++; void this.load(); }}>下一页</button></div>`;
   }

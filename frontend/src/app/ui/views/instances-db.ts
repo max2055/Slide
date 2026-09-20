@@ -573,11 +573,7 @@ export class InstancesPage extends LitElement {
         (this.filter === "warning" && status === "warning") ||
         (this.filter === "critical" && status === "critical") ||
         (this.filter === "unknown" && status === "unknown");
-      const matchesSearch = !this.searchQuery ||
-        inst.name.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
-        inst.host.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
-        inst.db_type.toLowerCase().includes(this.searchQuery.toLowerCase());
-      return matchesFilter && matchesSearch;
+      return matchesFilter;
     });
     if (!this.sortKey) return filtered;
     return [...filtered].sort((a: any, b: any) => {
@@ -646,7 +642,7 @@ export class InstancesPage extends LitElement {
               <span class="search-icon"><span style="width:14px;height:14px;display:flex;">${icons['search']}</span></span>
               <input
                 class="search-input"
-                placeholder="搜索名称、主机、类型..."
+                placeholder="搜索名称、主机、类型、版本、状态（空格组合）"
                 name="search-instances"
                 autocomplete="off"
                 .value=${this.searchQuery}
@@ -691,13 +687,14 @@ export class InstancesPage extends LitElement {
               : nothing}
           </div>
 
-          <resource-metrics-table resourceType="instance"
+          <resource-metrics-table resourceType="instance" .search=${this.searchQuery}
             .columns=${[{ key: 'name', label: '实例' }, { key: 'type', label: '数据库类型' }, { key: 'version', label: '数据库版本' }, { key: 'address', label: '连接地址' }, { key: 'health', label: '健康' }, { key: 'capacity', label: '已用空间（兼容数据）' }, { key: 'actions', label: '操作' }]}
             .entries=${filtered.map(inst => ({ id: inst.id, type: inst.db_type, version: inst.db_version,
+              searchValues: [inst.name, inst.host, inst.health_status, ({ healthy: "健康", warning: "警告", critical: "异常", error: "异常" } as Record<string, string>)[inst.health_status] ?? "未知"],
               name: html`<button class="btn-ghost" @click=${() => this._viewDetail(inst)}>${inst.name}</button>`,
               address: `${inst.host}:${inst.port}`, health: this._renderStatusBadge(inst.health_status),
               capacity: inst.data_size_gb == null ? '未知' : `${inst.data_size_gb} GB · 旧版数据，采集时间未知`,
-              actions: html`<div class="actions"><button class="btn" @click=${() => this._editInstance(inst)}>编辑</button><button class="btn" @click=${() => this._testConnection(inst)}>测试</button><button class="btn-ghost" @click=${() => this._deleteInstance(inst)}>删除</button></div>`
+              actions: html`<div class="actions"><button class="btn-sm" @click=${() => this._viewDetail(inst)}>详情</button><button class="btn-sm" @click=${() => this._editInstance(inst)}>编辑</button><button class="btn-sm" @click=${() => this._testConnection(inst)}>测试</button><button class="btn-sm danger" @click=${() => this._deleteInstance(inst)}>删除</button></div>`
             }))}
             @resource-metric-open=${(e: CustomEvent<{ id: number }>) => { const inst = this.instances.find(i => i.id === e.detail.id); if (inst) this._viewDetail(inst); }}
           ></resource-metrics-table>
