@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { NetworkDeviceCollector, type NetworkDeviceCollectionStore } from './network-device-collector.js';
+import { MysqlNetworkDeviceCollectionStore, NetworkDeviceCollector, type NetworkDeviceCollectionStore } from './network-device-collector.js';
 import type { HuaweiInterfaceCollection, HuaweiMetricObservation, HuaweiProbeResult } from './huawei-adapter.js';
 import type { SnmpV3Config } from './snmp-types.js';
 import { metricRegistry } from '../metric-registry.js';
@@ -267,4 +267,26 @@ it('counts a failed probe once per tick even when metrics are also due', async (
   const collector = new NetworkDeviceCollector(persistence, snmp as any, { scheduleStore: { list: async () => [], record: vi.fn() } });
   await collector.tick();
   expect(snmp.probe).toHaveBeenCalledTimes(1);
+});
+
+describe('MysqlNetworkDeviceCollectionStore legacy write boundary', () => {
+  it('does not insert old observations while source cutover is pending', async () => {
+    const execute = vi.fn(async (sql: string) => {
+      if (sql.includes('metric_v2_policy_lock')) return [[{ id: 1 }], []];
+      if (sql.includes('FROM metric_v2_rollout')) return [[{
+        source: 'v2', read_mode: 'v2', published_revision: 2, applied_revision: null,
+      }], []];
+      throw new Error(`unexpected legacy write: ${sql}`);
+    });
+    const connection = { execute, beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() };
+    const persistence = new MysqlNetworkDeviceCollectionStore(() => ({
+      execute,
+      getConnection: async () => connection,
+    }) as never);
+
+    await expect(persistence.insertObservations(7, [observation('device_cpu_percent', 42)]))
+      .resolves.toBeUndefined();
+    expect(execute.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO network_device_observations'))).toBe(false);
+    expect(connection.commit).toHaveBeenCalledOnce();
+  });
 });
