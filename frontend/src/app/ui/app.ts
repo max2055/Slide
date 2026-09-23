@@ -418,9 +418,7 @@ export class SlideApp extends LitElement {
     // DirectAdapter authenticates with the persisted JWT. The legacy control
     // session token is no longer issued and must not block refresh recovery.
     const hasJwt = Boolean(apiClient.getToken());
-    if (hasJwt) {
-      this.connect();
-    } else {
+    if (!hasJwt) {
       localStorage.removeItem('slide.control.session_token.v1');
     }
 
