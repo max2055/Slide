@@ -368,7 +368,7 @@ describe('DirectAdapter', () => {
       await new Promise<void>((resolve, reject) => { client.once('open', resolve); client.once('error', reject); });
       const socket = [...server.clients][0] as WebSocket;
       const handle = (value: unknown) => Promise.resolve(socket.listeners('message')[0].call(socket, Buffer.from(JSON.stringify(value))));
-      return { client, socket, handle, authenticateAccessToken };
+      return { adapter, client, socket, handle, authenticateAccessToken };
     }
 
     it.each([null, [], 'text', 1, true, {}, { type: 42 }])('rejects invalid message envelopes: %j', async value => {
@@ -421,12 +421,22 @@ describe('DirectAdapter', () => {
       const log = vi.spyOn(console, 'log').mockImplementation(() => {});
       const error = vi.spyOn(console, 'error').mockImplementation(() => {});
       const record = vi.spyOn(platformLogs, 'record');
-      const { client } = await connect();
+      const { adapter, client } = await connect();
       const opened = record.mock.calls.find(([entry]) => entry.eventType === 'connection.opened')![0];
+      const server = (adapter as any).wsServer;
+      const healthy = new WebSocket(`ws://127.0.0.1:${server.address().port}`);
+      clients.push(healthy);
+      await new Promise<void>((resolve, reject) => { healthy.once('open', resolve); healthy.once('error', reject); });
+      healthy.send(JSON.stringify({ type: 'auth', token: 'healthy-token' }));
+      await expect(new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('healthy peer authentication timed out')), 2_000);
+        healthy.once('message', raw => { clearTimeout(timeout); resolve(JSON.parse(raw.toString())); });
+      })).resolves.toEqual({ type: 'auth_ok' });
       const closed = new Promise<number>(resolve => client.once('close', resolve));
       // Raw bytes deliberately bypass WS framing; strict ws validation must still reject them.
       (client as any)._socket.write(Buffer.from([0x16, 0x03, 0x01, 0x00, 0x00]));
       expect(await closed).toBe(1002);
+      expect(healthy.readyState).toBe(WebSocket.OPEN);
       expect(record).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'connection.error', correlationId: opened.correlationId, errorCode: 'WS_ERR_UNEXPECTED_RSV_2_3' }));
       const connected = JSON.parse(log.mock.calls.find(([label]) => label === '[DirectAdapter] WS client connected')![1] as string);
       expect(connected).toMatchObject({ connectionId: opened.correlationId, remotePort: expect.any(Number), localPort: expect.any(Number) });

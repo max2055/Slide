@@ -7,8 +7,14 @@ Slide's production topology requires Linux and a dedicated rootless Docker daemo
 1. Create a dedicated non-root service account and enable rootless Docker for it.
 2. Create `SANDBOX_WORKSPACE_ROOT` outside the repository, owned by that account and mode `0700`.
 3. Copy `deploy/.env.production.example` to an operator-managed secret location and replace every placeholder. Keep JWT, encryption, approval HMAC, controller, database, and initial-admin secrets independent.
-4. Put a TLS reverse proxy or load balancer in front of the loopback-bound frontend port.
+4. Set `SLIDE_PUBLIC_ORIGIN` to the HTTPS DNS name covered by the trusted certificate and set `SLIDE_TLS_CERT` / `SLIDE_TLS_KEY` to operator-managed PEM files. Do not use an IP URL unless the certificate contains that IP SAN.
 5. Pre-pull every digest-pinned image listed in `SANDBOX_IMAGES` with the rootless daemon.
+
+The Compose TLS edge publishes 443 and an HTTP redirect on 80. The application
+frontend remains bound to loopback on 8080 only for local diagnostics; clients
+must use the HTTPS origin. Both proxy hops preserve `Host`, append
+`X-Forwarded-For`, set the real external `X-Forwarded-Proto`, and carry the
+HTTP/1.1 WebSocket upgrade for `/agent-ws`.
 
 Do not mount the repository, the rootful `/var/run/docker.sock`, or arbitrary host directories into the API or sandbox jobs.
 
@@ -44,6 +50,18 @@ pnpm security:scan
 pnpm security:test
 pnpm security:deployment
 docker compose --env-file /secure/path/slide.env -f compose.production.yaml config
+```
+
+Run the production-equivalent browser qualification from a Microsoft Edge host
+that trusts the deployed certificate. This performs at least 30 history/new
+session send cycles and a five-second offline durable-send recovery; it rejects
+certificate errors and non-same-origin WebSockets:
+
+```bash
+SLIDE_EDGE_BASE_URL=https://slide.example.com \
+SLIDE_EDGE_USERNAME='<operator test user>' \
+SLIDE_EDGE_PASSWORD='<operator-managed secret>' \
+pnpm --filter slide-frontend test:edge-recovery
 ```
 
 After the stack is healthy, run the Linux/rootless sandbox qualification from inside the controller:

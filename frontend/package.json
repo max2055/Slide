@@ -13,6 +13,7 @@
     "smoke": "npx playwright test",
     "smoke:headed": "npx playwright test --headed",
     "smoke:ui": "npx playwright test --ui",
+    "test:edge-recovery": "playwright test --config playwright.edge.config.ts",
     "test:browser": "playwright test --config playwright.audit.config.ts"
   },
   "dependencies": {

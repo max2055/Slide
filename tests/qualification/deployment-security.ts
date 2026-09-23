@@ -32,7 +32,7 @@ function volumeSources(service: Record<string, any>): string[] {
   return list(service.volumes).map((volume) => volume.split(':', 1)[0]);
 }
 
-for (const required of ['frontend', 'api', 'prompt-storage-init', 'sandbox-controller', 'mysql']) {
+for (const required of ['tls-edge', 'frontend', 'api', 'prompt-storage-init', 'sandbox-controller', 'mysql']) {
   requireInvariant(Boolean(services[required]), `missing service ${required}`);
 }
 
@@ -40,6 +40,7 @@ const api = services.api ?? {};
 const promptStorageInit = services['prompt-storage-init'] ?? {};
 const controller = services['sandbox-controller'] ?? {};
 const frontend = services.frontend ?? {};
+const tlsEdge = services['tls-edge'] ?? {};
 const declaredVolumes = new Set(Object.keys(compose.volumes ?? {}));
 const socketOwners = Object.entries(services)
   .filter(([, service]) => JSON.stringify((service as any).volumes ?? []).includes('docker.sock'))
@@ -49,14 +50,20 @@ requireInvariant(socketOwners.length === 1 && socketOwners[0] === 'sandbox-contr
 requireInvariant(!JSON.stringify(api).includes('docker.sock'), 'api must not reference docker.sock');
 requireInvariant(api.read_only === true, 'api root filesystem must be read-only');
 requireInvariant(controller.read_only === true, 'sandbox-controller root filesystem must be read-only');
-for (const [name, service] of [['api', api], ['sandbox-controller', controller], ['frontend', frontend]] as const) {
+for (const [name, service] of [['api', api], ['sandbox-controller', controller], ['frontend', frontend], ['tls-edge', tlsEdge]] as const) {
   requireInvariant(list(service.cap_drop).includes('ALL'), `${name} must drop all capabilities`);
   requireInvariant(list(service.security_opt).includes('no-new-privileges:true'), `${name} must set no-new-privileges`);
   requireInvariant(service.privileged !== true, `${name} must not be privileged`);
 }
 requireInvariant(!controller.ports, 'sandbox-controller must not publish a host port');
 requireInvariant(!api.ports, 'api and raw Agent WebSocket ports must remain internal');
-requireInvariant(Boolean(frontend.ports), 'frontend must be the only published service');
+requireInvariant(Boolean(frontend.ports), 'frontend must retain a loopback-only diagnostic listener');
+requireInvariant(list(frontend.ports).every((entry) => entry.includes('SLIDE_HTTP_BIND:-127.0.0.1')), 'frontend port 8080 must default to loopback');
+requireInvariant(Boolean(tlsEdge.ports), 'TLS edge must publish HTTPS and the HTTP redirect');
+requireInvariant(list(tlsEdge.ports).some((entry) => entry.includes('SLIDE_HTTPS_PORT:-443')), 'TLS edge must publish HTTPS');
+requireInvariant(list(tlsEdge.ports).some((entry) => entry.includes('SLIDE_HTTP_REDIRECT_PORT:-80')), 'TLS edge must publish the HTTP redirect');
+requireInvariant(list(tlsEdge.volumes).some((entry) => entry.includes('SLIDE_TLS_CERT') && entry.endsWith(':ro')), 'TLS certificate must be an operator-managed read-only mount');
+requireInvariant(list(tlsEdge.volumes).some((entry) => entry.includes('SLIDE_TLS_KEY') && entry.endsWith(':ro')), 'TLS private key must be an operator-managed read-only mount');
 requireInvariant(String(api.user) === '10001:10001', 'api must run as the dedicated non-root UID');
 requireInvariant(String(promptStorageInit.user) === '0:0', 'prompt storage initializer must explicitly run as root');
 requireInvariant(promptStorageInit.read_only === true, 'prompt storage initializer root filesystem must be read-only');
@@ -126,6 +133,22 @@ try {
 } catch {
   failures.push('deployment SANDBOX_IMAGES must be valid JSON');
 }
+
+const frontendNginx = await fs.readFile(path.join(root, 'frontend/nginx.conf'), 'utf8');
+const edgeNginx = await fs.readFile(path.join(root, 'deploy/nginx-tls.conf'), 'utf8');
+for (const [name, config] of [['frontend nginx', frontendNginx], ['TLS edge nginx', edgeNginx]] as const) {
+  requireInvariant(/location = \/agent-ws/.test(config), `${name} must define the exact /agent-ws route`);
+  requireInvariant(/proxy_http_version 1\.1/.test(config), `${name} must proxy WebSocket over HTTP/1.1`);
+  requireInvariant(/proxy_set_header Upgrade \$http_upgrade/.test(config), `${name} must forward Upgrade`);
+  requireInvariant(/proxy_set_header Connection/.test(config), `${name} must forward Connection upgrade`);
+  requireInvariant(/proxy_set_header Host \$host/.test(config), `${name} must preserve Host`);
+  requireInvariant(/proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for/.test(config), `${name} must append X-Forwarded-For`);
+  requireInvariant(/proxy_set_header X-Forwarded-Proto (\$slide_forwarded_proto|https)/.test(config), `${name} must forward the external scheme`);
+  requireInvariant(/proxy_read_timeout 3600s/.test(config), `${name} must allow long-lived WebSockets`);
+}
+requireInvariant(/return 308 https:\/\/\$host\$request_uri/.test(edgeNginx), 'TLS edge HTTP listener must only redirect to HTTPS');
+requireInvariant(/ssl_certificate \/etc\/nginx\/tls\/tls\.crt/.test(edgeNginx), 'TLS edge must load the mounted certificate');
+requireInvariant(/map \$http_x_forwarded_proto \$slide_forwarded_proto/.test(frontendNginx), 'frontend nginx must preserve the trusted outer proxy scheme');
 
 const qualificationScript = await fs.readFile(path.join(root, 'scripts/qualification/run-sandbox-security.sh'), 'utf8');
 const linuxCheckIndex = qualificationScript.indexOf('uname -s');
