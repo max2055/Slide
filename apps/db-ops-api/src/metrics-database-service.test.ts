@@ -8,7 +8,7 @@ describe('MetricsDatabaseService.recordMetrics', () => {
   });
 
   it('persists omitted independently scheduled metrics as null without losing real zeroes', async () => {
-    const execute = vi.fn(async (sql: string) => {
+    const execute = vi.fn(async (sql: string, _values?: unknown[]) => {
       if (sql.includes('metric_v2_policy_lock')) return [[{ id: 1 }], []];
       if (sql.includes('FROM metric_v2_rollout')) return [[], []];
       return [{ affectedRows: 1 }, []];
@@ -28,7 +28,7 @@ describe('MetricsDatabaseService.recordMetrics', () => {
   });
 
   it('treats a pending or v2 resource as an intentional legacy skip', async () => {
-    const execute = vi.fn(async (sql: string) => {
+    const execute = vi.fn(async (sql: string, _values?: unknown[]) => {
       if (sql.includes('metric_v2_policy_lock')) return [[{ id: 1 }], []];
       if (sql.includes('FROM metric_v2_rollout')) return [[{
         source: 'v2', read_mode: 'v2', published_revision: 2, applied_revision: null,

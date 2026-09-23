@@ -10,6 +10,8 @@ import { SnmpClient } from './snmp-client.js';
 import type { SnmpConfig, SnmpV3Config } from './snmp-types.js';
 import { metricRegistry, type MetricDefinition } from '../metric-registry.js';
 import { dueStoredMetricIds, MysqlCollectionScheduleStore, type CollectionScheduleStore } from '../collection-scheduler.js';
+import type { Pool } from 'mysql2/promise';
+import { withLegacyMetricWrite } from '../metrics-v2/rollout/legacy-write-fence.js';
 
 const NETWORK_DEVICE_COLLECTION_HEARTBEAT_MS = 10_000;
 const NETWORK_DEVICE_PROVIDER_ID = 'huawei-snmp';
@@ -271,7 +273,7 @@ export class NetworkDeviceCollector {
 }
 
 export class MysqlNetworkDeviceCollectionStore implements NetworkDeviceCollectionStore {
-  constructor(private readonly poolProvider: () => SqlPool | null = () => dbConnection.getPool() as unknown as SqlPool | null) {}
+  constructor(private readonly poolProvider: () => Pool | null = () => dbConnection.getPool()) {}
 
   async getDevice(id: number): Promise<NetworkDeviceCollectionTarget | null> {
     const [rows] = await this.pool().execute<Array<any>>(
@@ -315,15 +317,15 @@ export class MysqlNetworkDeviceCollectionStore implements NetworkDeviceCollectio
       return [id, observation.metricId, dimensions ? JSON.stringify(dimensions) : null, observation.value, observation.observedAt, validUntil, observation.quality, observation.source, observation.reason ?? null];
     });
     const placeholders = rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
-    await this.pool().execute(
+    await withLegacyMetricWrite(this.pool(), { type: 'network_device', id }, connection => connection.execute(
       `INSERT INTO network_device_observations
        (device_id, metric_id, dimensions, metric_value, observed_at, valid_until, quality, source, reason)
        VALUES ${placeholders}`,
       rows.flat(),
-    );
+    ));
   }
 
-  private pool(): SqlPool {
+  private pool(): Pool {
     const pool = this.poolProvider();
     if (!pool) throw new Error('RESOURCE_STORE_UNAVAILABLE');
     return pool;

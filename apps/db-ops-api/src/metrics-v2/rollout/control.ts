@@ -23,10 +23,14 @@ function check(ok: unknown, code: string): asserts ok { if (!ok) throw new Error
 /** Internal opt-in boundary. Caller authorizes the resource; no public route or production activation. */
 export class RolloutControl {
   constructor(private readonly pool: Pool, private readonly connection?: PoolConnection, private readonly clock = () => new Date()) {}
+  private async lock(c: PoolConnection): Promise<void> {
+    const [rows] = await c.execute<RowDataPacket[]>('SELECT id FROM metric_v2_policy_lock WHERE id = 1 FOR UPDATE');
+    check(rows.length === 1, 'ROLLOUT_LOCK_UNAVAILABLE');
+  }
   private async transaction<T>(fn: (c: PoolConnection) => Promise<T>): Promise<T> {
-    if (this.connection) return fn(this.connection);
+    if (this.connection) { await this.lock(this.connection); return fn(this.connection); }
     const c = await this.pool.getConnection();
-    try { await c.beginTransaction(); const value = await fn(c); await c.commit(); return value; }
+    try { await c.beginTransaction(); await this.lock(c); const value = await fn(c); await c.commit(); return value; }
     catch (e) { await c.rollback(); throw e; } finally { c.release(); }
   }
   private async row(c: Pool | PoolConnection, series: Series, lock = false): Promise<Control> {
@@ -37,9 +41,9 @@ export class RolloutControl {
   }
   async initialize(series: Series, input: Target): Promise<void> {
     const t = targetSchema.parse(input);
-    await this.pool.execute(`INSERT INTO metric_v2_rollout
-      (series_hash, source, generation, read_mode, package_pin, published_revision, resource_type, resource_id) VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
-    [seriesHash(series), t.source, t.read, JSON.stringify(t.package), t.revision, series.resource_type, series.resource_id]);
+    await this.transaction(async c => { await c.execute(`INSERT INTO metric_v2_rollout
+        (series_hash, source, generation, read_mode, package_pin, published_revision, resource_type, resource_id) VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
+      [seriesHash(series), t.source, t.read, JSON.stringify(t.package), t.revision, series.resource_type, series.resource_id]); });
   }
   current(series: Series): Promise<Control> { return this.row(this.pool, series); }
   /** Run after observation retention. Keeps one latest value and monotonic alert state per identity. */
