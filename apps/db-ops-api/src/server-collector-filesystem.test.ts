@@ -265,7 +265,7 @@ describe('server collector Linux lifecycle', () => {
 
     expect(mocks.execCommands).toHaveBeenCalledTimes(1);
     expect(mocks.execCommands.mock.calls[0][1]).toEqual(['LC_ALL=C LANG=C uname -s']);
-    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.execute.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO server_metrics'))).toBe(false);
     expect(mocks.releaseConnection).toHaveBeenCalledWith(client);
     expect(mocks.closeConnection).not.toHaveBeenCalled();
   });

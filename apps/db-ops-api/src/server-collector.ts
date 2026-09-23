@@ -17,7 +17,7 @@ import { isFatalSshCommandError, parseFilesystemEvidence } from './linux-host-ev
 import { isSupportedServerOs, normalizeServerOs } from './server-os-profile.js';
 import { metricRegistry, type MetricDefinition as RegistryMetricDefinition } from './metric-registry.js';
 import { dueStoredMetricIds, MysqlCollectionScheduleStore, type CollectionScheduleStore } from './collection-scheduler.js';
-import { withLegacyMetricWrite } from './metrics-v2/rollout/legacy-write-fence.js';
+import { legacyMetricSourceActive, withLegacyMetricWrite } from './metrics-v2/rollout/legacy-write-fence.js';
 
 const SERVER_COLLECTION_HEARTBEAT_MS = 10_000;
 const SERVER_PROVIDER_ID = 'ssh';
@@ -181,6 +181,13 @@ class ServerCollector {
       if (!server) return failedResult(new Error('SERVER_NOT_FOUND'));
       if (requestedMetricIds?.length !== 0 && !isSupportedServerOs(server.os_type)) return failedResult(new Error('HOST_OS_UNSUPPORTED'));
       const metricIds = requestedMetricIds ?? this.getSchedulableDefinitions(server.os_type).map((definition) => definition.id);
+      if (metricIds.length > 0) {
+        const pool = dbConnection.getPool();
+        if (!pool) return failedResult(new Error('DATABASE_UNAVAILABLE'));
+        if (!await legacyMetricSourceActive(pool, { type: 'server', id: server.id })) {
+          return { success: true, metricsCount: 0, succeededMetricIds: [...metricIds], collectedAt: new Date().toISOString(), sourceFenced: true };
+        }
+      }
       this.lastProbeAttempt.set(serverId, Date.now());
       const result = await this._collectOneServer(server, metricIds);
       this.failureCounts.delete(server.id);

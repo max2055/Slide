@@ -11,7 +11,7 @@ import type { SnmpConfig, SnmpV3Config } from './snmp-types.js';
 import { metricRegistry, type MetricDefinition } from '../metric-registry.js';
 import { dueStoredMetricIds, MysqlCollectionScheduleStore, type CollectionScheduleStore } from '../collection-scheduler.js';
 import type { Pool } from 'mysql2/promise';
-import { withLegacyMetricWrite } from '../metrics-v2/rollout/legacy-write-fence.js';
+import { legacyMetricSourceActive, withLegacyMetricWrite } from '../metrics-v2/rollout/legacy-write-fence.js';
 
 const NETWORK_DEVICE_COLLECTION_HEARTBEAT_MS = 10_000;
 const NETWORK_DEVICE_PROVIDER_ID = 'huawei-snmp';
@@ -50,6 +50,7 @@ export interface NetworkDeviceCollectionStore {
   updateStatus(id: number, status: 'online' | 'error' | 'unreachable'): Promise<void>;
   upsertInterface(id: number, snapshot: HuaweiInterfaceSnapshot, observedAt: Date): Promise<void>;
   insertObservations(id: number, observations: HuaweiMetricObservation[]): Promise<void>;
+  legacySourceActive?(id: number): Promise<boolean>;
 }
 
 interface SqlPool {
@@ -186,7 +187,7 @@ export class NetworkDeviceCollector {
     } finally { this.tickInFlight = false; }
   }
 
-  async collectDevice(id: number, requestedMetricIds?: readonly string[]): Promise<{ success: boolean; succeededMetricIds?: string[]; observations?: number; interfaces?: number; error?: string }> {
+  async collectDevice(id: number, requestedMetricIds?: readonly string[]): Promise<{ success: boolean; succeededMetricIds?: string[]; observations?: number; interfaces?: number; error?: string; sourceFenced?: boolean }> {
     if (this.inFlight.has(id)) return { success: false, error: 'COLLECTION_IN_PROGRESS' };
     this.inFlight.add(id);
     try {
@@ -195,6 +196,9 @@ export class NetworkDeviceCollector {
       if (!target.collectionEnabled) return { success: false, error: 'COLLECTION_DISABLED' };
       const metricIds = requestedMetricIds ?? this.getSchedulableDefinitions().map((definition) => definition.id);
       const requested = new Set(metricIds);
+      if (requested.size > 0 && this.store.legacySourceActive && !await this.store.legacySourceActive(id)) {
+        return { success: true, succeededMetricIds: [...metricIds], observations: 0, interfaces: 0, sourceFenced: true };
+      }
       this.lastProbeAttempt.set(id, Date.now());
       let authorizedTarget: { address: string; port: number };
       try {
@@ -296,6 +300,10 @@ export class MysqlNetworkDeviceCollectionStore implements NetworkDeviceCollectio
 
   async updateStatus(id: number, status: 'online' | 'error' | 'unreachable'): Promise<void> {
     await networkDeviceDatabaseService.updateStatus(id, status);
+  }
+
+  legacySourceActive(id: number): Promise<boolean> {
+    return legacyMetricSourceActive(this.pool(), { type: 'network_device', id });
   }
 
   async upsertInterface(id: number, snapshot: HuaweiInterfaceSnapshot, observedAt: Date): Promise<void> {

@@ -3,6 +3,11 @@ import { RefSchema, type Ref } from '../policy/model.js';
 
 export type LegacyMetricWriteResult<T> = { written: true; value: T } | { written: false };
 
+/** Best-effort early gate; the final write fence remains authoritative for in-flight work. */
+export async function legacyMetricSourceActive(pool: Pick<Pool, 'getConnection'>, ref: Ref): Promise<boolean> {
+  return (await withLegacyMetricWrite(pool, ref, async () => undefined)).written;
+}
+
 /**
  * Serialize legacy metric writes with policy publication and rollout changes.
  * Unregistered resources retain legacy behavior; once any registered series is
