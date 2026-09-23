@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// These cases exercise legacy threshold/history behavior; formal source selection has its own integration coverage.
+vi.mock('../src/metrics-v2/consumers/operational.js', () => ({ evaluateOperationalRule: async () => ({ handled: false }) }));
+
 vi.mock('../src/db-connection', () => ({
   dbConnection: { getPool: () => null, isConnected: () => false },
 }));

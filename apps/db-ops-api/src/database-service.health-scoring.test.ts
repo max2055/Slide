@@ -1,6 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { databaseService } from './database-service';
 import { scoringConfigService } from './scoring-config-service';
+// Preserve the explicit legacy scoring inputs in this weighted-formula suite.
+vi.mock('./metrics-v2/consumers/operational.js', () => ({ migrateOperationalChecks: async (_id: number, checks: unknown[]) => checks }));
 afterEach(() => vi.restoreAllMocks());
 it.each([[1, 0, 0, 0, 100, 'healthy'], [.35, .35, .2, .1, 73, 'warning']])('derives overall status from the configured weighted score %j', async (a, p, c, s, score, status) => {
   vi.spyOn(databaseService as any, '_withAutoReconnect').mockImplementation(async (_id: any, fn: any) => fn({ id: 21, db_type: 'oracle', oraclePool: {} }));

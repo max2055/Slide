@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mock = vi.hoisted(() => ({ exists: vi.fn(), inventory: vi.fn(), connection: vi.fn(), instance: vi.fn(), password: vi.fn(), transport: vi.fn() }));
+const mock = vi.hoisted(() => ({ exists: vi.fn(), inventory: vi.fn(), connection: vi.fn(), instance: vi.fn(), password: vi.fn(), transport: vi.fn(), server: vi.fn(), credentials: vi.fn() }));
 vi.mock('../../db-connection.js', () => ({ dbConnection: { getPool: () => ({}) } }));
 vi.mock('../../database-service.js', () => ({ databaseService: { getConnection: mock.connection } }));
 vi.mock('../../instance-database-service.js', () => ({ instanceDatabaseService: { getInstanceById: mock.instance, getInstancePassword: mock.password } }));
-vi.mock('../../server-database-service.js', () => ({ serverDatabaseService: {} }));
+vi.mock('../../server-database-service.js', () => ({ serverDatabaseService: { getServerById: mock.server, getDecryptedCredentials: mock.credentials } }));
 vi.mock('../../ssh-session-pool.js', () => ({ default: {} }));
 vi.mock('../../network-devices/network-device-collector.js', () => ({ MysqlNetworkDeviceCollectionStore: class {}, toSnmpConfig: vi.fn() }));
 vi.mock('../../resources/resource-service.js', () => ({ MysqlResourceRelationStore: class { exists = mock.exists; } }));
@@ -52,5 +52,20 @@ describe('server-owned collector identity', () => {
     await access.resolve(access.credential_ref, access.resource, 'sql');
     mock.password.mockResolvedValue('rotated-fixture');
     await expect(access.assertCurrent!()).rejects.toThrow('permission_denied');
+  });
+});
+
+describe('host production discovery ownership', () => {
+  it('retains block continuity only for the same server identity and credential snapshot', async () => {
+    mock.inventory.mockResolvedValue({ type: 'server', id: '1', attributes: {} });
+    mock.server.mockResolvedValue({ host: 'managed-host', port: 22, credential_type: 'password', host_key_fingerprint: 'fingerprint' });
+    mock.credentials.mockResolvedValue({ username: 'reader', password: 'fixture-only' });
+    const access = createAssetCollectorAccess(true), server = { type: 'server' as const, id: 1 };
+    const first = await access.resolve(server), second = await access.resolve(server);
+    expect(first.evidence.host_blocks).toBeDefined();
+    expect(second.evidence.host_blocks).toBe(first.evidence.host_blocks);
+    mock.credentials.mockResolvedValue({ username: 'reader', password: 'rotated-fixture' });
+    expect((await access.resolve(server)).evidence.host_blocks).not.toBe(first.evidence.host_blocks);
+    await expect(first.assertCurrent!()).rejects.toThrow('permission_denied');
   });
 });

@@ -6,6 +6,9 @@ import {
   type NetworkDeviceAlertStore,
 } from './network-device-alert-evaluator.js';
 
+// The injected observation store is a legacy source; test its alert behavior independently of the real rollout database.
+vi.mock('../metrics-v2/consumers/operational.js', () => ({ evaluateOperationalRule: async () => ({ handled: false }) }));
+
 const device = { id: 7, name: 'edge-1', label: 'edge-1', status: 'online', collectionEnabled: true };
 
 function observation(metricId: string, value: number | null, dimensions?: Record<string, string>, quality: NetworkDeviceAlertObservation['quality'] = 'good'): NetworkDeviceAlertObservation {

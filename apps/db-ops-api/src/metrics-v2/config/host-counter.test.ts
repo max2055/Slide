@@ -54,10 +54,10 @@ describe('host block lifecycle discovery', () => {
   it('isolates assets and discards continuity on identity changes, eviction and forget', () => {
     const cache = new HostBlockDiscoveryCache(2), a = cache.get(1, 'identity-a');
     expect(cache.get(1, 'identity-a')).toBe(a);
-    expect(cache.get(2, 'identity-a')).not.toBe(a);
+    const b = cache.get(2, 'identity-a'); expect(b).not.toBe(a);
     expect(cache.get(1, 'identity-b')).not.toBe(a);
     cache.get(3, 'identity-c');
-    expect(cache.get(2, 'identity-a')).not.toBe(a);
+    expect(cache.get(2, 'identity-a')).not.toBe(b);
     const current = cache.get(1, 'identity-b'); cache.forget(1);
     expect(cache.get(1, 'identity-b')).not.toBe(current);
   });

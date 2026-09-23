@@ -40,3 +40,26 @@
 按实际 diff 完成主线程自审；没有独立子代理审阅。子代理数 0、最大深度 0、代理并发峰值 1。硬预算未设定；raw input、cached input、output 与费用实际遥测不可用，不提供虚构估算。
 
 本批作为 draft PR 交付，不合并、不发布。周期采集缺省关闭。完整生产任务保持进行中，不能因本记录的本地测试结果放量。
+
+## 后续代码验证（2026-09-23，基于 72deeb5）
+
+新增 PostgreSQL 原子 counter evidence、Linux 块设备生命周期发现，以及 shadow 不提前替换旧告警/评分输入的来源选择。未修改冻结的指标包或历史迁移；未合并、部署、切换生产来源。
+
+### 实测环境与边界
+
+- 独立 PostgreSQL 16.14 容器：真实生产 transport、普通登录采集角色、固定 SQL、pg_stat_reset 及超时连接释放，3 项通过。验证的是 transport；注册表原有 16.4 版本范围未扩展，不能计作 16.14 整包兼容通过。
+- 独立 Alpine 3.22.5 SSH 容器，Linux 7.0.12-linuxkit：固定命令读取真实 boot ID、btime、diskseq 和 /proc/diskstats，经包 normalization 与语义 rate 查询验证，1 项通过。不是生产服务器或物理交换机验收。
+- 独立 MySQL 8.4.10：来源状态选择、shadow、CAS、pending/applied、混合来源、回退与告警重放，9 项通过。
+- 本次容器均为专用临时资源，未使用项目生产配置、既有数据库或真实资产凭据。
+
+### 最终门禁
+
+命令 `METRICS_V2_TEST_MYSQL_PORT=<isolated> METRICS_V2_TEST_PG_PORT=<isolated> METRICS_V2_TEST_SSH_PORT=<isolated> METRICS_V2_TEST_SSH_PASSWORD=<fixture> pnpm --filter slide-api exec vitest run --maxWorkers=2`：294 文件通过、5 文件跳过；2,693 项通过、56 项环境相关跳过。最终通过结果对应最新产品代码和测试。
+
+前后端 typecheck、前端 build/CSP（2 个生产脚本）、contracts:check、qualification:matrix（37/37）、security:scan、security:deployment 均通过。前端保留原有 chunk/import 提示。未单独测量覆盖率；没有把映射、静态检查或跳过项算作生产验收。
+
+首轮全套出现 9 项失败，根因为旧测试以数据库未连接的全局状态隐式选择 legacy；现已将这些 legacy 阈值/历史/加权评分用例显式隔离来源边界，并增加来源失联不触发/恢复告警的回归。真实 MySQL 来源选择测试未被 mock 替代。
+
+完整任务仍未完成：其他 SQL/Host 网络 counter authority、所有旧写入者/消费者、告警最终发布 fencing、停任务/排空/CAS/applied/回退协调器、真实版本/物理设备和峰值容量验收仍在待完成清单。剩余开发无需等待生产部署批准；不能因为本轮门禁通过就转为生产 GO。
+
+资源口径沿用原记录：硬预算未设定，实际 token/费用遥测不可用，子代理 0、深度 0、并发峰值 1；未以分批实施重置预算或缩减 MAX-85 的原始验收。
