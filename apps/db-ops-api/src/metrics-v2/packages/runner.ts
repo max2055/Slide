@@ -56,7 +56,7 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
   // Guard every transport call, including adapters that issue several reads.
   const guarded = (t: Transport): Transport => {
     if (!execution.signal && !execution.before_request) return t;
-    if (t.method === 'sql') return { method: 'sql', pool: { query: async options => { await check(); return t.pool.query(options); } } };
+    if (t.method === 'sql') return { method: 'sql', ...(t.counterQuery ? { counterQuery: async (options: { sql: string; timeout: number }) => { await check(); return t.counterQuery!(options); } } : {}), pool: { query: async options => { await check(); return t.pool.query(options); } } };
     if (t.method === 'snmp') return { method: 'snmp', ...(t.get ? { get: async (oids: string[], timeout: number) => { await check(); return t.get!(oids, timeout); } } : {}), table: async (root, timeout) => { await check(); return t.table(root, timeout); } };
     return { ...t, pool: { execCommands: async (client, commands, options) => {
       const results = [];

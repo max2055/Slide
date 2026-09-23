@@ -53,12 +53,12 @@ describe('PostgreSQL authoritative counter snapshot', () => {
     const execute = vi.fn(async () => ({ rows: [raw] }));
     const transport = postgresCounterTransport(execute), check = vi.fn(async () => undefined);
     const base = { resource: { type: 'instance' as const, id: '1', attributes: {
-      'db.engine': { value: 'postgresql', source: 'driver', observed_at: raw.sampled_at },
-      'db.version': { value: '16.4', source: 'driver', observed_at: raw.sampled_at } } },
+      'db.engine': { value: 'postgresql', source: 'driver', observed_at: new Date(raw.sampled_at).toISOString() },
+      'db.version': { value: '16.4', source: 'driver', observed_at: new Date(raw.sampled_at).toISOString() } } },
       collector_ids: ['postgresql-transactions'], binding_id: 'binding:1', config_revision: 1, evidence: {},
       resolve: async () => transport, before_request: check };
     const run = async (n: number, states?: Awaited<ReturnType<typeof runPackage>>['states']) => runPackage(registry, selection,
-      { ...base, attempt_id: `attempt:${n}`, observed_at: raw.sampled_at, clock: () => raw.sampled_at, states });
+      { ...base, attempt_id: `attempt:${n}`, observed_at: new Date(raw.sampled_at).toISOString(), clock: () => new Date(raw.sampled_at).toISOString(), states });
     const first = await run(1);
     raw = snapshot({ commits: '160', sampled_at: '2026-09-23T03:01:00.000001Z' });
     const second = await run(2, first.states);
@@ -70,7 +70,7 @@ describe('PostgreSQL authoritative counter snapshot', () => {
     expect(execute).toHaveBeenCalledTimes(3);
     expect(check).toHaveBeenCalled();
     const signal = AbortSignal.abort();
-    await expect(runPackage(registry, selection, { ...base, signal, attempt_id: 'cancelled', observed_at: raw.sampled_at })).rejects.toThrow();
+    await expect(runPackage(registry, selection, { ...base, signal, attempt_id: 'cancelled', observed_at: new Date(raw.sampled_at).toISOString() })).rejects.toThrow();
     expect(execute).toHaveBeenCalledTimes(3);
   });
 });

@@ -16,8 +16,13 @@ function uint(value: unknown): RawObservation['value'] {
 export async function collectDatabase(id: string, transport: Transport, evidence: DriverEvidence, timeoutMs: number): Promise<DecodedRow[]> {
   const read = databaseReads.find(r => implementationId(r) === id);
   if (!read || transport.method !== 'sql') throw new AdapterError('parse_error');
-  let response: unknown;
-  try { [response] = await transport.pool.query({ sql: read.sql, timeout: timeoutMs }); }
+  let response: unknown, counter = evidence.counter, observed_at: string | undefined;
+  try {
+    if (read.fields.some(f => f.definition.kind === 'counter') && transport.counterQuery) {
+      const snapshot = await transport.counterQuery({ sql: read.sql, timeout: timeoutMs });
+      response = snapshot.rows; counter = snapshot.counter; observed_at = snapshot.observed_at;
+    } else [response] = await transport.pool.query({ sql: read.sql, timeout: timeoutMs });
+  }
   catch (error) { throw new AdapterError(classifyError(error)); }
   if (!Array.isArray(response)) throw new AdapterError('parse_error');
   const values: Record<string, unknown> = {};
@@ -39,7 +44,7 @@ export async function collectDatabase(id: string, transport: Transport, evidence
     }
   }
   if (read.database && (typeof database !== 'string' || !database || database.length > 128)) throw new AdapterError('parse_error');
-  const row: DecodedRow = { dimensions: read.database ? { database: database as string } : {}, fields: {}, accuracy: {}, counter: evidence.counter };
+  const row: DecodedRow = { dimensions: read.database ? { database: database as string } : {}, fields: {}, accuracy: {}, counter, ...(observed_at ? { observed_at } : {}) };
   for (const field of read.fields) {
     // A malformed/missing scalar is omitted so the public runner isolates only this mapping.
     try { row.fields[field.name] = uint(values[field.name]); } catch { continue; }

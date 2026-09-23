@@ -21,7 +21,7 @@ import { MYSQL_STATUS_SQL } from '../../collectors/mysql-status-query.js';
 /** Same read-only status operation as MySQLProvider; batch once without its legacy Number/rate path. */
 export { MYSQL_STATUS_SQL };
 export type Transport =
-  | { method: 'sql'; pool: { query(options: { sql: string; timeout: number }): Promise<[unknown, unknown]> } }
+  | { method: 'sql'; counterQuery?(options: { sql: string; timeout: number }): Promise<{ rows: unknown; counter: NonNullable<RawObservation['counter']>; observed_at: string }>; pool: { query(options: { sql: string; timeout: number }): Promise<[unknown, unknown]> } }
   | { method: 'ssh'; client: Client; pool: Pick<SshSessionPool, 'execCommands'> }
   | { method: 'snmp'; get?(oids: string[], timeoutMs: number): Promise<SnmpVarbind[]>; table(root: string, timeoutMs: number): Promise<SnmpTableRow[]> };
 export function bindMySql(pool: Pick<Pool, 'query'>): Transport {
