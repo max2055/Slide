@@ -15,17 +15,19 @@ import { trialDatabaseTransport } from './database-transport.js';
 import { SnmpDiscovery } from '../snmp/collector.js';
 import { MysqlResourceRelationStore } from '../../resources/resource-service.js';
 import { SnmpDiscoveryCache } from './discovery-cache.js';
+import { HostBlockDiscoveryCache } from './host-counter.js';
 
 /** Called only after resource management authorization. No client-supplied target or credential. */
 export function createAssetCollectorAccess(preserveDiscovery = false): CollectorAccess {
  const discovery = new SnmpDiscoveryCache();
+ const hostBlocks = new HostBlockDiscoveryCache();
  const assets = new MysqlResourceRelationStore();
  return {
   async resolve(ref) {
     ref = RefSchema.parse(ref);
     const pool = dbConnection.getPool(); rule(pool, 'POLICY_STORE_UNAVAILABLE', 503);
     if (!await assets.exists(ref)) {
-      discovery.forget(ref.id);
+      discovery.forget(ref.id); hostBlocks.forget(ref.id);
       throw new AdapterError('permission_denied');
     }
     const identity = async () => {
@@ -62,7 +64,7 @@ export function createAssetCollectorAccess(preserveDiscovery = false): Collector
       snmp = preserveDiscovery ? discovery.get(ref.id, [device.host, device.snmpPort, credentials]) : new SnmpDiscovery();
     }
     const reference = `credential:asset-${ref.type}-${ref.id}`;
-    const evidence = snmp ? { snmp } : {};
+    const evidence = snmp ? { snmp } : ref.type === 'server' && preserveDiscovery ? { host_blocks: hostBlocks.get(ref.id, initialIdentity) } : {};
     return { resource, credential_ref: reference, evidence, assertCurrent,
       resolve: async (credential, target, method) => {
         rule(credential === reference && target.type === ref.type && target.id === String(ref.id), 'COLLECTOR_IDENTITY');

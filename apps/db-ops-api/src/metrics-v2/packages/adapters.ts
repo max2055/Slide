@@ -16,6 +16,7 @@ import type { SnmpClient } from '../../network-devices/snmp-client.js';
 import type { SnmpConfig, SnmpTableRow, SnmpVarbind } from '../../network-devices/snmp-types.js';
 import type { RawObservation } from '../../contracts/metrics-v2/index.js';
 import type { SnmpDiscovery } from '../snmp/collector.js';
+import type { HostBlockDiscovery } from '../config/host-counter.js';
 import { MYSQL_STATUS_SQL } from '../../collectors/mysql-status-query.js';
 
 /** Same read-only status operation as MySQLProvider; batch once without its legacy Number/rate path. */
@@ -32,6 +33,7 @@ export function bindSnmp(client: Pick<SnmpClient, 'table'> & Partial<Pick<SnmpCl
   return { method: 'snmp', ...(client.get ? { get: (oids: string[], timeoutMs: number) => client.get!({ ...config, timeoutMs }, oids) } : {}), table: (root, timeoutMs) => client.table({ ...config, timeoutMs }, root) };
 }
 export interface DriverEvidence {
+  host_blocks?: HostBlockDiscovery;
   snmp?: SnmpDiscovery;
   /** Trusted startup/discontinuity evidence, retained by the driver; never invent an epoch per sample. */
   counter?: RawObservation['counter'];
@@ -192,7 +194,8 @@ export async function collectFixed(id: string, transport: Transport, evidence: D
     });
   }
   if (id === 'builtin:linux.block.v1' && transport.method === 'ssh') {
-    const [result] = await fixedSsh(transport, [DISKSTATS_COMMAND], timeoutMs);
+    const snapshot = evidence.host_blocks ? await evidence.host_blocks.read(transport, timeoutMs) : undefined;
+    const result = snapshot ? { stdout: snapshot.stdout, stderr: '', exitCode: 0 } : (await fixedSsh(transport, [DISKSTATS_COMMAND], timeoutMs))[0];
     if (result.exitCode !== 0) throw new AdapterError(/permission denied/i.test(result.stderr) ? 'permission_denied' : 'parse_error');
     const grouped = new Map<string, Record<string, RawObservation['value']>>();
     for (const row of parseProcDiskstatsExact(result.stdout)) {
@@ -204,7 +207,7 @@ export async function collectFixed(id: string, transport: Transport, evidence: D
     if (grouped.size > maxRows) throw new AdapterError('parse_error');
     return [...grouped].map(([device, fields]) => {
       if (!fields.disk_read_bytes || !fields.disk_write_bytes || !fields.disk_io_time_ms) throw new AdapterError('parse_error');
-      return { dimensions: { device }, fields, counter: hostCounter(evidence, 'devices', device) };
+      return { dimensions: { device }, fields, ...(snapshot ? { observed_at: snapshot.observed_at } : {}), counter: hostCounter(snapshot?.evidence ?? evidence, 'devices', device) };
     });
   }
   if (id === 'builtin:if_mib.status.v1' && transport.method === 'snmp') {
