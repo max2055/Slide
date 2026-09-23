@@ -112,6 +112,8 @@ import { WorkerLease } from './src/lifecycle/worker-lease.js';
 import { registerDeliveryRoutes } from './src/workflows/delivery-routes.js';
 import { JobRegistry } from './src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.js';
+import { createMetricSchedulerLifecycle, assertMetricSchedulerSchema } from './src/metrics-v2/scheduler/runtime.js';
+import type { MetricSchedulerLifecycle } from './src/metrics-v2/scheduler/lifecycle.js';
 import { createNotificationDispatchJob, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
 import { createReportNotificationJob, createReportScheduleJob, MysqlReportOccurrenceStore } from './src/report-scheduler.js';
 import { assertCreatableDatabaseType, listAdapterCapabilities } from './src/adapters/capability-matrix.js';
@@ -5423,8 +5425,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   let engine: any;
   let stopWorkflow: (() => Promise<boolean>) | undefined;
   let workflowTimer: ReturnType<typeof setInterval> | undefined;
+  let metricLifecycle: MetricSchedulerLifecycle | undefined;
   fastify.addHook('onClose', async () => {
     if (workflowTimer) clearInterval(workflowTimer);
+    if (metricLifecycle && !await metricLifecycle.stop()) console.error('[MetricsV2] METRIC_SHUTDOWN_TIMEOUT');
     if (stopWorkflow && !await stopWorkflow()) console.error('[WorkerRuntime] WORKFLOW_SHUTDOWN_TIMEOUT');
   });
   const startWorkers = async () => {
@@ -5441,6 +5445,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const workflowStore = new MysqlWorkflowStore(() => dbConnection.getPool() as any);
   notificationWorkflowStore = workflowStore;
   const workflowRegistry = new JobRegistry();
+  metricLifecycle = createMetricSchedulerLifecycle(pool);
+  await metricLifecycle.start(workflowRegistry, () => assertMetricSchedulerSchema(pool));
   const notificationScheduler = new NotificationDispatchScheduler(notificationDatabaseService, notificationService, workflowStore);
   const enqueueNotificationDispatch = async (availableAt = new Date()) => {
     await workflowStore.enqueue(createNotificationDispatchJob(availableAt));
@@ -5585,8 +5591,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     await startWorkers();
     const heartbeat = setInterval(() => {
       void workerLease.renew().then((renewed) => {
-        if (!renewed) console.error('Worker lease lost; workers require operator intervention');
-      }).catch((error) => console.error('Worker lease heartbeat failed:', error));
+        if (!renewed) {
+          console.error('Worker lease lost; stopping workers');
+          void shutdown();
+        }
+      }).catch(() => { console.error('Worker lease heartbeat failed; stopping workers'); void shutdown(); });
     }, 10_000);
     let shuttingDown = false;
     const shutdown = async () => {
@@ -5594,6 +5603,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       shuttingDown = true;
       clearInterval(heartbeat);
       if (workflowTimer) clearInterval(workflowTimer);
+      if (metricLifecycle && !await metricLifecycle.stop()) console.error('[MetricsV2] METRIC_SHUTDOWN_TIMEOUT');
       if (stopWorkflow && !await stopWorkflow()) console.error('[WorkerRuntime] WORKFLOW_SHUTDOWN_TIMEOUT');
       monitorCollector.stop();
       networkDeviceCollector.stop();

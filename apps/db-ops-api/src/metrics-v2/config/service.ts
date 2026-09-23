@@ -57,11 +57,12 @@ export class MetricConfigurationService {
         overrides: { enabled: s.enabled, interval_ms: s.interval_ms, timeout_ms: s.timeout_ms, stale_after_ms: s.stale_after_ms,
           max_counter_gap_ms: s.max_counter_gap_ms, max_rows: s.max_rows } }, {
         ...access, binding_id: refKey(ref), attempt_id: `trial:${randomUUID()}`, config_revision: next.binding.revision,
-        observed_at: new Date().toISOString(), signal: controller.signal, before_request: check,
+        observed_at: new Date().toISOString(), signal: controller.signal, before_request: async () => { await check(); await access.assertCurrent?.(); },
         collector_ids: plan.collectorIds, metric_keys: plan.metricKeys,
         previous_capabilities: next.resolved.metric_templates.map(t => t.capability),
       });
       await check();
+      await access.assertCurrent?.();
       rule(result.observations.length <= s.max_series_per_resource, 'TRIAL_SERIES_LIMIT');
       return { trial: true, persisted: false, decision: result.decision, attempts: result.attempts,
         capabilities: result.capabilities, lifecycle_evidence: access.evidence.counter || access.evidence.host_counter_epochs || access.evidence.snmp ? 'available' : 'unavailable',

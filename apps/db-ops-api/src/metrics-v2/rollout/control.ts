@@ -38,8 +38,8 @@ export class RolloutControl {
   async initialize(series: Series, input: Target): Promise<void> {
     const t = targetSchema.parse(input);
     await this.pool.execute(`INSERT INTO metric_v2_rollout
-      (series_hash, source, generation, read_mode, package_pin, published_revision) VALUES (?, ?, 1, ?, ?, ?)`,
-    [seriesHash(series), t.source, t.read, JSON.stringify(t.package), t.revision]);
+      (series_hash, source, generation, read_mode, package_pin, published_revision, resource_type, resource_id) VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
+    [seriesHash(series), t.source, t.read, JSON.stringify(t.package), t.revision, series.resource_type, series.resource_id]);
   }
   current(series: Series): Promise<Control> { return this.row(this.pool, series); }
   /** Run after observation retention. Keeps one latest value and monotonic alert state per identity. */
@@ -95,7 +95,7 @@ export class RolloutControl {
   /** Read and switch are serialized, including the compatibility read callback. */
   async latest<T>(series: Series, legacyRead: (c: PoolConnection) => Promise<T>): Promise<T | StoredObservation | null> {
     return this.transaction(async c => { const r = await this.row(c, series, true);
-      return r.read === 'legacy' ? legacyRead(c) : r.latest; });
+      return r.read === 'legacy' ? legacyRead(c) : r.applied === r.revision && r.latest?.versions.config_revision === r.revision ? r.latest : null; });
   }
   private async formalWindow(c: PoolConnection, series: Series, from: string, to: string, limit = 1000): Promise<NormalizedObservation[]> {
     check(Number.isInteger(limit) && limit > 0 && limit <= 1000 && Date.parse(to) > Date.parse(from)
@@ -111,7 +111,7 @@ export class RolloutControl {
   async range<T>(series: Series, from: string, to: string, legacyRead: (c: PoolConnection) => Promise<T>, limit = 200) {
     return this.transaction(async c => {
       const r = await this.row(c, series, true);
-      return r.read === 'legacy' ? legacyRead(c) : (await this.formalWindow(c, series, from, to, limit))
+      return r.read === 'legacy' ? legacyRead(c) : r.applied !== r.revision ? [] : (await this.formalWindow(c, series, from, to, limit))
         .filter(o => Date.parse(o.observed_at) >= Date.parse(from) && Date.parse(o.observed_at) < Date.parse(to));
     });
   }

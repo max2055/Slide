@@ -6,6 +6,7 @@ import { definitions, sample, identify } from '../../contracts/metrics-v2/fixtur
 import { MysqlMetricStorage } from '../storage.js';
 import { MetricStorageAdapter } from '../compatibility.js';
 import { RolloutControl, type Target } from './control.js';
+import { MysqlFormalMetricStore } from './formal-store.js';
 
 const port = Number(process.env.METRICS_V2_TEST_MYSQL_PORT);
 describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
@@ -65,6 +66,34 @@ describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
     expect((await storage.range(series, '2026-09-01T00:00:00Z', '2026-09-01T00:02:00Z'))).toHaveLength(1);
     const [rows] = await pool.query<RowDataPacket[]>('SELECT name FROM database_instances WHERE id = 1');
     expect(rows[0].name).toBe('isolated');
+  });
+  it('formal consumers exclude shadow, pending revisions and rollback while retaining unknown evidence', async () => {
+    const formal = new MysqlFormalMetricStore(pool);
+    const from = '2026-09-01T00:00:00Z', to = '2026-09-01T00:02:00Z';
+    await storage.write(observation(), definition);
+    expect(await formal.queryWindow(series, from, to)).toEqual([]);
+    expect(await formal.dimensions({ type: 'instance', id: 1 }, definition, from, to)).toEqual([]);
+    await control.switch(series, 1, { ...target, source: 'v2', read: 'v2', revision: 2 });
+    const t = { source: 'v2', generation: 2, revision: 2 };
+    expect(await formal.queryWindow(series, from, to)).toEqual([]);
+    expect(await control.latest(series, async () => null)).toBeNull();
+    await control.applied(series, t);
+    await control.publish(observation(1, 2), definition, t);
+    await storage.write(observation(2, 2), definition);
+    expect((await formal.queryWindow(series, from, to)).map(o => o.id)).toEqual([observation(1, 2).id]);
+    expect(await formal.dimensions({ type: 'instance', id: 1 }, definition, from, to)).toEqual([{}]);
+    const unknown = identify({ ...observation(3, 2), value: null, quality: { status: 'unknown', reason: 'missing_input' } });
+    await control.publish(unknown, definition, t);
+    expect((await formal.queryWindow(series, from, to)).at(-1)).toMatchObject({ id: unknown.id, value: null });
+    await control.switch(series, 2, { ...target, source: 'v2', read: 'v2', revision: 3 });
+    expect(await control.latest(series, async () => null)).toBeNull();
+    expect(await formal.queryWindow(series, from, to)).toEqual([]);
+    await control.applied(series, { source: 'v2', generation: 3, revision: 3 });
+    expect(await control.latest(series, async () => null)).toBeNull();
+    await control.switch(series, 3, { ...target, revision: 4 });
+    expect(await formal.queryWindow(series, from, to)).toEqual([]);
+    expect(await formal.dimensions({ type: 'instance', id: 1 }, definition, from, to)).toEqual([]);
+    expect(await storage.range(series, from, to)).toHaveLength(4);
   });
   it('20 concurrent repeats create one real alert; recovery and old-window replay cannot refire', async () => {
     await control.publish(series, definition, ticket, async () => {});

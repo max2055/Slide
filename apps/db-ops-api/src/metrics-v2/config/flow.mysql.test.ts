@@ -88,11 +88,11 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
       await browserExpect(page.getByRole('button', { name: '预检与影响预览' })).toBeEnabled();
       await page.getByRole('button', { name: '预检与影响预览' }).click();
       await browserExpect(page.getByText('每小时逻辑读取估算', { exact: false })).toBeVisible();
-      await page.getByRole('button', { name: '有界试采' }).click();
+      await page.getByRole('button', { name: '试采', exact: true }).click();
       await browserExpect(page.getByRole('heading', { name: '本次试采（不写正式观测）' })).toBeVisible();
       await page.getByRole('button', { name: '发布', exact: true }).click();
       await browserExpect(page.getByRole('button', { name: '重新加载' })).toBeEnabled();
-      await browserExpect(page.getByText('group: fixture', { exact: false })).toBeVisible();
+      await browserExpect(page.locator('app-form-field[label="策略组"]').getByText('fixture', { exact: true })).toBeVisible();
       await browserExpect(page.getByRole('heading', { name: '指标能力、依据与覆盖' })).toBeVisible();
       expect(await page.locator('body').innerText()).not.toContain('credential:isolated-target');
       expect(await page.evaluate('document.documentElement.scrollWidth <= innerWidth')).toBe(true);
@@ -103,7 +103,7 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
     const conflict = await browser.newPage();
     await conflict.goto(`${web}/e2e/fixtures/metrics-config.html`);
     await conflict.getByRole('button', { name: '预检与影响预览' }).click();
-    await conflict.getByRole('button', { name: '有界试采' }).click();
+    await conflict.getByRole('button', { name: '试采', exact: true }).click();
     await browserExpect(conflict.getByRole('button', { name: '发布', exact: true })).toBeEnabled();
     const before = await (await fetch(`${base}/api/metrics-v2/policy/resources/instance/1`)).json() as any;
     expect((await post('policy/resources/instance/1/publish', { expected_revision: before.binding.revision })).status).toBe(200);
@@ -113,7 +113,8 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
     const after = await (await fetch(`${base}/api/metrics-v2/policy/resources/instance/1`)).json() as any;
     expect(after.binding.revision).toBe(before.binding.revision + 1);
     await conflict.getByRole('button', { name: '重新加载' }).click();
-    await browserExpect(conflict.getByText(`published revision: ${after.binding.revision}`, { exact: false })).toBeVisible();
+    await conflict.getByRole('button', { name: '放弃修改并继续' }).click();
+    await browserExpect(conflict.getByText(`当前发布版本 ${after.binding.revision}`, { exact: false })).toBeVisible();
     await conflict.close();
     const reader = await browser.newPage();
     await reader.addInitScript("localStorage.setItem('token', 'readonly')");
@@ -124,7 +125,7 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
     const settings = await browser.newPage();
     await settings.goto(`${web}/e2e/fixtures/metrics-config.html?mode=settings`);
     await browserExpect(settings.locator('metric-settings')).toBeVisible();
-    await browserExpect(settings.getByText('mysql-basic @ 1.0.0', { exact: true })).toBeVisible();
+    await browserExpect(settings.locator('summary').filter({ hasText: 'MySQL 基础采集 · 1.0.0' })).toBeVisible();
     await settings.close();
   }, 60000);
 });

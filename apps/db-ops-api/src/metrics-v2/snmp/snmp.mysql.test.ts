@@ -84,7 +84,7 @@ describe.skipIf(!port)('SNMP UDP → Worker → isolated MySQL → semantic quer
       finally { await worker.shutdown(); }
     };
     const observations = async (): Promise<NormalizedObservation[]> => {
-      const [rows] = await pool.query<any[]>('SELECT payload FROM metric_v2_observations ORDER BY observed_at');
+      const [rows] = await pool.query<any[]>("SELECT payload FROM metric_v2_observations WHERE stage = 'normalized' ORDER BY observed_at");
       return rows.map(r => typeof r.payload === 'string' ? JSON.parse(r.payload) : r.payload);
     };
     await scheduler.tick(); now += 10000; expect(await scheduler.tick()).toBe(1);

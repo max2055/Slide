@@ -10,7 +10,9 @@ import { JOB_TYPE, MysqlScheduleStore } from './store.js';
 const Payload = z.strictObject({ resource: RefSchema, revision: z.number().int().positive() });
 export interface CollectorAccess {
   /** Must authorize this exact resource and resolve only its own credential reference. */
-  resolve(ref: Ref): Promise<Pick<PackageExecution, 'resolve' | 'evidence'> & { credential_ref: string; resource: Resource }>;
+  resolve(ref: Ref): Promise<Pick<PackageExecution, 'resolve' | 'evidence'> & {
+    credential_ref: string; resource: Resource; assertCurrent?: () => Promise<void>;
+  }>;
 }
 /** Host calls tick on its existing lifecycle and uses the existing Worker/JobRegistry. No parallel runtime. */
 export class MetricScheduler {
@@ -50,7 +52,7 @@ export class MetricScheduler {
         const initial = compilePlan(this.packages, current.resolved);
         timer = setTimeout(() => cancel(new Error('SCHEDULE_TIMEOUT')), initial.timeoutMs);
         await this.store.assertCurrent(ref, revision, job, executionContext);
-        const access = current.resolved.settings.enabled ? await this.access.resolve(ref) : {
+        const access: Awaited<ReturnType<CollectorAccess['resolve']>> = current.resolved.settings.enabled ? await this.access.resolve(ref) : {
           resource: { type: ref.type, id: String(ref.id), attributes: {} }, credential_ref: 'credential:disabled', evidence: {},
           resolve: async () => { throw new Error('SCHEDULE_DISABLED'); },
         };
@@ -64,6 +66,7 @@ export class MetricScheduler {
           controller.signal.throwIfAborted();
           await reservation.connection.ping();
           await this.store.assertCurrent(ref, revision, job, executionContext);
+          await access.assertCurrent?.();
           controller.signal.throwIfAborted();
         };
         await check();
@@ -84,6 +87,7 @@ export class MetricScheduler {
           },
         });
         controller.signal.throwIfAborted();
+        await check();
         // Failed batches are retried by the existing Worker. Partial success is committed without re-querying healthy outputs.
         if (result.attempts.length && result.attempts.every(a => a.status === 'failed')) {
           await this.store.recordFailure(snapshot, result, job, executionContext, this.clock());
