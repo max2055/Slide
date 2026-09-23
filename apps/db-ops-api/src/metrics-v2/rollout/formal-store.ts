@@ -1,6 +1,6 @@
 import type { Pool, RowDataPacket } from 'mysql2/promise';
 import type { MetricDefinition, NormalizedObservation } from '../../contracts/metrics-v2/index.js';
-import type { Ref } from '../policy/model.js';
+import { RefSchema, type Ref } from '../policy/model.js';
 import { MysqlMetricStorage, seriesHash, type Series } from '../storage.js';
 
 const decode = <T>(v: T | string): T => typeof v === 'string' ? JSON.parse(v) : v;
@@ -14,6 +14,22 @@ const formal = `FROM metric_v2_publications p
 /** Formal consumers never fall back to unaccepted shadow evidence. Invalid/unknown values remain visible. */
 export class MysqlFormalMetricStore {
   constructor(private readonly pool: Pool) {}
+
+  /** Compatibility consumers may use legacy only while the whole resource is still legacy.
+   * A mixed/pending resource cannot silently mix legacy alert or score inputs with V2 values.
+   * This read selection is not a write ticket; alert publication still requires fencing.
+   */
+  async sourceState(input: Ref): Promise<'legacy' | 'v2' | 'pending'> {
+    const ref = RefSchema.parse(input);
+    const [rows] = await this.pool.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total,
+      SUM(source = 'legacy' AND read_mode = 'legacy' AND applied_revision = published_revision) AS legacy_count,
+      SUM(source = 'v2' AND read_mode = 'v2' AND applied_revision = published_revision) AS v2_count
+      FROM metric_v2_rollout WHERE resource_type = ? AND resource_id = ?`, [ref.type, String(ref.id)]);
+    const total = Number(rows[0]?.total);
+    if (!Number.isSafeInteger(total) || total < 0) throw new Error('ROLLOUT_SOURCE_STATE');
+    if (total === 0 || Number(rows[0].legacy_count) === total) return 'legacy';
+    return Number(rows[0].v2_count) === total ? 'v2' : 'pending';
+  }
 
   inventory(type: Series['resource_type'], id: string) { return new MysqlMetricStorage(this.pool).inventory(type, id); }
 

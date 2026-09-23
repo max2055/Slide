@@ -3,7 +3,7 @@ import { dbConnection } from '../../db-connection.js';
 import { CollectionAttemptSchema } from '../../contracts/metrics-v2/index.js';
 import { MysqlFormalMetricStore } from '../rollout/formal-store.js';
 import { policyService } from '../policy/service.js';
-import { refKey, rule } from '../policy/model.js';
+import { refKey, rule, type Ref } from '../policy/model.js';
 import { createConfigurationRegistry } from '../config/registry.js';
 import { MetricConsumerService, type ConsumerStore } from './service.js';
 const pool = () => { const p = dbConnection.getPool(); rule(p, 'METRIC_STORE_UNAVAILABLE', 503); return p; };
@@ -19,3 +19,5 @@ export const consumerStore: ConsumerStore = {
   },
 };
 export const metricConsumerService = new MetricConsumerService(policyService, createConfigurationRegistry(), consumerStore);
+
+export const operationalSource = (ref: Ref) => new MysqlFormalMetricStore(pool()).sourceState(ref);
