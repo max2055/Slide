@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   collect: vi.fn(),
   recordMetrics: vi.fn(),
   resetFailures: vi.fn(),
+  sourceActive: vi.fn(),
 }));
 
 vi.mock('./collectors/registry.js', () => ({
@@ -18,6 +19,8 @@ vi.mock('./collectors/registry.js', () => ({
 }));
 vi.mock('./database-service.js', () => ({ databaseService: { getConnection: () => ({ pool: {} }) } }));
 vi.mock('./metrics-database-service.js', () => ({ metricsDatabaseService: { recordMetrics: mocks.recordMetrics } }));
+vi.mock('./db-connection.js', () => ({ dbConnection: { getPool: () => ({}) } }));
+vi.mock('./metrics-v2/rollout/legacy-write-fence.js', () => ({ legacyMetricSourceActive: mocks.sourceActive }));
 vi.mock('./metric-registry.js', () => ({
   metricRegistry: {
     getByDbType: () => [
@@ -36,6 +39,7 @@ describe('UnifiedCollector due-only boundary', () => {
     vi.clearAllMocks();
     mocks.collect.mockResolvedValue(42);
     mocks.recordMetrics.mockResolvedValue({ success: true });
+    mocks.sourceActive.mockResolvedValue(true);
   });
 
   it('collects and persists only metric IDs selected by the scheduler', async () => {
@@ -58,5 +62,15 @@ describe('UnifiedCollector due-only boundary', () => {
       { id: 9, db_type: 'mysql' } as any,
       ['slow'],
     )).resolves.toEqual({ slow: false });
+  });
+
+  it('stops old database collection before remote IO after cutover starts', async () => {
+    mocks.sourceActive.mockResolvedValue(false);
+    await expect(unifiedCollector.collectInstance(
+      { id: 9, db_type: 'mysql' } as any,
+      ['slow'],
+    )).resolves.toEqual({ slow: true });
+    expect(mocks.collect).not.toHaveBeenCalled();
+    expect(mocks.recordMetrics).not.toHaveBeenCalled();
   });
 });

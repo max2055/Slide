@@ -104,6 +104,17 @@ describe('NetworkDeviceCollector', () => {
     expect(snmp.probe).toHaveBeenCalledWith(expect.objectContaining({ host: target.host, port: target.snmpPort, timeoutMs: 12_000 }));
   });
 
+  it('stops old network collection before authorization or SNMP after cutover starts', async () => {
+    const persistence = store({ legacySourceActive: vi.fn(async () => false) });
+    const snmp = adapter();
+    const authorizeTarget = vi.fn();
+    await expect(new NetworkDeviceCollector(persistence, snmp as any, { authorizeTarget }).collectDevice(7))
+      .resolves.toMatchObject({ success: true, observations: 0, sourceFenced: true });
+    expect(authorizeTarget).not.toHaveBeenCalled();
+    expect(persistence.getCredentials).not.toHaveBeenCalled();
+    expect(snmp.probe).not.toHaveBeenCalled();
+  });
+
   it('collects system and interface evidence, then marks the device online', async () => {
     const persistence = store();
     const snmp = adapter({

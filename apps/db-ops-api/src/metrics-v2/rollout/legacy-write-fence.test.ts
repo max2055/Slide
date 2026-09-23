@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { withLegacyMetricWrite } from './legacy-write-fence.js';
+import { legacyMetricSourceActive, withLegacyMetricWrite } from './legacy-write-fence.js';
 
 function database(rows: Array<Record<string, unknown>>) {
   const execute = vi.fn(async (sql: string) => {
@@ -68,5 +68,12 @@ describe('legacy metric write fencing', () => {
     expect(connection.commit).not.toHaveBeenCalled();
     expect(connection.rollback).toHaveBeenCalledOnce();
     expect(connection.release).toHaveBeenCalledOnce();
+  });
+
+  it('exposes the same decision for collectors before remote IO', async () => {
+    const legacy = database([]);
+    await expect(legacyMetricSourceActive(legacy.pool as never, { type: 'instance', id: 7 })).resolves.toBe(true);
+    const pending = database([{ source: 'v2', read_mode: 'v2', published_revision: 2, applied_revision: null }]);
+    await expect(legacyMetricSourceActive(pending.pool as never, { type: 'instance', id: 7 })).resolves.toBe(false);
   });
 });

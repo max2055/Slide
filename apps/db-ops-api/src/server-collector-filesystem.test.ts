@@ -178,6 +178,8 @@ describe('server collector Linux lifecycle', () => {
     await expect(new ServerCollector().collectServer(9)).resolves.toMatchObject({
       success: true, metricsCount: 0, sourceFenced: true,
     });
+    expect(mocks.getDecryptedCredentials).not.toHaveBeenCalled();
+    expect(mocks.getConnection).not.toHaveBeenCalled();
     expect(mocks.execute.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO server_metrics'))).toBe(false);
   });
 
