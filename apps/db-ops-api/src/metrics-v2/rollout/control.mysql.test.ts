@@ -35,6 +35,24 @@ describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
     for (const table of ['metric_v2_alert_transitions', 'metric_v2_alert_state', 'alerts', 'metric_v2_rollout', 'metric_v2_publications', 'metric_v2_observations']) await pool.query(`DELETE FROM ${table}`);
     await control.initialize(series, target); await control.applied(series, ticket);
   });
+  it('selects compatibility consumers only from a uniform applied formal source', async () => {
+    const formal = new MysqlFormalMetricStore(pool), ref = { type: 'instance' as const, id: 1 };
+    expect(await formal.sourceState({ type: 'instance', id: 999 })).toBe('legacy');
+    expect(await formal.sourceState(ref)).toBe('legacy');
+    await storage.write(observation(), definition);
+    expect(await formal.sourceState(ref)).toBe('legacy');
+    await control.switch(series, 1, { ...target, source: 'v2', read: 'v2', revision: 2 });
+    expect(await formal.sourceState(ref)).toBe('pending');
+    await control.applied(series, { source: 'v2', generation: 2, revision: 2 });
+    expect(await formal.sourceState(ref)).toBe('v2');
+    const other = { ...series, metric: { ...series.metric, id: 'mysql.processlist.count' } };
+    await control.initialize(other, target); await control.applied(other, ticket);
+    expect(await formal.sourceState(ref)).toBe('pending');
+    await control.switch(series, 2, { ...target, revision: 3 });
+    expect(await formal.sourceState(ref)).toBe('pending');
+    await control.applied(series, { source: 'legacy', generation: 3, revision: 3 });
+    expect(await formal.sourceState(ref)).toBe('legacy');
+  });
   it('serializes competing switches, pending applied revision, late sources and rollback without deleting evidence', async () => {
     await control.publish(series, definition, ticket, async () => {});
     const next = { ...target, source: 'v2', read: 'v2' as const, revision: 2, package: { ...target.package, version: '2.0.0' } };
