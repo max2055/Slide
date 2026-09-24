@@ -4,19 +4,14 @@ import { resolve } from 'path';
 
 const source = readFileSync(resolve(import.meta.dirname, 'instance-detail.ts'), 'utf8');
 
-describe('instance detail formal metric source', () => {
-  it('tracks the backend source contract and clears incompatible legacy caches', () => {
-    expect(source).toContain('metricSource');
-    expect(source).toContain('m?.source_contract');
-    expect(source).toContain('h?.source_contract');
-    expect(source).toContain('this.metricsHistory = {}');
-    expect(source).toContain('this.overviewHistory = null');
-  });
-
-  it('renders canonical semantic metrics for V2 overview and hides legacy charts', () => {
-    expect(source).toContain('this.metricSource === "legacy"');
+describe('instance detail Metrics V2 source', () => {
+  it('renders semantic metrics without a legacy metric fallback', () => {
     expect(source).toContain('<semantic-metrics resourceType="instance"');
-    expect(source).toContain('this._renderLegacyOverview()');
-    expect(source).toContain('this._renderLegacyTrend()');
+    expect(source).not.toContain('metricSource');
+    expect(source).not.toContain('source_contract');
+    expect(source).not.toContain('_renderLegacyOverview');
+    expect(source).not.toContain('_renderLegacyTrend');
+    expect(source).not.toContain('旧版趋势');
+    expect(source).not.toMatch(/\/api\/database\/instances\/\$\{[^}]+\}\/metrics(?:\/history)?/);
   });
 });

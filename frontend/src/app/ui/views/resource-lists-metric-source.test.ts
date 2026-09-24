@@ -21,6 +21,15 @@ describe('resource pages use the formal Metrics V2 source', () => {
     expect(text).not.toContain('_metricSummary');
   });
 
+  it('uses semantic metrics exclusively on the server detail page', () => {
+    const text = source('server-detail.ts');
+    expect(text).toContain('<semantic-metrics resourceType="server"');
+    expect(text).not.toContain('/metrics/history');
+    expect(text).not.toMatch(/\/api\/servers\/\$\{[^}]+\}\/metrics/);
+    expect(text).not.toContain('兼容采集');
+    expect(text).not.toContain('旧版趋势');
+  });
+
   it('uses semantic metrics for network overview and interface metrics', () => {
     const text = source('network-device-detail.ts');
     expect(text).toContain('<semantic-metrics resourceType="network_device"');
