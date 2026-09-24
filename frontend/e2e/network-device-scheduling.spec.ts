@@ -30,7 +30,8 @@ for (const width of [390, 1280]) {
       </body></html>` }));
     await page.goto('/network-schedule-fixture');
     await expect(page.getByRole('heading', { name: '测试交换机' })).toBeVisible();
-    await expect(page.getByText('CPU 使用率', { exact: true })).toBeVisible();
+    await expect(page.getByText('标准指标与能力', { exact: true })).toBeVisible();
+    await expect(page.getByText('模板扩展指标', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: '配置备份', exact: true }).click();
     await expect(page.getByLabel('每日执行时间', { exact: true })).toHaveValue('00:00');
     await expect(page.getByLabel('启用每日定时备份')).toBeChecked();
@@ -44,8 +45,10 @@ for (const width of [390, 1280]) {
     await expect(page.getByLabel('启用每日定时备份')).not.toBeChecked();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath('network-backup-settings.png'), fullPage: true });
-    await page.getByRole('button', { name: '接口', exact: true }).click();
-    await expect(page.getByText('暂无接口数据', { exact: true })).toBeVisible();
+    const interfacesTab = page.getByRole('button', { name: '接口', exact: true });
+    await interfacesTab.click();
+    await expect(interfacesTab).toHaveClass(/active/);
+    await expect(page.getByText('标准指标与能力', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: '关联资源', exact: true }).click();
     await expect(page.getByText('暂无关联资源', { exact: true })).toBeVisible();
   });
