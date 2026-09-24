@@ -14,7 +14,6 @@ import "../components/app-ssh-auth-selector.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
-import { aggregateServerDiskUsage } from "./server-metric-utils.js";
 
 interface ServerRow {
   id: number;
@@ -44,21 +43,6 @@ interface ServerFormData {
   credential_value: string;
 }
 
-
-interface MetricSummaryEntry {
-  server_id: number;
-  metric_name: string;
-  metric_value: number;
-  recorded_at: string;
-  dimensions?: Record<string, unknown> | string | null;
-}
-
-interface MetricSummaryData {
-  servers: Record<number, { metrics: MetricSummaryEntry[]; recorded_at: string | null }>;
-  recorded_at: string | null;
-}
-
-type ServerFilterQuality = "all" | "good" | "partial" | "unknown";
 
 const SERVER_ENVIRONMENT_OPTIONS = [
   { value: "development", label: "开发环境" },
@@ -240,10 +224,8 @@ export class ServersPage extends LitElement {
   };
   @state() private _testConnectionMessage = "";
   @state() private _testConnectionSuccess: boolean | null = null;
-  @state() private _metricSummary: MetricSummaryData | null = null;
   @state() private _osFilter = "all";
   @state() private _statusFilter = "all";
-  @state() private _qualityFilter: ServerFilterQuality = "all";
   @state() private _environmentFilter = "all";
   @state() private _relationFilter = "all";
 
@@ -254,10 +236,7 @@ export class ServersPage extends LitElement {
   private async _loadServers() {
     this._loading = true;
     try {
-      const [serversRes, metricsRes] = await Promise.all([
-        authFetch("/api/servers"),
-        authFetch("/api/servers/metrics/summary").catch(() => null),
-      ]);
+      const serversRes = await authFetch("/api/servers");
       if (serversRes.status === 401) {
         showToast("请先登录", "warning");
         window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "chat" } }));
@@ -265,9 +244,6 @@ export class ServersPage extends LitElement {
       }
       if (!serversRes.ok) throw new Error("加载服务器列表失败");
       this._servers = await serversRes.json();
-      if (metricsRes?.ok) {
-        this._metricSummary = await metricsRes.json();
-      }
     } catch (err: any) {
       showToast(err.message || "网络错误", "error");
     } finally {
@@ -482,58 +458,6 @@ export class ServersPage extends LitElement {
     }
   }
 
-  private _usageVariant(value: number | null): string {
-    if (value === null) return "muted";
-    if (value >= 80) return "danger";
-    if (value >= 50) return "warn";
-    return "ok";
-  }
-
-  private _getServerMetric(serverId: number, metricName: string): MetricSummaryEntry | null {
-    if (!this._metricSummary) return null;
-    const serverMetrics = this._metricSummary.servers?.[serverId];
-    if (!serverMetrics) return null;
-    return serverMetrics.metrics.find(m => m.metric_name === metricName) || null;
-  }
-
-  private _serverQuality(serverId: number): ServerFilterQuality {
-    const metrics = this._metricSummary?.servers?.[serverId]?.metrics ?? [];
-    if (metrics.length === 0) return "unknown";
-    const expected = ["cpu_usage", "memory_usage", "load_1min"];
-    const present = expected.filter((name) => metrics.some((metric) => metric.metric_name === name)).length;
-    return present === expected.length ? "good" : "partial";
-  }
-
-  private _serverFreshness(server: ServerRow): string {
-    const recordedAt = this._metricSummary?.servers?.[server.id]?.recorded_at ?? server.last_check_at;
-    if (!recordedAt) return "unknown";
-    const age = Date.now() - new Date(recordedAt).getTime();
-    if (!Number.isFinite(age) || age < 0) return "unknown";
-    if (age < 5 * 60_000) return "fresh";
-    if (age < 30 * 60_000) return "stale";
-    return "expired";
-  }
-
-  private _qualityVariant(quality: ServerFilterQuality): "ok" | "warn" | "danger" | "muted" {
-    if (quality === "good") return "ok";
-    if (quality === "partial") return "warn";
-    return quality === "unknown" ? "muted" : "danger";
-  }
-
-  private _getAggregateDiskMetric(serverId: number): MetricSummaryEntry | null {
-    if (!this._metricSummary) return null;
-    const serverMetrics = this._metricSummary.servers?.[serverId];
-    if (!serverMetrics) return null;
-    const value = aggregateServerDiskUsage(serverMetrics.metrics);
-    if (value === null) return null;
-    return {
-      server_id: serverId,
-      metric_name: 'disk_usage',
-      metric_value: value,
-      recorded_at: serverMetrics.recorded_at ?? '',
-    };
-  }
-
   private _navigateToDetail(serverId: number) {
     window.dispatchEvent(new CustomEvent("slide-navigate", {
       detail: { tab: "server-detail", serverId },
@@ -544,7 +468,6 @@ export class ServersPage extends LitElement {
     return this._servers.filter((srv) =>
       (this._osFilter === "all" || canonicalOsKey(srv.os_type) === this._osFilter) &&
       (this._statusFilter === "all" || srv.status === this._statusFilter) &&
-      (this._qualityFilter === "all" || this._serverQuality(srv.id) === this._qualityFilter) &&
       (this._environmentFilter === "all" || (srv.environment ?? "unknown") === this._environmentFilter) &&
       (this._relationFilter === "all" || (this._relationFilter === "linked"
         ? Number(srv.related_instance_count ?? 0) > 0
@@ -553,7 +476,7 @@ export class ServersPage extends LitElement {
   }
 
   private get _activeFilterCount(): number {
-    return [this._searchQuery.trim(), this._osFilter, this._statusFilter, this._qualityFilter, this._environmentFilter, this._relationFilter]
+    return [this._searchQuery.trim(), this._osFilter, this._statusFilter, this._environmentFilter, this._relationFilter]
       .filter((value) => Boolean(value) && value !== "all").length;
   }
 
@@ -561,7 +484,6 @@ export class ServersPage extends LitElement {
     this._searchQuery = "";
     this._osFilter = "all";
     this._statusFilter = "all";
-    this._qualityFilter = "all";
     this._environmentFilter = "all";
     this._relationFilter = "all";
   }
@@ -571,8 +493,6 @@ export class ServersPage extends LitElement {
       { key: "host", label: "主机" },
       { key: "type", label: "操作系统类型" },
       { key: "version", label: "系统版本" },
-      { key: "cpu", label: "CPU", textAlign: "center" },
-      { key: "memory", label: "内存", textAlign: "center" },
       { key: "status", label: "连接状态", textAlign: "center" },
       { key: "actions", label: "操作", textAlign: "center" },
     ];
@@ -580,19 +500,6 @@ export class ServersPage extends LitElement {
 
   private _getRows() {
     return this._filteredServers.map((srv) => {
-      const cpuMetric = this._getServerMetric(srv.id, "cpu_usage");
-      const memMetric = this._getServerMetric(srv.id, "memory_usage");
-      const diskMetric = this._getAggregateDiskMetric(srv.id);
-      const cpuValue = cpuMetric?.metric_value ?? null;
-      const memValue = memMetric?.metric_value ?? null;
-      const diskValue = diskMetric?.metric_value ?? null;
-      const rx = this._getServerMetric(srv.id, "network_rx_bytes")?.metric_value ?? null;
-      const tx = this._getServerMetric(srv.id, "network_tx_bytes")?.metric_value ?? null;
-      const errors = (this._getServerMetric(srv.id, "network_rx_errors")?.metric_value ?? 0)
-        + (this._getServerMetric(srv.id, "network_tx_errors")?.metric_value ?? 0);
-      const quality = this._serverQuality(srv.id);
-      const freshness = this._serverFreshness(srv);
-
       return {
         id: srv.id, type: canonicalOsLabel(srv.os_type), version: srv.os_version,
         searchValues: [srv.label, srv.host, srv.os_type, srv.status, this._statusLabel(srv.status)],
@@ -602,14 +509,7 @@ export class ServersPage extends LitElement {
           </div>`,
         label: srv.label || html`<span style="color:var(--muted);">—</span>`,
         os_type: html`<app-badge variant="muted">${canonicalOsLabel(srv.os_type)}</app-badge>`,
-        cpu: html`<small>兼容数据 · ${cpuMetric?.recorded_at || "时间未知"}</small><app-badge variant="${this._usageVariant(cpuValue)}">CPU ${cpuValue != null ? cpuValue.toFixed(1) + "%" : "--"}</app-badge>`,
-        memory: html`<small>兼容数据 · ${memMetric?.recorded_at || "时间未知"}</small><app-badge variant="${this._usageVariant(memValue)}">内存 ${memValue != null ? memValue.toFixed(1) + "%" : "--"}</app-badge>`,
-        disk: html`<app-badge variant="${this._usageVariant(diskValue)}">磁盘 ${diskValue != null ? diskValue.toFixed(1) + "%" : "--"}</app-badge>`,
-        network: html`<span>${rx != null || tx != null ? `${this._formatRate(rx)} / ${this._formatRate(tx)}` : "--"}</span>`,
-        errors: html`<app-badge variant=${errors > 0 ? "warn" : "muted"}>${errors || "--"}</app-badge>`,
         status: html`<app-badge variant="${this._statusBadgeVariant(srv.status)}">${this._statusLabel(srv.status)}</app-badge>`,
-        quality: html`<app-badge variant=${this._qualityVariant(quality)}>${quality}</app-badge>`,
-        freshness: html`<app-badge variant=${freshness === "fresh" ? "ok" : freshness === "stale" ? "warn" : "muted"}>${freshness}</app-badge>`,
         last_collection: html`<span style="font-size:var(--text-sm);color:var(--muted);">${this._formatLastCheck(srv.last_check_at)}</span>`,
         actions: html`
           <div class="actions">
@@ -634,14 +534,6 @@ export class ServersPage extends LitElement {
     const days = Math.floor(hours / 24);
     if (days < 7) return `${days} 天前`;
     return new Date(lastCheckAt).toLocaleDateString("zh-CN");
-  }
-
-  private _formatRate(value: number | null): string {
-    if (value == null || !Number.isFinite(value)) return "--";
-    if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-    if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-    if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
-    return `${value.toFixed(0)} B`;
   }
 
   override render() {
@@ -704,9 +596,6 @@ export class ServersPage extends LitElement {
             <select class="form-select filter-select" aria-label="Status filter" .value=${this._statusFilter} @change=${(e: Event) => (this._statusFilter = (e.target as HTMLSelectElement).value)}>
               <option value="all">全部状态</option>
               <option value="online">在线</option><option value="offline">离线</option><option value="unreachable">不可达</option><option value="error">异常</option>
-            </select>
-            <select class="form-select filter-select" aria-label="Quality filter" .value=${this._qualityFilter} @change=${(e: Event) => (this._qualityFilter = (e.target as HTMLSelectElement).value as ServerFilterQuality)}>
-              <option value="all">全部采集质量</option><option value="good">良好</option><option value="partial">部分缺失</option><option value="unknown">未知</option>
             </select>
             <select class="form-select filter-select" aria-label="Environment filter" .value=${this._environmentFilter} @change=${(e: Event) => (this._environmentFilter = (e.target as HTMLSelectElement).value)}>
               <option value="all">全部环境</option>

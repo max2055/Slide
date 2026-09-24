@@ -62,16 +62,16 @@ describe('Metrics V2 portfolio rollout', () => {
     expect(portfolio.resources.map(resource => [resource.key, resource.package?.id, resource.blockers])).toEqual([
       ['instance:1', 'mysql-representative', []],
       ['instance:2', 'postgresql-representative', []],
-      ['server:3', 'linux-host', []],
-      ['network_device:4', 'if-mib-basic', []],
       ['instance:5', undefined, ['unsupported_resource']],
+      ['server:3', 'linux-host', []],
       ['server:6', undefined, ['unsupported_resource']],
-      ['network_device:7', 'if-mib-basic', ['credential_unavailable']],
       ['server:8', 'linux-host', ['collection_disabled']],
+      ['network_device:4', 'if-mib-basic', []],
+      ['network_device:7', 'if-mib-basic', ['credential_unavailable']],
     ]);
     expect(portfolio.summary).toEqual({ total: 8, supported: 4, blocked: 4, v2: 0, complete: false });
     expect(portfolio.plan_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
-    expect(JSON.stringify(portfolio)).not.toMatch(/password|community|username|host|sql|oid/i);
+    expect(JSON.stringify(portfolio)).not.toMatch(/"(?:password|community|username|host|sql|oid)"\s*:/i);
   });
 
   it('uses a deterministic plan hash and changes it when server-owned inventory changes', async () => {

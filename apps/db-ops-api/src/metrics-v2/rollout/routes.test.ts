@@ -16,12 +16,19 @@ describe('rollout coordination API', () => {
     confirmApplied: vi.fn(async () => ({ phase: 'v2' })),
     rollback: vi.fn(async () => ({ phase: 'legacy' })),
   };
+  const portfolio = {
+    status: vi.fn(async () => ({ plan_hash: `sha256:${'a'.repeat(64)}`, summary: { total: 1, supported: 1, blocked: 0, v2: 0, complete: false }, resources: [] })),
+    prepare: vi.fn(async () => ({ results: [{ key: 'instance:1', outcome: 'changed' }] })),
+    shadow: vi.fn(async () => ({ results: [{ key: 'instance:1', outcome: 'changed' }] })),
+    cutover: vi.fn(async () => ({ results: [{ key: 'instance:1', outcome: 'changed' }] })),
+    confirm: vi.fn(async () => ({ results: [{ key: 'instance:1', outcome: 'changed' }] })),
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
     actor = admin;
     app = Fastify();
-    await registerMetricRolloutRoutes(app, async request => { (request as any).user = actor; }, coordinator as never, access);
+    await registerMetricRolloutRoutes(app, async request => { (request as any).user = actor; }, coordinator as never, access, portfolio as never);
   });
   afterEach(async () => app.close());
 
@@ -59,5 +66,32 @@ describe('rollout coordination API', () => {
     actor = admin;
     expect((await app.inject({ method: 'GET', url: '/api/metrics-v2/rollout/resources/unknown/1' })).statusCode).toBe(400);
     expect((await app.inject({ method: 'GET', url: '/api/metrics-v2/rollout/resources/instance/0' })).statusCode).toBe(400);
+  });
+
+  it('exposes fixed portfolio actions guarded by a server inventory plan hash', async () => {
+    const current = await app.inject({ method: 'GET', url: '/api/metrics-v2/rollout/portfolio' });
+    expect(current.statusCode).toBe(200);
+    expect(portfolio.status).toHaveBeenCalledWith(admin);
+    const expected_plan_hash = `sha256:${'a'.repeat(64)}`;
+    for (const operation of ['prepare', 'shadow', 'cutover', 'confirm'] as const) {
+      const response = await app.inject({ method: 'POST', url: `/api/metrics-v2/rollout/portfolio/${operation}`, payload: { expected_plan_hash } });
+      expect(response.statusCode).toBe(200);
+      expect(portfolio[operation]).toHaveBeenCalledWith(admin, expected_plan_hash);
+    }
+  });
+
+  it('rejects unauthenticated, stale and expanded portfolio requests without echoing input', async () => {
+    actor = undefined;
+    expect((await app.inject({ method: 'GET', url: '/api/metrics-v2/rollout/portfolio' })).statusCode).toBe(401);
+    actor = admin;
+    const invalid = await app.inject({ method: 'POST', url: '/api/metrics-v2/rollout/portfolio/prepare',
+      payload: { expected_plan_hash: `sha256:${'a'.repeat(64)}`, host: 'secret.internal' } });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.body).not.toContain('secret.internal');
+    portfolio.prepare.mockRejectedValueOnce(new Error('PORTFOLIO_PLAN_CHANGED'));
+    const stale = await app.inject({ method: 'POST', url: '/api/metrics-v2/rollout/portfolio/prepare',
+      payload: { expected_plan_hash: `sha256:${'b'.repeat(64)}` } });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toEqual({ error: 'PORTFOLIO_PLAN_CHANGED' });
   });
 });
