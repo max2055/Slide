@@ -46,6 +46,10 @@ export class MysqlScheduleStore {
     return this.transaction(async c => {
       const current = await this.current(c, ref);
       if (!current || current.binding.revision !== plan.revision) return false;
+      const [coordination] = await c.execute<RowDataPacket[]>(
+        'SELECT phase FROM metric_v2_rollout_resources WHERE resource_key = ? FOR UPDATE', [refKey(ref)],
+      );
+      if (coordination[0]?.phase === 'legacy') return false;
       const [rows] = await c.execute<RowDataPacket[]>('SELECT * FROM metric_v2_schedule WHERE resource_key = ? FOR UPDATE', [refKey(ref)]);
       const row = rows[0];
       let next = row ? Number(row.next_due_ms) : now + plan.jitterMs;
@@ -142,8 +146,11 @@ export class MysqlScheduleStore {
     });
   }
   async assertCurrent(ref: Ref, revision: number, job: ClaimedJob, ctx: JobExecutionContext): Promise<void> {
-    const valid = await this.transaction(c => this.valid(c, ref, revision, job, ctx));
-    rule(valid, 'SCHEDULE_STALE_EXECUTION');
+    await this.transaction(async c => {
+      const current = await this.current(c, ref);
+      rule(current && current.binding.revision === revision, 'SCHEDULE_SUPERSEDED');
+      rule(await this.valid(c, ref, revision, job, ctx), 'SCHEDULE_STALE_EXECUTION');
+    });
   }
   async recordFailure(snapshot: ExecutionSnapshot, result: PackageResult, job: ClaimedJob, ctx: JobExecutionContext, now: number): Promise<void> {
     await this.transaction(async c => {

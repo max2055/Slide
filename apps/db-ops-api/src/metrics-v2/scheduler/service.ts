@@ -97,9 +97,13 @@ export class MetricScheduler {
         await this.store.event(ref, revision, job.id, committed ? 'committed' : 'late_result_discarded', false, this.clock() - started, reads);
       } catch (error) {
         // Never store remote errors, credentials or SQL. Abort cannot retract an already issued request.
-        const code = cancelled ? 'cancelled_result_uncertain' : error instanceof Error && error.message === 'SCHEDULE_STALE_EXECUTION'
+        const superseded = error instanceof Error && error.message === 'SCHEDULE_SUPERSEDED';
+        const stale = error instanceof Error && error.message === 'SCHEDULE_STALE_EXECUTION';
+        const code = cancelled ? 'cancelled_result_uncertain' : superseded || stale
           ? 'late_result_discarded' : 'collection_failed';
         await this.store.event(ref, revision, job.id, code, uncertain || inFlight, this.clock() - started, reads);
+        // A superseded revision can never become current again; retrying it can starve the replacement job.
+        if (superseded) return;
         throw new Error(code);
       } finally {
         if (timer) clearTimeout(timer);

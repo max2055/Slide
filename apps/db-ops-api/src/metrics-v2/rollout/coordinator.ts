@@ -12,7 +12,7 @@ const ActorSchema = z.strictObject({
   userId: z.number().int().nonnegative(),
   requestId: z.string().min(1).max(128),
 });
-const ShadowGateSchema = z.strictObject({
+export const ShadowGateSchema = z.strictObject({
   sample_count: z.number().int().positive(),
   source_conflicts: z.number().int().nonnegative(),
   duplicate_formal_writes: z.number().int().nonnegative(),
@@ -26,11 +26,11 @@ const ShadowGateSchema = z.strictObject({
   derived_mismatches: z.number().int().nonnegative(),
   performance_regressions: z.number().int().nonnegative(),
 });
-const CasSchema = z.strictObject({
+export const CasSchema = z.strictObject({
   expected_revision: z.number().int().positive(),
   expected_generation: z.number().int().positive(),
 });
-const CutoverSchema = z.strictObject({
+export const CutoverSchema = z.strictObject({
   expected_shadow_revision: z.number().int().positive(),
   expected_generation: z.number().int().positive(),
 });

@@ -150,6 +150,7 @@ import { registerResourceRoutes } from './src/resources/resource-routes.js';
 import { registerMetricConsumerRoutes } from './src/metrics-v2/consumers/routes.js';
 import { registerMetricConfigurationRoutes } from './src/metrics-v2/config/routes.js';
 import { registerMetricPolicyRoutes } from './src/metrics-v2/policy/routes.js';
+import { registerMetricRolloutRoutes } from './src/metrics-v2/rollout/routes.js';
 import { registerEvidenceRoutes } from './src/evidence/evidence-api.js';
 import { registerEvidenceEvaluationRoutes } from './src/evidence/evidence-evaluation-api.js';
 import { installPlatformObservation } from './src/platform/platform-observation-service.js';
@@ -329,6 +330,7 @@ async function start() {
   await registerNetworkDeviceRoutes(fastify, verifyToken);
   await registerResourceRoutes(fastify, verifyToken);
   await registerMetricPolicyRoutes(fastify, verifyToken);
+  await registerMetricRolloutRoutes(fastify, verifyToken);
   await registerMetricConfigurationRoutes(fastify, verifyToken);
   await registerMetricConsumerRoutes(fastify, verifyToken);
   await installPlatformObservation(fastify, verifyToken);
