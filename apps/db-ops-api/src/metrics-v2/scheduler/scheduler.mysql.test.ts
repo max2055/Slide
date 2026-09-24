@@ -44,7 +44,7 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
   afterAll(async () => { await pool?.end(); if (root) { await root.query(`DROP DATABASE IF EXISTS ${database}`); await root.end(); } });
   beforeEach(async () => {
     now = Date.now() - 20000;
-    for (const table of ['metric_v2_rollout', 'metric_v2_publications', 'metric_v2_schedule', 'metric_v2_schedule_events', 'metric_v2_policy_bindings', 'metric_v2_policy_audit', 'metric_v2_observations', 'metric_v2_attempts', 'workflow_jobs']) await pool.query(`DELETE FROM ${table}`);
+    for (const table of ['metric_v2_rollout_events', 'metric_v2_rollout_resources', 'metric_v2_rollout', 'metric_v2_publications', 'metric_v2_schedule', 'metric_v2_schedule_events', 'metric_v2_policy_bindings', 'metric_v2_policy_audit', 'metric_v2_observations', 'metric_v2_attempts', 'workflow_jobs']) await pool.query(`DELETE FROM ${table}`);
     store = new MysqlScheduleStore(pool, packages);
     queue = new MysqlWorkflowStore(() => pool as never);
     policies = new PolicyService(new MysqlPolicyStore(() => pool), packages, { exists: async () => true, inventory: async r => resource(r.id) }, () => new Date(now).toISOString());
@@ -82,6 +82,20 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
     expect(data.filter(o => o.metric.id === 'mysql.queries.per_second').some(o => o.value?.value === fixture.expected_rate)).toBe(true);
     expect(data.every(o => o.versions.config_revision === 1 && o.versions.transform_version === '1.0.0')).toBe(true);
     expect(await rows('SELECT logical_reads FROM metric_v2_schedule_events')).toEqual([{ logical_reads: 1 }, { logical_reads: 1 }]);
+  });
+  it('stops V2 jobs after coordinated rollback while shadow collection remains active', async () => {
+    const published = await create();
+    await pool.execute(`INSERT INTO metric_v2_rollout_resources
+      (resource_key, resource_type, resource_id, phase, revision, generation, actor_id, request_id)
+      VALUES ('instance:1', 'instance', '1', 'legacy', 1, 1, 7, 'rollback')`);
+    expect(await store.enqueue(published, now)).toBe(false);
+    expect(await store.enqueue(published, now + 60000)).toBe(false);
+    expect(await rows('SELECT id FROM workflow_jobs')).toHaveLength(0);
+    expect(await rows('SELECT resource_key FROM metric_v2_schedule')).toHaveLength(0);
+    await pool.execute("UPDATE metric_v2_rollout_resources SET phase = 'shadow' WHERE resource_key = 'instance:1'");
+    expect(await store.enqueue(published, now + 60000)).toBe(false);
+    expect(await store.enqueue(published, now + 120000)).toBe(true);
+    expect(await rows('SELECT id FROM workflow_jobs')).toHaveLength(1);
   });
   it('rejects invalid resolved configuration before scheduling or applied acknowledgement', async () => {
     const p = await create(); p.resolved.settings.interval_ms = 1;
