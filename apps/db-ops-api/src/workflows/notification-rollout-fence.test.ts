@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { JobRegistry } from './job-registry.js';
 import { registerNotificationHandlers } from './notification-handlers.js';
-import type { DeliveryClaim, DeliveryGate, DeliveryRequest } from './delivery-store.js';
+import type { DeliveryGate } from './delivery-store.js';
 import {
   parseRolloutAlertFence,
   type RolloutAlertPublicationGate,
@@ -97,6 +97,24 @@ describe('Metrics V2 alert notification publication fence', () => {
 
     expect(result.sent).toHaveBeenCalledOnce();
     expect(result.finished).toEqual([{ state: 'sent', error: undefined }]);
+  });
+
+  it('records a fence outage as retryable without invoking the transport', async () => {
+    const registry = new JobRegistry();
+    const sent = vi.fn().mockResolvedValue({ success: true });
+    const finished: Array<{ state: string; error?: string }> = [];
+    registerNotificationHandlers(registry, {
+      getAlertById: async () => alert as any,
+      getChannelById: async () => channel,
+    }, { send: sent, buildMessage: () => ({ text: 'CPU high' }) }, {
+      getReportById: async () => null,
+    }, deliveryGate(finished), { run: async () => { throw new Error('ROLLOUT_ALERT_FENCE_UNAVAILABLE'); } });
+
+    await expect(registry.execute({ id: 'delivery-2', type: 'notification.deliver',
+      payload: { alertId: alert.id, channelId: channel.id }, attempts: 1, maxAttempts: 5, fencingToken: 1 }))
+      .rejects.toThrow('ROLLOUT_ALERT_FENCE_UNAVAILABLE');
+    expect(sent).not.toHaveBeenCalled();
+    expect(finished).toEqual([{ state: 'retryable', error: 'ROLLOUT_ALERT_FENCE_UNAVAILABLE' }]);
   });
 
   it('rejects a Metrics V2 alert without a complete immutable fence', () => {

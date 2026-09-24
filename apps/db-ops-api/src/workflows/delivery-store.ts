@@ -3,14 +3,16 @@ import type { Pool, PoolConnection } from 'mysql2/promise';
 import { dbConnection, encryptData, decryptData } from '../db-connection.js';
 import type { NotificationChannel } from '../notification-database-service.js';
 import type { ClaimedJob, JobExecutionContext } from './worker-runtime.js';
+import type { RolloutAlertFence } from '../metrics-v2/rollout/alert-publication-fence.js';
 
-export interface DeliveryRequest { channel: NotificationChannel; message: unknown }
+export interface DeliveryRequest { channel: NotificationChannel; message: unknown; rolloutFence?: RolloutAlertFence }
 export interface DeliveryClaim { key: string; attemptId: string; request: DeliveryRequest; retryDeadline?: number }
+export type DeliveryFinishState = 'sent' | 'unknown' | 'retryable' | 'skipped';
 export interface DeliveryGate {
   preflightFailed(job: ClaimedJob, context: JobExecutionContext): Promise<void>;
   snapshot(key: string): Promise<DeliveryRequest | null>;
   acquire(job: ClaimedJob, context: JobExecutionContext, request: DeliveryRequest | null): Promise<DeliveryClaim | null>;
-  finish(job: ClaimedJob, context: JobExecutionContext, claim: DeliveryClaim, state: 'sent' | 'unknown', error?: string): Promise<void>;
+  finish(job: ClaimedJob, context: JobExecutionContext, claim: DeliveryClaim, state: DeliveryFinishState, error?: string): Promise<void>;
 }
 export function deliveryIdentity(job: Pick<ClaimedJob, 'type' | 'payload'>) {
   const kind = job.type === 'notification.deliver' ? 'notification' : job.type === 'report.notify' ? 'report' : null;
@@ -127,7 +129,7 @@ export class MysqlDeliveryStore implements DeliveryGate {
     await c.execute(`UPDATE ${attemptTable(row.kind)} SET status = ?, error_code = ?, finished_at = NOW()
       WHERE workflow_job_id = ? AND attempt_number = ? AND status = 'started'`, [state, error, row.workflow_job_id, row.fencing_token]);
   }
-  async finish(job: ClaimedJob, context: JobExecutionContext, claim: DeliveryClaim, state: 'sent' | 'unknown', error?: string): Promise<void> {
+  async finish(job: ClaimedJob, context: JobExecutionContext, claim: DeliveryClaim, state: DeliveryFinishState, error?: string): Promise<void> {
     await this.transaction(async c => {
       await this.owned(c, job, context);
       const [rows] = await c.execute<any[]>('SELECT * FROM notification_delivery_states WHERE business_key = ? FOR UPDATE', [claim.key]);
@@ -137,7 +139,7 @@ export class MysqlDeliveryStore implements DeliveryGate {
         await c.execute("INSERT INTO notification_records (alert_id,channel_id,status,sent_at) VALUES (?,?,'sent',NOW())", [row.source_id, row.channel_id]);
       }
       await c.execute('UPDATE notification_delivery_states SET state = ?, error_code = ?, version = version + 1 WHERE business_key = ?', [state, error ?? null, claim.key]);
-      await this.attemptResult(c, row, state, error ?? null);
+      await this.attemptResult(c, row, state === 'retryable' ? 'failed' : state, error ?? null);
     });
   }
   async inspect(jobId: string) {

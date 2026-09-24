@@ -1,5 +1,5 @@
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
-import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MigrationRunner } from '../../migrations/runner.js';
 import type { MigrationPool } from '../../migrations/types.js';
 import { definitions, sample, identify } from '../../contracts/metrics-v2/fixtures.js';
@@ -7,6 +7,7 @@ import { MysqlMetricStorage } from '../storage.js';
 import { MetricStorageAdapter } from '../compatibility.js';
 import { RolloutControl, type Target } from './control.js';
 import { MysqlFormalMetricStore } from './formal-store.js';
+import { MysqlRolloutAlertPublicationGate, parseRolloutAlertFence } from './alert-publication-fence.js';
 
 const port = Number(process.env.METRICS_V2_TEST_MYSQL_PORT);
 describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
@@ -126,6 +127,32 @@ describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
     expect(alerts).toHaveLength(1); expect(alerts[0].status).toBe('resolved');
     const [transitions] = await pool.query<RowDataPacket[]>('SELECT * FROM metric_v2_alert_transitions');
     expect(transitions).toHaveLength(2);
+  });
+  it('holds cutover behind an in-flight alert publication and rejects the queued old generation afterwards', async () => {
+    await control.publish(series, definition, ticket, async () => {});
+    await control.transition(series, ticket, { rule: 'notify', ruleVersion: '1', observationId: series.id,
+      windowEnd: Date.parse(series.observed_at), state: 'firing', value: 3600, title: 'notify', level: 'warning' });
+    const [alerts] = await pool.query<RowDataPacket[]>('SELECT id, source, tags FROM alerts');
+    const alertId = Number(alerts[0].id);
+    const fence = parseRolloutAlertFence({ source: alerts[0].source, tags: alerts[0].tags })!;
+    let release!: () => void;
+    let started!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    const gate = new MysqlRolloutAlertPublicationGate(() => pool);
+    const publication = gate.run(alertId, fence, async () => { started(); await held; });
+    await entered;
+    let switched = false;
+    const cutover = control.switch(series, 1, { ...target, source: 'v2', read: 'v2', revision: 2 })
+      .then(result => { switched = true; return result; });
+    await new Promise(resolve => setTimeout(resolve, 25));
+    expect(switched).toBe(false);
+    release();
+    await expect(publication).resolves.toBe('published');
+    await expect(cutover).resolves.toBe(2);
+    const staleSend = vi.fn(async () => {});
+    await expect(gate.run(alertId, fence, staleSend)).resolves.toBe('stale');
+    expect(staleSend).not.toHaveBeenCalled();
   });
   it('rejects wrong revision and shadow evidence; rule versions have independent identities', async () => {
     await expect(control.publish(observation(0, 2), definition, ticket, async () => {})).rejects.toThrow('OBSERVATION_REVISION');

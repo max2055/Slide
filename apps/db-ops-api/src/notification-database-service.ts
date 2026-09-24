@@ -52,6 +52,8 @@ export interface NotificationRecord {
 export interface PendingAlert {
   id: number;
   instance_id: number | null;
+  source?: string | null;
+  status?: string;
   alert_type: string;
   level: string;
   title: string;
@@ -365,7 +367,7 @@ class NotificationDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT a.id, a.instance_id, a.alert_type, a.level, a.title, a.message,
+        `SELECT a.id, a.instance_id, a.source, a.status, a.alert_type, a.level, a.title, a.message,
                 a.metric_name, a.metric_value, a.threshold_value, a.tags, a.created_at,
                 di.name AS instance_name, di.host AS instance_host
          FROM alerts a
@@ -377,6 +379,8 @@ class NotificationDatabaseService {
       return rows.map((row: any) => ({
         id: row.id,
         instance_id: row.instance_id,
+        source: row.source,
+        status: row.status,
         alert_type: row.alert_type,
         level: row.level,
         title: row.title,
@@ -411,7 +415,7 @@ class NotificationDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT a.id, a.instance_id, a.alert_type, a.level, a.title, a.message,
+        `SELECT a.id, a.instance_id, a.source, a.status, a.alert_type, a.level, a.title, a.message,
                 a.metric_name, a.metric_value, a.threshold_value, a.tags, a.created_at,
                 d.name AS instance_name, d.host AS instance_host
          FROM alerts a
@@ -428,6 +432,8 @@ class NotificationDatabaseService {
       return {
         id: row.id,
         instance_id: row.instance_id,
+        source: row.source,
+        status: row.status,
         alert_type: row.alert_type,
         level: row.level,
         title: row.title,
