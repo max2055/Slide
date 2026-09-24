@@ -216,7 +216,7 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
     const next = packages.install(sealRelease(release));
     await policies.changeBinding(admin, ref, { expected_revision: 1, package: { id: next.package.id, version: next.package.version, digest: next.package.digest } }, true);
     expect((await policies.binding(admin, ref)).application).toMatchObject({ status: 'pending', applied_revision: 1 });
-    gate.resolve(batch()); await running; expect(await outputs()).toHaveLength(0);
+    gate.resolve(batch()); expect(await running).toBe('completed'); expect(await outputs()).toHaveLength(0);
     expect(await enqueue(s.scheduler)).toBe(1); await ready(); expect(await s.run(s.worker('v2'))).toBe('completed');
     expect((await policies.binding(admin, ref)).application.applied_revision).toBe(2);
     expect((await outputs()).every(r => r.payload.versions.package_version === '1.1.0' && r.payload.versions.config_revision === 2)).toBe(true);
