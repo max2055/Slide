@@ -3,6 +3,12 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const sourceMocks = vi.hoisted(() => ({ state: vi.fn(async () => 'legacy' as const) }));
+
+vi.mock('../src/metrics-v2/consumers/runtime', () => ({
+  operationalSource: sourceMocks.state,
+}));
+
 // Mock dependencies before importing the module
 vi.mock('../src/db-connection', () => ({
   dbConnection: {
@@ -40,6 +46,7 @@ describe('BaselineCalculator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    sourceMocks.state.mockResolvedValue('legacy');
   });
 
   afterEach(() => {
@@ -127,6 +134,15 @@ describe('BaselineCalculator', () => {
       const params = mockPool.execute.mock.calls[0][1];
       expect(params).toContain(1); // instance_id
     });
+
+    it.each(['v2', 'pending'] as const)('does not compute a legacy baseline for %s formal source', async state => {
+      sourceMocks.state.mockResolvedValue(state);
+      mockPool = { execute: vi.fn() };
+      const { baselineCalculator } = await import('../src/baseline-calculator');
+      await expect(baselineCalculator.computeBaselineForMetric(1, 'cpu_usage'))
+        .resolves.toEqual({ success: false, error: state === 'v2' ? 'METRIC_V2_BASELINE_UNAVAILABLE' : 'METRIC_SOURCE_PENDING' });
+      expect(mockPool.execute).not.toHaveBeenCalled();
+    });
   });
 
   describe('getCachedBaseline', () => {
@@ -159,6 +175,14 @@ describe('BaselineCalculator', () => {
       const { baselineCalculator } = await import('../src/baseline-calculator');
       const baseline = await baselineCalculator.getCachedBaseline(1, 'nonexistent');
       expect(baseline).toBeNull();
+    });
+
+    it('does not expose a cached legacy baseline after V2 becomes formal', async () => {
+      sourceMocks.state.mockResolvedValue('v2');
+      mockPool = { execute: vi.fn() };
+      const { baselineCalculator } = await import('../src/baseline-calculator');
+      await expect(baselineCalculator.getCachedBaseline(1, 'cpu_usage')).resolves.toBeNull();
+      expect(mockPool.execute).not.toHaveBeenCalled();
     });
   });
 
