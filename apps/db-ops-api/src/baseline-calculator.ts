@@ -11,6 +11,7 @@ import { dbConnection } from './db-connection';
 import { metricsDatabaseService } from './metrics-database-service';
 import { instanceDatabaseService } from './instance-database-service';
 import { metricRegistry } from './metric-registry';
+import { operationalSource } from './metrics-v2/consumers/runtime.js';
 
 /**
  * 基线计算结果
@@ -76,6 +77,14 @@ class BaselineCalculator {
     }
 
     try {
+      const source = await operationalSource({ type: 'instance', id: instanceId });
+      if (source !== 'legacy') {
+        return {
+          success: false,
+          error: source === 'v2' ? 'METRIC_V2_BASELINE_UNAVAILABLE' : 'METRIC_SOURCE_PENDING',
+        };
+      }
+
       // 使用 SQL STDDEV_POP 计算均值和标准差
       const [rows] = await pool.execute(
         `SELECT
@@ -198,6 +207,10 @@ class BaselineCalculator {
     }
 
     try {
+      if (await operationalSource({ type: 'instance', id: instanceId }) !== 'legacy') {
+        return null;
+      }
+
       const [rows] = await pool.execute(
         `SELECT mean_val, stddev_val, lower_bound, upper_bound
          FROM metric_baselines
