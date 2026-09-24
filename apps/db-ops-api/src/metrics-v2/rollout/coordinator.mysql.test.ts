@@ -58,7 +58,7 @@ describe.skipIf(!port)('resource rollout coordinator', () => {
       ['instance:1', JSON.stringify(published(1)), '[]']);
     const storage = new MysqlMetricStorage(pool);
     await storage.write(observation(0, 1), definitions[0]);
-    await storage.write(observation(1, 1), definitions[1]);
+    await storage.write(observation(6, 1), definitions[6]);
   });
 
   it('derives shadow series server-side and rejects an incomplete comparison gate', async () => {
@@ -119,7 +119,7 @@ describe.skipIf(!port)('resource rollout coordinator', () => {
       && row.applied_revision === null && Number(row.generation) === 2)).toBe(true);
 
     const control = new RolloutControl(pool);
-    for (const series of [observation(0, 1), observation(1, 1)]) {
+    for (const series of [observation(0, 1), observation(6, 1)]) {
       await control.applied(series, { source: 'v2', generation: 2, revision: 2 });
     }
     await expect(coordinator.confirmApplied(ref, 2, actor)).resolves.toMatchObject({ phase: 'v2', applied_series: 2 });
@@ -138,6 +138,6 @@ describe.skipIf(!port)('resource rollout coordinator', () => {
     const [events] = await pool.query<RowDataPacket[]>('SELECT action FROM metric_v2_rollout_events ORDER BY id');
     expect(events.map(row => row.action)).toEqual(['shadow_started', 'shadow_accepted', 'cutover_started', 'cutover_applied', 'rollback_applied']);
     expect(await coordinator.status(ref)).toMatchObject({ phase: 'legacy', series_count: 2, applied_series: 2 });
-    expect(seriesHash(observation(0, 1))).not.toBe(seriesHash(observation(1, 1)));
+    expect(seriesHash(observation(0, 1))).not.toBe(seriesHash(observation(6, 1)));
   });
 });
