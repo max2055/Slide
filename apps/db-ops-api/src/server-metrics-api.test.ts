@@ -23,6 +23,14 @@ const historyRoute = routeSource(
   "fastify.get('/api/servers/:id/metrics/history'",
   '// 手动触发单次采集',
 );
+const instanceLatestRoute = routeSource(
+  "fastify.get('/api/database/instances/:id/metrics'",
+  '// 获取实例历史指标',
+);
+const instanceHistoryRoute = routeSource(
+  "fastify.get('/api/database/instances/:id/metrics/history'",
+  '// 获取慢查询 (TopSQL)',
+);
 
 describe('server metrics API dimension contract', () => {
   it.each([
@@ -55,5 +63,24 @@ describe('server metrics API dimension contract', () => {
     expect(source).toContain('const latestServerMetricRecordedAt =');
     expect(route).toContain('latestServerMetricRecordedAt(rows)');
     expect(route).not.toContain('rows[0].recorded_at');
+  });
+});
+
+describe('database instance metric formal-source contract', () => {
+  it.each([
+    ['latest', instanceLatestRoute],
+    ['history', instanceHistoryRoute],
+  ])('%s selects one formal source and preserves semantic evidence', (_name, route) => {
+    expect(route).toContain('routeMetricRead');
+    expect(route).toContain('operationalSource');
+    expect(route).toContain('metricConsumerService.query');
+    expect(route).toContain("source_contract: 'metrics-v2'");
+    expect(route).toContain("METRIC_SOURCE_PENDING");
+    expect(route).toContain('semantic_metrics');
+  });
+
+  it('keeps both legacy reads behind callbacks selected by the source router', () => {
+    expect(instanceLatestRoute).toContain('databaseService.getRealtimeMetrics');
+    expect(instanceHistoryRoute).toContain('metricsDatabaseService.getHistoricalMetricsWithRange');
   });
 });
