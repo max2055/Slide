@@ -8,10 +8,7 @@ import "../components/metric-chart.js";
 import { showToast } from "../components/app-toast-container.js";
 import "../components/app-badge.js";
 import "../components/app-card.js";
-import "../components/instance-overview-tab.js";
-import "../components/instance-metrics-tab.js";
 import "../components/instance-diagnosis-modal.js";
-import "../components/instance-trend-chart.js";
 import "./ai-analysis-result.js";
 import "./schema-management.ts";
 import "./index-management.ts";
@@ -22,11 +19,9 @@ import "./health-score-tab.js";
 import { authFetch } from "../../../api/index.js";
 
 interface InstanceDetail { id: number; name: string; db_type: string; host: string; port: number; database_name: string; username: string; environment: string; description: string; health_status: "healthy"|"warning"|"critical"|"unknown"|"error"; health_score: number; status: string; created_at: string; updated_at: string; }
-interface MetricsData { source_contract?: "legacy"; cpu_usage: number; memory_usage: number; disk_usage: number; connections: number; max_connections?: number; qps: number; tps: number; active_transactions: number; slow_queries: number; version?: string; uptime_seconds?: number; innodb_buffer_pool_hit_rate?: number; replication_lag?: number; sga_size_mb?: number; pga_size_mb?: number; tablespace_usage_percent?: number; library_cache_hit_rate?: number; active_sessions?: number; enqueue_deadlocks?: number; metrics_data?: Record<string, number>; }
 interface SlowQuery { id: string; sql_text: string; avg_time_ms: number; max_time_ms: number; execution_count: number; first_seen: string; last_seen: string; }
 interface Session { id: number; user: string; host: string; database: string; command: string; time_seconds: number; state: string; query: string | null; }
 interface CapacityInfo { total_size_gb: number; databases?: Array<{ name: string; size_gb: number; table_count?: number }>; tablespaces?: Array<{ name: string; size_gb: number; max_size_gb?: number; usage_percent?: number }>; top_tables: Array<{ name: string; size_gb: number; row_count?: number }>; }
-interface MetricDef { id: string; name: string; description: string; unit: string; db_types?: string[]; threshold_template?: Record<string, number|string>; higher_is_worse?: boolean; is_collected: boolean; category?: string; value_type?: string; }
 
 @customElement("instance-detail-page")
 export class InstanceDetailPage extends LitElement {
@@ -109,13 +104,10 @@ export class InstanceDetailPage extends LitElement {
   @state() private activeTab: string = new URL(location.href).searchParams.get('metricResource')?.startsWith('instance:') ? 'metrics' : 'overview' ;
   @state() private loading = true;
   @state() private error: string | null = null;
-  @state() private metrics: MetricsData | null = null;
-  @state() private metricSource: "legacy" | "metrics-v2" | "pending" = "legacy";
   @state() private slowQueries: SlowQuery[] = [];
   @state() private sessions: Session[] = [];
   @state() private capacity: CapacityInfo | null = null;
   @state() private capHistory: { time: string[]; size: number[] } = { time: [], size: [] };
-  @state() private overviewHistory: { time: string[]; metrics: Record<string, number[]> } | null = null;
   @state() private lastUpdated: Date | null = null;
   @state() private autoRefresh = true;
   @state() private isRefreshing = false;
@@ -129,12 +121,6 @@ export class InstanceDetailPage extends LitElement {
   @state() private activeDiagnosisRecord: any = null;
   @state() private showDiagnosisModal = false;
   @state() private diagnosisExecutionTrace: any = null;
-  @state() private trendTab = "1h";
-  @state() private trendLoading = false;
-  @state() private trendData: { time: string[]; metrics: Record<string, number[]> } | null = null;
-  @state() private trendLoaded = false;
-  @state() private metricsHistory: Record<string, number[]> = {};
-  @state() private metricRegistry: MetricDef[] = [];
   private diagnosisPollTimer: ReturnType<typeof setInterval> | null = null;
   private diagnosisPollingStart = 0;
   private refreshTimer: number | null = null;
@@ -196,26 +182,6 @@ export class InstanceDetailPage extends LitElement {
       switch (this.activeTab) {
         case "overview":
         case "metrics": {
-          const [mr, hr] = await Promise.all([
-            authFetch(`/api/database/instances/${this.instanceId}/metrics`),
-            authFetch(`/api/database/instances/${this.instanceId}/metrics/history?period=24h&interval=1h`),
-          ]);
-          this.loadMetricRegistry(true).catch(() => {});
-          const m = mr.ok ? await mr.json() : null;
-          const h = hr.ok ? await hr.json() : null;
-          const source = m?.source_contract ?? h?.source_contract
-            ?? (mr.status === 409 || hr.status === 409 ? "pending" : "legacy");
-          this.metricSource = source;
-          if (source === "legacy") {
-            if (m) { this.updateMetricsHistory(m); this.metrics = m; }
-            if (h) this.overviewHistory = { time: h.time || [], metrics: h.metrics || {} };
-          } else {
-            this.metrics = null;
-            this.metricsHistory = {};
-            this.overviewHistory = null;
-            this.trendData = null;
-            this.trendLoaded = false;
-          }
           break;
         }
         case "topsql": {
@@ -244,51 +210,13 @@ export class InstanceDetailPage extends LitElement {
     } catch {/* ignore tab data errors */}
   }
 
-  private async loadTrendData(period: string) {
-    if (!this.instanceId) return;
-    if (this.metricRegistry.length === 0) await this.loadMetricRegistry();
-    this.trendLoading = true; this.trendTab = period;
-    try {
-      const collected = this._filteredRegistry.filter(d => d.is_collected).map(d => d.id);
-      const mp = collected.length > 0 ? `&metrics=${collected.join(',')}` : '';
-      const res = await authFetch(`/api/database/instances/${this.instanceId}/metrics/history?period=${period}&interval=5m${mp}`);
-      if (res.ok) { const d = await res.json(); this.trendData = { time: d.time || [], metrics: d.metrics || {} }; this.trendLoaded = true; }
-    } catch (err: any) { const msg = err?.message || 'Failed to load trend data'; this.error = msg; showToast(msg, 'error'); }
-    this.trendLoading = false;
-  }
-
-  private updateMetricsHistory(m: any) {
-    const MAX = 20;
-    for (const def of this._filteredRegistry.filter(d => d.is_collected)) {
-      const v = m[def.id] ?? m.metrics_data?.[def.id];
-      if (v != null) {
-        if (!this.metricsHistory[def.id]) this.metricsHistory[def.id] = [];
-        this.metricsHistory[def.id] = [...this.metricsHistory[def.id].slice(-(MAX - 1)), Number(v)];
-      }
-    }
-  }
-
-  private get _filteredRegistry() {
-    const dbType = this.instance?.db_type;
-    if (!dbType) return this.metricRegistry;
-    return this.metricRegistry.filter(d => !d.db_types || d.db_types.length === 0 || d.db_types.includes(dbType));
-  }
-
-  private async loadMetricRegistry(force = false) {
-    if (!force && this.metricRegistry.length > 0) return;
-    try {
-      const res = await authFetch("/api/metrics/registry");
-      if (res.ok) this.metricRegistry = await res.json();
-    } catch { /* ignore */ }
-  }
-
   private _goBack() { if (returnToDashboard()) return; const u = new URL(window.location.href); u.searchParams.set("tab", "instances-db"); u.searchParams.delete("id"); window.history.pushState({}, "", u); window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "instances-db" } })); }
   private _setTab(tab: string) {
     const configuration = this.renderRoot.querySelector('metric-configuration') as import('../components/metric-configuration.js').MetricConfiguration | null;
     if (configuration) { configuration.confirmDiscard(() => this._applyTab(tab)); return; }
     this._applyTab(tab);
   }
-  private _applyTab(tab: string) { this.activeTab = tab; this.loadTabData(); if (tab === "trend" && !this.trendLoaded) this.loadTrendData(this.trendTab); }
+  private _applyTab(tab: string) { this.activeTab = tab; this.loadTabData(); }
   private _toggleAutoRefresh() { this.autoRefresh = !this.autoRefresh; this.startAutoRefresh(); }
   private async _manualRefresh() { await this.refreshCurrentTab(); }
   private async _loadTopSqlData() {
@@ -363,8 +291,6 @@ export class InstanceDetailPage extends LitElement {
       detail: { tab: 'chat' },
     }));
   }
-  private _onPeriodChange(e: CustomEvent) { this.loadTrendData(e.detail.period); }
-
   private _formatTimeAgo(date: Date | null): string {
     if (!date) return "从未更新";
     const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -463,11 +389,9 @@ export class InstanceDetailPage extends LitElement {
   private _renderTabContent() {
     if (this.activeTab === "collection") return html`<metric-configuration resourceType="instance" .resourceId=${this.instanceId}></metric-configuration>`;
     switch (this.activeTab) {
-      case "overview": return this.metricSource === "legacy"
-        ? this._renderLegacyOverview()
-        : html`<semantic-metrics resourceType="instance" .resourceId=${this.instanceId}></semantic-metrics>`;
+      case "overview":
       case "metrics":
-      case "trend": return html`<semantic-metrics resourceType="instance" .resourceId=${this.instanceId}></semantic-metrics>${this.metricSource === "legacy" ? this._renderLegacyTrend() : nothing}`;
+      case "trend": return html`<semantic-metrics resourceType="instance" .resourceId=${this.instanceId}></semantic-metrics>`;
       case "health": return html`<health-score-tab .instanceId=${this.instanceId}></health-score-tab>`;
       case "topsql": return this._renderTopSQL();
       case "sessions": return this._renderSessions();
@@ -478,20 +402,9 @@ export class InstanceDetailPage extends LitElement {
       case "logs": return html`<database-log-tab .instanceId=${this.instanceId}></database-log-tab>`;
       case "qan": return html`<query-analysis-tab .instanceId=${this.instanceId}></query-analysis-tab>`;
       case "diagnosis": return this._renderDiagnosisHistory();
-      default: return this.metricSource === "legacy"
-        ? this._renderLegacyOverview()
-        : html`<semantic-metrics resourceType="instance" .resourceId=${this.instanceId}></semantic-metrics>`;
+      default: return html`<semantic-metrics resourceType="instance" .resourceId=${this.instanceId}></semantic-metrics>`;
     }
   }
-
-  private _renderLegacyOverview() {
-    return html`<instance-overview-tab .instance=${this.instance} .metrics=${this.metrics} .metricRegistry=${this._filteredRegistry} .overviewHistory=${this.overviewHistory} .metricsHistory=${this.metricsHistory}></instance-overview-tab>`;
-  }
-
-  private _renderLegacyTrend() {
-    return html`<details><summary>旧版趋势（兼容口径）</summary><instance-trend-chart .trendData=${this.trendData} .loading=${this.trendLoading} .activePeriod=${this.trendTab} .metricRegistry=${this._filteredRegistry} @period-change=${this._onPeriodChange}></instance-trend-chart></details>`;
-  }
-
   private _renderTopSQL() {
     if (this.topsqlLoading) return html`<app-card><div class="loading loading-pulse" style="min-height:200px;">加载慢查询数据...</div></app-card>`;
     if (this.slowQueries.length === 0) return html`<app-card><div class="empty-state"><div class="empty-title">暂无慢查询</div><div class="empty-desc">数据库运行良好，未发现慢查询</div></div></app-card>`;

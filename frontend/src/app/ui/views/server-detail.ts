@@ -5,14 +5,12 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import * as echarts from "echarts";
 import { icons } from "../../../icons.js";
-import "../components/metric-chart.js";
 import "../components/app-badge.js";
 import "../components/app-card.js";
 import "../components/app-empty-state.js";
 import "../components/server-diagnostic-panel.js";
 import { showToast } from "../components/app-toast-container.js";
 import { authFetch } from "../../../api/index.js";
-import { aggregateServerDiskUsage } from "./server-metric-utils.js";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.js";
 import type { HostedInstance, HostedInstancesResponse } from "../../../api/generated/public-api.js";
 import type { ServerDiagnosticEvidence } from "../components/server-diagnostic-panel.js";
@@ -30,16 +28,6 @@ interface ServerDetail {
   created_at: string;
   updated_at: string;
 }
-
-interface MetricEntry {
-  server_id: number;
-  metric_name: string;
-  metric_value: number;
-  recorded_at: string;
-  dimensions?: Record<string, unknown> | string | null;
-}
-
-type EvidenceQualityLabel = "good" | "partial" | "unknown";
 
 @customElement("server-detail")
 export class ServerDetailPage extends LitElement {
@@ -84,21 +72,6 @@ export class ServerDetailPage extends LitElement {
     .tab:hover { color:var(--text); }
     .tab.active { color:var(--accent-text);border-bottom-color:var(--accent); }
 
-    /* Summary cards grid */
-    .summary-grid {
-      display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:var(--space-md);
-      margin-bottom:var(--space-xl);
-    }
-    .summary-card { text-align:center;padding:var(--space-lg); }
-    .summary-value { font-size:var(--text-2xl);font-weight:700;color:var(--text-strong); }
-    .summary-unit { font-size:var(--text-sm);color:var(--muted);margin-left:var(--space-xs); }
-    .summary-label { font-size:var(--text-md);color:var(--muted);margin-top:var(--space-sm); }
-    .summary-sub { font-size:var(--text-sm);color:var(--muted);margin-top:var(--space-xs); }
-
-    .metric-value-ok { color:var(--ok); }
-    .metric-value-warn { color:var(--warn); }
-    .metric-value-danger { color:var(--danger); }
-
     /* Status section */
     .status-grid {
       display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:var(--space-md);
@@ -111,18 +84,6 @@ export class ServerDetailPage extends LitElement {
     .status-label { font-size:var(--text-sm);color:var(--muted);margin-bottom:var(--space-xs); }
     .status-value { font-size:var(--text-md);color:var(--text-strong);font-weight:500; }
 
-    /* Time range selector */
-    .range-selector {
-      display:flex;gap:var(--space-xs);margin-bottom:var(--space-md);
-    }
-    .range-btn {
-      padding:var(--space-sm) var(--space-md);border:1px solid var(--border);border-radius:var(--radius-sm);
-      font-size:var(--text-sm);font-weight:500;color:var(--muted);background:var(--secondary);
-      cursor:pointer;transition:all 0.15s ease;
-    }
-    .range-btn:hover { border-color:var(--accent);color:var(--accent-text); }
-    .range-btn.active { background:var(--accent);color:var(--accent-foreground);border-color:var(--accent); }
-
     /* Config section */
     .config-grid {
       display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:var(--space-md);
@@ -130,13 +91,6 @@ export class ServerDetailPage extends LitElement {
     .config-item { padding:var(--space-md) 0;border-bottom:1px solid var(--border); }
     .config-label { font-size:var(--text-sm);color:var(--muted);margin-bottom:var(--space-xs); }
     .config-value { font-size:var(--text-md);color:var(--text-strong); }
-
-    /* Chart wrapper */
-    .chart-wrapper { margin-top:var(--space-md); }
-    .chart-empty {
-      display:flex;align-items:center;justify-content:center;
-      min-height:200px;color:var(--muted);font-size:var(--text-md);
-    }
 
     /* Spinner for chart loading */
     .spinner { width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spinner 0.8s linear infinite;display:inline-block; }
@@ -169,9 +123,9 @@ export class ServerDetailPage extends LitElement {
       .header-left,.header-right { width:100%;min-width:0; }
       .header-right { align-items:flex-start; }
       .last-updated { width:100%; }
-      .summary-grid,.status-grid,.config-grid { grid-template-columns:minmax(0, 1fr); }
-      .summary-card,.status-item,.config-item { min-width:0; }
-      .tabs,.range-selector { max-width:100%;flex-wrap:wrap; }
+      .status-grid,.config-grid { grid-template-columns:minmax(0, 1fr); }
+      .status-item,.config-item { min-width:0; }
+      .tabs { max-width:100%;flex-wrap:wrap; }
       .hosted-instance { grid-template-columns:minmax(0, 1fr);align-items:flex-start; }
       .hosted-badges { justify-content:flex-start; }
       .hosted-instance .btn-ghost { justify-self:start; }
@@ -180,13 +134,9 @@ export class ServerDetailPage extends LitElement {
 
   @property({ type: Number }) serverId: number | null = null;
   @state() private server: ServerDetail | null = null;
-  @state() private metrics: MetricEntry[] = [];
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private activeTab: string = new URL(location.href).searchParams.get('metricResource')?.startsWith('server:') ? 'metrics' : 'overview' ;
-  @state() private activeRange: string = "1h";
-  @state() private historyLoading = false;
-  @state() private historyData: { time: string[]; metrics: Record<string, number[]>; dimensions?: Record<string, Record<string, unknown> | null> } | null = null;
   @state() private lastUpdated: Date | null = null;
   @state() private isRefreshing = false;
   @state() private hostedInstances: HostedInstance[] = [];
@@ -241,16 +191,14 @@ export class ServerDetailPage extends LitElement {
   private async loadServerContext(id: number): Promise<void> {
     const version = ++this.contextVersion;
     this.server = null;
-    this.metrics = [];
-    this.historyData = null;
     this.error = null;
     this.loading = true;
     void this.loadHostedInstances(id, version);
-    await Promise.all([
-      this.loadServer(id, version),
-      this.loadLatestMetrics(id, version),
-    ]);
-    if (version === this.contextVersion) this.loading = false;
+    await this.loadServer(id, version);
+    if (version === this.contextVersion) {
+      this.lastUpdated = new Date();
+      this.loading = false;
+    }
   }
 
   private async loadServer(id: number, version = this.contextVersion) {
@@ -265,27 +213,6 @@ export class ServerDetailPage extends LitElement {
       }
     } catch (err: any) {
       if (version === this.contextVersion) this.error = err.message;
-    }
-  }
-
-  private async loadLatestMetrics(id: number, version = this.contextVersion) {
-    try {
-      const res = await authFetch(`/api/servers/${id}/metrics`);
-      if (res.ok) {
-        const data = await res.json();
-        if (version === this.contextVersion) this.metrics = data.metrics || [];
-      }
-      if (version === this.contextVersion) this.lastUpdated = new Date();
-
-      // Load history for current range if on metrics tab
-      if (version === this.contextVersion && this.activeTab === "metrics") {
-        await this.loadMetricHistory(id, this.activeRange);
-      }
-    } catch (err: any) {
-      if (version === this.contextVersion && !this.error) {
-        this.error = err.message;
-        showToast(err.message || "加载失败", "error");
-      }
     }
   }
 
@@ -352,71 +279,15 @@ export class ServerDetailPage extends LitElement {
     }
   }
 
-  private async loadMetricHistory(id: number, range: string) {
-    this.historyLoading = true;
-    try {
-      const res = await authFetch(
-        `/api/servers/${id}/metrics/history?range=${range}`
-      );
-      if (res.ok) {
-        const data = await res.json();
-        const metrics = data.metrics || [];
-
-        // Group by metric_name, extract time/value arrays
-        const timeMap = new Map<string, string[]>();
-        const valueMap = new Map<string, number[]>();
-        const dimensionMap = new Map<string, Record<string, unknown> | null>();
-
-        for (const entry of metrics) {
-          let dimensions: Record<string, unknown> | null = null;
-          if (typeof entry.dimensions === "string") {
-            try { dimensions = JSON.parse(entry.dimensions); } catch { dimensions = null; }
-          } else if (entry.dimensions && typeof entry.dimensions === "object") {
-            dimensions = entry.dimensions;
-          }
-          const suffix = dimensions && Object.keys(dimensions).length
-            ? ` [${Object.entries(dimensions).map(([key, value]) => `${key}=${String(value)}`).join(", ")}]`
-            : "";
-          const name = `${entry.metric_name}${suffix}`;
-          const time = entry.recorded_at ? entry.recorded_at.substring(0, 16).replace("T", " ") : "";
-          const val = Number(entry.metric_value);
-          if (!timeMap.has(name)) timeMap.set(name, []);
-          if (!valueMap.has(name)) valueMap.set(name, []);
-          timeMap.get(name)!.push(time);
-          valueMap.get(name)!.push(val);
-          dimensionMap.set(name, dimensions);
-        }
-
-        // Use the first metric's time array as the common time axis
-        const firstKey = timeMap.keys().next().value;
-        const commonTime = firstKey ? timeMap.get(firstKey) || [] : [];
-
-        this.historyData = { time: commonTime, metrics: Object.fromEntries(valueMap), dimensions: Object.fromEntries(dimensionMap) };
-      }
-    } catch (err: any) {
-      // Silently fail for history
-    } finally {
-      this.historyLoading = false;
-    }
-  }
-
   private async refreshCurrentTab() {
     if (!this.serverId || this.isRefreshing) return;
     this.isRefreshing = true;
     const serverId = this.serverId;
     const hostedRefresh = this.loadHostedInstances(serverId);
     try {
-      const [serverRes, metricsRes] = await Promise.all([
-        authFetch(`/api/servers/${serverId}`),
-        authFetch(`/api/servers/${serverId}/metrics`),
-      ]);
+      const serverRes = await authFetch(`/api/servers/${serverId}`);
       if (serverRes.ok) this.server = await serverRes.json();
-      if (metricsRes.ok) {
-        const d = await metricsRes.json();
-        this.metrics = d.metrics || [];
-      }
       this.lastUpdated = new Date();
-      if (this.activeTab === "metrics") await this.loadMetricHistory(serverId, this.activeRange);
       if (["network", "processes", "services", "logs"].includes(this.activeTab)) await this.loadDiagnostics(serverId);
     } catch (err: any) {
       console.warn('[server-detail] refresh failed:', err);
@@ -469,68 +340,9 @@ export class ServerDetailPage extends LitElement {
   }
   private _applyTab(tab: string) {
     this.activeTab = tab;
-    if (tab === "metrics" && this.serverId) {
-      this.loadMetricHistory(this.serverId, this.activeRange);
-    }
     if (["diagnostics", "network", "processes", "services", "logs"].includes(tab) && this.serverId && !this.diagnostics) {
       this.loadDiagnostics(this.serverId);
     }
-  }
-
-  private _setRange(range: string) {
-    this.activeRange = range;
-    if (this.serverId) this.loadMetricHistory(this.serverId, range);
-  }
-
-  private _usageVariant(value: number | null): string {
-    if (value === null) return "muted";
-    if (value >= 80) return "danger";
-    if (value >= 50) return "warn";
-    return "ok";
-  }
-
-  private _metricValue(name: string): number | null {
-    const entry = this.metrics.find(m => m.metric_name === name);
-    return entry ? entry.metric_value : null;
-  }
-
-  private _evidenceQuality(): EvidenceQualityLabel {
-    const explicit = (this.server as ServerDetail & { collection_quality?: string } | null)?.collection_quality;
-    if (explicit === "good" || explicit === "partial" || explicit === "unknown") return explicit;
-    const expected = ["cpu_usage", "memory_usage", "load_1min"];
-    const count = expected.filter((name) => this.metrics.some((metric) => metric.metric_name === name)).length;
-    if (count === 0) return "unknown";
-    return count === expected.length ? "good" : "partial";
-  }
-
-  private _evidenceFreshness(): "fresh" | "stale" | "expired" | "unknown" {
-    const timestamp = this.metrics.reduce<string | null>((latest, metric) => {
-      if (!metric.recorded_at) return latest;
-      return !latest || metric.recorded_at > latest ? metric.recorded_at : latest;
-    }, this.server?.last_check_at ?? null);
-    if (!timestamp) return "unknown";
-    const age = Date.now() - new Date(timestamp).getTime();
-    if (!Number.isFinite(age) || age < 0) return "unknown";
-    if (age < 5 * 60_000) return "fresh";
-    if (age < 30 * 60_000) return "stale";
-    return "expired";
-  }
-
-  private _qualityVariant(quality: EvidenceQualityLabel): "ok" | "warn" | "muted" {
-    if (quality === "good") return "ok";
-    if (quality === "partial") return "warn";
-    return "muted";
-  }
-
-  private _aggregateDiskUsage(): number | null {
-    return aggregateServerDiskUsage(this.metrics);
-  }
-
-  private _formatBytes(bytes: number): string {
-    if (bytes === 0) return "0 B";
-    const units = ["B", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return (bytes / Math.pow(1024, i)).toFixed(1) + " " + units[i];
   }
 
   private _formatTimeAgo(date: Date | null): string {
@@ -623,11 +435,10 @@ export class ServerDetailPage extends LitElement {
   }
 
   private _renderTabContent() {
-    if (this.activeTab === "overview") return html`<p>概览来自兼容采集；标准指标和质量请查看“指标与趋势”。</p>${this._renderOverview()}`;
     if (this.activeTab === "collection") return html`<metric-configuration resourceType="server" .resourceId=${this.serverId}></metric-configuration>`;
     switch (this.activeTab) {
       case "overview": return this._renderOverview();
-      case "metrics": return html`<semantic-metrics resourceType="server" .resourceId=${this.serverId}></semantic-metrics><details><summary>旧版趋势（兼容口径）</summary>${this._renderMetrics()}</details>`;
+      case "metrics": return html`<semantic-metrics resourceType="server" .resourceId=${this.serverId}></semantic-metrics>`;
       case "config": return this._renderConfig();
       case "diagnostics": return this._renderDiagnosticSection(null);
       case "network": return this._renderDiagnosticSection("network");
@@ -668,62 +479,8 @@ export class ServerDetailPage extends LitElement {
   }
 
   private _renderOverview() {
-    const cpu = this._metricValue("cpu_usage");
-    const mem = this._metricValue("memory_usage");
-    const memUsed = this._metricValue("memory_used");
-    const memTotal = this._metricValue("memory_total");
-    const disk = this._aggregateDiskUsage();
-    const load1 = this._metricValue("load_1min");
-    const load5 = this._metricValue("load_5min");
-    const load15 = this._metricValue("load_15min");
-    const uptime = this._metricValue("uptime");
-    const quality = this._evidenceQuality();
-    const freshness = this._evidenceFreshness();
-
     return html`
-      <!-- Summary cards -->
-      <div class="summary-grid">
-        <app-card variant="bordered">
-          <div class="summary-card">
-            <div class="summary-value ${this._usageVariant(cpu)}">
-              ${cpu != null ? cpu.toFixed(1) : "--"}<span class="summary-unit">%</span>
-            </div>
-            <div class="summary-label">CPU 使用率</div>
-          </div>
-        </app-card>
-        <app-card variant="bordered">
-          <div class="summary-card">
-            <div class="summary-value ${this._usageVariant(mem)}">
-              ${mem != null ? mem.toFixed(1) : "--"}<span class="summary-unit">%</span>
-            </div>
-            <div class="summary-label">内存使用率</div>
-            ${memUsed != null && memTotal != null
-              ? html`<div class="summary-sub">${this._formatBytes(memUsed)} / ${this._formatBytes(memTotal)}</div>`
-              : nothing}
-          </div>
-        </app-card>
-        <app-card variant="bordered">
-          <div class="summary-card">
-            <div class="summary-value ${this._usageVariant(disk)}">
-              ${disk != null ? disk.toFixed(1) : "--"}<span class="summary-unit">%</span>
-            </div>
-            <div class="summary-label">磁盘使用率</div>
-          </div>
-        </app-card>
-        <app-card variant="bordered">
-          <div class="summary-card">
-            <div class="summary-value">
-              ${load1 != null ? load1.toFixed(2) : "--"}
-            </div>
-            <div class="summary-label">系统负载</div>
-            ${load5 != null && load15 != null
-              ? html`<div class="summary-sub">1min: ${load1?.toFixed(2) || "--"} / 5min: ${load5.toFixed(2)} / 15min: ${load15.toFixed(2)}</div>`
-              : nothing}
-          </div>
-        </app-card>
-      </div>
-
-      <!-- Status section -->
+      <semantic-metrics resourceType="server" .resourceId=${this.serverId}></semantic-metrics>
       <app-card>
         <span slot="header">服务器状态</span>
         <div class="status-grid">
@@ -740,20 +497,8 @@ export class ServerDetailPage extends LitElement {
             </div>
           </div>
           <div class="status-item">
-            <div class="status-label">运行时间</div>
-            <div class="status-value">${uptime != null ? `${Math.floor(uptime / 3600)} 小时 ${Math.floor((uptime % 3600) / 60)} 分钟` : "--"}</div>
-          </div>
-          <div class="status-item">
             <div class="status-label">上次采集</div>
             <div class="status-value">${this._formatLastCheck()}</div>
-          </div>
-          <div class="status-item">
-            <div class="status-label">采集质量</div>
-            <div class="status-value"><app-badge variant=${this._qualityVariant(quality)}>${quality}</app-badge></div>
-          </div>
-          <div class="status-item">
-            <div class="status-label">证据新鲜度</div>
-            <div class="status-value"><app-badge variant=${freshness === "fresh" ? "ok" : freshness === "stale" ? "warn" : "muted"}>${freshness}</app-badge></div>
           </div>
         </div>
       </app-card>
@@ -834,64 +579,6 @@ export class ServerDetailPage extends LitElement {
       unknown: "未知角色",
     };
     return labels[role] || role;
-  }
-
-  private _renderMetrics() {
-    const cpu = this._metricValue("cpu_usage");
-    const mem = this._metricValue("memory_usage");
-
-    // Build series data for metric-chart
-    const series: { name: string; data: number[]; color?: string }[] = [];
-    if (this.historyData) {
-      const metrics = this.historyData.metrics;
-      if (metrics.cpu_usage) {
-        series.push({ name: "CPU", data: metrics.cpu_usage, color: "#3b82f6" });
-      }
-      if (metrics.memory_usage) {
-        series.push({ name: "内存", data: metrics.memory_usage, color: "#22c55e" });
-      }
-      if (metrics.load_1min) {
-        series.push({ name: "Load 1min", data: metrics.load_1min, color: "#f59e0b" });
-      }
-      if (metrics.load_5min) {
-        series.push({ name: "Load 5min", data: metrics.load_5min, color: "#f97316" });
-      }
-      if (metrics.load_15min) {
-        series.push({ name: "Load 15min", data: metrics.load_15min, color: "#ef4444" });
-      }
-    }
-
-    return html`
-      <!-- Current values -->
-      <div style="display:flex;gap:var(--space-md);margin-bottom:var(--space-md);flex-wrap:wrap;">
-        <app-badge variant=${this._usageVariant(cpu)}>CPU ${cpu != null ? cpu.toFixed(1) + "%" : "--"}</app-badge>
-        <app-badge variant=${this._usageVariant(mem)}>内存 ${mem != null ? mem.toFixed(1) + "%" : "--"}</app-badge>
-      </div>
-
-      <div class="range-selector">
-        ${["1h", "6h", "24h", "7d", "30d"].map(r => html`
-          <button class="range-btn ${this.activeRange === r ? "active" : ""}" @click=${() => this._setRange(r)}>
-            ${r === "1h" ? "1小时" : r === "6h" ? "6小时" : r === "24h" ? "24小时" : r === "7d" ? "7天" : "30天"}
-          </button>
-        `)}
-      </div>
-
-      <div class="chart-wrapper">
-        ${this.historyLoading
-          ? html`<div class="chart-empty"><span class="spinner" style="margin-right:8px;"></span> 加载趋势数据...</div>`
-          : series.length > 0 && this.historyData && this.historyData.time.length > 0
-            ? html`
-                <metric-chart
-                  title="指标趋势"
-                  height="320px"
-                  .timeData=${this.historyData.time}
-                  .series=${series}
-                ></metric-chart>
-              `
-            : html`<app-card><div class="chart-empty">暂无历史指标数据</div></app-card>`
-        }
-      </div>
-    `;
   }
 
   private _renderConfig() {

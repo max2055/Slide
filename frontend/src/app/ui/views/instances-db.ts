@@ -843,17 +843,7 @@ export class InstancesPage extends LitElement {
       return;
     }
 
-    // 实例未连接 — 尝试用已有连接快速检测
-    try {
-      const mRes = await authFetch(`/api/database/instances/${inst.id}/metrics`);
-      if (mRes.ok) {
-        this.listTestStatus = "success";
-        this.listTestMessage = "连接正常，指标采集正常";
-        return;
-      }
-    } catch (_) {}
-
-    // 确实未连接，需要密码
+    // Non-healthy resources require an explicit connection test.
     this.listTestStatus = "idle";
     this.listTestMessage = "";
   }
