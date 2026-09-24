@@ -7,8 +7,8 @@ const source = readFileSync(resolve(import.meta.dirname, 'instance-detail.ts'), 
 describe('instance detail formal metric source', () => {
   it('tracks the backend source contract and clears incompatible legacy caches', () => {
     expect(source).toContain('metricSource');
-    expect(source).toContain('m.source_contract');
-    expect(source).toContain('h.source_contract');
+    expect(source).toContain('m?.source_contract');
+    expect(source).toContain('h?.source_contract');
     expect(source).toContain('this.metricsHistory = {}');
     expect(source).toContain('this.overviewHistory = null');
   });

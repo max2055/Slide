@@ -43,6 +43,8 @@ import { resolveProviderFromBaseUrl, getProvider } from './src/llm/provider-cata
 import { alertDatabaseService } from './src/alert-database-service.js';
 import { alertRuleTemplateService } from './src/alert-rule-template-service.js';
 import { metricsDatabaseService } from './src/metrics-database-service.js';
+import { metricConsumerService, operationalSource } from './src/metrics-v2/consumers/runtime.js';
+import { routeMetricRead } from './src/metrics-v2/consumers/source-router.js';
 import { databaseService } from './src/database-service.js';
 import { llmService } from './src/llm-service.js';
 import { dbConnection } from './src/db-connection.js';
@@ -2189,13 +2191,19 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.get('/api/database/instances/:id/metrics', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      const metrics = await databaseService.getRealtimeMetrics(Number(id));
+      const resource = { type: 'instance' as const, id: Number(id) };
+      const result = await routeMetricRead(resource, operationalSource,
+        () => databaseService.getRealtimeMetrics(resource.id),
+        () => metricConsumerService.query((request as any).user, { resource, view: 'all' }));
+      if (result.source === 'pending') return reply.code(409).send({ error: 'METRIC_SOURCE_PENDING' });
+      if (result.source === 'v2') return reply.send({ source_contract: 'metrics-v2', semantic_metrics: result.semantic });
+      const metrics = result.data;
       if (!metrics) {
         return reply.code(404).send({ error: '无法获取指标，实例可能未连接' });
       }
-      reply.send(metrics);
+      reply.send({ ...metrics, source_contract: 'legacy' });
     } catch (error: any) {
-      reply.code(500).send({ error: '获取指标失败：' + error.message });
+      reply.code(503).send({ error: 'METRIC_QUERY_UNAVAILABLE' });
     }
   });
 
@@ -2221,15 +2229,24 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const INVALID = metricIds.find(id => !/^[a-zA-Z0-9_-]+$/.test(id));
         if (INVALID) return reply.code(400).send({ error: `无效的指标 ID: ${INVALID}` });
       }
-      const result = await metricsDatabaseService.getHistoricalMetricsWithRange(
-        Number(id),
-        period as '1h' | '6h' | '24h' | '7d',
-        interval as '1m' | '5m' | '15m' | '1h',
-        metricIds
-      );
-      reply.send(result);
+      const resource = { type: 'instance' as const, id: Number(id) };
+      const periodMs = { '1h': 3600000, '6h': 21600000, '24h': 86400000, '7d': 604800000 }[period]!;
+      const bucketMs = { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000 }[interval]!;
+      const to = new Date().toISOString();
+      const from = new Date(Date.parse(to) - periodMs).toISOString();
+      const result = await routeMetricRead(resource, operationalSource,
+        () => metricsDatabaseService.getHistoricalMetricsWithRange(
+          resource.id,
+          period as '1h' | '6h' | '24h' | '7d',
+          interval as '1m' | '5m' | '15m' | '1h',
+          metricIds,
+        ),
+        () => metricConsumerService.query((request as any).user, { resource, view: 'all', from, to, bucket_ms: bucketMs }));
+      if (result.source === 'pending') return reply.code(409).send({ error: 'METRIC_SOURCE_PENDING' });
+      if (result.source === 'v2') return reply.send({ source_contract: 'metrics-v2', time: [], metrics: {}, semantic_metrics: result.semantic });
+      reply.send({ ...result.data, source_contract: 'legacy' });
     } catch (error: any) {
-      reply.code(500).send({ error: '获取历史指标失败：' + error.message });
+      reply.code(503).send({ error: 'METRIC_QUERY_UNAVAILABLE' });
     }
   });
 
