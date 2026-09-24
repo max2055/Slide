@@ -1,4 +1,4 @@
-# MAX-85 第一批接线验证记录
+# MAX-85 生产接线验证记录
 
 日期：2026-09-23。基线：`2da7b2d`。分支：`feat/max85-production`。
 
@@ -96,3 +96,38 @@
 - 最终后端全量 gate（未设置外部目标环境变量）：284 个文件通过、19 个文件环境相关跳过；2,649 项通过、124 项跳过。前一检查点的 contracts、qualification、秘密扫描和部署安全检查所覆盖输入未变化，复用其通过结果。
 
 该检查点关闭了共享资源诊断入口的 legacy 混读，但未覆盖旧 baseline、report、直接历史 API 或 canonical UI 展示；生产状态仍为 NO-GO。
+
+## Rollout 协调器检查点（2026-09-24，基于 7bc5973 / ecb558d）
+
+新增迁移 103 和逐资源协调器，将服务端 shadow evidence、停止新任务、在途排空、逐序列告警锁、策略锁、CAS 切换、applied 确认及更高代次回退串成可恢复状态机。资源 API 只接受资源与预期 revision，不接受目标、凭据、SQL、命令、OID 或客户端 series。回退后 Scheduler 不再入队；superseded job 不会抢占新 revision。
+
+- rollout、调度与 API focused：10 个文件、57 项通过。
+- 独立 MySQL 协调器与旧写入并发：13 项通过；切换/回退与旧事务按相同锁顺序收敛。
+- 回退保留 V2 历史及审计，不删除表、不降低 generation/revision、不重算历史。
+
+## 正式来源读取与 UI 检查点（2026-09-24，基于 bcb01f3 / ce23d8b）
+
+新增统一正式来源路由器，legacy、V2 与 pending/mixed 严格单选。实例实时及历史 API 在 V2 下返回完整 semantic response；前端来源切换时清除旧缓存并交给 canonical 组件展示，不把 V2 强制映射为旧字段。
+
+- 来源路由器与实例 API：12 项通过。
+- 前端来源切换及 canonical UI：6 项通过。
+- 前后端 TypeScript 检查通过。
+
+## Baseline 与报表检查点（2026-09-24，基于 26b5a92）
+
+legacy baseline 的计算和缓存读取先检查正式来源；V2 返回 `METRIC_V2_BASELINE_UNAVAILABLE`，pending 返回 `METRIC_SOURCE_PENDING` 或不暴露缓存。health/performance/capacity 报表在统一入口分流，V2 使用 `view=all` 并原样保存 semantic response，HTML 展示单位、维度、质量、原因、freshness、coverage 与来源；slow-query 保持独立路径。
+
+- baseline/report focused：2 个文件、16 项通过，其中行为测试确认 pending 不创建报表、V2 不调用 legacy metrics/slow-query reader。
+- 报表调度、实例指标 API 与 baseline 受影响回归：5 个文件、70 项通过。
+- 后端 TypeScript 与 `git diff --check` 通过。
+
+至此仓库内已盘点的正式指标写入和消费入口均已接入来源控制，开发候选进入最终集成门禁。真实生产等价数据库/Linux/物理网络设备、峰值容量、实际 package pin/凭据权限、分批 shadow/cutover 及真实回退仍未执行，因此生产状态继续为 **NO-GO**。
+
+## 最终开发候选门禁（2026-09-24）
+
+- 完整后端：287 个文件、2,666 项通过；20 个文件、127 项环境条件跳过。未设置生产或真实目标凭据，跳过项不计作通过。
+- 完整前端：80 个文件、537 项通过；TypeScript 检查通过；Vite 生产构建及 2 个 CSP 脚本通过。保留既有 chunk 大小和静态/动态 import 提示，无构建失败。
+- 后端 TypeScript、文档结构 11/11、API contracts、qualification matrix 37/37、秘密扫描、部署安全静态不变量及 `git diff --check` 通过。
+- 两张配置 UI 证据截图被既有测试重写，作为与本任务无关的工作树差异未提交；`.multica/` 运行时文件未提交。
+
+该门禁证明当前分支达到代码审阅候选标准，不证明真实生产目标、物理网络设备、峰值容量、生产告警渠道或真实灰度/回退通过。生产放量必须继续遵守 `production.md` 的门槛与授权要求。

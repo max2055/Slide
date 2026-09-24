@@ -17,10 +17,13 @@
 - 生产 store 在远程 IO 前冻结**每条已登记序列**的 ticket，不使用全局 ticket。只有 `source=v2`、`read=v2`、package pin 与 published revision 匹配的序列才报告 applied 并有资格正式发布；未登记、新维度或不匹配项只保存 shadow。
 - Worker 提交 Raw/Normalized、counter 状态、attempt 和 schedule 时使用同一事务与 fencing。Raw 不进入 publications。正式 V2 页面/Agent 服务的查询及维度发现仅接受 publications，pending/legacy 模式返回缺失 V2 证据。
 - `METRIC_TICK_OK` 记录入队数量和耗时，`METRIC_TICK_FAILED` 不打印底层 SQL/远程错误。逐资源 `metric_v2_schedule_events` 保留采集失败、迟到、取消及逻辑读取观测。
+- 逐资源 rollout 协调器执行 `legacy -> shadow -> pending -> v2`：服务端根据 V2 observations 生成并保存 shadow 证据，达到门槛后停止该资源旧/V2 新任务、等待在途工作收敛，在逐序列告警锁与策略锁内以 CAS 原子提升 generation/revision，并等待匹配的 applied revision。回退使用更高 generation/revision 切回 legacy、停止 V2 新任务，保留 V2 历史与审计；过期协调作业不能抢占更新 revision。
+- 正式读取统一经过资源来源路由器；legacy、V2、pending/mixed 严格单选，不以 pending 查询失败回退旧表。实例实时/历史 API 在 V2 下返回完整 semantic payload，前端切换来源时清除旧缓存并使用 canonical 组件展示单位、维度、质量、新鲜度与来源，不把指标强制映射为旧 CPU/QPS 字段。
+- legacy baseline 只在正式来源为 legacy 时计算或读取缓存；V2 返回明确不可用，pending 不读取旧缓存。health/performance/capacity 报表按正式来源路由，V2 报表查询 `view=all`、保存完整 semantic response，并逐系列展示值、单位、维度、质量、freshness、coverage 与来源；slow-query 报表不依赖指标来源，保持原路径。
 
 ## 迁移及恢复
 
-部署候选必须经过既有 MigrationRunner 执行 098–102。098–101 未修改；102 新增 rollout 的资源归属与索引，对已有 latest 做身份回填。无 latest 的旧登记无法逆推 series hash，必须在正式上线前通过经授权的维护过程补齐并校验身份，不能自动绑定其他资产。
+部署候选必须经过既有 MigrationRunner 执行 098–103。098–101 未修改；102 新增 rollout 的资源归属与索引，对已有 latest 做身份回填；103 新增逐资源 rollout 协调状态及 shadow evidence。无 latest 的旧登记无法逆推 series hash，必须在正式上线前通过经授权的维护过程补齐并校验身份，不能自动绑定其他资产。
 
 DDL 部分失败后禁止直接重复 ALTER、改写历史 migration 或清空 ledger。使用 `inspect` 确认失败语句位置；完成尚未执行的语句后，通过绑定**当前文件 checksum**的 verifier 检查字段、索引、回填及原来源/revision/历史数据，调用 `acknowledgeExternallyRepairedMigration` 后再运行迁移。`rollout/migration.mysql.test.ts` 对 ALTER 完成、backfill 未完成的情形作了真实 MySQL 故障注入。
 
@@ -31,9 +34,8 @@ DDL 部分失败后禁止直接重复 ALTER、改写历史 migration 或清空 l
 | 门槛 | 当前缺口与下一步 |
 | --- | --- |
 | SQL/Host 生命周期证据 | 已接入 PostgreSQL startup/stats_reset/OID 原子快照与 Linux boot/diskseq 块设备发现。MySQL、Oracle、Dameng 及 Linux 网络接口仍需可信重置/生命周期证据；MySQL Uptime 与接口名不能替代该证据。缺证据仍为未知。 |
-| 旧正式写入者 | `metrics_history`、`server_metrics`、`network_device_observations` 已具备逐资源事务 fence、远程 IO 前停止和在途提交再校验。仍需由切换协调器记录停任务/排空状态，并复核是否存在未纳入清单的正式指标写入入口；不能仅凭进程级开关判定完成。 |
-| 全部消费入口 | V2 consumer runtime 已受控，旧告警/评分已区分 shadow 与正式 applied 来源，正式 V2 告警创建、恢复及外部通知已使用 ticket/final-publication fencing；资源 overview/summary/diagnose 与 Agent 诊断已阻止 pending/V2 混读旧表。旧 baseline、report、直接历史接口及 canonical UI 展示仍需完整来源接线。禁止同名强制映射或补造 V2 历史。 |
-| 动态维度与发布编排 | 内部 RolloutControl 有 CAS，且旧写入与 CAS 已串行；尚无完整生产登记、shadow 比较、按资源/类型/全局切换协调器和 applied 确认编排。新维度默认 shadow。 |
+| 代码级写入/消费边界 | 仓库内三类旧正式写入、正式告警/评分/通知、资源诊断与 Agent、实例实时/历史 API、canonical UI、baseline 及指标型 report 已接入统一来源边界；逐资源协调器负责停止任务、排空、CAS、applied 与回退。上线前仍须按实际部署版本复核没有私有分支、外置任务或新增入口绕过边界。 |
+| 动态维度与发布编排 | 协调器已从服务端 V2 observations 生成 series 集合与 shadow gate，不接受客户端提交 series、目标、凭据、SQL、命令或 OID；新维度默认 shadow。仍需在生产资产上建立 package pin/策略/凭据权限，记录每批 shadow 证据并执行逐资源、类型和全局操作演练。 |
 | Counter/Derived 真实目标 | 隔离 fixture 能验证契约，不能证明当前生产 MySQL/PG/Oracle/Dameng 版本、Linux 发行版或物理交换机通过。 |
 | 容量与监控阈值 | 需要资源数、峰值序列基数、周期、Raw/Normalized 保留期、索引实测、备份空间及连接池/Worker 配额。以每类实测数据外推，并保留至少 30% 余量和一份完整备份。现有 12 资源样本不可作生产容量结论。 |
 | 生产放量与回退 | 需要明确部署实例、首批资产 ID/版本、凭据引用、窗口和操作范围。按批记录 published/applied revision、generation、pin、数值/单位/质量/新鲜度/缺失率差异、重复告警与回退点；必须项失败即停量。 |
