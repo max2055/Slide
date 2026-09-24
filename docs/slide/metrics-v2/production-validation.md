@@ -131,3 +131,18 @@ legacy baseline 的计算和缓存读取先检查正式来源；V2 返回 `METRI
 - 两张配置 UI 证据截图被既有测试重写，作为与本任务无关的工作树差异未提交；`.multica/` 运行时文件未提交。
 
 该门禁证明当前分支达到代码审阅候选标准，不证明真实生产目标、物理网络设备、峰值容量、生产告警渠道或真实灰度/回退通过。生产放量必须继续遵守 `production.md` 的门槛与授权要求。
+
+## 存量资源全量 V2 编排检查点（2026-09-24）
+
+新增服务端 portfolio 盘点与可恢复批量操作。数据库版本族、Linux OS、SNMP 协议、采集开关和凭据存在性均来自资产表；目标 package pin 来自进程内不可变注册表。客户端只提交盘点 hash，不能选择资源、目标、凭据、SQL、命令、OID 或 series。错误 pin、unsupported、缺凭据、禁用采集和 mixed rollout 会阻止全量完成。
+
+- TDD RED：服务测试先因 `portfolio.ts` 不存在失败；HTTP 测试先以 404 失败；真实 MySQL 测试随后证明混合 generation 曾错误报告 `complete=true`。
+- GREEN unit/API：portfolio 服务与严格 Fastify 路由 2 个文件、9 项通过；过期计划 409，额外字段 400 且不回显。
+- GREEN MySQL 8.4：专用 loopback 容器、全量迁移后 2 项通过。数据库、服务器、网络设备三类资产由真实表盘点；3/3 资源完全 applied 才完成，任一 series generation 不一致即标记 `rollout_mixed`。
+- GREEN 前端 focused：资源列表/网络设备详情及相关回归 8 个文件、52 项通过；前端类型检查通过。数据库列表不再展示旧容量字段，服务器列表不再读取旧 metrics summary，网络设备概览/接口不再读取旧 observation API，统一使用 semantic V2 组件。
+- V2-only 详情 RED/GREEN：数据库实例与服务器详情移除 legacy 指标状态、历史请求、旧图表及“旧版/兼容”文案；数据库列表不再用旧 metrics API 推断连接状态。相关回归 6 个文件、30 项通过。
+- 完整前端：80 个文件、538 项通过；前端 TypeScript 与 Vite 构建/CSP 通过，2 个生产脚本通过 CSP。保留既有 chunk/import 提示。
+- 完整后端（独立 MySQL 8.4，`testTimeout`/`hookTimeout` 120 秒）：301 个文件通过、8 个文件环境条件跳过；2,740 项通过、61 项跳过。默认 5 秒阈值下两个迁移测试在全量并发时超时；两者单文件分别 9/9、1/1 通过，增加超时后的同一完整测试集通过，无业务断言失败。
+- 前后端 TypeScript、API contracts、qualification matrix（37/37）、秘密扫描、部署安全静态检查、文档结构和 `git diff --check` 通过。
+
+Portfolio 提供全量切换能力和完成证明，但本检查点没有对真实生产资产执行 prepare/shadow/gate/cutover/confirm。物理设备、实际版本、峰值容量、变更窗口和真实回退仍是生产 **NO-GO** 门槛。
