@@ -11,6 +11,8 @@ describe('resource pages use the formal Metrics V2 source', () => {
     expect(text).not.toContain('已用空间（兼容数据）');
     expect(text).not.toContain('旧版数据，采集时间未知');
     expect(text).not.toContain('inst.data_size_gb');
+    expect(text).not.toMatch(/\/api\/database\/instances\/\$\{[^}]+\}\/metrics/);
+    expect(text).not.toContain('指标采集正常');
   });
 
   it('does not request or render legacy server metric summaries', () => {
