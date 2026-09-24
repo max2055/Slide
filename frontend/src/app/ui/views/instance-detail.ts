@@ -5,7 +5,6 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
 import "../components/metric-chart.js";
-import { showToast } from "../components/app-toast-container.js";
 import "../components/app-badge.js";
 import "../components/app-card.js";
 import "../components/instance-diagnosis-modal.js";

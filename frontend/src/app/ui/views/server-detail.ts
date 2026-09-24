@@ -3,7 +3,6 @@ import "../components/metric-configuration.js";
 import { returnToDashboard } from './dashboard-model.js';
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import * as echarts from "echarts";
 import { icons } from "../../../icons.js";
 import "../components/app-badge.js";
 import "../components/app-card.js";

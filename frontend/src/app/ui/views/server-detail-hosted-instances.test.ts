@@ -59,7 +59,7 @@ describe('server hosted database instances', () => {
   it('loads once per server id, renders hosted instances, and navigates to instance detail', async () => {
     authFetch.mockImplementation(async (url: string) => {
       const id = Number(url.match(/\/api\/servers\/(\d+)/)?.[1] ?? 0);
-      if (/\/instances$/.test(url)) return response({ instances: [hosted(id + 100)] });
+      if (url.endsWith('/instances')) return response({ instances: [hosted(id + 100)] });
       if (/\/api\/servers\/\d+$/.test(url)) return response(server(id));
       throw new Error(`unexpected request: ${url}`);
     });
