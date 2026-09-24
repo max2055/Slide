@@ -86,3 +86,13 @@
 - 后端 TypeScript 检查通过；本批未改前端，未重复前端门禁。
 
 该检查点完成告警创建/恢复与最终外部发布的 generation fencing，但不等同于完成切换协调器、全部消费者迁移或真实生产告警渠道验收；生产状态仍为 NO-GO。
+
+## 资源观测消费边界检查点（2026-09-24，基于 628b464）
+
+资源 overview、metrics summary、diagnose 以及 `diagnose_resource` Agent 现在通过同一个 source-state 包装器读取旧 observations。只有整个资源仍为 applied legacy 时调用旧表 reader；pending、mixed、V2 或来源状态查询失败均不会回退到旧观测。V2 诊断证据继续走已有正式 `semanticMetrics`；overview/summary 的旧字段在 V2 下保持缺失，等待 canonical UI 迁移，不用同名字段伪造等价语义。
+
+- TDD RED：4 项用例因 source-controlled 入口不存在而失败，提交 `af5c72e`。
+- GREEN focused：资源 summary、诊断、Agent 诊断和标准 Agent 查询 5 个文件、28 项通过；后端 TypeScript 检查通过。
+- 最终后端全量 gate（未设置外部目标环境变量）：284 个文件通过、19 个文件环境相关跳过；2,649 项通过、124 项跳过。前一检查点的 contracts、qualification、秘密扫描和部署安全检查所覆盖输入未变化，复用其通过结果。
+
+该检查点关闭了共享资源诊断入口的 legacy 混读，但未覆盖旧 baseline、report、直接历史 API 或 canonical UI 展示；生产状态仍为 NO-GO。
