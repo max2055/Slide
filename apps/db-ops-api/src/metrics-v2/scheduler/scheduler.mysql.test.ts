@@ -15,6 +15,7 @@ import { admin, pin, resource } from '../policy/test-support.js';
 import { compilePlan } from './compiler.js';
 import { MysqlScheduleStore, GLOBAL_CONCURRENCY } from './store.js';
 import { MetricScheduler, type CollectorAccess } from './service.js';
+import { RolloutControl } from '../rollout/control.js';
 
 const fixture = JSON.parse(readFileSync(new URL('../../../../../docs/slide/metrics-v2/scheduler/fixtures.json', import.meta.url), 'utf8'));
 const port = Number(process.env.METRICS_V2_TEST_MYSQL_PORT);
@@ -43,7 +44,7 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
   afterAll(async () => { await pool?.end(); if (root) { await root.query(`DROP DATABASE IF EXISTS ${database}`); await root.end(); } });
   beforeEach(async () => {
     now = Date.now() - 20000;
-    for (const table of ['metric_v2_schedule', 'metric_v2_schedule_events', 'metric_v2_policy_bindings', 'metric_v2_policy_audit', 'metric_v2_observations', 'metric_v2_attempts', 'workflow_jobs']) await pool.query(`DELETE FROM ${table}`);
+    for (const table of ['metric_v2_rollout_events', 'metric_v2_rollout_resources', 'metric_v2_rollout', 'metric_v2_publications', 'metric_v2_schedule', 'metric_v2_schedule_events', 'metric_v2_policy_bindings', 'metric_v2_policy_audit', 'metric_v2_observations', 'metric_v2_attempts', 'workflow_jobs']) await pool.query(`DELETE FROM ${table}`);
     store = new MysqlScheduleStore(pool, packages);
     queue = new MysqlWorkflowStore(() => pool as never);
     policies = new PolicyService(new MysqlPolicyStore(() => pool), packages, { exists: async () => true, inventory: async r => resource(r.id) }, () => new Date(now).toISOString());
@@ -60,7 +61,7 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
   };
   const enqueue = async (scheduler: MetricScheduler) => { await scheduler.tick(); now += 10000; return scheduler.tick(); };
   const rows = async (sql: string) => (await pool.query<any[]>(sql))[0];
-  const outputs = () => rows('SELECT payload FROM metric_v2_observations');
+  const outputs = () => rows("SELECT payload FROM metric_v2_observations WHERE stage = 'normalized'");
   const expire = () => pool.query("UPDATE workflow_jobs SET lease_expires_at = DATE_SUB(NOW(), INTERVAL 5 SECOND), available_at = DATE_SUB(NOW(), INTERVAL 5 SECOND) WHERE state = 'running'");
   const ready = () => pool.query("UPDATE workflow_jobs SET available_at = DATE_SUB(NOW(), INTERVAL 5 SECOND) WHERE state IN ('queued','retry')");
 
@@ -70,6 +71,7 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
     expect((await policies.binding(admin, ref)).application.applied_revision).toBeNull();
     expect(await s.run(s.worker('one'))).toBe('completed'); expect(s.collect).toHaveBeenCalledTimes(1);
     expect(await outputs()).toHaveLength(3);
+    expect(await rows("SELECT id FROM metric_v2_observations WHERE stage = 'raw'")).toHaveLength(2);
     expect((await policies.binding(admin, ref)).application).toMatchObject({ status: 'applied', applied_revision: 1 });
     store = new MysqlScheduleStore(pool, packages);
     const restarted = setup(vi.fn(async () => batch(fixture.second.Queries)));
@@ -81,11 +83,60 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
     expect(data.every(o => o.versions.config_revision === 1 && o.versions.transform_version === '1.0.0')).toBe(true);
     expect(await rows('SELECT logical_reads FROM metric_v2_schedule_events')).toEqual([{ logical_reads: 1 }, { logical_reads: 1 }]);
   });
+  it('stops V2 jobs after coordinated rollback while shadow collection remains active', async () => {
+    const published = await create();
+    await pool.execute(`INSERT INTO metric_v2_rollout_resources
+      (resource_key, resource_type, resource_id, phase, revision, generation, actor_id, request_id)
+      VALUES ('instance:1', 'instance', '1', 'legacy', 1, 1, 7, 'rollback')`);
+    expect(await store.enqueue(published, now)).toBe(false);
+    expect(await store.enqueue(published, now + 60000)).toBe(false);
+    expect(await rows('SELECT id FROM workflow_jobs')).toHaveLength(0);
+    expect(await rows('SELECT resource_key FROM metric_v2_schedule')).toHaveLength(0);
+    await pool.execute("UPDATE metric_v2_rollout_resources SET phase = 'shadow' WHERE resource_key = 'instance:1'");
+    expect(await store.enqueue(published, now + 60000)).toBe(false);
+    expect(await store.enqueue(published, now + 120000)).toBe(true);
+    expect(await rows('SELECT id FROM workflow_jobs')).toHaveLength(1);
+  });
   it('rejects invalid resolved configuration before scheduling or applied acknowledgement', async () => {
     const p = await create(); p.resolved.settings.interval_ms = 1;
     await expect(store.enqueue(p, now)).rejects.toThrow();
     expect(await rows('SELECT * FROM workflow_jobs')).toHaveLength(0);
     expect((await policies.binding(admin, ref)).application.applied_revision).toBeNull();
+  });
+  const uptimeSeries = (id = 1) => ({ resource_type: 'instance' as const, resource_id: String(id),
+    metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, dimensions: {} });
+  it('production snapshots resource-specific tickets and publishes only explicitly controlled series', async () => {
+    await create(); await create(2);
+    const control = new RolloutControl(pool);
+    await control.initialize(uptimeSeries(), { source: 'v2', read: 'v2', package: pin, revision: 1 });
+    store = new MysqlScheduleStore(pool, packages, 'production');
+    const s = setup(); await enqueue(s.scheduler);
+    await s.run(s.worker('formal-one')); await s.run(s.worker('shadow-two'));
+    expect(await rows('SELECT * FROM metric_v2_publications')).toHaveLength(1);
+    expect((await control.current(uptimeSeries())).applied).toBe(1);
+    expect((await control.current(uptimeSeries())).latest?.resource_id).toBe('1');
+    expect(await rows("SELECT id FROM metric_v2_observations WHERE stage = 'raw'")).toHaveLength(4);
+  });
+  it('cannot lend a switched generation to an already running production collector', async () => {
+    await create(); const control = new RolloutControl(pool), gate = deferred<DecodedRow[]>(), entered = deferred<void>();
+    await control.initialize(uptimeSeries(), { source: 'v2', read: 'v2', package: pin, revision: 1 });
+    store = new MysqlScheduleStore(pool, packages, 'production');
+    const s = setup(vi.fn(async () => { entered.resolve(); return gate.promise; }));
+    await enqueue(s.scheduler); const running = s.run(s.worker('old-source')); await entered.promise;
+    await control.switch(uptimeSeries(), 1, { source: 'v2', read: 'v2', package: pin, revision: 2 });
+    gate.resolve(batch()); expect(await running).toBe('retry');
+    expect(await rows('SELECT * FROM metric_v2_publications')).toHaveLength(0);
+    expect(await outputs()).toHaveLength(0);
+    expect((await control.current(uptimeSeries())).applied).toBeNull();
+  });
+  it('discards in-flight output when the asset or credential changes before commit', async () => {
+    await create(); let changed = false;
+    const guardedAccess: CollectorAccess = { resolve: async ref => ({ ...await access.resolve(ref),
+      assertCurrent: async () => { if (changed) throw new Error('permission_denied'); } }) };
+    const s = setup(vi.fn(async () => { changed = true; return batch(); }), guardedAccess);
+    await enqueue(s.scheduler); expect(await s.run(s.worker('changed-asset'))).toBe('retry');
+    expect(await rows('SELECT id FROM metric_v2_observations')).toHaveLength(0);
+    expect(await rows('SELECT id FROM metric_v2_attempts')).toHaveLength(0);
   });
   it('bounded retries and backoff do not form an immediate retry loop after dead letter', async () => {
     await create(); const s = setup(vi.fn(async () => { throw new AdapterError('timeout'); }));
@@ -165,7 +216,7 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
     const next = packages.install(sealRelease(release));
     await policies.changeBinding(admin, ref, { expected_revision: 1, package: { id: next.package.id, version: next.package.version, digest: next.package.digest } }, true);
     expect((await policies.binding(admin, ref)).application).toMatchObject({ status: 'pending', applied_revision: 1 });
-    gate.resolve(batch()); await running; expect(await outputs()).toHaveLength(0);
+    gate.resolve(batch()); expect(await running).toBe('completed'); expect(await outputs()).toHaveLength(0);
     expect(await enqueue(s.scheduler)).toBe(1); await ready(); expect(await s.run(s.worker('v2'))).toBe('completed');
     expect((await policies.binding(admin, ref)).application.applied_revision).toBe(2);
     expect((await outputs()).every(r => r.payload.versions.package_version === '1.1.0' && r.payload.versions.config_revision === 2)).toBe(true);

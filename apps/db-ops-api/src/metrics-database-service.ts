@@ -3,6 +3,7 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection';
+import { withLegacyMetricWrite } from './metrics-v2/rollout/legacy-write-fence.js';
 
 const STORED_METRIC_COLUMNS = [
   'cpu_usage', 'memory_usage', 'disk_usage', 'connections', 'qps', 'tps',
@@ -146,14 +147,14 @@ class MetricsDatabaseService {
     data_size_gb?: number;
     is_estimated?: boolean;
     metrics_data?: Record<string, number>;
-  }): Promise<{ success: boolean; error?: string }> {
+  }): Promise<{ success: boolean; error?: string; skipped?: 'source_fenced' }> {
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
     }
 
     try {
-      await pool.execute(
+      const result = await withLegacyMetricWrite(pool, { type: 'instance', id: data.instance_id }, connection => connection.execute(
         `INSERT INTO metrics_history
          (instance_id, cpu_usage, memory_usage, disk_usage, connections,
           qps, tps, active_transactions, slow_queries,
@@ -201,10 +202,10 @@ class MetricsDatabaseService {
           data.data_size_gb ?? null,
           data.is_estimated ?? false,
           data.metrics_data ? JSON.stringify(data.metrics_data) : null,
-        ]
-      );
+        ],
+      ));
 
-      return { success: true };
+      return result.written ? { success: true } : { success: true, skipped: 'source_fenced' };
     } catch (error: any) {
       console.error('记录监控指标失败:', error);
       return { success: false, error: error.message };

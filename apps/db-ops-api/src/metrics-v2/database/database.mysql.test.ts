@@ -52,7 +52,7 @@ describe.skipIf(!port)('MAX-71 isolated MySQL collection → Worker → storage 
     const worker = new WorkerRuntime(new MysqlWorkflowStore(() => pool as never), `max71-${now}`, 30);
     return { scheduler, run: () => worker.runOnce((job, context) => registry.execute(job, context), now) };
   }
-  const outputs = async (): Promise<NormalizedObservation[]> => (await pool.query<any[]>('SELECT payload FROM metric_v2_observations'))[0].map(r => typeof r.payload === 'string' ? JSON.parse(r.payload) : r.payload);
+  const outputs = async (): Promise<NormalizedObservation[]> => (await pool.query<any[]>("SELECT payload FROM metric_v2_observations WHERE stage = 'normalized'"))[0].map(r => typeof r.payload === 'string' ? JSON.parse(r.payload) : r.payload);
   const ready = () => pool.query("UPDATE workflow_jobs SET available_at = DATE_SUB(NOW(), INTERVAL 5 SECOND) WHERE state = 'queued'");
   it('publishes/applies pinned config and stores all representative observations from five real SQL reads', async () => {
     const s = setup(); await s.scheduler.tick(); now += 10000;

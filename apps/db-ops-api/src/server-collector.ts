@@ -17,6 +17,7 @@ import { isFatalSshCommandError, parseFilesystemEvidence } from './linux-host-ev
 import { isSupportedServerOs, normalizeServerOs } from './server-os-profile.js';
 import { metricRegistry, type MetricDefinition as RegistryMetricDefinition } from './metric-registry.js';
 import { dueStoredMetricIds, MysqlCollectionScheduleStore, type CollectionScheduleStore } from './collection-scheduler.js';
+import { legacyMetricSourceActive, withLegacyMetricWrite } from './metrics-v2/rollout/legacy-write-fence.js';
 
 const SERVER_COLLECTION_HEARTBEAT_MS = 10_000;
 const SERVER_PROVIDER_ID = 'ssh';
@@ -68,6 +69,7 @@ export interface ServerCollectionResult {
   error?: string;
   category?: CollectionFailureCategory;
   collectedAt?: string;
+  sourceFenced?: boolean;
 }
 
 export interface CollectorConfig {
@@ -179,6 +181,13 @@ class ServerCollector {
       if (!server) return failedResult(new Error('SERVER_NOT_FOUND'));
       if (requestedMetricIds?.length !== 0 && !isSupportedServerOs(server.os_type)) return failedResult(new Error('HOST_OS_UNSUPPORTED'));
       const metricIds = requestedMetricIds ?? this.getSchedulableDefinitions(server.os_type).map((definition) => definition.id);
+      if (metricIds.length > 0) {
+        const pool = dbConnection.getPool();
+        if (!pool) return failedResult(new Error('DATABASE_UNAVAILABLE'));
+        if (!await legacyMetricSourceActive(pool, { type: 'server', id: server.id })) {
+          return { success: true, metricsCount: 0, succeededMetricIds: [...metricIds], collectedAt: new Date().toISOString(), sourceFenced: true };
+        }
+      }
       this.lastProbeAttempt.set(serverId, Date.now());
       const result = await this._collectOneServer(server, metricIds);
       this.failureCounts.delete(server.id);
@@ -406,10 +415,15 @@ class ServerCollector {
       if (rows.length > 0) {
         const placeholders = rows.map(() => '(?, ?, ?, ?, ?)').join(', ');
         const params = rows.flatMap((row) => [...row]);
-        await pool.execute(
+        const persisted = await withLegacyMetricWrite(pool, { type: 'server', id: server.id }, connection => connection.execute(
           `INSERT INTO server_metrics (server_id, metric_name, dimensions, metric_value, recorded_at) VALUES ${placeholders}`,
           params,
-        );
+        ));
+        if (!persisted.written) {
+          await serverDatabaseService.updateServerStatus(server.id, 'online');
+          return { success: true, metricsCount: 0, succeededMetricIds: [...new Set(values.map((value) => value.name))]
+            .filter((metricId) => requested.has(metricId)), collectedAt: now.toISOString(), sourceFenced: true };
+        }
       }
       await serverDatabaseService.updateServerStatus(server.id, 'online');
       const succeededMetricIds = [...new Set(values.map((value) => value.name))]

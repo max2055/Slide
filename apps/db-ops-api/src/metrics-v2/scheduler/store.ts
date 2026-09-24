@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { dueMetricIds } from '../../collection-scheduler.js';
 import { MysqlWorkflowStore, type ClaimedJob, type JobExecutionContext } from '../../workflows/worker-runtime.js';
-import { MysqlMetricStorage } from '../storage.js';
+import { MysqlMetricStorage, seriesHash } from '../storage.js';
 import { RolloutControl, type Ticket } from '../rollout/control.js';
 import type { PackageRegistry } from '../packages/model.js';
 import type { PackageResult } from '../packages/runner.js';
@@ -15,13 +15,13 @@ import { compilePlan, hash, type CollectorPlan } from './compiler.js';
 export const JOB_TYPE = 'metrics.collect';
 export const GLOBAL_CONCURRENCY = 4;
 const decode = <T>(v: T | string): T => typeof v === 'string' ? JSON.parse(v) : v;
-export interface ExecutionSnapshot { published: Published; plan: CollectorPlan; states: Map<string, CounterState> }
+export interface ExecutionSnapshot { published: Published; plan: CollectorPlan; states: Map<string, CounterState>; tickets?: Map<string, Ticket> }
 export interface Reservation { connection: PoolConnection; release(): Promise<void> }
 
 /** Short transactions share the policy publication lock. Never hold a transaction during remote IO. */
 export class MysqlScheduleStore {
   constructor(readonly pool: Pool, private readonly registry: PackageRegistry,
-    private readonly rolloutTicket?: Ticket) {}
+    private readonly rolloutTicket?: Ticket | 'production') {}
   async list(): Promise<Published[]> {
     const [rows] = await this.pool.query<RowDataPacket[]>('SELECT payload FROM metric_v2_policy_bindings ORDER BY resource_key');
     return rows.map(r => decode<Published>(r.payload));
@@ -46,6 +46,10 @@ export class MysqlScheduleStore {
     return this.transaction(async c => {
       const current = await this.current(c, ref);
       if (!current || current.binding.revision !== plan.revision) return false;
+      const [coordination] = await c.execute<RowDataPacket[]>(
+        'SELECT phase FROM metric_v2_rollout_resources WHERE resource_key = ? FOR UPDATE', [refKey(ref)],
+      );
+      if (coordination[0]?.phase === 'legacy') return false;
       const [rows] = await c.execute<RowDataPacket[]>('SELECT * FROM metric_v2_schedule WHERE resource_key = ? FOR UPDATE', [refKey(ref)]);
       const row = rows[0];
       let next = row ? Number(row.next_due_ms) : now + plan.jitterMs;
@@ -124,12 +128,29 @@ export class MysqlScheduleStore {
       rule(now >= Date.parse(published.published_at) && (!published.application.reported_at || now >= Date.parse(published.application.reported_at)), 'SCHEDULE_APPLICATION_TIME');
       published.application = { status: 'applied', applied_revision: revision, reported_at: new Date(now).toISOString(), error_code: null };
       await c.execute('UPDATE metric_v2_policy_bindings SET payload = ? WHERE resource_key = ?', [JSON.stringify(published), refKey(ref)]);
-      return { published: { ...published, resolved: effective }, plan, states: new Map(Object.entries(decode<Record<string, CounterState>>(rows[0].states))) };
+      const tickets = new Map<string, Ticket>();
+      if (this.rolloutTicket === 'production') {
+        // Snapshot source generations BEFORE remote IO; never borrow a new generation when a late result commits.
+        const [sources] = await c.execute<RowDataPacket[]>(`SELECT * FROM metric_v2_rollout
+          WHERE resource_type = ? AND resource_id = ? ORDER BY series_hash FOR UPDATE`, [ref.type, String(ref.id)]);
+        for (const source of sources) {
+          const pin = decode<{ id: string; version: string; digest: string }>(source.package_pin);
+          if (source.source !== 'v2' || source.read_mode !== 'v2' || source.published_revision !== revision
+            || pin.id !== published.binding.package.id || pin.version !== published.binding.package.version
+            || pin.digest !== published.binding.package.digest) continue;
+          tickets.set(source.series_hash, { source: 'v2', generation: source.generation, revision });
+          await c.execute('UPDATE metric_v2_rollout SET applied_revision = published_revision WHERE series_hash = ?', [source.series_hash]);
+        }
+      }
+      return { published: { ...published, resolved: effective }, plan, states: new Map(Object.entries(decode<Record<string, CounterState>>(rows[0].states))), tickets };
     });
   }
   async assertCurrent(ref: Ref, revision: number, job: ClaimedJob, ctx: JobExecutionContext): Promise<void> {
-    const valid = await this.transaction(c => this.valid(c, ref, revision, job, ctx));
-    rule(valid, 'SCHEDULE_STALE_EXECUTION');
+    await this.transaction(async c => {
+      const current = await this.current(c, ref);
+      rule(current && current.binding.revision === revision, 'SCHEDULE_SUPERSEDED');
+      rule(await this.valid(c, ref, revision, job, ctx), 'SCHEDULE_STALE_EXECUTION');
+    });
   }
   async recordFailure(snapshot: ExecutionSnapshot, result: PackageResult, job: ClaimedJob, ctx: JobExecutionContext, now: number): Promise<void> {
     await this.transaction(async c => {
@@ -161,8 +182,19 @@ export class MysqlScheduleStore {
         rule(observation.versions.config_revision === plan.revision && observation.resource_type === plan.resource.type
           && observation.resource_id === String(plan.resource.id), 'SCHEDULE_OUTPUT_IDENTITY');
         const definition = catalog.find(d => d.id === observation.metric.id && d.semantic_version === observation.metric.semantic_version)!;
-        if (this.rolloutTicket) await new RolloutControl(this.pool, c, () => new Date(now)).publish(observation, definition, this.rolloutTicket);
+        const ticket = this.rolloutTicket === 'production' ? snapshot.tickets?.get(seriesHash(observation)) : this.rolloutTicket;
+        if (ticket) await new RolloutControl(this.pool, c, () => new Date(now)).publish(observation, definition, ticket);
         else await storage.write(observation, definition);
+      }
+      // Raw evidence shares the same transaction and fences, but is never a formal publication.
+      for (const raw of result.raw ?? []) {
+        rule(raw.stage === 'raw' && raw.versions.config_revision === plan.revision
+          && raw.resource_type === plan.resource.type && raw.resource_id === String(plan.resource.id), 'SCHEDULE_OUTPUT_IDENTITY');
+        const output = result.observations.find(o => o.observation.lineage.some(input => input.stage === 'raw' && input.id === raw.id));
+        rule(output, 'SCHEDULE_RAW_LINEAGE');
+        const definition = catalog.find(d => d.id === raw.metric.id && d.semantic_version === raw.metric.semantic_version);
+        rule(definition, 'SCHEDULE_OUTPUT_SOURCE');
+        await storage.write(raw, definition);
       }
       for (const attempt of result.attempts) await c.execute('INSERT INTO metric_v2_attempts (id, payload, stored_at) VALUES (?, ?, ?)',
         [attempt.id, JSON.stringify(attempt), new Date(now)]);

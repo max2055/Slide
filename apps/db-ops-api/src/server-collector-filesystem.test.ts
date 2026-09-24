@@ -10,6 +10,11 @@ const mocks = vi.hoisted(() => ({
   releaseConnection: vi.fn(),
   closeConnection: vi.fn(),
   execute: vi.fn(),
+  dbGetConnection: vi.fn(),
+  beginTransaction: vi.fn(),
+  commit: vi.fn(),
+  rollback: vi.fn(),
+  dbRelease: vi.fn(),
 }));
 
 vi.mock('./server-database-service', () => ({
@@ -32,7 +37,7 @@ vi.mock('./ssh-session-pool', () => ({
 }));
 
 vi.mock('./db-connection', () => ({
-  dbConnection: { getPool: () => ({ execute: mocks.execute }) },
+  dbConnection: { getPool: () => ({ execute: mocks.execute, getConnection: mocks.dbGetConnection }) },
 }));
 
 import { buildFilesystemMetricRows, ServerCollector } from './server-collector.js';
@@ -74,7 +79,18 @@ describe('server collector Linux lifecycle', () => {
     mocks.getCollectionEnabledServers.mockResolvedValue([]);
     mocks.getConnection.mockResolvedValue(client);
     mocks.updateServerStatus.mockResolvedValue(undefined);
-    mocks.execute.mockResolvedValue([{}]);
+    mocks.dbGetConnection.mockResolvedValue({
+      execute: mocks.execute,
+      beginTransaction: mocks.beginTransaction,
+      commit: mocks.commit,
+      rollback: mocks.rollback,
+      release: mocks.dbRelease,
+    });
+    mocks.execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('metric_v2_policy_lock')) return [[{ id: 1 }], []];
+      if (sql.includes('FROM metric_v2_rollout')) return [[], []];
+      return [{ affectedRows: 1 }, []];
+    });
   });
 
   it('checks SSH availability without enabled metrics on an independent minute cadence', async () => {
@@ -129,7 +145,8 @@ describe('server collector Linux lifecycle', () => {
     await expect(collector.collectServer(9)).resolves.toMatchObject({ success: true });
 
     expect(mocks.execCommands.mock.calls[0][1]).toEqual(['LC_ALL=C LANG=C uname -s']);
-    const values = mocks.execute.mock.calls[0][1] as unknown[];
+    const insert = mocks.execute.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO server_metrics'))!;
+    const values = insert[1] as unknown[];
     const metricNames = values.filter((_value, index) => index % 5 === 1);
     expect(metricNames).toEqual(expect.arrayContaining([
       'disk_usage',
@@ -142,6 +159,28 @@ describe('server collector Linux lifecycle', () => {
     expect(JSON.parse(String(values[diskIndex * 5 + 2]))).toEqual({
       mount: '/var/lib/mysql', device: '/dev/sda1', fs_type: 'xfs',
     });
+  });
+
+  it('does not persist old server observations while source cutover is pending', async () => {
+    mocks.execCommands.mockImplementation(async (_client: unknown, commands: string[]) => {
+      if (commands[0] === 'LC_ALL=C LANG=C uname -s') return [ok('Linux\n')];
+      if (commands[0] === 'LC_ALL=C LANG=C df -Pi') return [failed(), ok('/dev/sda1 / xfs\n')];
+      return commands.map(() => ok('12.5\n'));
+    });
+    mocks.execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('metric_v2_policy_lock')) return [[{ id: 1 }], []];
+      if (sql.includes('FROM metric_v2_rollout')) return [[{
+        source: 'v2', read_mode: 'v2', published_revision: 2, applied_revision: null,
+      }], []];
+      throw new Error('server_metrics insert must be fenced');
+    });
+
+    await expect(new ServerCollector().collectServer(9)).resolves.toMatchObject({
+      success: true, metricsCount: 0, sourceFenced: true,
+    });
+    expect(mocks.getDecryptedCredentials).not.toHaveBeenCalled();
+    expect(mocks.getConnection).not.toHaveBeenCalled();
+    expect(mocks.execute.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO server_metrics'))).toBe(false);
   });
 
   it('re-reads stored credentials and recovers on the next collection', async () => {
@@ -226,7 +265,7 @@ describe('server collector Linux lifecycle', () => {
 
     expect(mocks.execCommands).toHaveBeenCalledTimes(1);
     expect(mocks.execCommands.mock.calls[0][1]).toEqual(['LC_ALL=C LANG=C uname -s']);
-    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.execute.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO server_metrics'))).toBe(false);
     expect(mocks.releaseConnection).toHaveBeenCalledWith(client);
     expect(mocks.closeConnection).not.toHaveBeenCalled();
   });

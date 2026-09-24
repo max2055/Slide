@@ -10,6 +10,8 @@ import { SnmpClient } from './snmp-client.js';
 import type { SnmpConfig, SnmpV3Config } from './snmp-types.js';
 import { metricRegistry, type MetricDefinition } from '../metric-registry.js';
 import { dueStoredMetricIds, MysqlCollectionScheduleStore, type CollectionScheduleStore } from '../collection-scheduler.js';
+import type { Pool } from 'mysql2/promise';
+import { legacyMetricSourceActive, withLegacyMetricWrite } from '../metrics-v2/rollout/legacy-write-fence.js';
 
 const NETWORK_DEVICE_COLLECTION_HEARTBEAT_MS = 10_000;
 const NETWORK_DEVICE_PROVIDER_ID = 'huawei-snmp';
@@ -48,6 +50,7 @@ export interface NetworkDeviceCollectionStore {
   updateStatus(id: number, status: 'online' | 'error' | 'unreachable'): Promise<void>;
   upsertInterface(id: number, snapshot: HuaweiInterfaceSnapshot, observedAt: Date): Promise<void>;
   insertObservations(id: number, observations: HuaweiMetricObservation[]): Promise<void>;
+  legacySourceActive?(id: number): Promise<boolean>;
 }
 
 interface SqlPool {
@@ -184,7 +187,7 @@ export class NetworkDeviceCollector {
     } finally { this.tickInFlight = false; }
   }
 
-  async collectDevice(id: number, requestedMetricIds?: readonly string[]): Promise<{ success: boolean; succeededMetricIds?: string[]; observations?: number; interfaces?: number; error?: string }> {
+  async collectDevice(id: number, requestedMetricIds?: readonly string[]): Promise<{ success: boolean; succeededMetricIds?: string[]; observations?: number; interfaces?: number; error?: string; sourceFenced?: boolean }> {
     if (this.inFlight.has(id)) return { success: false, error: 'COLLECTION_IN_PROGRESS' };
     this.inFlight.add(id);
     try {
@@ -193,6 +196,9 @@ export class NetworkDeviceCollector {
       if (!target.collectionEnabled) return { success: false, error: 'COLLECTION_DISABLED' };
       const metricIds = requestedMetricIds ?? this.getSchedulableDefinitions().map((definition) => definition.id);
       const requested = new Set(metricIds);
+      if (requested.size > 0 && this.store.legacySourceActive && !await this.store.legacySourceActive(id)) {
+        return { success: true, succeededMetricIds: [...metricIds], observations: 0, interfaces: 0, sourceFenced: true };
+      }
       this.lastProbeAttempt.set(id, Date.now());
       let authorizedTarget: { address: string; port: number };
       try {
@@ -271,7 +277,7 @@ export class NetworkDeviceCollector {
 }
 
 export class MysqlNetworkDeviceCollectionStore implements NetworkDeviceCollectionStore {
-  constructor(private readonly poolProvider: () => SqlPool | null = () => dbConnection.getPool() as unknown as SqlPool | null) {}
+  constructor(private readonly poolProvider: () => Pool | null = () => dbConnection.getPool()) {}
 
   async getDevice(id: number): Promise<NetworkDeviceCollectionTarget | null> {
     const [rows] = await this.pool().execute<Array<any>>(
@@ -296,6 +302,10 @@ export class MysqlNetworkDeviceCollectionStore implements NetworkDeviceCollectio
     await networkDeviceDatabaseService.updateStatus(id, status);
   }
 
+  legacySourceActive(id: number): Promise<boolean> {
+    return legacyMetricSourceActive(this.pool(), { type: 'network_device', id });
+  }
+
   async upsertInterface(id: number, snapshot: HuaweiInterfaceSnapshot, observedAt: Date): Promise<void> {
     await this.pool().execute(
       `INSERT INTO network_device_interfaces
@@ -315,15 +325,15 @@ export class MysqlNetworkDeviceCollectionStore implements NetworkDeviceCollectio
       return [id, observation.metricId, dimensions ? JSON.stringify(dimensions) : null, observation.value, observation.observedAt, validUntil, observation.quality, observation.source, observation.reason ?? null];
     });
     const placeholders = rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
-    await this.pool().execute(
+    await withLegacyMetricWrite(this.pool(), { type: 'network_device', id }, connection => connection.execute(
       `INSERT INTO network_device_observations
        (device_id, metric_id, dimensions, metric_value, observed_at, valid_until, quality, source, reason)
        VALUES ${placeholders}`,
       rows.flat(),
-    );
+    ));
   }
 
-  private pool(): SqlPool {
+  private pool(): Pool {
     const pool = this.poolProvider();
     if (!pool) throw new Error('RESOURCE_STORE_UNAVAILABLE');
     return pool;

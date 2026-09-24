@@ -1,4 +1,4 @@
-import { metricConsumerService } from '../metrics-v2/consumers/runtime.js';
+import { metricConsumerService, operationalSource } from '../metrics-v2/consumers/runtime.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { canReadResource, resourceService } from './resource-service.js';
 import type { Observation, ResourceDetail, ResourceRef, ResourceRelation, ResourceType } from './types.js';
@@ -17,6 +17,19 @@ export interface ResourceDiagnosticDependencies {
   observations(ref: ResourceRef, actor: ActorContext, options?: { metricIds?: string[]; limit?: number }): Promise<Observation[]>;
   relations(ref: ResourceRef, actor: ActorContext): Promise<ResourceRelation[]>;
   alerts(ref: ResourceRef, actor: ActorContext, limit?: number): Promise<Array<Record<string, unknown>>>;
+}
+
+type ObservationReader = ResourceDiagnosticDependencies['observations'];
+type OperationalSourceState = 'legacy' | 'v2' | 'pending';
+
+/** Resource views must not mix old tables with an accepted or pending V2 source. */
+export function sourceControlledObservations(
+  sourceState: (ref: ResourceRef) => Promise<OperationalSourceState>,
+  legacy: ObservationReader,
+): ObservationReader {
+  return async (ref, actor, options) => await sourceState(ref) === 'legacy'
+    ? legacy(ref, actor, options)
+    : [];
 }
 
 export interface ResourceDiagnosticPack {
@@ -616,7 +629,7 @@ async function defaultList(actor: ActorContext): Promise<ResourceDetail[]> {
   return Object.assign(result, { unavailableTypes });
 }
 
-async function defaultObservations(ref: ResourceRef, actor: ActorContext, options: { metricIds?: string[]; limit?: number } = {}): Promise<Observation[]> {
+async function legacyObservations(ref: ResourceRef, actor: ActorContext, options: { metricIds?: string[]; limit?: number } = {}): Promise<Observation[]> {
   const limit = Math.min(options.limit ?? MAX_OBSERVATIONS, MAX_OBSERVATIONS);
   const metricIds = options.metricIds;
   if (metricIds?.length) {
@@ -687,7 +700,7 @@ export const resourceDiagnosticService = new ResourceDiagnosticService({
   semantic: (ref, actor) => metricConsumerService.query(actor, { resource: ref, view: 'core' }),
   list: defaultList,
   detail: async (ref, actor) => resourceService.detail(actor, ref),
-  observations: defaultObservations,
+  observations: sourceControlledObservations(operationalSource, legacyObservations),
   relations: async (ref, actor) => resourceService.currentRelations(actor, ref),
   alerts: defaultAlerts,
 });

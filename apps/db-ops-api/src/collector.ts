@@ -13,6 +13,8 @@ import { metricRegistry } from './metric-registry.js';
 import type { MetricDefinition } from './metric-registry.js';
 import type { DatabaseConnection } from './database-service.js';
 import type { DatabaseInstance } from './instance-database-service.js';
+import { dbConnection } from './db-connection.js';
+import { legacyMetricSourceActive } from './metrics-v2/rollout/legacy-write-fence.js';
 
 // Fixed-column metrics — these have dedicated columns in metrics_history table
 const FIXED_COLUMN_METRICS = new Set([
@@ -40,13 +42,17 @@ class UnifiedCollector {
     const providers = collectorRegistry.getProvidersByDbType(dbType);
     if (providers.length === 0) return {};
 
-    const conn = databaseService.getConnection(instance.id) as DatabaseConnection;
-    if (!conn) return {};
-
     // 读取该 db_type 的指标定义
     const due = dueMetricIds ? new Set(dueMetricIds) : null;
     const definitions = metricRegistry.getByDbType(dbType)
       .filter((m: MetricDefinition) => m.is_collected && (!due || due.has(m.id)));
+    const pool = dbConnection.getPool();
+    if (pool && !await legacyMetricSourceActive(pool, { type: 'instance', id: instance.id })) {
+      return Object.fromEntries(definitions.map((definition) => [definition.id, true]));
+    }
+
+    const conn = databaseService.getConnection(instance.id) as DatabaseConnection;
+    if (!conn) return {};
 
     const results: Record<string, number> = {};
     const scope = `instance:${instance.id}`;

@@ -32,6 +32,7 @@ export interface PackageExecution {
 }
 export interface PackageResult {
   observations: Computation[];
+  raw?: RawObservation[];
   attempts: CollectionAttempt[];
   capabilities: Capability[];
   states: Map<string, CounterState>;
@@ -55,7 +56,7 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
   // Guard every transport call, including adapters that issue several reads.
   const guarded = (t: Transport): Transport => {
     if (!execution.signal && !execution.before_request) return t;
-    if (t.method === 'sql') return { method: 'sql', pool: { query: async options => { await check(); return t.pool.query(options); } } };
+    if (t.method === 'sql') return { method: 'sql', ...(t.counterQuery ? { counterQuery: async (options: { sql: string; timeout: number }) => { await check(); return t.counterQuery!(options); } } : {}), pool: { query: async options => { await check(); return t.pool.query(options); } } };
     if (t.method === 'snmp') return { method: 'snmp', ...(t.get ? { get: async (oids: string[], timeout: number) => { await check(); return t.get!(oids, timeout); } } : {}), table: async (root, timeout) => { await check(); return t.table(root, timeout); } };
     return { ...t, pool: { execCommands: async (client, commands, options) => {
       const results = [];
@@ -63,7 +64,7 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
       return results;
     } } };
   };
-  const result: PackageResult = { observations: [], attempts: [], capabilities: [], states: new Map(execution.states), decision: 'attempted' };
+  const result: PackageResult = { observations: [], raw: [], attempts: [], capabilities: [], states: new Map(execution.states), decision: 'attempted' };
   if (!settings.enabled) return { ...result, decision: 'disabled' };
   let applicable: Capability['status'] = resource.type === p.resource_type ? 'supported' : 'unsupported';
   const basis: Capability['basis'] = [{ kind: 'resource', evidence: `resource_type:${resource.type};required:${p.resource_type}` }];
@@ -92,6 +93,7 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
     validateAttempt(attempt);
     let error: CollectionAttempt['error'] = null;
     let outputs: Computation[] = [];
+    let rawOutputs: RawObservation[] = [];
     const fieldCapabilities = new Map<string, Array<'supported' | 'unsupported' | 'unknown'>>();
     let transport: Transport;
     try { transport = guarded(await execution.resolve(selection.credential_ref, resource, collector.method)); await check(); }
@@ -130,6 +132,7 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
             const output = normalize(raw, definition, { now: collectedAt, stale_after_ms: settings.stale_after_ms });
             validateObservationBatch([output.observation], definitions);
             outputs.push(output);
+            rawOutputs.push(raw);
             if (detail?.max_increment_per_second) bounds.set(seriesIdentity(output.observation), detail.max_increment_per_second);
           } catch { error = 'parse_error'; }
         }
@@ -138,13 +141,14 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
         // Known transport errors retain their category. Validation failures are parse failures.
         error = failure instanceof AdapterError ? failure.code : 'parse_error';
         outputs = [];
+        rawOutputs = [];
       }
     }
     execution.signal?.throwIfAborted();
     attempt.ended_at = TimestampSchema.parse(clock());
     attempt.error = error; attempt.status = error ? outputs.length ? 'partial' : 'failed' : 'succeeded';
     attempt.observation_ids = outputs.map(o => o.observation.id);
-    validateAttempt(attempt); result.attempts.push(attempt); result.observations.push(...outputs);
+    validateAttempt(attempt); result.attempts.push(attempt); result.observations.push(...outputs); result.raw!.push(...rawOutputs);
     for (const mapping of collector.mappings) {
       const mappingError = outputs.some(o => stable(o.observation.metric) === stable(mapping.metric)) ? null : error;
       const fieldStatuses = fieldCapabilities.get(mapping.raw_field);

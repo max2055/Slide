@@ -6,6 +6,8 @@ import { reportDatabaseService, Report, ReportType, ReportFormat } from './repor
 import { metricsDatabaseService } from './metrics-database-service';
 import { databaseService } from './database-service';
 import { instanceDatabaseService } from './instance-database-service';
+import type { ActorContext } from './auth/actor-context.js';
+import { metricConsumerService, operationalSource } from './metrics-v2/consumers/runtime.js';
 import ejs from 'ejs';
 import path from 'path';
 import fs from 'fs';
@@ -29,6 +31,80 @@ interface HealthMetrics {
 }
 
 const TEMPLATE_DIR = path.resolve(process.cwd(), 'src/templates/reports');
+
+type InstanceMetricReportType = Extract<ReportType, 'health' | 'performance' | 'capacity'>;
+
+const metricReportLabels: Record<InstanceMetricReportType, string> = {
+  health: '健康检查报告',
+  performance: '性能分析报告',
+  capacity: '容量规划报告',
+};
+
+function metricReportActor(instanceId: number): ActorContext {
+  return {
+    userId: 0,
+    username: 'metric-report-generator',
+    roles: [],
+    permissions: ['instance:view'],
+    instanceScopes: { [instanceId]: 'read-only' },
+    sessionVersion: 0,
+    requestId: `metric-report:instance:${instanceId}`,
+  };
+}
+
+function semanticValue(value: unknown): string {
+  return value === null ? 'null' : JSON.stringify(value);
+}
+
+function generateSemanticMetricHTML(
+  title: string,
+  instanceName: string,
+  generatedAt: string,
+  semantic: Awaited<ReturnType<typeof metricConsumerService.query>>,
+): string {
+  const rows = semantic.metrics.flatMap(metric => metric.series.length
+    ? metric.series.flatMap(series => series.buckets.map(bucket => `<tr>
+        <td>${ejs.escapeXML(metric.definition.id)}</td>
+        <td>${ejs.escapeXML(bucket.unit)}</td>
+        <td><code>${ejs.escapeXML(JSON.stringify(series.dimensions))}</code></td>
+        <td><code>${ejs.escapeXML(semanticValue(bucket.value))}</code></td>
+        <td>${ejs.escapeXML(bucket.quality.status)}</td>
+        <td>${ejs.escapeXML(bucket.quality.reason)}</td>
+        <td>${ejs.escapeXML(bucket.freshness)}</td>
+        <td>${bucket.coverage}</td>
+        <td><code>${ejs.escapeXML(JSON.stringify(bucket.sources))}</code></td>
+      </tr>`))
+    : [`<tr>
+        <td>${ejs.escapeXML(metric.definition.id)}</td>
+        <td>${ejs.escapeXML(metric.definition.unit)}</td>
+        <td colspan="7">${ejs.escapeXML(metric.state)}</td>
+      </tr>`]);
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>${ejs.escapeXML(title)} - ${ejs.escapeXML(instanceName)}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; vertical-align: top; }
+    th { background: #f5f5f5; }
+    code { white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <h1>${ejs.escapeXML(title)}</h1>
+  <p><strong>实例:</strong> ${ejs.escapeXML(instanceName)}</p>
+  <p><strong>生成时间:</strong> ${ejs.escapeXML(generatedAt)}</p>
+  <p><strong>来源契约:</strong> Metrics V2 ${ejs.escapeXML(semantic.contract_version)}</p>
+  <table>
+    <thead><tr><th>指标</th><th>单位</th><th>维度</th><th>值</th><th>质量</th><th>原因</th><th>新鲜度</th><th>覆盖率</th><th>来源</th></tr></thead>
+    <tbody>${rows.join('')}</tbody>
+  </table>
+</body>
+</html>`;
+}
 
 /**
  * 健康报告回退 HTML（当模板文件缺失时使用）
@@ -568,6 +644,12 @@ class ReportService {
     instanceId: number,
     options: ReportOptions = {}
   ): Promise<Report> {
+    if (type === 'health' || type === 'performance' || type === 'capacity') {
+      const source = await operationalSource({ type: 'instance', id: instanceId });
+      if (source === 'pending') throw new Error('METRIC_SOURCE_PENDING');
+      if (source === 'v2') return this.generateSemanticMetricReport(type, instanceId, options);
+    }
+
     switch (type) {
       case 'health':
         return this.generateHealthReport(instanceId, options);
@@ -579,6 +661,60 @@ class ReportService {
         return this.generateCapacityReport(instanceId, options);
       default:
         throw new Error(`未知的报表类型：${type}`);
+    }
+  }
+
+  private async generateSemanticMetricReport(
+    type: InstanceMetricReportType,
+    instanceId: number,
+    options: ReportOptions,
+  ): Promise<Report> {
+    const format = options.format || 'html';
+    const title = metricReportLabels[type];
+    let report: Report | null = null;
+
+    try {
+      assertWorkflowActive();
+      const instance = await instanceDatabaseService.getInstanceById(instanceId);
+      const instanceName = instance?.name || `Instance-${instanceId}`;
+      report = await reportDatabaseService.createReport({
+        name: `${instanceName} - ${title}`,
+        type,
+        format,
+        instance_id: instanceId,
+        status: 'pending',
+      });
+
+      assertWorkflowActive();
+      const semantic = await metricConsumerService.query(metricReportActor(instanceId), {
+        resource: { type: 'instance', id: instanceId },
+        view: 'all',
+      });
+      const generatedAt = new Date().toISOString();
+      const htmlContent = generateSemanticMetricHTML(title, instanceName, generatedAt, semantic);
+      const reportData = {
+        instance_id: instanceId,
+        instance_name: instanceName,
+        generated_at: generatedAt,
+        source_contract: 'metrics-v2',
+        semantic_metrics: semantic,
+      };
+
+      assertWorkflowActive();
+      await reportDatabaseService.updateReportStatus(report.id, 'completed', htmlContent, reportData);
+      assertWorkflowActive();
+      return (await reportDatabaseService.getReportById(report.id))!;
+    } catch (error) {
+      assertWorkflowActive();
+      if (report) {
+        try {
+          await reportDatabaseService.updateReportStatus(report.id, 'failed');
+        } catch (statusError) {
+          assertWorkflowActive();
+          console.error('更新报表失败状态时出错:', statusError);
+        }
+      }
+      throw error;
     }
   }
 

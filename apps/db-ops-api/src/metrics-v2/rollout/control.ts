@@ -8,6 +8,7 @@ import { alertDatabaseService } from '../../alert-database-service.js';
 import { SemanticQueryService, type SemanticQuery } from '../query.js';
 import { evaluateMetric, type ConsumerAlertPolicy } from '../consumers/evaluation.js';
 import type { NormalizedObservation } from '../../contracts/metrics-v2/observations.js';
+import { rolloutAlertLockName } from './alert-publication-fence.js';
 
 const pin = z.strictObject({ id: z.string().min(1), version: z.string().min(1), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/) });
 const targetSchema = z.strictObject({ source: z.string().min(1).max(128), read: z.enum(['legacy', 'v2']),
@@ -23,11 +24,40 @@ function check(ok: unknown, code: string): asserts ok { if (!ok) throw new Error
 /** Internal opt-in boundary. Caller authorizes the resource; no public route or production activation. */
 export class RolloutControl {
   constructor(private readonly pool: Pool, private readonly connection?: PoolConnection, private readonly clock = () => new Date()) {}
-  private async transaction<T>(fn: (c: PoolConnection) => Promise<T>): Promise<T> {
-    if (this.connection) return fn(this.connection);
+  private async lock(c: PoolConnection): Promise<void> {
+    const [rows] = await c.execute<RowDataPacket[]>('SELECT id FROM metric_v2_policy_lock WHERE id = 1 FOR UPDATE');
+    check(rows.length === 1, 'ROLLOUT_LOCK_UNAVAILABLE');
+  }
+  private async acquireFence(c: PoolConnection, name: string): Promise<void> {
+    const [rows] = await c.execute<RowDataPacket[]>('SELECT GET_LOCK(?, 10) AS acquired', [name]);
+    check(Number(rows[0]?.acquired) === 1, 'ROLLOUT_ALERT_FENCE_UNAVAILABLE');
+  }
+  private async transaction<T>(fn: (c: PoolConnection) => Promise<T>, fence?: string): Promise<T> {
+    if (this.connection) {
+      if (fence) await this.acquireFence(this.connection, fence);
+      try { await this.lock(this.connection); return await fn(this.connection); }
+      finally { if (fence) await this.connection.execute('SELECT RELEASE_LOCK(?)', [fence]); }
+    }
     const c = await this.pool.getConnection();
-    try { await c.beginTransaction(); const value = await fn(c); await c.commit(); return value; }
-    catch (e) { await c.rollback(); throw e; } finally { c.release(); }
+    let fenced = false;
+    let started = false;
+    try {
+      if (fence) { await this.acquireFence(c, fence); fenced = true; }
+      await c.beginTransaction(); started = true;
+      await this.lock(c); const value = await fn(c); await c.commit(); started = false; return value;
+    } catch (e) { if (started) await c.rollback(); throw e; }
+    finally {
+      let reusable = true;
+      if (fenced) {
+        let released = false;
+        try {
+          const [rows] = await c.execute<RowDataPacket[]>('SELECT RELEASE_LOCK(?) AS released', [fence]);
+          released = Number(rows[0]?.released) === 1;
+        } catch { /* Destroy below so a held named lock never returns to the pool. */ }
+        if (!released) { c.destroy(); reusable = false; }
+      }
+      if (reusable) c.release();
+    }
   }
   private async row(c: Pool | PoolConnection, series: Series, lock = false): Promise<Control> {
     const [rows] = await c.execute<RowDataPacket[]>(`SELECT * FROM metric_v2_rollout WHERE series_hash = ?${lock ? ' FOR UPDATE' : ''}`, [seriesHash(series)]);
@@ -37,9 +67,9 @@ export class RolloutControl {
   }
   async initialize(series: Series, input: Target): Promise<void> {
     const t = targetSchema.parse(input);
-    await this.pool.execute(`INSERT INTO metric_v2_rollout
-      (series_hash, source, generation, read_mode, package_pin, published_revision) VALUES (?, ?, 1, ?, ?, ?)`,
-    [seriesHash(series), t.source, t.read, JSON.stringify(t.package), t.revision]);
+    await this.transaction(async c => { await c.execute(`INSERT INTO metric_v2_rollout
+        (series_hash, source, generation, read_mode, package_pin, published_revision, resource_type, resource_id) VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
+      [seriesHash(series), t.source, t.read, JSON.stringify(t.package), t.revision, series.resource_type, series.resource_id]); });
   }
   current(series: Series): Promise<Control> { return this.row(this.pool, series); }
   /** Run after observation retention. Keeps one latest value and monotonic alert state per identity. */
@@ -62,7 +92,7 @@ export class RolloutControl {
         read_mode = ?, package_pin = ?, published_revision = ?, applied_revision = NULL WHERE series_hash = ?`,
       [t.source, t.read, JSON.stringify(t.package), t.revision, seriesHash(series)]);
       return old.generation + 1;
-    });
+    }, rolloutAlertLockName(seriesHash(series)));
   }
   private assertTicket(r: Control, t: Ticket, applied = true) {
     check(r.source === t.source && r.generation === t.generation && r.revision === t.revision, 'ROLLOUT_STALE_SOURCE');
@@ -95,7 +125,7 @@ export class RolloutControl {
   /** Read and switch are serialized, including the compatibility read callback. */
   async latest<T>(series: Series, legacyRead: (c: PoolConnection) => Promise<T>): Promise<T | StoredObservation | null> {
     return this.transaction(async c => { const r = await this.row(c, series, true);
-      return r.read === 'legacy' ? legacyRead(c) : r.latest; });
+      return r.read === 'legacy' ? legacyRead(c) : r.applied === r.revision && r.latest?.versions.config_revision === r.revision ? r.latest : null; });
   }
   private async formalWindow(c: PoolConnection, series: Series, from: string, to: string, limit = 1000): Promise<NormalizedObservation[]> {
     check(Number.isInteger(limit) && limit > 0 && limit <= 1000 && Date.parse(to) > Date.parse(from)
@@ -111,7 +141,7 @@ export class RolloutControl {
   async range<T>(series: Series, from: string, to: string, legacyRead: (c: PoolConnection) => Promise<T>, limit = 200) {
     return this.transaction(async c => {
       const r = await this.row(c, series, true);
-      return r.read === 'legacy' ? legacyRead(c) : (await this.formalWindow(c, series, from, to, limit))
+      return r.read === 'legacy' ? legacyRead(c) : r.applied !== r.revision ? [] : (await this.formalWindow(c, series, from, to, limit))
         .filter(o => Date.parse(o.observed_at) >= Date.parse(from) && Date.parse(o.observed_at) < Date.parse(to));
     });
   }
@@ -166,7 +196,8 @@ export class RolloutControl {
             network_device_id: series.resource_type === 'network_device' ? id : undefined,
             alert_type: 'performance', level: input.level, title: input.title, message: input.title,
             metric_name: series.metric.id, metric_value: String(input.value), source: 'metrics-v2-rollout',
-            tags: { rule_id: input.rule, rule_version: input.ruleVersion, dimensions: series.dimensions, ticket },
+            tags: { rule_id: input.rule, rule_version: input.ruleVersion, dimensions: series.dimensions, ticket,
+              rollout_fence: { series_hash: seriesHash(series), ...ticket } },
           }, c);
           check(result.success, 'ROLLOUT_ALERT_WRITE'); alertId = result.alertId;
         } else if (alertId) {
@@ -177,6 +208,6 @@ export class RolloutControl {
       await c.execute('UPDATE metric_v2_alert_state SET last_window_ms = ?, state = ?, alert_id = ? WHERE identity_hash = ?',
         [input.windowEnd, input.state, alertId ?? null, identity]);
       return changed;
-    });
+    }, rolloutAlertLockName(seriesHash(series)));
   }
 }

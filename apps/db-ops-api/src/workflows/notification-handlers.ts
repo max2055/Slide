@@ -5,6 +5,8 @@ import type { reportDatabaseService as ReportDatabase } from '../report-database
 import { validateNotificationChannelConfig } from '../notification-channel-config.js';
 import { isAlertEligibleForChannel } from './notification-dispatch.js';
 import { deliveryIdentity, deliveryStore, type DeliveryGate, type DeliveryRequest } from './delivery-store.js';
+import { parseRolloutAlertFence, rolloutAlertPublicationGate,
+  type RolloutAlertPublicationGate } from '../metrics-v2/rollout/alert-publication-fence.js';
 
 /** All durable external effects pass through the business gate, including replay. */
 export function registerNotificationHandlers(
@@ -13,6 +15,7 @@ export function registerNotificationHandlers(
   notificationService: Pick<NotificationService, 'send' | 'buildMessage'>,
   reportDatabaseService: Pick<typeof ReportDatabase, 'getReportById'>,
   gate: DeliveryGate = deliveryStore,
+  publicationGate: RolloutAlertPublicationGate = rolloutAlertPublicationGate,
 ): void {
   for (const type of ['notification.deliver', 'report.notify']) {
     registry.register(type, async (_payload, job, context) => {
@@ -41,6 +44,7 @@ export function registerNotificationHandlers(
               message: identity.kind === 'notification'
                 ? notificationService.buildMessage(channel.type, source as any, (source as any).instance_name, (source as any).instance_host)
                 : { type: 'scheduled_report', report: { id: source.id, name: (source as any).name, type: (source as any).type, format: (source as any).format, status: (source as any).status }, downloadPath: `/api/reports/${source.id}/download` },
+              rolloutFence: identity.kind === 'notification' ? parseRolloutAlertFence(source as any) : undefined,
             };
           }
         } catch (error) {
@@ -52,18 +56,30 @@ export function registerNotificationHandlers(
       signal.throwIfAborted();
       const claim = await gate.acquire(job, context, request);
       if (!claim) return;
+      let transportStarted = false;
       try {
         signal.throwIfAborted();
-        // One transport invocation only. SMTP and ordinary webhooks have no receiver deduplication contract.
-        const sendSignal = claim.retryDeadline === undefined ? signal
-          : AbortSignal.any([signal, AbortSignal.timeout(Math.max(0, claim.retryDeadline - Date.now()))]);
-        const result = await notificationService.send(claim.request.channel, claim.request.message, sendSignal, claim.key, claim.retryDeadline);
-        signal.throwIfAborted();
-        if (!result.success) throw new Error('DELIVERY_TRANSPORT_UNCERTAIN');
+        const publish = async () => {
+          transportStarted = true;
+          // One transport invocation only. SMTP and ordinary webhooks have no receiver deduplication contract.
+          const sendSignal = claim.retryDeadline === undefined ? signal
+            : AbortSignal.any([signal, AbortSignal.timeout(Math.max(0, claim.retryDeadline - Date.now()))]);
+          const result = await notificationService.send(claim.request.channel, claim.request.message, sendSignal, claim.key, claim.retryDeadline);
+          signal.throwIfAborted();
+          if (!result.success) throw new Error('DELIVERY_TRANSPORT_UNCERTAIN');
+        };
+        const outcome = identity.kind === 'notification' && claim.request.rolloutFence
+          ? await publicationGate.run(identity.sourceId, claim.request.rolloutFence, publish)
+          : (await publish(), 'published');
+        if (outcome === 'stale') {
+          await gate.finish(job, context, claim, 'skipped', 'ROLLOUT_ALERT_STALE');
+          return;
+        }
         await gate.finish(job, context, claim, 'sent');
       } catch (error) {
-        // If ownership or DB availability was lost, leave sending durable. Recovery interprets it as unknown.
-        if (!signal.aborted) await gate.finish(job, context, claim, 'unknown', 'DELIVERY_OUTCOME_UNCERTAIN').catch(() => {});
+        // Failures before transport are retryable; after invocation the receiver outcome is uncertain.
+        if (!signal.aborted) await gate.finish(job, context, claim, transportStarted ? 'unknown' : 'retryable',
+          transportStarted ? 'DELIVERY_OUTCOME_UNCERTAIN' : 'ROLLOUT_ALERT_FENCE_UNAVAILABLE').catch(() => {});
         throw error;
       }
     });

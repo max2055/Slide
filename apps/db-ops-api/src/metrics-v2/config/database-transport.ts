@@ -6,10 +6,12 @@ import type { DatabaseConnection } from '../../database-service.js';
 import { authorizeDatabaseTarget } from '../../security/database-target-policy.js';
 import { AdapterError, type Transport } from '../packages/adapters.js';
 import { bindDatabaseDriver } from '../database/collector.js';
+import { postgresCounterTransport } from './postgres-counter.js';
 
 /** Fixed package reads only. Dedicated sessions prevent trial timeouts changing a shared session. */
 export function trialDatabaseTransport(connection: DatabaseConnection): Transport {
-  return bindDatabaseDriver(async (sql, timeout) => {
+  const bind = connection.db_type === 'postgresql' ? postgresCounterTransport : bindDatabaseDriver;
+  return bind(async (sql, timeout) => {
     if (connection.db_type === 'oracle' && connection.oraclePool) {
       const client = await connection.oraclePool.getConnection();
       try { client.callTimeout = timeout; return await client.execute(sql); }

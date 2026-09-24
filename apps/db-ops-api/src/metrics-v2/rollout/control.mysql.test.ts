@@ -1,11 +1,13 @@
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
-import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MigrationRunner } from '../../migrations/runner.js';
 import type { MigrationPool } from '../../migrations/types.js';
 import { definitions, sample, identify } from '../../contracts/metrics-v2/fixtures.js';
 import { MysqlMetricStorage } from '../storage.js';
 import { MetricStorageAdapter } from '../compatibility.js';
 import { RolloutControl, type Target } from './control.js';
+import { MysqlFormalMetricStore } from './formal-store.js';
+import { MysqlRolloutAlertPublicationGate, parseRolloutAlertFence } from './alert-publication-fence.js';
 
 const port = Number(process.env.METRICS_V2_TEST_MYSQL_PORT);
 describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
@@ -33,6 +35,24 @@ describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
   beforeEach(async () => {
     for (const table of ['metric_v2_alert_transitions', 'metric_v2_alert_state', 'alerts', 'metric_v2_rollout', 'metric_v2_publications', 'metric_v2_observations']) await pool.query(`DELETE FROM ${table}`);
     await control.initialize(series, target); await control.applied(series, ticket);
+  });
+  it('selects compatibility consumers only from a uniform applied formal source', async () => {
+    const formal = new MysqlFormalMetricStore(pool), ref = { type: 'instance' as const, id: 1 };
+    expect(await formal.sourceState({ type: 'instance', id: 999 })).toBe('legacy');
+    expect(await formal.sourceState(ref)).toBe('legacy');
+    await storage.write(observation(), definition);
+    expect(await formal.sourceState(ref)).toBe('legacy');
+    await control.switch(series, 1, { ...target, source: 'v2', read: 'v2', revision: 2 });
+    expect(await formal.sourceState(ref)).toBe('pending');
+    await control.applied(series, { source: 'v2', generation: 2, revision: 2 });
+    expect(await formal.sourceState(ref)).toBe('v2');
+    const other = { ...series, metric: { ...series.metric, id: 'mysql.processlist.count' } };
+    await control.initialize(other, target); await control.applied(other, ticket);
+    expect(await formal.sourceState(ref)).toBe('pending');
+    await control.switch(series, 2, { ...target, revision: 3 });
+    expect(await formal.sourceState(ref)).toBe('pending');
+    await control.applied(series, { source: 'legacy', generation: 3, revision: 3 });
+    expect(await formal.sourceState(ref)).toBe('legacy');
   });
   it('serializes competing switches, pending applied revision, late sources and rollback without deleting evidence', async () => {
     await control.publish(series, definition, ticket, async () => {});
@@ -66,6 +86,34 @@ describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
     const [rows] = await pool.query<RowDataPacket[]>('SELECT name FROM database_instances WHERE id = 1');
     expect(rows[0].name).toBe('isolated');
   });
+  it('formal consumers exclude shadow, pending revisions and rollback while retaining unknown evidence', async () => {
+    const formal = new MysqlFormalMetricStore(pool);
+    const from = '2026-09-01T00:00:00Z', to = '2026-09-01T00:02:00Z';
+    await storage.write(observation(), definition);
+    expect(await formal.queryWindow(series, from, to)).toEqual([]);
+    expect(await formal.dimensions({ type: 'instance', id: 1 }, definition, from, to)).toEqual([]);
+    await control.switch(series, 1, { ...target, source: 'v2', read: 'v2', revision: 2 });
+    const t = { source: 'v2', generation: 2, revision: 2 };
+    expect(await formal.queryWindow(series, from, to)).toEqual([]);
+    expect(await control.latest(series, async () => null)).toBeNull();
+    await control.applied(series, t);
+    await control.publish(observation(1, 2), definition, t);
+    await storage.write(observation(2, 2), definition);
+    expect((await formal.queryWindow(series, from, to)).map(o => o.id)).toEqual([observation(1, 2).id]);
+    expect(await formal.dimensions({ type: 'instance', id: 1 }, definition, from, to)).toEqual([{}]);
+    const unknown = identify({ ...observation(3, 2), value: null, quality: { status: 'unknown', reason: 'missing_input' } });
+    await control.publish(unknown, definition, t);
+    expect((await formal.queryWindow(series, from, to)).at(-1)).toMatchObject({ id: unknown.id, value: null });
+    await control.switch(series, 2, { ...target, source: 'v2', read: 'v2', revision: 3 });
+    expect(await control.latest(series, async () => null)).toBeNull();
+    expect(await formal.queryWindow(series, from, to)).toEqual([]);
+    await control.applied(series, { source: 'v2', generation: 3, revision: 3 });
+    expect(await control.latest(series, async () => null)).toBeNull();
+    await control.switch(series, 3, { ...target, revision: 4 });
+    expect(await formal.queryWindow(series, from, to)).toEqual([]);
+    expect(await formal.dimensions({ type: 'instance', id: 1 }, definition, from, to)).toEqual([]);
+    expect(await storage.range(series, from, to)).toHaveLength(4);
+  });
   it('20 concurrent repeats create one real alert; recovery and old-window replay cannot refire', async () => {
     await control.publish(series, definition, ticket, async () => {});
     const input = { rule: 'rule-1', ruleVersion: '1', observationId: series.id, windowEnd: Date.parse(series.observed_at),
@@ -79,6 +127,32 @@ describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
     expect(alerts).toHaveLength(1); expect(alerts[0].status).toBe('resolved');
     const [transitions] = await pool.query<RowDataPacket[]>('SELECT * FROM metric_v2_alert_transitions');
     expect(transitions).toHaveLength(2);
+  });
+  it('holds cutover behind an in-flight alert publication and rejects the queued old generation afterwards', async () => {
+    await control.publish(series, definition, ticket, async () => {});
+    await control.transition(series, ticket, { rule: 'notify', ruleVersion: '1', observationId: series.id,
+      windowEnd: Date.parse(series.observed_at), state: 'firing', value: 3600, title: 'notify', level: 'warning' });
+    const [alerts] = await pool.query<RowDataPacket[]>('SELECT id, source, tags FROM alerts');
+    const alertId = Number(alerts[0].id);
+    const fence = parseRolloutAlertFence({ source: alerts[0].source, tags: alerts[0].tags })!;
+    let release!: () => void;
+    let started!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    const gate = new MysqlRolloutAlertPublicationGate(() => pool);
+    const publication = gate.run(alertId, fence, async () => { started(); await held; });
+    await entered;
+    let switched = false;
+    const cutover = control.switch(series, 1, { ...target, source: 'v2', read: 'v2', revision: 2 })
+      .then(result => { switched = true; return result; });
+    await new Promise(resolve => setTimeout(resolve, 25));
+    expect(switched).toBe(false);
+    release();
+    await expect(publication).resolves.toBe('published');
+    await expect(cutover).resolves.toBe(2);
+    const staleSend = vi.fn(async () => {});
+    await expect(gate.run(alertId, fence, staleSend)).resolves.toBe('stale');
+    expect(staleSend).not.toHaveBeenCalled();
   });
   it('rejects wrong revision and shadow evidence; rule versions have independent identities', async () => {
     await expect(control.publish(observation(0, 2), definition, ticket, async () => {})).rejects.toThrow('OBSERVATION_REVISION');

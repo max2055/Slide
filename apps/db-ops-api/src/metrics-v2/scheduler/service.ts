@@ -10,7 +10,9 @@ import { JOB_TYPE, MysqlScheduleStore } from './store.js';
 const Payload = z.strictObject({ resource: RefSchema, revision: z.number().int().positive() });
 export interface CollectorAccess {
   /** Must authorize this exact resource and resolve only its own credential reference. */
-  resolve(ref: Ref): Promise<Pick<PackageExecution, 'resolve' | 'evidence'> & { credential_ref: string; resource: Resource }>;
+  resolve(ref: Ref): Promise<Pick<PackageExecution, 'resolve' | 'evidence'> & {
+    credential_ref: string; resource: Resource; assertCurrent?: () => Promise<void>;
+  }>;
 }
 /** Host calls tick on its existing lifecycle and uses the existing Worker/JobRegistry. No parallel runtime. */
 export class MetricScheduler {
@@ -50,7 +52,7 @@ export class MetricScheduler {
         const initial = compilePlan(this.packages, current.resolved);
         timer = setTimeout(() => cancel(new Error('SCHEDULE_TIMEOUT')), initial.timeoutMs);
         await this.store.assertCurrent(ref, revision, job, executionContext);
-        const access = current.resolved.settings.enabled ? await this.access.resolve(ref) : {
+        const access: Awaited<ReturnType<CollectorAccess['resolve']>> = current.resolved.settings.enabled ? await this.access.resolve(ref) : {
           resource: { type: ref.type, id: String(ref.id), attributes: {} }, credential_ref: 'credential:disabled', evidence: {},
           resolve: async () => { throw new Error('SCHEDULE_DISABLED'); },
         };
@@ -64,6 +66,7 @@ export class MetricScheduler {
           controller.signal.throwIfAborted();
           await reservation.connection.ping();
           await this.store.assertCurrent(ref, revision, job, executionContext);
+          await access.assertCurrent?.();
           controller.signal.throwIfAborted();
         };
         await check();
@@ -84,6 +87,7 @@ export class MetricScheduler {
           },
         });
         controller.signal.throwIfAborted();
+        await check();
         // Failed batches are retried by the existing Worker. Partial success is committed without re-querying healthy outputs.
         if (result.attempts.length && result.attempts.every(a => a.status === 'failed')) {
           await this.store.recordFailure(snapshot, result, job, executionContext, this.clock());
@@ -93,9 +97,13 @@ export class MetricScheduler {
         await this.store.event(ref, revision, job.id, committed ? 'committed' : 'late_result_discarded', false, this.clock() - started, reads);
       } catch (error) {
         // Never store remote errors, credentials or SQL. Abort cannot retract an already issued request.
-        const code = cancelled ? 'cancelled_result_uncertain' : error instanceof Error && error.message === 'SCHEDULE_STALE_EXECUTION'
+        const superseded = error instanceof Error && error.message === 'SCHEDULE_SUPERSEDED';
+        const stale = error instanceof Error && error.message === 'SCHEDULE_STALE_EXECUTION';
+        const code = cancelled ? 'cancelled_result_uncertain' : superseded || stale
           ? 'late_result_discarded' : 'collection_failed';
         await this.store.event(ref, revision, job.id, code, uncertain || inFlight, this.clock() - started, reads);
+        // A superseded revision can never become current again; retrying it can starve the replacement job.
+        if (superseded) return;
         throw new Error(code);
       } finally {
         if (timer) clearTimeout(timer);

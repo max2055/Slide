@@ -8,17 +8,39 @@ describe('MetricsDatabaseService.recordMetrics', () => {
   });
 
   it('persists omitted independently scheduled metrics as null without losing real zeroes', async () => {
-    const execute = vi.fn().mockResolvedValue([{ affectedRows: 1 }, []]);
-    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+    const execute = vi.fn(async (sql: string, _values?: unknown[]) => {
+      if (sql.includes('metric_v2_policy_lock')) return [[{ id: 1 }], []];
+      if (sql.includes('FROM metric_v2_rollout')) return [[], []];
+      return [{ affectedRows: 1 }, []];
+    });
+    const connection = { execute, beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() };
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ getConnection: async () => connection } as any);
 
     await expect(metricsDatabaseService.recordMetrics({ instance_id: 7, qps: 0 }))
       .resolves.toEqual({ success: true });
 
-    const params = execute.mock.calls[0][1] as unknown[];
+    const insert = execute.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO metrics_history'))!;
+    const params = insert[1] as unknown[];
     expect(params[0]).toBe(7);
     expect(params[1]).toBeNull();
     expect(params[5]).toBe(0);
     expect(params.slice(6, 17)).toEqual(Array(11).fill(null));
+  });
+
+  it('treats a pending or v2 resource as an intentional legacy skip', async () => {
+    const execute = vi.fn(async (sql: string, _values?: unknown[]) => {
+      if (sql.includes('metric_v2_policy_lock')) return [[{ id: 1 }], []];
+      if (sql.includes('FROM metric_v2_rollout')) return [[{
+        source: 'v2', read_mode: 'v2', published_revision: 2, applied_revision: null,
+      }], []];
+      throw new Error('legacy insert must be fenced');
+    });
+    const connection = { execute, beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() };
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ getConnection: async () => connection } as any);
+
+    await expect(metricsDatabaseService.recordMetrics({ instance_id: 7, qps: 9 }))
+      .resolves.toEqual({ success: true, skipped: 'source_fenced' });
+    expect(execute.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO metrics_history'))).toBe(false);
   });
 });
 
