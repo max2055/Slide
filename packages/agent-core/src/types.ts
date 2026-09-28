@@ -261,3 +261,4 @@ export interface Tool {
   execute(params: Record<string, unknown>, context?: ToolExecutionContext): Promise<unknown>;
   castParams?(params: Record<string, unknown>): Record<string, unknown>;
 }
+export type { TurnPhase, RunControl, RuntimeStateSnapshot } from './runtime/contracts.js';

@@ -71,7 +71,6 @@ describe('AgentRunner checkpoint restore', () => {
 
   describe('_checkpointMessageKey', () => {
     it('returns tuple from message fields', () => {
-      // Access via prototype since method is protected — we test as close to implementation as possible
       const message: TestSessionEntry = {
         role: 'assistant',
         content: 'Hello',
@@ -81,9 +80,10 @@ describe('AgentRunner checkpoint restore', () => {
         reasoning_content: 'thinking...',
         thinking_blocks: [{ type: 'thinking', content: 'deep' }],
       };
-      // Note: _checkpointMessageKey is private — we verify its behavior through _restoreRuntimeCheckpoint
-      // The key generation happens internally
-      expect(true).toBe(true);
+      expect(AgentRunner._checkpointMessageKey(message)).toEqual([
+        'assistant', 'Hello', 'call_123', 'test_tool', message.tool_calls,
+        'thinking...', message.thinking_blocks,
+      ]);
     });
   });
 

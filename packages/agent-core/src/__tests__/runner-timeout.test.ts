@@ -198,6 +198,18 @@ function makeSpec(overrides: Partial<AgentRunSpec> = {}): AgentRunSpec {
 }
 
 describe("AgentRunner timeout layering", () => {
+  it('preserves explicit timeout options and streaming idle defaults after migration', async () => {
+    const provider = new RecordingProvider();
+    const runner = new AgentRunner(provider);
+    process.env.NANOBOT_STREAM_IDLE_TIMEOUT_S = '17';
+    await runner.run(makeSpec({ hook: new RecordingHook(true), llmTimeoutS: 9 }));
+    expect(provider.lastOptions?.timeoutS).toBe(9);
+    expect(provider.lastOptions?.streamIdleTimeoutS).toBe(9);
+    await runner.run(makeSpec({ hook: new RecordingHook(true) }));
+    expect(provider.lastOptions?.timeoutS).toBe(300);
+    expect(provider.lastOptions?.streamIdleTimeoutS).toBe(17);
+    delete process.env.NANOBOT_STREAM_IDLE_TIMEOUT_S;
+  });
   beforeEach(() => {
     // Ensure env vars don't leak between tests
     delete process.env["NANOBOT_LLM_TIMEOUT_S"];
