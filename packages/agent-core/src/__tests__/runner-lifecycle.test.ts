@@ -24,6 +24,36 @@ function spec(tools: ToolRegistry, signal: AbortSignal): AgentRunSpec {
 }
 
 describe('AgentRunner lifecycle', () => {
+  it('keeps concurrent results in call order and exclusive calls between batches', async () => {
+    const tools = new ToolRegistry();
+    const order: string[] = [];
+    let finishFirst!: () => void;
+    const first = new Promise<void>(resolve => { finishFirst = resolve; });
+    for (const name of ['first', 'second', 'exclusive', 'last']) {
+      tools.register({
+        name, description: name, parameters: { type: 'object', properties: {} },
+        readOnly: true, concurrencySafe: name !== 'exclusive', exclusive: name === 'exclusive',
+        execute: async () => {
+          order.push(`start:${name}`);
+          if (name === 'first') await first;
+          if (name === 'second') finishFirst();
+          order.push(`end:${name}`);
+          return name;
+        },
+      });
+    }
+    const chat = async () => ({
+      content: null, finishReason: 'tool_calls', usage: {}, shouldExecuteTools: true, hasToolCalls: true,
+      toolCalls: ['first', 'second', 'exclusive', 'last'].map(name => ({ id: name, name, arguments: {} })),
+    });
+    const result = await new AgentRunner({ chat, chatStream: chat, getDefaultModel: () => 'test' }).run({
+      ...spec(tools, new AbortController().signal), concurrentTools: true,
+    });
+    expect(order).toEqual(['start:first', 'start:second', 'end:second', 'end:first', 'start:exclusive', 'end:exclusive', 'start:last', 'end:last']);
+    expect(result.messages.filter(m => m.role === 'tool').map(m => [m.tool_call_id, m.content]))
+      .toEqual(['first', 'second', 'exclusive', 'last'].map(name => [name, name]));
+  });
+
   it('passes the run abort signal to tool execution', async () => {
     const tools = new ToolRegistry();
     const controller = new AbortController();

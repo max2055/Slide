@@ -6,6 +6,32 @@ const response = { content: 'done', finishReason: 'stop', toolCalls: [], usage: 
 const spec = (): AgentRunSpec => ({ initialMessages: [], tools: new ToolRegistry(), model: 'test', maxIterations: 1, maxToolResultChars: 100, hook: new NoopHook(), llmTimeoutS: 1 });
 afterEach(() => vi.useRealTimers());
 describe('runner request resources', () => {
+  it('observes the actual finalization retry promise after timeout, without hiding settlement', async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let calls = 0;
+    const chat = async () => {
+      if (++calls < 3) return { ...response, toolCalls: [], content: '' };
+      await gate;
+      return { ...response, toolCalls: [] };
+    };
+    const requests: Promise<unknown>[] = [];
+    const run = new AgentRunner({ chat, chatStream: chat, getDefaultModel: () => 'test' }).run({
+      ...spec(), maxIterations: 4, onProviderRequest: promise => { requests.push(promise); },
+    });
+    await vi.advanceTimersByTimeAsync(1001);
+    expect((await run).stopReason).toBe('timed_out');
+    expect(requests).toHaveLength(3);
+    let settled = false;
+    void requests[2].then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    release();
+    await requests[2];
+    expect(settled).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it.each(['success', 'failure'])('cleans timers after %s', async mode => {
     vi.useFakeTimers();
     const chat = vi.fn(async () => { if (mode === 'failure') throw new Error('request failed'); return { ...response }; });
