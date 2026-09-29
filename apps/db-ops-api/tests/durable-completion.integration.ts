@@ -17,7 +17,7 @@ import { DirectAdapter } from '../src/adapter/direct-adapter.js';
 import { dbConnection } from '../src/db-connection.js';
 import { agentRunService, AgentRunService } from '../src/adapter/agent-run-service.js';
 
-const database = `max56_${randomUUID().replaceAll('-', '')}`;
+const database = `max88_${randomUUID().replaceAll('-', '')}`;
 const config = { host: process.env.DB_HOST || '127.0.0.1', port: Number(process.env.DB_PORT || 3306),
   user: process.env.DB_USER || 'root', password: process.env.DB_PASSWORD || '' };
 const admin = await mysql.createConnection(config);
@@ -26,6 +26,9 @@ const sockets: WebSocket[] = [];
 let adapter: DirectAdapter | undefined;
 let created = false;
 let calls = 0;
+let rejectCandidates = false;
+const rejectedBody = '正在分析数据库状态……\n'.repeat(20);
+const modelContexts: unknown[] = [];
 let hold: Promise<void> = Promise.resolve();
 let release = () => {};
 const actor = { userId: 74, username: 'fixture', roles: ['viewer'], permissions: [], sessionVersion: 1, instanceScopes: {}, requestId: 'max56' };
@@ -34,7 +37,9 @@ async function start() {
   adapter = new DirectAdapter({ workspace, tools: new ToolRegistry(), llmProvider: {
     getDefaultModel: () => 'fixture', chat: async () => answer,
     chatStream: async (_m: any, _t: any, callbacks: any) => {
-      calls++; await callbacks.onContentDelta(answer.content); await hold; return answer;
+      calls++; modelContexts.push(structuredClone(_m));
+      const candidate = rejectCandidates ? { ...answer, content: rejectedBody } : answer;
+      await callbacks.onContentDelta(candidate.content); await hold; return candidate;
     },
   } as any, actorContextService: { authenticateAccessToken: async () => actor, revalidateActor: async () => actor } });
   await adapter.start();
@@ -102,6 +107,7 @@ try {
     const pending = await check(started.runId, 'running', 0);
     assert.equal(pending.result_json.completionPending, true);
     assert.equal(pending.result_json.event.finalContent, answer.content);
+    assert.equal(await agentRunService.finish(started.runId, 'failed'), false, 'pending completion must survive fallback failure');
     // Repeat while storage is still broken: no new model call, no duplicated user.
     client.events.length = 0; client.send(request); await client.wait('error');
     await check(started.runId, 'running', 0); assert.equal(calls, before + 1);
@@ -132,6 +138,43 @@ try {
   assert.equal(types.lastIndexOf('run.snapshot') < types.indexOf('complete'), true);
   assert.equal(calls, before + 1); retry.socket.terminate();
   console.log('PASS disconnect during generation: exactly one model call; terminal snapshot precedes complete; database already committed');
+
+  // Candidate rejection crosses real WS, MySQL, disk session, adapter restart and provider context.
+  rejectCandidates = true;
+  const rejected = await connect(port); const rejectedRequest = frame(); const priorCalls = calls;
+  rejected.send(rejectedRequest);
+  const rejection = await rejected.wait('error'); const rejectionRun = await rejected.wait('run.started');
+  assert.equal(rejection.resolution.reasonCode, 'MODEL_REPETITION_LOOP');
+  assert.equal(rejection.finalContent, '');
+  assert.equal(rejected.events.some(e => e.type === 'text_delta' && e.delta === ''), true);
+  assert.equal(rejected.events.some(e => e.type === 'complete'), false);
+  // An error frame is delivered before finish(); wait for the foreground handler to settle.
+  let failedRun: any;
+  for (let i = 0; i < 100; i++) {
+    failedRun = await agentRunService.getForActor(rejectionRun.runId, actor.userId, rejectionRun.sessionKey);
+    if (failedRun?.state === 'failed') break;
+    await delay(10);
+  }
+  assert.equal(failedRun.state, 'failed');
+  await check(rejectionRun.runId, 'failed', 0);
+  assert.equal(calls, priorCalls + 3);
+  rejected.socket.terminate(); await adapter!.dispose(); port = await start();
+  const history = await connect(port);
+  history.send({ type: 'chat.history', sessionKey: rejectionRun.sessionKey });
+  const transcript = await history.wait('complete');
+  assert.equal(JSON.stringify(transcript).includes('正在分析'), false);
+  history.events.length = 0; history.send(rejectedRequest);
+  const failedSnapshot = await history.wait('run.snapshot');
+  assert.equal(failedSnapshot.run.state, 'failed');
+  assert.equal(failedSnapshot.run.result.resolution.reasonCode, 'MODEL_REPETITION_LOOP');
+  assert.equal(calls, priorCalls + 3);
+  rejectCandidates = false;
+  const nextRequest = { ...frame(), sessionKey: rejectionRun.sessionKey };
+  history.events.length = 0; history.send(nextRequest); await history.wait('complete');
+  assert.equal(JSON.stringify(modelContexts).includes('正在分析'), false);
+  assert.equal(history.events.filter(e => e.type === 'complete').length, 1);
+  history.socket.terminate();
+  console.log('PASS candidate rejection: three attempts, empty retraction, precise failure, clean MySQL/history/disk/replay/next context');
 
   // Simulate lost COMMIT acknowledgement after the server committed.
   const session = randomUUID();

@@ -23,7 +23,7 @@ export type AdapterToolProgressEvent = { type: 'tool_progress'; toolName: string
 export type AdapterThinkingDeltaEvent = { type: 'thinking_delta'; delta: string };
 export type AdapterThinkingEndEvent = { type: 'thinking_end' };
 export type AdapterCompleteEvent = { type: 'complete'; finalContent?: string; thinkingContent?: string; messageSequence?: number };
-export type AdapterCancelledEvent = { type: 'cancelled'; runId?: string; sessionKey?: string };
+export type AdapterCancelledEvent = { type: 'cancelled'; runId?: string; sessionKey?: string; finalContent?: string };
 export type AdapterErrorEvent = { type: 'error'; error: string };
 export type AdapterSessionCreatedEvent = { type: 'session.created'; sessionKey: string; messageId?: string };
 export type AdapterRunStartedEvent = { type: 'run.started'; runId: string; sessionKey: string; messageId?: string };
@@ -709,6 +709,7 @@ function mapAdapterChatEventToPayload(
         runId: event.runId ?? runId ?? '',
         sessionKey: event.sessionKey ?? sessionKey,
         state: 'aborted',
+        ...(event.finalContent !== undefined ? { message: { role: 'assistant', content: [{ type: 'text', text: event.finalContent }] } } : {}),
       };
     case 'protocol.error':
       return {

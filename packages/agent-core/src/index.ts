@@ -72,6 +72,7 @@ export type {
   // Run types
   AgentRunSpec,
   AgentRunResult,
+  RuntimeResolution,
   // Checkpoint types
   RuntimeCheckpoint,
 } from "./types.js";

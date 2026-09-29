@@ -1,10 +1,12 @@
 import type { AgentHookContext, AgentRunResult, AgentRunSpec, LLMResponse, Message, ToolCallRequest } from "../types.js";
 
-import { ModelStep, TimeoutError, requestFinalizationRetry } from "./model-step.js";
+import { ModelStep, TimeoutError } from "./model-step.js";
 import { ToolExecutor, executeTools } from "./tool-executor.js";
 import { emitCheckpoint } from "./checkpoint.js";
 import { createTurnState, transition } from "./turn-state.js";
 import { dropOrphanToolResults, backfillMissingToolResults, microcompact, applyToolResultBudget, snipHistory, normalizeToolResult } from "./legacy-context.js";
+import { AnomalyGuard } from "./anomaly-guard.js";
+import { CompletionSupervisor } from "./supervisor.js";
 const DEFAULT_ERROR_MESSAGE = "Sorry, I encountered an error calling the AI model.";
 const PERSISTED_MODEL_ERROR_PLACEHOLDER =
   "[Assistant reply unavailable due to model error.]";
@@ -21,6 +23,18 @@ export class TurnLoop {
   ) {}
   async run(spec: AgentRunSpec): Promise<AgentRunResult> {
     const hook = spec.hook;
+    const supervisor = new CompletionSupervisor();
+    const supervisorMode = spec.supervisorMode ?? 'enforce';
+    const progress = new AnomalyGuard();
+    let toolEpoch = 0;
+    let reminder: string | undefined;
+    let safeContent = '';
+    const currentRequest = (messages: Message[]) => {
+      const latest = [...messages].reverse().find(m => m.role === 'user');
+      return typeof latest?.content === 'string' ? latest.content : '';
+    };
+    let progressEpoch = 0;
+    let request = currentRequest(spec.initialMessages);
     let state = createTurnState(spec.initialMessages);
     for (let iteration = 0; iteration < spec.maxIterations; iteration++) {
       if (spec.signal?.aborted) { state.stopReason = 'cancelled'; state.error = 'Cancelled'; break; }
@@ -61,6 +75,8 @@ export class TurnLoop {
         stopReason: null,
         error: null,
       };
+      if (reminder) messagesForModel = [...messagesForModel, { role: 'user', content: reminder }];
+      reminder = undefined;
       await hook.beforeIteration(context);
 
       // ── Request LLM ──
@@ -120,6 +136,7 @@ export class TurnLoop {
           response.toolCalls,
           (response as any)._extra, // Preserve provider-specific fields (e.g., reasoning_content)
         );
+        safeContent += response.content ?? '';
         state.messages.push(assistantMsg);
         for (const tc of response.toolCalls) state.toolsUsed.push(tc.name);
 
@@ -142,6 +159,9 @@ export class TurnLoop {
           iteration,
           this.executor,
         );
+        const nextToolEpoch = progress.progress(results);
+        if (nextToolEpoch > toolEpoch) progressEpoch++;
+        toolEpoch = nextToolEpoch;
         state.toolEvents.push(...events);
         context.toolResults = [...results];
         context.toolEvents = [...events];
@@ -215,7 +235,7 @@ export class TurnLoop {
           undefined
         );
         state.injectionCycles = newCycles2;
-        if (drained) state.hadInjections = true;
+        if (drained) { state.hadInjections = true; progressEpoch++; request = currentRequest(state.messages); }
 
         await hook.afterIteration(context);
         continue;
@@ -226,88 +246,79 @@ export class TurnLoop {
       state = transition(state, "candidate_final");
       const clean = hook.finalizeContent(context, response.content) || "";
 
-      // Empty response retry
-      if (response.finishReason !== "error" && isBlankText(clean)) {
+      const decision = supervisor.classify(response, clean, request, progressEpoch, supervisorMode);
+      if (decision === 'repetition' || decision === 'unresolved_tools') {
+        const reasonCode = decision === 'repetition' ? 'MODEL_REPETITION_LOOP' : 'UNRESOLVED_TOOL_CALLS';
+        state.finalContent = safeContent;
+        // Clear before callbacks/injections: all exits after rejection see only safe text.
+        state.resolution = { kind: 'failed', reasonCode, retryable: false, safePartialContent: safeContent };
+        await hook.onCandidateRejected?.(context, safeContent, reasonCode);
+        context.finalContent = safeContent;
+        await hook.afterIteration(context);
+        if (decision === 'repetition' && supervisor.recoverRepetition() && !spec.signal?.aborted) {
+          reminder = supervisor.reminder();
+          state = transition(state, 'recovering');
+          const [drained, cycles] = await tryDrainInjections(spec, state.messages, null, state.injectionCycles, 'after rejected candidate');
+          state.injectionCycles = cycles;
+          if (drained) { state.hadInjections = true; progressEpoch++; request = currentRequest(state.messages); }
+          continue;
+        }
+        state.stopReason = spec.signal?.aborted ? 'cancelled' : 'error';
+        state.error = reasonCode;
+        break;
+      }
+      if (decision === 'empty') {
         state.emptyContentRetries++;
-        if (state.emptyContentRetries < MAX_EMPTY_RETRIES) {
-          if (hook.wantsStreaming()) {
-            await hook.onStreamEnd(context, false);
-          }
+        await hook.onCandidateRejected?.(context, safeContent, 'EMPTY_RESPONSE');
+        if (state.emptyContentRetries <= MAX_EMPTY_RETRIES) {
+          if (state.emptyContentRetries === MAX_EMPTY_RETRIES) reminder = "[Runtime: Your previous response was empty. Please provide a substantive response to the user's request.]";
+          if (hook.wantsStreaming()) await hook.onStreamEnd(context, false);
           await hook.afterIteration(context);
           continue;
         }
-        // Retry with finalization prompt
-        if (hook.wantsStreaming()) {
-          await hook.onStreamEnd(context, false);
-        }
-        state.providerAttempts++;
-        const retryResp = await requestFinalizationRetry(spec, messagesForModel, this.getProvider());
-        const retryUsage = usageDict(retryResp.usage);
-        accumulateUsage(state.usage, retryUsage);
-        const retryClean = hook.finalizeContent(context, retryResp.content) || "";
-
-        if (retryResp.finishReason === "error") {
-          state.finalContent = retryResp.error || spec.errorMessage || DEFAULT_ERROR_MESSAGE;
-          state.stopReason = retryResp.errorKind === 'timeout' ? 'timed_out' : 'error';
-          state.error = state.finalContent;
-          appendModelErrorPlaceholder(state.messages);
-          context.finalContent = state.finalContent;
-          context.error = state.error;
-          context.stopReason = state.stopReason;
-          await hook.afterIteration(context);
-          break;
-        }
-
-        if (isBlankText(retryClean)) {
-          state.finalContent = EMPTY_FINAL_RESPONSE_MESSAGE;
-          state.stopReason = "empty_final_response";
-          state.error = state.finalContent;
-          appendFinalMessage(state.messages, state.finalContent);
-          context.finalContent = state.finalContent;
-          context.error = state.error;
-          context.stopReason = state.stopReason;
-          await hook.afterIteration(context);
-          const [sc, nc] = await tryDrainInjections(
-            spec, state.messages, null, state.injectionCycles, "after empty response", undefined
-          );
-          state.injectionCycles = nc;
-          if (sc) { state.hadInjections = true; continue; }
-          break;
-        }
-
-        // Use retry result
-        state.finalContent = retryClean;
-      } else if (response.finishReason === "length" && !isBlankText(clean)) {
-        // Length recovery
+        state.finalContent = '';
+        state.stopReason = 'empty_final_response';
+        state.error = EMPTY_FINAL_RESPONSE_MESSAGE;
+        state.resolution = { kind: 'failed', reasonCode: 'EMPTY_RESPONSE', retryable: false, safePartialContent: '' };
+        context.finalContent = '';
+        context.error = state.error;
+        context.stopReason = state.stopReason;
+        await hook.afterIteration(context);
+        break;
+      } else if (decision === 'length') {
         state.lengthRecoveryCount++;
         if (state.lengthRecoveryCount <= MAX_LENGTH_RECOVERIES) {
-          if (hook.wantsStreaming()) {
-            await hook.onStreamEnd(context, true);
-          }
+          if (hook.wantsStreaming()) await hook.onStreamEnd(context, true);
+          safeContent += clean;
           state.messages.push(buildAssistantMessage(clean));
           state.messages.push(buildLengthRecoveryMessage());
           await hook.afterIteration(context);
           continue;
         }
         state.finalContent = clean;
-      } else if (response.finishReason === "error") {
+      } else if (decision === 'error') {
+        const afterRejection = state.resolution?.safePartialContent !== undefined;
+        if (afterRejection) await hook.onCandidateRejected?.(context, safeContent, 'PROVIDER_ERROR');
         state.finalContent = clean || response.error || spec.errorMessage || DEFAULT_ERROR_MESSAGE;
         state.stopReason = response.errorKind === 'timeout' ? 'timed_out' : "error";
         state.error = state.finalContent;
+        state.resolution = { kind: state.stopReason === 'timed_out' ? 'timed_out' : 'failed', reasonCode: response.errorKind === 'timeout' ? 'MODEL_REQUEST_TIMEOUT' : 'PROVIDER_ERROR', retryable: false, ...(afterRejection ? { safePartialContent: safeContent } : {}) };
         appendModelErrorPlaceholder(state.messages);
         context.finalContent = state.finalContent;
         context.error = state.error;
         context.stopReason = state.stopReason;
         await hook.afterIteration(context);
-        const [sc, nc] = await tryDrainInjections(
-          spec, state.messages, null, state.injectionCycles, "after LLM error", undefined
-        );
+        const [sc, nc] = await tryDrainInjections(spec, state.messages, null, state.injectionCycles, "after LLM error", undefined);
         state.injectionCycles = nc;
-        if (sc) { state.hadInjections = true; continue; }
+        if (sc) { state.hadInjections = true; progressEpoch++; request = currentRequest(state.messages); continue; }
         break;
       } else {
         state.finalContent = clean;
       }
+      // A successful remedy replaces any earlier candidate failure.
+      state.stopReason = 'completed';
+      state.error = null;
+      state.resolution = undefined;
 
       // ── Check for mid-turn injections before signaling stream end ──
       const assistantMsg = !isBlankText(state.finalContent)
@@ -323,7 +334,12 @@ export class TurnLoop {
         iteration
       );
       state.injectionCycles = newCycles3;
-      if (shouldContinue) state.hadInjections = true;
+      if (shouldContinue) {
+        state.hadInjections = true;
+        progressEpoch++;
+        request = currentRequest(state.messages);
+        safeContent += state.finalContent ?? '';
+      }
 
       if (hook.wantsStreaming()) {
         await hook.onStreamEnd(context, shouldContinue);
@@ -352,6 +368,12 @@ export class TurnLoop {
       break;
     }
 
+    // A rejected candidate cannot become an implicit success at the step boundary.
+    if (state.phase === 'recovering' && state.stopReason === 'completed') {
+      state.stopReason = 'max_iterations';
+      state.finalContent = safeContent;
+      state.resolution = { kind: 'partial', reasonCode: 'MAX_MODEL_STEPS', retryable: false, safePartialContent: safeContent };
+    }
     // Max iterations reached
     if (state.stopReason === "completed" && !state.finalContent) {
       state.stopReason = "max_iterations";
@@ -361,6 +383,7 @@ export class TurnLoop {
       appendFinalMessage(state.messages, state.finalContent);
     }
 
+    if (state.stopReason === 'cancelled') state.resolution = { kind: 'cancelled', reasonCode: 'USER_CANCELLED', retryable: false, ...(state.resolution ? { safePartialContent: state.resolution.safePartialContent ?? '' } : {}) };
     state = transition(state, state.stopReason === "completed" ? "response_ready" : "terminal");
     return {
       finalContent: state.finalContent,
@@ -371,6 +394,7 @@ export class TurnLoop {
       error: state.error,
       toolEvents: state.toolEvents,
       hadInjections: state.hadInjections,
+      ...(state.resolution ? { resolution: state.resolution } : {}),
     };
   }
 }

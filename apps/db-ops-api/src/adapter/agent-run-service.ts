@@ -44,6 +44,7 @@ export class AgentRunService {
   // Persist the answer before attempting the atomic message + terminal commit.
   // A replay can finish this intent even after the originating process exits.
   async complete(run: AgentRun, event: CompleteEvent): Promise<AgentRun> {
+    this.assertCompletion(event);
     await this.requirePool().query(
       `UPDATE agent_runs SET result_json = ?, error_json = ?
        WHERE id = ? AND actor_id = ? AND session_id = ? AND state = 'running' AND result_json IS NULL`,
@@ -86,6 +87,7 @@ export class AgentRunService {
         [run.sessionId, run.actorId],
       );
       if (!sessions[0]) throw new Error('Chat session not found');
+      this.assertCompletion(result.event);
       const event = { ...result.event };
       if (event.finalContent || event.thinkingContent) {
         const content = event.thinkingContent
@@ -136,13 +138,23 @@ export class AgentRunService {
   }
 
   async finish(id: string, state: Exclude<AgentRunState, 'running'>, result?: unknown, error?: unknown): Promise<boolean> {
+    // Durable success is only available through complete() and its transaction.
+    if (state === 'completed') return false;
     const [outcome] = await this.requirePool().query<{ affectedRows: number }>(
       `UPDATE agent_runs SET state = ?, result_json = ?, error_json = ?, finished_at = NOW()
-       WHERE id = ? AND state = 'running'`,
+       WHERE id = ? AND state = 'running'
+       AND (result_json IS NULL OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(result_json, '$.completionPending')), 'false') <> 'true')`,
       [state, result ? JSON.stringify(result) : null, error ? JSON.stringify(error) : null, id],
     );
-    if (Number(outcome.affectedRows) === 1) platformLogs.record({ component: 'agent', eventType: 'run.' + state, status: state === 'completed' ? 'ok' : state === 'failed' || state === 'timed_out' ? 'failed' : 'unknown', correlationId: id });
+    if (Number(outcome.affectedRows) === 1) platformLogs.record({ component: 'agent', eventType: 'run.' + state, status: state === 'failed' || state === 'timed_out' ? 'failed' : 'unknown', correlationId: id });
     return Number(outcome.affectedRows) === 1;
+  }
+
+  private assertCompletion(event: CompleteEvent): void {
+    if (event.type !== 'complete' || (event.stopReason !== undefined && event.stopReason !== 'completed')
+      || (event.resolution && event.resolution.kind !== 'response_ready')) {
+      throw new Error('INVALID_RUNTIME_COMPLETION');
+    }
   }
 
   async getForActor(id: string, actorId: number, sessionId: string): Promise<AgentRun | null> {

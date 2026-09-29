@@ -1,5 +1,5 @@
 import { resetToolStream } from "../app-tool-stream.ts";
-import { extractText } from "../chat/message-extract.ts";
+import { extractText, extractRawText } from "../chat/message-extract.ts";
 import { reconcileChatRunLifecycle } from "../chat/run-lifecycle.ts";
 import { formatConnectError } from "../connect-error.ts";
 import { ChatAcceptanceTimeoutError, type DirectGatewayClient } from "../direct-gateway.ts";
@@ -459,7 +459,7 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
     });
 
   if (payload.state === "delta") {
-    const next = extractText(payload.message);
+    const next = extractRawText(payload.message) === "" ? "" : extractText(payload.message);
     if (typeof next === "string" && !isSilentReplyStream(next)) {
       state.chatStream = next;
     }
@@ -470,7 +470,7 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
     );
     if (finalMessage && !isAssistantSilentReply(finalMessage)) {
       state.chatMessages = [...state.chatMessages, finalMessage];
-    } else if (state.chatStream?.trim() && !isSilentReplyStream(state.chatStream)) {
+    } else if (extractRawText(payload.message ?? {}) !== "" && state.chatStream?.trim() && !isSilentReplyStream(state.chatStream)) {
       state.chatMessages = [
         ...state.chatMessages,
         {
@@ -490,7 +490,7 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
     if (normalizedMessage && !isAssistantSilentReply(normalizedMessage)) {
       state.chatMessages = [...state.chatMessages, normalizedMessage];
     } else {
-      const streamedText = state.chatStream ?? "";
+      const streamedText = extractRawText(payload.message ?? {}) === "" ? "" : state.chatStream ?? "";
       if (streamedText.trim() && !isSilentReplyStream(streamedText)) {
         state.chatMessages = [
           ...state.chatMessages,

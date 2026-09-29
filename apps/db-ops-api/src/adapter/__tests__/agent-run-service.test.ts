@@ -49,3 +49,15 @@ describe('AgentRunService', () => {
     expect(sql).toContain('UNIQUE KEY `uq_agent_runs_actor_idempotency` (`actor_id`, `idempotency_key`)');
   });
 });
+
+it('rejects a failed runtime candidate before staging a durable completion', async () => {
+  const pool = new Pool();
+  const service = new AgentRunService(() => pool as any);
+  const { run } = await service.claim(7, 'session', 'message', 'candidate-final');
+  await expect(service.complete(run, { type: 'complete', finalContent: 'bad', stopReason: 'error',
+    resolution: { kind: 'failed', reasonCode: 'MODEL_REPETITION_LOOP', retryable: false } }))
+    .rejects.toThrow('INVALID_RUNTIME_COMPLETION');
+  expect(pool.row.state).toBe('running');
+  expect(pool.row.result_json).toBeUndefined();
+  expect(await service.finish(run.id, 'completed')).toBe(false);
+});

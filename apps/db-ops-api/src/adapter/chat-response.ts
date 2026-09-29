@@ -10,14 +10,14 @@ export class ChatResponse {
     if (event.type === 'text_delta') this.text = event.delta;
     if (event.type === 'thinking_delta') this.thinking += event.delta;
     if (event.type === 'complete' || event.type === 'cancelled' || event.type === 'error') {
-      this.text = event.finalContent || this.text;
+      this.text = event.finalContent ?? this.text;
       this.thinking = event.thinkingContent || this.thinking;
       this.stopReason = event.stopReason || (event.type === 'complete' ? 'completed' : event.type);
     }
   }
 
   message(result?: ChatResult) {
-    const text = result?.finalContent || this.text;
+    const text = result?.finalContent ?? this.text;
     const thinking = result?.thinkingContent || this.thinking;
     const stopReason = result?.stopReason || this.stopReason || (result?.finalContent ? 'completed' : 'error');
     if (!text.trim() && !thinking.trim()) return null;
