@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import { AgentRunService } from '../../apps/db-ops-api/src/adapter/agent-run-service';
 import { dbConnection } from '../../apps/db-ops-api/src/db-connection';
 
 for (const scenario of ['recovery', 'length', 'reject'] as const) {
@@ -37,6 +38,23 @@ for (const scenario of ['recovery', 'length', 'reject'] as const) {
       if (scenario !== 'reject') await expect(page.getByText(expected, { exact: true })).toBeVisible({ timeout: 15000 });
       await expect(page.getByText('正在分析数据库状态', { exact: false })).toHaveCount(0);
       expect(await readMessages()).toEqual(rows);
+      if (scenario === 'recovery') {
+        const [owners] = await pool.query<Array<{ user_id: number }>>('SELECT user_id FROM chat_sessions WHERE session_id = ?', [sessionId]);
+        const service = new AgentRunService();
+        const { run } = await service.claim(owners[0].user_id, sessionId, randomUUID(), randomUUID());
+        const failingStore = new AgentRunService(() => ({ query: pool.query.bind(pool), getConnection: async () => { throw new Error('controlled storage unavailable'); } }) as any);
+        await expect(failingStore.complete(run, { type: 'complete', finalContent: '重连恢复的唯一最终答案。' })).rejects.toThrow('controlled storage unavailable');
+        const pending = await service.getForActor(run.id, run.actorId, sessionId);
+        expect(pending?.state).toBe('running');
+        expect((pending?.result as any).completionPending).toBe(true);
+        await page.reload();
+        await expect(page.getByText('重连恢复的唯一最终答案。', { exact: true })).toBeVisible({ timeout: 15000 });
+        await expect.poll(async () => (await service.getForActor(run.id, run.actorId, sessionId))?.state).toBe('completed');
+        await page.reload();
+        await expect(page.getByText('重连恢复的唯一最终答案。', { exact: true })).toHaveCount(1);
+        const [finals] = await pool.query<Array<{ content: string }>>('SELECT content FROM chat_messages WHERE message_id = ?', [`run_${run.id}_assistant`]);
+        expect(finals).toEqual([{ content: '重连恢复的唯一最终答案。' }]);
+      }
     } finally { await dbConnection.close(); }
   });
 }
