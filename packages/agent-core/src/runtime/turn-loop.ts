@@ -1,3 +1,4 @@
+import { runtimeEvents } from './events.js';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { assertRequestBudget, assertTokenBudget, assertToolBudget, withBudgetContext } from './budget.js';
 import type { AgentHookContext, AgentRunResult, AgentRunSpec, LLMResponse, Message, ToolCallRequest } from "../types.js";
@@ -33,6 +34,7 @@ export class TurnLoop {
   async run(spec: AgentRunSpec): Promise<AgentRunResult> {
     const hook = spec.hook;
     const recovery = new RecoveryPolicy(spec.resumeCheckpoint?.runtime_state_v1, spec.recoveryLimits);
+    const emit = runtimeEvents(spec, recovery.state);
     if (typeof spec.resumeCheckpoint?.runtime_deadline_at === 'number') recovery.state.deadlineAt = spec.resumeCheckpoint.runtime_deadline_at;
     if (spec.budgetLimits) recovery.state.progressRunId ??= randomUUID();
     const runProgressKey = createHmac('sha256', progressKey).update(recovery.state.progressRunId ?? '').digest();
@@ -53,6 +55,7 @@ export class TurnLoop {
       await saveCheckpoint?.(next);
       if ('context_summary_v1' in payload && spec.signal?.aborted) throw cancellationError(spec.signal);
       checkpoint = next;
+      if ('context_summary_v1' in payload) emit('compact.saved');
     } };
     const persistCounters = () => emitCheckpoint(spec, {});
     const supervisor = new CompletionSupervisor();
@@ -144,6 +147,7 @@ export class TurnLoop {
       recovery.state.modelSteps++; recovery.state.providerAttempts++;
       recovery.state.unknownRequests++;
       recovery.state.reservedTokens += reservation;
+      emit('model.start');
       await persistCounters();
       if (spec.signal?.aborted) { state.stopReason = 'cancelled'; break; }
 
@@ -212,6 +216,7 @@ export class TurnLoop {
         state = transition(state, "tools_running");
         state.toolCalls += response.toolCalls.length;
         recovery.state.toolCalls += response.toolCalls.length;
+        emit('tools.start');
         context.toolCalls = [...response.toolCalls];
         if (hook.wantsStreaming()) {
           await hook.onStreamEnd(context, true); // resuming
@@ -245,7 +250,12 @@ export class TurnLoop {
           response.toolCalls,
           state.externalLookupCounts,
           iteration,
-          this.executor,
+          { runTool: async (...args) => {
+            const toolIndex = recovery.state.toolCalls - response.toolCalls.length + response.toolCalls.indexOf(args[1]) + 1;
+            emit('tool.start', toolIndex);
+            try { return await this.executor.runTool(...args); }
+            finally { emit('tool.returned', toolIndex); }
+          } },
         ), persistCounters);
         if (spec.signal?.aborted) { state.stopReason = 'cancelled'; break; }
         if (toolError) {
@@ -355,7 +365,9 @@ export class TurnLoop {
       const clean = hook.finalizeContent(context, response.content) || "";
 
       const decision = supervisor.classify(response, clean, request, progressEpoch, supervisorMode);
+      if (supervisorMode === 'observe' && supervisor.observedRepetition) emit('candidate.observe_repetition');
       if (decision === 'repetition' || decision === 'unresolved_tools') {
+        emit('candidate.reject');
         const reasonCode = decision === 'repetition' ? 'MODEL_REPETITION_LOOP' : 'UNRESOLVED_TOOL_CALLS';
         state.finalContent = safeContent + continuation.content;
         // Clear before callbacks/injections: all exits after rejection see only safe text.
@@ -364,6 +376,7 @@ export class TurnLoop {
         context.finalContent = safeContent + continuation.content;
         await hook.afterIteration(context);
         if (decision === 'repetition' && recovery.consume('repetition') && supervisor.recoverRepetition() && !spec.signal?.aborted) {
+          emit('recovery.start');
           reminder = supervisor.reminder();
           await persistCounters();
           state = transition(state, 'recovering');
@@ -381,6 +394,7 @@ export class TurnLoop {
       if (decision === 'empty') {
         await hook.onCandidateRejected?.(context, safeContent + continuation.content, 'EMPTY_RESPONSE');
         if (recovery.consume('empty')) {
+          emit('recovery.start');
           reminder = '[Runtime: Your previous response was empty. Please provide a substantive response to the user request.]';
           state = transition(state, 'recovering');
           await persistCounters();
@@ -402,6 +416,7 @@ export class TurnLoop {
         continuation.append(clean);
         state.finalContent = continuation.content;
         if (recovery.consume('continuation')) {
+          emit('recovery.start');
           state = transition(state, 'recovering');
           await persistCounters();
           if (hook.wantsStreaming()) await hook.onStreamEnd(context, true);
@@ -429,6 +444,7 @@ export class TurnLoop {
         }
         // No tool intent or uncertain side effect is replayed by transport recovery.
         if (error.recoverable && !response.toolCalls.length && !response.hasToolCalls && recovery.consume('stream')) {
+          emit('recovery.start');
           await hook.onCandidateRejected?.(context, safeContent + continuation.content, error.code);
           state = transition(state, 'recovering');
           await persistCounters();
@@ -532,6 +548,7 @@ export class TurnLoop {
     await emitCheckpoint(spec, { terminal_resolution: state.resolution ?? { kind: state.stopReason === 'completed' ? 'response_ready' : 'partial' } });
     applyCancellation();
     state = transition(state, state.stopReason === "completed" ? "response_ready" : "terminal");
+    emit(state.stopReason === 'completed' ? 'response.ready' : 'turn.terminal');
     return {
       runtimeState: recovery.snapshot(),
       ...(state.runtimeError ? { runtimeError: state.runtimeError } : {}),

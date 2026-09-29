@@ -44,6 +44,8 @@ export interface JsonSchemaProperty {
 // ── LLM provider interface ──
 
 export interface LLMResponse {
+  /** Provider HTTP request identifier when available; never a credential. */
+  requestId?: string;
   content: string | null;
   reasoningContent?: string | null;
   thinkingBlocks?: unknown[];
@@ -179,6 +181,8 @@ export interface AgentHook {
 // ── Agent run spec & result ──
 
 export interface AgentRunSpec {
+  runtimeRunId?: string;
+  onRuntimeEvent?: (event: import("./runtime/events.js").RuntimeEvent) => void | Promise<void>;
   budgetLimits?: import("./runtime/contracts.js").RuntimeBudgetLimits;
   runTimeoutMs?: number;
   toolTimeoutMs?: number;

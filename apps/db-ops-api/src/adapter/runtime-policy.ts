@@ -6,6 +6,7 @@ export interface RuntimePolicy {
   entry: RuntimeEntry;
   source: string;
   longChat: boolean;
+  supervisorMode?: 'observe' | 'enforce';
   runTimeoutMs?: number;
   maxIterations: number;
   toolTimeoutMs?: number;
@@ -22,6 +23,8 @@ function positive(env: NodeJS.ProcessEnv, name: string): number | undefined {
 export function resolveRuntimePolicy(entry: RuntimeEntry, options: { env?: NodeJS.ProcessEnv; cronTimeoutSeconds?: number; maxIterations?: number; parentRemaining?: RuntimePolicy } = {}): Readonly<RuntimePolicy> {
   const env = options.env ?? process.env;
   const legacy = loadAgentRuntimeLimits(env);
+  const supervisorMode = env.AGENT_RUNTIME_SUPERVISOR_MODE ?? 'enforce';
+  if (supervisorMode !== 'observe' && supervisorMode !== 'enforce') throw new Error('Invalid runtime configuration: AGENT_RUNTIME_SUPERVISOR_MODE');
   const enabled = env.AGENT_RUNTIME_LONG_CHAT === 'true';
   if (env.AGENT_RUNTIME_LONG_CHAT !== undefined && !['true', 'false'].includes(env.AGENT_RUNTIME_LONG_CHAT)) throw new Error('Invalid runtime configuration: AGENT_RUNTIME_LONG_CHAT must be true or false');
   const oldTimeout = enabled ? positive(env, 'AGENT_RUN_TIMEOUT_MS') : undefined;
@@ -37,7 +40,7 @@ export function resolveRuntimePolicy(entry: RuntimeEntry, options: { env?: NodeJ
     timeout = seconds * 1000;
   } else if (entry !== 'chat' && enabled && oldTimeout !== undefined) timeout = Math.min(timeout ?? oldTimeout, oldTimeout);
   const policy: RuntimePolicy = { entry, source: entry === 'cron' ? 'job.timeout_seconds' : entry === 'chat' && enabled && chatTimeout !== undefined ? 'AGENT_CHAT_RUN_TIMEOUT_MS' : env.AGENT_RUN_TIMEOUT_MS !== undefined ? 'AGENT_RUN_TIMEOUT_MS' : enabled && entry === 'chat' ? 'long-chat-default' : 'legacy-default',
-    longChat: enabled && entry === 'chat', runTimeoutMs: timeout,
+    supervisorMode, longChat: enabled && entry === 'chat', runTimeoutMs: timeout,
     maxIterations: Math.min(defaults[entry], steps ?? (entry === 'chat' ? defaults.chat : legacy.maxIterations), options.maxIterations ?? Infinity),
     llmTimeoutS: entry === 'invoke' ? 60 : entry === 'cron' ? options.cronTimeoutSeconds ?? 300 : undefined,
   };
@@ -60,7 +63,7 @@ export function resolveRuntimePolicy(entry: RuntimeEntry, options: { env?: NodeJ
   if (!Number.isSafeInteger(policy.maxIterations) || policy.maxIterations < 1 || (policy.runTimeoutMs !== undefined && policy.runTimeoutMs <= 0) || (policy.budgetLimits && Object.values(policy.budgetLimits).some(n => !Number.isSafeInteger(n) || n <= 0))) throw new Error('Runtime parent allowance exhausted or invalid');
   return Object.freeze(policy);
 }
-export function runtimeSpec(policy: RuntimePolicy): Pick<AgentRunSpec, 'maxIterations' | 'runTimeoutMs' | 'llmTimeoutS' | 'streamIdleTimeoutS' | 'toolTimeoutMs' | 'budgetLimits'> {
-  return { maxIterations: policy.maxIterations, runTimeoutMs: policy.runTimeoutMs, llmTimeoutS: policy.llmTimeoutS,
+export function runtimeSpec(policy: RuntimePolicy): Pick<AgentRunSpec, 'maxIterations' | 'runTimeoutMs' | 'llmTimeoutS' | 'streamIdleTimeoutS' | 'toolTimeoutMs' | 'budgetLimits' | 'supervisorMode'> {
+  return { supervisorMode: policy.supervisorMode, maxIterations: policy.maxIterations, runTimeoutMs: policy.runTimeoutMs, llmTimeoutS: policy.llmTimeoutS,
     streamIdleTimeoutS: policy.streamIdleTimeoutS, toolTimeoutMs: policy.toolTimeoutMs, budgetLimits: policy.budgetLimits };
 }

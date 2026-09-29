@@ -82,3 +82,5 @@ export type { RecoverySnapshot, RecoveryLimits, RecoveryKind } from "./runtime/r
 
 export type { RuntimeBudgetLimits } from './runtime/contracts.js';
 export { reserveChildBudget } from './runtime/budget.js';
+
+export type { RuntimeEvent } from './runtime/events.js';

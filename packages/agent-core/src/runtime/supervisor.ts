@@ -5,12 +5,15 @@ export type CandidateDecision = 'error' | 'unresolved_tools' | 'empty' | 'repeti
 export class CompletionSupervisor {
   private guard = new AnomalyGuard();
   private rejected = 0;
+  observedRepetition = false;
   classify(response: LLMResponse, content: string, request: string, epoch: number, mode: 'enforce' | 'observe'): CandidateDecision {
+    this.observedRepetition = false;
     if (response.finishReason === 'error' || response.error || response.errorKind) return 'error';
     if (response.toolCalls.length || response.hasToolCalls || response.finishReason === 'tool_calls') return 'unresolved_tools';
     if (!['stop', 'end_turn', 'stop_sequence', 'length'].includes(response.finishReason)) return 'error';
     if (!content.trim()) return 'empty';
     const anomaly = this.guard.inspect(content, request, epoch);
+    this.observedRepetition = anomaly.repeated;
     if (anomaly.repeated && mode === 'enforce') return 'repetition';
     if (response.finishReason === 'length') return 'length';
     return 'accept';

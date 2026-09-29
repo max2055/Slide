@@ -1,3 +1,4 @@
+import { recordRuntimeEvent } from '../platform/runtime-events.js';
 import { resolveRuntimePolicy, runtimeSpec } from '../adapter/runtime-policy.js';
 /**
  * CronExecutor — AI Agent 驱动定时任务执行引擎
@@ -96,6 +97,7 @@ export class CronExecutor {
         tools: this.registry,
         model: this.provider.getDefaultModel(),
         ...runtimeSpec(policy),
+        onRuntimeEvent: recordRuntimeEvent,
         maxToolResultChars: this.runtimeLimits.maxToolResultChars,
         temperature: 0.0,
         reasoningEffort: 'medium',

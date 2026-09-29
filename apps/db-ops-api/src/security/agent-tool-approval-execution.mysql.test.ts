@@ -14,6 +14,7 @@ import { agentSecurityPolicyService } from './agent-security-policy-service.js';
 
 // Explicitly opt into a disposable MySQL database; never use the application's DB.
 const port = Number(process.env.APPROVAL_TEST_MYSQL_PORT);
+const connectionOptions = { host: process.env.APPROVAL_TEST_MYSQL_HOST ?? '127.0.0.1', port, user: process.env.APPROVAL_TEST_MYSQL_USER ?? 'root', password: process.env.APPROVAL_TEST_MYSQL_PASSWORD, connectionLimit: 8 };
 describe.skipIf(!port)('approval dispatch: real MySQL transactions', () => {
   let pool: Pool;
   const database = `approval_test_${randomUUID().replaceAll('-', '')}`;
@@ -39,11 +40,11 @@ describe.skipIf(!port)('approval dispatch: real MySQL transactions', () => {
   const resource = { type: 'none' as const };
 
   beforeAll(async () => {
-    pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', connectionLimit: 8 });
+    pool = mysql.createPool(connectionOptions);
     await pool.query(`CREATE DATABASE ${database}`);
     created = true;
     await pool.end();
-    pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', database, connectionLimit: 8 });
+    pool = mysql.createPool({ ...connectionOptions, database });
     await pool.query('CREATE TABLE IF NOT EXISTS users (id INT UNSIGNED PRIMARY KEY)');
     await pool.query('INSERT IGNORE INTO users VALUES (7)');
     for (const name of ['054_agent_tool_approvals', '055_agent_tool_audit', '068_agent_tool_approval_scopes', '094_agent_tool_execution_intents']) {
