@@ -7,11 +7,15 @@ it.each([
   expect(resolveRuntimePolicy(entry, { env: {} }).budgetLimits).toBeUndefined();
 });
 it.each([
-  ['chat', undefined, 200], ['invoke', 120000, 8], ['subagent', 120000, 25], ['cron', 300000, 40],
+  ['chat', undefined, 1000], ['invoke', 120000, 8], ['subagent', 120000, 25], ['cron', 300000, 40],
 ] as const)('opens only chat deadline under long policy: %s', (entry, runTimeoutMs, maxIterations) => {
   const policy = resolveRuntimePolicy(entry, { env: { AGENT_RUNTIME_LONG_CHAT: 'true' } });
   expect(policy).toMatchObject({ runTimeoutMs, maxIterations, toolTimeoutMs: 60000, streamIdleTimeoutS: 60 });
   expect(policy.budgetLimits).toMatchObject({ maxToolCalls: 500, maxProviderAttempts: 600, maxTotalTokens: 1000000 });
+});
+it('keeps the long-chat model-step fuse beyond the ordinary provider-attempt budget', () => {
+  const policy = resolveRuntimePolicy('chat', { env: { AGENT_RUNTIME_LONG_CHAT: 'true' } });
+  expect(policy.maxIterations).toBeGreaterThan(policy.budgetLimits!.maxProviderAttempts);
 });
 it.each(['chat', 'invoke', 'subagent', 'cron'] as const)('preserves explicit legacy limits for %s', entry => {
   const policy = resolveRuntimePolicy(entry, { env: { AGENT_RUNTIME_LONG_CHAT: 'true', AGENT_RUN_TIMEOUT_MS: '17000', AGENT_MAX_ITERATIONS: '3' } });
