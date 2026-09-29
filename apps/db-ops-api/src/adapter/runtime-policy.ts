@@ -29,8 +29,8 @@ export function resolveRuntimePolicy(entry: RuntimeEntry, options: { env?: NodeJ
   if (env.AGENT_RUNTIME_LONG_CHAT !== undefined && !['true', 'false'].includes(env.AGENT_RUNTIME_LONG_CHAT)) throw new Error('Invalid runtime configuration: AGENT_RUNTIME_LONG_CHAT must be true or false');
   // Chat has no implicit whole-run deadline. Both timeout variables are still
   // accepted as explicit operator limits, independently of rollout mode.
-  const oldTimeout = positive(env, 'AGENT_RUN_TIMEOUT_MS');
-  const chatTimeout = positive(env, 'AGENT_CHAT_RUN_TIMEOUT_MS');
+  const oldTimeout = entry === 'chat' || enabled ? positive(env, 'AGENT_RUN_TIMEOUT_MS') : undefined;
+  const chatTimeout = entry === 'chat' ? positive(env, 'AGENT_CHAT_RUN_TIMEOUT_MS') : undefined;
   const steps = enabled ? positive(env, 'AGENT_MAX_ITERATIONS') : undefined;
   // maxIterations remains the compatibility name, but for long chat it is an
   // emergency runaway fuse above the ordinary resource budgets.
@@ -43,7 +43,7 @@ export function resolveRuntimePolicy(entry: RuntimeEntry, options: { env?: NodeJ
     // job.timeout_seconds remains the authoritative Cron deadline, as before.
     timeout = seconds * 1000;
   } else if (entry !== 'chat' && enabled && oldTimeout !== undefined) timeout = Math.min(timeout ?? oldTimeout, oldTimeout);
-  const policy: RuntimePolicy = { entry, source: entry === 'cron' ? 'job.timeout_seconds' : entry === 'chat' && chatTimeout !== undefined ? 'AGENT_CHAT_RUN_TIMEOUT_MS' : env.AGENT_RUN_TIMEOUT_MS !== undefined ? 'AGENT_RUN_TIMEOUT_MS' : entry === 'chat' ? 'chat-default' : 'legacy-default',
+  const policy: RuntimePolicy = { entry, source: entry === 'cron' ? 'job.timeout_seconds' : entry === 'chat' && chatTimeout !== undefined ? 'AGENT_CHAT_RUN_TIMEOUT_MS' : oldTimeout !== undefined ? 'AGENT_RUN_TIMEOUT_MS' : entry === 'chat' ? 'chat-default' : 'legacy-default',
     supervisorMode, longChat: enabled && entry === 'chat', runTimeoutMs: timeout,
     maxIterations: Math.min(defaults[entry], steps ?? (entry === 'chat' ? defaults.chat : legacy.maxIterations), options.maxIterations ?? Infinity),
     llmTimeoutS: entry === 'invoke' ? 60 : entry === 'cron' ? options.cronTimeoutSeconds ?? 300 : undefined,

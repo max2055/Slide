@@ -375,6 +375,7 @@ export class TurnLoop {
         if (nextCandidate !== candidateEvidence) {
           candidateEvidence = nextCandidate;
           recovery.state.progressCandidate = nextCandidate;
+          recovery.state.progressKeyId = progressKeyId;
           if (!needsCandidateBaseline) recovery.state.noProgressSteps = 0;
           needsCandidateBaseline = false;
         }
@@ -647,7 +648,7 @@ function appendInjectedMessages(messages: Message[], injections: Message[]): voi
   }
 }
 
-const VOLATILE_PROGRESS_KEY = /^(?:time(?:stamp)?|created_?at|updated_?at|request_?id|trace_?id|span_?id|correlation_?id)$/i;
+const VOLATILE_PROGRESS_KEY = /^(?:time(?:stamp)?|created[-_]?at|updated[-_]?at|request[-_]?id|trace[-_]?id|span[-_]?id|correlation[-_]?id)$/i;
 
 /** Hash bounded semantic evidence without persisting raw tool or candidate text. */
 function progressFingerprint(value: unknown, key: Buffer): string {
