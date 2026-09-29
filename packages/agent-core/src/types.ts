@@ -179,6 +179,9 @@ export interface AgentHook {
 // ── Agent run spec & result ──
 
 export interface AgentRunSpec {
+  budgetLimits?: import("./runtime/contracts.js").RuntimeBudgetLimits;
+  runTimeoutMs?: number;
+  toolTimeoutMs?: number;
   resumeCheckpoint?: Record<string, unknown>;
   recoveryLimits?: import("./runtime/recovery-policy.js").RecoveryLimits;
   streamIdleTimeoutS?: number;
@@ -269,6 +272,8 @@ export interface ToolExecutionContext {
 }
 
 export interface Tool {
+  /** Trusted server-side handler boundary; never supplied by model arguments. */
+  readonly timeoutMs?: number;
   readonly name: string;
   readonly description: string;
   readonly parameters: ToolSchema["parameters"];

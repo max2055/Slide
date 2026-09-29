@@ -73,3 +73,35 @@
 - `slide_add_database_batch` 当前默认顺序执行；后续可在有明确幂等和连接池上限后增加可配置并发度。
 - 将 runner 的 guard/timeout/context/approval 事件统一写入结构化 trace，至少包含 `tool`, 脱敏 signature, `iteration`, `count`, `threshold`, `stopReason`。
 - 为 `maxIterations`、超时、注入上限和上下文截断增加独立指标，避免所有中断都被归类为“工具失败”。
+
+
+## Runtime T5：有界长任务与迁移（MAX-91）
+
+配置入口统一为 `adapter/runtime-policy.ts`。DirectAdapter 构造时校验并冻结配置；修改环境后须重建 adapter/重启服务，新 policy 不改写在途执行。LONG_CHAT 默认 false，本次不修改部署环境；试点仍须遵循 T6 的 observe/enforce/long-chat 顺序。
+
+| 入口 | legacy 默认 | LONG_CHAT=true | deadline 来源 |
+| --- | --- | --- | --- |
+| chat | 120s / 40 steps | 无整轮 deadline / 200 steps | 新 `AGENT_CHAT_RUN_TIMEOUT_MS` > 旧 `AGENT_RUN_TIMEOUT_MS` > policy 默认 |
+| invoke | 120s / 8 steps | 保持有界 | 旧 timeout；request 保持 60s |
+| subagent | 120s / 25 steps | 保持有界，父剩余额度可收紧 | 旧 timeout 与 120s 取小，父 deadline 再收紧 |
+| cron | job timeout / 40 steps | 保持有界 | job.timeout_seconds（默认 300s）仍独立且权威，不改为 chat/旧全局 120s |
+
+旧 `AGENT_MAX_ITERATIONS` 和服务端显式 `maxIterations` 均生效，后台入口取更严格步数。新模式显式 timeout/iterations 必须是正整数字符串；空串、0、负数、小数、非数字报配置错误，绝不解释为无限。legacy 模式仍按原范围 fallback；新 chat timeout 在 legacy 模式不启用。LONG_CHAT 本身仅接受 true/false。
+
+新模式四入口有 500 工具、600 provider attempts、1,000,000 total tokens 和 12 个无新工具证据步骤的有限上限。Chat 模型 request 300s、stream idle 60s、工具 60s；服务端工具 `timeoutMs` 更严格时优先。当前审批以 pending 结果返回，不在工具调用内等待人工，因此不会把用户审批等待计入 handler 超时；审批过期/消费/拒绝机制保留。文本 token 与 heartbeat 只能刷新流 idle，不能刷新 request/tool/run deadline 或资源预算。进展证据仅保留有界 HMAC 摘要，密钥不持久化；进程重启后首次工具结果只重建比较基线，不获得无法验证的进展额度。
+
+计账口径：`prompt_tokens + completion_tokens`，cached_tokens 为 prompt 的子集。每次普通、重试、续写、摘要请求开始前，先按 context window + max output 预留；usage 不完整时保留 reservation 和 unknownRequests。真实 usage 返回后核对上限，再接受结果/调度工具。恢复、压缩不清零累计计数；deadline 以绝对时间持久化，恢复不能重新获得整轮时长。同 request key 重试沿用原账本；不同请求只有在前轮已终止且无 pending tool intent 时才启动新预算，避免过期 deadline 永久锁死会话。旧无 request key 的 checkpoint 保守按恢复处理。
+
+子任务通过 runtime 异步上下文预留父额度，模型无法从参数伪造额度。分配在子任务启动前写 checkpoint；并发分配互斥于同步账本扣减。默认最多分配父剩余 token/attempt/tool 额度的一半，步数不超过子入口 25 和父剩余步数。预留不退款，单独记在 `delegated` 中，不冒充实际 usage；这会保守地限制多子任务吞吐，但避免异步结束/崩溃重复使用预算。父 Stop 信号传给子任务。
+
+| 情形 | core resolution | 入口映射 |
+| --- | --- | --- |
+| 合格最终候选 | response_ready | chat/invoke completed；subagent completed；cron success；DB completed 仍由原事务决定 |
+| steps/tools/attempts/tokens/no-progress 耗尽 | partial + typed reason | chat/invoke 保留 partial resolution；subagent legacy failed + resolution；cron partial |
+| Stop | cancelled / USER_CANCELLED | chat/invoke cancelled；subagent legacy failed + cancelled resolution；cron保留 stop_reason |
+| run/model/idle/tool 超时 | timed_out / 对应 typed reason | chat/invoke timed_out；subagent legacy failed + timed_out resolution；cron timeout |
+| 不确定工具 intent 恢复 | failed / TOOL_SETTLEMENT_UNKNOWN | 禁止自动重放，等待对账 |
+
+工具 timeout 仅请求取消：API 观察原始 Promise，session、WS actor、subagent actor 和 cron job 的所有权直到真实 settlement 才释放。未收敛工具保留 pending intent；迟到结果及 progress 不回填，Stop 后不启动下一工具。没有 settlement observer 的 core 调用仍等待原操作结束，避免提前释放调用方所有权。外部副作用无法承诺 exactly-once。
+
+确定性验收入口：核心 `runtime-budget.test.ts` / `runtime-settlement.test.ts` / `runtime-compact.test.ts`；API `runtime-policy.test.ts` / `runtime-lifecycle.test.ts` / `agent-runtime-limits.test.ts` / `subagent-manager.test.ts` / `cron-security.test.ts`。130s/45 steps 使用 fake clock；不等同于 T6 真实部署 provider、30 分钟 soak、MySQL/WS/UI 资格与灰度验收。默认 1M token 只是待校准策略，不是实测成本。

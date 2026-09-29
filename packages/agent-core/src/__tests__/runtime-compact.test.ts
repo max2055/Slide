@@ -168,3 +168,10 @@ it('four normally spaced summaries exhaust the compact budget even after seriali
   expect(() => restored.begin()).toThrow('limit');
   expect(restored.snapshot().compactCount).toBe(4);
 });
+
+it.each(['attempts', 'tokens'])('summary shares the ordinary %s budget before dispatch', async limit => {
+  const f = fixture({ contextPolicy: { watermark: 0.6 }, budgetLimits: { maxToolCalls: 500, maxProviderAttempts: 1, maxTotalTokens: limit === 'tokens' ? 100 : 1_000_000, maxNoProgressSteps: 12 } });
+  if (limit === 'attempts') { f.recovery.state.providerAttempts = 1; }
+  await expect(autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {})).rejects.toMatchObject({ code: limit === 'attempts' ? 'MAX_PROVIDER_ATTEMPTS' : 'TOKEN_BUDGET' });
+  expect(f.calls).toHaveLength(0);
+});

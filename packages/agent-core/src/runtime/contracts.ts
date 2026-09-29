@@ -19,3 +19,11 @@ export interface RuntimeStateSnapshot {
 
 /** Versioned cumulative recovery/usage ledger persisted as runtime_state_v1. */
 export type { RecoverySnapshot, RecoveryKind, RecoveryLimits } from "./recovery-policy.js";
+
+/** Optional for legacy callers; finite for every opted-in runtime entry. */
+export interface RuntimeBudgetLimits {
+  maxToolCalls: number;
+  maxProviderAttempts: number;
+  maxTotalTokens: number;
+  maxNoProgressSteps: number;
+}

@@ -243,11 +243,13 @@ export class AnthropicProvider implements LLMProvider {
 
     const finishReason = mapStopReason(response.stop_reason);
     const cacheUsage = response.usage as typeof response.usage & { cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
-    const usage: Record<string, number> = {
-      prompt_tokens: response.usage.input_tokens + (cacheUsage.cache_read_input_tokens ?? 0) + (cacheUsage.cache_creation_input_tokens ?? 0),
-      cached_tokens: cacheUsage.cache_read_input_tokens ?? 0,
-      completion_tokens: response.usage?.output_tokens || 0,
-    };
+    const usage: Record<string, number> = {};
+    if (Number.isSafeInteger(cacheUsage?.input_tokens) && cacheUsage.input_tokens >= 0) {
+      usage.prompt_tokens = cacheUsage.input_tokens + (cacheUsage.cache_read_input_tokens ?? 0) + (cacheUsage.cache_creation_input_tokens ?? 0);
+      usage.cached_tokens = cacheUsage.cache_read_input_tokens ?? 0;
+    }
+    if (Number.isSafeInteger(cacheUsage?.output_tokens) && cacheUsage.output_tokens >= 0) usage.completion_tokens = cacheUsage.output_tokens;
+
 
     return {
       content: content || null,

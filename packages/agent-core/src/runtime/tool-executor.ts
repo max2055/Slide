@@ -1,3 +1,5 @@
+import { withBudgetDispatchSignal } from './budget.js';
+import { RuntimeError, cancellationError } from './recovery-policy.js';
 import type { AgentRunSpec, ToolCallRequest, ToolEvent } from "../types.js";
 
 export class ToolExecutor {
@@ -34,6 +36,11 @@ export class ToolExecutor {
       };
     }
 
+    const controller = new AbortController();
+    const cancel = () => controller.abort(spec.signal?.reason);
+    spec.signal?.addEventListener('abort', cancel, { once: true });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let boundaryListener: (() => void) | undefined;
     try {
       if (spec.signal?.aborted) {
         const error = new Error('Tool execution cancelled');
@@ -43,15 +50,29 @@ export class ToolExecutor {
           error,
         };
       }
-      const execution = spec.tools.execute(toolCall.name, toolCall.arguments, {
-        signal: spec.signal,
+      const declaredTimeout = spec.tools.get(toolCall.name)?.timeoutMs;
+      const timeout = Math.min(spec.toolTimeoutMs ?? Infinity, declaredTimeout ?? Infinity);
+      if (timeout !== Infinity && (!Number.isSafeInteger(timeout) || timeout <= 0)) throw new RuntimeError('INVALID_POLICY', 'Invalid tool timeout', 'tool');
+      if (timeout !== Infinity) timer = setTimeout(() => controller.abort(new RuntimeError('TOOL_TIMEOUT', 'Tool deadline exceeded; cancellation requested, settlement may still be pending', 'tool')), timeout);
+      const execution = withBudgetDispatchSignal(controller.signal, () => spec.tools.execute(toolCall.name, toolCall.arguments, {
+        signal: timeout === Infinity ? spec.signal : controller.signal,
         sessionKey: spec.sessionKey,
         idempotencyKey: spec.idempotencyKey,
-        progressCallback: spec.toolProgressCallback,
+        progressCallback: event => { if (!controller.signal.aborted) return spec.toolProgressCallback?.(event); },
         preserveErrors: true,
-      });
+      }));
       spec.onToolExecution?.(execution);
-      const result = await execution;
+      // A caller tracking the actual execution can safely receive the boundary result early.
+      // Without an observer retain ownership here until the underlying operation settles.
+      const boundary = new Promise<never>((_, reject) => {
+        boundaryListener = () => reject(cancellationError(controller.signal));
+        controller.signal.addEventListener('abort', boundaryListener, { once: true });
+        if (controller.signal.aborted) boundaryListener();
+      });
+      // Always handle boundary rejection, including the legacy wait-for-settlement path.
+      void boundary.catch(() => {});
+      const result = spec.onToolExecution && timeout !== Infinity ? await Promise.race([execution, boundary]) : await execution;
+      if (controller.signal.aborted) throw cancellationError(controller.signal);
       if (spec.signal?.aborted) throw new Error('Tool execution cancelled after settlement');
       const detail = result === undefined || result === null
         ? "(empty)"
@@ -66,8 +87,12 @@ export class ToolExecutor {
       return {
         result: `Error: ${message}` + (spec.failOnToolError ? "" : HINT),
         event: { name: toolCall.name, status: "error", detail: message.slice(0, 120) },
-        error: spec.failOnToolError ? (e instanceof Error ? e : new Error(message)) : null,
+        error: e instanceof RuntimeError || spec.failOnToolError ? (e instanceof Error ? e : new Error(message)) : null,
       };
+    } finally {
+      clearTimeout(timer);
+      spec.signal?.removeEventListener('abort', cancel);
+      if (boundaryListener) controller.signal.removeEventListener('abort', boundaryListener);
     }
   }
 
@@ -83,13 +108,16 @@ export async function executeTools(
   results: unknown[];
   events: ToolEvent[];
   fatalError: string | null;
+  runtimeError?: RuntimeError;
 }> {
   const batches = partitionToolBatches(spec, toolCalls);
   const allResults: unknown[] = [];
   const allEvents: ToolEvent[] = [];
   let fatalError: string | null = null;
+  let runtimeError: RuntimeError | undefined;
 
   for (const batch of batches) {
+    if (spec.signal?.aborted || runtimeError) break;
     if (spec.concurrentTools && batch.length > 1) {
       const batchResults = await Promise.all(
         batch.map((tc) =>
@@ -100,9 +128,11 @@ export async function executeTools(
         allResults.push(r.result);
         allEvents.push(r.event);
         if (r.error && !fatalError) fatalError = r.error.message;
+        if (r.error instanceof RuntimeError) runtimeError = r.error;
       }
     } else {
       for (const tc of batch) {
+        if (spec.signal?.aborted || runtimeError) break;
         const r = await executor.runTool(
           spec,
           tc,
@@ -113,11 +143,12 @@ export async function executeTools(
         allResults.push(r.result);
         allEvents.push(r.event);
         if (r.error && !fatalError) fatalError = r.error.message;
+        if (r.error instanceof RuntimeError) runtimeError = r.error;
       }
     }
   }
 
-  return { results: allResults, events: allEvents, fatalError };
+  return { results: allResults, events: allEvents, fatalError, runtimeError };
 }
 
 function partitionToolBatches(

@@ -1,3 +1,4 @@
+import { resolveRuntimePolicy, runtimeSpec } from './runtime-policy.js';
 /**
  * DirectAdapter — Default IAgentEngine implementation.
  *
@@ -21,7 +22,7 @@ import { ChatResponse } from './chat-response.js';
 import { WebSocketServer, WebSocket } from 'ws';
 import { platformLogs } from '../platform/structured-log-evidence-adapter.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import {
   AgentRunner,
   NoopHook,
@@ -179,6 +180,7 @@ export class DirectAdapter implements IAgentEngine {
   private memoryStore: MemoryStore;
   private actorContexts: Pick<ActorContextService, 'authenticateAccessToken' | 'revalidateActor'>;
   private heartbeatIntervalMs: number;
+  private readonly policies = { chat: resolveRuntimePolicy('chat'), invoke: resolveRuntimePolicy('invoke') };
   private readonly runtimeLimits = loadAgentRuntimeLimits();
   private readonly runLimiter = new ActorConcurrencyLimiter(this.runtimeLimits.maxConcurrentRunsPerActor);
   private wsServer: WebSocketServer | null = null;
@@ -560,7 +562,8 @@ export class DirectAdapter implements IAgentEngine {
             }
 
             const controller = new AbortController();
-            const runTimeout = setTimeout(() => controller.abort(new Error('CHAT_TIMED_OUT')), this.runtimeLimits.runTimeoutMs);
+            const chatPolicy = this.policies.chat;
+            const runTimeout = chatPolicy.runTimeoutMs === undefined ? undefined : setTimeout(() => controller.abort(new Error('CHAT_TIMED_OUT')), chatPolicy.runTimeoutMs);
 
             let persistentRun: { run: AgentRun; created: boolean } | undefined;
             let completionAttempted = false;
@@ -676,7 +679,9 @@ export class DirectAdapter implements IAgentEngine {
             } finally {
               if (persistentRun?.created) this.activeRuns.delete(persistentRun.run.id);
               clearTimeout(runTimeout);
-              this.runLimiter.release(messageActor.userId);
+              const unsettled = this.sessionOperations.get(sessionKey);
+              if (unsettled?.size) void Promise.all(unsettled).then(() => this.runLimiter.release(messageActor.userId));
+              else this.runLimiter.release(messageActor.userId);
               if (messageId) pendingMessages.delete(messageId);
             }
             break;
@@ -833,11 +838,21 @@ export class DirectAdapter implements IAgentEngine {
     signal?: AbortSignal,
     idempotencyKey?: string,
   ): Promise<ChatResult> {
+    const policy = this.policies.chat;
     // Get or create session via SessionManager (D-07)
     const session = this.sessionManager.getOrCreate(sessionKey);
 
     // Restore messages and accrued budgets before the provider context is built.
-    const resumeCheckpoint = session.metadata?.runtime_checkpoint as Record<string, unknown> | undefined;
+    let resumeCheckpoint = session.metadata?.runtime_checkpoint as Record<string, unknown> | undefined;
+    const requestKey = idempotencyKey ? createHash('sha256').update(idempotencyKey).digest('hex') : randomUUID();
+    const pending = resumeCheckpoint?.pendingToolCalls ?? resumeCheckpoint?.pending_tool_calls;
+    // A new request after a terminal turn is a new budget, not a retry. Unknown tool
+    // intents still require reconciliation even when the user sends a new request.
+    if (resumeCheckpoint?.terminal_resolution && resumeCheckpoint.runtime_request_key
+      && resumeCheckpoint.runtime_request_key !== requestKey && !(Array.isArray(pending) && pending.length)) {
+      delete session.metadata.runtime_checkpoint;
+      resumeCheckpoint = undefined;
+    }
     if (resumeCheckpoint) this.runner._restoreRuntimeCheckpoint(session as any);
 
     // Capture history before adding this turn. ContextBuilder appends the
@@ -865,7 +880,8 @@ export class DirectAdapter implements IAgentEngine {
     // Create checkpoint callback that persists to session metadata
     const checkpointCallback = async (payload: Record<string, unknown>) => {
       if (session.metadata) {
-        session.metadata['runtime_checkpoint'] = payload;
+        session.metadata['runtime_checkpoint'] = { ...payload, runtime_request_key: requestKey,
+          runtime_policy: { entry: policy.entry, source: policy.source, longChat: policy.longChat, maxIterations: policy.maxIterations, runTimeoutMs: policy.runTimeoutMs } };
       }
       await this.sessionManager.save(session);
     };
@@ -887,7 +903,7 @@ export class DirectAdapter implements IAgentEngine {
         initialMessages: contextMessages as Message[],
         tools: _actor && this.toolsForActor ? this.toolsForActor(_actor) : new ToolRegistry(),
         model: provider.getDefaultModel(),
-        maxIterations: this.runtimeLimits.maxIterations,
+        ...runtimeSpec(policy),
         maxToolResultChars: this.runtimeLimits.maxToolResultChars,
         temperature: 0.0,
         reasoningEffort,
@@ -1033,7 +1049,8 @@ export class DirectAdapter implements IAgentEngine {
     const cancel = () => controller.abort(options?.signal?.reason);
     options?.signal?.addEventListener('abort', cancel, { once: true });
     if (options?.signal?.aborted) cancel();
-    const timeout = setTimeout(() => controller.abort(new Error('ANALYSIS_TIMED_OUT')), this.runtimeLimits.runTimeoutMs);
+    const policy = this.policies.invoke;
+    const timeout = setTimeout(() => controller.abort(new Error('ANALYSIS_TIMED_OUT')), policy.runTimeoutMs);
     try {
       const provider = this.providerForPurpose ? await this.providerForPurpose(options?.purpose || 'default') : this.provider;
       const runner = this.providerForPurpose ? new AgentRunner(provider) : this.runner;
@@ -1043,13 +1060,12 @@ export class DirectAdapter implements IAgentEngine {
         // one completion tool bound to the operator-created analysis record.
         tools: analysisCompletionTools(options?.analysisId),
         model: provider.getDefaultModel(),
-        maxIterations: 8,
+        ...runtimeSpec(policy),
         maxToolResultChars: 20000,
         temperature: 0.0,
         hook: invokeHook as any,
         contextWindowTokens: 200_000,
         maxTokens: 4096,
-        llmTimeoutS: 60,
         signal: controller.signal,
         onProviderRequest: request => this.observeSessionOperation(sessionKey, request),
         onToolExecution: request => this.observeSessionOperation(sessionKey, request),

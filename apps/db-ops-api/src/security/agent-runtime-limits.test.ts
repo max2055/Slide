@@ -19,3 +19,9 @@ describe('Agent runtime guards', () => {
     expect(limiter.acquire(7)).toBe(true);
   });
 });
+
+import { loadAgentRuntimeLimits } from './agent-runtime-limits.js';
+it('preserves legacy timeout/iteration fallbacks independently of new configuration', () => {
+  expect(loadAgentRuntimeLimits({ AGENT_RUN_TIMEOUT_MS: '0', AGENT_MAX_ITERATIONS: '-1' })).toMatchObject({ runTimeoutMs: 120000, maxIterations: 40 });
+  expect(loadAgentRuntimeLimits({ AGENT_RUN_TIMEOUT_MS: '15000', AGENT_MAX_ITERATIONS: '7' })).toMatchObject({ runTimeoutMs: 15000, maxIterations: 7 });
+});

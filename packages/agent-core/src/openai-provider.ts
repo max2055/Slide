@@ -162,7 +162,7 @@ export class OpenAIProvider implements LLMProvider {
       for await (const chunk of stream as unknown as AsyncIterable<any>) {
         callbacks.onActivity?.();
         if (chunk.choices?.[0]?.finish_reason) finishReason = chunk.choices[0].finish_reason;
-        if (chunk.usage) usage = { prompt_tokens: chunk.usage.prompt_tokens, completion_tokens: chunk.usage.completion_tokens };
+        if (chunk.usage) usage = { prompt_tokens: chunk.usage.prompt_tokens, completion_tokens: chunk.usage.completion_tokens, ...(chunk.usage.prompt_tokens_details?.cached_tokens !== undefined ? { cached_tokens: chunk.usage.prompt_tokens_details.cached_tokens } : {}) };
         const delta = chunk.choices?.[0]?.delta;
         const hasReasoningField = !!(delta as any)?.reasoning_content;
 
@@ -380,7 +380,7 @@ function parseOpenAIResponse(
     finishReason: choice?.finish_reason ?? "error",
     toolCalls,
     usage: {
-      ...(response.usage ? { prompt_tokens: response.usage.prompt_tokens, completion_tokens: response.usage.completion_tokens } : {}),
+      ...(response.usage ? { prompt_tokens: response.usage.prompt_tokens, completion_tokens: response.usage.completion_tokens, ...(response.usage.prompt_tokens_details?.cached_tokens !== undefined ? { cached_tokens: response.usage.prompt_tokens_details.cached_tokens } : {}) } : {}),
     },
     shouldExecuteTools: choice?.finish_reason === 'tool_calls' && toolCalls.length > 0,
     hasToolCalls: toolCalls.length > 0,

@@ -34,3 +34,26 @@ for (const [name, create] of providers) {
     expect(result.runtimeError).toMatchObject({ code: 'PROVIDER_AUTH', providerStatus: 401, attemptId: 1, retryable: false });
   });
 }
+
+it.each([false, true])('Anthropic SDK preserves incomplete usage reservation (missing all=%s)', async missingAll => {
+  const baseURL = await fixture((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'fixture', type: 'message', role: 'assistant', model: 'fixture', stop_reason: 'end_turn', stop_sequence: null,
+      content: [{ type: 'text', text: 'Complete.' }], ...(missingAll ? {} : { usage: { input_tokens: 12 } }) }));
+  });
+  const result = await new AgentRunner(new AnthropicProvider({ apiKey: 'fixture', baseURL })).run({ initialMessages: [{ role: 'user', content: 'test' }],
+    tools: new ToolRegistry(), model: 'fixture', maxIterations: 2, maxToolResultChars: 1000, hook: new NoopHook(),
+    budgetLimits: { maxToolCalls: 500, maxProviderAttempts: 600, maxTotalTokens: 1_000_000, maxNoProgressSteps: 12 } });
+  expect(result.runtimeState).toMatchObject({ unknownRequests: 1, reservedTokens: 204096 });
+});
+it.each(['OpenAI', 'Anthropic'])('%s SDK normalizes cached tokens as an input subset', async name => {
+  const baseURL = await fixture((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(name === 'OpenAI'
+      ? { id: 'fixture', choices: [{ message: { role: 'assistant', content: 'Complete.' }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 10, prompt_tokens_details: { cached_tokens: 60 } } }
+      : { id: 'fixture', type: 'message', role: 'assistant', model: 'fixture', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Complete.' }], usage: { input_tokens: 20, cache_read_input_tokens: 60, cache_creation_input_tokens: 20, output_tokens: 10 } }));
+  });
+  const provider = providers.find(([n]) => n === name)![1](baseURL);
+  const response = await provider.chat([{ role: 'user', content: 'test' }], [], { model: 'fixture' });
+  expect(response.usage).toEqual({ prompt_tokens: 100, completion_tokens: 10, cached_tokens: 60 });
+});

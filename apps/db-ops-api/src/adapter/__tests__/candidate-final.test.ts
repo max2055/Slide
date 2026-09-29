@@ -57,7 +57,8 @@ it('retracts rejected attempts, excludes them from memory/file/next context, ign
 
 it('exhaustion emits one precise error and no completed reply', async () => {
   const mock = provider([bad]);
-  const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: mock.value });
+  const directory = await mkdtemp(join(tmpdir(), 'candidate-exhaustion-')); directories.push(directory);
+  const adapter = new DirectAdapter({ workspace: directory, tools: new ToolRegistry(), llmProvider: mock.value });
   const response = new ChatResponse(); const events: ChatEvent[] = [];
   const result = await adapter.chat('rejection-test', '诊断数据库', e => { response.observe(e); events.push(e); });
   expect(result).toMatchObject({ finalContent: '', stopReason: 'error', resolution: { reasonCode: 'MODEL_REPETITION_LOOP' } });

@@ -39,7 +39,7 @@ it('retains ownership of an uncooperative tool after timeout and resumes only af
   const first = manager.executeJob(config);
   await vi.advanceTimersByTimeAsync(1001);
   await first;
-  expect(service.updateRunResult).toHaveBeenLastCalledWith(1, 'error');
+  expect(service.updateRunResult).toHaveBeenLastCalledWith(1, 'timeout');
   const second = manager.executeJob(config);
   await vi.advanceTimersByTimeAsync(1001);
   await second;

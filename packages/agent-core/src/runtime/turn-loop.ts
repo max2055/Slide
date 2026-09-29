@@ -1,3 +1,5 @@
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { assertRequestBudget, assertTokenBudget, assertToolBudget, withBudgetContext } from './budget.js';
 import type { AgentHookContext, AgentRunResult, AgentRunSpec, LLMResponse, Message, ToolCallRequest } from "../types.js";
 
 import { ModelStep, TimeoutError } from "./model-step.js";
@@ -11,6 +13,10 @@ import { AnomalyGuard } from "./anomaly-guard.js";
 import { CompletionSupervisor } from "./supervisor.js";
 import { RecoveryPolicy, RuntimeError, runtimeError, cancellationError, backoff } from './recovery-policy.js';
 import { OutputContinuation } from './output-continuation.js';
+// Process-local key never enters a checkpoint. After restart establish a fresh
+// comparison baseline without crediting the first unverifiable result as progress.
+const progressKey = randomBytes(32);
+const progressKeyId = randomUUID();
 const DEFAULT_ERROR_MESSAGE = "Sorry, I encountered an error calling the AI model.";
 const PERSISTED_MODEL_ERROR_PLACEHOLDER =
   "[Assistant reply unavailable due to model error.]";
@@ -27,6 +33,12 @@ export class TurnLoop {
   async run(spec: AgentRunSpec): Promise<AgentRunResult> {
     const hook = spec.hook;
     const recovery = new RecoveryPolicy(spec.resumeCheckpoint?.runtime_state_v1, spec.recoveryLimits);
+    if (typeof spec.resumeCheckpoint?.runtime_deadline_at === 'number') recovery.state.deadlineAt = spec.resumeCheckpoint.runtime_deadline_at;
+    if (spec.budgetLimits) recovery.state.progressRunId ??= randomUUID();
+    const runProgressKey = createHmac('sha256', progressKey).update(recovery.state.progressRunId ?? '').digest();
+    const comparableEvidence = recovery.state.progressKeyId === progressKeyId;
+    const evidence = new Set(comparableEvidence ? recovery.state.progressEvidence ?? [] : []);
+    let needsProgressBaseline = !comparableEvidence && (recovery.state.progressEvidence?.length ?? 0) > 0;
     const continuation = new OutputContinuation(typeof spec.resumeCheckpoint?.continuation_content === 'string' ? spec.resumeCheckpoint.continuation_content : '');
     const compact = new RapidRefill(spec.resumeCheckpoint?.context_state_v1);
     let manager: ContextManager | undefined;
@@ -64,8 +76,18 @@ export class TurnLoop {
         resolution: { kind: 'failed', reasonCode: error.code, retryable: false, safePartialContent: '' }, runtimeState: recovery.snapshot() };
     }
     state.usage = { ...state.usage, ...recovery.state.usage };
+    const stopForBudget = (cause: unknown) => {
+      const error = cause as RuntimeError;
+      state.runtimeError = error; state.error = error.message; state.stopReason = 'error';
+      state.finalContent = safeContent + continuation.content;
+      state.resolution = { kind: 'partial', reasonCode: error.code, retryable: false, safePartialContent: state.finalContent };
+    };
     for (let iteration = recovery.state.modelSteps; iteration < spec.maxIterations; iteration++) {
       if (spec.signal?.aborted) { state.stopReason = 'cancelled'; state.error = 'Cancelled'; break; }
+      if (recovery.state.modelSteps + (recovery.state.delegated?.modelSteps ?? 0) >= spec.maxIterations) break;
+      if (spec.budgetLimits && (recovery.state.noProgressSteps ?? 0) >= spec.budgetLimits.maxNoProgressSteps) {
+        stopForBudget(new RuntimeError('NO_PROGRESS', 'No new tool evidence within the progress budget')); break;
+      }
       state = transition(state, "model_running");
       // Governance must succeed before reserving or dispatching an ordinary request.
       let messagesForModel: Message[];
@@ -115,10 +137,12 @@ export class TurnLoop {
         error: null,
       };
       reminder = undefined;
+      const reservation = (spec.contextWindowTokens ?? 200_000) + (spec.maxTokens ?? 4096);
+      try { assertRequestBudget(spec, recovery.state, reservation); } catch (error) { stopForBudget(error); break; }
+      if (spec.budgetLimits) recovery.state.noProgressSteps = (recovery.state.noProgressSteps ?? 0) + 1;
       state.modelSteps++; state.providerAttempts++;
       recovery.state.modelSteps++; recovery.state.providerAttempts++;
       recovery.state.unknownRequests++;
-      const reservation = (spec.contextWindowTokens ?? 200_000) + (spec.maxTokens ?? 4096);
       recovery.state.reservedTokens += reservation;
       await persistCounters();
       if (spec.signal?.aborted) { state.stopReason = 'cancelled'; break; }
@@ -164,6 +188,8 @@ export class TurnLoop {
       await persistCounters();
       if (spec.signal?.aborted) { state.stopReason = 'cancelled'; break; }
 
+      try { assertTokenBudget(spec, recovery.state); } catch (error) { stopForBudget(error); break; }
+
       // Extract reasoning content
       if (response.reasoningContent) {
         if (!context.streamedReasoning) {
@@ -182,6 +208,7 @@ export class TurnLoop {
 
       // ── Tool execution path ──
       if (!response.error && !response.errorKind && response.finishReason !== 'error' && response.finishReason !== 'length' && response.shouldExecuteTools && response.toolCalls.length > 0) {
+        try { assertToolBudget(spec, recovery.state, response.toolCalls.length); } catch (error) { stopForBudget(error); break; }
         state = transition(state, "tools_running");
         state.toolCalls += response.toolCalls.length;
         recovery.state.toolCalls += response.toolCalls.length;
@@ -213,14 +240,34 @@ export class TurnLoop {
         await hook.beforeExecuteTools(context);
 
         // Execute tools (potentially in parallel)
-        const { results, events, fatalError } = await executeTools(
+        const { results, events, fatalError, runtimeError: toolError } = await withBudgetContext(spec, recovery.state, () => executeTools(
           spec,
           response.toolCalls,
           state.externalLookupCounts,
           iteration,
           this.executor,
-        );
+        ), persistCounters);
         if (spec.signal?.aborted) { state.stopReason = 'cancelled'; break; }
+        if (toolError) {
+          state.runtimeError = toolError; state.error = toolError.message;
+          state.stopReason = toolError.code === 'TOOL_TIMEOUT' ? 'timed_out' : 'tool_error';
+          state.resolution = { kind: state.stopReason === 'timed_out' ? 'timed_out' : 'failed', reasonCode: toolError.code, retryable: false, safePartialContent: safeContent };
+          // Unsettled tools retain their pending intent; never checkpoint them as completed.
+          break;
+        }
+        if (spec.budgetLimits) {
+          for (let i = 0; i < results.length; i++) {
+            if (events[i]?.status !== 'ok') continue;
+            const hash = createHmac('sha256', runProgressKey).update((JSON.stringify(results[i]) ?? '').slice(0, 100_000)).digest('hex');
+            if (!evidence.has(hash) && evidence.size < 256) {
+              evidence.add(hash);
+              if (!needsProgressBaseline) recovery.state.noProgressSteps = 0;
+              needsProgressBaseline = false;
+            }
+          }
+          recovery.state.progressEvidence = [...evidence];
+          recovery.state.progressKeyId = progressKeyId;
+        }
         const nextToolEpoch = progress.progress(results);
         if (nextToolEpoch > toolEpoch) progressEpoch++;
         toolEpoch = nextToolEpoch;

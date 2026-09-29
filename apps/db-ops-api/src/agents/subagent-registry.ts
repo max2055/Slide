@@ -1,3 +1,4 @@
+import type { RuntimeResolution } from '@slide/agent-core';
 /**
  * DB-Ops 子 Agent 注册表
  *
@@ -25,6 +26,7 @@ export interface SubagentRunRecord {
   createdAt: number;
   /** 状态 */
   status: 'running' | 'completed' | 'failed' | 'cancelled';
+  resolution?: RuntimeResolution;
   /** 结果 */
   result?: unknown;
   /** 错误信息 */
@@ -108,6 +110,7 @@ export class SubagentRegistry {
     status: SubagentRunRecord['status'],
     result?: unknown,
     error?: string,
+    resolution?: RuntimeResolution,
   ): SubagentRunRecord | undefined {
     const run = this.runs.get(runId);
     if (!run) {
@@ -115,6 +118,7 @@ export class SubagentRegistry {
     }
 
     run.status = status;
+    if (resolution) run.resolution = resolution;
     if (result !== undefined) {
       run.result = result;
     }

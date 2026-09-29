@@ -1,3 +1,4 @@
+import { assertRequestBudget, assertTokenBudget } from './budget.js';
 import type { AgentHook, AgentHookContext, AgentRunSpec, LLMProvider, Message } from '../types.js';
 import { ToolRegistry } from '../tool-registry.js';
 import { ContextManager, sourceHash, prepareMessages, historicalData } from './context-manager.js';
@@ -57,11 +58,12 @@ export async function autoCompact(
   const summaryManager = new ContextManager(summarySpec, provider);
   summaryManager.assertFits(messages);
   if (recovery.state.total >= recovery.limits.total || recovery.state.counts.context >= recovery.limits.context) throw new RuntimeError('RECOVERY_LIMIT', 'Compaction recovery budget exhausted');
+  const reservation = (spec.contextWindowTokens ?? 200_000) + maxTokens;
+  assertRequestBudget(spec, recovery.state, reservation);
   tracker.begin();
   recovery.consume('context');
   recovery.state.providerAttempts++;
   recovery.state.unknownRequests++;
-  const reservation = (spec.contextWindowTokens ?? 200_000) + maxTokens;
   recovery.state.reservedTokens += reservation;
   await persist();
   if (spec.signal?.aborted) throw cancellationError(spec.signal);
@@ -77,6 +79,7 @@ export async function autoCompact(
   await persist();
   if (spec.signal?.aborted) throw cancellationError(spec.signal);
   if (response.error || response.errorKind || response.finishReason !== 'stop' || response.hasToolCalls || response.toolCalls.length) throw new RuntimeError('SUMMARY_INVALID', 'Summary response incomplete or contains tool intent');
+  assertTokenBudget(spec, recovery.state);
   const summary = validateSummary(response.content ?? '');
   const record: SummaryRecord = { schemaVersion: 1, sourceStart: 0, sourceEnd: end, sourceHash: hash, summary };
   const assertSource = () => {
