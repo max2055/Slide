@@ -13,6 +13,9 @@
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ToolRegistry } from '@slide/agent-core';
 import type { LLMProvider, LLMResponse, LLMCallOptions, StreamCallbacks, Message, ToolSchema } from '@slide/agent-core';
 import { DirectAdapter } from '../direct-adapter.js';
@@ -281,10 +284,18 @@ function createMockAdapter(tools?: ToolRegistry): DirectAdapter {
     });
   }
 
-  return new DirectAdapter({
+  return isolatedAdapter({
     tools: registry,
     llmProvider: new MockLLMProvider(),
   });
+}
+
+// Persisted runtime deadlines must never leak between independent fixtures/reruns.
+const workspaces: string[] = [];
+function isolatedAdapter(options: ConstructorParameters<typeof DirectAdapter>[0]): DirectAdapter {
+  const workspace = mkdtempSync(join(tmpdir(), 'direct-adapter-test-'));
+  workspaces.push(workspace);
+  return new DirectAdapter({ workspace, ...options });
 }
 
 // Track adapters for cleanup
@@ -295,6 +306,7 @@ afterEach(async () => {
     await a.dispose();
   }
   adaptersToCleanup.length = 0;
+  for (const workspace of workspaces.splice(0)) rmSync(workspace, { recursive: true, force: true });
 });
 
 // ── Tests ──
@@ -333,7 +345,7 @@ describe('DirectAdapter', () => {
 
     it('should accept empty ToolRegistry', () => {
       const empty = new ToolRegistry();
-      const adapter = new DirectAdapter({
+      const adapter = isolatedAdapter({
         tools: empty,
         llmProvider: new MockLLMProvider(),
       });
@@ -355,7 +367,7 @@ describe('DirectAdapter', () => {
       vi.stubEnv('AGENT_WS_PORT', '0');
       vi.stubEnv('AGENT_WS_AUTH_TIMEOUT_MS', '1000');
       vi.stubEnv('JWT_SECRET_KEY', 'test-secret-for-ws-ingress');
-      const adapter = new DirectAdapter({
+      const adapter = isolatedAdapter({
         tools: new ToolRegistry(), llmProvider: new MockLLMProvider(),
         actorContextService: { authenticateAccessToken, revalidateActor: vi.fn().mockImplementation(async actor => actor) },
       });
@@ -508,7 +520,7 @@ describe('DirectAdapter', () => {
       process.env.AGENT_WS_PORT = String(port);
       process.env.JWT_SECRET_KEY = 'test-websocket-secret-that-is-long-enough';
       const authenticateAccessToken = vi.fn().mockRejectedValue(new Error('Session revoked'));
-      const adapter = new DirectAdapter({
+      const adapter = isolatedAdapter({
         tools: new ToolRegistry(),
         llmProvider: new MockLLMProvider(),
         actorContextService: {
@@ -604,7 +616,7 @@ describe('DirectAdapter', () => {
       const actorTools = createActorBoundToolRegistry(viewer);
       const protectedTool = actorTools.get('get_instance_connection');
       expect(protectedTool).toBeUndefined();
-      const adapter = new DirectAdapter({
+      const adapter = isolatedAdapter({
         tools: platformTools,
         toolsForActor: () => actorTools,
         llmProvider: new CatalogToolCallingProvider('get_instance_connection', { instance_id: 999_999 }),
@@ -680,7 +692,7 @@ describe('DirectAdapter', () => {
         run: { id: 'provider-failure-run', actorId: actor.userId, sessionId: 'ws-provider-failure-session', messageId: 'failure-message', idempotencyKey: 'failure-key', state: 'running' },
       });
       const finish = vi.spyOn(agentRunService, 'finish').mockResolvedValue(true);
-      const adapter = new DirectAdapter({
+      const adapter = isolatedAdapter({
         tools: new ToolRegistry(),
         llmProvider: new FailingProvider(),
         actorContextService: {
@@ -764,7 +776,7 @@ describe('DirectAdapter', () => {
         if (stopReason !== 'completed') throw new Error('provider interrupted');
         return { content: 'final answer', finishReason: 'stop', toolCalls: [], usage: {}, shouldExecuteTools: false, hasToolCalls: false };
       });
-      const adapter = new DirectAdapter({
+      const adapter = isolatedAdapter({
         tools: new ToolRegistry(),
         llmProvider: provider,
         actorContextService: {
@@ -772,7 +784,7 @@ describe('DirectAdapter', () => {
           revalidateActor: vi.fn().mockResolvedValue(actor),
         },
       });
-      (adapter as any).runtimeLimits = { ...(adapter as any).runtimeLimits, runTimeoutMs: 100 };
+      (adapter as any).policies.chat = { ...(adapter as any).policies.chat, runTimeoutMs: 100 };
       adaptersToCleanup.push(adapter);
 
       try {
@@ -843,7 +855,7 @@ describe('DirectAdapter', () => {
         controller.abort();
         throw new Error('aborted');
       });
-      const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: provider });
+      const adapter = isolatedAdapter({ tools: new ToolRegistry(), llmProvider: provider });
       adaptersToCleanup.push(adapter);
       let persisted = false;
       const events: ChatEvent[] = [];
@@ -895,7 +907,7 @@ describe('DirectAdapter', () => {
     });
 
     it('keeps thinking events separate from the visible answer stream', async () => {
-      const adapter = new DirectAdapter({
+      const adapter = isolatedAdapter({
         tools: new ToolRegistry(),
         llmProvider: new ThinkingStreamingProvider(),
       });
@@ -915,7 +927,7 @@ describe('DirectAdapter', () => {
 
     it('passes the current user message to the model only once', async () => {
       const provider = new CapturingMessagesProvider();
-      const adapter = new DirectAdapter({
+      const adapter = isolatedAdapter({
         tools: new ToolRegistry(),
         llmProvider: provider,
       });
@@ -949,7 +961,7 @@ describe('DirectAdapter', () => {
         instanceScopes: Object.freeze({}),
         requestId: 'adapter-policy-test',
       });
-      const adapter = new DirectAdapter({
+      const adapter = isolatedAdapter({
         tools: new ToolRegistry(),
         toolsForActor: (actor) => {
           const registry = new ToolRegistry();
@@ -997,7 +1009,7 @@ describe('DirectAdapter', () => {
       const actorTools = createActorBoundToolRegistry(viewer);
       const protectedTool = actorTools.get('get_instance_connection');
       expect(protectedTool).toBeUndefined();
-      const adapter = new DirectAdapter({
+      const adapter = isolatedAdapter({
         tools: platformTools,
         toolsForActor: () => actorTools,
         llmProvider: new CatalogToolCallingProvider('get_instance_connection', { instance_id: 999_999 }),
@@ -1030,7 +1042,7 @@ describe('DirectAdapter', () => {
       const faultCall = vi.spyOn(fault, 'chat');
       const chatCall = vi.spyOn(chat, 'chatStream');
       const resolve = vi.fn(async (purpose?: string) => purpose === 'sql_analysis' ? sql : purpose === 'fault_diagnosis' ? fault : chat);
-      const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: new FailingProvider(), providerForPurpose: resolve });
+      const adapter = isolatedAdapter({ tools: new ToolRegistry(), llmProvider: new FailingProvider(), providerForPurpose: resolve });
       try {
         const results = await Promise.all([
           adapter.invoke('scene-sql', 'SQL', undefined, { purpose: 'sql_analysis' }),
@@ -1055,7 +1067,7 @@ describe('DirectAdapter', () => {
       const pendingCall = (_m: Message[], _t: ToolSchema[], options?: LLMCallOptions): Promise<LLMResponse> => {
         observed = options?.signal; started(); return new Promise(() => {});
       };
-      const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: {
+      const adapter = isolatedAdapter({ tools: new ToolRegistry(), llmProvider: {
         getDefaultModel: () => 'test', chat: pendingCall,
         chatStream: (m, t, _callbacks, options) => pendingCall(m, t, options),
       } });
@@ -1094,7 +1106,7 @@ describe('DirectAdapter', () => {
     });
 
     it('retains the concrete provider error for failed background invokes', async () => {
-      const adapter = new DirectAdapter({
+      const adapter = isolatedAdapter({
         tools: new ToolRegistry(),
         llmProvider: new FailingProvider(),
       });
@@ -1109,7 +1121,7 @@ describe('DirectAdapter', () => {
 
     it('exposes no tools to an unbound background invoke', async () => {
       const provider = new CapturingInvokeProvider();
-      const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: provider });
+      const adapter = isolatedAdapter({ tools: new ToolRegistry(), llmProvider: provider });
 
       await adapter.invoke('test-session-analysis-completion', 'Analyze');
 
@@ -1118,7 +1130,7 @@ describe('DirectAdapter', () => {
 
     it('exposes only a record-bound completion tool to an analysis invoke', async () => {
       const provider = new CapturingInvokeProvider();
-      const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: provider });
+      const adapter = isolatedAdapter({ tools: new ToolRegistry(), llmProvider: provider });
 
       await adapter.invoke('test-session-analysis-completion', 'Analyze', undefined, { analysisId: 42 });
 
@@ -1127,7 +1139,7 @@ describe('DirectAdapter', () => {
 
     it('rejects a model-supplied analysis id that differs from the bound record', async () => {
       const handler = vi.spyOn(completeAnalysisTool, 'handler').mockResolvedValue({ success: true });
-      const adapter = new DirectAdapter({
+      const adapter = isolatedAdapter({
         tools: new ToolRegistry(),
         llmProvider: new AnalysisCompletionProvider(99),
       });
@@ -1146,7 +1158,7 @@ describe('DirectAdapter', () => {
         success: true,
         data: { saved: true, analysisId: 42 },
       });
-      const adapter = new DirectAdapter({
+      const adapter = isolatedAdapter({
         tools: new ToolRegistry(),
         llmProvider: new AnalysisCompletionProvider(42),
       });
@@ -1225,7 +1237,7 @@ describe('DirectAdapter', () => {
 
 it('restores checkpoint evidence before context build and keeps recovery counters', async () => {
   const provider = new CapturingMessagesProvider();
-  const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: provider });
+  const adapter = isolatedAdapter({ tools: new ToolRegistry(), llmProvider: provider });
   adaptersToCleanup.push(adapter);
   const session = (adapter as any).sessionManager.getOrCreate('restore-before-context');
   session.metadata.runtime_checkpoint = { assistantMessage: { role: 'assistant', content: 'restored evidence' }, completedToolResults: [], pendingToolCalls: [],
@@ -1244,7 +1256,7 @@ it('keeps the session locked after cancellation until a noncooperative provider 
   let started!: () => void;
   const ready = new Promise<void>(r => { started = r; });
   const chatStream = vi.spyOn(provider, 'chatStream').mockImplementationOnce(async () => { started(); return new Promise(r => { finish = r; }); });
-  const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: provider });
+  const adapter = isolatedAdapter({ tools: new ToolRegistry(), llmProvider: provider });
   adaptersToCleanup.push(adapter);
   vi.spyOn((adapter as any).sessionManager, 'save').mockResolvedValue(undefined);
   const controller = new AbortController();

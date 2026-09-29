@@ -10,7 +10,7 @@
  * 6. slide_complete_cron handler 拒绝空 summary
  * 7. CronExecutor 构造函数接受 (AgentRunner, ToolRegistry, LLMProvider)
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -20,7 +20,7 @@ const __dirname = resolve(__filename, '..');
 const EXECUTOR_SRC = resolve(__dirname, '../cron/cron-executor.ts');
 const TOOL_SRC = resolve(__dirname, '../cron/cron-completion-tool.ts');
 
-import { CronHook } from '../cron/cron-executor.js';
+import { CronHook, CronExecutor } from '../cron/cron-executor.js';
 import { completeCronTool } from '../cron/cron-completion-tool.js';
 import { toolCatalog } from '../tools/catalog.js';
 
@@ -77,9 +77,12 @@ describe('CronExecutor', () => {
     expect(source).toContain('timeoutSeconds');
   });
 
-  it('uses llmTimeoutS in runner.run call', () => {
-    const source = readFileSync(EXECUTOR_SRC, 'utf-8');
-    expect(source).toContain('llmTimeoutS');
+  it('passes the configured job timeout to the actual runner spec', async () => {
+    const run = vi.fn(async () => ({ stopReason: 'completed', messages: [], toolEvents: [], toolsUsed: [], usage: {}, finalContent: 'ok' }));
+    const { ToolRegistry } = await import('@slide/agent-core');
+    const executor = new CronExecutor({ run } as any, new ToolRegistry(), { getDefaultModel: () => 'fixture' } as any);
+    await executor.execute(1, 'inspect', 77);
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ llmTimeoutS: 77, runTimeoutMs: 77000, maxIterations: 40 }));
   });
 
   it('generates sessionKey with cron:{jobId}:{timestamp} format', () => {

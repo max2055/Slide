@@ -1,5 +1,5 @@
-function boundedInt(name: string, fallback: number, min: number, max: number): number {
-  const value = Number(process.env[name]);
+function boundedInt(name: string, fallback: number, min: number, max: number, env: NodeJS.ProcessEnv): number {
+  const value = Number(env[name]);
   return Number.isSafeInteger(value) && value >= min && value <= max ? value : fallback;
 }
 
@@ -15,17 +15,17 @@ export interface AgentRuntimeLimits {
   maxToolResultChars: number;
 }
 
-export function loadAgentRuntimeLimits(): AgentRuntimeLimits {
+export function loadAgentRuntimeLimits(env: NodeJS.ProcessEnv = process.env): AgentRuntimeLimits {
   return Object.freeze({
-    wsMaxPayloadBytes: boundedInt('AGENT_WS_MAX_PAYLOAD_BYTES', 64 * 1024, 4 * 1024, 1024 * 1024),
-    wsFramesPerWindow: boundedInt('AGENT_WS_FRAMES_PER_WINDOW', 60, 5, 1000),
-    wsRateWindowMs: boundedInt('AGENT_WS_RATE_WINDOW_MS', 10_000, 1000, 60_000),
-    authTimeoutMs: boundedInt('AGENT_WS_AUTH_TIMEOUT_MS', 10_000, 1000, 60_000),
-    maxMessageChars: boundedInt('AGENT_MAX_MESSAGE_CHARS', 16_000, 1000, 100_000),
-    maxConcurrentRunsPerActor: boundedInt('AGENT_MAX_CONCURRENT_RUNS', 2, 1, 20),
-    runTimeoutMs: boundedInt('AGENT_RUN_TIMEOUT_MS', 120_000, 5000, 30 * 60_000),
-    maxIterations: boundedInt('AGENT_MAX_ITERATIONS', 40, 1, 200),
-    maxToolResultChars: boundedInt('AGENT_MAX_TOOL_RESULT_CHARS', 20_000, 1000, 100_000),
+    wsMaxPayloadBytes: boundedInt('AGENT_WS_MAX_PAYLOAD_BYTES', 64 * 1024, 4 * 1024, 1024 * 1024, env),
+    wsFramesPerWindow: boundedInt('AGENT_WS_FRAMES_PER_WINDOW', 60, 5, 1000, env),
+    wsRateWindowMs: boundedInt('AGENT_WS_RATE_WINDOW_MS', 10_000, 1000, 60_000, env),
+    authTimeoutMs: boundedInt('AGENT_WS_AUTH_TIMEOUT_MS', 10_000, 1000, 60_000, env),
+    maxMessageChars: boundedInt('AGENT_MAX_MESSAGE_CHARS', 16_000, 1000, 100_000, env),
+    maxConcurrentRunsPerActor: boundedInt('AGENT_MAX_CONCURRENT_RUNS', 2, 1, 20, env),
+    runTimeoutMs: boundedInt('AGENT_RUN_TIMEOUT_MS', 120_000, 5000, 30 * 60_000, env),
+    maxIterations: boundedInt('AGENT_MAX_ITERATIONS', 40, 1, 200, env),
+    maxToolResultChars: boundedInt('AGENT_MAX_TOOL_RESULT_CHARS', 20_000, 1000, 100_000, env),
   });
 }
 

@@ -11,6 +11,12 @@ export interface RecoverySnapshot {
   unknownRequests: number;
   reservedTokens: number;
   usage: Record<string, number>;
+  delegated?: { modelSteps: number; providerAttempts: number; toolCalls: number; tokens: number };
+  deadlineAt?: number;
+  noProgressSteps?: number;
+  progressEvidence?: string[];
+  progressKeyId?: string;
+  progressRunId?: string;
 }
 export interface RecoveryLimits { total?: number; empty?: number; continuation?: number; stream?: number; repetition?: number; context?: number }
 const defaults = { total: 8, empty: 2, continuation: 3, stream: 2, repetition: 2, context: 4 };
@@ -63,7 +69,18 @@ export function validateRecoverySnapshot(value: unknown): RecoverySnapshot {
     !(['empty', 'continuation', 'stream', 'repetition', 'context'] as const).every(k => number(s.counts[k])) ||
     s.total !== Object.values(s.counts).reduce((a, b) => a + b, 0) || s.providerAttempts < s.modelSteps ||
     !Object.values(s.usage).every(number)) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid runtime recovery checkpoint');
-  return { schemaVersion: 1, modelSteps: s.modelSteps, providerAttempts: s.providerAttempts, toolCalls: s.toolCalls,
+  if (s.delegated && ![s.delegated.modelSteps, s.delegated.providerAttempts, s.delegated.toolCalls, s.delegated.tokens].every(number)) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid delegated allowance');
+  if (s.deadlineAt !== undefined && !number(s.deadlineAt)) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid persisted deadline');
+  if (s.noProgressSteps !== undefined && !number(s.noProgressSteps)) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid progress counter');
+  if (s.progressRunId !== undefined && (typeof s.progressRunId !== 'string' || !/^[a-f0-9-]{36}$/.test(s.progressRunId))) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid progress run ID');
+  if (s.progressKeyId !== undefined && (typeof s.progressKeyId !== 'string' || !/^[a-f0-9-]{36}$/.test(s.progressKeyId))) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid progress key ID');
+  if (s.progressEvidence !== undefined && (!Array.isArray(s.progressEvidence) || s.progressEvidence.length > 256 || !s.progressEvidence.every(h => /^[a-f0-9]{64}$/.test(h)))) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid progress evidence');
+  return { ...(s.delegated ? { delegated: { modelSteps: s.delegated.modelSteps, providerAttempts: s.delegated.providerAttempts, toolCalls: s.delegated.toolCalls, tokens: s.delegated.tokens } } : {}), ...(s.deadlineAt !== undefined ? { deadlineAt: s.deadlineAt } : {}),
+    ...(s.noProgressSteps !== undefined ? { noProgressSteps: s.noProgressSteps } : {}),
+    ...(s.progressRunId ? { progressRunId: s.progressRunId } : {}),
+    ...(s.progressKeyId ? { progressKeyId: s.progressKeyId } : {}),
+    ...(s.progressEvidence ? { progressEvidence: [...s.progressEvidence] } : {}),
+    schemaVersion: 1, modelSteps: s.modelSteps, providerAttempts: s.providerAttempts, toolCalls: s.toolCalls,
     total: s.total, counts: { empty: s.counts.empty, continuation: s.counts.continuation, stream: s.counts.stream, repetition: s.counts.repetition, context: s.counts.context },
     unknownRequests: s.unknownRequests, reservedTokens: s.reservedTokens,
     usage: Object.fromEntries(Object.entries(s.usage).filter(([k]) => ['prompt_tokens', 'completion_tokens', 'cached_tokens'].includes(k))) };

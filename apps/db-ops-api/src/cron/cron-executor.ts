@@ -1,3 +1,4 @@
+import { resolveRuntimePolicy, runtimeSpec } from '../adapter/runtime-policy.js';
 /**
  * CronExecutor — AI Agent 驱动定时任务执行引擎
  *
@@ -58,6 +59,7 @@ export class CronExecutor {
     timeoutSeconds: number = 300,
     outputSchema?: Record<string, unknown> | null,
   ): Promise<CronExecutionResult> {
+    const policy = resolveRuntimePolicy('cron', { cronTimeoutSeconds: timeoutSeconds });
     const sessionKey = `cron:${jobId}:${Date.now()}`;
     const hook = new CronHook();
     const controller = new AbortController();
@@ -69,6 +71,11 @@ export class CronExecutor {
     const executionSettled = new Promise<void>(resolve => { resolveSettled = resolve; });
     const maybeSettled = () => {
       if (runSettled && pendingOperations === 0) resolveSettled();
+    };
+    const observeOperation = (request: Promise<unknown>) => {
+      pendingOperations++;
+      const finish = () => { pendingOperations--; maybeSettled(); };
+      request.then(finish, finish);
     };
     const timeoutError = new Error(`Cron 任务执行超时（${timeoutSeconds}s）；已请求取消，未收敛操作结果不确定`);
 
@@ -88,22 +95,18 @@ export class CronExecutor {
         ] as Message[],
         tools: this.registry,
         model: this.provider.getDefaultModel(),
-        maxIterations: Math.min(this.runtimeLimits.maxIterations, 40),
+        ...runtimeSpec(policy),
         maxToolResultChars: this.runtimeLimits.maxToolResultChars,
         temperature: 0.0,
         reasoningEffort: 'medium',
         hook,
         contextWindowTokens: 200_000,
         maxTokens: 4096,
-        llmTimeoutS: timeoutSeconds,
         failOnToolError: false,
         sessionKey,
         signal: controller.signal,
-        onProviderRequest: request => {
-          pendingOperations++;
-          const finish = () => { pendingOperations--; maybeSettled(); };
-          request.then(finish, finish);
-        },
+        onProviderRequest: observeOperation,
+        onToolExecution: observeOperation,
       }));
       const finishRun = () => { runSettled = true; maybeSettled(); };
       runPromise.then(finishRun, finishRun);
@@ -138,6 +141,7 @@ export class CronExecutor {
         toolsUsed: [],
         usage: {},
         stopReason: timedOut ? 'timeout' : 'error',
+        resolution: { kind: timedOut ? 'timed_out' : 'failed', reasonCode: timedOut ? 'RUN_DEADLINE' : 'RUNTIME_ERROR', retryable: false },
         error: errorMessage,
         toolEvents: [...hook.events],
         hadInjections: false,

@@ -79,3 +79,6 @@ export type {
 
 export { RuntimeError, RecoveryPolicy, runtimeError, cancellationError } from "./runtime/recovery-policy.js";
 export type { RecoverySnapshot, RecoveryLimits, RecoveryKind } from "./runtime/recovery-policy.js";
+
+export type { RuntimeBudgetLimits } from './runtime/contracts.js';
+export { reserveChildBudget } from './runtime/budget.js';

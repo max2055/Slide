@@ -1,3 +1,4 @@
+import { resolveRuntimePolicy, runtimeSpec, type RuntimePolicy } from '../adapter/runtime-policy.js';
 /**
  * SubagentManager — wraps AgentRunner for subagent execution.
  *
@@ -13,8 +14,8 @@
  * - This mirrors nanobot's _scopes = {"core"} default — subagents get a subset.
  */
 
-import type { AgentRunner, Tool } from '@slide/agent-core';
-import { ToolRegistry } from '@slide/agent-core';
+import type { AgentRunner, RuntimeResolution } from '@slide/agent-core';
+import { ToolRegistry, reserveChildBudget } from '@slide/agent-core';
 import { subagentRegistry, type SubagentRunRecord } from './subagent-registry.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { loadAgentRuntimeLimits } from '../security/agent-runtime-limits.js';
@@ -38,6 +39,7 @@ export class SubagentManager {
   private agentRunner: AgentRunner;
   private parentTools: ToolRegistry | null;
   private readonly toolsForActor?: (actor: ActorContext) => ToolRegistry;
+  private readonly unsettled = new Set<string>();
   private readonly owners = new Map<string, number>();
   private readonly limits = loadAgentRuntimeLimits();
 
@@ -68,17 +70,23 @@ export class SubagentManager {
     task: string,
     parentSessionKey: string,
     actor?: ActorContext,
+    parentRemaining?: RuntimePolicy,
   ): Promise<string> {
     if (!actor) throw new Error('SUBAGENT_ACTOR_REQUIRED');
     if (!task.trim() || task.length > this.limits.maxMessageChars) throw new Error('SUBAGENT_TASK_INVALID');
     if (!/^[a-zA-Z0-9._-]{1,64}$/.test(agentId)) throw new Error('SUBAGENT_AGENT_ID_INVALID');
     const activeForActor = [...this.owners.entries()].filter(([runId, ownerId]) => {
       const status = subagentRegistry.getRun(runId)?.status;
-      return ownerId === actor.userId && status === 'running';
+      return ownerId === actor.userId && (status === 'running' || this.unsettled.has(runId));
     }).length;
     if (activeForActor >= this.limits.maxConcurrentRunsPerActor) {
       throw new Error('SUBAGENT_CONCURRENCY_LIMIT');
     }
+    const requested = resolveRuntimePolicy('subagent', { parentRemaining });
+    const allocation = await reserveChildBudget(requested);
+    const policy = allocation ? Object.freeze({ ...requested, ...allocation }) : requested;
+    // Reserving a child budget can await persistence; recheck admission afterward.
+    if ([...this.owners].filter(([id, owner]) => owner === actor.userId && (subagentRegistry.getRun(id)?.status === 'running' || this.unsettled.has(id))).length >= this.limits.maxConcurrentRunsPerActor) throw new Error('SUBAGENT_CONCURRENCY_LIMIT');
     const run = subagentRegistry.register({
       sessionKey: `subagent:${agentId}:${Date.now()}`,
       task,
@@ -87,7 +95,7 @@ export class SubagentManager {
     this.owners.set(run.runId, actor.userId);
 
     // Fire-and-forget: execute in background without awaiting
-    this._executeSubagent(run, actor).catch((err) => {
+    this._executeSubagent(run, actor, policy, allocation?.signal).catch((err) => {
       console.error(`[SubagentManager] Subagent ${run.runId} failed:`, err);
       subagentRegistry.updateRunStatus(run.runId, 'failed', undefined, err instanceof Error ? err.message : String(err));
     });
@@ -98,7 +106,7 @@ export class SubagentManager {
   /**
    * Access a subagent's status and result.
    */
-  async access(runId: string, actor?: ActorContext): Promise<{ status: SubagentStatus; result?: unknown; error?: string }> {
+  async access(runId: string, actor?: ActorContext): Promise<{ status: SubagentStatus; result?: unknown; error?: string; resolution?: RuntimeResolution; cancellationPending?: boolean }> {
     if (!actor || this.owners.get(runId) !== actor.userId) {
       return { status: 'failed', error: 'Subagent run not found' };
     }
@@ -106,7 +114,7 @@ export class SubagentManager {
     if (!run) {
       return { status: 'failed', error: `Subagent run not found: ${runId}` };
     }
-    return { status: run.status, result: run.result, error: run.error };
+    return { status: run.status, result: run.result, error: run.error, ...(run.resolution ? { resolution: run.resolution } : {}), ...(this.unsettled.has(runId) && run.status !== 'running' ? { cancellationPending: true } : {}) };
   }
 
   /**
@@ -140,9 +148,21 @@ export class SubagentManager {
    * Creates a minimal run spec and updates the registry on completion.
    * This is fire-and-forget — no awaited call from spawn().
    */
-  private async _executeSubagent(run: SubagentRunRecord, actor: ActorContext): Promise<void> {
+  private async _executeSubagent(run: SubagentRunRecord, actor: ActorContext, policy: RuntimePolicy, parentSignal?: AbortSignal): Promise<void> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), Math.min(this.limits.runTimeoutMs, 120_000));
+    const cancel = () => controller.abort(parentSignal?.reason);
+    parentSignal?.addEventListener('abort', cancel, { once: true });
+    if (parentSignal?.aborted) cancel();
+    const timeout = setTimeout(() => controller.abort(new Error('RUN_DEADLINE')), policy.runTimeoutMs);
+    let pending = 0;
+    let finished = false;
+    this.unsettled.add(run.runId);
+    const release = () => { if (finished && pending === 0) this.unsettled.delete(run.runId); };
+    const observe = (operation: Promise<unknown>) => {
+      pending++;
+      const done = () => { pending--; release(); };
+      operation.then(done, done);
+    };
     try {
       subagentRegistry.updateRunStatus(run.runId, 'running');
 
@@ -153,7 +173,9 @@ export class SubagentManager {
         ],
         tools: this._buildSubagentTools(actor),
         model: this.agentRunner.getDefaultModel(),
-        maxIterations: Math.min(this.limits.maxIterations, 25),
+        ...runtimeSpec(policy),
+        onProviderRequest: observe,
+        onToolExecution: observe,
         maxToolResultChars: Math.min(this.limits.maxToolResultChars, 10_000),
         contextWindowTokens: 200_000,
         maxTokens: 4096,
@@ -173,19 +195,23 @@ export class SubagentManager {
         signal: controller.signal,
       });
 
-      const completed = result.stopReason === 'completed'
+      const completed = !controller.signal.aborted && result.stopReason === 'completed'
         && (!result.resolution || result.resolution.kind === 'response_ready');
-      const reason = controller.signal.aborted ? 'RUN_DEADLINE'
+      const reason = controller.signal.aborted ? (controller.signal.reason?.code ?? (/DEADLINE/.test(controller.signal.reason?.message ?? '') ? 'RUN_DEADLINE' : 'USER_CANCELLED'))
         : result.resolution?.reasonCode ?? result.stopReason ?? 'MISSING_STOP_REASON';
       subagentRegistry.updateRunStatus(run.runId, completed ? 'completed' : 'failed',
         completed ? result.finalContent || undefined : result.resolution?.safePartialContent,
-        completed ? undefined : redactSensitiveText(reason));
+        completed ? undefined : redactSensitiveText(reason),
+        controller.signal.aborted ? { kind: reason === 'RUN_DEADLINE' ? 'timed_out' : 'cancelled', reasonCode: reason, retryable: false }
+          : result.resolution ?? { kind: completed ? 'response_ready' : result.stopReason === 'timed_out' ? 'timed_out' : result.stopReason === 'cancelled' ? 'cancelled' : result.stopReason === 'max_iterations' ? 'partial' : 'failed', reasonCode: completed ? 'COMPLETED' : reason, retryable: false });
     } catch (err) {
       const errorMessage = redactSensitiveText(err instanceof Error ? err.message : String(err));
       subagentRegistry.updateRunStatus(run.runId, 'failed', undefined, errorMessage);
       throw err;
     } finally {
       clearTimeout(timeout);
+      parentSignal?.removeEventListener('abort', cancel);
+      finished = true; release();
     }
   }
 }
