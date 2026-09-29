@@ -8,11 +8,11 @@ overrides:
   '@opentelemetry/core@>=2.0.0 <3.0.0': 2.8.0
   dompurify@>=3.0.0 <4.0.0: 3.4.13
   esbuild@>=0.28.0 <0.29.0: 0.28.1
-  fast-uri@>=3.0.0 <4.0.0: 3.1.6
-  fast-uri@>=4.0.0 <5.0.0: 4.1.3
+  fast-uri@>=3.0.0 <4.0.0: 3.1.7
+  fast-uri@>=4.0.0 <5.0.0: 4.1.4
   form-data: 4.0.6
   linkify-it: 5.0.2
-  undici: 6.28.0
+  undici: 6.28.1
 
 importers:
 
@@ -95,8 +95,8 @@ importers:
         specifier: ^5.4.0
         version: 5.4.0
       nodemailer:
-        specifier: ^9.1.1
-        version: 9.1.1
+        specifier: ^10.0.2
+        version: 10.0.11
       openai:
         specifier: ^4.28.0
         version: 4.104.0(ws@8.21.0)(zod@4.4.3)
@@ -122,8 +122,8 @@ importers:
         specifier: ^5.3.2
         version: 5.9.3
       undici:
-        specifier: 6.28.0
-        version: 6.28.0
+        specifier: 6.28.1
+        version: 6.28.1
       ws:
         specifier: ^8.20.0
         version: 8.21.0
@@ -1913,11 +1913,11 @@ packages:
   fast-querystring@1.1.2:
     resolution: {integrity: sha512-g6KuKWmFXc0fID8WWH0jit4g0AGBoJhCkJMb1RmbsSEUNvQ+ZC8D6CUZ+GtF8nMzSPXnhiePyyqqipzNNEnHjg==}
 
-  fast-uri@3.1.6:
-    resolution: {integrity: sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==}
+  fast-uri@3.1.7:
+    resolution: {integrity: sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==}
 
-  fast-uri@4.1.3:
-    resolution: {integrity: sha512-7+72G6vLt7jjNas8SmSATx2qeyRIjxeqO3i4IkmDTxlqYZRKANhOe1bnovcp4WZmvsYrp60WyqPyHqgRiX0yXw==}
+  fast-uri@4.1.4:
+    resolution: {integrity: sha512-dODXrIxlS9JSdgAnhIUKOosKV1oMtU2VtVw87QRaHzyl5jxO290Ii5tEZfCfzfWNHi3jKWwBSdQj0qIyshdZdQ==}
 
   fastify-plugin@6.0.0:
     resolution: {integrity: sha512-fZOty7z3O7vOliF6d8bHE3wiEh1KcNnKEQensSgTk9C1DvN6nRLS++XVd86v33Hw/8u9Un8A1zDrQ8ujcQDHEg==}
@@ -2550,9 +2550,9 @@ packages:
     resolution: {integrity: sha512-jVe6Z61gPcPjCElPZ6j8llB3wnqGcuQzefim1ERsqIakxnEy5JlzV7XKdO1KmacRG5TKwPc4vJTgSRQ0LfkbFw==}
     engines: {node: '>=8'}
 
-  nodemailer@9.1.1:
-    resolution: {integrity: sha512-izw9mVKFix6YSnC9eLgV6g1opl9DUlRio9ZNcq+Wu9Ujn2UwF+8Nl0B8nz22kEC+CTZCvinkxwJ0DeFbb6NwcQ==}
-    engines: {node: '>=6.0.0'}
+  nodemailer@10.0.11:
+    resolution: {integrity: sha512-/c4P7U7aGpiNu2Rl08q525q2zECkUpSaf2zQPgIStCcAjHAkkQQKwD4sTyi3l91mGcLQrKzL1syXPHymo+Ogtw==}
+    engines: {node: '>=20.0.0'}
 
   npm-run-path@4.0.1:
     resolution: {integrity: sha512-S48WzZW777zhNIrn7gxOlISNAqi9ZC/uQFnRdbeIHhZhCA6UqpkOT8T1G7BvfdgP4Er8gF4sUbaS0i7QvIfCWw==}
@@ -3149,8 +3149,8 @@ packages:
   undici-types@7.16.0:
     resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
 
-  undici@6.28.0:
-    resolution: {integrity: sha512-LIY910g9TI13YS95lrMFrs8Rm/u/irgHeTWoKCoteeJ04CUJ92eEfj0rVn+7VKMPBpUPiUoBKfhNyLI23EE/KA==}
+  undici@6.28.1:
+    resolution: {integrity: sha512-zWpdTVD54H48CIybL0rWQ3ukpb9d23wM7eH5RtfdmeP70cWHNjtfo7P4vZX+5CoDcO53J4Pu5uXp7lNfjc6DRA==}
     engines: {node: '>=18.17'}
 
   unicode-properties@1.4.1:
@@ -3547,7 +3547,7 @@ snapshots:
       ms: 2.1.3
       secure-json-parse: 3.0.2
       tslib: 2.8.1
-      undici: 6.28.0
+      undici: 6.28.1
     transitivePeerDependencies:
       - supports-color
 
@@ -3722,7 +3722,7 @@ snapshots:
     dependencies:
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
-      fast-uri: 3.1.6
+      fast-uri: 3.1.7
 
   '@fastify/cors@11.3.0':
     dependencies:
@@ -4467,7 +4467,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.6
+      fast-uri: 3.1.7
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -4906,7 +4906,7 @@ snapshots:
       '@fastify/merge-json-schemas': 0.2.1
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
-      fast-uri: 4.1.3
+      fast-uri: 4.1.4
       json-schema-ref-resolver: 3.0.0
       rfdc: 1.4.1
 
@@ -4914,9 +4914,9 @@ snapshots:
     dependencies:
       fast-decode-uri-component: 1.0.1
 
-  fast-uri@3.1.6: {}
+  fast-uri@3.1.7: {}
 
-  fast-uri@4.1.3: {}
+  fast-uri@4.1.4: {}
 
   fastify-plugin@6.0.0: {}
 
@@ -5558,7 +5558,7 @@ snapshots:
       '@types/pegjs': 0.10.6
       big-integer: 1.6.52
 
-  nodemailer@9.1.1: {}
+  nodemailer@10.0.11: {}
 
   npm-run-path@4.0.1:
     dependencies:
@@ -6128,7 +6128,7 @@ snapshots:
 
   undici-types@7.16.0: {}
 
-  undici@6.28.0: {}
+  undici@6.28.1: {}
 
   unicode-properties@1.4.1:
     dependencies:

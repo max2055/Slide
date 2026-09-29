@@ -57,3 +57,11 @@
 ## 资源
 
 未设置硬预算；未委派子代理（总数 0、深度 0、并发峰值 1）。实际 raw/cached input、output 和费用遥测不可用，不以内部上下文或估算冒充实测。
+
+## CI remediation v2 — 2026-09-29
+
+Max requested automatic CI remediation in comment `01a0eaf4-b3a4-7488-900a-67edcf106ad5`. Scope extends only to the production dependency audit blocking PR #96; runtime acceptance and merge gates remain unchanged. No hard budget is set; no subagents used. Actual token/cost telemetry is unavailable; prior resource usage is not reset.
+
+The original audit reproduced 4 high and 2 moderate findings. Upgrade fast-uri overrides to 3.1.7 / 4.1.4 and undici to 6.28.1; raise nodemailer to ^10.0.2 (lockfile resolves 10.0.11). Nodemailer 10 requires Node >=20, consistent with the project, and supports the existing ESM import and transport API. No audit exclusions or threshold changes.
+
+Local checks on this dependency candidate: frozen-lockfile install; production audit (zero known vulnerabilities); API typecheck; 2687 API tests passed, 129 skipped; actual Nodemailer stream transport/message construction smoke passed; API contracts, qualification matrix (37/37), secret scan and diff whitespace check passed. Existing runtime implementation evidence above remains historical evidence for its recorded revision; current candidate CI is collected separately in the PR/issue.
