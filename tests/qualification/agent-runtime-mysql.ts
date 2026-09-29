@@ -25,6 +25,7 @@ try {
   process.env.DB_NAME = database;
   process.env.JWT_SECRET_KEY = randomUUID() + randomUUID();
   process.env.ENCRYPTION_KEY = randomUUID();
+  process.env.AGENT_RUN_TIMEOUT_MS = '5000';
   process.env.AGENT_WS_PORT = '0'; process.env.AGENT_WS_HOST = '127.0.0.1';
   const init = spawnSync('pnpm', ['--filter', 'slide-api', 'exec', 'tsx', 'init-db.ts'], { cwd: new URL('../..', import.meta.url), env: process.env, encoding: 'utf8', timeout: 120_000 });
   assert.equal(init.status, 0, 'isolated schema initialization failed');
@@ -32,15 +33,16 @@ try {
   const [created] = await pool.execute("INSERT INTO users (username, password_hash, status) VALUES (?, 'not-a-login', 'active')", [`runtime-${randomUUID()}`]) as any;
   const actor: ActorContext = { userId: Number(created.insertId), username: 'runtime-qualification', roles: ['viewer'], permissions: [], sessionVersion: 1, instanceScopes: {}, requestId: randomUUID() };
   const bad = '正在分析数据库状态……\n'.repeat(20);
+  let activeScenario = '';
   let requests = 0; let sequence: LLMResponse[] = [];
   const response = (content: string, finishReason = 'stop'): LLMResponse => ({ content, finishReason, toolCalls: [], shouldExecuteTools: false, hasToolCalls: false, usage: { prompt_tokens: 10, completion_tokens: 10 } });
-  const provider: LLMProvider = { getDefaultModel: () => 'controlled-mysql', chat: async () => sequence[Math.min(requests++, sequence.length-1)], chatStream: async (_m,_t,c) => { const r = sequence[Math.min(requests++, sequence.length-1)]; await c.onContentDelta(r.content ?? ''); return r; } };
+  const provider: LLMProvider = { getDefaultModel: () => 'controlled-mysql', chat: async () => sequence[Math.min(requests++, sequence.length-1)], chatStream: async (_m,_t,c,options) => { if (activeScenario === 'deadline' || activeScenario === 'cancel') { requests++; if (activeScenario === 'cancel') await c.onContentDelta('准备检查。'); await new Promise((_resolve, reject) => { const cancel = () => reject(options?.signal?.reason); if (options?.signal?.aborted) cancel(); else options?.signal?.addEventListener('abort', cancel, { once: true }); }); } const r = sequence[Math.min(requests++, sequence.length-1)]; await c.onContentDelta(r.content ?? ''); return r; } };
   adapter = new DirectAdapter({ workspace, tools: new ToolRegistry(), llmProvider: provider, actorContextService: { authenticateAccessToken: async () => actor, revalidateActor: async () => actor } });
   await adapter.start();
   const server = (adapter as any).wsServer; if (!server.address()) await once(server, 'listening');
   const port = server.address().port;
   console.log(JSON.stringify({ pid: process.pid, port, cwd: process.cwd(), command: 'tsx agent-runtime.ts mysql', schema: database, log: process.env.QUALIFICATION_RUNTIME_LOG }));
-  async function socketExchange(command: Record<string, unknown>, terminal: string) {
+  async function socketExchange(command: Record<string, unknown>, terminal: string, cancelOnDelta = false) {
     const ws = new WebSocket(`ws://127.0.0.1:${port}`); const events: any[] = [];
     try { return await new Promise<any[]>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('WS qualification timeout')), 15000);
@@ -48,14 +50,17 @@ try {
       ws.on('error', (e: Error) => { clearTimeout(timeout); reject(e); });
       ws.on('message', (raw: Buffer) => { const e = JSON.parse(raw.toString()); events.push(e);
         if (e.type === 'auth_ok') ws.send(JSON.stringify(command));
+        if (cancelOnDelta && e.type === 'text_delta') { const run = events.find(r => r.type === 'run.started'); ws.send(JSON.stringify({ type: 'chat.cancel', runId: run.runId, sessionKey: run.sessionKey })); }
         if (e.type === terminal) { clearTimeout(timeout); resolve(events); }
       });
     }); } finally { ws.close(); if (ws.readyState !== WebSocket.CLOSED) await once(ws, 'close'); }
   }
-  for (const scenario of ['recovery', 'length', 'reject'] as const) {
+  for (const scenario of ['recovery', 'length', 'reject', 'deadline', 'cancel'] as const) {
+    activeScenario = scenario;
+    const success = scenario === 'recovery' || scenario === 'length';
     requests = 0; sequence = scenario === 'recovery' ? [response(bad), response('安全结论')] : scenario === 'length' ? [response('第一段', 'length'), response('第二段')] : [response(bad)];
     const idempotencyKey = randomUUID(); const messageId = randomUUID();
-    const events = await socketExchange({ type: 'chat.send', message: '检查数据库', messageId, idempotencyKey }, scenario === 'reject' ? 'error' : 'complete');
+    const events = await socketExchange({ type: 'chat.send', message: '检查数据库', messageId, idempotencyKey }, success ? 'complete' : scenario === 'cancel' ? 'cancelled' : 'error', scenario === 'cancel');
     const started = events.find(e => e.type === 'run.started'); assert(started?.runId);
     const before = requests;
     const replay = await socketExchange({ type: 'chat.send', sessionKey: started.sessionKey, message: '检查数据库', messageId, idempotencyKey }, 'run.snapshot');
@@ -63,14 +68,14 @@ try {
     const history = await socketExchange({ type: 'chat.history', sessionKey: started.sessionKey }, 'complete');
     assert(!JSON.stringify(history).includes('正在分析数据库状态'));
     const run = replay.find(e => e.type === 'run.snapshot').run;
-    assert.equal(run.state, scenario === 'reject' ? 'failed' : 'completed');
+    assert.equal(run.state, success ? 'completed' : scenario === 'deadline' ? 'timed_out' : scenario === 'cancel' ? 'cancelled' : 'failed');
     const [messages] = await pool.query<any[]>('SELECT content FROM chat_messages WHERE session_id = ? AND role = ?', [started.sessionKey, 'assistant']);
-    assert.equal(messages.length, scenario === 'reject' ? 0 : 1);
+    assert.equal(messages.length, success || scenario === 'cancel' ? 1 : 0);
     assert(!JSON.stringify(messages).includes('正在分析数据库状态'));
-    if (scenario !== 'reject') assert.equal(messages[0].content, scenario === 'length' ? '第一段第二段' : '安全结论');
+    if (success) assert.equal(messages[0].content, scenario === 'length' ? '第一段第二段' : '安全结论');
     const groups = platformLogs.query({ component: 'agent' }).groups;
     assert(groups.some(g => g.eventType === 'runtime.model.start' && g.correlationIds.includes(started.runId)));
-    if (scenario !== 'reject') assert(groups.some(g => g.eventType === 'run.completed' && g.correlationIds.includes(started.runId)));
+    if (success) assert(groups.some(g => g.eventType === 'run.completed' && g.correlationIds.includes(started.runId)));
     console.log(JSON.stringify({ scenario, state: run.state, requests, assistantMessages: messages.length, uniqueFinal: true, correlated: true }));
     // Real SQL intent survives a process/service replacement and concurrent recovery.
     if (scenario === 'recovery') {
