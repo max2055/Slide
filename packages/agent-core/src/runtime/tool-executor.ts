@@ -1,3 +1,4 @@
+import { withBudgetDispatchSignal } from './budget.js';
 import { RuntimeError, cancellationError } from './recovery-policy.js';
 import type { AgentRunSpec, ToolCallRequest, ToolEvent } from "../types.js";
 
@@ -53,13 +54,13 @@ export class ToolExecutor {
       const timeout = Math.min(spec.toolTimeoutMs ?? Infinity, declaredTimeout ?? Infinity);
       if (timeout !== Infinity && (!Number.isSafeInteger(timeout) || timeout <= 0)) throw new RuntimeError('INVALID_POLICY', 'Invalid tool timeout', 'tool');
       if (timeout !== Infinity) timer = setTimeout(() => controller.abort(new RuntimeError('TOOL_TIMEOUT', 'Tool deadline exceeded; cancellation requested, settlement may still be pending', 'tool')), timeout);
-      const execution = spec.tools.execute(toolCall.name, toolCall.arguments, {
+      const execution = withBudgetDispatchSignal(controller.signal, () => spec.tools.execute(toolCall.name, toolCall.arguments, {
         signal: timeout === Infinity ? spec.signal : controller.signal,
         sessionKey: spec.sessionKey,
         idempotencyKey: spec.idempotencyKey,
         progressCallback: event => { if (!controller.signal.aborted) return spec.toolProgressCallback?.(event); },
         preserveErrors: true,
-      });
+      }));
       spec.onToolExecution?.(execution);
       // A caller tracking the actual execution can safely receive the boundary result early.
       // Without an observer retain ownership here until the underlying operation settles.

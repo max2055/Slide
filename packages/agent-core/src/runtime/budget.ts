@@ -19,9 +19,14 @@ export function assertToolBudget(spec: AgentRunSpec, state: RecoverySnapshot, ca
   if (spec.budgetLimits && state.toolCalls + (state.delegated?.toolCalls ?? 0) + calls > spec.budgetLimits.maxToolCalls) throw new RuntimeError('MAX_TOOL_CALLS', 'Tool call budget exhausted');
 }
 
-const activeBudget = new AsyncLocalStorage<{ spec: AgentRunSpec; state: RecoverySnapshot; persist: () => Promise<void> }>();
+const activeBudget = new AsyncLocalStorage<{ spec: AgentRunSpec; state: RecoverySnapshot; persist: () => Promise<void>; dispatchSignal?: AbortSignal }>();
 export function withBudgetContext<T>(spec: AgentRunSpec, state: RecoverySnapshot, task: () => T, persist: () => Promise<void>): T {
   return activeBudget.run({ spec, state, persist }, task);
+}
+/** A tool may time out while awaiting durable child admission. */
+export function withBudgetDispatchSignal<T>(signal: AbortSignal, task: () => T): T {
+  const current = activeBudget.getStore();
+  return current ? activeBudget.run({ ...current, dispatchSignal: signal }, task) : task();
 }
 /** Non-refundable child allocation prevents concurrent children spending the same parent remainder.
  * It is tracked separately from measured usage and persists through restart. */
@@ -30,6 +35,7 @@ export async function reserveChildBudget(request: { maxIterations: number; budge
   if (!current?.spec.budgetLimits) return undefined;
   const { spec, state } = current;
   spec.signal?.throwIfAborted();
+  current.dispatchSignal?.throwIfAborted();
   const limits = spec.budgetLimits!;
   const used = state.delegated ?? { modelSteps: 0, providerAttempts: 0, toolCalls: 0, tokens: 0 };
   const own = request.budgetLimits ?? limits;
@@ -47,5 +53,6 @@ export async function reserveChildBudget(request: { maxIterations: number; budge
     toolCalls: used.toolCalls + budgetLimits.maxToolCalls, tokens: used.tokens + budgetLimits.maxTotalTokens };
   await current.persist();
   spec.signal?.throwIfAborted();
+  current.dispatchSignal?.throwIfAborted();
   return { maxIterations, budgetLimits, runTimeoutMs: remainingMs, signal: spec.signal };
 }

@@ -144,3 +144,17 @@ it('restart does not credit unverifiable first tool evidence as fresh progress',
   expect(result.resolution?.reasonCode).toBe('NO_PROGRESS'); expect(chat).toHaveBeenCalledTimes(1);
   expect(result.runtimeState?.noProgressSteps).toBe(2);
 });
+
+it('tool timeout during child admission cannot start a child after persistence returns', async () => {
+  vi.useFakeTimers(); const { reserveChildBudget } = await import('../runtime/budget.js');
+  let release!: () => void; let saved = false; let children = 0; let settled = false;
+  const config = spec({ toolTimeoutMs: 20, onToolExecution: p => { p.then(() => { settled = true; }, () => { settled = true; }); },
+    checkpointCallback: async p => {
+      if ((p.runtime_state_v1 as any).delegated && !saved) { saved = true; await new Promise<void>(r => { release = r; }); }
+    } });
+  config.tools.register({ ...config.tools.get('read')!, execute: async () => { await reserveChildBudget({ maxIterations: 25, budgetLimits: config.budgetLimits }); children++; return 'spawned'; } });
+  const run = new AgentRunner(provider(async () => call())).run(config);
+  await vi.advanceTimersByTimeAsync(21); expect((await run).resolution?.reasonCode).toBe('TOOL_TIMEOUT');
+  expect(settled).toBe(false); release(); await vi.advanceTimersByTimeAsync(0);
+  expect(settled).toBe(true); expect(children).toBe(0);
+});
