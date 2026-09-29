@@ -2,6 +2,7 @@ import { AgentRunner, NoopHook, OpenAIProvider, ToolRegistry } from '../../packa
 import { AnthropicProvider } from '../../apps/db-ops-api/src/adapter/llm-provider.js';
 
 // Explicit qualification variables only. Never discover credentials from production DB/files.
+const representativeMaxTokens = 1024;
 let missing = false;
 for (const kind of ['ANTHROPIC', 'OPENAI', 'OLLAMA'] as const) {
   const prefix = `QUALIFICATION_${kind}_`;
@@ -23,12 +24,12 @@ for (const kind of ['ANTHROPIC', 'OPENAI', 'OLLAMA'] as const) {
   provider.chat = async (...args) => { const result = await chat(...args); if (result.requestId && /^[A-Za-z0-9_.:-]{1,128}$/.test(result.requestId)) requestIds.push(result.requestId); return result; };
   const started = performance.now();
   const result = await new AgentRunner(provider).run({ initialMessages: [{ role: 'user', content: 'Explain briefly why SELECT 1 is a read-only database connectivity check. Do not execute anything.' }],
-    tools: new ToolRegistry(), model, maxIterations: 3, maxTokens: 256, maxToolResultChars: 1000,
+    tools: new ToolRegistry(), model, maxIterations: 3, maxTokens: representativeMaxTokens, maxToolResultChars: 1000,
     temperature: 0, hook: new NoopHook(), runTimeoutMs: 60_000,
     budgetLimits: { maxToolCalls: 1, maxProviderAttempts: 3, maxTotalTokens: 20_000, maxNoProgressSteps: 3 }, contextWindowTokens: 4096 });
   const passed = result.stopReason === 'completed' && Boolean(result.finalContent?.trim()) && result.runtimeState?.unknownRequests === 0;
   console.log(JSON.stringify({ provider: kind, model, version: process.env[`${prefix}VERSION`] ?? 'unavailable',
-    parameters: { temperature: 0, maxTokens: 256 }, requestIds, requestIdStatus: requestIds.length ? 'available' : 'unavailable',
+    parameters: { temperature: 0, maxTokens: representativeMaxTokens }, requestIds, requestIdStatus: requestIds.length ? 'available' : 'unavailable',
     usage: result.usage, budget: result.runtimeState, elapsedMs: performance.now() - started, status: passed ? 'passed-representative-readonly' : 'failed',
     reasonCode: result.resolution?.reasonCode ?? null }));
   if (!passed) process.exitCode = 1;
