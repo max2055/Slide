@@ -43,13 +43,16 @@ export class ToolExecutor {
           error,
         };
       }
-      const result = await spec.tools.execute(toolCall.name, toolCall.arguments, {
+      const execution = spec.tools.execute(toolCall.name, toolCall.arguments, {
         signal: spec.signal,
         sessionKey: spec.sessionKey,
         idempotencyKey: spec.idempotencyKey,
         progressCallback: spec.toolProgressCallback,
         preserveErrors: true,
       });
+      spec.onToolExecution?.(execution);
+      const result = await execution;
+      if (spec.signal?.aborted) throw new Error('Tool execution cancelled after settlement');
       const detail = result === undefined || result === null
         ? "(empty)"
         : String(result).replace(/\n/g, " ").trim().slice(0, 120);

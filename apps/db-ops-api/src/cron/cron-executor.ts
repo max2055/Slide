@@ -112,9 +112,12 @@ export class CronExecutor {
       if (timedOut) throw timeoutError;
 
       // Extract structured result from agent output
-      const structuredResult = this.extractStructuredResult(result.finalContent, hook.events);
+      const structuredResult = result.stopReason === 'completed' ? this.extractStructuredResult(result.finalContent, hook.events) : null;
 
       return {
+        resolution: result.resolution,
+        runtimeError: result.runtimeError,
+        runtimeState: result.runtimeState,
         finalContent: result.finalContent,
         messages: result.messages,
         toolsUsed: result.toolsUsed,
@@ -194,7 +197,7 @@ TASK: ${task}
 ${schemaBlock}
 ## 执行约束
 - 执行超时后将请求取消，不再启动新工具；已启动操作可能仍需等待底层结束
-- 工具调用失败时自动重试（最多 2 次）
+- 不自动重试审批拒绝、凭据已消费或副作用结果不确定的操作；先核对执行记录
 - 自主执行，不需要请求用户确认
 - 任务完成时务必调用 slide_complete_cron 工具保存结果
 - **必须使用 slide_complete_cron 的 result 参数输出结构化数据**

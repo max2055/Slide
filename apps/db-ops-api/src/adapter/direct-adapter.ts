@@ -183,6 +183,7 @@ export class DirectAdapter implements IAgentEngine {
   private readonly runLimiter = new ActorConcurrencyLimiter(this.runtimeLimits.maxConcurrentRunsPerActor);
   private wsServer: WebSocketServer | null = null;
   private activeRuns = new Map<string, { actorId: number; sessionId: string; controller: AbortController }>();
+  private sessionOperations = new Map<string, Set<Promise<void>>>();
   private sessionLocks = new Map<string, Promise<void>>();
   /** Track WebSocket clients subscribed to each session for invoke() broadcast. */
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
@@ -781,6 +782,14 @@ export class DirectAdapter implements IAgentEngine {
     console.log(`[DirectAdapter] WS transport listening on port ${port}`);
   }
 
+  private observeSessionOperation(sessionKey: string, operation: Promise<unknown>): void {
+    let operations = this.sessionOperations.get(sessionKey);
+    if (!operations) { operations = new Set(); this.sessionOperations.set(sessionKey, operations); }
+    const settled = operation.then(() => {}, () => {});
+    operations.add(settled);
+    void settled.then(() => operations!.delete(settled));
+  }
+
   private async withSessionLock<T>(sessionKey: string, task: () => Promise<T>): Promise<T> {
     const previous = this.sessionLocks.get(sessionKey) ?? Promise.resolve();
     let release!: () => void;
@@ -790,10 +799,14 @@ export class DirectAdapter implements IAgentEngine {
     try {
       return await task();
     } finally {
-      release();
-      if (this.sessionLocks.get(sessionKey) === current) {
-        this.sessionLocks.delete(sessionKey);
-      }
+      const operations = this.sessionOperations.get(sessionKey);
+      const releaseOwned = () => {
+        this.sessionOperations.delete(sessionKey);
+        release();
+        if (this.sessionLocks.get(sessionKey) === current) this.sessionLocks.delete(sessionKey);
+      };
+      if (operations?.size) void Promise.all(operations).then(releaseOwned);
+      else releaseOwned();
     }
   }
 
@@ -822,6 +835,10 @@ export class DirectAdapter implements IAgentEngine {
   ): Promise<ChatResult> {
     // Get or create session via SessionManager (D-07)
     const session = this.sessionManager.getOrCreate(sessionKey);
+
+    // Restore messages and accrued budgets before the provider context is built.
+    const resumeCheckpoint = session.metadata?.runtime_checkpoint as Record<string, unknown> | undefined;
+    if (resumeCheckpoint) this.runner._restoreRuntimeCheckpoint(session as any);
 
     // Capture history before adding this turn. ContextBuilder appends the
     // current user message itself, so including the just-added entry would
@@ -865,7 +882,7 @@ export class DirectAdapter implements IAgentEngine {
     try {
       const provider = this.providerForPurpose ? await this.providerForPurpose('chat') : this.provider;
       const runner = this.providerForPurpose ? new AgentRunner(provider) : this.runner;
-      if (session.metadata && 'runtime_checkpoint' in session.metadata) runner._restoreRuntimeCheckpoint(session as any);
+
       const result = await runner.run({
         initialMessages: contextMessages as Message[],
         tools: _actor && this.toolsForActor ? this.toolsForActor(_actor) : new ToolRegistry(),
@@ -876,6 +893,9 @@ export class DirectAdapter implements IAgentEngine {
         reasoningEffort,
         hook,
         checkpointCallback,
+        resumeCheckpoint,
+        onProviderRequest: request => this.observeSessionOperation(sessionKey, request),
+        onToolExecution: request => this.observeSessionOperation(sessionKey, request),
         contextWindowTokens: 200_000,
         maxTokens: 4096,
         sessionKey,
@@ -912,7 +932,7 @@ export class DirectAdapter implements IAgentEngine {
       }
 
       // Clear checkpoint on successful completion
-      if (session.metadata && 'runtime_checkpoint' in session.metadata) {
+      if (stopReason === 'completed' && session.metadata && 'runtime_checkpoint' in session.metadata) {
         delete session.metadata['runtime_checkpoint'];
       }
 
@@ -1031,6 +1051,8 @@ export class DirectAdapter implements IAgentEngine {
         maxTokens: 4096,
         llmTimeoutS: 60,
         signal: controller.signal,
+        onProviderRequest: request => this.observeSessionOperation(sessionKey, request),
+        onToolExecution: request => this.observeSessionOperation(sessionKey, request),
       });
 
       // Embed thinking as <think> tags so chat UI renders collapsible thinking section

@@ -51,6 +51,8 @@ export interface LLMResponse {
   toolCalls: ToolCallRequest[];
   usage: Record<string, number>;
   rawResponse?: string;
+  runtimeError?: import("./runtime/recovery-policy.js").RuntimeError;
+  retryAfterMs?: number;
   errorKind?: string;
   error?: string;
   errorCode?: string;
@@ -98,6 +100,7 @@ export interface LLMCallOptions {
 }
 
 export interface StreamCallbacks {
+  onActivity?: () => void;
   onContentDelta: (delta: string) => Promise<void> | void;
   onThinkingDelta?: (delta: string) => Promise<void> | void;
   onToolCallDelta?: (delta: Record<string, unknown>) => Promise<void> | void;
@@ -174,6 +177,10 @@ export interface AgentHook {
 // ── Agent run spec & result ──
 
 export interface AgentRunSpec {
+  resumeCheckpoint?: Record<string, unknown>;
+  recoveryLimits?: import("./runtime/recovery-policy.js").RecoveryLimits;
+  streamIdleTimeoutS?: number;
+  onToolExecution?: (execution: Promise<unknown>) => void;
   supervisorMode?: "observe" | "enforce";
   initialMessages: Message[];
   tools: ToolRegistry;
@@ -212,6 +219,8 @@ export interface AgentRunSpec {
 }
 
 export interface AgentRunResult {
+  runtimeError?: import("./runtime/recovery-policy.js").RuntimeError;
+  runtimeState?: import("./runtime/recovery-policy.js").RecoverySnapshot;
   resolution?: RuntimeResolution;
   finalContent: string | null;
   messages: Message[];

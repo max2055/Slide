@@ -76,3 +76,6 @@ export type {
   // Checkpoint types
   RuntimeCheckpoint,
 } from "./types.js";
+
+export { RuntimeError, RecoveryPolicy, runtimeError, cancellationError } from "./runtime/recovery-policy.js";
+export type { RecoverySnapshot, RecoveryLimits, RecoveryKind } from "./runtime/recovery-policy.js";

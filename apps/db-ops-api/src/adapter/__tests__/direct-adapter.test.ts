@@ -1065,7 +1065,7 @@ describe('DirectAdapter', () => {
         await ready;
         if (mode === 'cancel') controller.abort(new Error('operator cancelled'));
         else await vi.advanceTimersByTimeAsync(5001);
-        expect(await pending).toMatchObject({ stopReason: 'cancelled', error: mode === 'cancel' ? 'operator cancelled' : 'ANALYSIS_TIMED_OUT' });
+        expect(await pending).toMatchObject({ stopReason: mode === 'cancel' ? 'cancelled' : 'timed_out', error: mode === 'cancel' ? 'operator cancelled' : 'ANALYSIS_TIMED_OUT' });
         expect(observed?.aborted).toBe(true);
         expect(vi.getTimerCount()).toBe(0);
       } finally { vi.useRealTimers(); vi.unstubAllEnvs(); }
@@ -1221,4 +1221,37 @@ describe('DirectAdapter', () => {
       expect(caps.features.sessions.state).toBe('supported');
     });
   });
+});
+
+it('restores checkpoint evidence before context build and keeps recovery counters', async () => {
+  const provider = new CapturingMessagesProvider();
+  const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: provider });
+  adaptersToCleanup.push(adapter);
+  const session = (adapter as any).sessionManager.getOrCreate('restore-before-context');
+  session.metadata.runtime_checkpoint = { assistantMessage: { role: 'assistant', content: 'restored evidence' }, completedToolResults: [], pendingToolCalls: [],
+    runtime_state_v1: { schemaVersion: 1, modelSteps: 2, providerAttempts: 2, toolCalls: 0, total: 2,
+      counts: { empty: 2, repetition: 0, continuation: 0, stream: 0, context: 0 }, unknownRequests: 0, reservedTokens: 0, usage: {} } };
+  const save = vi.spyOn((adapter as any).sessionManager, 'save').mockResolvedValue(undefined);
+  await adapter.chat('restore-before-context', 'continue', () => {});
+  expect(provider.seenMessages.some(m => m.content === 'restored evidence')).toBe(true);
+  expect(save).toHaveBeenCalled();
+  expect(session.metadata.runtime_checkpoint).toBeUndefined();
+});
+
+it('keeps the session locked after cancellation until a noncooperative provider actually settles', async () => {
+  const provider = new MockLLMProvider();
+  let finish!: (r: LLMResponse) => void;
+  let started!: () => void;
+  const ready = new Promise<void>(r => { started = r; });
+  const chatStream = vi.spyOn(provider, 'chatStream').mockImplementationOnce(async () => { started(); return new Promise(r => { finish = r; }); });
+  const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: provider });
+  adaptersToCleanup.push(adapter);
+  vi.spyOn((adapter as any).sessionManager, 'save').mockResolvedValue(undefined);
+  const controller = new AbortController();
+  const first = adapter.chat('pending-provider', 'one', () => {}, undefined, controller.signal);
+  await ready; controller.abort(); expect((await first).stopReason).toBe('cancelled');
+  const second = adapter.chat('pending-provider', 'two', () => {});
+  await Promise.resolve(); expect(chatStream).toHaveBeenCalledTimes(1);
+  finish(await provider.chat([], [])); await second;
+  expect(chatStream).toHaveBeenCalledTimes(2);
 });

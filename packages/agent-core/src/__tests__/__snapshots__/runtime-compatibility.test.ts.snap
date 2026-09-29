@@ -5,7 +5,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
   "requests": 2,
   "result": {
     "error": null,
-    "finalContent": "第二部分结论。",
+    "finalContent": "第一部分结论。第二部分结论。",
     "hadInjections": false,
     "messages": [
       {
@@ -13,20 +13,31 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
         "role": "user",
       },
       {
-        "content": "第一部分结论。",
-        "role": "assistant",
-        "tool_calls": undefined,
-      },
-      {
-        "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-        "role": "user",
-      },
-      {
-        "content": "第二部分结论。",
+        "content": "第一部分结论。第二部分结论。",
         "role": "assistant",
         "tool_calls": undefined,
       },
     ],
+    "runtimeState": {
+      "counts": {
+        "context": 0,
+        "continuation": 1,
+        "empty": 0,
+        "repetition": 0,
+        "stream": 0,
+      },
+      "modelSteps": 2,
+      "providerAttempts": 2,
+      "reservedTokens": 0,
+      "schemaVersion": 1,
+      "toolCalls": 0,
+      "total": 1,
+      "unknownRequests": 0,
+      "usage": {
+        "completion_tokens": 2,
+        "prompt_tokens": 2,
+      },
+    },
     "stopReason": "completed",
     "toolEvents": [],
     "toolsUsed": [],
@@ -36,6 +47,29 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
     },
   },
   "trace": [
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 1,
+          "usage": {},
+        },
+      },
+    ],
     [
       "before",
       {
@@ -76,9 +110,61 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
       "settled",
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
+    ],
+    [
       "finalize",
       0,
       "第一部分结论。",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "第一部分结论。",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 1,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 1,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
     ],
     [
       "after",
@@ -89,14 +175,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
         "messages": [
           {
             "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "第一部分结论。",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -124,6 +202,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
       },
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "第一部分结论。",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 1,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 1,
+          "unknownRequests": 1,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
+    ],
+    [
       "before",
       {
         "error": null,
@@ -132,14 +236,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
         "messages": [
           {
             "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "第一部分结论。",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -168,7 +264,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
           "role": "assistant",
         },
         {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
+          "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
           "role": "user",
         },
       ],
@@ -179,6 +275,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
       "settled",
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "第一部分结论。",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 1,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 1,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
+      },
+    ],
+    [
       "finalize",
       1,
       "第二部分结论。",
@@ -187,21 +309,43 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
       "checkpoint",
       {
         "assistantMessage": {
-          "content": "第二部分结论。",
+          "content": "第一部分结论。第二部分结论。",
           "role": "assistant",
         },
         "completedToolResults": [],
+        "continuation_content": "",
         "iteration": 1,
+        "messages_restored": false,
         "model": "fixture",
         "pendingToolCalls": [],
         "phase": "final_response",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 1,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 1,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
       },
     ],
     [
       "after",
       {
         "error": null,
-        "finalContent": "第二部分结论。",
+        "finalContent": "第一部分结论。第二部分结论。",
         "iteration": 1,
         "messages": [
           {
@@ -209,15 +353,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
             "role": "user",
           },
           {
-            "content": "第一部分结论。",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "第二部分结论。",
+            "content": "第一部分结论。第二部分结论。",
             "role": "assistant",
           },
         ],
@@ -244,6 +380,45 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
         },
       },
     ],
+    [
+      "checkpoint",
+      {
+        "assistantMessage": {
+          "content": "第一部分结论。第二部分结论。",
+          "role": "assistant",
+        },
+        "completedToolResults": [],
+        "continuation_content": "",
+        "iteration": 1,
+        "messages_restored": false,
+        "model": "fixture",
+        "pendingToolCalls": [],
+        "phase": "final_response",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 1,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 1,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
+        "terminal_resolution": {
+          "kind": "response_ready",
+        },
+      },
+    ],
   ],
 }
 `;
@@ -252,7 +427,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
 {
   "requests": 6,
   "result": {
-    "error": null,
+    "error": "OUTPUT_LIMIT",
     "finalContent": "仍未完成的截断答案",
     "hadInjections": false,
     "messages": [
@@ -263,37 +438,36 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
       {
         "content": "仍未完成的截断答案",
         "role": "assistant",
-        "tool_calls": undefined,
-      },
-      {
-        "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-        "role": "user",
-      },
-      {
-        "content": "仍未完成的截断答案",
-        "role": "assistant",
-        "tool_calls": undefined,
-      },
-      {
-        "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-        "role": "user",
-      },
-      {
-        "content": "仍未完成的截断答案",
-        "role": "assistant",
-        "tool_calls": undefined,
-      },
-      {
-        "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-        "role": "user",
-      },
-      {
-        "content": "仍未完成的截断答案",
-        "role": "assistant",
-        "tool_calls": undefined,
       },
     ],
-    "stopReason": "completed",
+    "resolution": {
+      "kind": "partial",
+      "reasonCode": "OUTPUT_LIMIT",
+      "retryable": false,
+      "safePartialContent": "仍未完成的截断答案",
+    },
+    "runtimeError": [RuntimeError: Output continuation limit reached],
+    "runtimeState": {
+      "counts": {
+        "context": 0,
+        "continuation": 3,
+        "empty": 2,
+        "repetition": 0,
+        "stream": 0,
+      },
+      "modelSteps": 6,
+      "providerAttempts": 6,
+      "reservedTokens": 0,
+      "schemaVersion": 1,
+      "toolCalls": 0,
+      "total": 5,
+      "unknownRequests": 0,
+      "usage": {
+        "completion_tokens": 6,
+        "prompt_tokens": 6,
+      },
+    },
+    "stopReason": "output_limit",
     "toolEvents": [],
     "toolsUsed": [],
     "usage": {
@@ -303,6 +477,29 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
   },
   "trace": [
     [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 1,
+          "usage": {},
+        },
+      },
+    ],
+    [
       "before",
       {
         "error": null,
@@ -340,6 +537,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     ],
     [
       "settled",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
     ],
     [
       "finalize",
@@ -347,6 +570,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
       "",
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 1,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 1,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
+    ],
+    [
       "after",
       {
         "error": null,
@@ -382,6 +631,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
       },
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 1,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 1,
+          "unknownRequests": 1,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
+    ],
+    [
       "before",
       {
         "error": null,
@@ -413,6 +688,10 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
           "content": "诊断数据库并输出结论",
           "role": "user",
         },
+        {
+          "content": "[Runtime: Your previous response was empty. Please provide a substantive response to the user request.]",
+          "role": "user",
+        },
       ],
       [],
       "fixture",
@@ -421,9 +700,61 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
       "settled",
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 1,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 1,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
+      },
+    ],
+    [
       "finalize",
       1,
       "",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 2,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 2,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
+      },
     ],
     [
       "after",
@@ -461,6 +792,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
       },
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 2,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 3,
+          "providerAttempts": 3,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 2,
+          "unknownRequests": 1,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
+      },
+    ],
+    [
       "before",
       {
         "error": null,
@@ -493,7 +850,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
           "role": "user",
         },
         {
-          "content": "[Runtime: Your previous response was empty. Please provide a substantive response to the user's request.]",
+          "content": "[Runtime: Your previous response was empty. Please provide a substantive response to the user request.]",
           "role": "user",
         },
       ],
@@ -502,6 +859,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     ],
     [
       "settled",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 2,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 3,
+          "providerAttempts": 3,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 2,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 3,
+            "prompt_tokens": 3,
+          },
+        },
+      },
     ],
     [
       "finalize",
@@ -509,6 +892,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
       "仍未完成的截断答案",
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "仍未完成的截断答案",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 1,
+            "empty": 2,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 3,
+          "providerAttempts": 3,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 3,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 3,
+            "prompt_tokens": 3,
+          },
+        },
+      },
+    ],
+    [
       "after",
       {
         "error": null,
@@ -519,14 +928,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
         ],
         "response": {
           "content": "仍未完成的截断答案",
@@ -552,6 +953,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
       },
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "仍未完成的截断答案",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 1,
+            "empty": 2,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 4,
+          "providerAttempts": 4,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 3,
+          "unknownRequests": 1,
+          "usage": {
+            "completion_tokens": 3,
+            "prompt_tokens": 3,
+          },
+        },
+      },
+    ],
+    [
       "before",
       {
         "error": null,
@@ -560,14 +987,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
         "messages": [
           {
             "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -596,7 +1015,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
           "role": "assistant",
         },
         {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
+          "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
           "role": "user",
         },
       ],
@@ -605,6 +1024,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     ],
     [
       "settled",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "仍未完成的截断答案",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 1,
+            "empty": 2,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 4,
+          "providerAttempts": 4,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 3,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 4,
+            "prompt_tokens": 4,
+          },
+        },
+      },
     ],
     [
       "finalize",
@@ -612,6 +1057,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
       "仍未完成的截断答案",
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "仍未完成的截断答案",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 2,
+            "empty": 2,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 4,
+          "providerAttempts": 4,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 4,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 4,
+            "prompt_tokens": 4,
+          },
+        },
+      },
+    ],
+    [
       "after",
       {
         "error": null,
@@ -620,22 +1091,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
         "messages": [
           {
             "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -663,6 +1118,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
       },
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "仍未完成的截断答案",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 2,
+            "empty": 2,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 5,
+          "providerAttempts": 5,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 4,
+          "unknownRequests": 1,
+          "usage": {
+            "completion_tokens": 4,
+            "prompt_tokens": 4,
+          },
+        },
+      },
+    ],
+    [
       "before",
       {
         "error": null,
@@ -671,22 +1152,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
         "messages": [
           {
             "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -715,15 +1180,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
           "role": "assistant",
         },
         {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-          "role": "user",
-        },
-        {
-          "content": "仍未完成的截断答案",
-          "role": "assistant",
-        },
-        {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
+          "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
           "role": "user",
         },
       ],
@@ -734,9 +1191,61 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
       "settled",
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "仍未完成的截断答案",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 2,
+            "empty": 2,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 5,
+          "providerAttempts": 5,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 4,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 5,
+            "prompt_tokens": 5,
+          },
+        },
+      },
+    ],
+    [
       "finalize",
       4,
       "仍未完成的截断答案",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "仍未完成的截断答案",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 3,
+            "empty": 2,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 5,
+          "providerAttempts": 5,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 5,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 5,
+            "prompt_tokens": 5,
+          },
+        },
+      },
     ],
     [
       "after",
@@ -747,30 +1256,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
         "messages": [
           {
             "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -794,6 +1279,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
         "usage": {
           "completion_tokens": 1,
           "prompt_tokens": 1,
+        },
+      },
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "仍未完成的截断答案",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 3,
+            "empty": 2,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 6,
+          "providerAttempts": 6,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 5,
+          "unknownRequests": 1,
+          "usage": {
+            "completion_tokens": 5,
+            "prompt_tokens": 5,
+          },
         },
       },
     ],
@@ -808,30 +1319,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
         ],
         "response": null,
         "stopReason": null,
@@ -858,23 +1345,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
           "role": "assistant",
         },
         {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-          "role": "user",
-        },
-        {
-          "content": "仍未完成的截断答案",
-          "role": "assistant",
-        },
-        {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-          "role": "user",
-        },
-        {
-          "content": "仍未完成的截断答案",
-          "role": "assistant",
-        },
-        {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
+          "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
           "role": "user",
         },
       ],
@@ -883,6 +1354,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     ],
     [
       "settled",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "仍未完成的截断答案",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 3,
+            "empty": 2,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 6,
+          "providerAttempts": 6,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 5,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 6,
+            "prompt_tokens": 6,
+          },
+        },
+      },
     ],
     [
       "finalize",
@@ -892,15 +1389,27 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
-        "assistantMessage": {
-          "content": "仍未完成的截断答案",
-          "role": "assistant",
+        "continuation_content": "仍未完成的截断答案",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 3,
+            "empty": 2,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 6,
+          "providerAttempts": 6,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 5,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 6,
+            "prompt_tokens": 6,
+          },
         },
-        "completedToolResults": [],
-        "iteration": 5,
-        "model": "fixture",
-        "pendingToolCalls": [],
-        "phase": "final_response",
       },
     ],
     [
@@ -918,30 +1427,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
             "content": "仍未完成的截断答案",
             "role": "assistant",
           },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
         ],
         "response": {
           "content": "仍未完成的截断答案",
@@ -954,7 +1439,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
             "prompt_tokens": 1,
           },
         },
-        "stopReason": "completed",
+        "stopReason": "output_limit",
         "streamedContent": false,
         "streamedReasoning": false,
         "toolCalls": [],
@@ -963,6 +1448,38 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
         "usage": {
           "completion_tokens": 1,
           "prompt_tokens": 1,
+        },
+      },
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "仍未完成的截断答案",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 3,
+            "empty": 2,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 6,
+          "providerAttempts": 6,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 5,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 6,
+            "prompt_tokens": 6,
+          },
+        },
+        "terminal_resolution": {
+          "kind": "partial",
+          "reasonCode": "OUTPUT_LIMIT",
+          "retryable": false,
+          "safePartialContent": "仍未完成的截断答案",
         },
       },
     ],
@@ -974,8 +1491,8 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
 {
   "requests": 4,
   "result": {
-    "error": null,
-    "finalContent": "截断片段4",
+    "error": "OUTPUT_LIMIT",
+    "finalContent": "截断片段1截断片段2截断片段3截断片段4",
     "hadInjections": false,
     "messages": [
       {
@@ -983,39 +1500,38 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
         "role": "user",
       },
       {
-        "content": "截断片段1",
+        "content": "截断片段1截断片段2截断片段3截断片段4",
         "role": "assistant",
-        "tool_calls": undefined,
-      },
-      {
-        "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-        "role": "user",
-      },
-      {
-        "content": "截断片段2",
-        "role": "assistant",
-        "tool_calls": undefined,
-      },
-      {
-        "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-        "role": "user",
-      },
-      {
-        "content": "截断片段3",
-        "role": "assistant",
-        "tool_calls": undefined,
-      },
-      {
-        "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-        "role": "user",
-      },
-      {
-        "content": "截断片段4",
-        "role": "assistant",
-        "tool_calls": undefined,
       },
     ],
-    "stopReason": "completed",
+    "resolution": {
+      "kind": "partial",
+      "reasonCode": "OUTPUT_LIMIT",
+      "retryable": false,
+      "safePartialContent": "截断片段1截断片段2截断片段3截断片段4",
+    },
+    "runtimeError": [RuntimeError: Output continuation limit reached],
+    "runtimeState": {
+      "counts": {
+        "context": 0,
+        "continuation": 3,
+        "empty": 0,
+        "repetition": 0,
+        "stream": 0,
+      },
+      "modelSteps": 4,
+      "providerAttempts": 4,
+      "reservedTokens": 0,
+      "schemaVersion": 1,
+      "toolCalls": 0,
+      "total": 3,
+      "unknownRequests": 0,
+      "usage": {
+        "completion_tokens": 4,
+        "prompt_tokens": 4,
+      },
+    },
+    "stopReason": "output_limit",
     "toolEvents": [],
     "toolsUsed": [],
     "usage": {
@@ -1025,6 +1541,29 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
   },
   "trace": [
     [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 1,
+          "usage": {},
+        },
+      },
+    ],
+    [
       "before",
       {
         "error": null,
@@ -1062,6 +1601,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     ],
     [
       "settled",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
     ],
     [
       "finalize",
@@ -1069,6 +1634,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
       "截断片段1",
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "截断片段1",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 1,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 1,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
+    ],
+    [
       "after",
       {
         "error": null,
@@ -1079,14 +1670,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
-          {
-            "content": "截断片段1",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
         ],
         "response": {
           "content": "截断片段1",
@@ -1112,6 +1695,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
       },
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "截断片段1",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 1,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 1,
+          "unknownRequests": 1,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
+    ],
+    [
       "before",
       {
         "error": null,
@@ -1120,14 +1729,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
         "messages": [
           {
             "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "截断片段1",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -1156,7 +1757,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
           "role": "assistant",
         },
         {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
+          "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
           "role": "user",
         },
       ],
@@ -1165,6 +1766,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     ],
     [
       "settled",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "截断片段1",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 1,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 1,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
+      },
     ],
     [
       "finalize",
@@ -1172,6 +1799,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
       "截断片段2",
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "截断片段1截断片段2",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 2,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 2,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
+      },
+    ],
+    [
       "after",
       {
         "error": null,
@@ -1180,22 +1833,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
         "messages": [
           {
             "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "截断片段1",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "截断片段2",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -1223,6 +1860,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
       },
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "截断片段1截断片段2",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 2,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 3,
+          "providerAttempts": 3,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 2,
+          "unknownRequests": 1,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
+      },
+    ],
+    [
       "before",
       {
         "error": null,
@@ -1231,22 +1894,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
         "messages": [
           {
             "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "截断片段1",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "截断片段2",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -1271,19 +1918,11 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
           "role": "user",
         },
         {
-          "content": "截断片段1",
+          "content": "截断片段1截断片段2",
           "role": "assistant",
         },
         {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-          "role": "user",
-        },
-        {
-          "content": "截断片段2",
-          "role": "assistant",
-        },
-        {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
+          "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
           "role": "user",
         },
       ],
@@ -1294,9 +1933,61 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
       "settled",
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "截断片段1截断片段2",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 2,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 3,
+          "providerAttempts": 3,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 2,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 3,
+            "prompt_tokens": 3,
+          },
+        },
+      },
+    ],
+    [
       "finalize",
       2,
       "截断片段3",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "截断片段1截断片段2截断片段3",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 3,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 3,
+          "providerAttempts": 3,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 3,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 3,
+            "prompt_tokens": 3,
+          },
+        },
+      },
     ],
     [
       "after",
@@ -1307,30 +1998,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
         "messages": [
           {
             "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "截断片段1",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "截断片段2",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "截断片段3",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -1354,6 +2021,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
         "usage": {
           "completion_tokens": 1,
           "prompt_tokens": 1,
+        },
+      },
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "截断片段1截断片段2截断片段3",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 3,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 4,
+          "providerAttempts": 4,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 3,
+          "unknownRequests": 1,
+          "usage": {
+            "completion_tokens": 3,
+            "prompt_tokens": 3,
+          },
         },
       },
     ],
@@ -1368,30 +2061,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
-          {
-            "content": "截断片段1",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "截断片段2",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "截断片段3",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
         ],
         "response": null,
         "stopReason": null,
@@ -1414,27 +2083,11 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
           "role": "user",
         },
         {
-          "content": "截断片段1",
+          "content": "截断片段1截断片段2截断片段3",
           "role": "assistant",
         },
         {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-          "role": "user",
-        },
-        {
-          "content": "截断片段2",
-          "role": "assistant",
-        },
-        {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-          "role": "user",
-        },
-        {
-          "content": "截断片段3",
-          "role": "assistant",
-        },
-        {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
+          "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
           "role": "user",
         },
       ],
@@ -1443,6 +2096,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     ],
     [
       "settled",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "截断片段1截断片段2截断片段3",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 3,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 4,
+          "providerAttempts": 4,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 3,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 4,
+            "prompt_tokens": 4,
+          },
+        },
+      },
     ],
     [
       "finalize",
@@ -1452,22 +2131,34 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     [
       "checkpoint",
       {
-        "assistantMessage": {
-          "content": "截断片段4",
-          "role": "assistant",
+        "continuation_content": "截断片段1截断片段2截断片段3截断片段4",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 3,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 4,
+          "providerAttempts": 4,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 3,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 4,
+            "prompt_tokens": 4,
+          },
         },
-        "completedToolResults": [],
-        "iteration": 3,
-        "model": "fixture",
-        "pendingToolCalls": [],
-        "phase": "final_response",
       },
     ],
     [
       "after",
       {
         "error": null,
-        "finalContent": "截断片段4",
+        "finalContent": "截断片段1截断片段2截断片段3截断片段4",
         "iteration": 3,
         "messages": [
           {
@@ -1475,31 +2166,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
             "role": "user",
           },
           {
-            "content": "截断片段1",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "截断片段2",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "截断片段3",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "截断片段4",
+            "content": "截断片段1截断片段2截断片段3截断片段4",
             "role": "assistant",
           },
         ],
@@ -1514,7 +2181,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
             "prompt_tokens": 1,
           },
         },
-        "stopReason": "completed",
+        "stopReason": "output_limit",
         "streamedContent": false,
         "streamedReasoning": false,
         "toolCalls": [],
@@ -1523,6 +2190,38 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
         "usage": {
           "completion_tokens": 1,
           "prompt_tokens": 1,
+        },
+      },
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "截断片段1截断片段2截断片段3截断片段4",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 3,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 4,
+          "providerAttempts": 4,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 3,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 4,
+            "prompt_tokens": 4,
+          },
+        },
+        "terminal_resolution": {
+          "kind": "partial",
+          "reasonCode": "OUTPUT_LIMIT",
+          "retryable": false,
+          "safePartialContent": "截断片段1截断片段2截断片段3截断片段4",
         },
       },
     ],
@@ -1549,6 +2248,27 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
       "retryable": false,
       "safePartialContent": "",
     },
+    "runtimeError": [RuntimeError: MODEL_REPETITION_LOOP],
+    "runtimeState": {
+      "counts": {
+        "context": 0,
+        "continuation": 0,
+        "empty": 0,
+        "repetition": 2,
+        "stream": 0,
+      },
+      "modelSteps": 3,
+      "providerAttempts": 3,
+      "reservedTokens": 0,
+      "schemaVersion": 1,
+      "toolCalls": 0,
+      "total": 2,
+      "unknownRequests": 0,
+      "usage": {
+        "completion_tokens": 3,
+        "prompt_tokens": 3,
+      },
+    },
     "stopReason": "error",
     "toolEvents": [],
     "toolsUsed": [],
@@ -1558,6 +2278,29 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
     },
   },
   "trace": [
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 1,
+          "usage": {},
+        },
+      },
+    ],
     [
       "before",
       {
@@ -1596,6 +2339,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
     ],
     [
       "settled",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
     ],
     [
       "finalize",
@@ -1674,6 +2443,58 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
         "usage": {
           "completion_tokens": 1,
           "prompt_tokens": 1,
+        },
+      },
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 1,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 1,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 1,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 1,
+          "unknownRequests": 1,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
         },
       },
     ],
@@ -1721,6 +2542,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
       "settled",
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 1,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 1,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
+      },
+    ],
+    [
       "finalize",
       1,
       "正在分析数据库状态……
@@ -1801,6 +2648,58 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
       },
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 2,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 2,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
+      },
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 2,
+            "stream": 0,
+          },
+          "modelSteps": 3,
+          "providerAttempts": 3,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 2,
+          "unknownRequests": 1,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
+      },
+    ],
+    [
       "before",
       {
         "error": null,
@@ -1842,6 +2741,32 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
     ],
     [
       "settled",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 2,
+            "stream": 0,
+          },
+          "modelSteps": 3,
+          "providerAttempts": 3,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 2,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 3,
+            "prompt_tokens": 3,
+          },
+        },
+      },
     ],
     [
       "finalize",
@@ -1923,6 +2848,38 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
         },
       },
     ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 2,
+            "stream": 0,
+          },
+          "modelSteps": 3,
+          "providerAttempts": 3,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 2,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 3,
+            "prompt_tokens": 3,
+          },
+        },
+        "terminal_resolution": {
+          "kind": "failed",
+          "reasonCode": "MODEL_REPETITION_LOOP",
+          "retryable": false,
+          "safePartialContent": "",
+        },
+      },
+    ],
   ],
 }
 `;
@@ -1945,6 +2902,26 @@ exports[`frozen legacy compatibility traces > 'normal response' 1`] = `
         "tool_calls": undefined,
       },
     ],
+    "runtimeState": {
+      "counts": {
+        "context": 0,
+        "continuation": 0,
+        "empty": 0,
+        "repetition": 0,
+        "stream": 0,
+      },
+      "modelSteps": 1,
+      "providerAttempts": 1,
+      "reservedTokens": 0,
+      "schemaVersion": 1,
+      "toolCalls": 0,
+      "total": 0,
+      "unknownRequests": 0,
+      "usage": {
+        "completion_tokens": 1,
+        "prompt_tokens": 1,
+      },
+    },
     "stopReason": "completed",
     "toolEvents": [],
     "toolsUsed": [],
@@ -1954,6 +2931,29 @@ exports[`frozen legacy compatibility traces > 'normal response' 1`] = `
     },
   },
   "trace": [
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 1,
+          "usage": {},
+        },
+      },
+    ],
     [
       "before",
       {
@@ -1994,6 +2994,32 @@ exports[`frozen legacy compatibility traces > 'normal response' 1`] = `
       "settled",
     ],
     [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
+    ],
+    [
       "finalize",
       0,
       "诊断完成。",
@@ -2006,10 +3032,32 @@ exports[`frozen legacy compatibility traces > 'normal response' 1`] = `
           "role": "assistant",
         },
         "completedToolResults": [],
+        "continuation_content": "",
         "iteration": 0,
+        "messages_restored": false,
         "model": "fixture",
         "pendingToolCalls": [],
         "phase": "final_response",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
       },
     ],
     [
@@ -2051,6 +3099,45 @@ exports[`frozen legacy compatibility traces > 'normal response' 1`] = `
         },
       },
     ],
+    [
+      "checkpoint",
+      {
+        "assistantMessage": {
+          "content": "诊断完成。",
+          "role": "assistant",
+        },
+        "completedToolResults": [],
+        "continuation_content": "",
+        "iteration": 0,
+        "messages_restored": false,
+        "model": "fixture",
+        "pendingToolCalls": [],
+        "phase": "final_response",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+        "terminal_resolution": {
+          "kind": "response_ready",
+        },
+      },
+    ],
   ],
 }
 `;
@@ -2077,6 +3164,27 @@ exports[`frozen legacy compatibility traces > 'provider error' 1`] = `
       "reasonCode": "PROVIDER_ERROR",
       "retryable": false,
     },
+    "runtimeError": [RuntimeError: fixture failure],
+    "runtimeState": {
+      "counts": {
+        "context": 0,
+        "continuation": 0,
+        "empty": 0,
+        "repetition": 0,
+        "stream": 0,
+      },
+      "modelSteps": 1,
+      "providerAttempts": 1,
+      "reservedTokens": 0,
+      "schemaVersion": 1,
+      "toolCalls": 0,
+      "total": 0,
+      "unknownRequests": 0,
+      "usage": {
+        "completion_tokens": 1,
+        "prompt_tokens": 1,
+      },
+    },
     "stopReason": "error",
     "toolEvents": [],
     "toolsUsed": [],
@@ -2086,6 +3194,29 @@ exports[`frozen legacy compatibility traces > 'provider error' 1`] = `
     },
   },
   "trace": [
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 1,
+          "usage": {},
+        },
+      },
+    ],
     [
       "before",
       {
@@ -2124,6 +3255,32 @@ exports[`frozen legacy compatibility traces > 'provider error' 1`] = `
     ],
     [
       "settled",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
     ],
     [
       "finalize",
@@ -2170,6 +3327,37 @@ exports[`frozen legacy compatibility traces > 'provider error' 1`] = `
         },
       },
     ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+        "terminal_resolution": {
+          "kind": "failed",
+          "reasonCode": "PROVIDER_ERROR",
+          "retryable": false,
+        },
+      },
+    ],
   ],
 }
 `;
@@ -2202,12 +3390,61 @@ exports[`frozen legacy compatibility traces > preserves streaming thinking, inje
   "drains": 2,
   "events": [
     [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 1,
+          "usage": {},
+        },
+      },
+    ],
+    [
       "thinking",
       "thinking",
     ],
     [
       "text",
       "answer1",
+    ],
+    [
+      "checkpoint",
+      {
+        "continuation_content": "",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
     ],
     [
       "thinking-end",
@@ -2220,10 +3457,32 @@ exports[`frozen legacy compatibility traces > preserves streaming thinking, inje
           "role": "assistant",
         },
         "completedToolResults": [],
+        "continuation_content": "",
         "iteration": 0,
+        "messages_restored": false,
         "model": "fixture",
         "pendingToolCalls": [],
         "phase": "final_response",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 1,
+          "providerAttempts": 1,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
       },
     ],
     [
@@ -2235,12 +3494,84 @@ exports[`frozen legacy compatibility traces > preserves streaming thinking, inje
       0,
     ],
     [
+      "checkpoint",
+      {
+        "assistantMessage": {
+          "content": "answer1",
+          "role": "assistant",
+        },
+        "completedToolResults": [],
+        "continuation_content": "",
+        "iteration": 0,
+        "messages_restored": false,
+        "model": "fixture",
+        "pendingToolCalls": [],
+        "phase": "final_response",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 204096,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 1,
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+          },
+        },
+      },
+    ],
+    [
       "thinking",
       "thinking",
     ],
     [
       "text",
       "answer2",
+    ],
+    [
+      "checkpoint",
+      {
+        "assistantMessage": {
+          "content": "answer1",
+          "role": "assistant",
+        },
+        "completedToolResults": [],
+        "continuation_content": "",
+        "iteration": 0,
+        "messages_restored": false,
+        "model": "fixture",
+        "pendingToolCalls": [],
+        "phase": "final_response",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
+      },
     ],
     [
       "thinking-end",
@@ -2257,15 +3588,76 @@ exports[`frozen legacy compatibility traces > preserves streaming thinking, inje
           "role": "assistant",
         },
         "completedToolResults": [],
+        "continuation_content": "",
         "iteration": 1,
+        "messages_restored": false,
         "model": "fixture",
         "pendingToolCalls": [],
         "phase": "final_response",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
       },
     ],
     [
       "after",
       1,
+    ],
+    [
+      "checkpoint",
+      {
+        "assistantMessage": {
+          "content": "answer2",
+          "role": "assistant",
+        },
+        "completedToolResults": [],
+        "continuation_content": "",
+        "iteration": 1,
+        "messages_restored": false,
+        "model": "fixture",
+        "pendingToolCalls": [],
+        "phase": "final_response",
+        "runtime_state_v1": {
+          "counts": {
+            "context": 0,
+            "continuation": 0,
+            "empty": 0,
+            "repetition": 0,
+            "stream": 0,
+          },
+          "modelSteps": 2,
+          "providerAttempts": 2,
+          "reservedTokens": 0,
+          "schemaVersion": 1,
+          "toolCalls": 0,
+          "total": 0,
+          "unknownRequests": 0,
+          "usage": {
+            "completion_tokens": 2,
+            "prompt_tokens": 2,
+          },
+        },
+        "terminal_resolution": {
+          "kind": "response_ready",
+        },
+      },
     ],
   ],
   "result": {
@@ -2292,6 +3684,26 @@ exports[`frozen legacy compatibility traces > preserves streaming thinking, inje
         "tool_calls": undefined,
       },
     ],
+    "runtimeState": {
+      "counts": {
+        "context": 0,
+        "continuation": 0,
+        "empty": 0,
+        "repetition": 0,
+        "stream": 0,
+      },
+      "modelSteps": 2,
+      "providerAttempts": 2,
+      "reservedTokens": 0,
+      "schemaVersion": 1,
+      "toolCalls": 0,
+      "total": 0,
+      "unknownRequests": 0,
+      "usage": {
+        "completion_tokens": 2,
+        "prompt_tokens": 2,
+      },
+    },
     "stopReason": "completed",
     "toolEvents": [],
     "toolsUsed": [],
