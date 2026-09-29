@@ -719,7 +719,7 @@ describe('DirectAdapter', () => {
         });
         expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'error' })]));
         expect(events.some((event) => event.type === 'complete')).toBe(false);
-        expect(finish).toHaveBeenCalledWith('provider-failure-run', 'failed', { stopReason: 'error' });
+        expect(finish).toHaveBeenCalledWith('provider-failure-run', 'failed', expect.objectContaining({ stopReason: 'error', resolution: expect.objectContaining({ reasonCode: 'PROVIDER_ERROR' }) }));
       } finally {
         metadata.mockRestore();
         createSession.mockRestore();
@@ -815,7 +815,7 @@ describe('DirectAdapter', () => {
             role: 'assistant', content: 'partial answer',
             metadata: expect.objectContaining({ interrupted: true, stopReason }),
           }));
-          expect(finish).toHaveBeenCalledWith('provider-failure-run', stopReason === 'error' ? 'failed' : stopReason, { stopReason });
+          expect(finish).toHaveBeenCalledWith('provider-failure-run', stopReason === 'error' ? 'failed' : stopReason, expect.objectContaining({ stopReason, resolution: expect.objectContaining({ reasonCode: stopReason === 'timed_out' ? 'RUN_DEADLINE' : 'PROVIDER_ERROR' }) }));
         }
         expect(events.at(-1)).toMatchObject({ type: stopReason === 'completed' ? 'complete' : 'error', messageSequence: 1, stopReason });
       } finally {

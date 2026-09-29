@@ -151,7 +151,15 @@ export interface ToolEvent {
   detail: string;
 }
 
+export interface RuntimeResolution {
+  kind: "response_ready" | "partial" | "cancelled" | "timed_out" | "failed";
+  reasonCode: string;
+  retryable: boolean;
+  safePartialContent?: string;
+}
+
 export interface AgentHook {
+  onCandidateRejected?(ctx: AgentHookContext, safeContent: string, reasonCode: string): Promise<void> | void;
   wantsStreaming(): boolean;
   beforeIteration(ctx: AgentHookContext): Promise<void> | void;
   onStream(ctx: AgentHookContext, delta: string): Promise<void> | void;
@@ -166,6 +174,7 @@ export interface AgentHook {
 // ── Agent run spec & result ──
 
 export interface AgentRunSpec {
+  supervisorMode?: "observe" | "enforce";
   initialMessages: Message[];
   tools: ToolRegistry;
   model: string;
@@ -203,6 +212,7 @@ export interface AgentRunSpec {
 }
 
 export interface AgentRunResult {
+  resolution?: RuntimeResolution;
   finalContent: string | null;
   messages: Message[];
   toolsUsed: string[];

@@ -12,7 +12,7 @@
  *   text_delta | tool_start | tool_result | tool_error | complete | error
  */
 
-import type { ToolSchema } from '@slide/agent-core';
+import type { ToolSchema, RuntimeResolution } from '@slide/agent-core';
 
 // ── ChatEvent discriminated union ──
 
@@ -40,6 +40,7 @@ export interface ToolErrorEvent {
 }
 
 export interface ChatTerminalContent {
+  resolution?: RuntimeResolution;
   finalContent?: string;
   thinkingContent?: string;
   stopReason?: string;
@@ -113,6 +114,7 @@ export interface AgentFeatureCapability {
 // ── Chat result ──
 
 export interface ChatResult {
+  resolution?: RuntimeResolution;
   thinkingContent?: string;
   /** Final assistant content, null if no response */
   finalContent: string | null;
@@ -124,6 +126,7 @@ export interface ChatResult {
 // ── Invoke result ──
 
 export interface InvokeResult {
+  resolution?: RuntimeResolution;
   /** Assistant content from fire-and-forget execution */
   content: string | null;
   /** Token usage stats */

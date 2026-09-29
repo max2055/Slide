@@ -624,6 +624,24 @@ describe('109-04: DirectGatewayClient', () => {
     expect(host.chatStream).toBe('第一段第二段');
   });
 
+  it.each(['complete', 'cancelled', 'error'])('empty retraction survives queued flush and %s', async type => {
+    const host = {
+      chatRunId: 'run-1', sessionKey: 'session-1', chatThinkingText: '', chatThinkingComplete: false,
+      chatStream: 'bad rendered text', chatMessages: [], chatQueue: [], chatSending: true, lastError: null,
+      settings: { lastActiveSessionKey: '' }, applySettings(next: Record<string, unknown>) { this.settings = next; },
+      refreshSessionsAfterChat: new Set<string>(), chatToolMessages: [], chatStreamSegments: [],
+      toolStreamById: new Map(), toolStreamOrder: [], toolStreamSyncTimer: null,
+    };
+    (directGateway as any).handleDirectAdapterEvent(host, { type: 'text_delta', delta: 'bad queued text' });
+    (directGateway as any).handleDirectAdapterEvent(host, { type: 'text_delta', delta: '' });
+    await new Promise(resolve => setTimeout(resolve, 25));
+    expect(host.chatStream).toBe('');
+    (directGateway as any).handleDirectAdapterEvent(host, { type, finalContent: '', error: 'MODEL_REPETITION_LOOP' });
+    await new Promise(resolve => setTimeout(resolve, 25));
+    expect(JSON.stringify(host.chatMessages)).not.toContain('bad');
+    expect(host.chatStream).toBeNull();
+  });
+
   it('cancels pending stream updates when an expired session is cleared', async () => {
     const host = {
       connected: true, chatLoading: true, chatSending: true, chatRunId: 'run-1',

@@ -24,7 +24,7 @@ afterEach(() => {
 
 describe('SubagentManager security boundary', () => {
   it('binds run access to the parent Actor', async () => {
-    const manager = new SubagentManager(runner(async () => ({ finalContent: 'done' })));
+    const manager = new SubagentManager(runner(async () => ({ finalContent: 'done', stopReason: 'completed' })));
     const owner = actor(10);
     const runId = await manager.spawn('slide-default', 'inspect metrics', 'parent-session', owner);
 
@@ -49,4 +49,11 @@ describe('SubagentManager security boundary', () => {
     await expect(manager.spawn('../invalid', 'task', 'parent-session', actor(13)))
       .rejects.toThrow('SUBAGENT_AGENT_ID_INVALID');
   });
+});
+
+ it.each(['cancelled', 'timed_out', 'error', 'max_iterations', 'empty_final_response'])('never promotes %s to subagent success', async stopReason => {
+  const manager = new SubagentManager(runner(async () => ({ finalContent: 'unsafe', stopReason, resolution: { kind: 'failed', reasonCode: 'PRECISE_REASON', safePartialContent: '' } })));
+  const owner = actor(25);
+  const id = await manager.spawn('slide-default', 'diagnose', 'parent-session', owner);
+  await vi.waitFor(async () => expect(await manager.access(id, owner)).toMatchObject({ status: 'failed', error: 'PRECISE_REASON' }));
 });

@@ -82,7 +82,7 @@ function mapHookEventToChatEvent(
   hook: Partial<AgentHook>,
   onEvent: (event: ChatEvent) => void,
   thinkingHolder?: { text: string },
-  streamHolder?: { text: string },
+  streamHolder?: { text: string; safeContent?: string },
 ): AgentHook {
   let reasoningActive = false;
   return {
@@ -97,6 +97,10 @@ function mapHookEventToChatEvent(
       // replacement renders as progressively building text (not flickering chars).
       if (streamHolder) streamHolder.text += delta;
       onEvent({ type: 'text_delta', delta: streamHolder ? streamHolder.text : delta });
+    },
+    onCandidateRejected: async (_ctx, safeContent) => {
+      if (streamHolder) { streamHolder.text = safeContent; streamHolder.safeContent = safeContent; }
+      await onEvent({ type: 'text_delta', delta: safeContent });
     },
     onStreamEnd: async () => {},
     beforeExecuteTools: async (ctx: AgentHookContext) => {
@@ -626,7 +630,7 @@ export class DirectAdapter implements IAgentEngine {
               }, messageActor, controller.signal, idempotencyKey);
               if (chatResult.stopReason === 'completed') {
                 completionAttempted = true;
-                const event = completionEvent ?? { type: 'complete' as const, finalContent: chatResult.finalContent || undefined };
+                const event = completionEvent ?? { type: 'complete' as const, finalContent: chatResult.finalContent ?? '', resolution: chatResult.resolution };
                 if (persistentRun) {
                   const committed = await agentRunService.complete(persistentRun.run, event);
                   sendToSession(sessionKey, { type: 'run.snapshot', run: committed, messageId, sessionKey });
@@ -649,7 +653,7 @@ export class DirectAdapter implements IAgentEngine {
                   : chatResult.stopReason === 'cancelled' ? 'cancelled'
                   : chatResult.stopReason === 'timed_out' ? 'timed_out'
                   : 'failed';
-                await agentRunService.finish(persistentRun.run.id, terminal, { stopReason: chatResult.stopReason });
+                await agentRunService.finish(persistentRun.run.id, terminal, { stopReason: chatResult.stopReason, resolution: chatResult.resolution });
                 this.activeRuns.delete(persistentRun.run.id);
               }
             } catch (err) {
@@ -854,7 +858,7 @@ export class DirectAdapter implements IAgentEngine {
     // embedded in the final message (matching external <think> tag behavior).
     // streamHolder accumulates text deltas for progressive display.
     const thinkingHolder: { text: string } = { text: '' };
-    const streamHolder: { text: string } = { text: '' };
+    const streamHolder: { text: string; safeContent?: string } = { text: '' };
     const hook = mapHookEventToChatEvent({}, onEvent, thinkingHolder, streamHolder);
 
     let terminalEmitted = false;
@@ -888,8 +892,13 @@ export class DirectAdapter implements IAgentEngine {
       // The API parses <think> tags back into structured content blocks.
       const stopReason = result.stopReason === 'cancelled' && signal?.reason?.message === 'CHAT_TIMED_OUT'
         ? 'timed_out' : result.stopReason;
+      if (stopReason === 'timed_out' && result.stopReason === 'cancelled') {
+        result.resolution = { ...result.resolution, kind: 'timed_out', reasonCode: 'RUN_DEADLINE', retryable: false };
+      }
       // Failed runner results may contain synthetic error text, not an assistant reply.
-      const cleanContent = stopReason === 'completed' ? (result.finalContent || '') : streamHolder.text;
+      const cleanContent = stopReason === 'completed' ? (result.finalContent ?? '')
+        : (result.resolution?.safePartialContent ?? streamHolder.safeContent ?? streamHolder.text);
+      streamHolder.safeContent = cleanContent;
       const thinkingContent = thinkingHolder.text || undefined;
       const displayContent = thinkingContent
         ? `<think>${thinkingContent}</think>\n\n${cleanContent}`
@@ -910,7 +919,7 @@ export class DirectAdapter implements IAgentEngine {
       await this.sessionManager.save(session);
 
       terminalEmitted = true;
-      const terminalContent = { finalContent: cleanContent || undefined, thinkingContent, stopReason };
+      const terminalContent = { finalContent: cleanContent, thinkingContent, stopReason, resolution: result.resolution };
       if (stopReason === 'completed') {
         await onEvent({ type: 'complete', ...terminalContent });
       } else if (stopReason === 'cancelled') {
@@ -918,13 +927,13 @@ export class DirectAdapter implements IAgentEngine {
       } else {
         await onEvent({ type: 'error', error: result.error || `Agent run ended: ${stopReason}`, ...terminalContent });
       }
-      return { finalContent: cleanContent || null, thinkingContent, usage: result.usage, stopReason };
+      return { finalContent: cleanContent, thinkingContent, usage: result.usage, stopReason, resolution: result.resolution };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       // Do not emit a second terminal event if persistence or delivery failed.
       if (!terminalEmitted) {
         await onEvent({ type: 'error', error: errorMessage, stopReason: 'error',
-          finalContent: streamHolder.text || undefined, thinkingContent: thinkingHolder.text || undefined });
+          finalContent: streamHolder.safeContent ?? streamHolder.text, thinkingContent: thinkingHolder.text || undefined });
       }
       throw err;
     }
@@ -1039,7 +1048,9 @@ ${result.finalContent || ''}`
       // Broadcast completion to WebSocket clients viewing this session
       const subs = this.sessionSubscribers.get(sessionKey);
       if (subs && subs.size > 0 && finalContent) {
-        const msg = JSON.stringify({ type: 'complete', finalContent });
+        const msg = JSON.stringify(result.stopReason === 'completed'
+          ? { type: 'complete', finalContent, stopReason: result.stopReason, resolution: result.resolution }
+          : { type: 'error', finalContent, stopReason: result.stopReason, resolution: result.resolution, error: result.error || result.resolution?.reasonCode || result.stopReason });
         for (const ws of subs) {
           try { ws.send(msg); } catch { /* client may have disconnected */ }
         }
@@ -1047,6 +1058,7 @@ ${result.finalContent || ''}`
 
       return {
         content: finalContent,
+        resolution: result.resolution,
         usage: result.usage,
         toolEvents: result.toolEvents,
         stopReason: result.stopReason,

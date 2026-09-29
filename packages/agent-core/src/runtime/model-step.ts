@@ -51,15 +51,18 @@ export class ModelStep {
     const timeoutS = spec.llmTimeoutS ?? parseFloat(process.env.NANOBOT_LLM_TIMEOUT_S || '300');
 
     if (wantsStreaming) {
-      return withTimeout(signal => this.provider.chatStream(
+      let active = true;
+      try { return await withTimeout(signal => this.provider.chatStream(
         messages,
         tools,
         {
           onContentDelta: async (delta: string) => {
+            if (!active || signal.aborted) return;
             if (delta) context.streamedContent = true;
             await hook.onStream(context, delta);
           },
           onThinkingDelta: async (delta: string) => {
+            if (!active || signal.aborted) return;
             if (delta) {
               context.streamedReasoning = true;
               await hook.emitReasoning(delta);
@@ -78,6 +81,7 @@ export class ModelStep {
           signal,
         }
       ), 0, spec.signal, spec.onProviderRequest);
+      } finally { active = false; }
     }
 
     // Non-streaming: wrap with wall-clock timeout

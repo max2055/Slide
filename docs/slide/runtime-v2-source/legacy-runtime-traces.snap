@@ -250,7 +250,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
 
 exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization_len…' 1`] = `
 {
-  "requests": 6,
+  "requests": 3,
   "result": {
     "error": null,
     "finalContent": "仍未完成的截断答案",
@@ -265,40 +265,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
         "role": "assistant",
         "tool_calls": undefined,
       },
-      {
-        "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-        "role": "user",
-      },
-      {
-        "content": "仍未完成的截断答案",
-        "role": "assistant",
-        "tool_calls": undefined,
-      },
-      {
-        "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-        "role": "user",
-      },
-      {
-        "content": "仍未完成的截断答案",
-        "role": "assistant",
-        "tool_calls": undefined,
-      },
-      {
-        "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-        "role": "user",
-      },
-      {
-        "content": "仍未完成的截断答案",
-        "role": "assistant",
-        "tool_calls": undefined,
-      },
     ],
     "stopReason": "completed",
     "toolEvents": [],
     "toolsUsed": [],
     "usage": {
-      "completion_tokens": 6,
-      "prompt_tokens": 6,
+      "completion_tokens": 3,
+      "prompt_tokens": 3,
     },
   },
   "trace": [
@@ -426,63 +399,6 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
       "",
     ],
     [
-      "after",
-      {
-        "error": null,
-        "finalContent": null,
-        "iteration": 1,
-        "messages": [
-          {
-            "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-        ],
-        "response": {
-          "content": "",
-          "finishReason": "stop",
-          "hasToolCalls": false,
-          "shouldExecuteTools": false,
-          "toolCalls": [],
-          "usage": {
-            "completion_tokens": 1,
-            "prompt_tokens": 1,
-          },
-        },
-        "stopReason": null,
-        "streamedContent": false,
-        "streamedReasoning": false,
-        "toolCalls": [],
-        "toolEvents": [],
-        "toolResults": [],
-        "usage": {
-          "completion_tokens": 1,
-          "prompt_tokens": 1,
-        },
-      },
-    ],
-    [
-      "before",
-      {
-        "error": null,
-        "finalContent": null,
-        "iteration": 2,
-        "messages": [
-          {
-            "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-        ],
-        "response": null,
-        "stopReason": null,
-        "streamedContent": false,
-        "streamedReasoning": false,
-        "toolCalls": [],
-        "toolEvents": [],
-        "toolResults": [],
-        "usage": {},
-      },
-    ],
-    [
       "request-observed",
     ],
     [
@@ -493,7 +409,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
           "role": "user",
         },
         {
-          "content": "[Runtime: Your previous response was empty. Please provide a substantive response to the user's request.]",
+          "content": "[System: Your previous response was empty. Please provide a substantive response to the user's request.]",
           "role": "user",
         },
       ],
@@ -505,388 +421,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     ],
     [
       "finalize",
-      2,
-      "仍未完成的截断答案",
-    ],
-    [
-      "after",
-      {
-        "error": null,
-        "finalContent": null,
-        "iteration": 2,
-        "messages": [
-          {
-            "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-        ],
-        "response": {
-          "content": "仍未完成的截断答案",
-          "finishReason": "length",
-          "hasToolCalls": false,
-          "shouldExecuteTools": false,
-          "toolCalls": [],
-          "usage": {
-            "completion_tokens": 1,
-            "prompt_tokens": 1,
-          },
-        },
-        "stopReason": null,
-        "streamedContent": false,
-        "streamedReasoning": false,
-        "toolCalls": [],
-        "toolEvents": [],
-        "toolResults": [],
-        "usage": {
-          "completion_tokens": 1,
-          "prompt_tokens": 1,
-        },
-      },
-    ],
-    [
-      "before",
-      {
-        "error": null,
-        "finalContent": null,
-        "iteration": 3,
-        "messages": [
-          {
-            "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-        ],
-        "response": null,
-        "stopReason": null,
-        "streamedContent": false,
-        "streamedReasoning": false,
-        "toolCalls": [],
-        "toolEvents": [],
-        "toolResults": [],
-        "usage": {},
-      },
-    ],
-    [
-      "request-observed",
-    ],
-    [
-      "request",
-      [
-        {
-          "content": "诊断数据库并输出结论",
-          "role": "user",
-        },
-        {
-          "content": "仍未完成的截断答案",
-          "role": "assistant",
-        },
-        {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-          "role": "user",
-        },
-      ],
-      [],
-      "fixture",
-    ],
-    [
-      "settled",
-    ],
-    [
-      "finalize",
-      3,
-      "仍未完成的截断答案",
-    ],
-    [
-      "after",
-      {
-        "error": null,
-        "finalContent": null,
-        "iteration": 3,
-        "messages": [
-          {
-            "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-        ],
-        "response": {
-          "content": "仍未完成的截断答案",
-          "finishReason": "length",
-          "hasToolCalls": false,
-          "shouldExecuteTools": false,
-          "toolCalls": [],
-          "usage": {
-            "completion_tokens": 1,
-            "prompt_tokens": 1,
-          },
-        },
-        "stopReason": null,
-        "streamedContent": false,
-        "streamedReasoning": false,
-        "toolCalls": [],
-        "toolEvents": [],
-        "toolResults": [],
-        "usage": {
-          "completion_tokens": 1,
-          "prompt_tokens": 1,
-        },
-      },
-    ],
-    [
-      "before",
-      {
-        "error": null,
-        "finalContent": null,
-        "iteration": 4,
-        "messages": [
-          {
-            "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-        ],
-        "response": null,
-        "stopReason": null,
-        "streamedContent": false,
-        "streamedReasoning": false,
-        "toolCalls": [],
-        "toolEvents": [],
-        "toolResults": [],
-        "usage": {},
-      },
-    ],
-    [
-      "request-observed",
-    ],
-    [
-      "request",
-      [
-        {
-          "content": "诊断数据库并输出结论",
-          "role": "user",
-        },
-        {
-          "content": "仍未完成的截断答案",
-          "role": "assistant",
-        },
-        {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-          "role": "user",
-        },
-        {
-          "content": "仍未完成的截断答案",
-          "role": "assistant",
-        },
-        {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-          "role": "user",
-        },
-      ],
-      [],
-      "fixture",
-    ],
-    [
-      "settled",
-    ],
-    [
-      "finalize",
-      4,
-      "仍未完成的截断答案",
-    ],
-    [
-      "after",
-      {
-        "error": null,
-        "finalContent": null,
-        "iteration": 4,
-        "messages": [
-          {
-            "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-        ],
-        "response": {
-          "content": "仍未完成的截断答案",
-          "finishReason": "length",
-          "hasToolCalls": false,
-          "shouldExecuteTools": false,
-          "toolCalls": [],
-          "usage": {
-            "completion_tokens": 1,
-            "prompt_tokens": 1,
-          },
-        },
-        "stopReason": null,
-        "streamedContent": false,
-        "streamedReasoning": false,
-        "toolCalls": [],
-        "toolEvents": [],
-        "toolResults": [],
-        "usage": {
-          "completion_tokens": 1,
-          "prompt_tokens": 1,
-        },
-      },
-    ],
-    [
-      "before",
-      {
-        "error": null,
-        "finalContent": null,
-        "iteration": 5,
-        "messages": [
-          {
-            "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-        ],
-        "response": null,
-        "stopReason": null,
-        "streamedContent": false,
-        "streamedReasoning": false,
-        "toolCalls": [],
-        "toolEvents": [],
-        "toolResults": [],
-        "usage": {},
-      },
-    ],
-    [
-      "request-observed",
-    ],
-    [
-      "request",
-      [
-        {
-          "content": "诊断数据库并输出结论",
-          "role": "user",
-        },
-        {
-          "content": "仍未完成的截断答案",
-          "role": "assistant",
-        },
-        {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-          "role": "user",
-        },
-        {
-          "content": "仍未完成的截断答案",
-          "role": "assistant",
-        },
-        {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-          "role": "user",
-        },
-        {
-          "content": "仍未完成的截断答案",
-          "role": "assistant",
-        },
-        {
-          "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-          "role": "user",
-        },
-      ],
-      [],
-      "fixture",
-    ],
-    [
-      "settled",
-    ],
-    [
-      "finalize",
-      5,
+      1,
       "仍未完成的截断答案",
     ],
     [
@@ -897,7 +432,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
           "role": "assistant",
         },
         "completedToolResults": [],
-        "iteration": 5,
+        "iteration": 1,
         "model": "fixture",
         "pendingToolCalls": [],
         "phase": "final_response",
@@ -908,7 +443,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
       {
         "error": null,
         "finalContent": "仍未完成的截断答案",
-        "iteration": 5,
+        "iteration": 1,
         "messages": [
           {
             "content": "诊断数据库并输出结论",
@@ -918,34 +453,10 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
             "content": "仍未完成的截断答案",
             "role": "assistant",
           },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
-          {
-            "content": "[System: Your previous response was truncated due to output length. Please continue from where you left off.]",
-            "role": "user",
-          },
-          {
-            "content": "仍未完成的截断答案",
-            "role": "assistant",
-          },
         ],
         "response": {
-          "content": "仍未完成的截断答案",
-          "finishReason": "length",
+          "content": "",
+          "finishReason": "stop",
           "hasToolCalls": false,
           "shouldExecuteTools": false,
           "toolCalls": [],
@@ -1532,29 +1043,68 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
 
 exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_accepted' 1`] = `
 {
-  "requests": 3,
+  "requests": 1,
   "result": {
-    "error": "MODEL_REPETITION_LOOP",
-    "finalContent": "",
+    "error": null,
+    "finalContent": "正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+",
     "hadInjections": false,
     "messages": [
       {
         "content": "诊断数据库并输出结论",
         "role": "user",
       },
+      {
+        "content": "正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+",
+        "role": "assistant",
+        "tool_calls": undefined,
+      },
     ],
-    "resolution": {
-      "kind": "failed",
-      "reasonCode": "MODEL_REPETITION_LOOP",
-      "retryable": false,
-      "safePartialContent": "",
-    },
-    "stopReason": "error",
+    "stopReason": "completed",
     "toolEvents": [],
     "toolsUsed": [],
     "usage": {
-      "completion_tokens": 3,
-      "prompt_tokens": 3,
+      "completion_tokens": 1,
+      "prompt_tokens": 1,
     },
   },
   "trace": [
@@ -1623,19 +1173,72 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
 ",
     ],
     [
+      "checkpoint",
+      {
+        "assistantMessage": {
+          "content": "正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+",
+          "role": "assistant",
+        },
+        "completedToolResults": [],
+        "iteration": 0,
+        "model": "fixture",
+        "pendingToolCalls": [],
+        "phase": "final_response",
+      },
+    ],
+    [
       "after",
       {
         "error": null,
-        "finalContent": "",
+        "finalContent": "正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+正在分析数据库状态……
+",
         "iteration": 0,
         "messages": [
           {
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
-        ],
-        "response": {
-          "content": "正在分析数据库状态……
+          {
+            "content": "正在分析数据库状态……
 正在分析数据库状态……
 正在分析数据库状态……
 正在分析数据库状态……
@@ -1656,105 +1259,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
 正在分析数据库状态……
 正在分析数据库状态……
 ",
-          "finishReason": "stop",
-          "hasToolCalls": false,
-          "shouldExecuteTools": false,
-          "toolCalls": [],
-          "usage": {
-            "completion_tokens": 1,
-            "prompt_tokens": 1,
-          },
-        },
-        "stopReason": null,
-        "streamedContent": false,
-        "streamedReasoning": false,
-        "toolCalls": [],
-        "toolEvents": [],
-        "toolResults": [],
-        "usage": {
-          "completion_tokens": 1,
-          "prompt_tokens": 1,
-        },
-      },
-    ],
-    [
-      "before",
-      {
-        "error": null,
-        "finalContent": null,
-        "iteration": 1,
-        "messages": [
-          {
-            "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-        ],
-        "response": null,
-        "stopReason": null,
-        "streamedContent": false,
-        "streamedReasoning": false,
-        "toolCalls": [],
-        "toolEvents": [],
-        "toolResults": [],
-        "usage": {},
-      },
-    ],
-    [
-      "request-observed",
-    ],
-    [
-      "request",
-      [
-        {
-          "content": "诊断数据库并输出结论",
-          "role": "user",
-        },
-        {
-          "content": "[Runtime: The previous candidate repeated itself. Give a concise substantive answer using available evidence; do not repeat the rejected text.]",
-          "role": "user",
-        },
-      ],
-      [],
-      "fixture",
-    ],
-    [
-      "settled",
-    ],
-    [
-      "finalize",
-      1,
-      "正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-",
-    ],
-    [
-      "after",
-      {
-        "error": null,
-        "finalContent": "",
-        "iteration": 1,
-        "messages": [
-          {
-            "content": "诊断数据库并输出结论",
-            "role": "user",
+            "role": "assistant",
           },
         ],
         "response": {
@@ -1788,130 +1293,7 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
             "prompt_tokens": 1,
           },
         },
-        "stopReason": null,
-        "streamedContent": false,
-        "streamedReasoning": false,
-        "toolCalls": [],
-        "toolEvents": [],
-        "toolResults": [],
-        "usage": {
-          "completion_tokens": 1,
-          "prompt_tokens": 1,
-        },
-      },
-    ],
-    [
-      "before",
-      {
-        "error": null,
-        "finalContent": null,
-        "iteration": 2,
-        "messages": [
-          {
-            "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-        ],
-        "response": null,
-        "stopReason": null,
-        "streamedContent": false,
-        "streamedReasoning": false,
-        "toolCalls": [],
-        "toolEvents": [],
-        "toolResults": [],
-        "usage": {},
-      },
-    ],
-    [
-      "request-observed",
-    ],
-    [
-      "request",
-      [
-        {
-          "content": "诊断数据库并输出结论",
-          "role": "user",
-        },
-        {
-          "content": "[Runtime: Start a fresh concise answer using the original request and tool evidence. Avoid repetitive narration.]",
-          "role": "user",
-        },
-      ],
-      [],
-      "fixture",
-    ],
-    [
-      "settled",
-    ],
-    [
-      "finalize",
-      2,
-      "正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-",
-    ],
-    [
-      "after",
-      {
-        "error": null,
-        "finalContent": "",
-        "iteration": 2,
-        "messages": [
-          {
-            "content": "诊断数据库并输出结论",
-            "role": "user",
-          },
-        ],
-        "response": {
-          "content": "正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-正在分析数据库状态……
-",
-          "finishReason": "stop",
-          "hasToolCalls": false,
-          "shouldExecuteTools": false,
-          "toolCalls": [],
-          "usage": {
-            "completion_tokens": 1,
-            "prompt_tokens": 1,
-          },
-        },
-        "stopReason": null,
+        "stopReason": "completed",
         "streamedContent": false,
         "streamedReasoning": false,
         "toolCalls": [],
@@ -2072,11 +1454,6 @@ exports[`frozen legacy compatibility traces > 'provider error' 1`] = `
         "role": "assistant",
       },
     ],
-    "resolution": {
-      "kind": "failed",
-      "reasonCode": "PROVIDER_ERROR",
-      "retryable": false,
-    },
     "stopReason": "error",
     "toolEvents": [],
     "toolsUsed": [],

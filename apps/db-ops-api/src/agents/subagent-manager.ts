@@ -173,7 +173,13 @@ export class SubagentManager {
         signal: controller.signal,
       });
 
-      subagentRegistry.updateRunStatus(run.runId, 'completed', result.finalContent || undefined);
+      const completed = result.stopReason === 'completed'
+        && (!result.resolution || result.resolution.kind === 'response_ready');
+      const reason = controller.signal.aborted ? 'RUN_DEADLINE'
+        : result.resolution?.reasonCode ?? result.stopReason ?? 'MISSING_STOP_REASON';
+      subagentRegistry.updateRunStatus(run.runId, completed ? 'completed' : 'failed',
+        completed ? result.finalContent || undefined : result.resolution?.safePartialContent,
+        completed ? undefined : redactSensitiveText(reason));
     } catch (err) {
       const errorMessage = redactSensitiveText(err instanceof Error ? err.message : String(err));
       subagentRegistry.updateRunStatus(run.runId, 'failed', undefined, errorMessage);

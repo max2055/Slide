@@ -9,7 +9,8 @@ const response = (content: string, finishReason = 'stop'): LLMResponse => ({
 });
 
 // Frozen against main@07b3e6ce458b0b4576d356a97d78ab17df3ddd66 BEFORE migration.
-// These four fixtures describe known legacy defects, not correct business outcomes.
+// Original traces remain in docs/slide/runtime-v2-source/legacy-runtime-traces.snap.
+// Current snapshots change only for explicitly fixed defects/contracts.
 const scenarios = [
   { name: 'legacy defect: repeated_text_accepted', responses: [response('正在分析数据库状态……\n'.repeat(20))] },
   { name: 'legacy defect: length_exhaustion_accepted', responses: [1, 2, 3, 4].map(i => response(`截断片段${i}`, 'length')) },
