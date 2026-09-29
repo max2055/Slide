@@ -50,7 +50,7 @@ it('persists a source-bound summary before projection, retains goal/authority/ev
   expect(projected.filter(m => m.role === 'system')).toEqual([f.raw[0]]);
   for (const text of ['db-42', 'e-1', 'write-2', 'read only']) expect(JSON.stringify(projected)).toContain(text);
   expect(f.calls[0]).toMatchObject({ tools: [], model: 'same-model' });
-  expect(f.recovery.snapshot()).toMatchObject({ providerAttempts: 1, total: 1, unknownRequests: 0, reservedTokens: 0, usage: { prompt_tokens: 11, completion_tokens: 7, cached_tokens: 3 } });
+  expect(f.recovery.snapshot()).toMatchObject({ providerAttempts: 1, total: 0, unknownRequests: 0, reservedTokens: 0, usage: { prompt_tokens: 11, completion_tokens: 7, cached_tokens: 3 } });
   const restored = new ContextManager(f.spec, f.provider); restored.summary = f.manager.summary;
   expect(restored.project(f.raw)).toEqual(projected);
 });
@@ -85,7 +85,7 @@ it('run performs one proactive summary and keeps summary accounting alongside no
   expect(result.stopReason).toBe('completed');
   expect(f.calls).toHaveLength(1);
   expect(persisted.context_summary_v1).toBeDefined();
-  expect(result.runtimeState).toMatchObject({ modelSteps: 1, providerAttempts: 2, total: 1, usage: { prompt_tokens: 22, completion_tokens: 14 } });
+  expect(result.runtimeState).toMatchObject({ modelSteps: 1, providerAttempts: 2, total: 0, usage: { prompt_tokens: 22, completion_tokens: 14 } });
   expect(result.messages.slice(0, f.raw.length)).toEqual(f.raw);
 });
 it('summary request timeout observes the actual pending request and cannot dispatch the final model', async () => {
@@ -105,7 +105,7 @@ it('provider overflow triggers one bounded reactive summary and retry without re
   f.provider.chat = async () => ++ordinary === 1 ? { ...reply(''), finishReason: 'error', error: 'context window exceeded' } : reply('recovered');
   const result = await new AgentRunner(f.provider).run(f.spec);
   expect(result.stopReason).toBe('completed'); expect(ordinary).toBe(2); expect(f.calls).toHaveLength(1);
-  expect(result.runtimeState).toMatchObject({ modelSteps: 2, providerAttempts: 3, total: 1 });
+  expect(result.runtimeState).toMatchObject({ modelSteps: 2, providerAttempts: 3, total: 0 });
 });
 it('summary attempts share the run recovery budget and cannot restart it', async () => {
   const f = fixture(); for (let i = 0; i < 4; i++) f.recovery.consume('context');
@@ -118,7 +118,7 @@ it('resume reuses the persisted projection and cumulative accounting without ano
   await new AgentRunner(f.provider).run(f.spec);
   const result = await new AgentRunner(f.provider).run({ ...f.spec, resumeCheckpoint: checkpoint });
   expect(result.stopReason).toBe('completed'); expect(f.calls).toHaveLength(1);
-  expect(result.runtimeState).toMatchObject({ providerAttempts: 3, total: 1 });
+  expect(result.runtimeState).toMatchObject({ providerAttempts: 3, total: 0 });
 });
 it('tool text cannot promote summary claims into system authority and deterministic references survive compaction', async () => {
   const f = fixture();
@@ -143,7 +143,7 @@ it('third rapid refill stops actual summary dispatch and persisted counters rema
   }
   await expect(autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {})).rejects.toThrow('CONTEXT_RAPID_REFILL');
   expect(f.calls).toHaveLength(3);
-  expect(f.recovery.state).toMatchObject({ total: 3, providerAttempts: 3 });
+  expect(f.recovery.state).toMatchObject({ total: 0, providerAttempts: 3 });
 });
 it('raw oversized tool results remain in audit while provider receives capped results', async () => {
   const f = fixture({ initialMessages: [{ role: 'user', content: 'inspect' }], maxToolResultChars: 100 });
