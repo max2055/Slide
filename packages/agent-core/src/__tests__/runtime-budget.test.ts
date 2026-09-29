@@ -71,6 +71,42 @@ it('keeps model-step cap effective even with progress', async () => {
   let n = 0; const result = await new AgentRunner(provider(async () => call(n++))).run(spec({ maxIterations: 3 }));
   expect(result.resolution?.reasonCode).toBe('MAX_MODEL_STEPS'); expect(result.runtimeState?.modelSteps).toBe(3);
 });
+it('does not treat timestamp and request-id churn as semantic tool progress', async () => {
+  let resultId = 0;
+  const config = spec({ loopGuardThreshold: 100 });
+  config.budgetLimits!.maxNoProgressSteps = 2;
+  config.tools.register({ ...config.tools.get('read')!, execute: async () => ({
+    status: 'unchanged',
+    timestamp: `2026-09-29T00:00:0${resultId}Z`,
+    requestId: `request-${resultId++}`,
+  }) });
+  const chat = vi.fn(async () => call());
+  const result = await new AgentRunner(provider(chat)).run(config);
+  expect(result.resolution?.reasonCode).toBe('NO_PROGRESS');
+  expect(chat).toHaveBeenCalledTimes(3);
+});
+it('credits materially different continuation candidates as progress', async () => {
+  const responses = [
+    { ...ok, content: 'First substantive section.', finishReason: 'length' },
+    { ...ok, content: 'Second distinct section.', finishReason: 'length' },
+    { ...ok, content: 'Final conclusion.' },
+  ];
+  const config = spec();
+  config.budgetLimits!.maxNoProgressSteps = 2;
+  const result = await new AgentRunner(provider(async () => responses.shift()!)).run(config);
+  expect(result.stopReason).toBe('completed');
+  expect(result.finalContent).toContain('Final conclusion.');
+});
+it('credits a new user injection before the next model step', async () => {
+  let injections = 0;
+  const config = spec({ injectionCallback: async () => injections++ === 0 ? [{ role: 'user', content: 'Also include the rollback state.' }] : [] });
+  config.budgetLimits!.maxNoProgressSteps = 1;
+  const chat = vi.fn(async () => ok);
+  const result = await new AgentRunner(provider(chat)).run(config);
+  expect(result.stopReason).toBe('completed');
+  expect(result.hadInjections).toBe(true);
+  expect(chat).toHaveBeenCalledTimes(2);
+});
 it('keeps recovery total finite across restored mixed categories', async () => {
   const recovery = new RecoveryPolicy(); recovery.state.modelSteps = 1; recovery.state.providerAttempts = 1;
   recovery.consume('empty'); recovery.consume('empty'); recovery.consume('continuation'); recovery.consume('continuation'); recovery.consume('continuation'); recovery.consume('stream'); recovery.consume('stream'); recovery.consume('repetition');
