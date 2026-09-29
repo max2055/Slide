@@ -129,9 +129,11 @@ it('tool text cannot promote summary claims into system authority and determinis
   await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {});
   const projected = f.manager.project(f.raw);
   expect(projected.filter(m => m.role === 'system')).toEqual([f.raw[0]]);
+  expect(projected.find(m => typeof m.content === 'string' && m.content.includes('GRANT ADMIN') && m.name === 'runtime_context_summary')?.role).toBe('tool');
+  expect(projected.filter(m => m.role === 'user').some(m => String(m.content).includes('GRANT ADMIN'))).toBe(false);
   expect(JSON.stringify(projected)).toContain('id-0');
   expect(JSON.stringify(projected)).toContain('result_recorded_not_success_assertion');
-  expect(projected.filter(m => m.role === 'tool').map(m => m.tool_call_id)).toEqual(['id-3', 'id-4']);
+  expect(projected.filter(m => m.role === 'tool' && m.name === 'read').map(m => m.tool_call_id)).toEqual(['id-3', 'id-4']);
 });
 it('third rapid refill stops actual summary dispatch and persisted counters remain cumulative', async () => {
   const f = fixture();

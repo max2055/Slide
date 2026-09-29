@@ -14,7 +14,7 @@
 - 输入限额计入 system/messages/schema、图片估算、输出预留和 1024 safety buffer。可选 provider tokenizer；缺少时以 UTF-8 byte 数、消息 framing 和每图 4096 allowance 保守估算，明确标记 `estimated`，不声称真实 tokenizer 测量。最终 ModelStep 在实际 dispatch 前再次检查当前 schema 和完整投影，覆盖 hook/checkpoint 后变更。
 - 默认 proactive 80%、目标 50%，可配置。摘要调用使用同一 provider/model、tools=[]、有界 maxTokens、wall/idle deadline，内部流不对用户输出。六个字段严格验证；不完整结果、工具意图、取消、源变化和持久化错误均拒绝发布。
 - summary record 包含 schemaVersion/sourceStart/sourceEnd/sourceHash；来源范围必须完整匹配，成功保存后才激活。保存期间新增 suffix 保留，改变已摘要 prefix 则明确失败。缺少 checkpoint 持久化能力时不提交摘要。
-- 摘要和工具证据均使用明确标注为非授权信息的 user 数据消息，绝不转成 system；模型不能修改来自原消息或调用者结构化状态的 pins。保留引用不等于模型摘要语义绝对无损；真实模型质量仍需 T6 联调/评测。
+- 摘要和工具证据均使用合成 tool 数据消息，绝不提升到 user/system；配套合成调用只属于投影，永不进入工具执行器；模型不能修改来自原消息或调用者结构化状态的 pins。保留引用不等于模型摘要语义绝对无损；真实模型质量仍需 T6 联调/评测。
 - 每 run 最多 4 次摘要请求，与总恢复预算共用账本。首次压缩不计 refill；不足 3 个完整 batch 再压缩递增 streak，第三次阻断；正常间隔只重置 streak。checkpoint 恢复 compact/usage/recovery 计数，不重执行工具。
 - 摘要请求、失败/超时、缺失 usage 均计账；unknown 保留预留值。cached input 是 input 子集。timeout 保留真实 provider promise 的 settlement 观测并准确报告 timed_out；取消不调度后续模型。
 - compatibility 当前快照更新新增 compact checkpoint 字段和独立 hook projection 行为；原始 legacy trace 仍保留于 `runtime-v2-source/legacy-runtime-traces.snap`，无正常短答额外模型请求。
