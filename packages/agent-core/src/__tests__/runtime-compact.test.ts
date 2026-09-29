@@ -158,15 +158,34 @@ it('raw oversized tool results remain in audit while provider receives capped re
   expect(result.stopReason).toBe('completed');
   expect(result.messages.find(m => m.role === 'tool')?.content).toBe('evidence '.repeat(1000));
 });
-it('four normally spaced summaries exhaust the compact budget even after serialization', () => {
+it('normally spaced summaries can exceed the former per-run compact ceiling after serialization', () => {
   const tracker = new RapidRefill();
   for (let i = 0; i < 4; i++) {
     tracker.begin(); tracker.commit();
     tracker.completeBatch(); tracker.completeBatch(); tracker.completeBatch();
   }
   const restored = new RapidRefill(JSON.parse(JSON.stringify(tracker.snapshot())));
-  expect(() => restored.begin()).toThrow('limit');
-  expect(restored.snapshot().compactCount).toBe(4);
+  restored.begin(); restored.commit();
+  expect(restored.snapshot()).toMatchObject({ compactCount: 5, successfulCompacts: 5, rapidRefills: 0 });
+});
+
+it('allows five normally spaced summaries while cumulative provider and token budgets remain authoritative', async () => {
+  const f = fixture();
+  for (let i = 0; i < 5; i++) {
+    await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {});
+    f.tracker.completeBatch(); f.tracker.completeBatch(); f.tracker.completeBatch();
+    for (let batch = 0; batch < 3; batch++) {
+      const id = `phase-${i}-${batch}`;
+      f.raw.push(
+        { role: 'assistant', content: null, tool_calls: [{ id, type: 'function', function: { name: 'read', arguments: '{}' } }] },
+        { role: 'tool', tool_call_id: id, name: 'read', content: `evidence from phase ${i}/${batch}` },
+      );
+    }
+    f.raw.push({ role: 'user', content: `continue phase ${i}` });
+  }
+  expect(f.calls).toHaveLength(5);
+  expect(f.tracker.snapshot()).toMatchObject({ compactCount: 5, successfulCompacts: 5, rapidRefills: 0 });
+  expect(f.recovery.snapshot()).toMatchObject({ providerAttempts: 5, total: 0, counts: { context: 0 } });
 });
 
 it.each(['attempts', 'tokens'])('summary shares the ordinary %s budget before dispatch', async limit => {
