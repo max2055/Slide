@@ -283,3 +283,24 @@ describe('AgentRunner checkpoint restore', () => {
     });
   });
 });
+
+it('loads emitted camelCase checkpoints as well as legacy snake_case messages', () => {
+  const runner = new AgentRunner({ getDefaultModel: () => 'fixture' } as any);
+  const session = createSession('camel');
+  session.metadata.runtime_checkpoint = { assistantMessage: { role: 'assistant', content: 'tool intent' },
+    completedToolResults: [{ role: 'tool', content: 'done', tool_call_id: 'one' }], pendingToolCalls: [] };
+  expect(runner._restoreRuntimeCheckpoint(session)).toBe(true);
+  expect(session.messages.map(m => m.content)).toEqual(['tool intent', 'done']);
+});
+it('restores new checkpoint evidence once while retaining its cumulative ledger', async () => {
+  const { RecoveryPolicy } = await import('../runtime/recovery-policy.js');
+  const runner = new AgentRunner({ getDefaultModel: () => 'fixture' } as any);
+  const session = createSession('persistent-ledger');
+  const recovery = new RecoveryPolicy(); recovery.consume('empty');
+  session.metadata.runtime_checkpoint = { assistantMessage: { role: 'assistant', content: 'evidence' }, runtime_state_v1: recovery.snapshot() };
+  runner._restoreRuntimeCheckpoint(session);
+  session.messages.push({ role: 'user', content: 'new message' });
+  expect(runner._restoreRuntimeCheckpoint(session)).toBe(false);
+  expect(session.messages.filter(m => m.content === 'evidence')).toHaveLength(1);
+  expect((session.metadata.runtime_checkpoint as any).runtime_state_v1.total).toBe(1);
+});

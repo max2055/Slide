@@ -127,7 +127,7 @@ export class AnthropicProvider implements LLMProvider {
   private get client(): Anthropic {
     if (!this.client_) {
       if (!this.config.apiKey) throw new Error('LLM_CREDENTIAL_NOT_CONFIGURED');
-      this.client_ = new Anthropic({ apiKey: this.config.apiKey, baseURL: this.config.baseURL });
+      this.client_ = new Anthropic({ maxRetries: 0, apiKey: this.config.apiKey, baseURL: this.config.baseURL });
     }
     return this.client_;
   }
@@ -172,6 +172,7 @@ export class AnthropicProvider implements LLMProvider {
         error: message,
         errorCode: normalized.errorCode,
         providerStatus: normalized.status,
+        retryAfterMs: normalized.retryAfterMs,
       };
     }
   }
@@ -198,6 +199,9 @@ export class AnthropicProvider implements LLMProvider {
       }, { signal: options?.signal });
 
       for await (const event of stream) {
+        callbacks.onActivity?.();
+        const delta = event.type === 'content_block_delta' ? event.delta as { type: string; thinking?: string } : undefined;
+        if (delta?.type === 'thinking_delta' && delta.thinking) await callbacks.onThinkingDelta?.(delta.thinking);
         if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
           await callbacks.onContentDelta(event.delta.text);
         }
@@ -220,6 +224,7 @@ export class AnthropicProvider implements LLMProvider {
         error: message,
         errorCode: normalized.errorCode,
         providerStatus: normalized.status,
+        retryAfterMs: normalized.retryAfterMs,
       };
     }
   }
@@ -237,8 +242,10 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     const finishReason = mapStopReason(response.stop_reason);
+    const cacheUsage = response.usage as typeof response.usage & { cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
     const usage: Record<string, number> = {
-      prompt_tokens: response.usage?.input_tokens || 0,
+      prompt_tokens: response.usage.input_tokens + (cacheUsage.cache_read_input_tokens ?? 0) + (cacheUsage.cache_creation_input_tokens ?? 0),
+      cached_tokens: cacheUsage.cache_read_input_tokens ?? 0,
       completion_tokens: response.usage?.output_tokens || 0,
     };
 
@@ -247,7 +254,7 @@ export class AnthropicProvider implements LLMProvider {
       finishReason,
       toolCalls,
       usage,
-      shouldExecuteTools: toolCalls.length > 0,
+      shouldExecuteTools: finishReason === 'tool_calls' && toolCalls.length > 0,
       hasToolCalls: toolCalls.length > 0,
     };
   }

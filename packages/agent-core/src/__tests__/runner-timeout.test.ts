@@ -229,24 +229,18 @@ describe("AgentRunner timeout layering", () => {
     expect(result.finalContent).toMatch(/timeout|timed out/i);
   });
 
-  it("streaming call with short LLM timeout does NOT timeout", async () => {
-    // For streaming, wall-clock timeout should be skipped
-    const hook = new RecordingHook(true); // wantsStreaming = true
+  it("streaming requests enforce wall-clock timeouts at the model boundary", async () => {
     const runner = new AgentRunner(new HangingProvider());
-    const spec = makeSpec({
-      llmTimeoutS: 0.1, // Would timeout if applied, but streaming skips it
-      hook,
-    });
+    const result = await runner.run(makeSpec({ llmTimeoutS: 0.02, hook: new RecordingHook(true) }));
+    expect(result.stopReason).toBe('timed_out');
+    expect(result.resolution?.reasonCode).toBe('MODEL_REQUEST_TIMEOUT');
+  });
 
-    // This should hang indefinitely since the provider hangs and there's no streaming idle timeout
-    // We use a shorter overall timeout via Promise.race to avoid test hanging
-    const result = await Promise.race([
-      runner.run(spec),
-      new Promise<"TIMEOUT">((resolve) => setTimeout(() => resolve("TIMEOUT"), 500)),
-    ]);
-
-    // The streaming call should hang (not return timeout), so our race should win with TIMEOUT
-    expect(result).toBe("TIMEOUT");
+  it("streaming idle timeout is distinguished from request timeout", async () => {
+    const runner = new AgentRunner(new HangingProvider());
+    const result = await runner.run(makeSpec({ llmTimeoutS: 1, streamIdleTimeoutS: 0.02, hook: new RecordingHook(true) }));
+    expect(result.stopReason).toBe('timed_out');
+    expect(result.resolution?.reasonCode).toBe('MODEL_IDLE_TIMEOUT');
   });
 
   it("NANOBOT_LLM_TIMEOUT_S env var is used as default when spec.llmTimeoutS is undefined", async () => {

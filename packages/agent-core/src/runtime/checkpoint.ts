@@ -1,3 +1,4 @@
+import { validateRecoverySnapshot } from "./recovery-policy.js";
 import type { AgentRunSpec } from "../types.js";
 
 export class LegacyCheckpoint {
@@ -48,9 +49,11 @@ export class LegacyCheckpoint {
     }
 
     const cp = checkpoint as Record<string, unknown>;
-    const assistantMessage = cp['assistant_message'] as Record<string, unknown> | undefined;
-    const completedToolResults = (cp['completed_tool_results'] as Record<string, unknown>[]) || [];
-    const pendingToolCalls = (cp['pending_tool_calls'] as Record<string, unknown>[]) || [];
+    if (cp.runtime_state_v1 !== undefined) validateRecoverySnapshot(cp.runtime_state_v1);
+    if (cp.messages_restored === true) return false;
+    const assistantMessage = (cp['assistant_message'] ?? cp['assistantMessage']) as Record<string, unknown> | undefined;
+    const completedToolResults = ((cp['completed_tool_results'] ?? cp['completedToolResults']) as Record<string, unknown>[]) || [];
+    const pendingToolCalls = ((cp['pending_tool_calls'] ?? cp['pendingToolCalls']) as Record<string, unknown>[]) || [];
 
     const restoredMessages: Record<string, unknown>[] = [];
 
@@ -113,8 +116,10 @@ export class LegacyCheckpoint {
     // Append only non-overlapping messages
     session.messages.push(...restoredMessages.slice(overlap));
 
-    // Clear checkpoint after restoring
-    this._clearRuntimeCheckpoint(session);
+    // Legacy callers retain their clear-on-restore contract. New ledgers survive;
+    // materialized evidence must not be appended again after another user message.
+    if (cp.runtime_state_v1 === undefined) this._clearRuntimeCheckpoint(session);
+    else cp.messages_restored = true;
 
     return restoredMessages.length > 0;
   }

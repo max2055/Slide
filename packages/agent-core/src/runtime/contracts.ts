@@ -16,3 +16,6 @@ export interface RuntimeStateSnapshot {
   providerAttempts: number;
   toolCalls: number;
 }
+
+/** Versioned cumulative recovery/usage ledger persisted as runtime_state_v1. */
+export type { RecoverySnapshot, RecoveryKind, RecoveryLimits } from "./recovery-policy.js";

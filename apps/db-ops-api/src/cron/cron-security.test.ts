@@ -56,3 +56,18 @@ describe('Cron control-plane SQL regression (audit R3)', () => {
     expect(service.updateRunResult).toHaveBeenCalledWith(2, 'error');
   });
 });
+
+it('records runtime output exhaustion as partial and never releases same-job ownership before settlement', async () => {
+  let settle!: () => void;
+  const executionSettled = new Promise<void>(r => { settle = r; });
+  const execute = vi.fn(async () => ({ finalContent: 'partial', error: 'OUTPUT_LIMIT', stopReason: 'output_limit',
+    resolution: { kind: 'partial', reasonCode: 'OUTPUT_LIMIT' }, toolsUsed: [], toolEvents: [], usage: {}, executionSettled, cancellationPending: true }));
+  const service = { startLog: vi.fn(async () => 1), completeLog: vi.fn(async () => true), updateRunResult: vi.fn() };
+  const manager = new CronManager(service as any, { execute } as any);
+  const job = { id: 89, name: 'recovery', task_description: 'test', timeout_seconds: 1 } as any;
+  await manager.executeJob(job); await manager.executeJob(job);
+  expect(execute).toHaveBeenCalledTimes(1);
+  expect(service.updateRunResult).toHaveBeenCalledWith(89, 'partial');
+  settle(); await executionSettled; await manager.executeJob(job);
+  expect(execute).toHaveBeenCalledTimes(2);
+});

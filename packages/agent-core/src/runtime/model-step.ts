@@ -1,149 +1,59 @@
-import type { AgentHook, AgentHookContext, AgentRunSpec, LLMResponse, Message } from "../types.js";
+import type { AgentHook, AgentHookContext, AgentRunSpec, LLMResponse, Message } from '../types.js';
+import { RuntimeError, cancellationError } from './recovery-policy.js';
 
-function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutS: number, signal?: AbortSignal, onRequest?: (request: Promise<T>) => void): Promise<T> {
-  const controller = new AbortController();
-  return new Promise<T>((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const cleanup = () => {
-      if (timer) clearTimeout(timer);
-      signal?.removeEventListener('abort', cancel);
-    };
-    const cancel = () => {
-      cleanup();
-      const error = signal?.reason ?? new Error('Cancelled');
-      reject(error);
-      controller.abort(error);
-    };
-    if (signal?.aborted) { cancel(); return; }
-    signal?.addEventListener('abort', cancel, { once: true });
-    if (timeoutS > 0) timer = setTimeout(() => {
-      cleanup();
-      const error = new TimeoutError(`LLM request timed out after ${timeoutS}s`);
-      reject(error);
-      controller.abort(error);
-    }, timeoutS * 1000);
-    const request = Promise.resolve().then(() => {
-      controller.signal.throwIfAborted();
-      return operation(controller.signal);
-    });
-    request.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
-    onRequest?.(request);
-  });
+export class TimeoutError extends RuntimeError {
+  constructor(message: string, code = 'MODEL_REQUEST_TIMEOUT') { super(code, message); this.name = 'TimeoutError'; }
 }
 
-export class TimeoutError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'TimeoutError';
-  }
-}
-
+/** Timers belong at the model boundary, including providers that ignore abort. */
 export class ModelStep {
-  constructor(private readonly provider: import("../types.js").LLMProvider) {}
-  async request(
-    spec: AgentRunSpec,
-    messages: Message[],
-    hook: AgentHook,
-    context: AgentHookContext
-  ): Promise<LLMResponse> {
-    const wantsStreaming = hook.wantsStreaming();
-    const tools = spec.tools.getDefinitions();
+  constructor(private readonly provider: import('../types.js').LLMProvider) {}
+  async request(spec: AgentRunSpec, messages: Message[], hook: AgentHook, context: AgentHookContext): Promise<LLMResponse> {
     const timeoutS = spec.llmTimeoutS ?? parseFloat(process.env.NANOBOT_LLM_TIMEOUT_S || '300');
-
-    if (wantsStreaming) {
-      let active = true;
-      try { return await withTimeout(signal => this.provider.chatStream(
-        messages,
-        tools,
-        {
-          onContentDelta: async (delta: string) => {
-            if (!active || signal.aborted) return;
-            if (delta) context.streamedContent = true;
+    const idleS = spec.streamIdleTimeoutS ?? spec.llmTimeoutS ?? (parseFloat(process.env.NANOBOT_STREAM_IDLE_TIMEOUT_S || '0') || undefined);
+    const controller = new AbortController();
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let idle: ReturnType<typeof setTimeout> | undefined;
+    let rejectBoundary!: (error: unknown) => void;
+    const stop = (error: unknown) => { active = false; rejectBoundary(error); controller.abort(error); };
+    const cancel = () => stop(cancellationError(spec.signal));
+    const activity = () => {
+      if (!active || !idleS || !hook.wantsStreaming()) return;
+      clearTimeout(idle);
+      idle = setTimeout(() => stop(new TimeoutError(`LLM stream idle timed out after ${idleS}s`, 'MODEL_IDLE_TIMEOUT')), idleS * 1000);
+    };
+    const boundary = new Promise<never>((_, reject) => { rejectBoundary = reject; });
+    try {
+      if (spec.signal?.aborted) throw cancellationError(spec.signal);
+      spec.signal?.addEventListener('abort', cancel, { once: true });
+      if (timeoutS > 0) timer = setTimeout(() => stop(new TimeoutError(`LLM request timed out after ${timeoutS}s`)), timeoutS * 1000);
+      activity();
+      const options = { model: spec.model, temperature: spec.temperature, maxTokens: spec.maxTokens,
+        reasoningEffort: spec.reasoningEffort, timeoutS, streamIdleTimeoutS: idleS, signal: controller.signal };
+      const request = Promise.resolve().then(() => {
+        controller.signal.throwIfAborted();
+        return hook.wantsStreaming() ? this.provider.chatStream(messages, spec.tools.getDefinitions(), {
+          onActivity: activity,
+          onContentDelta: async delta => {
+            if (!active || controller.signal.aborted) return;
+            if (delta) { activity(); context.streamedContent = true; }
             await hook.onStream(context, delta);
           },
-          onThinkingDelta: async (delta: string) => {
-            if (!active || signal.aborted) return;
-            if (delta) {
-              context.streamedReasoning = true;
-              await hook.emitReasoning(delta);
-            }
+          onThinkingDelta: async delta => {
+            if (!active || controller.signal.aborted) return;
+            if (delta) { activity(); context.streamedReasoning = true; await hook.emitReasoning(delta); }
           },
-        },
-        {
-          model: spec.model,
-          temperature: spec.temperature,
-          maxTokens: spec.maxTokens,
-          reasoningEffort: spec.reasoningEffort,
-          timeoutS,
-          streamIdleTimeoutS: spec.llmTimeoutS
-            ? spec.llmTimeoutS
-            : parseFloat(process.env.NANOBOT_STREAM_IDLE_TIMEOUT_S || '0') || undefined,
-          signal,
-        }
-      ), 0, spec.signal, spec.onProviderRequest);
-      } finally { active = false; }
+          onToolCallDelta: async () => { if (active) activity(); },
+        }, options) : this.provider.chat(messages, spec.tools.getDefinitions(), options);
+      });
+      // Observe the original promise, never the timeout race.
+      spec.onProviderRequest?.(request);
+      return await Promise.race([request, boundary]);
+    } finally {
+      active = false;
+      clearTimeout(timer); clearTimeout(idle);
+      spec.signal?.removeEventListener('abort', cancel);
     }
-
-    // Non-streaming: wrap with wall-clock timeout
-    return withTimeout(
-      signal => this.provider.chat(messages, tools, {
-        model: spec.model,
-        temperature: spec.temperature,
-        maxTokens: spec.maxTokens,
-        reasoningEffort: spec.reasoningEffort,
-        timeoutS,
-        signal,
-      }),
-      timeoutS,
-      spec.signal,
-      spec.onProviderRequest,
-    );
-  }
-
-}
-
-export async function requestFinalizationRetry(
-  spec: AgentRunSpec,
-  messages: Message[],
-  provider: import("../types.js").LLMProvider
-): Promise<LLMResponse> {
-  const retryMessages = [
-    ...messages,
-    {
-      role: "user" as const,
-      content:
-        "[System: Your previous response was empty. " +
-        "Please provide a substantive response to the user's request.]",
-    },
-  ];
-  const timeoutS = spec.llmTimeoutS ?? parseFloat(process.env.NANOBOT_LLM_TIMEOUT_S || '300');
-  try {
-    return await withTimeout(
-      signal => provider.chat(retryMessages, [], {
-        model: spec.model,
-        temperature: spec.temperature,
-        maxTokens: spec.maxTokens,
-        reasoningEffort: spec.reasoningEffort,
-        timeoutS,
-        signal,
-      }),
-      timeoutS,
-      spec.signal,
-      spec.onProviderRequest,
-    );
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    const timedOut = error instanceof TimeoutError;
-    return {
-      content: null,
-      finishReason: 'error',
-      toolCalls: [],
-      usage: {},
-      shouldExecuteTools: false,
-      hasToolCalls: false,
-      errorKind: timedOut ? 'timeout' : 'provider_error',
-      error: message,
-    };
   }
 }
-

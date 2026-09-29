@@ -33,10 +33,18 @@ export interface NormalizedProviderError {
   message: string;
   errorCode?: string;
   status?: number;
+  retryAfterMs?: number;
 }
 
 /** Convert provider HTTP failures into messages an operator can act on. */
 export function normalizeProviderError(error: unknown): NormalizedProviderError {
+  const normalized = normalizeError(error);
+  const headers = (error as { headers?: Headers | Record<string, string> })?.headers;
+  const retry = headers instanceof Headers ? headers.get('retry-after') : headers?.['retry-after'];
+  const delay = retry == null ? NaN : /^\d+(\.\d+)?$/.test(retry) ? Number(retry) * 1000 : Date.parse(retry) - Date.now();
+  return { ...normalized, ...(Number.isFinite(delay) ? { retryAfterMs: Math.max(0, delay) } : {}) };
+}
+function normalizeError(error: unknown): NormalizedProviderError {
   const candidate = error as { status?: unknown; code?: unknown; message?: unknown; error?: { message?: unknown } } | null;
   const status = Number(candidate?.status);
   const rawMessage = String(candidate?.message ?? candidate?.error?.message ?? error ?? 'Unknown provider error');
@@ -59,7 +67,7 @@ export function normalizeProviderError(error: unknown): NormalizedProviderError 
   }
   return {
     ...(Number.isFinite(status) && status > 0 ? { status } : {}),
-    ...(typeof candidate?.code === 'string' ? { errorCode: candidate.code } : {}),
+    ...(typeof candidate?.code === 'string' ? { errorCode: candidate.code } : /APIConnectionError|connection error|fetch failed/i.test(String((error as Error)?.name) + rawMessage) ? { errorCode: 'APIConnectionError' } : {}),
     message: rawMessage,
   };
 }
@@ -74,6 +82,7 @@ export class OpenAIProvider implements LLMProvider {
     model?: string;
   }) {
     this.client = new OpenAI({
+      maxRetries: 0, // Runtime owns the shared attempt/recovery budget.
       apiKey: opts.apiKey,
       baseURL: opts.baseURL || undefined,
     });
@@ -114,6 +123,7 @@ export class OpenAIProvider implements LLMProvider {
         error: message,
         errorCode: normalized.errorCode,
         providerStatus: normalized.status,
+        retryAfterMs: normalized.retryAfterMs,
       };
     }
   }
@@ -124,20 +134,6 @@ export class OpenAIProvider implements LLMProvider {
     callbacks: StreamCallbacks,
     options?: LLMCallOptions,
   ): Promise<LLMResponse> {
-    const idleTimeoutS = options?.streamIdleTimeoutS;
-    const ctrl = new AbortController();
-    const abortFromCaller = () => ctrl.abort();
-    options?.signal?.addEventListener('abort', abortFromCaller, { once: true });
-    let idleTimer: ReturnType<typeof setTimeout> | undefined;
-
-    const resetIdleTimer = () => {
-      if (!idleTimeoutS || idleTimeoutS <= 0) return;
-      if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => {
-        ctrl.abort();
-      }, idleTimeoutS * 1000);
-    };
-
     try {
       const stream = await this.client.chat.completions.create({
         model: options?.model || this.model,
@@ -147,9 +143,11 @@ export class OpenAIProvider implements LLMProvider {
         max_tokens: options?.maxTokens,
         stream: true,
         ...(options?.reasoningEffort ? { reasoning_effort: options.reasoningEffort } as any : {}),
-      }, { signal: ctrl.signal });
+      }, { signal: options?.signal });
 
       let content = "";
+      let finishReason = "error";
+      let usage: Record<string, number> = {};
       let reasoningContent = "";
       // Track partial <think> tag streaming across chunks.
       // Some models (e.g. DeepSeek without native thinking mode) embed reasoning
@@ -162,7 +160,9 @@ export class OpenAIProvider implements LLMProvider {
       const toolCalls: Record<number, { id: string; name: string; arguments: string }> = {};
 
       for await (const chunk of stream as unknown as AsyncIterable<any>) {
-        resetIdleTimer();
+        callbacks.onActivity?.();
+        if (chunk.choices?.[0]?.finish_reason) finishReason = chunk.choices[0].finish_reason;
+        if (chunk.usage) usage = { prompt_tokens: chunk.usage.prompt_tokens, completion_tokens: chunk.usage.completion_tokens };
         const delta = chunk.choices?.[0]?.delta;
         const hasReasoningField = !!(delta as any)?.reasoning_content;
 
@@ -275,22 +275,19 @@ export class OpenAIProvider implements LLMProvider {
         arguments: safeParseJSON(tc.arguments),
       }));
 
-      if (idleTimer) clearTimeout(idleTimer);
-      options?.signal?.removeEventListener('abort', abortFromCaller);
       return {
         content: content || null,
         reasoningContent: reasoningContent || null,
-        finishReason: parsedToolCalls.length > 0 ? "tool_calls" : "stop",
+        finishReason,
         toolCalls: parsedToolCalls,
-        usage: {},
-        shouldExecuteTools: parsedToolCalls.length > 0,
+        usage,
+        ...(finishReason === 'error' ? { error: 'Provider stream ended without a finish reason', errorKind: 'provider_error', errorCode: 'INCOMPLETE_STREAM' } : {}),
+        shouldExecuteTools: finishReason === 'tool_calls' && parsedToolCalls.length > 0,
         hasToolCalls: parsedToolCalls.length > 0,
         // Preserve reasoning_content for DeepSeek thinking mode (required on next turn)
         ...(reasoningContent ? { _extra: { reasoning_content: reasoningContent } } as any : {}),
       };
     } catch (err) {
-      if (idleTimer) clearTimeout(idleTimer);
-      options?.signal?.removeEventListener('abort', abortFromCaller);
       const normalized = normalizeProviderError(err);
       const message = normalized.message;
       console.error("[OpenAIProvider] chatStream() failed:", message);
@@ -305,6 +302,7 @@ export class OpenAIProvider implements LLMProvider {
         error: message,
         errorCode: normalized.errorCode,
         providerStatus: normalized.status,
+        retryAfterMs: normalized.retryAfterMs,
       };
     }
   }
@@ -379,13 +377,12 @@ function parseOpenAIResponse(
 
   const result: LLMResponse = {
     content: typeof content === "string" ? content || null : null,
-    finishReason: toolCalls.length > 0 ? "tool_calls" : "stop",
+    finishReason: choice?.finish_reason ?? "error",
     toolCalls,
     usage: {
-      prompt_tokens: response.usage?.prompt_tokens || 0,
-      completion_tokens: response.usage?.completion_tokens || 0,
+      ...(response.usage ? { prompt_tokens: response.usage.prompt_tokens, completion_tokens: response.usage.completion_tokens } : {}),
     },
-    shouldExecuteTools: toolCalls.length > 0,
+    shouldExecuteTools: choice?.finish_reason === 'tool_calls' && toolCalls.length > 0,
     hasToolCalls: toolCalls.length > 0,
   };
   if (reasoningContent) {

@@ -175,8 +175,8 @@ export class CronManager {
 
       executionSettled = result.executionSettled;
       const durationMs = Date.now() - startTime;
-      const status = result.error ? 'error'
-        : result.stopReason === 'max_iterations' ? 'partial'
+      const status = result.resolution?.kind === 'partial' || result.stopReason === 'max_iterations' ? 'partial'
+        : result.error || result.stopReason !== 'completed' ? 'error'
         : 'success';
 
       await this.jobService.completeLog(logId, status,

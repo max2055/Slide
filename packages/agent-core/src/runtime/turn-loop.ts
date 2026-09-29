@@ -7,11 +7,12 @@ import { createTurnState, transition } from "./turn-state.js";
 import { dropOrphanToolResults, backfillMissingToolResults, microcompact, applyToolResultBudget, snipHistory, normalizeToolResult } from "./legacy-context.js";
 import { AnomalyGuard } from "./anomaly-guard.js";
 import { CompletionSupervisor } from "./supervisor.js";
+import { RecoveryPolicy, RuntimeError, runtimeError, cancellationError, backoff } from './recovery-policy.js';
+import { OutputContinuation } from './output-continuation.js';
 const DEFAULT_ERROR_MESSAGE = "Sorry, I encountered an error calling the AI model.";
 const PERSISTED_MODEL_ERROR_PLACEHOLDER =
   "[Assistant reply unavailable due to model error.]";
-const MAX_EMPTY_RETRIES = 2;
-const MAX_LENGTH_RECOVERIES = 3;
+
 const MAX_INJECTIONS_PER_TURN = 3;
 const MAX_INJECTION_CYCLES = 5;
 const EMPTY_FINAL_RESPONSE_MESSAGE = "[No response — task may have completed.]";
@@ -23,12 +24,25 @@ export class TurnLoop {
   ) {}
   async run(spec: AgentRunSpec): Promise<AgentRunResult> {
     const hook = spec.hook;
+    const recovery = new RecoveryPolicy(spec.resumeCheckpoint?.runtime_state_v1, spec.recoveryLimits);
+    const continuation = new OutputContinuation(typeof spec.resumeCheckpoint?.continuation_content === 'string' ? spec.resumeCheckpoint.continuation_content : '');
+    let checkpoint = spec.resumeCheckpoint ?? {};
+    const saveCheckpoint = spec.checkpointCallback;
+    spec = { ...spec, checkpointCallback: async payload => {
+      checkpoint = { ...checkpoint, ...payload, runtime_state_v1: recovery.snapshot(), continuation_content: continuation.content };
+      if ('assistantMessage' in payload) { delete checkpoint.assistant_message; checkpoint.messages_restored = false; }
+      if ('completedToolResults' in payload) delete checkpoint.completed_tool_results;
+      if ('pendingToolCalls' in payload) delete checkpoint.pending_tool_calls;
+      await saveCheckpoint?.(checkpoint);
+    } };
+    const persistCounters = () => emitCheckpoint(spec, {});
     const supervisor = new CompletionSupervisor();
     const supervisorMode = spec.supervisorMode ?? 'enforce';
     const progress = new AnomalyGuard();
     let toolEpoch = 0;
     let reminder: string | undefined;
     let safeContent = '';
+    let responseReady = false;
     const currentRequest = (messages: Message[]) => {
       const latest = [...messages].reverse().find(m => m.role === 'user');
       return typeof latest?.content === 'string' ? latest.content : '';
@@ -36,11 +50,26 @@ export class TurnLoop {
     let progressEpoch = 0;
     let request = currentRequest(spec.initialMessages);
     let state = createTurnState(spec.initialMessages);
-    for (let iteration = 0; iteration < spec.maxIterations; iteration++) {
+    const pendingTools = spec.resumeCheckpoint?.pendingToolCalls ?? spec.resumeCheckpoint?.pending_tool_calls;
+    if (Array.isArray(pendingTools) && pendingTools.length) {
+      const error = new RuntimeError('TOOL_SETTLEMENT_UNKNOWN', 'Interrupted tool intent requires reconciliation', 'tool');
+      return { ...state, stopReason: 'tool_error', error: error.message, runtimeError: error,
+        resolution: { kind: 'failed', reasonCode: error.code, retryable: false, safePartialContent: '' }, runtimeState: recovery.snapshot() };
+    }
+    state.usage = { ...state.usage, ...recovery.state.usage };
+    for (let iteration = recovery.state.modelSteps; iteration < spec.maxIterations; iteration++) {
       if (spec.signal?.aborted) { state.stopReason = 'cancelled'; state.error = 'Cancelled'; break; }
       state = transition(state, "model_running");
       state.modelSteps++;
       state.providerAttempts++;
+      recovery.state.modelSteps++;
+      recovery.state.providerAttempts++;
+      // Reserve before dispatch: a crash or missing usage must never make this request free.
+      recovery.state.unknownRequests++;
+      const reservation = (spec.contextWindowTokens ?? 200_000) + (spec.maxTokens ?? 4096);
+      recovery.state.reservedTokens += reservation;
+      await persistCounters();
+      if (spec.signal?.aborted) { state.stopReason = 'cancelled'; break; }
       // ── Context governance ──
       let messagesForModel: Message[];
       try {
@@ -75,6 +104,7 @@ export class TurnLoop {
         stopReason: null,
         error: null,
       };
+      messagesForModel = continuation.project(messagesForModel);
       if (reminder) messagesForModel = [...messagesForModel, { role: 'user', content: reminder }];
       reminder = undefined;
       await hook.beforeIteration(context);
@@ -95,6 +125,7 @@ export class TurnLoop {
           hasToolCalls: false,
           errorKind: isTimeout ? "timeout" : "provider_error",
           error: errMsg,
+          runtimeError: runtimeError(e, recovery.state.providerAttempts),
         };
         if (!isTimeout) console.error("[AgentRunner] LLM request failed:", errMsg);
       }
@@ -104,9 +135,15 @@ export class TurnLoop {
       context.usage = { ...rawUsage };
       context.toolCalls = [...response.toolCalls];
       accumulateUsage(state.usage, rawUsage);
+      recovery.state.usage = { ...state.usage };
+      if (Number.isFinite(rawUsage.prompt_tokens) && Number.isFinite(rawUsage.completion_tokens)) {
+        recovery.state.unknownRequests--;
+        recovery.state.reservedTokens -= reservation;
+      }
+      await persistCounters();
+      if (spec.signal?.aborted) { state.stopReason = 'cancelled'; break; }
 
       // Extract reasoning content
-      let cleanedContent = response.content || "";
       if (response.reasoningContent) {
         if (!context.streamedReasoning) {
           // Batch path: reasoning came via reasoning_content field, not streamed
@@ -123,9 +160,10 @@ export class TurnLoop {
       }
 
       // ── Tool execution path ──
-      if (response.shouldExecuteTools && response.toolCalls.length > 0) {
+      if (!response.error && !response.errorKind && response.finishReason !== 'error' && response.finishReason !== 'length' && response.shouldExecuteTools && response.toolCalls.length > 0) {
         state = transition(state, "tools_running");
         state.toolCalls += response.toolCalls.length;
+        recovery.state.toolCalls += response.toolCalls.length;
         context.toolCalls = [...response.toolCalls];
         if (hook.wantsStreaming()) {
           await hook.onStreamEnd(context, true); // resuming
@@ -136,6 +174,7 @@ export class TurnLoop {
           response.toolCalls,
           (response as any)._extra, // Preserve provider-specific fields (e.g., reasoning_content)
         );
+        if (continuation.content) { state.messages.push(buildAssistantMessage(continuation.content)); safeContent += continuation.content; continuation.clear(); }
         safeContent += response.content ?? '';
         state.messages.push(assistantMsg);
         for (const tc of response.toolCalls) state.toolsUsed.push(tc.name);
@@ -149,6 +188,7 @@ export class TurnLoop {
           pendingToolCalls: response.toolCalls.map((tc) => tcToOpenAI(tc)),
         });
 
+        if (spec.signal?.aborted) { state.stopReason = 'cancelled'; break; }
         await hook.beforeExecuteTools(context);
 
         // Execute tools (potentially in parallel)
@@ -159,6 +199,7 @@ export class TurnLoop {
           iteration,
           this.executor,
         );
+        if (spec.signal?.aborted) { state.stopReason = 'cancelled'; break; }
         const nextToolEpoch = progress.progress(results);
         if (nextToolEpoch > toolEpoch) progressEpoch++;
         toolEpoch = nextToolEpoch;
@@ -223,8 +264,6 @@ export class TurnLoop {
           pendingToolCalls: [],
         });
 
-        state.emptyContentRetries = 0;
-        state.lengthRecoveryCount = 0;
 
         const [drained, newCycles2] = await tryDrainInjections(
           spec,
@@ -249,14 +288,15 @@ export class TurnLoop {
       const decision = supervisor.classify(response, clean, request, progressEpoch, supervisorMode);
       if (decision === 'repetition' || decision === 'unresolved_tools') {
         const reasonCode = decision === 'repetition' ? 'MODEL_REPETITION_LOOP' : 'UNRESOLVED_TOOL_CALLS';
-        state.finalContent = safeContent;
+        state.finalContent = safeContent + continuation.content;
         // Clear before callbacks/injections: all exits after rejection see only safe text.
-        state.resolution = { kind: 'failed', reasonCode, retryable: false, safePartialContent: safeContent };
-        await hook.onCandidateRejected?.(context, safeContent, reasonCode);
-        context.finalContent = safeContent;
+        state.resolution = { kind: 'failed', reasonCode, retryable: false, safePartialContent: safeContent + continuation.content };
+        await hook.onCandidateRejected?.(context, safeContent + continuation.content, reasonCode);
+        context.finalContent = safeContent + continuation.content;
         await hook.afterIteration(context);
-        if (decision === 'repetition' && supervisor.recoverRepetition() && !spec.signal?.aborted) {
+        if (decision === 'repetition' && recovery.consume('repetition') && supervisor.recoverRepetition() && !spec.signal?.aborted) {
           reminder = supervisor.reminder();
+          await persistCounters();
           state = transition(state, 'recovering');
           const [drained, cycles] = await tryDrainInjections(spec, state.messages, null, state.injectionCycles, 'after rejected candidate');
           state.injectionCycles = cycles;
@@ -265,55 +305,80 @@ export class TurnLoop {
         }
         state.stopReason = spec.signal?.aborted ? 'cancelled' : 'error';
         state.error = reasonCode;
+        state.runtimeError = new RuntimeError(reasonCode, reasonCode);
+        if (recovery.state.total >= recovery.limits.total) state.resolution!.reasonCode = 'RECOVERY_LIMIT';
         break;
       }
       if (decision === 'empty') {
-        state.emptyContentRetries++;
-        await hook.onCandidateRejected?.(context, safeContent, 'EMPTY_RESPONSE');
-        if (state.emptyContentRetries <= MAX_EMPTY_RETRIES) {
-          if (state.emptyContentRetries === MAX_EMPTY_RETRIES) reminder = "[Runtime: Your previous response was empty. Please provide a substantive response to the user's request.]";
+        await hook.onCandidateRejected?.(context, safeContent + continuation.content, 'EMPTY_RESPONSE');
+        if (recovery.consume('empty')) {
+          reminder = '[Runtime: Your previous response was empty. Please provide a substantive response to the user request.]';
+          state = transition(state, 'recovering');
+          await persistCounters();
           if (hook.wantsStreaming()) await hook.onStreamEnd(context, false);
           await hook.afterIteration(context);
           continue;
         }
-        state.finalContent = '';
+        state.finalContent = continuation.content;
         state.stopReason = 'empty_final_response';
         state.error = EMPTY_FINAL_RESPONSE_MESSAGE;
-        state.resolution = { kind: 'failed', reasonCode: 'EMPTY_RESPONSE', retryable: false, safePartialContent: '' };
-        context.finalContent = '';
+        state.runtimeError = new RuntimeError('EMPTY_RESPONSE', state.error);
+        state.resolution = { kind: 'failed', reasonCode: recovery.state.total >= recovery.limits.total ? 'RECOVERY_LIMIT' : 'EMPTY_RESPONSE', retryable: false, safePartialContent: safeContent + continuation.content };
+        context.finalContent = state.finalContent;
         context.error = state.error;
         context.stopReason = state.stopReason;
         await hook.afterIteration(context);
         break;
       } else if (decision === 'length') {
-        state.lengthRecoveryCount++;
-        if (state.lengthRecoveryCount <= MAX_LENGTH_RECOVERIES) {
+        continuation.append(clean);
+        state.finalContent = continuation.content;
+        if (recovery.consume('continuation')) {
+          state = transition(state, 'recovering');
+          await persistCounters();
           if (hook.wantsStreaming()) await hook.onStreamEnd(context, true);
-          safeContent += clean;
-          state.messages.push(buildAssistantMessage(clean));
-          state.messages.push(buildLengthRecoveryMessage());
           await hook.afterIteration(context);
           continue;
         }
-        state.finalContent = clean;
+        state.stopReason = 'output_limit';
+        state.error = 'OUTPUT_LIMIT';
+        state.runtimeError = new RuntimeError('OUTPUT_LIMIT', 'Output continuation limit reached');
+        state.resolution = { kind: 'partial', reasonCode: 'OUTPUT_LIMIT', retryable: false, safePartialContent: safeContent + continuation.content };
+        appendFinalMessage(state.messages, continuation.content);
+        await persistCounters();
+        context.finalContent = state.finalContent;
+        context.stopReason = state.stopReason;
+        await hook.afterIteration(context);
+        break;
       } else if (decision === 'error') {
+        const error = response.runtimeError ?? runtimeError(response, recovery.state.providerAttempts);
+        // No tool intent or uncertain side effect is replayed by transport recovery.
+        if (error.recoverable && !response.toolCalls.length && !response.hasToolCalls && recovery.consume('stream')) {
+          await hook.onCandidateRejected?.(context, safeContent + continuation.content, error.code);
+          state = transition(state, 'recovering');
+          await persistCounters();
+          await hook.afterIteration(context);
+          try {
+            await backoff(Math.max(recovery.state.counts.stream * 1000, response.retryAfterMs ?? 0), spec.signal);
+          } catch { state.stopReason = 'cancelled'; break; }
+          continue;
+        }
         const afterRejection = state.resolution?.safePartialContent !== undefined;
-        if (afterRejection) await hook.onCandidateRejected?.(context, safeContent, 'PROVIDER_ERROR');
+        if (afterRejection) await hook.onCandidateRejected?.(context, safeContent, error.code);
+        state.runtimeError = error;
         state.finalContent = clean || response.error || spec.errorMessage || DEFAULT_ERROR_MESSAGE;
-        state.stopReason = response.errorKind === 'timeout' ? 'timed_out' : "error";
+        state.stopReason = error.code === 'MODEL_REQUEST_TIMEOUT' || error.code === 'MODEL_IDLE_TIMEOUT' ? 'timed_out' : 'error';
         state.error = state.finalContent;
-        state.resolution = { kind: state.stopReason === 'timed_out' ? 'timed_out' : 'failed', reasonCode: response.errorKind === 'timeout' ? 'MODEL_REQUEST_TIMEOUT' : 'PROVIDER_ERROR', retryable: false, ...(afterRejection ? { safePartialContent: safeContent } : {}) };
+        state.resolution = { kind: state.stopReason === 'timed_out' ? 'timed_out' : 'failed', reasonCode: error.code,
+          retryable: false, ...((afterRejection || continuation.content) ? { safePartialContent: safeContent + continuation.content } : {}) };
         appendModelErrorPlaceholder(state.messages);
         context.finalContent = state.finalContent;
         context.error = state.error;
         context.stopReason = state.stopReason;
         await hook.afterIteration(context);
-        const [sc, nc] = await tryDrainInjections(spec, state.messages, null, state.injectionCycles, "after LLM error", undefined);
-        state.injectionCycles = nc;
-        if (sc) { state.hadInjections = true; progressEpoch++; request = currentRequest(state.messages); continue; }
         break;
       } else {
-        state.finalContent = clean;
+        state.finalContent = continuation.append(clean);
+        continuation.clear();
       }
       // A successful remedy replaces any earlier candidate failure.
       state.stopReason = 'completed';
@@ -365,27 +430,35 @@ export class TurnLoop {
       context.finalContent = state.finalContent;
       context.stopReason = state.stopReason;
       await hook.afterIteration(context);
+      responseReady = true;
       break;
     }
 
-    // A rejected candidate cannot become an implicit success at the step boundary.
-    if (state.phase === 'recovering' && state.stopReason === 'completed') {
+    // Only an accepted final candidate can complete; a tool step or recovery at the boundary cannot.
+    if (state.stopReason === 'completed' && !responseReady) {
       state.stopReason = 'max_iterations';
-      state.finalContent = safeContent;
-      state.resolution = { kind: 'partial', reasonCode: 'MAX_MODEL_STEPS', retryable: false, safePartialContent: safeContent };
-    }
-    // Max iterations reached
-    if (state.stopReason === "completed" && !state.finalContent) {
-      state.stopReason = "max_iterations";
-      state.finalContent =
-        spec.maxIterationsMessage ||
-        `[Maximum iterations (${spec.maxIterations}) reached — task may be incomplete.]`;
-      appendFinalMessage(state.messages, state.finalContent);
+      const partial = safeContent + continuation.content;
+      state.finalContent = partial || spec.maxIterationsMessage || `[Maximum iterations (${spec.maxIterations}) reached — task may be incomplete.]`;
+      state.resolution = { kind: 'partial', reasonCode: 'MAX_MODEL_STEPS', retryable: false, safePartialContent: partial };
+      if (state.phase !== 'recovering') appendFinalMessage(state.messages, state.finalContent);
+      else state.finalContent = partial;
     }
 
-    if (state.stopReason === 'cancelled') state.resolution = { kind: 'cancelled', reasonCode: 'USER_CANCELLED', retryable: false, ...(state.resolution ? { safePartialContent: state.resolution.safePartialContent ?? '' } : {}) };
+    if (continuation.content) appendFinalMessage(state.messages, continuation.content);
+    const applyCancellation = () => {
+      if (!spec.signal?.aborted && state.stopReason !== 'cancelled') return;
+      state.runtimeError = cancellationError(spec.signal);
+      state.stopReason = state.runtimeError.code === 'RUN_DEADLINE' ? 'timed_out' : 'cancelled';
+      state.resolution = { kind: state.stopReason === 'timed_out' ? 'timed_out' : 'cancelled', reasonCode: state.runtimeError.code, retryable: false,
+        ...((state.resolution?.safePartialContent !== undefined || continuation.content) ? { safePartialContent: safeContent + continuation.content } : {}) };
+    };
+    applyCancellation();
+    await emitCheckpoint(spec, { terminal_resolution: state.resolution ?? { kind: state.stopReason === 'completed' ? 'response_ready' : 'partial' } });
+    applyCancellation();
     state = transition(state, state.stopReason === "completed" ? "response_ready" : "terminal");
     return {
+      runtimeState: recovery.snapshot(),
+      ...(state.runtimeError ? { runtimeError: state.runtimeError } : {}),
       finalContent: state.finalContent,
       messages: state.messages,
       toolsUsed: state.toolsUsed,
@@ -485,15 +558,6 @@ function tcToOpenAI(tc: ToolCallRequest) {
       name: tc.name,
       arguments: JSON.stringify(tc.arguments),
     },
-  };
-}
-
-function buildLengthRecoveryMessage(): Message {
-  return {
-    role: "user",
-    content:
-      "[System: Your previous response was truncated due to output length. " +
-      "Please continue from where you left off.]",
   };
 }
 
