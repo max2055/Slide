@@ -57,7 +57,7 @@ export async function autoCompact(
     streamIdleTimeoutS: Math.min(spec.streamIdleTimeoutS && spec.streamIdleTimeoutS > 0 ? spec.streamIdleTimeoutS : 60, 60) };
   const summaryManager = new ContextManager(summarySpec, provider);
   summaryManager.assertFits(messages);
-  if (recovery.state.total >= recovery.limits.total || recovery.state.counts.context >= recovery.limits.context) throw new RuntimeError('RECOVERY_LIMIT', 'Compaction recovery budget exhausted');
+  if (recovery.state.counts.context >= recovery.limits.context) throw new RuntimeError('RECOVERY_LIMIT', 'Compaction failure budget exhausted');
   const reservation = (spec.contextWindowTokens ?? 200_000) + maxTokens;
   assertRequestBudget(spec, recovery.state, reservation);
   tracker.begin();

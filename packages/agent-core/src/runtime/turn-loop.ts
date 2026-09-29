@@ -548,7 +548,7 @@ export class TurnLoop {
     if (state.stopReason === 'completed' && !responseReady) {
       state.stopReason = 'max_iterations';
       const partial = safeContent + continuation.content;
-      state.finalContent = partial || spec.maxIterationsMessage || `[Maximum iterations (${spec.maxIterations}) reached — task may be incomplete.]`;
+      state.finalContent = partial || spec.maxIterationsMessage || `[Emergency model-step fuse (${spec.maxIterations}) reached — task may be incomplete.]`;
       state.resolution = { kind: 'partial', reasonCode: 'MAX_MODEL_STEPS', retryable: false, safePartialContent: partial };
       if (state.phase !== 'recovering') appendFinalMessage(state.messages, state.finalContent);
       else state.finalContent = partial;
