@@ -41,6 +41,8 @@ export class TurnLoop {
     const comparableEvidence = recovery.state.progressKeyId === progressKeyId;
     const evidence = new Set(comparableEvidence ? recovery.state.progressEvidence ?? [] : []);
     let needsProgressBaseline = !comparableEvidence && (recovery.state.progressEvidence?.length ?? 0) > 0;
+    let candidateEvidence = comparableEvidence ? recovery.state.progressCandidate : undefined;
+    let needsCandidateBaseline = !comparableEvidence && recovery.state.progressCandidate !== undefined;
     const continuation = new OutputContinuation(typeof spec.resumeCheckpoint?.continuation_content === 'string' ? spec.resumeCheckpoint.continuation_content : '');
     const compact = new RapidRefill(spec.resumeCheckpoint?.context_state_v1);
     let manager: ContextManager | undefined;
@@ -89,7 +91,7 @@ export class TurnLoop {
       if (spec.signal?.aborted) { state.stopReason = 'cancelled'; state.error = 'Cancelled'; break; }
       if (recovery.state.modelSteps + (recovery.state.delegated?.modelSteps ?? 0) >= spec.maxIterations) break;
       if (spec.budgetLimits && (recovery.state.noProgressSteps ?? 0) >= spec.budgetLimits.maxNoProgressSteps) {
-        stopForBudget(new RuntimeError('NO_PROGRESS', 'No new tool evidence within the progress budget')); break;
+        stopForBudget(new RuntimeError('NO_PROGRESS', 'No material progress within the progress budget')); break;
       }
       state = transition(state, "model_running");
       // Governance must succeed before reserving or dispatching an ordinary request.
@@ -268,7 +270,7 @@ export class TurnLoop {
         if (spec.budgetLimits) {
           for (let i = 0; i < results.length; i++) {
             if (events[i]?.status !== 'ok') continue;
-            const hash = createHmac('sha256', runProgressKey).update((JSON.stringify(results[i]) ?? '').slice(0, 100_000)).digest('hex');
+            const hash = progressFingerprint({ tool: response.toolCalls[i]?.name, arguments: response.toolCalls[i]?.arguments, result: results[i] }, runProgressKey);
             if (!evidence.has(hash) && evidence.size < 256) {
               evidence.add(hash);
               if (!needsProgressBaseline) recovery.state.noProgressSteps = 0;
@@ -353,7 +355,10 @@ export class TurnLoop {
           undefined
         );
         state.injectionCycles = newCycles2;
-        if (drained) { state.hadInjections = true; progressEpoch++; request = currentRequest(state.messages); }
+        if (drained) {
+          state.hadInjections = true; progressEpoch++; request = currentRequest(state.messages);
+          if (spec.budgetLimits) { recovery.state.noProgressSteps = 0; await persistCounters(); }
+        }
 
         await hook.afterIteration(context);
         continue;
@@ -365,6 +370,15 @@ export class TurnLoop {
       const clean = hook.finalizeContent(context, response.content) || "";
 
       const decision = supervisor.classify(response, clean, request, progressEpoch, supervisorMode);
+      if (spec.budgetLimits && decision === 'length') {
+        const nextCandidate = progressFingerprint(clean, runProgressKey);
+        if (nextCandidate !== candidateEvidence) {
+          candidateEvidence = nextCandidate;
+          recovery.state.progressCandidate = nextCandidate;
+          if (!needsCandidateBaseline) recovery.state.noProgressSteps = 0;
+          needsCandidateBaseline = false;
+        }
+      }
       if (supervisorMode === 'observe' && supervisor.observedRepetition) emit('candidate.observe_repetition');
       if (decision === 'repetition' || decision === 'unresolved_tools') {
         emit('candidate.reject');
@@ -382,7 +396,10 @@ export class TurnLoop {
           state = transition(state, 'recovering');
           const [drained, cycles] = await tryDrainInjections(spec, state.messages, null, state.injectionCycles, 'after rejected candidate');
           state.injectionCycles = cycles;
-          if (drained) { state.hadInjections = true; progressEpoch++; request = currentRequest(state.messages); }
+          if (drained) {
+            state.hadInjections = true; progressEpoch++; request = currentRequest(state.messages);
+            if (spec.budgetLimits) { recovery.state.noProgressSteps = 0; await persistCounters(); }
+          }
           continue;
         }
         state.stopReason = spec.signal?.aborted ? 'cancelled' : 'error';
@@ -496,6 +513,7 @@ export class TurnLoop {
         progressEpoch++;
         request = currentRequest(state.messages);
         safeContent += state.finalContent ?? '';
+        if (spec.budgetLimits) { recovery.state.noProgressSteps = 0; await persistCounters(); }
       }
 
       if (hook.wantsStreaming()) {
@@ -629,6 +647,37 @@ function appendInjectedMessages(messages: Message[], injections: Message[]): voi
   }
 }
 
+const VOLATILE_PROGRESS_KEY = /^(?:time(?:stamp)?|created_?at|updated_?at|request_?id|trace_?id|span_?id|correlation_?id)$/i;
+
+/** Hash bounded semantic evidence without persisting raw tool or candidate text. */
+function progressFingerprint(value: unknown, key: Buffer): string {
+  return createHmac('sha256', key).update(stableProgressValue(value).slice(0, 100_000)).digest('hex');
+}
+
+function stableProgressValue(value: unknown, depth = 0, seen = new WeakSet<object>()): string {
+  if (depth > 12) return '"[depth-limit]"';
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if ((trimmed.startsWith('{') || trimmed.startsWith('[')) && trimmed.length <= 100_000) {
+      try { return stableProgressValue(JSON.parse(trimmed), depth + 1, seen); } catch { /* keep text */ }
+    }
+    return JSON.stringify(trimmed.replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/giu, '[timestamp]'));
+  }
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (seen.has(value)) return '"[circular]"';
+  seen.add(value);
+  const result = Array.isArray(value)
+    ? `[${value.slice(0, 512).map(item => stableProgressValue(item, depth + 1, seen)).join(',')}]`
+    : `{${Object.entries(value as Record<string, unknown>)
+      .filter(([name]) => !VOLATILE_PROGRESS_KEY.test(name))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(0, 512)
+      .map(([name, child]) => `${JSON.stringify(name)}:${stableProgressValue(child, depth + 1, seen)}`)
+      .join(',')}}`;
+  seen.delete(value);
+  return result;
+}
+
 function buildAssistantMessage(
   content: string,
   toolCalls?: ToolCallRequest[],
@@ -695,4 +744,3 @@ function accumulateUsage(
     target[key] = (target[key] || 0) + value;
   }
 }
-
