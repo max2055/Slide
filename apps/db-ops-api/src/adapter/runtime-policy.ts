@@ -32,7 +32,9 @@ export function resolveRuntimePolicy(entry: RuntimeEntry, options: { env?: NodeJ
   const oldTimeout = positive(env, 'AGENT_RUN_TIMEOUT_MS');
   const chatTimeout = positive(env, 'AGENT_CHAT_RUN_TIMEOUT_MS');
   const steps = enabled ? positive(env, 'AGENT_MAX_ITERATIONS') : undefined;
-  const defaults = { chat: enabled ? 200 : legacy.maxIterations, invoke: 8, subagent: 25, cron: 40 };
+  // maxIterations remains the compatibility name, but for long chat it is an
+  // emergency runaway fuse above the ordinary resource budgets.
+  const defaults = { chat: enabled ? 1000 : legacy.maxIterations, invoke: 8, subagent: 25, cron: 40 };
   let timeout = entry === 'chat' ? chatTimeout ?? oldTimeout : enabled ? oldTimeout ?? 120_000 : legacy.runTimeoutMs;
   if (entry === 'subagent') timeout = Math.min(timeout ?? 120_000, 120_000);
   if (entry === 'cron') {
@@ -47,7 +49,7 @@ export function resolveRuntimePolicy(entry: RuntimeEntry, options: { env?: NodeJ
     llmTimeoutS: entry === 'invoke' ? 60 : entry === 'cron' ? options.cronTimeoutSeconds ?? 300 : undefined,
   };
   if (enabled) {
-    if (entry === 'chat') policy.maxIterations = Math.min(steps ?? 200, options.maxIterations ?? Infinity);
+    if (entry === 'chat') policy.maxIterations = Math.min(steps ?? 1000, options.maxIterations ?? Infinity);
     policy.llmTimeoutS ??= 300;
     policy.streamIdleTimeoutS = 60;
     policy.toolTimeoutMs = 60_000;
