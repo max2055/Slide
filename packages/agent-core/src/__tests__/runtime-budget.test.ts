@@ -79,7 +79,7 @@ it('does not treat timestamp and request-id churn as semantic tool progress', as
   config.tools.register({ ...config.tools.get('read')!, execute: async () => ({
     status: 'unchanged',
     timestamp: `2026-09-29T00:00:0${resultId}Z`,
-    requestId: `request-${resultId++}`,
+    'request-id': `request-${resultId++}`,
   }) });
   const chat = vi.fn(async () => call());
   const result = await new AgentRunner(provider(chat)).run(config);
@@ -97,6 +97,8 @@ it('credits materially different continuation candidates as progress', async () 
   const result = await new AgentRunner(provider(async () => responses.shift()!)).run(config);
   expect(result.stopReason).toBe('completed');
   expect(result.finalContent).toContain('Final conclusion.');
+  expect(result.runtimeState?.progressKeyId).toMatch(/^[a-f0-9-]{36}$/);
+  expect(JSON.stringify(result.runtimeState)).not.toContain('First substantive section');
 });
 it('credits a new user injection before the next model step', async () => {
   let injections = 0;

@@ -47,6 +47,12 @@ it('does not interpret invalid values as infinite', () => {
   expect(resolveRuntimePolicy('chat', { env: { AGENT_MAX_ITERATIONS: '0' } })).toMatchObject({ runTimeoutMs: undefined, maxIterations: 40 });
   expect(() => resolveRuntimePolicy('chat', { env: { AGENT_RUNTIME_LONG_CHAT: 'yes' } })).toThrow('AGENT_RUNTIME_LONG_CHAT');
 });
+it.each(['invoke', 'subagent'] as const)('preserves legacy invalid-timeout fallback for %s', entry => {
+  expect(resolveRuntimePolicy(entry, { env: { AGENT_RUN_TIMEOUT_MS: '-1' } })).toMatchObject({
+    runTimeoutMs: 120000,
+    source: 'legacy-default',
+  });
+});
 it('respects explicit spec steps, cron timeout and immutable snapshots', () => {
   const env = { AGENT_RUNTIME_LONG_CHAT: 'true' };
   const policy = resolveRuntimePolicy('chat', { env, maxIterations: 7 });
