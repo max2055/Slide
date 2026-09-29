@@ -67,6 +67,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter agent-core typecheck
       - run: pnpm --filter agent-core test
+      - name: Runtime deterministic qualification
+        run: bash scripts/qualification/run-agent-runtime.sh --mode deterministic
 
   sandbox-controller:
     runs-on: ubuntu-latest
@@ -135,6 +137,11 @@ jobs:
           release-critical-paths.spec.ts release-security.spec.ts agent-cancellation.spec.ts
           --grep 'qualification login|qualification security boundary|viewer cannot|Stop cancels'
           --workers=1
+
+      - name: Runtime MySQL transaction and WebSocket qualification
+        run: bash scripts/qualification/run-agent-runtime.sh --mode mysql
+      - name: Runtime candidate isolation and history
+        run: pnpm --filter slide-frontend exec playwright test agent-runtime.spec.ts --workers=1
 
   recovery-qualification:
     runs-on: ubuntu-latest

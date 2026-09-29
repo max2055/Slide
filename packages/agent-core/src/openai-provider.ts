@@ -107,7 +107,7 @@ export class OpenAIProvider implements LLMProvider {
         max_tokens: options?.maxTokens,
       }, { signal: options?.signal });
 
-      return parseOpenAIResponse(response);
+      return { ...parseOpenAIResponse(response), requestId: response._request_id ?? undefined };
     } catch (err) {
       const normalized = normalizeProviderError(err);
       const message = normalized.message;

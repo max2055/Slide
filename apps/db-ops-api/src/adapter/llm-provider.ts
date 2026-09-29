@@ -147,16 +147,16 @@ export class AnthropicProvider implements LLMProvider {
     const anthropicTools = tools.length > 0 ? toAnthropicTools(tools) : undefined;
 
     try {
-      const response = await this.client.messages.create({
+      const { data: response, response: httpResponse } = await this.client.messages.create({
         model,
         system: systemPrompt,
         messages: anthropicMessages,
         tools: anthropicTools,
         max_tokens: options?.maxTokens || 4096,
         temperature: options?.temperature ?? 0.0,
-      }, { signal: options?.signal });
+      }, { signal: options?.signal }).withResponse();
 
-      return this.parseResponse(response);
+      return { ...this.parseResponse(response), requestId: httpResponse.headers.get('request-id') ?? undefined };
     } catch (err) {
       const normalized = normalizeProviderError(err);
       const message = normalized.message;

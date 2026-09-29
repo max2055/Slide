@@ -44,3 +44,12 @@ it('bounds explicit child allowance to parent remainder and rejects exhaustion',
   expect(resolveRuntimePolicy('subagent', { env: {}, parentRemaining })).toMatchObject({ maxIterations: 2, runTimeoutMs: 700, budgetLimits: parentRemaining.budgetLimits });
   expect(() => resolveRuntimePolicy('subagent', { env: {}, parentRemaining: { ...parentRemaining, maxIterations: 0 } })).toThrow('exhausted');
 });
+
+it('freezes supervisor mode and rejects invalid rollout configuration', () => {
+  const env = { AGENT_RUNTIME_SUPERVISOR_MODE: 'observe' };
+  const policy = resolveRuntimePolicy('chat', { env });
+  env.AGENT_RUNTIME_SUPERVISOR_MODE = 'enforce';
+  expect(policy.supervisorMode).toBe('observe');
+  expect(resolveRuntimePolicy('chat', { env }).supervisorMode).toBe('enforce');
+  expect(() => resolveRuntimePolicy('chat', { env: { AGENT_RUNTIME_SUPERVISOR_MODE: 'off' } })).toThrow('AGENT_RUNTIME_SUPERVISOR_MODE');
+});

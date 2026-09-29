@@ -1,3 +1,4 @@
+import { recordRuntimeEvent } from '../platform/runtime-events.js';
 import { resolveRuntimePolicy, runtimeSpec, type RuntimePolicy } from '../adapter/runtime-policy.js';
 /**
  * SubagentManager — wraps AgentRunner for subagent execution.
@@ -174,6 +175,7 @@ export class SubagentManager {
         tools: this._buildSubagentTools(actor),
         model: this.agentRunner.getDefaultModel(),
         ...runtimeSpec(policy),
+        onRuntimeEvent: recordRuntimeEvent,
         onProviderRequest: observe,
         onToolExecution: observe,
         maxToolResultChars: Math.min(this.limits.maxToolResultChars, 10_000),

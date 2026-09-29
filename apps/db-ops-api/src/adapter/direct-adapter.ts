@@ -20,6 +20,7 @@ import { resolveRuntimePolicy, runtimeSpec } from './runtime-policy.js';
 
 import { ChatResponse } from './chat-response.js';
 import { WebSocketServer, WebSocket } from 'ws';
+import { recordRuntimeEvent } from '../platform/runtime-events.js';
 import { platformLogs } from '../platform/structured-log-evidence-adapter.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID, createHash } from 'node:crypto';
@@ -631,7 +632,7 @@ export class DirectAdapter implements IAgentEngine {
                   ...event,
                   ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
                 });
-              }, messageActor, controller.signal, idempotencyKey);
+              }, messageActor, controller.signal, idempotencyKey, persistentRun?.run.id);
               if (chatResult.stopReason === 'completed') {
                 completionAttempted = true;
                 const event = completionEvent ?? { type: 'complete' as const, finalContent: chatResult.finalContent ?? '', resolution: chatResult.resolution };
@@ -824,9 +825,10 @@ export class DirectAdapter implements IAgentEngine {
     _actor?: ActorContext,
     signal?: AbortSignal,
     idempotencyKey?: string,
+    runtimeRunId?: string,
   ): Promise<ChatResult> {
     return this.withSessionLock(sessionKey, () =>
-      this.runChat(sessionKey, message, onEvent, _actor, signal, idempotencyKey),
+      this.runChat(sessionKey, message, onEvent, _actor, signal, idempotencyKey, runtimeRunId),
     );
   }
 
@@ -837,6 +839,7 @@ export class DirectAdapter implements IAgentEngine {
     _actor?: ActorContext,
     signal?: AbortSignal,
     idempotencyKey?: string,
+    runtimeRunId?: string,
   ): Promise<ChatResult> {
     const policy = this.policies.chat;
     // Get or create session via SessionManager (D-07)
@@ -904,6 +907,8 @@ export class DirectAdapter implements IAgentEngine {
         tools: _actor && this.toolsForActor ? this.toolsForActor(_actor) : new ToolRegistry(),
         model: provider.getDefaultModel(),
         ...runtimeSpec(policy),
+        runtimeRunId,
+        onRuntimeEvent: recordRuntimeEvent,
         maxToolResultChars: this.runtimeLimits.maxToolResultChars,
         temperature: 0.0,
         reasoningEffort,
@@ -1061,6 +1066,7 @@ export class DirectAdapter implements IAgentEngine {
         tools: analysisCompletionTools(options?.analysisId),
         model: provider.getDefaultModel(),
         ...runtimeSpec(policy),
+        onRuntimeEvent: recordRuntimeEvent,
         maxToolResultChars: 20000,
         temperature: 0.0,
         hook: invokeHook as any,

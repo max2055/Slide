@@ -41,3 +41,23 @@ if (checkCiAt >= 0) {
   }
   console.log('qualification CI gates valid');
 }
+
+// Runtime qualification is a command index, never proof of a deployed rollout.
+const runtimeCoverage = [
+  ['A1', 'tests/qualification/agent-runtime.ts', 'bash scripts/qualification/run-agent-runtime.sh --mode deterministic'],
+  ['A2', 'packages/agent-core/src/__tests__/fixtures/text-repetition.json', 'bash scripts/qualification/run-agent-runtime.sh --mode deterministic'],
+  ['A3', 'tests/qualification/agent-runtime.ts', 'bash scripts/qualification/run-agent-runtime.sh --mode soak --duration-seconds 1800'],
+  ['A4', 'packages/agent-core/src/__tests__/runtime-budget.test.ts', 'pnpm --filter @slide/agent-core test'],
+  ['A5', 'packages/agent-core/src/__tests__/runtime-recovery.test.ts', 'pnpm --filter @slide/agent-core test'],
+  ['A6', 'packages/agent-core/src/__tests__/runtime-settlement.test.ts', 'pnpm --filter @slide/agent-core test'],
+  ['A7', 'tests/qualification/agent-runtime-mysql.ts', 'bash scripts/qualification/run-agent-runtime.sh --mode mysql'],
+  ['A8', 'frontend/e2e/agent-runtime.spec.ts', 'pnpm --filter slide-frontend exec playwright test agent-runtime.spec.ts agent-cancellation.spec.ts --workers=1'],
+];
+for (const [id, file, command] of runtimeCoverage) {
+  if (!existsSync(resolve(root, file)) || !command) throw new Error(`runtime qualification missing: ${id}`);
+}
+const runtimeCi = readFileSync(resolve(root, '.github/workflows/ci.yml'), 'utf8');
+for (const command of ['run-agent-runtime.sh --mode deterministic', 'run-agent-runtime.sh --mode mysql', 'playwright test agent-runtime.spec.ts']) {
+  if (!runtimeCi.includes(command)) throw new Error(`runtime CI gate missing: ${command}`);
+}
+if (process.argv.includes('--validate')) console.log('runtime qualification A1–A8 commands mapped (provider/soak/rollout need separate evidence)');

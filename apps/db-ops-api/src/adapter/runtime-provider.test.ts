@@ -57,3 +57,13 @@ it.each(['OpenAI', 'Anthropic'])('%s SDK normalizes cached tokens as an input su
   const response = await provider.chat([{ role: 'user', content: 'test' }], [], { model: 'fixture' });
   expect(response.usage).toEqual({ prompt_tokens: 100, completion_tokens: 10, cached_tokens: 60 });
 });
+it.each(['OpenAI', 'Anthropic'])('%s exposes actual HTTP request ID for qualification', async name => {
+  const baseURL = await fixture((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'x-request-id': 'req-runtime-fixture', 'request-id': 'req-runtime-fixture' });
+    res.end(JSON.stringify(name === 'OpenAI'
+      ? { id: 'body-id-is-not-request-id', choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }
+      : { id: 'body-id-is-not-request-id', type: 'message', role: 'assistant', model: 'fixture', stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 1, output_tokens: 1 } }));
+  });
+  const provider = name === 'OpenAI' ? new OpenAIProvider({ apiKey: 'fixture', baseURL }) : new AnthropicProvider({ apiKey: 'fixture', baseURL });
+  expect((await provider.chat([{ role: 'user', content: 'read-only' }], [], {})).requestId).toBe('req-runtime-fixture');
+});
