@@ -70,6 +70,7 @@ it('checks real usage before accepting a final result', async () => {
 it('keeps model-step cap effective even with progress', async () => {
   let n = 0; const result = await new AgentRunner(provider(async () => call(n++))).run(spec({ maxIterations: 3 }));
   expect(result.resolution?.reasonCode).toBe('MAX_MODEL_STEPS'); expect(result.runtimeState?.modelSteps).toBe(3);
+  expect(result.finalContent).toContain('Emergency model-step fuse');
 });
 it('does not treat timestamp and request-id churn as semantic tool progress', async () => {
   let resultId = 0;

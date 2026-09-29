@@ -112,6 +112,15 @@ it('summary attempts share the run recovery budget and cannot restart it', async
   await expect(autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {})).rejects.toThrow('budget');
   expect(f.calls).toHaveLength(0); expect(f.recovery.state.total).toBe(4);
 });
+it('allows normal lifecycle compaction after unrelated recovery categories exhaust their total', async () => {
+  const f = fixture();
+  for (const kind of ['empty', 'empty', 'continuation', 'continuation', 'continuation', 'stream', 'stream', 'repetition'] as const) {
+    expect(f.recovery.consume(kind)).toBe(true);
+  }
+  await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {});
+  expect(f.calls).toHaveLength(1);
+  expect(f.recovery.snapshot()).toMatchObject({ total: 8, counts: { context: 0 }, providerAttempts: 1 });
+});
 it('resume reuses the persisted projection and cumulative accounting without another summary request', async () => {
   const f = fixture({ contextPolicy: { watermark: 0.6 } }); let checkpoint: Record<string, unknown> = {};
   f.spec.checkpointCallback = async p => { checkpoint = structuredClone(p); };
