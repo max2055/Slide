@@ -1,3 +1,5 @@
+import { RapidRefill } from './rapid-refill.js';
+import { validateSummaryRecord } from './auto-compact.js';
 import { validateRecoverySnapshot } from "./recovery-policy.js";
 import type { AgentRunSpec } from "../types.js";
 
@@ -49,6 +51,8 @@ export class LegacyCheckpoint {
     }
 
     const cp = checkpoint as Record<string, unknown>;
+    if (cp.context_state_v1 !== undefined) new RapidRefill(cp.context_state_v1);
+    if (cp.context_summary_v1 !== undefined) validateSummaryRecord(cp.context_summary_v1);
     if (cp.runtime_state_v1 !== undefined) validateRecoverySnapshot(cp.runtime_state_v1);
     if (cp.messages_restored === true) return false;
     const assistantMessage = (cp['assistant_message'] ?? cp['assistantMessage']) as Record<string, unknown> | undefined;

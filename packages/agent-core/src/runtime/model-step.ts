@@ -1,4 +1,5 @@
 import type { AgentHook, AgentHookContext, AgentRunSpec, LLMResponse, Message } from '../types.js';
+import { ContextManager, normalizeToolGroups } from './context-manager.js';
 import { RuntimeError, cancellationError } from './recovery-policy.js';
 
 export class TimeoutError extends RuntimeError {
@@ -33,7 +34,10 @@ export class ModelStep {
         reasoningEffort: spec.reasoningEffort, timeoutS, streamIdleTimeoutS: idleS, signal: controller.signal };
       const request = Promise.resolve().then(() => {
         controller.signal.throwIfAborted();
-        return hook.wantsStreaming() ? this.provider.chatStream(messages, spec.tools.getDefinitions(), {
+        const definitions = spec.tools.getDefinitions();
+        const projection = normalizeToolGroups(messages);
+        new ContextManager(spec, this.provider).assertFits(projection, undefined, definitions);
+        return hook.wantsStreaming() ? this.provider.chatStream(projection, definitions, {
           onActivity: activity,
           onContentDelta: async delta => {
             if (!active || controller.signal.aborted) return;
@@ -45,7 +49,7 @@ export class ModelStep {
             if (delta) { activity(); context.streamedReasoning = true; await hook.emitReasoning(delta); }
           },
           onToolCallDelta: async () => { if (active) activity(); },
-        }, options) : this.provider.chat(messages, spec.tools.getDefinitions(), options);
+        }, options) : this.provider.chat(projection, definitions, options);
       });
       // Observe the original promise, never the timeout race.
       spec.onProviderRequest?.(request);

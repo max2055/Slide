@@ -68,6 +68,8 @@ export interface ToolCallRequest {
 }
 
 export interface LLMProvider {
+  /** Optional exact provider-aware count including schemas and images. */
+  countPromptTokens?(messages: Message[], tools: ToolSchema[]): number;
   /** Default model name. */
   getDefaultModel(): string;
 
@@ -199,6 +201,9 @@ export interface AgentRunSpec {
   loopGuardThreshold?: number;
   workspace?: string;
   sessionKey?: string;
+  contextPolicy?: { watermark?: number; target?: number; summaryMaxTokens?: number };
+  /** Caller-owned facts. Never derive authorization from model summaries. */
+  contextPins?: { goal?: string; constraints?: string[]; pending?: string[]; evidence?: string[]; uncertain?: string[] };
   contextWindowTokens?: number;
   contextBlockLimit?: number;
   providerRetryMode?: string;
