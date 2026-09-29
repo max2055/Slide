@@ -77,18 +77,20 @@
 
 ## Runtime T5：有界长任务与迁移（MAX-91）
 
-配置入口统一为 `adapter/runtime-policy.ts`。DirectAdapter 构造时校验并冻结配置；修改环境后须重建 adapter/重启服务，新 policy 不改写在途执行。LONG_CHAT 默认 false，本次不修改部署环境；试点仍须遵循 T6 的 observe/enforce/long-chat 顺序。
+配置入口统一为 `adapter/runtime-policy.ts`。DirectAdapter 构造时校验并冻结配置；修改环境后须重建 adapter/重启服务，新 policy 不改写在途执行。Chat 默认不设置整轮 deadline；LONG_CHAT 默认 false，仅控制扩展资源预算，试点仍须遵循 T6 的 observe/enforce/long-chat 顺序。
 
 | 入口 | legacy 默认 | LONG_CHAT=true | deadline 来源 |
 | --- | --- | --- | --- |
-| chat | 120s / 40 steps | 无整轮 deadline / 200 steps | 新 `AGENT_CHAT_RUN_TIMEOUT_MS` > 旧 `AGENT_RUN_TIMEOUT_MS` > policy 默认 |
+| chat | 无整轮 deadline / 40 steps | 无整轮 deadline / 1000-step emergency fuse | `AGENT_CHAT_RUN_TIMEOUT_MS` > 显式 `AGENT_RUN_TIMEOUT_MS` > 无 deadline |
 | invoke | 120s / 8 steps | 保持有界 | 旧 timeout；request 保持 60s |
 | subagent | 120s / 25 steps | 保持有界，父剩余额度可收紧 | 旧 timeout 与 120s 取小，父 deadline 再收紧 |
 | cron | job timeout / 40 steps | 保持有界 | job.timeout_seconds（默认 300s）仍独立且权威，不改为 chat/旧全局 120s |
 
-旧 `AGENT_MAX_ITERATIONS` 和服务端显式 `maxIterations` 均生效，后台入口取更严格步数。新模式显式 timeout/iterations 必须是正整数字符串；空串、0、负数、小数、非数字报配置错误，绝不解释为无限。legacy 模式仍按原范围 fallback；新 chat timeout 在 legacy 模式不启用。LONG_CHAT 本身仅接受 true/false。
+旧 `AGENT_MAX_ITERATIONS` 和服务端显式 `maxIterations` 均生效，后台入口取更严格步数；long-chat 的默认 1000 steps 是高于 provider-attempt 等正常预算的最后 runaway fuse。显式 timeout 必须是正整数字符串；空串、0、负数、小数、非数字报配置错误，绝不解释为无限。Chat 专用 timeout 不依赖 LONG_CHAT 开关。LONG_CHAT 本身仅接受 true/false。
 
-新模式四入口有 500 工具、600 provider attempts、1,000,000 total tokens 和 12 个无新工具证据步骤的有限上限。Chat 模型 request 300s、stream idle 60s、工具 60s；服务端工具 `timeoutMs` 更严格时优先。当前审批以 pending 结果返回，不在工具调用内等待人工，因此不会把用户审批等待计入 handler 超时；审批过期/消费/拒绝机制保留。文本 token 与 heartbeat 只能刷新流 idle，不能刷新 request/tool/run deadline 或资源预算。进展证据仅保留有界 HMAC 摘要，密钥不持久化；进程重启后首次工具结果只重建比较基线，不获得无法验证的进展额度。
+新模式四入口有 500 工具、600 provider attempts、1,000,000 total tokens 和 12 个无实质进展步骤的有限上限。进展信号包括去除时间戳/request-id 等噪声后的新工具/执行证据、用户注入和实质变化的续写候选；不使用 embedding 或 LLM judge。Chat 模型 request 300s、stream idle 60s、工具 60s；服务端工具 `timeoutMs` 更严格时优先。当前审批以 pending 结果返回，不在工具调用内等待人工，因此不会把用户审批等待计入 handler 超时；审批过期/消费/拒绝机制保留。文本 token 与 heartbeat 只能刷新流 idle，不能刷新 request/tool/run deadline 或资源预算。进展证据仅保留有界 HMAC 摘要，密钥不持久化；进程重启后首次证据只重建比较基线，不获得无法验证的进展额度。
+
+成功 compact 不再消耗固定的每-run 4 次额度；经过至少 3 个完整工具批次后可以再次 compact。短间隔连续回填仍由 rapid-refill breaker 阻止，失败的 compact 仍消耗 context recovery allowance，所有摘要请求继续计入 provider attempt、token/费用和 checkpoint 累计账本。
 
 计账口径：`prompt_tokens + completion_tokens`，cached_tokens 为 prompt 的子集。每次普通、重试、续写、摘要请求开始前，先按 context window + max output 预留；usage 不完整时保留 reservation 和 unknownRequests。真实 usage 返回后核对上限，再接受结果/调度工具。恢复、压缩不清零累计计数；deadline 以绝对时间持久化，恢复不能重新获得整轮时长。同 request key 重试沿用原账本；不同请求只有在前轮已终止且无 pending tool intent 时才启动新预算，避免过期 deadline 永久锁死会话。旧无 request key 的 checkpoint 保守按恢复处理。
 
