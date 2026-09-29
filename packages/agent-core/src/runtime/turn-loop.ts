@@ -4,7 +4,9 @@ import { ModelStep, TimeoutError } from "./model-step.js";
 import { ToolExecutor, executeTools } from "./tool-executor.js";
 import { emitCheckpoint } from "./checkpoint.js";
 import { createTurnState, transition } from "./turn-state.js";
-import { dropOrphanToolResults, backfillMissingToolResults, microcompact, applyToolResultBudget, snipHistory, normalizeToolResult } from "./legacy-context.js";
+import { ContextManager, ensureNonemptyToolResult } from './context-manager.js';
+import { autoCompact, validateSummaryRecord } from './auto-compact.js';
+import { RapidRefill } from './rapid-refill.js';
 import { AnomalyGuard } from "./anomaly-guard.js";
 import { CompletionSupervisor } from "./supervisor.js";
 import { RecoveryPolicy, RuntimeError, runtimeError, cancellationError, backoff } from './recovery-policy.js';
@@ -26,14 +28,19 @@ export class TurnLoop {
     const hook = spec.hook;
     const recovery = new RecoveryPolicy(spec.resumeCheckpoint?.runtime_state_v1, spec.recoveryLimits);
     const continuation = new OutputContinuation(typeof spec.resumeCheckpoint?.continuation_content === 'string' ? spec.resumeCheckpoint.continuation_content : '');
+    const compact = new RapidRefill(spec.resumeCheckpoint?.context_state_v1);
+    let manager: ContextManager | undefined;
+    let forceCompact = false;
     let checkpoint = spec.resumeCheckpoint ?? {};
     const saveCheckpoint = spec.checkpointCallback;
     spec = { ...spec, checkpointCallback: async payload => {
-      checkpoint = { ...checkpoint, ...payload, runtime_state_v1: recovery.snapshot(), continuation_content: continuation.content };
-      if ('assistantMessage' in payload) { delete checkpoint.assistant_message; checkpoint.messages_restored = false; }
-      if ('completedToolResults' in payload) delete checkpoint.completed_tool_results;
-      if ('pendingToolCalls' in payload) delete checkpoint.pending_tool_calls;
-      await saveCheckpoint?.(checkpoint);
+      const next: Record<string, unknown> = { ...checkpoint, context_state_v1: compact.snapshot(), ...payload, runtime_state_v1: recovery.snapshot(), continuation_content: continuation.content };
+      if ('assistantMessage' in payload) { delete next.assistant_message; next.messages_restored = false; }
+      if ('completedToolResults' in payload) delete next.completed_tool_results;
+      if ('pendingToolCalls' in payload) delete next.pending_tool_calls;
+      await saveCheckpoint?.(next);
+      if ('context_summary_v1' in payload && spec.signal?.aborted) throw cancellationError(spec.signal);
+      checkpoint = next;
     } };
     const persistCounters = () => emitCheckpoint(spec, {});
     const supervisor = new CompletionSupervisor();
@@ -60,33 +67,36 @@ export class TurnLoop {
     for (let iteration = recovery.state.modelSteps; iteration < spec.maxIterations; iteration++) {
       if (spec.signal?.aborted) { state.stopReason = 'cancelled'; state.error = 'Cancelled'; break; }
       state = transition(state, "model_running");
-      state.modelSteps++;
-      state.providerAttempts++;
-      recovery.state.modelSteps++;
-      recovery.state.providerAttempts++;
-      // Reserve before dispatch: a crash or missing usage must never make this request free.
-      recovery.state.unknownRequests++;
-      const reservation = (spec.contextWindowTokens ?? 200_000) + (spec.maxTokens ?? 4096);
-      recovery.state.reservedTokens += reservation;
-      await persistCounters();
-      if (spec.signal?.aborted) { state.stopReason = 'cancelled'; break; }
-      // ── Context governance ──
+      // Governance must succeed before reserving or dispatching an ordinary request.
       let messagesForModel: Message[];
       try {
-        messagesForModel = dropOrphanToolResults(state.messages);
-        messagesForModel = backfillMissingToolResults(messagesForModel);
-        messagesForModel = microcompact(messagesForModel);
-        messagesForModel = applyToolResultBudget(spec, messagesForModel);
-        messagesForModel = snipHistory(spec, messagesForModel, this.getProvider());
-        messagesForModel = dropOrphanToolResults(messagesForModel);
-        messagesForModel = backfillMissingToolResults(messagesForModel);
-      } catch {
-        try {
-          messagesForModel = dropOrphanToolResults(state.messages);
-          messagesForModel = backfillMissingToolResults(messagesForModel);
-        } catch {
-          messagesForModel = state.messages;
+        if (!manager) {
+          manager = new ContextManager({ ...spec, checkpointCallback: saveCheckpoint }, this.getProvider());
+          if (spec.resumeCheckpoint?.context_summary_v1) manager.summary = validateSummaryRecord(spec.resumeCheckpoint.context_summary_v1);
         }
+        messagesForModel = manager.project(state.messages);
+        if (forceCompact || manager.tokens(messagesForModel) > manager.inputBudget * manager.watermark) {
+          const split = manager.split(state.messages);
+          if (forceCompact || split.end > (manager.summary?.sourceEnd ?? 0)) {
+            await autoCompact(manager, state.messages, this.getProvider(), recovery, compact, async (record, compactState) => {
+              await emitCheckpoint(spec, { ...(record ? { context_summary_v1: record } : {}), ...(compactState ? { context_state_v1: compactState } : {}) });
+            });
+            state.usage = { ...recovery.state.usage };
+            messagesForModel = manager.project(state.messages);
+          }
+        }
+        forceCompact = false;
+        messagesForModel = continuation.project(messagesForModel);
+        if (reminder) messagesForModel = [...messagesForModel, { role: 'user', content: reminder }];
+        manager.assertFits(messagesForModel);
+      } catch (cause) {
+        const error = cause instanceof RuntimeError ? cause : new RuntimeError('CONTEXT_GOVERNANCE_ERROR', 'Context governance failed');
+        state.usage = { ...recovery.state.usage };
+        state.runtimeError = error;
+        state.stopReason = error.code === 'MODEL_REQUEST_TIMEOUT' || error.code === 'MODEL_IDLE_TIMEOUT' ? 'timed_out' : 'error'; state.error = error.message;
+        state.finalContent = safeContent + continuation.content;
+        state.resolution = { kind: state.stopReason === 'timed_out' ? 'timed_out' : 'failed', reasonCode: error.code, retryable: false, safePartialContent: state.finalContent };
+        break;
       }
 
       // ── Hook: before iteration ──
@@ -104,10 +114,21 @@ export class TurnLoop {
         stopReason: null,
         error: null,
       };
-      messagesForModel = continuation.project(messagesForModel);
-      if (reminder) messagesForModel = [...messagesForModel, { role: 'user', content: reminder }];
       reminder = undefined;
+      state.modelSteps++; state.providerAttempts++;
+      recovery.state.modelSteps++; recovery.state.providerAttempts++;
+      recovery.state.unknownRequests++;
+      const reservation = (spec.contextWindowTokens ?? 200_000) + (spec.maxTokens ?? 4096);
+      recovery.state.reservedTokens += reservation;
+      await persistCounters();
+      if (spec.signal?.aborted) { state.stopReason = 'cancelled'; break; }
+
       await hook.beforeIteration(context);
+      try { manager.assertFits(messagesForModel); } catch (cause) {
+        state.runtimeError = cause as RuntimeError; state.stopReason = 'error'; state.error = state.runtimeError.message;
+        state.resolution = { kind: 'failed', reasonCode: state.runtimeError.code, retryable: false, safePartialContent: safeContent + continuation.content };
+        break;
+      }
 
       // ── Request LLM ──
       let response: LLMResponse;
@@ -214,7 +235,7 @@ export class TurnLoop {
             role: "tool",
             tool_call_id: tc.id,
             name: tc.name,
-            content: normalizeToolResult(spec, tc.id, tc.name, results[i]),
+            content: ensureNonemptyToolResult(tc.name, results[i]),
           };
           state.messages.push(toolMsg);
           completedToolResults.push(toolMsg);
@@ -255,6 +276,7 @@ export class TurnLoop {
           break;
         }
 
+        compact.completeBatch();
         await emitCheckpoint(spec, {
           phase: "tools_completed",
           iteration,
@@ -351,6 +373,13 @@ export class TurnLoop {
         break;
       } else if (decision === 'error') {
         const error = response.runtimeError ?? runtimeError(response, recovery.state.providerAttempts);
+        if (error.code === 'CONTEXT_OVERFLOW' && !response.toolCalls.length && !response.hasToolCalls) {
+          forceCompact = true;
+          state = transition(state, 'recovering');
+          await hook.onCandidateRejected?.(context, safeContent + continuation.content, error.code);
+          await hook.afterIteration(context);
+          continue;
+        }
         // No tool intent or uncertain side effect is replayed by transport recovery.
         if (error.recoverable && !response.toolCalls.length && !response.hasToolCalls && recovery.consume('stream')) {
           await hook.onCandidateRejected?.(context, safeContent + continuation.content, error.code);

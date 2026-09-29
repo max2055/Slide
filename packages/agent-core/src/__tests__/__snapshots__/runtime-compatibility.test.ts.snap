@@ -50,6 +50,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -112,6 +119,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -143,6 +157,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "第一部分结论。",
         "runtime_state_v1": {
           "counts": {
@@ -204,6 +225,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "第一部分结论。",
         "runtime_state_v1": {
           "counts": {
@@ -236,6 +264,14 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
         "messages": [
           {
             "content": "诊断数据库并输出结论",
+            "role": "user",
+          },
+          {
+            "content": "第一部分结论。",
+            "role": "assistant",
+          },
+          {
+            "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -277,6 +313,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "第一部分结论。",
         "runtime_state_v1": {
           "counts": {
@@ -313,6 +356,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
           "role": "assistant",
         },
         "completedToolResults": [],
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "iteration": 1,
         "messages_restored": false,
@@ -353,8 +403,12 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
             "role": "user",
           },
           {
-            "content": "第一部分结论。第二部分结论。",
+            "content": "第一部分结论。",
             "role": "assistant",
+          },
+          {
+            "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
+            "role": "user",
           },
         ],
         "response": {
@@ -388,6 +442,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: continuation_final
           "role": "assistant",
         },
         "completedToolResults": [],
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "iteration": 1,
         "messages_restored": false,
@@ -479,6 +540,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -541,6 +609,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -572,6 +647,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -633,6 +715,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -665,6 +754,10 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
         "messages": [
           {
             "content": "诊断数据库并输出结论",
+            "role": "user",
+          },
+          {
+            "content": "[Runtime: Your previous response was empty. Please provide a substantive response to the user request.]",
             "role": "user",
           },
         ],
@@ -702,6 +795,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -733,6 +833,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -767,6 +874,10 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
+          {
+            "content": "[Runtime: Your previous response was empty. Please provide a substantive response to the user request.]",
+            "role": "user",
+          },
         ],
         "response": {
           "content": "",
@@ -794,6 +905,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -826,6 +944,10 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
         "messages": [
           {
             "content": "诊断数据库并输出结论",
+            "role": "user",
+          },
+          {
+            "content": "[Runtime: Your previous response was empty. Please provide a substantive response to the user request.]",
             "role": "user",
           },
         ],
@@ -863,6 +985,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -894,6 +1023,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "仍未完成的截断答案",
         "runtime_state_v1": {
           "counts": {
@@ -928,6 +1064,10 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
+          {
+            "content": "[Runtime: Your previous response was empty. Please provide a substantive response to the user request.]",
+            "role": "user",
+          },
         ],
         "response": {
           "content": "仍未完成的截断答案",
@@ -955,6 +1095,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "仍未完成的截断答案",
         "runtime_state_v1": {
           "counts": {
@@ -987,6 +1134,14 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
         "messages": [
           {
             "content": "诊断数据库并输出结论",
+            "role": "user",
+          },
+          {
+            "content": "仍未完成的截断答案",
+            "role": "assistant",
+          },
+          {
+            "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -1028,6 +1183,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "仍未完成的截断答案",
         "runtime_state_v1": {
           "counts": {
@@ -1059,6 +1221,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "仍未完成的截断答案",
         "runtime_state_v1": {
           "counts": {
@@ -1093,6 +1262,14 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
+          {
+            "content": "仍未完成的截断答案",
+            "role": "assistant",
+          },
+          {
+            "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
+            "role": "user",
+          },
         ],
         "response": {
           "content": "仍未完成的截断答案",
@@ -1120,6 +1297,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "仍未完成的截断答案",
         "runtime_state_v1": {
           "counts": {
@@ -1154,6 +1338,14 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
+          {
+            "content": "仍未完成的截断答案",
+            "role": "assistant",
+          },
+          {
+            "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
+            "role": "user",
+          },
         ],
         "response": null,
         "stopReason": null,
@@ -1193,6 +1385,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "仍未完成的截断答案",
         "runtime_state_v1": {
           "counts": {
@@ -1224,6 +1423,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "仍未完成的截断答案",
         "runtime_state_v1": {
           "counts": {
@@ -1258,6 +1464,14 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
+          {
+            "content": "仍未完成的截断答案",
+            "role": "assistant",
+          },
+          {
+            "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
+            "role": "user",
+          },
         ],
         "response": {
           "content": "仍未完成的截断答案",
@@ -1285,6 +1499,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "仍未完成的截断答案",
         "runtime_state_v1": {
           "counts": {
@@ -1319,6 +1540,14 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
+          {
+            "content": "仍未完成的截断答案",
+            "role": "assistant",
+          },
+          {
+            "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
+            "role": "user",
+          },
         ],
         "response": null,
         "stopReason": null,
@@ -1358,6 +1587,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "仍未完成的截断答案",
         "runtime_state_v1": {
           "counts": {
@@ -1389,6 +1625,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "仍未完成的截断答案",
         "runtime_state_v1": {
           "counts": {
@@ -1427,6 +1670,10 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
             "content": "仍未完成的截断答案",
             "role": "assistant",
           },
+          {
+            "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
+            "role": "user",
+          },
         ],
         "response": {
           "content": "仍未完成的截断答案",
@@ -1454,6 +1701,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: empty_finalization
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "仍未完成的截断答案",
         "runtime_state_v1": {
           "counts": {
@@ -1543,6 +1797,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -1605,6 +1866,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -1636,6 +1904,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "截断片段1",
         "runtime_state_v1": {
           "counts": {
@@ -1697,6 +1972,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "截断片段1",
         "runtime_state_v1": {
           "counts": {
@@ -1729,6 +2011,14 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
         "messages": [
           {
             "content": "诊断数据库并输出结论",
+            "role": "user",
+          },
+          {
+            "content": "截断片段1",
+            "role": "assistant",
+          },
+          {
+            "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -1770,6 +2060,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "截断片段1",
         "runtime_state_v1": {
           "counts": {
@@ -1801,6 +2098,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "截断片段1截断片段2",
         "runtime_state_v1": {
           "counts": {
@@ -1835,6 +2139,14 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
+          {
+            "content": "截断片段1",
+            "role": "assistant",
+          },
+          {
+            "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
+            "role": "user",
+          },
         ],
         "response": {
           "content": "截断片段2",
@@ -1862,6 +2174,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "截断片段1截断片段2",
         "runtime_state_v1": {
           "counts": {
@@ -1894,6 +2213,14 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
         "messages": [
           {
             "content": "诊断数据库并输出结论",
+            "role": "user",
+          },
+          {
+            "content": "截断片段1截断片段2",
+            "role": "assistant",
+          },
+          {
+            "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -1935,6 +2262,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "截断片段1截断片段2",
         "runtime_state_v1": {
           "counts": {
@@ -1966,6 +2300,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "截断片段1截断片段2截断片段3",
         "runtime_state_v1": {
           "counts": {
@@ -2000,6 +2341,14 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
+          {
+            "content": "截断片段1截断片段2",
+            "role": "assistant",
+          },
+          {
+            "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
+            "role": "user",
+          },
         ],
         "response": {
           "content": "截断片段3",
@@ -2027,6 +2376,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "截断片段1截断片段2截断片段3",
         "runtime_state_v1": {
           "counts": {
@@ -2059,6 +2415,14 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
         "messages": [
           {
             "content": "诊断数据库并输出结论",
+            "role": "user",
+          },
+          {
+            "content": "截断片段1截断片段2截断片段3",
+            "role": "assistant",
+          },
+          {
+            "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
             "role": "user",
           },
         ],
@@ -2100,6 +2464,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "截断片段1截断片段2截断片段3",
         "runtime_state_v1": {
           "counts": {
@@ -2131,6 +2502,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "截断片段1截断片段2截断片段3截断片段4",
         "runtime_state_v1": {
           "counts": {
@@ -2166,8 +2544,12 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
             "role": "user",
           },
           {
-            "content": "截断片段1截断片段2截断片段3截断片段4",
+            "content": "截断片段1截断片段2截断片段3",
             "role": "assistant",
+          },
+          {
+            "content": "[Runtime: Your previous response was truncated due to output length. Please continue from where you left off.]",
+            "role": "user",
           },
         ],
         "response": {
@@ -2196,6 +2578,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: length_exhaustion_
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "截断片段1截断片段2截断片段3截断片段4",
         "runtime_state_v1": {
           "counts": {
@@ -2281,6 +2670,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -2343,6 +2739,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -2449,6 +2852,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -2475,6 +2885,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -2507,6 +2924,10 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
         "messages": [
           {
             "content": "诊断数据库并输出结论",
+            "role": "user",
+          },
+          {
+            "content": "[Runtime: The previous candidate repeated itself. Give a concise substantive answer using available evidence; do not repeat the rejected text.]",
             "role": "user",
           },
         ],
@@ -2544,6 +2965,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -2603,6 +3031,10 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
+          {
+            "content": "[Runtime: The previous candidate repeated itself. Give a concise substantive answer using available evidence; do not repeat the rejected text.]",
+            "role": "user",
+          },
         ],
         "response": {
           "content": "正在分析数据库状态……
@@ -2650,6 +3082,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -2676,6 +3115,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -2708,6 +3154,10 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
         "messages": [
           {
             "content": "诊断数据库并输出结论",
+            "role": "user",
+          },
+          {
+            "content": "[Runtime: Start a fresh concise answer using the original request and tool evidence. Avoid repetitive narration.]",
             "role": "user",
           },
         ],
@@ -2745,6 +3195,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -2804,6 +3261,10 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
+          {
+            "content": "[Runtime: Start a fresh concise answer using the original request and tool evidence. Avoid repetitive narration.]",
+            "role": "user",
+          },
         ],
         "response": {
           "content": "正在分析数据库状态……
@@ -2851,6 +3312,13 @@ exports[`frozen legacy compatibility traces > 'legacy defect: repeated_text_acce
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -2934,6 +3402,13 @@ exports[`frozen legacy compatibility traces > 'normal response' 1`] = `
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -2996,6 +3471,13 @@ exports[`frozen legacy compatibility traces > 'normal response' 1`] = `
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -3032,6 +3514,13 @@ exports[`frozen legacy compatibility traces > 'normal response' 1`] = `
           "role": "assistant",
         },
         "completedToolResults": [],
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "iteration": 0,
         "messages_restored": false,
@@ -3071,10 +3560,6 @@ exports[`frozen legacy compatibility traces > 'normal response' 1`] = `
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
-          {
-            "content": "诊断完成。",
-            "role": "assistant",
-          },
         ],
         "response": {
           "content": "诊断完成。",
@@ -3107,6 +3592,13 @@ exports[`frozen legacy compatibility traces > 'normal response' 1`] = `
           "role": "assistant",
         },
         "completedToolResults": [],
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "iteration": 0,
         "messages_restored": false,
@@ -3197,6 +3689,13 @@ exports[`frozen legacy compatibility traces > 'provider error' 1`] = `
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -3259,6 +3758,13 @@ exports[`frozen legacy compatibility traces > 'provider error' 1`] = `
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -3298,10 +3804,6 @@ exports[`frozen legacy compatibility traces > 'provider error' 1`] = `
             "content": "诊断数据库并输出结论",
             "role": "user",
           },
-          {
-            "content": "[Assistant reply unavailable due to model error.]",
-            "role": "assistant",
-          },
         ],
         "response": {
           "content": "",
@@ -3330,6 +3832,13 @@ exports[`frozen legacy compatibility traces > 'provider error' 1`] = `
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -3392,6 +3901,13 @@ exports[`frozen legacy compatibility traces > preserves streaming thinking, inje
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -3423,6 +3939,13 @@ exports[`frozen legacy compatibility traces > preserves streaming thinking, inje
     [
       "checkpoint",
       {
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "runtime_state_v1": {
           "counts": {
@@ -3457,6 +3980,13 @@ exports[`frozen legacy compatibility traces > preserves streaming thinking, inje
           "role": "assistant",
         },
         "completedToolResults": [],
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "iteration": 0,
         "messages_restored": false,
@@ -3501,6 +4031,13 @@ exports[`frozen legacy compatibility traces > preserves streaming thinking, inje
           "role": "assistant",
         },
         "completedToolResults": [],
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "iteration": 0,
         "messages_restored": false,
@@ -3545,6 +4082,13 @@ exports[`frozen legacy compatibility traces > preserves streaming thinking, inje
           "role": "assistant",
         },
         "completedToolResults": [],
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "iteration": 0,
         "messages_restored": false,
@@ -3588,6 +4132,13 @@ exports[`frozen legacy compatibility traces > preserves streaming thinking, inje
           "role": "assistant",
         },
         "completedToolResults": [],
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "iteration": 1,
         "messages_restored": false,
@@ -3628,6 +4179,13 @@ exports[`frozen legacy compatibility traces > preserves streaming thinking, inje
           "role": "assistant",
         },
         "completedToolResults": [],
+        "context_state_v1": {
+          "compactCount": 0,
+          "rapidRefills": 0,
+          "schemaVersion": 1,
+          "successfulCompacts": 0,
+          "toolBatchesSinceCompact": 0,
+        },
         "continuation_content": "",
         "iteration": 1,
         "messages_restored": false,
