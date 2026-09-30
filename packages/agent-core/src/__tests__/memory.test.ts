@@ -80,11 +80,12 @@ describe("MemoryStore", () => {
     expect(entries.length).toBeLessThanOrEqual(3);
   });
 
-  it("getMemoryContext() includes MEMORY.md content", async () => {
+  it("getMemoryContext() returns only matched bounded references with explicit scope", async () => {
     const store = new MemoryStore(tempDir);
     await store.writeMemory("Important information.");
-    const ctx = await store.getMemoryContext();
-    expect(ctx).toContain("## Memory");
+    expect(await store.getMemoryContext()).toBeNull();
+    const ctx = await store.getMemoryContext("Important", { workspaceId: "w", actorId: "A", sessionId: "s" });
+    expect(ctx).toContain("legacy/unknown");
     expect(ctx).toContain("Important information");
   });
 

@@ -136,3 +136,33 @@ describe("ContextBuilder", () => {
     expect(prompt).toContain("monitoring specialist");
   });
 });
+
+describe('bounded memory request projection', () => {
+  it('does not infer actor access from workspace; scoped legacy matching is low-authority and bounded', async () => {
+    const directory = createTempDir();
+    try {
+      writeFile(directory, 'MEMORY.md', '# Notes\nMySQL backups retain 14 days.\nRedis cache is disposable.\nMySQL password=fixture');
+      const scope = { workspaceId: 'w', actorId: 'A', sessionId: 's' };
+      const builder = new ContextBuilder(directory, { legacyMemoryScope: scope, memoryRetrievalLimits: { maxCount: 1, maxTokens: 1200 } });
+      expect((await builder.buildBlocks([], 'MySQL')).some(b => b.kind === 'memory')).toBe(false);
+      expect((await builder.buildBlocks([], 'MySQL', undefined, { memoryScope: { ...scope, actorId: 'B' } })).some(b => b.kind === 'memory')).toBe(false);
+      const blocks = await builder.buildBlocks([], 'MySQL backup', undefined, { memoryScope: scope });
+      expect(blocks.find(b => b.kind === 'memory')).toMatchObject({ authority: 'reference', lifetime: 'request', sourceIds: expect.arrayContaining(['MEMORY.md:L2']) });
+      const messages = await builder.buildMessages([], 'MySQL backup', undefined, { memoryScope: scope });
+      expect(messages.filter(m => m.role === 'system').some(m => String(m.content).includes('MySQL'))).toBe(false);
+      expect(messages.find(m => m.role === 'tool')).toMatchObject({ source: 'derived', content: expect.stringContaining('legacy/unknown') });
+      expect(JSON.stringify(messages)).not.toContain('password=fixture');
+      expect((await builder.buildBlocks([], 'unmatched llama', undefined, { memoryScope: scope })).some(b => b.kind === 'memory')).toBe(false);
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+  it('retrieval failure returns no memory and never reads full MEMORY.md', async () => {
+    const directory = createTempDir();
+    try {
+      writeFile(directory, 'MEMORY.md', 'NEVER FALL BACK TO THIS WHOLE FILE');
+      const builder = new ContextBuilder(directory, { memoryRetrieval: async () => { throw new Error('database unavailable'); } });
+      const messages = await builder.buildMessages([], 'question', undefined, { memoryScope: { workspaceId: 'w', actorId: 'A', sessionId: 's' } });
+      expect(messages.some(m => m.role === 'tool')).toBe(false); expect(JSON.stringify(messages)).not.toContain('WHOLE FILE');
+      expect(messages.at(-1)?.content).toBe('question');
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+});

@@ -93,3 +93,6 @@ export { StructuredMemoryStore, memoryHash } from './memory-record.js';
 export type { MemoryKind, MemoryScope, MemorySource, MemoryRecord, MemoryCandidate, MemoryInput, MemoryJob, MemoryLimits } from './memory-record.js';
 export { MemoryPipeline, ProviderMemoryExtractor, DEFAULT_MEMORY_LIMITS } from './memory-pipeline.js';
 export type { MemoryExtractor, CommittedMemorySnapshot, MemorySourceReader } from './memory-pipeline.js';
+export { MemoryRetriever, DEFAULT_RETRIEVAL_LIMITS, memoryReferenceTokens, emptyRetrieval } from './memory-retrieval.js';
+export type { MemoryQuery, MemoryReference, MemoryRetrievalResult, MemoryRetrievalLimits } from './memory-retrieval.js';
+export type { ContextRequest } from './context.js';
