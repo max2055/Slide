@@ -11,7 +11,7 @@ it('future/malformed document uses readable old fields', () => {
 });
 it('REST thinking/text projection is preserved when the rollback snapshot contains think tags', () => {
   const doc = migrateMessageParts({ id: 'rest', role: 'assistant', content: '<think>analysis</think>answer' }).messageParts;
-  const rest = { id: 'rest', role: 'assistant', content: [{ type: 'thinking', thinking: 'analysis' }, { type: 'text', text: 'answer' }] };
+  const rest = { id: 'rest', role: 'assistant', timestamp: 1, content: [{ type: 'thinking', thinking: 'analysis' }, { type: 'text', text: 'answer' }] };
   expect(normalizeMessage({ ...rest, messageParts: doc })).toEqual(normalizeMessage(rest));
 });
 it('mixed image/text keeps both canonical sources visible', () => {
