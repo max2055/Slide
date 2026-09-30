@@ -148,6 +148,10 @@ export type ContentBlock =
 
 export interface AgentHookContext {
   iteration: number;
+  streamAttempt?: number;
+  sourceRequestId?: string;
+  provisionalBytes?: { text: number; reasoning: number; tool: number };
+  streamReset?: import('./runtime/stream-boundary.js').StreamReset;
   messages: Message[];
   response: LLMResponse | null;
   usage: Record<string, number>;

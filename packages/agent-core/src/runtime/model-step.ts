@@ -60,16 +60,17 @@ export class ModelStep {
           onActivity: activity,
           onContentDelta: async delta => {
             if (!active || controller.signal.aborted) return;
-            if (delta) { activity(); context.streamedContent = true; }
+            if (delta) { activity(); context.streamedContent = true; if (context.provisionalBytes) context.provisionalBytes.text += Buffer.byteLength(delta); }
             await queue!.enqueue({ type: 'text', delta });
           },
           onThinkingDelta: async delta => {
             if (!active || controller.signal.aborted) return;
-            if (delta) { activity(); context.streamedReasoning = true; await queue!.enqueue({ type: 'reasoning', delta }); }
+            if (delta) { activity(); context.streamedReasoning = true; if (context.provisionalBytes) context.provisionalBytes.reasoning += Buffer.byteLength(delta); await queue!.enqueue({ type: 'reasoning', delta }); }
           },
           onToolCallDelta: async delta => {
             if (!active || controller.signal.aborted) return;
             activity();
+            if (context.provisionalBytes) context.provisionalBytes.tool += Buffer.byteLength(JSON.stringify(delta));
             // Tool arguments remain provider-owned. This marker fences text
             // coalescing; actual tool_start waits for the model boundary drain.
             await queue!.enqueue({ type: 'tool', delta: JSON.stringify(delta) });

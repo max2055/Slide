@@ -19,7 +19,14 @@ import type { ToolSchema, RuntimeResolution } from '@slide/agent-core';
 export interface TextDeltaEvent {
   type: 'text_delta';
   delta: string;
+  /** Replace text and reasoning together; old clients already replace delta. */
+  reset?: boolean;
+  thinkingContent?: string;
+  anchorId?: string;
+  sourceRequestId?: string;
+  discardedBytes?: number;
 }
+
 
 export interface ToolStartEvent {
   type: 'tool_start';
@@ -87,9 +94,9 @@ export type ChatEvent = (
   | CompleteEvent
   | CancelledEvent
   | ErrorEvent) & {
-    /** Advisory order within this chat delivery; not a durable recovery cursor. */
+    /** Ordered delivery ordinal; only checkpoint snapshots are durable watermarks. */
     sequence?: number;
-    /** Model request ordinal within this run; S2 owns durable recovery epochs. */
+    /** Model request epoch persisted across checkpoint recovery. */
     attempt?: number;
   };
 

@@ -98,3 +98,5 @@ export type { MemoryExtractor, CommittedMemorySnapshot, MemorySourceReader } fro
 export { MemoryRetriever, DEFAULT_RETRIEVAL_LIMITS, memoryReferenceTokens, emptyRetrieval } from './memory-retrieval.js';
 export type { MemoryQuery, MemoryReference, MemoryRetrievalResult, MemoryRetrievalLimits } from './memory-retrieval.js';
 export type { ContextRequest } from './context.js';
+
+export type { StreamAnchor, StreamSnapshot, StreamReset } from './runtime/stream-boundary.js';

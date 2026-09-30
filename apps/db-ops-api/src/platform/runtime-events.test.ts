@@ -25,3 +25,16 @@ it('retains bounded traces and whitelisted cumulative counters in the existing s
   expect(result.gaps).toContain('LOG_BUFFER_TRUNCATED');
   expect(JSON.stringify(result)).not.toContain('private');
 });
+
+it('records reset anchor/request IDs and discarded bytes without prose', async () => {
+  const { StructuredLogEvidenceAdapter } = await import('./structured-log-evidence-adapter.js');
+  const store = new StructuredLogEvidenceAdapter(() => 1000, 20);
+  const record = vi.spyOn(platformLogs, 'record').mockImplementation(input => store.record(input));
+  try {
+    recordRuntimeEvent({ type: 'stream.reset', runId: 'run-1', turnId: 'turn-1', sequence: 1, modelStep: 1,
+      anchorId: '00000000-0000-0000-0000-000000000001', sourceRequestId: '00000000-0000-0000-0000-000000000002', discardedBytes: 52,
+      content: 'private prose' } as unknown as RuntimeEvent);
+    expect(store.query({ component: 'agent' }).groups[0].latestStreamBoundary).toEqual({ anchorId: '00000000-0000-0000-0000-000000000001', sourceRequestId: '00000000-0000-0000-0000-000000000002', discardedBytes: 52 });
+    expect(JSON.stringify(store.query({ component: 'agent' }))).not.toContain('private');
+  } finally { record.mockRestore(); }
+});

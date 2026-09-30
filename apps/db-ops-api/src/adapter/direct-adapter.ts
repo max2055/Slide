@@ -92,7 +92,7 @@ function mapHookEventToChatEvent(
   hook: Partial<AgentHook>,
   onEvent: ChatEventConsumer,
   thinkingHolder?: { text: string },
-  streamHolder?: { text: string; safeContent?: string },
+  streamHolder?: { text: string; safeContent?: string; resetSnapshot?: import('@slide/agent-core').StreamReset },
 ): AgentHook {
   let reasoningActive = false;
   return {
@@ -109,9 +109,13 @@ function mapHookEventToChatEvent(
       signal?.throwIfAborted();
       await onEvent({ type: 'text_delta', delta: streamHolder ? streamHolder.text : delta }, signal);
     },
-    onCandidateRejected: async (_ctx, safeContent) => {
-      if (streamHolder) { streamHolder.text = safeContent; streamHolder.safeContent = safeContent; }
-      await onEvent({ type: 'text_delta', delta: safeContent });
+    onCandidateRejected: async (ctx, safeContent) => {
+      reasoningActive = false;
+      if (thinkingHolder) thinkingHolder.text = ctx.streamReset?.anchor?.reasoning ?? '';
+      if (streamHolder) { streamHolder.text = safeContent; streamHolder.safeContent = safeContent; streamHolder.resetSnapshot = ctx.streamReset; }
+      if (ctx.streamReset?.reasonCode.startsWith('STREAM_CONSUMER_')) return;
+      await onEvent({ type: 'text_delta', delta: safeContent, reset: true, thinkingContent: thinkingHolder?.text ?? '',
+        anchorId: ctx.streamReset?.anchor?.checkpointId, sourceRequestId: ctx.sourceRequestId, discardedBytes: ctx.streamReset?.discardedBytes });
     },
     onStreamEnd: async () => {},
     beforeExecuteTools: async (ctx: AgentHookContext) => {
@@ -202,6 +206,7 @@ export class DirectAdapter implements IAgentEngine {
   private readonly runtimeLimits = loadAgentRuntimeLimits();
   private readonly runLimiter = new ActorConcurrencyLimiter(this.runtimeLimits.maxConcurrentRunsPerActor);
   private wsServer: WebSocketServer | null = null;
+  private streamSnapshots = new Map<string, Extract<ChatEvent, { type: 'text_delta' }> & { runId: string; sessionKey: string }>();
   private activeRuns = new Map<string, { actorId: number; sessionId: string; controller: AbortController }>();
   private sessionOperations = new Map<string, Set<Promise<void>>>();
   private sessionLocks = new Map<string, Promise<void>>();
@@ -792,6 +797,8 @@ export class DirectAdapter implements IAgentEngine {
                   this.sessionSubscribers.set(watchKey, new Set());
                 }
                 this.sessionSubscribers.get(watchKey)!.add(ws);
+                const stream = this.streamSnapshots.get(watchKey);
+                if (stream) this.socketWriter.send(ws, JSON.stringify(stream));
                 // Refresh/reconnect need not retain the original request key.
                 for (const pending of await agentRunService.pendingCompletions(connectionActor.userId, watchKey)) {
                   try {
@@ -949,7 +956,8 @@ export class DirectAdapter implements IAgentEngine {
       metadata: { canonicalRunId: runId, canonicalTurnId: userFactId },
     });
     const currentIndex = session.messages.findIndex(m => m.id === userFactId);
-    if (currentIndex >= 0) session.messages = session.messages.slice(0, currentIndex);
+    const resumingTurn = currentIndex >= 0 && resumeCheckpoint?.runtime_request_key === requestKey;
+    if (currentIndex >= 0 && !resumingTurn) session.messages = session.messages.slice(0, currentIndex);
     const historyBeforeCurrentMessage = session.getHistory(120) as any[];
     session.addMessage('user', message, { id: userFactId, runId, turnId: userFactId });
     const sessThinkingLevel = (sessMeta?.thinkingLevel as string) || undefined;
@@ -967,8 +975,17 @@ export class DirectAdapter implements IAgentEngine {
       { memoryScope, memory: retrieved },
     );
 
+    // A resumed request already has its durable user + tool facts in history.
+    // Remove only the request-local duplicate user frame added by ContextBuilder.
+    if (resumingTurn && historyBeforeCurrentMessage.some(m => m.id === userFactId)) {
+      const index = contextMessages.findLastIndex(m => m.role === 'user');
+      if (index >= 0) contextMessages.splice(index, 1);
+    }
+
     // Create checkpoint callback that persists to session metadata
     const checkpointCallback = async (payload: Record<string, unknown>) => {
+      const streamState = payload.stream_state_v1 as import('@slide/agent-core').StreamSnapshot | undefined;
+      if (streamState) streamState.sequence = Math.max(streamState.sequence, sequence);
       const checkpoint = { ...payload, canonical_run_id: runId, canonical_turn_id: userFactId,
         runtime_request_key: requestKey,
         runtime_policy: { entry: policy.entry, source: policy.source, longChat: policy.longChat, maxIterations: policy.maxIterations, runTimeoutMs: policy.runTimeoutMs } };
@@ -979,24 +996,39 @@ export class DirectAdapter implements IAgentEngine {
         if (facts.length) await canonicalStore.appendToolFacts(_actor, sessionKey, userFactId, facts, Number(payload.iteration ?? 0), checkpoint);
         else await canonicalStore.saveCheckpoint(_actor, sessionKey, checkpoint);
       }
+      const previousCheckpoint = session.metadata.runtime_checkpoint;
+      const previousMessages = [...session.messages];
       session.appendFacts(facts);
       session.metadata.runtime_checkpoint = checkpoint;
       try { await this.sessionManager.save(session); }
-      catch (error) { if (!_actor) throw error; this.sessionManager.invalidate(cacheKey); }
+      catch (error) {
+        if (!_actor) { session.messages = previousMessages; session.metadata.runtime_checkpoint = previousCheckpoint; throw error; }
+        this.sessionManager.invalidate(cacheKey);
+      }
     };
 
     // Create streaming hook that maps to ChatEvent.
     // thinkingHolder captures reasoning text from emitReasoning so it can be
     // embedded in the final message (matching external <think> tag behavior).
     // streamHolder accumulates text deltas for progressive display.
-    const thinkingHolder: { text: string } = { text: '' };
-    const streamHolder: { text: string; safeContent?: string } = { text: '' };
-    let sequence = 0;
-    let attempt = 0;
+    const restoredStream = resumeCheckpoint?.stream_state_v1 as import('@slide/agent-core').StreamSnapshot | undefined;
+    const thinkingHolder: { text: string } = { text: restoredStream?.anchor?.reasoning ?? '' };
+    const streamHolder: { text: string; safeContent?: string; resetSnapshot?: import('@slide/agent-core').StreamReset } = { text: restoredStream?.anchor?.text ?? '', safeContent: restoredStream?.anchor?.text ?? '' };
+    let sequence = restoredStream?.sequence ?? 0;
+    let attempt = restoredStream?.attempt ?? 0;
+    let sourceRequestId = restoredStream?.sourceRequestId;
     const consume = orderedChatConsumer(onEvent, this.streamingLimits);
-    const deliver: ChatEventConsumer = (event, writerSignal) => consume({ ...event, sequence: ++sequence, attempt },
-      writerSignal ?? (['complete', 'error', 'cancelled'].includes(event.type) ? undefined : signal));
-    const hook = mapHookEventToChatEvent({ beforeIteration: () => { attempt++; } }, deliver, thinkingHolder, streamHolder);
+    let streamClosed = false;
+    const deliver: ChatEventConsumer = (event, writerSignal) => {
+      if (streamClosed && !['complete', 'error', 'cancelled'].includes(event.type)) return;
+      const ordered = { ...event, sequence: ++sequence, attempt, sourceRequestId };
+      if (['complete', 'error', 'cancelled'].includes(event.type)) { streamClosed = true; this.streamSnapshots.delete(sessionKey); }
+      else this.streamSnapshots.set(sessionKey, { type: 'text_delta', delta: streamHolder.text, reset: true,
+        thinkingContent: thinkingHolder.text, sequence, attempt, runId, sessionKey,
+        anchorId: (session.metadata.runtime_checkpoint?.stream_state_v1 as import('@slide/agent-core').StreamSnapshot | undefined)?.anchor?.checkpointId });
+      return consume(ordered, writerSignal ?? (['complete', 'error', 'cancelled'].includes(event.type) ? undefined : signal));
+    };
+    const hook = mapHookEventToChatEvent({ beforeIteration: ctx => { attempt = ctx.streamAttempt ?? attempt + 1; sourceRequestId = ctx.sourceRequestId; } }, deliver, thinkingHolder, streamHolder);
 
     let terminalEmitted = false;
     try {
@@ -1040,7 +1072,11 @@ export class DirectAdapter implements IAgentEngine {
         // Cancellation inside a control hook bypasses TurnLoop's normal exit.
         // Preserve cumulative counters and the terminal marker; storage errors
         // still propagate and cannot be converted into a successful cancellation.
-        if (checkpoint) await checkpointCallback({ ...checkpoint, terminal_resolution: resolution });
+        if (checkpoint) {
+          const { reasonCode: _reason, ...stream } = streamHolder.resetSnapshot ?? { reasonCode: '' };
+          await checkpointCallback({ ...checkpoint, ...(streamHolder.resetSnapshot ? { stream_state_v1: stream } : {}),
+            ...(checkpoint.phase === 'final_response' ? { phase: 'stream_reset', assistantMessage: undefined, assistant_message: undefined } : {}), terminal_resolution: resolution });
+        }
         return { stopReason, finalContent: null, usage: counters?.usage, error: cancelled.message, resolution };
       });
 
@@ -1061,6 +1097,9 @@ export class DirectAdapter implements IAgentEngine {
         ? `<think>${thinkingContent}</think>\n\n${cleanContent}`
         : cleanContent;
 
+      // Keep only acknowledged content if local finalization fails.
+      const previousMessages = [...session.messages];
+      const previousCheckpoint = session.metadata.runtime_checkpoint;
       // Keep partial replies in the session context as well as database history.
       if (displayContent && !_actor) {
         const extra: any = {};
@@ -1073,7 +1112,10 @@ export class DirectAdapter implements IAgentEngine {
         delete session.metadata['runtime_checkpoint'];
       }
 
-      if (!_actor) await this.sessionManager.save(session);
+      if (!_actor) {
+        try { await this.sessionManager.save(session); }
+        catch (error) { session.messages = previousMessages; session.metadata.runtime_checkpoint = previousCheckpoint; throw error; }
+      }
 
       terminalEmitted = true;
       const terminalContent = { finalContent: cleanContent, thinkingContent, stopReason, resolution: result.resolution };
@@ -1087,6 +1129,10 @@ export class DirectAdapter implements IAgentEngine {
       return { finalContent: cleanContent, thinkingContent, usage: result.usage, stopReason, resolution: result.resolution };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
+      const anchor = (session.metadata.runtime_checkpoint?.stream_state_v1 as import('@slide/agent-core').StreamSnapshot | undefined)?.anchor;
+      streamHolder.text = streamHolder.safeContent = anchor?.text ?? '';
+      thinkingHolder.text = anchor?.reasoning ?? '';
+      this.streamSnapshots.delete(sessionKey);
       // Do not emit a second terminal event if persistence or delivery failed.
       if (!terminalEmitted) {
         await deliver({ type: 'error', error: errorMessage, stopReason: 'error',
@@ -1146,6 +1192,7 @@ export class DirectAdapter implements IAgentEngine {
       // long-lived streaming connection while waiting for persistence.
       wantsStreaming: () => false,
       beforeIteration: async () => {},
+      onCandidateRejected: async ctx => { thinkingHolder.text = ctx.streamReset?.anchor?.reasoning ?? ''; },
       onStream: async (_ctx: any, delta: string) => { thinkingHolder.text += delta; },
       onStreamEnd: async () => {},
       beforeExecuteTools: async (ctx: any) => {
@@ -1216,7 +1263,7 @@ ${result.finalContent || ''}`
 
       // Broadcast completion to WebSocket clients viewing this session
       const subs = this.sessionSubscribers.get(sessionKey);
-      if (subs && subs.size > 0 && finalContent) {
+      if (subs && subs.size > 0 && (finalContent || result.stopReason !== 'completed')) {
         const msg = JSON.stringify(result.stopReason === 'completed'
           ? { type: 'complete', finalContent, stopReason: result.stopReason, resolution: result.resolution }
           : { type: 'error', finalContent, stopReason: result.stopReason, resolution: result.resolution, error: result.error || result.resolution?.reasonCode || result.stopReason });

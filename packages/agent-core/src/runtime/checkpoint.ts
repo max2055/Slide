@@ -73,6 +73,9 @@ export class LegacyCheckpoint {
     if (cp.context_summary_v1 !== undefined) validateSummaryRecord(cp.context_summary_v1);
     if (cp.runtime_state_v1 !== undefined) validateRecoverySnapshot(cp.runtime_state_v1);
     if (cp.messages_restored === true) return false;
+    // A response_ready checkpoint is a candidate; completion transaction/file
+    // finalization alone may promote it to canonical assistant history.
+    if (cp.stream_state_v1 && cp.phase === 'final_response') { cp.messages_restored = true; return false; }
     const assistantMessage = (cp['assistant_message'] ?? cp['assistantMessage']) as Record<string, unknown> | undefined;
     const completedToolResults = ((cp['completed_tool_results'] ?? cp['completedToolResults']) as Record<string, unknown>[]) || [];
     const pendingToolCalls = ((cp['pending_tool_calls'] ?? cp['pendingToolCalls']) as Record<string, unknown>[]) || [];
