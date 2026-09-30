@@ -56,6 +56,22 @@ python tests/qualification/freeze-token-calibration.py
 - 确定性 Runtime qualification：210 个正常控制样本，无误拒、无漏拒、无额外正常请求。不会据此宣称生产 rollout 通过。
 - contracts:check、qualification:matrix（37/37）、secret scan 通过；lint 无 error（已有 warning）。
 - 原先以隐式 200k 为条件的 long-runtime/streaming/policy fixture 改为显式 200k。旧冻结兼容 trace 只更新本次明确改变的未知 usage 预留数，原历史 trace 不变。
-- `pnpm security:audit` 被既有 DOMPurify 3.4.13 的 low 漏洞 `GHSA-p98j-92pf-mc4p` 阻塞，修复版本 >=3.4.16。本次新增依赖为 js-tiktoken，DOMPurify pin 未变；没有降低审计级别或绕过合并门禁。升级该无关依赖须单独明确授权。
+- 初始提交 `9a03947` 的 `pnpm security:audit` 被既有 DOMPurify 3.4.13 的 low 漏洞 `GHSA-p98j-92pf-mc4p` 阻塞，修复版本 >=3.4.16。该阶段新增依赖为 js-tiktoken，DOMPurify pin 未变；没有降低审计级别或绕过合并门禁。后续最小门禁修复见下面的范围增量记录。
 
 验收 1/2 已有冻结数据及边界证据；3 有控制运行/SDK/累计账本证据；4 的配置准入、兼容和不降低旧上界已验证，**真实当前部署调用仍未验证**。无部署、无付费模型请求、无父任务整链验收。
+
+## 范围 v1.1：最小合并门禁修复（2026-10-01）
+
+保留上述 Token 范围、排除项及初始验证记录。CI run `36762919722` 的 backend 在生产依赖审计处退出 1；GitHub 实际为 4 项成功、1 项失败、3 项跳过，不能把平台的 7 passed 概括当作八项全部成功。失败与 Token 逻辑无关，但直接阻塞本任务明确要求的完整仓库合并门禁，按 AGENTS.md「控制范围扩张」的直接阻塞验收例外，仅将 DOMPurify override 从 3.4.13 升级到 3.4.16，并更新对应 lockfile；没有升级其他依赖、降低审计门槛或扩大部署/付费权限。
+
+修复前再次运行 `pnpm security:audit`，复现同一 advisory；修复后：
+
+- `pnpm install --frozen-lockfile --ignore-scripts` 成功。
+- `pnpm security:audit` 成功，No known vulnerabilities found。
+- `pnpm --filter slide-frontend exec vitest run src/app/ui/views/ai-analysis-result.test.ts src/app/ui/views/alerts-analysis.test.ts`：26 项通过，含 script/iframe/event handler 清理验证。
+- `pnpm --filter slide-frontend test`：80 文件、542 项通过。
+- `pnpm --filter slide-frontend typecheck` 成功。
+- `pnpm --filter slide-frontend build` 成功，CSP 检查通过；既有 chunk 大小/动态导入警告保留。
+- `git diff --check` 成功。Token/core/backend 实现未改变，复用初始有效验证证据；新 head 的完整 CI 仍须单独核验后才可合并。
+
+未使用子代理，硬预算仍未设定；实际累计 token/费用遥测不可用，此范围增量不重置原任务统计。真实供应商与父任务整链验收仍未验证。
