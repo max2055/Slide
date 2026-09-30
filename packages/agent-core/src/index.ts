@@ -88,3 +88,8 @@ export type { RuntimeEvent } from './runtime/events.js';
 
 export { projectContextBlocks, runtimeBlock, currentTime } from './context-block.js';
 export type { ContextBlock } from './context-block.js';
+
+export { StructuredMemoryStore, memoryHash } from './memory-record.js';
+export type { MemoryKind, MemoryScope, MemorySource, MemoryRecord, MemoryCandidate, MemoryInput, MemoryJob, MemoryLimits } from './memory-record.js';
+export { MemoryPipeline, ProviderMemoryExtractor, DEFAULT_MEMORY_LIMITS } from './memory-pipeline.js';
+export type { MemoryExtractor, CommittedMemorySnapshot, MemorySourceReader } from './memory-pipeline.js';

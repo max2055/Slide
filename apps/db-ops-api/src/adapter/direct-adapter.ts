@@ -1,3 +1,4 @@
+import { BusinessMemoryService } from './memory-service.js';
 import { resolveRuntimePolicy, runtimeSpec } from './runtime-policy.js';
 /**
  * DirectAdapter — Default IAgentEngine implementation.
@@ -168,12 +169,15 @@ export interface DirectAdapterOptions {
   memoryStore?: MemoryStore;       // optional, created from workspace if not provided
   actorContextService?: Pick<ActorContextService, 'authenticateAccessToken' | 'revalidateActor'>;
   heartbeatIntervalMs?: number;
+  memoryWorkspaceId?: string;
+  memoryPipeline?: import('@slide/agent-core').MemoryPipeline;
 }
 
 // ── DirectAdapter ──
 
 export class DirectAdapter implements IAgentEngine {
   private runner: AgentRunner;
+  private businessMemory: BusinessMemoryService;
   private providerForPurpose?: DirectAdapterOptions['providerForPurpose'];
   private registry: ToolRegistry;
   private toolsForActor?: (actor: ActorContext) => ToolRegistry;
@@ -205,12 +209,20 @@ export class DirectAdapter implements IAgentEngine {
 
     const workspace = opts.workspace || process.cwd();
     this.memoryStore = opts.memoryStore || new MemoryStore(workspace);
+    this.businessMemory = new BusinessMemoryService(workspace, opts.memoryWorkspaceId ?? process.env.SLIDE_MEMORY_WORKSPACE_ID,
+      async () => this.providerForPurpose ? this.providerForPurpose('memory') : this.provider, opts.memoryPipeline);
     this.skillsLoader = opts.skillsLoader || new SkillsLoader(workspace);
     this.sessionManager = opts.sessionManager || new SessionManager(workspace);
     this.contextBuilder = opts.contextBuilder || new ContextBuilder(workspace, {
       memoryStore: this.memoryStore,
       skillsLoader: this.skillsLoader,
     });
+  }
+
+  /** Post-commit maintenance cannot change chat's durable terminal outcome. */
+  async extractCompletedMemory(actor: ActorContext, sessionId: string, runId: string, signal?: AbortSignal): Promise<void> {
+    try { await this.businessMemory.completed(actor, sessionId, runId, signal); }
+    catch { platformLogs.record({ component: 'agent', eventType: 'memory.extraction_failed', status: 'failed', correlationId: runId }); }
   }
 
   // ── start() — minimal WS transport (D-25 Option B) ──
@@ -551,6 +563,7 @@ export class DirectAdapter implements IAgentEngine {
                     messageId,
                     sessionKey: existingRun.sessionId,
                   }));
+                  if (existingRun.state === 'completed') await this.extractCompletedMemory(messageActor, existingRun.sessionId, existingRun.id);
                   return;
                 }
               } catch (err) {
@@ -598,6 +611,7 @@ export class DirectAdapter implements IAgentEngine {
                   messageId,
                   sessionKey,
                 }));
+                if (persistentRun.run.state === 'completed') await this.extractCompletedMemory(messageActor, sessionKey, persistentRun.run.id, controller.signal);
                 return;
               }
               if (persistentRun) {
@@ -654,6 +668,7 @@ export class DirectAdapter implements IAgentEngine {
                   sendToSession(sessionKey, { type: 'run.snapshot', run: committed, messageId, sessionKey });
                   if (committed.state === 'completed') {
                     sendToSession(sessionKey, { ...(committed.result as { event: ChatEvent }).event, runId: committed.id, sessionKey });
+                    await this.extractCompletedMemory(messageActor, sessionKey, committed.id, controller.signal);
                   }
                 } else {
                   if (event.finalContent || event.thinkingContent) {
@@ -716,6 +731,22 @@ export class DirectAdapter implements IAgentEngine {
             break;
           }
 
+          case 'memory.list':
+          case 'memory.export':
+          case 'memory.delete':
+          case 'memory.share':
+          case 'memory.import':
+          case 'memory.stop':
+          case 'memory.retry': {
+            try {
+              const result = await this.businessMemory.request(connectionActor, String(msg.sessionKey ?? ''), msg.type!, msg);
+              if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'memory.result', operation: msg.type, messageId: msg.messageId, result }));
+            } catch {
+              if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'error', messageId: msg.messageId, error: 'Memory request failed' }));
+            }
+            break;
+          }
+
           case 'chat.history': {
             const historySessionKey = (msg.sessionKey as string) || '';
             try {
@@ -753,6 +784,7 @@ export class DirectAdapter implements IAgentEngine {
                     sendToSession(watchKey, { type: 'run.snapshot', run: recovered, messageId: recovered.messageId, sessionKey: watchKey });
                     if (recovered.state === 'completed') {
                       sendToSession(watchKey, { ...(recovered.result as { event: ChatEvent }).event, runId: recovered.id, sessionKey: watchKey });
+                      await this.extractCompletedMemory(connectionActor, watchKey, recovered.id);
                     }
                   } catch {
                     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'run.snapshot', run: pending, messageId: pending.messageId, sessionKey: watchKey }));
@@ -1218,6 +1250,7 @@ ${result.finalContent || ''}`
    * Used for test cleanup. Not part of IAgentEngine interface.
    */
   async dispose(): Promise<void> {
+    await this.businessMemory.close();
     if (this.wsServer) {
       for (const ws of this.wsServer.clients) {
         if (ws.readyState === WebSocket.OPEN) ws.close(1012, 'Service restart');
