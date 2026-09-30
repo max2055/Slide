@@ -763,7 +763,13 @@ describe('DirectAdapter', () => {
         created: true,
         run: { id: 'provider-failure-run', actorId: actor.userId, sessionId: 'ws-provider-failure-session', messageId: 'failure-message', idempotencyKey: 'failure-key', state: 'running' },
       });
-      const finish = vi.spyOn(agentRunService, 'finish').mockResolvedValue(true);
+      let terminalPersisted = false;
+      const finish = vi.spyOn(agentRunService, 'finish').mockImplementation(async () => {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        terminalPersisted = true;
+        return true;
+      });
+      let persistedAtDelivery = false;
       const complete = vi.spyOn(agentRunService, 'complete').mockImplementation(async (run, event) => ({
         ...run, state: 'completed', result: { event: { ...event, messageSequence: 1 } },
       }));
@@ -804,6 +810,7 @@ describe('DirectAdapter', () => {
               ws.send(JSON.stringify({ type: 'chat.send', message: 'trigger provider failure', messageId: 'failure-message', idempotencyKey: 'failure-key' }));
             }
             if (message.type === 'error' || message.type === 'complete') {
+              persistedAtDelivery = terminalPersisted;
               clearTimeout(timeout);
               ws.close();
               resolve(received);
@@ -821,6 +828,7 @@ describe('DirectAdapter', () => {
             expect.objectContaining({ type: 'complete', finalContent: 'final answer' }));
           expect(finish).not.toHaveBeenCalled();
         } else {
+          expect(persistedAtDelivery).toBe(true);
           expect(complete).not.toHaveBeenCalled();
           expect(addMessage).toHaveBeenCalledTimes(2);
           expect(addMessage).toHaveBeenLastCalledWith(actor, 'ws-provider-failure-session', expect.objectContaining({
