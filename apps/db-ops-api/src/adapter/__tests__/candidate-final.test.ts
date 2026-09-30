@@ -115,6 +115,7 @@ it.each(['USER_CANCELLED', 'RUN_DEADLINE'])('async retraction %s preserves count
   expect(result.stopReason).toBe(kind);
   const checkpoint = sessions.getOrCreate('async-stop').metadata.runtime_checkpoint!;
   expect(checkpoint.terminal_resolution).toMatchObject({ kind, reasonCode: code });
+  expect(checkpoint.stream_state_v1).toMatchObject({ discardedBytes: Buffer.byteLength(bad) });
   expect(checkpoint.runtime_state_v1).toMatchObject({ modelSteps: 1, providerAttempts: 1, unknownRequests: 1 });
   expect(JSON.stringify(sessions.getOrCreate('async-stop').getHistory(120))).not.toContain('正在分析');
 });
@@ -127,4 +128,100 @@ it('a persistence failure concurrent with Stop stays a failure and cannot emit c
   vi.spyOn(sessions, 'save').mockImplementationOnce(async () => { controller.abort(); throw new Error('storage failed'); });
   await expect(adapter.chat('storage-stop', '诊断数据库', event => { events.push(event); }, undefined, controller.signal)).rejects.toThrow('storage failed');
   expect(events.map(e => e.type)).toEqual(['error']);
+});
+
+
+it.each(['rejection', 'thinking-only', 'partial-tool'])('isolates discarded reasoning and text after %s', async failure => {
+  const directory = await mkdtemp(join(tmpdir(), 'stream-reset-')); directories.push(directory);
+  const sessions = new SessionManager(directory);
+  const mock = provider([bad, 'fresh answer']);
+  const original = mock.value.chatStream;
+  mock.value.chatStream = async (messages, tools, stream, options) => {
+    const first = mock.contexts.length === 0;
+    await stream.onThinkingDelta?.(first ? 'discarded thinking' : 'valid thinking');
+    if (first && failure !== 'rejection') {
+      mock.contexts.push(structuredClone(messages)); mock.callbacks.push(stream);
+      if (failure === 'partial-tool') {
+        await stream.onContentDelta('discarded text');
+        await stream.onToolCallDelta?.({ index: 0, arguments: '{"sql":' } as any);
+      }
+      throw Object.assign(new Error('stream interrupted'), { code: 'ECONNRESET' });
+    }
+    return original(messages, tools, stream, options);
+  };
+  const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: mock.value, sessionManager: sessions });
+  const events: ChatEvent[] = []; const response = new ChatResponse();
+  const result = await adapter.chat('isolation', '诊断数据库', e => { events.push(e); response.observe(e); });
+  expect(result.stopReason).toBe('completed');
+  expect(result.thinkingContent).toBe('valid thinking');
+  expect(JSON.stringify([result, response.message(result), sessions.getOrCreate('isolation').getCanonicalPage().messages, mock.contexts])).not.toContain('discarded');
+  const count = events.length;
+  await mock.callbacks[0].onThinkingDelta?.('late thinking');
+  await mock.callbacks[0].onContentDelta('late text');
+  expect(events).toHaveLength(count);
+});
+
+
+it('failed local finalization retains only the durable checkpoint and never restores its final candidate', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'stream-finalization-')); directories.push(directory);
+  const sessions = new SessionManager(directory); const mock = provider(['uncommitted candidate']);
+  const realSave = sessions.save.bind(sessions);
+  vi.spyOn(sessions, 'save').mockImplementation(async session => {
+    if (session.messages.some(m => m.role === 'assistant' && !m.tool_calls)) throw new Error('finalization failed');
+    await realSave(session);
+  });
+  const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: mock.value, sessionManager: sessions });
+  const events: ChatEvent[] = [];
+  await expect(adapter.chat('finalization', 'diagnose', e => { events.push(e); })).rejects.toThrow('finalization failed');
+  expect(events.at(-1)).toMatchObject({ type: 'error', finalContent: '' });
+  expect(sessions.getOrCreate('finalization').messages.filter(m => m.role === 'assistant')).toEqual([]);
+  const restored = new SessionManager(directory).getOrCreate('finalization');
+  (adapter as any).runner._restoreRuntimeCheckpoint(restored);
+  expect(restored.messages.filter(m => m.role === 'assistant')).toEqual([]);
+});
+
+
+it('accepted continuation stays anchored while final candidate reasoning is cancelled', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'continuation-anchor-')); directories.push(directory);
+  const sessions = new SessionManager(directory); const controller = new AbortController(); let requests = 0;
+  const provider: LLMProvider = { getDefaultModel: () => 'fixture', chat: async () => { throw new Error('unused'); }, chatStream: async (_m, _t, c) => {
+    const first = ++requests === 1; const text = first ? 'durable prefix' : 'discarded suffix';
+    await c.onThinkingDelta?.(first ? 'durable reasoning' : 'discarded reasoning'); await c.onContentDelta(text);
+    return { content: text, finishReason: first ? 'length' : 'stop', toolCalls: [], usage: {}, hasToolCalls: false, shouldExecuteTools: false };
+  } };
+  const save = sessions.save.bind(sessions);
+  vi.spyOn(sessions, 'save').mockImplementation(async session => {
+    await save(session);
+    if (session.metadata.runtime_checkpoint?.phase === 'final_response') controller.abort();
+  });
+  const adapter = new DirectAdapter({ sessionManager: sessions, tools: new ToolRegistry(), llmProvider: provider });
+  const events: ChatEvent[] = [];
+  const result = await adapter.chat('continuation', 'diagnose', e => { events.push(e); }, undefined, controller.signal);
+  expect(result).toMatchObject({ stopReason: 'cancelled', finalContent: 'durable prefix', thinkingContent: 'durable reasoning' });
+  expect(JSON.stringify(sessions.getOrCreate('continuation').messages)).not.toContain('discarded');
+  const checkpoint = sessions.getOrCreate('continuation').metadata.runtime_checkpoint!;
+  expect(checkpoint.stream_state_v1).toMatchObject({ anchor: { text: 'durable prefix', reasoning: 'durable reasoning' } });
+  expect(checkpoint.assistantMessage).toBeUndefined();
+  expect(events.at(-1)?.type).toBe('cancelled');
+});
+
+
+it('Stop during terminal checkpoint retracts final reasoning and persists the cancellation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'terminal-checkpoint-stop-')); directories.push(directory);
+  const sessions = new SessionManager(directory); const controller = new AbortController(); const mock = provider(['candidate']);
+  const original = mock.value.chatStream;
+  mock.value.chatStream = async (m, t, c, o) => { await c.onThinkingDelta?.('discarded reasoning'); return original(m, t, c, o); };
+  const save = sessions.save.bind(sessions);
+  vi.spyOn(sessions, 'save').mockImplementation(async session => {
+    await save(session);
+    if ((session.metadata.runtime_checkpoint?.terminal_resolution as any)?.kind === 'response_ready') controller.abort();
+  });
+  const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: mock.value, sessionManager: sessions });
+  const result = await adapter.chat('terminal-stop', 'diagnose', () => {}, undefined, controller.signal);
+  expect(result).toMatchObject({ stopReason: 'cancelled', finalContent: '' });
+  expect(result.thinkingContent).toBeUndefined();
+  const checkpoint = sessions.getOrCreate('terminal-stop').metadata.runtime_checkpoint!;
+  expect(checkpoint.terminal_resolution).toMatchObject({ kind: 'cancelled' });
+  expect(checkpoint.assistantMessage).toBeUndefined();
+  expect(JSON.stringify(sessions.getOrCreate('terminal-stop').messages)).not.toContain('discarded');
 });

@@ -1,3 +1,4 @@
+import { StreamBoundary } from './stream-boundary.js';
 import { currentTime, projectContextBlocks, runtimeBlock } from '../context-block.js';
 import { runtimeEvents } from './events.js';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
@@ -33,7 +34,33 @@ export class TurnLoop {
     private readonly executor: Pick<ToolExecutor, "runTool">,
   ) {}
   async run(spec: AgentRunSpec): Promise<AgentRunResult> {
-    const hook = spec.hook;
+    const boundary = new StreamBoundary(spec.resumeCheckpoint?.stream_state_v1);
+    if (spec.resumeCheckpoint?.stream_state_v1 && !spec.resumeCheckpoint.terminal_resolution) boundary.state.discardedBytesIncomplete = true;
+    const originalHook = spec.hook;
+    let currentContext: AgentHookContext | undefined;
+    let finalCandidate: Message | undefined;
+    const hook = { ...originalHook,
+      wantsStreaming: () => originalHook.wantsStreaming(),
+      beforeIteration: (ctx: AgentHookContext) => originalHook.beforeIteration(ctx),
+      onStream: (ctx: AgentHookContext, delta: string, signal?: AbortSignal) => { boundary.state.sequence++; return originalHook.onStream(ctx, delta, signal); },
+      onStreamEnd: (ctx: AgentHookContext, resuming: boolean) => originalHook.onStreamEnd(ctx, resuming),
+      beforeExecuteTools: (ctx: AgentHookContext) => originalHook.beforeExecuteTools(ctx),
+      afterIteration: (ctx: AgentHookContext) => originalHook.afterIteration(ctx),
+      finalizeContent: (ctx: AgentHookContext, content: string | null) => originalHook.finalizeContent(ctx, content),
+      emitReasoning: async (text: string | null, signal?: AbortSignal) => {
+        if (text) {
+          boundary.state.sequence++; boundary.reasoning += text;
+          if (currentContext?.provisionalBytes && !currentContext.streamedReasoning) currentContext.provisionalBytes.reasoning += Buffer.byteLength(text);
+        }
+        await originalHook.emitReasoning(text, signal);
+      },
+      emitReasoningEnd: () => originalHook.emitReasoningEnd(),
+      onCandidateRejected: async (ctx: AgentHookContext, safe: string, reason: string) => {
+        boundary.reset(ctx, reason);
+        emit('stream.reset', undefined, { anchorId: boundary.state.anchor?.checkpointId, sourceRequestId: ctx.sourceRequestId, discardedBytes: boundary.state.discardedBytes });
+        await originalHook.onCandidateRejected?.(ctx, boundary.state.anchor?.text ?? safe, reason);
+      },
+    };
     const recovery = new RecoveryPolicy(spec.resumeCheckpoint?.runtime_state_v1, spec.recoveryLimits);
     const emit = runtimeEvents(spec, recovery.state);
     if (typeof spec.resumeCheckpoint?.runtime_deadline_at === 'number') recovery.state.deadlineAt = spec.resumeCheckpoint.runtime_deadline_at;
@@ -55,8 +82,22 @@ export class TurnLoop {
       if ('assistantMessage' in payload) { delete next.assistant_message; next.messages_restored = false; }
       if ('completedToolResults' in payload) delete next.completed_tool_results;
       if ('pendingToolCalls' in payload) delete next.pending_tool_calls;
+      const checkpointId = randomUUID();
+      const mayCommit = payload.phase === 'tools_completed' || (continuation.content.length > 0 && continuation.content !== String(checkpoint.continuation_content ?? ''));
+      const anchor = saveCheckpoint && (mayCommit || !boundary.state.anchor)
+        ? boundary.proposedAnchor(checkpointId, safeContent + continuation.content,
+          [next.assistantMessage, ...(next.completedToolResults as Message[] ?? [])].flatMap(m => (m as Message)?.id ? [(m as Message).id!] : []))
+        : boundary.state.anchor;
+      next.checkpoint_id = checkpointId;
+      next.stream_state_v1 = boundary.snapshot(anchor);
       await saveCheckpoint?.(next);
+      // Publication follows persistence acknowledgement; failed writes retain the old anchor.
+      if (saveCheckpoint) {
+        boundary.state.anchor = anchor;
+        if (mayCommit && currentContext) currentContext.provisionalBytes = { text: 0, reasoning: 0, tool: 0 };
+      }
       if ('context_summary_v1' in payload && spec.signal?.aborted) throw cancellationError(spec.signal);
+      boundary.state.sequence = Math.max(boundary.state.sequence, (next.stream_state_v1 as import('./stream-boundary.js').StreamSnapshot).sequence);
       checkpoint = next;
       if ('context_summary_v1' in payload) emit('compact.saved');
     } };
@@ -66,7 +107,8 @@ export class TurnLoop {
     const progress = new AnomalyGuard();
     let toolEpoch = 0;
     let reminder: string | undefined;
-    let safeContent = '';
+    let safeContent = boundary.state.anchor?.text ?? '';
+    if (continuation.content && safeContent.endsWith(continuation.content)) safeContent = safeContent.slice(0, -continuation.content.length);
     let responseReady = false;
     const currentRequest = (messages: Message[]) => {
       const latest = [...messages].reverse().find(m => m.role === 'user');
@@ -142,9 +184,11 @@ export class TurnLoop {
         stopReason: null,
         error: null,
       };
+      currentContext = context;
       reminder = undefined;
       const reservation = (spec.contextWindowTokens ?? 200_000) + (spec.maxTokens ?? 4096);
       try { assertRequestBudget(spec, recovery.state, reservation); } catch (error) { stopForBudget(error); break; }
+      boundary.begin(context);
       if (spec.budgetLimits) recovery.state.noProgressSteps = (recovery.state.noProgressSteps ?? 0) + 1;
       state.modelSteps++; state.providerAttempts++;
       recovery.state.modelSteps++; recovery.state.providerAttempts++;
@@ -462,7 +506,7 @@ export class TurnLoop {
           continue;
         }
         // No tool intent or uncertain side effect is replayed by transport recovery.
-        if (error.recoverable && !response.toolCalls.length && !response.hasToolCalls && recovery.consume('stream')) {
+        if (error.recoverable && boundary.state.anchor && !response.toolCalls.length && !response.hasToolCalls && recovery.consume('stream')) {
           emit('recovery.start');
           await hook.onCandidateRejected?.(context, safeContent + continuation.content, error.code);
           state = transition(state, 'recovering');
@@ -474,13 +518,13 @@ export class TurnLoop {
           continue;
         }
         const afterRejection = state.resolution?.safePartialContent !== undefined;
-        if (afterRejection) await hook.onCandidateRejected?.(context, safeContent, error.code);
+        await hook.onCandidateRejected?.(context, safeContent + continuation.content, error.code);
         state.runtimeError = error;
         state.finalContent = clean || response.error || spec.errorMessage || DEFAULT_ERROR_MESSAGE;
         state.stopReason = error.code === 'MODEL_REQUEST_TIMEOUT' || error.code === 'MODEL_IDLE_TIMEOUT' ? 'timed_out' : 'error';
         state.error = state.finalContent;
-        state.resolution = { kind: state.stopReason === 'timed_out' ? 'timed_out' : 'failed', reasonCode: error.code,
-          retryable: false, ...((afterRejection || continuation.content) ? { safePartialContent: safeContent + continuation.content } : {}) };
+        state.resolution = { kind: state.stopReason === 'timed_out' ? 'timed_out' : 'failed', reasonCode: error.recoverable && !boundary.state.anchor ? 'STREAM_ANCHOR_UNAVAILABLE' : error.code,
+          retryable: false, ...((afterRejection || continuation.content || error.recoverable && !boundary.state.anchor) ? { safePartialContent: boundary.state.anchor?.text ?? (error.recoverable ? '' : safeContent + continuation.content) } : {}) };
         appendModelErrorPlaceholder(state.messages);
         context.finalContent = state.finalContent;
         context.error = state.error;
@@ -528,6 +572,7 @@ export class TurnLoop {
       }
 
       if (assistantMsg) {
+        finalCandidate = assistantMsg;
         state.messages.push(assistantMsg);
         await emitCheckpoint(spec, {
           phase: "final_response",
@@ -559,14 +604,27 @@ export class TurnLoop {
     if (continuation.content) appendFinalMessage(state.messages, continuation.content);
     const applyCancellation = () => {
       if (!spec.signal?.aborted && state.stopReason !== 'cancelled') return;
+      if (finalCandidate) {
+        state.messages = state.messages.filter(m => m !== finalCandidate);
+        // A cancelled response_ready candidate cannot be restored by any entry.
+        checkpoint = { ...checkpoint, phase: 'stream_reset', assistantMessage: undefined, assistant_message: undefined };
+      }
       state.runtimeError = cancellationError(spec.signal);
       state.stopReason = state.runtimeError.code === 'RUN_DEADLINE' ? 'timed_out' : 'cancelled';
       state.resolution = { kind: state.stopReason === 'timed_out' ? 'timed_out' : 'cancelled', reasonCode: state.runtimeError.code, retryable: false,
-        ...((state.resolution?.safePartialContent !== undefined || continuation.content) ? { safePartialContent: safeContent + continuation.content } : {}) };
+        ...(boundary.state.anchor ? { safePartialContent: boundary.state.anchor.text }
+          : ((state.resolution?.safePartialContent !== undefined || continuation.content) ? { safePartialContent: safeContent + continuation.content } : {})) };
     };
     applyCancellation();
+    if (state.stopReason !== 'completed' && state.resolution && boundary.state.anchor) state.resolution.safePartialContent = boundary.state.anchor.text;
+    if (state.stopReason !== 'completed' && currentContext) await hook.onCandidateRejected?.(currentContext, safeContent + continuation.content, state.resolution?.reasonCode ?? state.stopReason);
+    const beforeTerminalSave = state.stopReason;
     await emitCheckpoint(spec, { terminal_resolution: state.resolution ?? { kind: state.stopReason === 'completed' ? 'response_ready' : 'partial' } });
     applyCancellation();
+    if (state.stopReason !== beforeTerminalSave) {
+      if (currentContext) await hook.onCandidateRejected?.(currentContext, boundary.state.anchor?.text ?? '', state.resolution?.reasonCode ?? state.stopReason);
+      await emitCheckpoint(spec, { terminal_resolution: state.resolution });
+    }
     state = transition(state, state.stopReason === "completed" ? "response_ready" : "terminal");
     emit(state.stopReason === 'completed' ? 'response.ready' : 'turn.terminal');
     return {

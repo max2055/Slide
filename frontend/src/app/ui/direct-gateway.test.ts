@@ -607,6 +607,31 @@ describe('109-04: DirectGatewayClient', () => {
     expect(host.chatMessages).toEqual([]);
   });
 
+  it('reset replaces queued thinking and isolates late attempts and post-final deltas', async () => {
+    const host = {
+      chatRunId: 'run-1', sessionKey: 'session-1', chatThinkingText: '', chatThinkingComplete: false,
+      chatStream: '', chatMessages: [], chatQueue: [], chatSending: true, lastError: null,
+      settings: { lastActiveSessionKey: '' }, applySettings(next: Record<string, unknown>) { this.settings = next; },
+      refreshSessionsAfterChat: new Set<string>(), chatToolMessages: [], chatStreamSegments: [],
+      toolStreamById: new Map(), toolStreamOrder: [], toolStreamSyncTimer: null,
+    };
+    const deliver = (event: any) => directGateway.handleDirectAdapterEvent(host, { runId: 'run-1', ...event });
+    deliver({ type: 'thinking_delta', delta: 'discarded thinking', attempt: 1, sequence: 1 });
+    deliver({ type: 'text_delta', delta: 'discarded text', attempt: 1, sequence: 2 });
+    deliver({ type: 'text_delta', delta: 'durable prefix', reset: true, thinkingContent: 'durable reasoning', attempt: 1, sequence: 3 });
+    deliver({ type: 'thinking_delta', delta: ' fresh thinking', attempt: 2, sequence: 4 });
+    deliver({ type: 'thinking_delta', delta: 'late thinking', attempt: 1, sequence: 99 });
+    deliver({ type: 'text_delta', delta: 'durable prefix fresh answer', attempt: 2, sequence: 5 });
+    await new Promise(resolve => setTimeout(resolve, 25));
+    expect(host.chatThinkingText).toBe('durable reasoning fresh thinking');
+    expect(host.chatStream).toBe('durable prefix fresh answer');
+    deliver({ type: 'complete', finalContent: 'fresh answer', thinkingContent: 'valid', attempt: 2, sequence: 6 });
+    deliver({ type: 'text_delta', delta: 'late final mutation', attempt: 2, sequence: 7 });
+    await new Promise(resolve => setTimeout(resolve, 25));
+    expect(JSON.stringify(host.chatMessages)).not.toContain('discarded');
+    expect(host.chatStream).toBeNull();
+  });
+
   it('coalesces rapid answer deltas and keeps the latest text', async () => {
     const host = {
       chatRunId: 'run-1', sessionKey: 'session-1', chatThinkingText: '', chatThinkingComplete: false,

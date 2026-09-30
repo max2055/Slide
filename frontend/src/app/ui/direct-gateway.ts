@@ -15,7 +15,7 @@ import { loadPermissions, readCachedPermissions } from './permissions.ts';
 import { generateUUID } from './uuid.ts';
 import type { DeviceIdentity } from './device-identity.ts';
 
-export type AdapterTextDeltaEvent = { type: 'text_delta'; delta: string };
+export type AdapterTextDeltaEvent = { type: 'text_delta'; delta: string; reset?: boolean; thinkingContent?: string; anchorId?: string };
 export type AdapterToolStartEvent = { type: 'tool_start'; toolName: string; args: Record<string, unknown> };
 export type AdapterToolResultEvent = { type: 'tool_result'; toolName: string; result: unknown };
 export type AdapterToolErrorEvent = { type: 'tool_error'; toolName: string; error: string };
@@ -43,7 +43,7 @@ export type AdapterRunSnapshotEvent = {
 export type AdapterProtocolErrorEvent = { type: 'protocol.error'; code: string };
 
 /** ChatEvent discriminated union — mirrors apps/db-ops-api/src/adapter/types.ts */
-export type AdapterChatEvent =
+export type AdapterChatEvent = (
   | AdapterSessionCreatedEvent
   | AdapterRunStartedEvent
   | AdapterRunSnapshotEvent
@@ -57,7 +57,7 @@ export type AdapterChatEvent =
   | AdapterThinkingEndEvent
   | AdapterCompleteEvent
   | AdapterCancelledEvent
-  | AdapterErrorEvent;
+  | AdapterErrorEvent) & { sequence?: number; attempt?: number; runId?: string };
 
 export type ConnectionState =
   | 'connecting'
@@ -861,9 +861,21 @@ function handleChatGatewayEvent(host: Record<string, unknown>, payload: ChatEven
   }
 }
 
+const directStreamOrder = new WeakMap<object, { runId: string; attempt: number; sequence: number; terminal: boolean }>();
+
 export function handleDirectAdapterEvent(host: Record<string, unknown>, event: AdapterChatEvent): void {
   const runId = host.chatRunId as string | null;
   const sessionKey = host.sessionKey as string;
+  if (event.type === 'run.started') directStreamOrder.delete(host);
+  if (event.sequence !== undefined && event.attempt !== undefined) {
+    const eventRun = event.runId ?? runId ?? '';
+    if (runId && event.runId && event.runId !== runId) return;
+    const prior = directStreamOrder.get(host);
+    if (prior?.runId === eventRun && (prior.terminal || event.attempt < prior.attempt
+      || (event.attempt === prior.attempt && event.sequence <= prior.sequence))) return;
+    directStreamOrder.set(host, { runId: eventRun, attempt: event.attempt, sequence: event.sequence,
+      terminal: ['complete', 'cancelled', 'error'].includes(event.type) });
+  }
 
   switch (event.type) {
     case 'run.started':
@@ -904,6 +916,11 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
       host.chatThinkingComplete = true;
       break;
     case 'text_delta': {
+      if (event.reset) {
+        flushDirectStreamUpdates(host);
+        host.chatThinkingText = event.thinkingContent ?? '';
+        host.chatThinkingComplete = false;
+      }
       const payload = mapAdapterChatEventToPayload(event, runId, sessionKey);
       if (payload) {
         pendingStreamUpdateFor(host).textPayload = payload;

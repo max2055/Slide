@@ -1,0 +1,152 @@
+{
+  "baseline": "34c67dbb1b75bb41cfd55750a1cfdeb6923ccf1e",
+  "controlledProvider": true,
+  "actualMySQL": true,
+  "actualWebSocket": true,
+  "records": [
+    {
+      "scenario": "recovery",
+      "state": "completed",
+      "requests": 2,
+      "assistantMessages": 1,
+      "uniqueFinal": true,
+      "correlated": true
+    },
+    {
+      "scenario": "storage-pending-service-restart-concurrent-recovery",
+      "uniqueFinal": true
+    },
+    {
+      "scenario": "OS-process-exit-before-commit",
+      "rolledBack": true,
+      "uniqueFinal": true
+    },
+    {
+      "scenario": "length",
+      "state": "completed",
+      "requests": 2,
+      "assistantMessages": 1,
+      "uniqueFinal": true,
+      "correlated": true
+    },
+    {
+      "scenario": "reject",
+      "state": "failed",
+      "requests": 3,
+      "assistantMessages": 0,
+      "uniqueFinal": true,
+      "correlated": true
+    },
+    {
+      "scenario": "deadline",
+      "state": "timed_out",
+      "requests": 1,
+      "assistantMessages": 0,
+      "uniqueFinal": true,
+      "correlated": true
+    },
+    {
+      "scenario": "cancel",
+      "state": "cancelled",
+      "requests": 1,
+      "assistantMessages": 0,
+      "uniqueFinal": true,
+      "correlated": true
+    },
+    {
+      "scenario": "thinking-reset",
+      "anchorId": "d381fc50-217a-4651-b4d1-60d787f1eabd",
+      "sourceRequestId": "a4701522-704c-407c-803e-22f1d92623d6",
+      "discardedBytes": 19,
+      "toolExecutions": 0,
+      "attempt": 2
+    },
+    {
+      "scenario": "thinking-reset",
+      "state": "completed",
+      "requests": 2,
+      "assistantMessages": 1,
+      "uniqueFinal": true,
+      "correlated": true
+    },
+    {
+      "scenario": "partial-tool-reset",
+      "anchorId": "0d26af11-85ff-4da9-9947-daa5603df810",
+      "sourceRequestId": "d0bb1924-aba8-446f-a073-b2874eeeb0db",
+      "discardedBytes": 60,
+      "toolExecutions": 0,
+      "attempt": 2
+    },
+    {
+      "scenario": "partial-tool-reset",
+      "state": "completed",
+      "requests": 2,
+      "assistantMessages": 1,
+      "uniqueFinal": true,
+      "correlated": true
+    },
+    {
+      "scenario": "tool-reset",
+      "anchorId": "d0b3ce97-0266-45be-bf75-b086af1957de",
+      "sourceRequestId": "5cee8898-50e1-4028-a0d3-ac492be05ba3",
+      "discardedBytes": 60,
+      "toolExecutions": 1,
+      "attempt": 3
+    },
+    {
+      "scenario": "tool-reset",
+      "state": "completed",
+      "requests": 3,
+      "assistantMessages": 1,
+      "uniqueFinal": true,
+      "correlated": true
+    },
+    {
+      "scenario": "active-WS-reconnect-effective-attempt-snapshot",
+      "passed": true,
+      "attempt": 2,
+      "sequence": 6
+    },
+    {
+      "scenario": "OS-stream-crash-durable-tool-anchor-restored",
+      "passed": true,
+      "anchorId": "ee5d7157-0034-40a0-9aa6-b8968dd77bd7",
+      "beforeAttempt": 2,
+      "afterAttempt": 3,
+      "toolExecutionsForCrashedRun": 1,
+      "finalAssistantCount": 1
+    },
+    {
+      "scenario": "OS-crash-unknown-tool-settlement-no-replay",
+      "passed": true,
+      "toolExecutionsForUnknownRun": 1,
+      "providerRequestsAfterRestart": 0,
+      "pendingIntents": 1
+    },
+    {
+      "scenario": "505-real-facts-legacy-ID-pagination-JSONL-roundtrip-actor-isolation",
+      "passed": true,
+      "hash": "821c446871888b2c80dace484451d7c9641d4c99c46784fa72f576d92c755e1f"
+    },
+    {
+      "scenario": "real-COMMIT-ack-loss-unique-durable-final",
+      "passed": true
+    },
+    {
+      "scenario": "tool-facts-checkpoint-atomic-COMMIT-ack-loss-idempotent-replay",
+      "passed": true
+    },
+    {
+      "scenario": "real-MySQL-pending-failure-service-restart-concurrent-recovery",
+      "passed": true
+    },
+    {
+      "scenario": "JSONL-write-failure-DB-rebuild-response-ready-excluded",
+      "passed": true
+    },
+    {
+      "scenario": "explicit-retention-whole-turns-audit-unsettled-denied",
+      "passed": true
+    }
+  ]
+}

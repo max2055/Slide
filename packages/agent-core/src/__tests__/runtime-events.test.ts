@@ -9,9 +9,9 @@ it('correlates ordered recovery and readiness without body or unknown usage loss
     content: ++n === 1 ? 'secret-user-prose'.repeat(20) : '正常', finishReason: 'stop', toolCalls: [], shouldExecuteTools: false, hasToolCalls: false, usage: {} }) };
   await new AgentRunner(provider).run({ initialMessages: [{ role: 'user', content: 'private-user-text' }], tools: new ToolRegistry(), model: 'secret-model', hook: new NoopHook(), maxIterations: 5, maxToolResultChars: 100,
     runtimeRunId: '00000000-0000-0000-0000-000000000001', onRuntimeEvent: e => { events.push(e); } });
-  expect(events.map(e => e.type)).toEqual(['model.start', 'candidate.reject', 'recovery.start', 'model.start', 'response.ready']);
+  expect(events.map(e => e.type)).toEqual(['model.start', 'candidate.reject', 'stream.reset', 'recovery.start', 'model.start', 'response.ready']);
   expect(new Set(events.map(e => e.runId)).size).toBe(1); expect(new Set(events.map(e => e.turnId)).size).toBe(1);
-  expect(events.map(e => e.sequence)).toEqual([1,2,3,4,5]);
+  expect(events.map(e => e.sequence)).toEqual([1,2,3,4,5,6]);
   expect(events.at(-1)).toMatchObject({ unknownRequests: 2, recoveryCount: 1 });
   expect(JSON.stringify(events)).not.toMatch(/secret|private/);
 });

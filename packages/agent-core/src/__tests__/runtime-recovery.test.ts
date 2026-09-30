@@ -76,6 +76,7 @@ it('cancellation while committing final checkpoint cannot return completed', asy
   const { result } = await run([response('完成')], { signal: controller.signal,
     checkpointCallback: async p => { if (p.phase === 'final_response') controller.abort(); } });
   expect(result.stopReason).toBe('cancelled');
+  expect(result.messages.some(m => m.content === 'done')).toBe(false);
 });
 
 it('alternating all implemented recovery kinds cannot exceed the default total eight', async () => {
@@ -83,7 +84,7 @@ it('alternating all implemented recovery kinds cannot exceed the default total e
   try {
     const bad = '正在分析数据库状态……\n'.repeat(20);
     const pending = run([response(bad), response(''), response('甲', 'length'), response(bad), response(''),
-      response('乙', 'length'), response('丙', 'length'), { ...response('', 'error'), error: 'busy', providerStatus: 503 }, response('')]);
+      response('乙', 'length'), response('丙', 'length'), { ...response('', 'error'), error: 'busy', providerStatus: 503 }, response('')], { checkpointCallback: async () => {} });
     await vi.runAllTimersAsync();
     const { result, requests } = await pending;
     expect(requests).toHaveLength(9);

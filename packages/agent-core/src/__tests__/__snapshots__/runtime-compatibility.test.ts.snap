@@ -3655,6 +3655,7 @@ exports[`frozen legacy compatibility traces > 'provider error' 1`] = `
       "kind": "failed",
       "reasonCode": "PROVIDER_ERROR",
       "retryable": false,
+      "safePartialContent": "",
     },
     "runtimeError": [RuntimeError: fixture failure],
     "runtimeState": {
@@ -3864,6 +3865,7 @@ exports[`frozen legacy compatibility traces > 'provider error' 1`] = `
           "kind": "failed",
           "reasonCode": "PROVIDER_ERROR",
           "retryable": false,
+          "safePartialContent": "",
         },
       },
     ],

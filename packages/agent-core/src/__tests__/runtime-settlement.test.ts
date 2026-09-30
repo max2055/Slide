@@ -27,7 +27,7 @@ it('cancellation in retry backoff ends immediately and starts no new provider at
   const controller = new AbortController();
   const chat = vi.fn(async () => ({ ...ok, content: null, finishReason: 'error', error: 'busy', providerStatus: 503 }));
   const runner = new AgentRunner({ getDefaultModel: () => 'fixture', chat, chatStream: chat });
-  const pending = runner.run(spec({ signal: controller.signal }));
+  const pending = runner.run(spec({ signal: controller.signal, checkpointCallback: async () => {} }));
   await vi.advanceTimersByTimeAsync(0); controller.abort();
   expect((await pending).stopReason).toBe('cancelled');
   expect(chat).toHaveBeenCalledTimes(1); expect(vi.getTimerCount()).toBe(0);
@@ -52,7 +52,7 @@ it('noncooperative tools keep the runner owned until settlement and cannot publi
 it('transient recovery respects Retry-After and retains exact provider attempt accounting', async () => {
   vi.useFakeTimers();
   const chat = vi.fn().mockResolvedValueOnce({ ...ok, finishReason: 'error', error: 'busy', providerStatus: 429, retryAfterMs: 3000 }).mockResolvedValue(ok);
-  const pending = new AgentRunner({ getDefaultModel: () => 'fixture', chat, chatStream: chat }).run(spec());
+  const pending = new AgentRunner({ getDefaultModel: () => 'fixture', chat, chatStream: chat }).run(spec({ checkpointCallback: async () => {} }));
   await vi.advanceTimersByTimeAsync(2999); expect(chat).toHaveBeenCalledTimes(1);
   await vi.advanceTimersByTimeAsync(1);
   const result = await pending;

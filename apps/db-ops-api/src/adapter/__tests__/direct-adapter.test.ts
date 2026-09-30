@@ -757,7 +757,7 @@ describe('DirectAdapter', () => {
         else process.env.JWT_SECRET_KEY = previousSecret;
       }
     }, 10_000);
-    it.each(['error', 'timed_out', 'completed'])('persists partial output before delivering WS terminal %s', async (stopReason) => {
+    it.each(['error', 'timed_out', 'completed'])('discards provisional output before delivering WS terminal %s', async (stopReason) => {
       const port = 28994;
       const previousPort = process.env.AGENT_WS_PORT;
       const previousSecret = process.env.JWT_SECRET_KEY;
@@ -843,14 +843,12 @@ describe('DirectAdapter', () => {
         } else {
           expect(persistedAtDelivery).toBe(true);
           expect(complete).not.toHaveBeenCalled();
-          expect(addMessage).toHaveBeenCalledTimes(2);
-          expect(addMessage).toHaveBeenLastCalledWith(actor, 'ws-provider-failure-session', expect.objectContaining({
-            role: 'assistant', content: 'partial answer',
-            metadata: expect.objectContaining({ interrupted: true, stopReason }),
-          }));
+          expect(addMessage).toHaveBeenCalledTimes(1);
+          expect(JSON.stringify(addMessage.mock.calls)).not.toContain('partial answer');
           expect(finish).toHaveBeenCalledWith('provider-failure-run', stopReason === 'error' ? 'failed' : stopReason, expect.objectContaining({ stopReason, resolution: expect.objectContaining({ reasonCode: stopReason === 'timed_out' ? 'RUN_DEADLINE' : 'PROVIDER_ERROR' }) }));
         }
-        expect(events.at(-1)).toMatchObject({ type: stopReason === 'completed' ? 'complete' : 'error', messageSequence: 1, stopReason });
+        expect(events.at(-1)).toMatchObject({ type: stopReason === 'completed' ? 'complete' : 'error', stopReason });
+        if (stopReason === 'completed') expect(events.at(-1)?.messageSequence).toBe(1);
       } finally {
         metadata.mockRestore();
         createSession.mockRestore();
@@ -902,7 +900,7 @@ describe('DirectAdapter', () => {
       })).rejects.toThrow('terminal rejected');
       expect(terminals).toBe(1);
     });
-    it('retains partial streaming output on cancellation and awaits the terminal consumer', async () => {
+    it('discards provisional streaming output on cancellation and awaits the terminal consumer', async () => {
       const controller = new AbortController();
       const provider = new MockLLMProvider();
       vi.spyOn(provider, 'chatStream').mockImplementation(async (_m, _t, callbacks) => {
@@ -921,8 +919,8 @@ describe('DirectAdapter', () => {
           persisted = true;
         }
       }, undefined, controller.signal);
-      expect(result).toMatchObject({ finalContent: 'partial answer', stopReason: 'cancelled' });
-      expect(events.at(-1)).toMatchObject({ type: 'cancelled', finalContent: 'partial answer', stopReason: 'cancelled' });
+      expect(result).toMatchObject({ finalContent: '', stopReason: 'cancelled' });
+      expect(events.at(-1)).toMatchObject({ type: 'cancelled', finalContent: '', stopReason: 'cancelled' });
       expect(persisted).toBe(true);
     });
 
