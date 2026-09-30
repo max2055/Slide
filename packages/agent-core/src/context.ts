@@ -10,6 +10,8 @@ import path from 'node:path';
 import { MemoryStore } from './memory.js';
 import { SkillsLoader } from './skills.js';
 import type { SessionEntry } from './session.js';
+import type { Message } from './types.js';
+import { currentTime, projectContextBlocks, runtimeBlock, type ContextBlock } from './context-block.js';
 
 // ── Constants ──
 
@@ -51,12 +53,6 @@ export class ContextBuilder {
       }
     }
 
-    // Memory context
-    const memoryContext = await this.memoryStore.getMemoryContext();
-    if (memoryContext) {
-      parts.push(memoryContext);
-    }
-
     // Skills content (when skillNames provided, include full body)
     if (skillNames && skillNames.length > 0) {
       const skillParts = this.skillsLoader.loadSkillsForContext(skillNames);
@@ -71,47 +67,24 @@ export class ContextBuilder {
       }
     }
 
-    // Runtime context
-    const runtimeCtx = ContextBuilder._buildRuntimeContext();
-    parts.push(runtimeCtx);
-
-    return parts.join('\n\n');
+    return parts.join('\n\n') || 'You are a helpful database operations assistant.';
   }
 
   /** Build a complete message array: system prompt + history + user message. */
-  async buildMessages(
-    history: SessionEntry[],
-    userMessage: string,
-    skillNames?: string[],
-  ): Promise<Array<{ role: string; content: string; reasoning_content?: string | null; tool_calls?: any; tool_call_id?: string; name?: string }>> {
-    const systemPrompt = await this.buildSystemPrompt(skillNames);
-    const messages: Array<{ role: string; content: string; reasoning_content?: string | null; tool_calls?: any; tool_call_id?: string; name?: string }> = [
-      { role: 'system', content: systemPrompt },
+  async buildBlocks(history: SessionEntry[], userMessage: string, skillNames?: string[]): Promise<ContextBlock[]> {
+    const policy = await this.buildSystemPrompt(skillNames);
+    const memory = await this.memoryStore.getMemoryContext();
+    return [
+      { kind: 'policy', sourceIds: [...BOOTSTRAP_FILES], authority: 'policy', lifetime: 'session', priority: 100, tokenPolicy: 'protected', messages: [{ role: 'system', content: policy }] },
+      ...(memory ? [{ kind: 'memory' as const, sourceIds: ['MEMORY.md'], authority: 'reference' as const, lifetime: 'request' as const, priority: 40, tokenPolicy: 'bounded' as const, value: memory }] : []),
+      { kind: 'history', sourceIds: history.flatMap(m => m.id ? [m.id] : []), authority: 'user', lifetime: 'session', priority: 50, tokenPolicy: 'bounded', messages: history as Message[] },
+      runtimeBlock('runtime', currentTime()),
+      { kind: 'current_user', sourceIds: [], authority: 'user', lifetime: 'session', priority: 100, tokenPolicy: 'protected', messages: [{ role: 'user', content: userMessage }] },
     ];
+  }
 
-    // Add history
-    for (const entry of history) {
-      const msg: any = { role: entry.role, content: entry.content ?? '' };
-      if (entry.reasoning_content) msg.reasoning_content = entry.reasoning_content;
-      if (entry.tool_calls) msg.tool_calls = entry.tool_calls;
-      if (entry.tool_call_id) msg.tool_call_id = entry.tool_call_id;
-      if (entry.name) msg.name = entry.name;
-      messages.push(msg);
-    }
-
-    // Build user message with runtime context and skill context appended
-    let userContent = userMessage;
-    const runtime = ContextBuilder._buildRuntimeContext();
-    userContent += `\n\n${runtime}`;
-
-    // Append available skills info
-    if (skillNames && skillNames.length > 0) {
-      userContent += `\n\nAvailable skills: ${skillNames.join(', ')}`;
-    }
-
-    messages.push({ role: 'user', content: userContent });
-
-    return messages;
+  async buildMessages(history: SessionEntry[], userMessage: string, skillNames?: string[]): Promise<Message[]> {
+    return projectContextBlocks(await this.buildBlocks(history, userMessage, skillNames));
   }
 
   /** Get the workspace path used by this builder. */
@@ -136,13 +109,7 @@ export class ContextBuilder {
 
   /** Build runtime context string (time-based info). */
   static _buildRuntimeContext(): string {
-    const now = new Date();
-    const dateStr = now.toISOString().split('T')[0];
-    const timeStr = now.toTimeString().split(' ')[0];
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const weekday = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][now.getDay()];
-
-    return `Current Time: ${dateStr} ${timeStr} ${tz} (${weekday})`;
+    return currentTime();
   }
 
   // ── Private ──

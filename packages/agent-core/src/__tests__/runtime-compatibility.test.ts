@@ -20,7 +20,13 @@ const scenarios = [
   { name: 'provider error', responses: [{ ...response('', 'error'), error: 'fixture failure' }] },
 ];
 
-const copy = (value: unknown) => JSON.parse(JSON.stringify(value));
+// MAX-99 request-only time is covered by context-authority tests. Strip only
+// that new frame and reminder provenance when comparing the frozen legacy API.
+const copy = (value: unknown) => JSON.parse(JSON.stringify(value, (_key, item) => {
+  if (Array.isArray(item)) return item.filter(m => !(m?.source === 'runtime' && String(m.content).startsWith('Current Time:')));
+  if (item?.source === 'runtime') { const { source: _source, ...rest } = item; return rest; }
+  return item;
+}));
 
 // Frozen traces assert the pre-identity API; canonical ID invariants have their
 // own checkpoint roundtrip tests. Do not replace the historical snapshots.
