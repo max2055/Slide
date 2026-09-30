@@ -1026,9 +1026,6 @@ function renderGroupedMessage(
 
   const toolCards = (opts.showToolCalls ?? true) ? extractToolCards(message, messageKey) : [];
   const hasToolCards = toolCards.length > 0;
-  const images = extractImages(message);
-  const hasImages = images.length > 0;
-
   const normalizedMessage = normalizeMessage(message);
   const extractedText = normalizedMessage.content
     .reduce<string[]>((lines, item) => {
@@ -1043,6 +1040,9 @@ function renderGroupedMessage(
     (item): item is Extract<MessageContentItem, { type: "attachment" }> =>
       item.type === "attachment",
   );
+  // A legacy image block and its additive attachment part refer to one image.
+  const images = extractImages(message).filter(image => !assistantAttachments.some(item => item.attachment.kind === 'image' && item.attachment.url === image.url));
+  const hasImages = images.length > 0;
   const assistantViewBlocks = normalizedMessage.content.filter(
     (item): item is Extract<MessageContentItem, { type: "canvas" }> => item.type === "canvas",
   );

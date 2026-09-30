@@ -666,6 +666,7 @@ export class DirectAdapter implements IAgentEngine {
                       messageId: `msg_${randomUUID()}_asst`,
                       role: 'assistant',
                       ...assistant,
+                      metadata: { ...assistant.metadata, stopReason: event.type === 'cancelled' ? 'cancelled' : 'failed', canonicalRunId: persistentRun?.run.id, canonicalTurnId: userFactId },
                       parentId: userFactId,
                     }) };
                   }
@@ -778,6 +779,7 @@ export class DirectAdapter implements IAgentEngine {
                 sequence: m.sequence,
                 role: m.role,
                 content: m.content,
+                messageParts: m.messageParts,
                 createdAt: m.created_at instanceof Date ? m.created_at.toISOString() : m.created_at,
               }));
               this.socketWriter.send(ws, JSON.stringify({ type: 'complete', messages: mapped }));
@@ -1103,7 +1105,7 @@ export class DirectAdapter implements IAgentEngine {
       if (displayContent && !_actor) {
         const extra: any = {};
         if (thinkingContent) extra.reasoning_content = thinkingContent;
-        session.addMessage('assistant', displayContent, { ...extra, id: `run_${runId}_assistant`, runId, turnId: userFactId });
+        session.addMessage('assistant', displayContent, { ...extra, id: `run_${runId}_assistant`, runId, turnId: userFactId, metadata: { stopReason } });
       }
 
       // Clear checkpoint on successful completion

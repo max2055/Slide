@@ -30,6 +30,7 @@ import { RecoveryPolicy } from '../runtime/recovery-policy.js';
 import { ToolRegistry } from '../tool-registry.js';
 import { AgentRunner, NoopHook } from '../runner.js';
 import type { AgentRunSpec, LLMProvider, LLMResponse, Message } from '../types.js';
+import { migrateMessageParts } from '../message-parts.js';
 const valid = { goal: ['inspect resource db-42'], constraints: ['read only'], done: ['read evidence e-1'], pending: ['report'], evidence: ['e-1'], uncertain: ['write-2 unknown; do not replay'] };
 const reply = (content = JSON.stringify(valid)): LLMResponse => ({ content, finishReason: 'stop', toolCalls: [], hasToolCalls: false, shouldExecuteTools: false, usage: { prompt_tokens: 11, completion_tokens: 7, cached_tokens: 3 } });
 function fixture(extra: Partial<AgentRunSpec> = {}) {
@@ -39,6 +40,15 @@ function fixture(extra: Partial<AgentRunSpec> = {}) {
   const provider: LLMProvider = { getDefaultModel: () => 'same-model', chat: async () => reply('Final report.'), chatStream: async (messages, tools, _callbacks, options) => { calls.push({ messages: structuredClone(messages), tools, model: options?.model }); return reply(); } };
   return { raw, spec, calls, provider, manager: new ContextManager(spec, provider), recovery: new RecoveryPolicy(), tracker: new RapidRefill() };
 }
+it('summary sources exclude rollback snapshots and historical reasoning while canonical facts stay intact', async () => {
+  const f = fixture();
+  f.raw[2] = migrateMessageParts({ ...f.raw[2], id: 'history', reasoning_content: 'private-history-reasoning', thinking_blocks: [{ type: 'thinking', thinking: 'signed-history', signature: 'opaque-signature' }] });
+  const before = structuredClone(f.raw);
+  await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {});
+  const wire = JSON.stringify(f.calls[0].messages);
+  expect(wire).not.toMatch(/messageParts|private-history-reasoning|opaque-signature/);
+  expect(wire).toContain('historical record'); expect(f.raw).toEqual(before);
+});
 it('persists a source-bound summary before projection, retains goal/authority/evidence/uncertainty and original history', async () => {
   const f = fixture(); const before = structuredClone(f.raw); let record: unknown;
   await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async value => {

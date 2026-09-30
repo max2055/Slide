@@ -104,6 +104,7 @@ export async function registerChatRoutes(
         sequence: message.sequence,
         role: message.role,
         ...formatMessageContent(message.content || ''),
+        ...(message.messageParts ? { messageParts: message.messageParts } : {}),
         timestamp: message.created_at ? new Date(message.created_at).getTime() : Date.now(),
       }));
       return reply.send({

@@ -2,6 +2,7 @@ import { dbConnection } from '../db-connection.js';
 import { chatDatabaseService } from '../chat-database-service.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { memoryHash, type MemoryInput, type SessionEntry } from '@slide/agent-core';
+import { persistedMessageParts, recordMessageParts } from './message-parts.js';
 
 interface Executor { query<T = any>(sql: string, values?: unknown[]): Promise<[T, unknown?]>; }
 interface Connection extends Executor { beginTransaction(): Promise<void>; commit(): Promise<void>; rollback(): Promise<void>; release(): void; }
@@ -43,7 +44,8 @@ export class CanonicalStore {
       if (!turns.length) throw new Error('CANONICAL_TURN_NOT_FOUND');
       const [counts] = await connection.query<any[]>('SELECT COUNT(*) AS total FROM agent_canonical_facts WHERE session_id = ?', [sessionId]);
       for (let index = 0; index < entries.length; index++) {
-        const entry = entries[index];
+        const pending = entries[index].tool_calls?.some(call => !entries.some(result => result.role === 'tool' && result.tool_call_id === call.id));
+        const entry = persistedMessageParts(entries[index], 'checkpoint', pending ? 'partial' : 'completed');
         if (!entry.id || (entry.source && entry.source !== 'fact') || !(entry.role === 'tool' || (entry.role === 'assistant' && entry.tool_calls?.length))) throw new Error('INVALID_CANONICAL_FACT');
         const json = JSON.stringify(entry);
         if (Buffer.byteLength(json) > MAX_FACT_BYTES) throw new Error('CANONICAL_CAPACITY_EXCEEDED');
@@ -51,8 +53,10 @@ export class CanonicalStore {
         if (existing.length) {
           const prior = typeof existing[0].entry_json === 'string' ? JSON.parse(existing[0].entry_json) : existing[0].entry_json;
           // JSON object member order is not preserved by MySQL.
-          const payload = (m: SessionEntry) => stable([m.role, m.content, m.tool_calls, m.tool_call_id, m.runId, m.turnId]);
+          const payload = (m: SessionEntry) => stable([m.role, m.content, m.tool_calls, m.tool_call_id, m.runId, m.turnId, m.reasoning_content, m.thinking_blocks, m.attachments]);
           if (payload(prior) !== payload(entry)) throw new Error('CANONICAL_ID_CONFLICT');
+          if (prior.messageParts?.status !== entry.messageParts?.status) await connection.query(
+            'UPDATE agent_canonical_facts SET entry_json = ? WHERE session_id = ? AND message_id = ?', [json, sessionId, entry.id]);
           continue;
         }
         if (++counts[0].total > MAX_FACTS) throw new Error('CANONICAL_CAPACITY_EXCEEDED');
@@ -110,11 +114,11 @@ export class CanonicalStore {
     const page = rows.slice(0, limit);
     return { nextBefore: rows.length > limit ? `${page.at(-1).turn_sequence}:${page.at(-1).ordinal}:${page.at(-1).tie}` : null,
       messages: page.reverse().map(row => {
-        if (row.entry_json) return structuredClone(typeof row.entry_json === 'string' ? JSON.parse(row.entry_json) : row.entry_json);
-        const metadata = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
-        return { id: row.message_id, role: row.role, content: row.content, source: 'fact',
-          timestamp: new Date(row.created_at).toISOString(), runId: metadata?.canonicalRunId ?? `legacy_run_${sessionId}_${row.turn_sequence}`,
-          turnId: metadata?.canonicalTurnId ?? `legacy_turn_${sessionId}_${row.turn_sequence}` };
+        if (row.entry_json) {
+          const entry = typeof row.entry_json === 'string' ? JSON.parse(row.entry_json) : row.entry_json;
+          return persistedMessageParts(entry, 'checkpoint', entry.messageParts?.status);
+        }
+        return recordMessageParts(row, { runId: `legacy_run_${sessionId}_${row.turn_sequence}`, turnId: `legacy_turn_${sessionId}_${row.turn_sequence}` });
       }) };
   }
 }

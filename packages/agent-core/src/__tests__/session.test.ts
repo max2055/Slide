@@ -170,10 +170,12 @@ describe("SessionManager", () => {
     new AutoCompact({ maxMessagesPerSession: 5 }).compactSession(session, 'summary');
     expect(session.canonicalHash()).toBe(hash);
     await manager.save(session, { fsync: true });
+    const persistedFacts = structuredClone(session.messages);
+    expect(persistedFacts.map(({ messageParts: _parts, ...fact }) => fact)).toEqual(facts.map(({ messageParts: _parts, ...fact }) => fact));
     for (let cold = 0; cold < 3; cold++) {
       manager = new SessionManager(dir);
       const loaded = manager.getOrCreate('parallel');
-      expect(loaded.messages).toEqual(facts);
+      expect(loaded.messages).toEqual(persistedFacts);
       expect(loaded.canonicalHash()).toBe(hash);
       await manager.save(loaded);
     }

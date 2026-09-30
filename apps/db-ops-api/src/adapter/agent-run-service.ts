@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { dbConnection } from '../db-connection.js';
 import type { CompleteEvent } from './types.js';
 import { platformLogs } from '../platform/structured-log-evidence-adapter.js';
+import { persistedMessageParts } from './message-parts.js';
 
 export type AgentRunState = 'running' | 'completed' | 'partial' | 'failed' | 'cancelled' | 'timed_out';
 export interface AgentRun { id: string; actorId: number; sessionId: string; messageId: string; idempotencyKey: string; state: AgentRunState; result?: unknown; error?: unknown; }
@@ -97,7 +98,10 @@ export class AgentRunService {
           `INSERT INTO chat_messages (session_id, message_id, role, content, parent_id, metadata)
            VALUES (?, ?, 'assistant', ?, ?, ?) ON DUPLICATE KEY UPDATE message_id = message_id`,
           [run.sessionId, messageId, content, `run_${run.id}_user`,
-            JSON.stringify({ canonicalRunId: run.id, canonicalTurnId: `run_${run.id}_user` })],
+            JSON.stringify({ canonicalRunId: run.id, canonicalTurnId: `run_${run.id}_user`, messageParts: persistedMessageParts({
+              id: messageId, runId: run.id, turnId: `run_${run.id}_user`, role: 'assistant', content: content ?? '',
+              ...(event.thinkingContent ? { reasoning_content: event.thinkingContent } : {}),
+            }).messageParts })],
         );
         const [messages] = await connection.query<any[]>(
           'SELECT id, content FROM chat_messages WHERE session_id = ? AND message_id = ?', [run.sessionId, messageId],

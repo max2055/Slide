@@ -21,12 +21,14 @@ export function hasMedia(messages: Message[]): boolean {
 }
 /** Retain metadata too: it can only increase this conservative budget. */
 export function tokenPayload(messages: Message[], tools: unknown[]): string {
-  return JSON.stringify({ messages, tools });
+  return JSON.stringify({ messages: messages.map(({ messageParts: _parts, ...message }) => message), tools });
 }
 export function conservativePromptEstimate(messages: Message[], tools: unknown[], model = 'unknown', fallbackReason?: string): PromptTokenEstimate {
   let rawTokens = 32 + Buffer.byteLength(JSON.stringify(tools), 'utf8');
   for (const message of messages) {
-    rawTokens += 16 + Buffer.byteLength(JSON.stringify(message), 'utf8');
+    // Parts/rollback snapshots are local persistence fields, never provider payload.
+    const { messageParts: _parts, ...payload } = message;
+    rawTokens += 16 + Buffer.byteLength(JSON.stringify(payload), 'utf8');
     if (Array.isArray(message.content)) rawTokens += message.content.filter(b => b.type === 'image_url').length * 4096;
   }
   return { tokens: rawTokens, rawTokens, method: 'conservative-heuristic', model, version: TOKEN_ESTIMATOR_VERSION,

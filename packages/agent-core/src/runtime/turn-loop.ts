@@ -750,7 +750,11 @@ function buildAssistantMessage(
     content: content || null,
     tool_calls: toolCalls?.map(tcToOpenAI),
   };
-  if (_extra) (msg as any)._extra = _extra;
+  if (_extra) {
+    (msg as any)._extra = _extra;
+    if (typeof _extra.reasoning_content === 'string') msg.reasoning_content = _extra.reasoning_content;
+    if (Array.isArray(_extra.thinking_blocks)) msg.thinking_blocks = _extra.thinking_blocks;
+  }
   return msg;
 }
 

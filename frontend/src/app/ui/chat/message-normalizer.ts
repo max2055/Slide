@@ -13,6 +13,27 @@ import { mediaKindFromMime } from "../../src/media/constants.ts";
 import { splitMediaFromOutput } from "../../src/media/parse.ts";
 import { parseInlineDirectives } from "../../src/utils/directive-tags.ts";
 import type { NormalizedMessage, MessageContentItem } from "../types/chat-types.ts";
+import { readMessageParts } from '../../../../../packages/agent-core/src/message-parts.ts';
+
+/** Parts are additive. Future versions and invalid documents retain the old UI projection. */
+export function messagePartsDisplay(message: unknown): Record<string, unknown> {
+  const original = message as Record<string, unknown>;
+  if (!original?.messageParts) return original;
+  try {
+    const doc = readMessageParts(original.messageParts);
+    if (doc.id !== original.id || doc.role !== original.role) return original;
+    const attachments = doc.parts.filter(part => part.type === 'attachment' && part.status !== 'discarded');
+    if (!attachments.length) return { ...doc.legacy, ...original, id: doc.id, role: doc.role };
+    const content = typeof doc.legacy.content === 'string' ? [{ type: 'text', text: doc.legacy.content }]
+      : (doc.legacy.content ?? []).filter(block => block.type === 'text');
+    return { ...original, id: doc.id, role: doc.role, content: [...content, ...attachments.map(part => {
+      if (part.type !== 'attachment') return {};
+      const a = part.attachment;
+      return { type: 'attachment', attachment: { url: a.reference, kind: a.kind === 'image' ? 'image' : 'document',
+        label: a.kind === 'image' ? '图片附件' : '文件附件', mimeType: a.mimeType } };
+    })] };
+  } catch { return original; }
+}
 
 function coerceCanvasPreview(
   value: unknown,
@@ -234,7 +255,7 @@ function expandTextContent(text: string): {
  * Normalize a raw message object into a consistent structure.
  */
 export function normalizeMessage(message: unknown): NormalizedMessage {
-  const m = message as Record<string, unknown>;
+  const m = messagePartsDisplay(message);
   let role = typeof m.role === "string" ? m.role : "unknown";
 
   // Detect tool messages by common gateway shapes.

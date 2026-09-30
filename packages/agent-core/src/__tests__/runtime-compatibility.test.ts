@@ -25,7 +25,7 @@ const scenarios = [
 // that new frame and reminder provenance when comparing the frozen legacy API.
 const copy = (value: unknown) => JSON.parse(JSON.stringify(value, (key, item) => {
   // S2 metadata has dedicated persistence/epoch assertions; legacy traces exclude it.
-  if (['streamAttempt', 'sourceRequestId', 'provisionalBytes', 'streamReset', 'checkpoint_id', 'stream_state_v1', 'context_estimate_v1', 'context_config_v1'].includes(key)) return undefined;
+  if (['messageParts', 'streamAttempt', 'sourceRequestId', 'provisionalBytes', 'streamReset', 'checkpoint_id', 'stream_state_v1', 'context_estimate_v1', 'context_config_v1'].includes(key)) return undefined;
   if (Array.isArray(item)) return item.filter(m => !(m?.source === 'runtime' && String(m.content).startsWith('Current Time:')));
   if (item?.source === 'runtime') { const { source: _source, ...rest } = item; return rest; }
   return item;
