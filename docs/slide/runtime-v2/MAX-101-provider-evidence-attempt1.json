@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "results": [
+    {
+      "scenario": "real-MySQL-committed-only-actor-owned-source-snapshot",
+      "passed": true,
+      "snapshot": [
+        {
+          "id": "run_e90fad63-81ea-481f-a675-14e4379cb079_user",
+          "content": "I prefer concise Chinese replies.",
+          "hash": "086cd66ac999a01adf94a2897a02fd9141b482e00b6f190383c9cedf13d1026f"
+        }
+      ]
+    },
+    {
+      "scenario": "real-MySQL-business-entrance-replay-share-source-edit-delete-tombstone-chat-completion-preserved",
+      "passed": true
+    },
+    {
+      "scenario": "limited-real-provider-one-attempt",
+      "passed": false,
+      "model": "deepseek-v4-flash",
+      "job": {
+        "schemaVersion": 1,
+        "id": "extract_0864f05364c3ecb619524a889d45afaa0e86320a52cf0abede8da36b9c519da4",
+        "scope": {
+          "workspaceId": "qualification",
+          "actorId": "3",
+          "sessionId": "261eafe8-a247-4f77-a7df-16db0a8c55ff"
+        },
+        "boundary": "e90fad63-81ea-481f-a675-14e4379cb079",
+        "inputs": [
+          {
+            "id": "run_e90fad63-81ea-481f-a675-14e4379cb079_user",
+            "content": "I prefer concise Chinese replies.",
+            "hash": "086cd66ac999a01adf94a2897a02fd9141b482e00b6f190383c9cedf13d1026f"
+          }
+        ],
+        "limits": {
+          "maxMessages": 40,
+          "maxCandidates": 20,
+          "maxInputBytes": 12000,
+          "maxOutputTokens": 512,
+          "maxTotalTokens": 4096,
+          "maxProviderAttempts": 1,
+          "deadlineMs": 15000
+        },
+        "createdAt": 1790779425362,
+        "deadlineAt": 1790779440362,
+        "state": "failed",
+        "attempts": 1,
+        "usage": {},
+        "reservedTokens": 1913,
+        "requests": [
+          {
+            "attempt": 1,
+            "usage": {},
+            "reservation": 1913,
+            "outcome": "failed"
+          }
+        ],
+        "errorCode": "MEMORY_EXTRACTION_FAILED"
+      },
+      "records": [],
+      "billingEvidence": "Provider-reported tokens/request ID; invoice or monetary cost not available.",
+      "jobSnapshotBeforeOwnershipRelease": true
+    }
+  ]
+}

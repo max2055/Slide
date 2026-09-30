@@ -1,7 +1,7 @@
 import { dbConnection } from '../db-connection.js';
 import { chatDatabaseService } from '../chat-database-service.js';
 import type { ActorContext } from '../auth/actor-context.js';
-import type { SessionEntry } from '@slide/agent-core';
+import { memoryHash, type MemoryInput, type SessionEntry } from '@slide/agent-core';
 
 interface Executor { query<T = any>(sql: string, values?: unknown[]): Promise<[T, unknown?]>; }
 interface Connection extends Executor { beginTransaction(): Promise<void>; commit(): Promise<void>; rollback(): Promise<void>; release(): void; }
@@ -67,6 +67,23 @@ export class CanonicalStore {
       await connection.commit();
     } catch (error) { try { await connection.rollback(); } catch { /* retain original */ } throw error; }
     finally { connection.release(); }
+  }
+
+  /** One committed SQL snapshot. Only user statements from durably completed runs.
+   * Internal owner identity comes from authenticated admission or a stored shared
+   * record, never a model, request payload, workspace path or cached JSONL.
+   */
+  async getCommittedMemoryInputs(ownerId: number, sessionId: string, ids: string[]): Promise<MemoryInput[]> {
+    if (!Number.isSafeInteger(ownerId) || ownerId <= 0 || !ids.length || ids.length > 1000
+      || ids.some(id => typeof id !== 'string' || id.length > 256)) throw new Error('MEMORY_SOURCE_QUERY_INVALID');
+    const [rows] = await this.pool().query<any[]>(
+      `SELECT cm.message_id, cm.content FROM chat_messages cm
+       JOIN chat_sessions cs ON cs.session_id = cm.session_id AND cs.user_id = ?
+       JOIN agent_runs ar ON ar.session_id = cm.session_id AND ar.actor_id = cs.user_id
+         AND cm.message_id = CONCAT('run_', ar.id, '_user') AND ar.state = 'completed'
+       WHERE cm.session_id = ? AND cm.role = 'user' AND cm.message_id IN (${ids.map(() => '?').join(',')})
+       ORDER BY cm.id`, [ownerId, sessionId, ...ids]);
+    return rows.map(row => ({ id: row.message_id, content: row.content, hash: memoryHash(row.content) }));
   }
 
   /** Descending cursor pages returned in chronological order, with stable IDs. */

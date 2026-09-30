@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "results": [
+    {
+      "scenario": "real-MySQL-committed-only-actor-owned-source-snapshot",
+      "passed": true,
+      "snapshot": [
+        {
+          "id": "run_eb757783-5acb-4c41-b09f-5e21ed5a3d25_user",
+          "content": "I prefer concise Chinese replies.",
+          "hash": "086cd66ac999a01adf94a2897a02fd9141b482e00b6f190383c9cedf13d1026f"
+        }
+      ]
+    },
+    {
+      "scenario": "real-MySQL-business-entrance-replay-share-source-edit-delete-tombstone-chat-completion-preserved",
+      "passed": true
+    },
+    {
+      "scenario": "limited-real-provider-one-attempt",
+      "passed": false,
+      "model": "deepseek-v4-flash",
+      "job": {
+        "schemaVersion": 1,
+        "id": "extract_148e469bfa8dd4347c81b6e4875ab2b2a7436271ed32b5006009ebaf606e27ea",
+        "scope": {
+          "workspaceId": "qualification",
+          "actorId": "3",
+          "sessionId": "5358db5a-019d-4854-b632-f11b629be480"
+        },
+        "boundary": "eb757783-5acb-4c41-b09f-5e21ed5a3d25",
+        "inputs": [
+          {
+            "id": "run_eb757783-5acb-4c41-b09f-5e21ed5a3d25_user",
+            "content": "I prefer concise Chinese replies.",
+            "hash": "086cd66ac999a01adf94a2897a02fd9141b482e00b6f190383c9cedf13d1026f"
+          }
+        ],
+        "limits": {
+          "maxMessages": 40,
+          "maxCandidates": 20,
+          "maxInputBytes": 12000,
+          "maxOutputTokens": 512,
+          "maxTotalTokens": 4096,
+          "maxProviderAttempts": 1,
+          "deadlineMs": 15000
+        },
+        "createdAt": 1790779554219,
+        "deadlineAt": 1790779569219,
+        "state": "failed",
+        "attempts": 1,
+        "usage": {},
+        "reservedTokens": 1913,
+        "requests": [
+          {
+            "attempt": 1,
+            "usage": {},
+            "reservation": 1913,
+            "outcome": "failed",
+            "errorCode": "LLM_INSUFFICIENT_BALANCE",
+            "providerStatus": 402
+          }
+        ],
+        "errorCode": "LLM_INSUFFICIENT_BALANCE"
+      },
+      "records": [],
+      "billingEvidence": "Provider-reported tokens/request ID; invoice or monetary cost not available."
+    }
+  ]
+}
