@@ -220,6 +220,34 @@ describe('durable memory consolidation', () => {
     expect(await fs.readFile(store.getHistoryPath(), 'utf8')).toBe(original);
   });
 
+  it('does not acknowledge sources after archive fsync fails', async () => {
+    await seed(2, store);
+    const before = await store.readUnprocessedHistory(0);
+    const open = fs.open.bind(fs);
+    vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (String(args[0]).includes('memory-archive') && String(args[0]).endsWith('.tmp')) {
+        vi.spyOn(handle, 'sync').mockRejectedValueOnce(new Error('injected fsync failure'));
+      }
+      return handle;
+    });
+    await expect(consolidator.consolidateToMemory(store)).rejects.toThrow('fsync');
+    expect(await store.readUnprocessedHistory(0)).toEqual(before);
+    await expect(fs.access(path.join(store.getMemoryDir(), 'consolidation-cursor.json'))).rejects.toThrow();
+    vi.restoreAllMocks();
+    await consolidator.consolidateToMemory(new MemoryStore(workspace));
+    expect(await archives()).toHaveLength(2);
+  });
+
+  it('refuses a corrupt journal without deleting or overwriting history', async () => {
+    await seed(2, store);
+    const before = await fs.readFile(store.getHistoryPath(), 'utf8');
+    await fs.writeFile(path.join(store.getMemoryDir(), 'consolidation-pending.json'), '{"version":1,"id":"bad","entries":[]}');
+    await expect(consolidator.consolidateToMemory(store)).rejects.toThrow('journal');
+    expect(await fs.readFile(store.getHistoryPath(), 'utf8')).toBe(before);
+    expect(await archives()).toHaveLength(0);
+  });
+
   it.each([0, -1, NaN, Infinity, 1.5])('rejects invalid batch limit %s without mutation', async limit => {
     await seed(2, store);
     await expect(consolidator.consolidateToMemory(store, limit)).rejects.toThrow();
