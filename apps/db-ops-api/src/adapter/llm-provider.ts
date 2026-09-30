@@ -18,6 +18,7 @@ import type {
   LLMResponse,
   LLMCallOptions,
   StreamCallbacks,
+  ModelCapabilities,
 } from '@slide/agent-core';
 import type {
   TextBlockParam,
@@ -118,10 +119,15 @@ function toAnthropicTools(tools: ToolSchema[]): AnthropicTool[] {
 export class AnthropicProvider implements LLMProvider {
   private client_: Anthropic | null = null;
 
-  private readonly config: { apiKey?: string; baseURL?: string; model?: string };
+  private readonly config: { apiKey?: string; baseURL?: string; model?: string; capabilities?: ModelCapabilities };
 
-  constructor(config: string | { apiKey?: string; baseURL?: string; model?: string } = {}) {
-    this.config = typeof config === 'string' ? { apiKey: config } : { ...config };
+  constructor(config: string | { apiKey?: string; baseURL?: string; model?: string; capabilities?: ModelCapabilities } = {}) {
+    this.config = typeof config === 'string' ? { apiKey: config } : { ...config,
+      ...(config.capabilities ? { capabilities: { ...config.capabilities } } : {}) };
+  }
+
+  getModelCapabilities(model = this.getDefaultModel()): ModelCapabilities | undefined {
+    return this.config.capabilities?.model === model ? { ...this.config.capabilities } : undefined;
   }
 
   private get client(): Anthropic {

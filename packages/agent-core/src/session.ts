@@ -14,7 +14,8 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { referenceMessages } from './context-block.js';
-import { sourceHash, normalizeToolGroups } from './runtime/context-manager.js';
+import { sourceHash, normalizeToolGroups, estimatePromptTokens } from './runtime/context-manager.js';
+import { conservativeTextTokens } from './token-estimation.js';
 import type { Message } from './types.js';
 
 // ── Constants ──
@@ -86,10 +87,9 @@ export class Session {
   /** Backward-compat: updated_at as Date object. */
   get updated_at(): Date { return new Date(this.updatedAt); }
 
-  /** Estimate token count for a message text (char-based ~4 chars/token). */
+  /** Conservative text budget, never measured provider usage. */
   static estimateTokens(text: string | null): number {
-    if (!text) return 0;
-    return Math.ceil(text.length / 4);
+    return conservativeTextTokens(text);
   }
 
   /** Add a message to the session history. */
@@ -182,19 +182,6 @@ export class Session {
       msgs = msgs.slice(1);
     }
 
-    // Slice whole user turns; a count/token budget must never cut a parallel batch.
-    const limit = Math.min(maxMessages && maxMessages > 0 ? maxMessages : Infinity, this.projectionLimit ?? Infinity);
-    const starts = msgs.flatMap((m, i) => m.role === 'user' ? [i] : []);
-    let start = starts.at(-1) ?? 0;
-    for (let i = starts.length - 1; i >= 0; i--) {
-      const candidate = msgs.slice(starts[i]);
-      const tokens = candidate.reduce((n, m) => n + Session.estimateTokens(JSON.stringify(m)), 0);
-      if (candidate.length > limit || (tokenBudget && tokenBudget > 0 && tokens > tokenBudget)) {
-        if (i === starts.length - 1) start = starts[i];
-        break;
-      }
-      start = starts[i];
-    }
     const summary = this.metadata.context_summary;
     if (summary && (!Number.isSafeInteger(summary.generation) || summary.generation < 0 ||
       !['original', 'legacy/unknown'].includes(summary.provenance) || !Array.isArray(summary.sourceIds) ||
@@ -204,6 +191,19 @@ export class Session {
       if (JSON.stringify(sources.map(m => m.id)) !== JSON.stringify(summary.sourceIds) || sourceHash(sources as Message[]) !== summary.sourceHash) throw new Error('SUMMARY_SOURCE_CHANGED');
     }
     const derived = summary ? referenceMessages('session_summary', { text: summary.text, generation: summary.generation, provenance: summary.provenance }, summary.sourceHash ?? 'legacy') : [];
+    // Slice whole user turns; a count/token budget must never cut a parallel batch.
+    const limit = Math.min(maxMessages && maxMessages > 0 ? maxMessages : Infinity, this.projectionLimit ?? Infinity);
+    const starts = msgs.flatMap((m, i) => m.role === 'user' ? [i] : []);
+    let start = starts.at(-1) ?? 0;
+    for (let i = starts.length - 1; i >= 0; i--) {
+      const candidate = msgs.slice(starts[i]);
+      const tokens = estimatePromptTokens([...policies, ...derived, ...normalizeToolGroups(candidate as Message[])] as Message[], []);
+      if (candidate.length > limit || (tokenBudget && tokenBudget > 0 && tokens > tokenBudget)) {
+        if (i === starts.length - 1) start = starts[i];
+        break;
+      }
+      start = starts[i];
+    }
     return [...structuredClone(policies), ...derived, ...normalizeToolGroups(structuredClone(msgs.slice(start)) as Message[])] as SessionEntry[];
   }
 

@@ -47,7 +47,7 @@ it('alternating error categories share a cumulative limit across a serialized re
 });
 it('missing usage is reserved and survives restart; cached usage is not added twice', async () => {
   const { result } = await run([{ ...response(''), usage: {} }, { ...response('完成'), usage: { prompt_tokens: 10, completion_tokens: 2, cached_tokens: 8 } }]);
-  expect(result.runtimeState).toMatchObject({ unknownRequests: 1, reservedTokens: 204096, usage: { prompt_tokens: 10, completion_tokens: 2, cached_tokens: 8 } });
+  expect(result.runtimeState).toMatchObject({ unknownRequests: 1, reservedTokens: 8192, usage: { prompt_tokens: 10, completion_tokens: 2, cached_tokens: 8 } });
 });
 it.each([401, 403, 400, 402])('does not retry nonrecoverable provider status %i', async providerStatus => {
   const { result, requests } = await run([{ ...response('', 'error'), error: 'provider rejected', providerStatus }]);

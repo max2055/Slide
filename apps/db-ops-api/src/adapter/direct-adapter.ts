@@ -29,6 +29,7 @@ import { platformLogs } from '../platform/structured-log-evidence-adapter.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID, createHash } from 'node:crypto';
 import {
+  resolveContextConfig,
   AgentRunner,
   NoopHook,
   ToolRegistry,
@@ -1051,8 +1052,6 @@ export class DirectAdapter implements IAgentEngine {
         resumeCheckpoint,
         onProviderRequest: request => this.observeSessionOperation(sessionKey, request),
         onToolExecution: request => this.observeSessionOperation(sessionKey, request),
-        contextWindowTokens: 200_000,
-        maxTokens: 4096,
         sessionKey,
         signal,
         idempotencyKey,
@@ -1241,8 +1240,6 @@ export class DirectAdapter implements IAgentEngine {
           session.metadata.runtime_checkpoint = cp;
           await this.sessionManager.save(session);
         },
-        contextWindowTokens: 200_000,
-        maxTokens: 4096,
         signal: controller.signal,
         onProviderRequest: request => this.observeSessionOperation(sessionKey, request),
         onToolExecution: request => this.observeSessionOperation(sessionKey, request),
@@ -1302,10 +1299,13 @@ ${result.finalContent || ''}`
   // ── capabilities() ──
 
   capabilities(): AgentCapabilities {
+    const model = this.provider.getDefaultModel();
+    const profile = this.provider.getModelCapabilities?.(model);
+    const context = resolveContextConfig({ model }, this.provider);
     return {
       streaming: true,
-      toolCalling: true,
-      maxContextTokens: 200_000,
+      toolCalling: profile?.supportsTools ?? true,
+      maxContextTokens: context.contextWindowTokens,
       supportsCustomSystemPrompt: true,
       features: {
         sessions: { state: 'supported' },

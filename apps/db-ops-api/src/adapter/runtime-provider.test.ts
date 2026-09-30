@@ -1,6 +1,6 @@
 import { createServer, type Server, type RequestListener } from 'node:http';
 import { afterEach, expect, it } from 'vitest';
-import { AgentRunner, NoopHook, OpenAIProvider, ToolRegistry, type LLMProvider, projectContextBlocks } from '@slide/agent-core';
+import { AgentRunner, NoopHook, OpenAIProvider, ToolRegistry, type LLMProvider, projectContextBlocks, conservativePromptEstimate } from '@slide/agent-core';
 import { AnthropicProvider } from './llm-provider.js';
 const servers: Server[] = [];
 afterEach(async () => { for (const server of servers.splice(0)) { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); } });
@@ -13,6 +13,31 @@ const providers = [
   ['OpenAI', (baseURL: string) => new OpenAIProvider({ apiKey: 'fixture', baseURL })],
   ['Anthropic', (baseURL: string) => new AnthropicProvider({ apiKey: 'fixture', baseURL })],
 ] as const;
+it('SDK dispatch uses the configured window/output and blocks an overflowing schema before any HTTP request', async () => {
+  let calls = 0; let wire: any; let checkpoint: any;
+  const baseURL = await fixture(async (req, res) => {
+    calls++; let body = ''; for await (const chunk of req) body += chunk;
+    wire = JSON.parse(body);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'fixture', choices: [{ message: { role: 'assistant', content: 'Complete.' }, finish_reason: 'stop' }] }));
+  });
+  const p = new OpenAIProvider({ apiKey: 'fixture', baseURL, model: 'configured-model', capabilities: {
+    model: 'configured-model', contextWindowTokens: 8192, preferredOutputTokens: 1024, supportsTools: true, supportsVision: false,
+    source: 'configuration', version: 'fixture/v1' } });
+  const runSpec = { initialMessages: [{ role: 'user' as const, content: '中文 read-only SQL SELECT 1' }],
+    tools: new ToolRegistry(), model: 'configured-model', maxIterations: 2, maxToolResultChars: 1000, hook: new NoopHook(),
+    checkpointCallback: async (value: Record<string, unknown>) => { checkpoint = value; } };
+  const result = await new AgentRunner(p).run(runSpec);
+  expect(result.stopReason).toBe('completed'); expect(calls).toBe(1); expect(wire.max_tokens).toBe(1024);
+  expect(conservativePromptEstimate(wire.messages, []).tokens + wire.max_tokens + 1024).toBeLessThanOrEqual(8192);
+  expect(checkpoint.context_estimate_v1.method).toBe('conservative-heuristic');
+  expect(checkpoint.context_config_v1).toMatchObject({ contextWindowTokens: 8192, maxTokens: 1024, source: 'configuration' });
+  expect(result.runtimeState).toMatchObject({ unknownRequests: 1, reservedTokens: 8192 });
+  const tools = new ToolRegistry();
+  tools.getDefinitions = () => [{ name: 'huge', description: 'x'.repeat(8192), parameters: { type: 'object', properties: {} } }];
+  const rejected = await new AgentRunner(p).run({ ...runSpec, tools });
+  expect(rejected.resolution?.reasonCode).toBe('CONTEXT_UNRECOVERABLE'); expect(calls).toBe(1);
+});
 for (const [name, create] of providers) {
   it(`${name}: actual SDK request honors model-boundary idle cancellation before first token`, async () => {
     const baseURL = await fixture((_req, res) => { res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.flushHeaders(); });
@@ -44,7 +69,7 @@ it.each([false, true])('Anthropic SDK preserves incomplete usage reservation (mi
   const result = await new AgentRunner(new AnthropicProvider({ apiKey: 'fixture', baseURL })).run({ initialMessages: [{ role: 'user', content: 'test' }],
     tools: new ToolRegistry(), model: 'fixture', maxIterations: 2, maxToolResultChars: 1000, hook: new NoopHook(),
     budgetLimits: { maxToolCalls: 500, maxProviderAttempts: 600, maxTotalTokens: 1_000_000, maxNoProgressSteps: 12 } });
-  expect(result.runtimeState).toMatchObject({ unknownRequests: 1, reservedTokens: 204096 });
+  expect(result.runtimeState).toMatchObject({ unknownRequests: 1, reservedTokens: 8192 });
 });
 it.each(['OpenAI', 'Anthropic'])('%s SDK normalizes cached tokens as an input subset', async name => {
   const baseURL = await fixture((_req, res) => {

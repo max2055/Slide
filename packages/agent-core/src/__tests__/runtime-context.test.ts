@@ -32,15 +32,15 @@ it('impossible latest user or schema fails explicitly with no provider dispatch'
   expect(calls).toBe(0);
   expect(result.resolution?.reasonCode).toBe('CONTEXT_UNRECOVERABLE');
 });
-it('giant schemas and governance exceptions never fall back to an unchecked request', async () => {
+it('giant schemas fail admission even when the tokenizer throws and degrades', async () => {
   for (const kind of ['schema', 'throw']) {
     let calls = 0; const tools = new ToolRegistry();
-    if (kind === 'schema') tools.getDefinitions = () => [{ name: 'huge', description: 'x'.repeat(9000), parameters: { type: 'object', properties: {} } }];
+    tools.getDefinitions = () => [{ name: 'huge', description: 'x'.repeat(9000), parameters: { type: 'object', properties: {} } }];
     const runner = new AgentRunner({ getDefaultModel: () => 'test', countPromptTokens: kind === 'throw' ? () => { throw new Error('broken tokenizer'); } : undefined,
       chat: async () => { calls++; throw new Error('dispatch'); }, chatStream: async () => { calls++; throw new Error('dispatch'); } });
     const result = await runner.run(spec({ tools, initialMessages: [{ role: 'user', content: 'hi' }] }));
     expect(calls).toBe(0);
-    expect(result.resolution?.reasonCode).toBe(kind === 'schema' ? 'CONTEXT_UNRECOVERABLE' : 'CONTEXT_GOVERNANCE_ERROR');
+    expect(result.resolution?.reasonCode).toBe('CONTEXT_UNRECOVERABLE');
   }
 });
 it('current user and recent complete tool groups remain protected in a long single turn', () => {

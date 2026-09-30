@@ -3,6 +3,8 @@ import type { AgentRunSpec, Message, LLMProvider } from '../types.js';
 import { RuntimeError } from './recovery-policy.js';
 import { referenceMessages, projectContextBlocks } from '../context-block.js';
 import type { SummaryRecord } from './auto-compact.js';
+import { conservativePromptEstimate, estimateWithProvider, type PromptTokenEstimate } from '../token-estimation.js';
+import { resolveContextConfig } from '../model-context.js';
 
 const MICROCOMPACT_KEEP_RECENT = 10;
 const MICROCOMPACT_MIN_CHARS = 500;
@@ -37,12 +39,7 @@ export function normalizeToolGroups(messages: Message[]): Message[] {
 
 /** UTF-8 byte upper bound, not measured tokens. Include metadata, schemas and image allowance. */
 export function estimatePromptTokens(messages: Message[], tools: unknown[]): number {
-  let total = 32 + Buffer.byteLength(JSON.stringify(tools), 'utf8');
-  for (const message of messages) {
-    total += 16 + Buffer.byteLength(JSON.stringify(message), 'utf8');
-    if (Array.isArray(message.content)) total += message.content.filter(b => b.type === 'image_url').length * 4096;
-  }
-  return total;
+  return conservativePromptEstimate(messages, tools).tokens;
 }
 export function sourceHash(messages: Message[]): string {
   return createHash('sha256').update(JSON.stringify(messages)).digest('hex');
@@ -55,28 +52,40 @@ export function prepareMessages(spec: AgentRunSpec, messages: Message[]): Messag
   return applyToolResultBudget(spec, microcompact(normalizeToolGroups(messages)));
 }
 export class ContextManager {
-  readonly estimation: 'provider' | 'estimated';
+  lastEstimate?: PromptTokenEstimate;
+  get estimation(): 'provider' | 'estimated' { return this.lastEstimate?.method === 'exact' ? 'provider' : 'estimated'; }
+  readonly contextConfig: ReturnType<typeof resolveContextConfig>;
   readonly inputBudget: number;
   readonly watermark: number;
   readonly target: number;
   summary?: SummaryRecord;
   constructor(readonly spec: AgentRunSpec, private readonly provider?: LLMProvider) {
-    this.estimation = provider?.countPromptTokens ? 'provider' : 'estimated';
-    const window = spec.contextWindowTokens ?? 200_000;
-    this.inputBudget = Math.min(spec.contextBlockLimit ?? Infinity, window - (spec.maxTokens ?? 4096) - 1024);
+    try { this.contextConfig = resolveContextConfig(spec, provider); }
+    catch { throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Invalid model context configuration'); }
+    this.inputBudget = Math.min(spec.contextBlockLimit ?? Infinity, this.contextConfig.contextWindowTokens - this.contextConfig.maxTokens - 1024);
     this.watermark = spec.contextPolicy?.watermark ?? 0.8;
     this.target = spec.contextPolicy?.target ?? 0.5;
-    if (!Number.isSafeInteger(spec.maxToolResultChars) || spec.maxToolResultChars < 1 || !Number.isFinite(this.inputBudget) || this.inputBudget <= 0 || !(this.target > 0 && this.target < this.watermark && this.watermark <= 1)) {
+    if (!Number.isSafeInteger(spec.maxToolResultChars) || spec.maxToolResultChars < 1 || !Number.isSafeInteger(this.inputBudget) || this.inputBudget <= 0 || !(this.target > 0 && this.target < this.watermark && this.watermark <= 1)) {
       throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Invalid context budget or watermarks');
     }
   }
-  tokens(messages: Message[], tools: unknown[] = this.spec.tools.getDefinitions()): number {
-    const measured = this.provider?.countPromptTokens?.(messages, tools as import('../types.js').ToolSchema[]);
-    if (measured !== undefined) {
-      if (!Number.isSafeInteger(measured) || measured < 0) throw new RuntimeError('CONTEXT_GOVERNANCE_ERROR', 'Invalid tokenizer result');
-      return measured;
+  estimate(messages: Message[], tools: unknown[] = this.spec.tools.getDefinitions()): PromptTokenEstimate {
+    this.lastEstimate = estimateWithProvider(messages, tools as import('../types.js').ToolSchema[], this.spec.model, this.provider);
+    if (this.lastEstimate.fallbackReason === 'MEDIA_UNCALIBRATED') {
+      // Unknown dimensions/provider image accounting has no proven upper bound.
+      // Fail admission rather than treating a fixed image allowance as exact.
+      this.lastEstimate.tokens = Math.max(this.lastEstimate.tokens, this.contextConfig.contextWindowTokens);
+      this.lastEstimate.margin.floorTokens = this.lastEstimate.tokens;
     }
-    return estimatePromptTokens(messages, tools);
+    return this.lastEstimate;
+  }
+  tokens(messages: Message[], tools?: unknown[]): number {
+    return this.estimate(messages, tools).tokens;
+  }
+  /** Unknown usage reserves the full admitted window, separately from measured usage. */
+  requestReservation(): number {
+    // The model window already covers input + output. Do not add output twice.
+    return this.contextConfig.contextWindowTokens;
   }
   assertFits(messages: Message[], limit = this.inputBudget, tools?: unknown[]): void {
     if (this.tokens(messages, tools) > limit) throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Protected context exceeds input budget');

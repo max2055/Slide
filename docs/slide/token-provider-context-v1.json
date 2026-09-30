@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "status": "configuration-and-admission-only;live-provider-unverified",
+  "source": "default",
+  "model": "deepseek-v4-flash",
+  "configuredWindow": 128000,
+  "configuredOutput": 2048,
+  "capabilities": {
+    "model": "deepseek-v4-flash",
+    "contextWindowTokens": 128000,
+    "preferredOutputTokens": 2048,
+    "supportsTools": true,
+    "supportsVision": false,
+    "source": "configuration",
+    "version": "slide-provider-config/catalog-v1"
+  },
+  "resolved": {
+    "contextWindowTokens": 128000,
+    "maxTokens": 2048,
+    "source": "configuration",
+    "version": "slide-provider-config/catalog-v1"
+  },
+  "inputBudget": 124928,
+  "estimate": {
+    "tokens": 142,
+    "rawTokens": 142,
+    "method": "conservative-heuristic",
+    "model": "deepseek-v4-flash",
+    "version": "utf8-upper-bound/v1",
+    "margin": {
+      "ratio": 0,
+      "fixedTokens": 0,
+      "floorTokens": 142
+    },
+    "fallbackReason": "TOKENIZER_UNSUPPORTED"
+  },
+  "sampleFits": true,
+  "giantSchemaRejected": true,
+  "providerCredentialsFetched": false,
+  "databaseAccess": "read-only-provider-metadata",
+  "providerRequests": 0
+}
