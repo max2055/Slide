@@ -15,6 +15,7 @@ export interface RecoverySnapshot {
   deadlineAt?: number;
   noProgressSteps?: number;
   progressEvidence?: string[];
+  progressCandidate?: string;
   progressKeyId?: string;
   progressRunId?: string;
 }
@@ -75,11 +76,13 @@ export function validateRecoverySnapshot(value: unknown): RecoverySnapshot {
   if (s.progressRunId !== undefined && (typeof s.progressRunId !== 'string' || !/^[a-f0-9-]{36}$/.test(s.progressRunId))) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid progress run ID');
   if (s.progressKeyId !== undefined && (typeof s.progressKeyId !== 'string' || !/^[a-f0-9-]{36}$/.test(s.progressKeyId))) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid progress key ID');
   if (s.progressEvidence !== undefined && (!Array.isArray(s.progressEvidence) || s.progressEvidence.length > 256 || !s.progressEvidence.every(h => /^[a-f0-9]{64}$/.test(h)))) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid progress evidence');
+  if (s.progressCandidate !== undefined && !/^[a-f0-9]{64}$/.test(s.progressCandidate)) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid candidate progress fingerprint');
   return { ...(s.delegated ? { delegated: { modelSteps: s.delegated.modelSteps, providerAttempts: s.delegated.providerAttempts, toolCalls: s.delegated.toolCalls, tokens: s.delegated.tokens } } : {}), ...(s.deadlineAt !== undefined ? { deadlineAt: s.deadlineAt } : {}),
     ...(s.noProgressSteps !== undefined ? { noProgressSteps: s.noProgressSteps } : {}),
     ...(s.progressRunId ? { progressRunId: s.progressRunId } : {}),
     ...(s.progressKeyId ? { progressKeyId: s.progressKeyId } : {}),
     ...(s.progressEvidence ? { progressEvidence: [...s.progressEvidence] } : {}),
+    ...(s.progressCandidate ? { progressCandidate: s.progressCandidate } : {}),
     schemaVersion: 1, modelSteps: s.modelSteps, providerAttempts: s.providerAttempts, toolCalls: s.toolCalls,
     total: s.total, counts: { empty: s.counts.empty, continuation: s.counts.continuation, stream: s.counts.stream, repetition: s.counts.repetition, context: s.counts.context },
     unknownRequests: s.unknownRequests, reservedTokens: s.reservedTokens,

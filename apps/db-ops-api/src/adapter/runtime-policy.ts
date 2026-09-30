@@ -27,11 +27,15 @@ export function resolveRuntimePolicy(entry: RuntimeEntry, options: { env?: NodeJ
   if (supervisorMode !== 'observe' && supervisorMode !== 'enforce') throw new Error('Invalid runtime configuration: AGENT_RUNTIME_SUPERVISOR_MODE');
   const enabled = env.AGENT_RUNTIME_LONG_CHAT === 'true';
   if (env.AGENT_RUNTIME_LONG_CHAT !== undefined && !['true', 'false'].includes(env.AGENT_RUNTIME_LONG_CHAT)) throw new Error('Invalid runtime configuration: AGENT_RUNTIME_LONG_CHAT must be true or false');
-  const oldTimeout = enabled ? positive(env, 'AGENT_RUN_TIMEOUT_MS') : undefined;
-  const chatTimeout = enabled ? positive(env, 'AGENT_CHAT_RUN_TIMEOUT_MS') : undefined;
+  // Chat has no implicit whole-run deadline. Both timeout variables are still
+  // accepted as explicit operator limits, independently of rollout mode.
+  const oldTimeout = entry === 'chat' || enabled ? positive(env, 'AGENT_RUN_TIMEOUT_MS') : undefined;
+  const chatTimeout = entry === 'chat' ? positive(env, 'AGENT_CHAT_RUN_TIMEOUT_MS') : undefined;
   const steps = enabled ? positive(env, 'AGENT_MAX_ITERATIONS') : undefined;
-  const defaults = { chat: enabled ? 200 : legacy.maxIterations, invoke: 8, subagent: 25, cron: 40 };
-  let timeout = entry === 'chat' && enabled ? chatTimeout ?? oldTimeout : enabled ? oldTimeout ?? 120_000 : legacy.runTimeoutMs;
+  // maxIterations remains the compatibility name, but for long chat it is an
+  // emergency runaway fuse above the ordinary resource budgets.
+  const defaults = { chat: enabled ? 1000 : legacy.maxIterations, invoke: 8, subagent: 25, cron: 40 };
+  let timeout = entry === 'chat' ? chatTimeout ?? oldTimeout : enabled ? oldTimeout ?? 120_000 : legacy.runTimeoutMs;
   if (entry === 'subagent') timeout = Math.min(timeout ?? 120_000, 120_000);
   if (entry === 'cron') {
     const seconds = options.cronTimeoutSeconds ?? 300;
@@ -39,13 +43,13 @@ export function resolveRuntimePolicy(entry: RuntimeEntry, options: { env?: NodeJ
     // job.timeout_seconds remains the authoritative Cron deadline, as before.
     timeout = seconds * 1000;
   } else if (entry !== 'chat' && enabled && oldTimeout !== undefined) timeout = Math.min(timeout ?? oldTimeout, oldTimeout);
-  const policy: RuntimePolicy = { entry, source: entry === 'cron' ? 'job.timeout_seconds' : entry === 'chat' && enabled && chatTimeout !== undefined ? 'AGENT_CHAT_RUN_TIMEOUT_MS' : env.AGENT_RUN_TIMEOUT_MS !== undefined ? 'AGENT_RUN_TIMEOUT_MS' : enabled && entry === 'chat' ? 'long-chat-default' : 'legacy-default',
+  const policy: RuntimePolicy = { entry, source: entry === 'cron' ? 'job.timeout_seconds' : entry === 'chat' && chatTimeout !== undefined ? 'AGENT_CHAT_RUN_TIMEOUT_MS' : oldTimeout !== undefined ? 'AGENT_RUN_TIMEOUT_MS' : entry === 'chat' ? 'chat-default' : 'legacy-default',
     supervisorMode, longChat: enabled && entry === 'chat', runTimeoutMs: timeout,
     maxIterations: Math.min(defaults[entry], steps ?? (entry === 'chat' ? defaults.chat : legacy.maxIterations), options.maxIterations ?? Infinity),
     llmTimeoutS: entry === 'invoke' ? 60 : entry === 'cron' ? options.cronTimeoutSeconds ?? 300 : undefined,
   };
   if (enabled) {
-    if (entry === 'chat') policy.maxIterations = Math.min(steps ?? 200, options.maxIterations ?? Infinity);
+    if (entry === 'chat') policy.maxIterations = Math.min(steps ?? 1000, options.maxIterations ?? Infinity);
     policy.llmTimeoutS ??= 300;
     policy.streamIdleTimeoutS = 60;
     policy.toolTimeoutMs = 60_000;

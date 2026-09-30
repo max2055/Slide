@@ -1,17 +1,21 @@
 import { expect, it } from 'vitest';
 import { resolveRuntimePolicy } from './runtime-policy.js';
 it.each([
-  ['chat', 120000, 40], ['invoke', 120000, 8], ['subagent', 120000, 25], ['cron', 300000, 40],
-] as const)('preserves legacy %s defaults', (entry, runTimeoutMs, maxIterations) => {
+  ['chat', undefined, 40], ['invoke', 120000, 8], ['subagent', 120000, 25], ['cron', 300000, 40],
+] as const)('keeps bounded entry defaults while chat has no implicit whole-run deadline: %s', (entry, runTimeoutMs, maxIterations) => {
   expect(resolveRuntimePolicy(entry, { env: {} })).toMatchObject({ runTimeoutMs, maxIterations, longChat: false });
   expect(resolveRuntimePolicy(entry, { env: {} }).budgetLimits).toBeUndefined();
 });
 it.each([
-  ['chat', undefined, 200], ['invoke', 120000, 8], ['subagent', 120000, 25], ['cron', 300000, 40],
+  ['chat', undefined, 1000], ['invoke', 120000, 8], ['subagent', 120000, 25], ['cron', 300000, 40],
 ] as const)('opens only chat deadline under long policy: %s', (entry, runTimeoutMs, maxIterations) => {
   const policy = resolveRuntimePolicy(entry, { env: { AGENT_RUNTIME_LONG_CHAT: 'true' } });
   expect(policy).toMatchObject({ runTimeoutMs, maxIterations, toolTimeoutMs: 60000, streamIdleTimeoutS: 60 });
   expect(policy.budgetLimits).toMatchObject({ maxToolCalls: 500, maxProviderAttempts: 600, maxTotalTokens: 1000000 });
+});
+it('keeps the long-chat model-step fuse beyond the ordinary provider-attempt budget', () => {
+  const policy = resolveRuntimePolicy('chat', { env: { AGENT_RUNTIME_LONG_CHAT: 'true' } });
+  expect(policy.maxIterations).toBeGreaterThan(policy.budgetLimits!.maxProviderAttempts);
 });
 it.each(['chat', 'invoke', 'subagent', 'cron'] as const)('preserves explicit legacy limits for %s', entry => {
   const policy = resolveRuntimePolicy(entry, { env: { AGENT_RUNTIME_LONG_CHAT: 'true', AGENT_RUN_TIMEOUT_MS: '17000', AGENT_MAX_ITERATIONS: '3' } });
@@ -22,14 +26,32 @@ it('uses chat-specific override, positive milliseconds, and records source', () 
   expect(resolveRuntimePolicy('chat', { env })).toMatchObject({ runTimeoutMs: 350000, source: 'AGENT_CHAT_RUN_TIMEOUT_MS' });
   expect(resolveRuntimePolicy('invoke', { env }).runTimeoutMs).toBe(10000);
 });
+it('honors an explicit chat deadline without requiring the long-chat rollout flag', () => {
+  expect(resolveRuntimePolicy('chat', { env: { AGENT_CHAT_RUN_TIMEOUT_MS: '350000' } })).toMatchObject({
+    runTimeoutMs: 350000,
+    source: 'AGENT_CHAT_RUN_TIMEOUT_MS',
+  });
+  expect(resolveRuntimePolicy('chat', { env: { AGENT_RUN_TIMEOUT_MS: '17000' } })).toMatchObject({
+    runTimeoutMs: 17000,
+    source: 'AGENT_RUN_TIMEOUT_MS',
+  });
+});
 it.each(['', '0', '-1', 'oops', '1.5', 'Infinity', '9007199254740992'])('rejects explicit invalid new-policy value %j', value => {
   for (const key of ['AGENT_CHAT_RUN_TIMEOUT_MS', 'AGENT_RUN_TIMEOUT_MS', 'AGENT_MAX_ITERATIONS']) {
     expect(() => resolveRuntimePolicy('chat', { env: { AGENT_RUNTIME_LONG_CHAT: 'true', [key]: value } })).toThrow(key);
   }
 });
-it('legacy fallback remains unchanged and does not interpret invalid values as infinite', () => {
-  expect(resolveRuntimePolicy('chat', { env: { AGENT_RUN_TIMEOUT_MS: '-1', AGENT_MAX_ITERATIONS: '0', AGENT_CHAT_RUN_TIMEOUT_MS: '0' } })).toMatchObject({ runTimeoutMs: 120000, maxIterations: 40 });
+it('does not interpret invalid values as infinite', () => {
+  expect(() => resolveRuntimePolicy('chat', { env: { AGENT_RUN_TIMEOUT_MS: '-1' } })).toThrow('AGENT_RUN_TIMEOUT_MS');
+  expect(() => resolveRuntimePolicy('chat', { env: { AGENT_CHAT_RUN_TIMEOUT_MS: '0' } })).toThrow('AGENT_CHAT_RUN_TIMEOUT_MS');
+  expect(resolveRuntimePolicy('chat', { env: { AGENT_MAX_ITERATIONS: '0' } })).toMatchObject({ runTimeoutMs: undefined, maxIterations: 40 });
   expect(() => resolveRuntimePolicy('chat', { env: { AGENT_RUNTIME_LONG_CHAT: 'yes' } })).toThrow('AGENT_RUNTIME_LONG_CHAT');
+});
+it.each(['invoke', 'subagent'] as const)('preserves legacy invalid-timeout fallback for %s', entry => {
+  expect(resolveRuntimePolicy(entry, { env: { AGENT_RUN_TIMEOUT_MS: '-1' } })).toMatchObject({
+    runTimeoutMs: 120000,
+    source: 'legacy-default',
+  });
 });
 it('respects explicit spec steps, cron timeout and immutable snapshots', () => {
   const env = { AGENT_RUNTIME_LONG_CHAT: 'true' };

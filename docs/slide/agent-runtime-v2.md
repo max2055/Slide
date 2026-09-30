@@ -49,12 +49,12 @@ All four entries bridge to the existing bounded, one-hour process-local platform
 
 ## Policy and staged rollout
 
-`AGENT_RUNTIME_SUPERVISOR_MODE=observe|enforce` is validated and frozen with each entry policy. Default remains the existing enforce behavior; setting observe explicitly records candidate decisions without repeating business tools. `AGENT_RUNTIME_LONG_CHAT=false` remains the default; explicit legacy iteration/time limits remain effective. For rollout configure only a designated test cohort, not all existing sessions.
+`AGENT_RUNTIME_SUPERVISOR_MODE=observe|enforce` is validated and frozen with each entry policy. Default remains the existing enforce behavior; setting observe explicitly records candidate decisions without repeating business tools. Chat has no implicit whole-run deadline; `AGENT_CHAT_RUN_TIMEOUT_MS` and `AGENT_RUN_TIMEOUT_MS` still impose an explicit deadline. `AGENT_RUNTIME_LONG_CHAT=false` remains the default for expanded resource budgets, and explicit iteration limits remain effective. For rollout configure only a designated test cohort, not all existing sessions.
 
 1. Observe at least 200 representative turns, preserving original traffic and counting model/tool requests once. Offline corpus runs do not satisfy this cohort.
 2. Enforce on at least 100 distinct sessions for a measured 24-hour window. Record cohort/run IDs, policy SHA, normal false rejection numerator/denominator, degraded-output completed count, duplicate effects/durable finals, permission violations, extra model requests, and application-only p95 latency versus matched baseline.
 3. Require normal false rejection ≤1%; degraded completed=0; duplicate effects/finals/permission bypass=0; normal short-answer extra requests=0; p95 added application latency ≤5% (report sample size, exclude network variability).
-4. Enable long-chat only for a pilot after these gates, then expand. Do not generate meaningless paid traffic to meet sample counts or elapsed time.
+4. Enable the expanded long-chat budgets only for a pilot after these gates, then expand. The default chat deadline behavior is independent of this flag. Do not generate meaningless paid traffic to meet sample counts or elapsed time.
 
 No deployed cohort or rollout window is provisioned by the qualification scripts. A missing deployment, provider connection, request ID or observation window is **unverified**, never production complete.
 

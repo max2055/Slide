@@ -57,44 +57,50 @@ export async function autoCompact(
     streamIdleTimeoutS: Math.min(spec.streamIdleTimeoutS && spec.streamIdleTimeoutS > 0 ? spec.streamIdleTimeoutS : 60, 60) };
   const summaryManager = new ContextManager(summarySpec, provider);
   summaryManager.assertFits(messages);
-  if (recovery.state.total >= recovery.limits.total || recovery.state.counts.context >= recovery.limits.context) throw new RuntimeError('RECOVERY_LIMIT', 'Compaction recovery budget exhausted');
+  if (recovery.state.counts.context >= recovery.limits.context) throw new RuntimeError('RECOVERY_LIMIT', 'Compaction failure budget exhausted');
   const reservation = (spec.contextWindowTokens ?? 200_000) + maxTokens;
   assertRequestBudget(spec, recovery.state, reservation);
   tracker.begin();
-  recovery.consume('context');
-  recovery.state.providerAttempts++;
-  recovery.state.unknownRequests++;
-  recovery.state.reservedTokens += reservation;
-  await persist();
-  if (spec.signal?.aborted) throw cancellationError(spec.signal);
-  const context: AgentHookContext = { iteration: recovery.state.modelSteps, messages, response: null, usage: {}, toolCalls: [], toolResults: [], toolEvents: [], streamedContent: false, streamedReasoning: false, finalContent: null, stopReason: null, error: null };
-  const response = await new ModelStep(provider).request(summarySpec, messages, summaryHook, context);
-  for (const key of ['prompt_tokens', 'completion_tokens', 'cached_tokens']) {
-    const value = response.usage?.[key];
-    if (Number.isSafeInteger(value) && value >= 0) recovery.state.usage[key] = (recovery.state.usage[key] ?? 0) + value;
-  }
-  if (['prompt_tokens', 'completion_tokens'].every(k => Number.isSafeInteger(response.usage?.[k]) && response.usage[k] >= 0)) {
-    recovery.state.unknownRequests--; recovery.state.reservedTokens -= reservation;
-  }
-  await persist();
-  if (spec.signal?.aborted) throw cancellationError(spec.signal);
-  if (response.error || response.errorKind || response.finishReason !== 'stop' || response.hasToolCalls || response.toolCalls.length) throw new RuntimeError('SUMMARY_INVALID', 'Summary response incomplete or contains tool intent');
-  assertTokenBudget(spec, recovery.state);
-  const summary = validateSummary(response.content ?? '');
-  const record: SummaryRecord = { schemaVersion: 1, sourceStart: 0, sourceEnd: end, sourceHash: hash, summary };
-  const assertSource = () => {
+  try {
+    recovery.state.providerAttempts++;
+    recovery.state.unknownRequests++;
+    recovery.state.reservedTokens += reservation;
+    await persist();
     if (spec.signal?.aborted) throw cancellationError(spec.signal);
-    if (sourceHash(raw.slice(0, end)) !== hash) throw new RuntimeError('SUMMARY_SOURCE_CHANGED', 'History changed while summarizing');
-  };
-  assertSource();
-  // Validate candidate without changing the active projection.
-  const candidate = new ContextManager(spec, provider); candidate.summary = record;
-  candidate.assertFits(candidate.project(raw), manager.inputBudget * manager.target);
-  const committedTracker = new RapidRefill(tracker.snapshot()); committedTracker.commit();
-  await persist(record, committedTracker.snapshot());
-  assertSource();
-  // New input may arrive while persistence is pending. Revalidate against the current suffix.
-  candidate.assertFits(candidate.project(raw), manager.inputBudget);
-  tracker.commit();
-  manager.summary = record;
+    const context: AgentHookContext = { iteration: recovery.state.modelSteps, messages, response: null, usage: {}, toolCalls: [], toolResults: [], toolEvents: [], streamedContent: false, streamedReasoning: false, finalContent: null, stopReason: null, error: null };
+    const response = await new ModelStep(provider).request(summarySpec, messages, summaryHook, context);
+    for (const key of ['prompt_tokens', 'completion_tokens', 'cached_tokens']) {
+      const value = response.usage?.[key];
+      if (Number.isSafeInteger(value) && value >= 0) recovery.state.usage[key] = (recovery.state.usage[key] ?? 0) + value;
+    }
+    if (['prompt_tokens', 'completion_tokens'].every(k => Number.isSafeInteger(response.usage?.[k]) && response.usage[k] >= 0)) {
+      recovery.state.unknownRequests--; recovery.state.reservedTokens -= reservation;
+    }
+    await persist();
+    if (spec.signal?.aborted) throw cancellationError(spec.signal);
+    if (response.error || response.errorKind || response.finishReason !== 'stop' || response.hasToolCalls || response.toolCalls.length) throw new RuntimeError('SUMMARY_INVALID', 'Summary response incomplete or contains tool intent');
+    assertTokenBudget(spec, recovery.state);
+    const summary = validateSummary(response.content ?? '');
+    const record: SummaryRecord = { schemaVersion: 1, sourceStart: 0, sourceEnd: end, sourceHash: hash, summary };
+    const assertSource = () => {
+      if (spec.signal?.aborted) throw cancellationError(spec.signal);
+      if (sourceHash(raw.slice(0, end)) !== hash) throw new RuntimeError('SUMMARY_SOURCE_CHANGED', 'History changed while summarizing');
+    };
+    assertSource();
+    // Validate candidate without changing the active projection.
+    const candidate = new ContextManager(spec, provider); candidate.summary = record;
+    candidate.assertFits(candidate.project(raw), manager.inputBudget * manager.target);
+    const committedTracker = new RapidRefill(tracker.snapshot()); committedTracker.commit();
+    await persist(record, committedTracker.snapshot());
+    assertSource();
+    // New input may arrive while persistence is pending. Revalidate against the current suffix.
+    candidate.assertFits(candidate.project(raw), manager.inputBudget);
+    tracker.commit();
+    manager.summary = record;
+  } catch (error) {
+    // Successful lifecycle compaction is governed by cumulative request/token
+    // budgets. Only failed compaction attempts consume recovery allowance.
+    recovery.consume('context');
+    throw error;
+  }
 }

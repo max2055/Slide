@@ -50,7 +50,7 @@ it('persists a source-bound summary before projection, retains goal/authority/ev
   expect(projected.filter(m => m.role === 'system')).toEqual([f.raw[0]]);
   for (const text of ['db-42', 'e-1', 'write-2', 'read only']) expect(JSON.stringify(projected)).toContain(text);
   expect(f.calls[0]).toMatchObject({ tools: [], model: 'same-model' });
-  expect(f.recovery.snapshot()).toMatchObject({ providerAttempts: 1, total: 1, unknownRequests: 0, reservedTokens: 0, usage: { prompt_tokens: 11, completion_tokens: 7, cached_tokens: 3 } });
+  expect(f.recovery.snapshot()).toMatchObject({ providerAttempts: 1, total: 0, unknownRequests: 0, reservedTokens: 0, usage: { prompt_tokens: 11, completion_tokens: 7, cached_tokens: 3 } });
   const restored = new ContextManager(f.spec, f.provider); restored.summary = f.manager.summary;
   expect(restored.project(f.raw)).toEqual(projected);
 });
@@ -85,7 +85,7 @@ it('run performs one proactive summary and keeps summary accounting alongside no
   expect(result.stopReason).toBe('completed');
   expect(f.calls).toHaveLength(1);
   expect(persisted.context_summary_v1).toBeDefined();
-  expect(result.runtimeState).toMatchObject({ modelSteps: 1, providerAttempts: 2, total: 1, usage: { prompt_tokens: 22, completion_tokens: 14 } });
+  expect(result.runtimeState).toMatchObject({ modelSteps: 1, providerAttempts: 2, total: 0, usage: { prompt_tokens: 22, completion_tokens: 14 } });
   expect(result.messages.slice(0, f.raw.length)).toEqual(f.raw);
 });
 it('summary request timeout observes the actual pending request and cannot dispatch the final model', async () => {
@@ -105,12 +105,21 @@ it('provider overflow triggers one bounded reactive summary and retry without re
   f.provider.chat = async () => ++ordinary === 1 ? { ...reply(''), finishReason: 'error', error: 'context window exceeded' } : reply('recovered');
   const result = await new AgentRunner(f.provider).run(f.spec);
   expect(result.stopReason).toBe('completed'); expect(ordinary).toBe(2); expect(f.calls).toHaveLength(1);
-  expect(result.runtimeState).toMatchObject({ modelSteps: 2, providerAttempts: 3, total: 1 });
+  expect(result.runtimeState).toMatchObject({ modelSteps: 2, providerAttempts: 3, total: 0 });
 });
 it('summary attempts share the run recovery budget and cannot restart it', async () => {
   const f = fixture(); for (let i = 0; i < 4; i++) f.recovery.consume('context');
   await expect(autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {})).rejects.toThrow('budget');
   expect(f.calls).toHaveLength(0); expect(f.recovery.state.total).toBe(4);
+});
+it('allows normal lifecycle compaction after unrelated recovery categories exhaust their total', async () => {
+  const f = fixture();
+  for (const kind of ['empty', 'empty', 'continuation', 'continuation', 'continuation', 'stream', 'stream', 'repetition'] as const) {
+    expect(f.recovery.consume(kind)).toBe(true);
+  }
+  await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {});
+  expect(f.calls).toHaveLength(1);
+  expect(f.recovery.snapshot()).toMatchObject({ total: 8, counts: { context: 0 }, providerAttempts: 1 });
 });
 it('resume reuses the persisted projection and cumulative accounting without another summary request', async () => {
   const f = fixture({ contextPolicy: { watermark: 0.6 } }); let checkpoint: Record<string, unknown> = {};
@@ -118,7 +127,7 @@ it('resume reuses the persisted projection and cumulative accounting without ano
   await new AgentRunner(f.provider).run(f.spec);
   const result = await new AgentRunner(f.provider).run({ ...f.spec, resumeCheckpoint: checkpoint });
   expect(result.stopReason).toBe('completed'); expect(f.calls).toHaveLength(1);
-  expect(result.runtimeState).toMatchObject({ providerAttempts: 3, total: 1 });
+  expect(result.runtimeState).toMatchObject({ providerAttempts: 3, total: 0 });
 });
 it('tool text cannot promote summary claims into system authority and deterministic references survive compaction', async () => {
   const f = fixture();
@@ -143,7 +152,7 @@ it('third rapid refill stops actual summary dispatch and persisted counters rema
   }
   await expect(autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {})).rejects.toThrow('CONTEXT_RAPID_REFILL');
   expect(f.calls).toHaveLength(3);
-  expect(f.recovery.state).toMatchObject({ total: 3, providerAttempts: 3 });
+  expect(f.recovery.state).toMatchObject({ total: 0, providerAttempts: 3 });
 });
 it('raw oversized tool results remain in audit while provider receives capped results', async () => {
   const f = fixture({ initialMessages: [{ role: 'user', content: 'inspect' }], maxToolResultChars: 100 });
@@ -158,15 +167,34 @@ it('raw oversized tool results remain in audit while provider receives capped re
   expect(result.stopReason).toBe('completed');
   expect(result.messages.find(m => m.role === 'tool')?.content).toBe('evidence '.repeat(1000));
 });
-it('four normally spaced summaries exhaust the compact budget even after serialization', () => {
+it('normally spaced summaries can exceed the former per-run compact ceiling after serialization', () => {
   const tracker = new RapidRefill();
   for (let i = 0; i < 4; i++) {
     tracker.begin(); tracker.commit();
     tracker.completeBatch(); tracker.completeBatch(); tracker.completeBatch();
   }
   const restored = new RapidRefill(JSON.parse(JSON.stringify(tracker.snapshot())));
-  expect(() => restored.begin()).toThrow('limit');
-  expect(restored.snapshot().compactCount).toBe(4);
+  restored.begin(); restored.commit();
+  expect(restored.snapshot()).toMatchObject({ compactCount: 5, successfulCompacts: 5, rapidRefills: 0 });
+});
+
+it('allows five normally spaced summaries while cumulative provider and token budgets remain authoritative', async () => {
+  const f = fixture();
+  for (let i = 0; i < 5; i++) {
+    await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {});
+    f.tracker.completeBatch(); f.tracker.completeBatch(); f.tracker.completeBatch();
+    for (let batch = 0; batch < 3; batch++) {
+      const id = `phase-${i}-${batch}`;
+      f.raw.push(
+        { role: 'assistant', content: null, tool_calls: [{ id, type: 'function', function: { name: 'read', arguments: '{}' } }] },
+        { role: 'tool', tool_call_id: id, name: 'read', content: `evidence from phase ${i}/${batch}` },
+      );
+    }
+    f.raw.push({ role: 'user', content: `continue phase ${i}` });
+  }
+  expect(f.calls).toHaveLength(5);
+  expect(f.tracker.snapshot()).toMatchObject({ compactCount: 5, successfulCompacts: 5, rapidRefills: 0 });
+  expect(f.recovery.snapshot()).toMatchObject({ providerAttempts: 5, total: 0, counts: { context: 0 } });
 });
 
 it.each(['attempts', 'tokens'])('summary shares the ordinary %s budget before dispatch', async limit => {

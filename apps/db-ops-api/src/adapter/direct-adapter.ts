@@ -613,6 +613,7 @@ export class DirectAdapter implements IAgentEngine {
               subscribeToSession(sessionKey);
 
               let completionEvent: Extract<ChatEvent, { type: 'complete' }> | undefined;
+              let failureEvent: Extract<ChatEvent, { type: 'error' | 'cancelled' }> | undefined;
               const response = new ChatResponse();
               const chatResult = await this.chat(sessionKey, userMessage, async (event) => {
                 response.observe(event);
@@ -627,6 +628,12 @@ export class DirectAdapter implements IAgentEngine {
                       ...assistant,
                     }) };
                   }
+                }
+                // Reconnect must observe the durable terminal state as soon as
+                // the client receives a failure/cancellation event.
+                if (persistentRun && (event.type === 'error' || event.type === 'cancelled')) {
+                  failureEvent = event;
+                  return;
                 }
                 sendToSession(sessionKey, {
                   ...event,
@@ -660,6 +667,7 @@ export class DirectAdapter implements IAgentEngine {
                   : 'failed';
                 await agentRunService.finish(persistentRun.run.id, terminal, { stopReason: chatResult.stopReason, resolution: chatResult.resolution });
                 this.activeRuns.delete(persistentRun.run.id);
+                if (failureEvent) sendToSession(sessionKey, { ...failureEvent, runId: persistentRun.run.id, sessionKey });
               }
             } catch (err) {
               const errorMsg = err instanceof Error ? err.message : String(err);
