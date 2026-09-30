@@ -2,6 +2,7 @@ import { currentTime, projectContextBlocks, runtimeBlock } from '../context-bloc
 import type { AgentHook, AgentHookContext, AgentRunSpec, LLMResponse, Message } from '../types.js';
 import { ContextManager, normalizeToolGroups } from './context-manager.js';
 import { RuntimeError, cancellationError } from './recovery-policy.js';
+import { StreamingCoordinator } from './streaming-coordinator.js';
 
 export class TimeoutError extends RuntimeError {
   constructor(message: string, code = 'MODEL_REQUEST_TIMEOUT') { super(code, message); this.name = 'TimeoutError'; }
@@ -18,7 +19,11 @@ export class ModelStep {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let idle: ReturnType<typeof setTimeout> | undefined;
     let rejectBoundary!: (error: unknown) => void;
-    const stop = (error: unknown) => { active = false; rejectBoundary(error); controller.abort(error); };
+    let queue: StreamingCoordinator<{ type: 'text' | 'reasoning' | 'tool'; delta: string }> | undefined;
+    const stop = (error: unknown) => {
+      if (!active) return;
+      active = false; rejectBoundary(error); controller.abort(error); queue?.fail(error);
+    };
     const cancel = () => stop(cancellationError(spec.signal));
     const activity = () => {
       if (!active || !idleS || !hook.wantsStreaming()) return;
@@ -31,6 +36,16 @@ export class ModelStep {
       spec.signal?.addEventListener('abort', cancel, { once: true });
       if (timeoutS > 0) timer = setTimeout(() => stop(new TimeoutError(`LLM request timed out after ${timeoutS}s`)), timeoutS * 1000);
       activity();
+      if (hook.wantsStreaming()) queue = new StreamingCoordinator(async (event, signal) => {
+        if (event.type === 'text') await hook.onStream(context, event.delta, signal);
+        else if (event.type === 'reasoning') await hook.emitReasoning(event.delta, signal);
+      }, {
+        ...spec.streamingLimits,
+        size: event => Buffer.byteLength(event.delta, 'utf8') + 32,
+        // Raw content deltas concatenate. Reasoning/control boundaries never merge.
+        merge: (a, b) => a.type === 'text' && b.type === 'text' ? { type: 'text', delta: a.delta + b.delta } : undefined,
+        onError: stop,
+      });
       const options = { model: spec.model, temperature: spec.temperature, maxTokens: spec.maxTokens,
         reasoningEffort: spec.reasoningEffort, timeoutS, streamIdleTimeoutS: idleS, signal: controller.signal };
       const request = Promise.resolve().then(() => {
@@ -46,20 +61,34 @@ export class ModelStep {
           onContentDelta: async delta => {
             if (!active || controller.signal.aborted) return;
             if (delta) { activity(); context.streamedContent = true; }
-            await hook.onStream(context, delta);
+            await queue!.enqueue({ type: 'text', delta });
           },
           onThinkingDelta: async delta => {
             if (!active || controller.signal.aborted) return;
-            if (delta) { activity(); context.streamedReasoning = true; await hook.emitReasoning(delta); }
+            if (delta) { activity(); context.streamedReasoning = true; await queue!.enqueue({ type: 'reasoning', delta }); }
           },
-          onToolCallDelta: async () => { if (active) activity(); },
+          onToolCallDelta: async delta => {
+            if (!active || controller.signal.aborted) return;
+            activity();
+            // Tool arguments remain provider-owned. This marker fences text
+            // coalescing; actual tool_start waits for the model boundary drain.
+            await queue!.enqueue({ type: 'tool', delta: JSON.stringify(delta) });
+          },
         }, options) : this.provider.chat(projection, definitions, options);
       });
       // Observe the original promise, never the timeout race.
       spec.onProviderRequest?.(request);
-      return await Promise.race([request, boundary]);
+      const delivered = request.then(async response => {
+        // Reader EOF is no longer an idle stream; wall-clock and consumer timers
+        // continue covering drain before tool/control/terminal hooks can run.
+        clearTimeout(idle);
+        await queue?.drain();
+        return response;
+      });
+      return await Promise.race([delivered, boundary]);
     } finally {
       active = false;
+      queue?.fail(controller.signal.reason ?? new RuntimeError('STREAM_CLOSED', 'Model boundary closed'));
       clearTimeout(timer); clearTimeout(idle);
       spec.signal?.removeEventListener('abort', cancel);
     }

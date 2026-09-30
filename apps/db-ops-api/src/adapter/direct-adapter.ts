@@ -1,3 +1,5 @@
+import { BoundedSocketWriter } from './bounded-socket-writer.js';
+import { orderedChatConsumer } from './chat-event-consumer.js';
 import { BusinessMemoryService } from './memory-service.js';
 import { resolveRuntimePolicy, runtimeSpec } from './runtime-policy.js';
 /**
@@ -36,9 +38,11 @@ import {
   ContextBuilder,
   SkillsLoader,
   MemoryStore,
+  cancellationError,
+  RuntimeError,
 } from '@slide/agent-core';
 import type { AgentHook, AgentHookContext, Message, ToolSchema, RuntimeCheckpoint } from '@slide/agent-core';
-import type { IAgentEngine, ChatEvent, AgentCapabilities, ChatResult, InvokeResult, InvokeOptions } from './types.js';
+import type { IAgentEngine, ChatEvent, ChatEventConsumer, AgentCapabilities, ChatResult, InvokeResult, InvokeOptions } from './types.js';
 import { chatDatabaseService } from '../chat-database-service.js';
 import { SubagentManager } from '../agents/subagent-manager.js';
 import { setSubagentManager } from '../agents/subagent-spawn-tool.js';
@@ -86,7 +90,7 @@ function analysisCompletionTools(analysisId?: number): ToolRegistry {
 
 function mapHookEventToChatEvent(
   hook: Partial<AgentHook>,
-  onEvent: (event: ChatEvent) => void,
+  onEvent: ChatEventConsumer,
   thinkingHolder?: { text: string },
   streamHolder?: { text: string; safeContent?: string },
 ): AgentHook {
@@ -94,15 +98,16 @@ function mapHookEventToChatEvent(
   return {
     wantsStreaming: () => true,
     beforeIteration: async () => {},
-    onStream: async (_ctx: AgentHookContext, delta: string) => {
+    onStream: async (_ctx: AgentHookContext, delta: string, signal?: AbortSignal) => {
       if (reasoningActive) {
         reasoningActive = false;
-        onEvent({ type: 'thinking_end' });
+        await onEvent({ type: 'thinking_end' }, signal);
       }
       // Accumulate full text and send as delta so the frontend's chatStream
       // replacement renders as progressively building text (not flickering chars).
       if (streamHolder) streamHolder.text += delta;
-      onEvent({ type: 'text_delta', delta: streamHolder ? streamHolder.text : delta });
+      signal?.throwIfAborted();
+      await onEvent({ type: 'text_delta', delta: streamHolder ? streamHolder.text : delta }, signal);
     },
     onCandidateRejected: async (_ctx, safeContent) => {
       if (streamHolder) { streamHolder.text = safeContent; streamHolder.safeContent = safeContent; }
@@ -111,28 +116,28 @@ function mapHookEventToChatEvent(
     onStreamEnd: async () => {},
     beforeExecuteTools: async (ctx: AgentHookContext) => {
       for (const tc of ctx.toolCalls) {
-        onEvent({ type: 'tool_start', toolName: tc.name, args: tc.arguments });
+        await onEvent({ type: 'tool_start', toolName: tc.name, args: tc.arguments });
       }
     },
-    emitReasoning: async (text: string | null) => {
+    emitReasoning: async (text: string | null, signal?: AbortSignal) => {
       if (text) {
         reasoningActive = true;
         if (thinkingHolder) thinkingHolder.text += text;
-        onEvent({ type: 'thinking_delta', delta: text });
+        await onEvent({ type: 'thinking_delta', delta: text }, signal);
       }
     },
     emitReasoningEnd: async () => {
       // Only insert separator if reasoning text was accumulated (WR-08)
       if (!reasoningActive) return;
       reasoningActive = false;
-      onEvent({ type: 'thinking_end' });
+      await onEvent({ type: 'thinking_end' });
     },
     afterIteration: async (ctx: AgentHookContext) => {
       for (const te of ctx.toolEvents) {
         if (te.status === 'ok') {
-          onEvent({ type: 'tool_result', toolName: te.name, result: te.detail });
+          await onEvent({ type: 'tool_result', toolName: te.name, result: te.detail });
         } else {
-          onEvent({ type: 'tool_error', toolName: te.name, error: te.detail });
+          await onEvent({ type: 'tool_error', toolName: te.name, error: te.detail });
         }
       }
     },
@@ -169,6 +174,8 @@ export interface DirectAdapterOptions {
   memoryStore?: MemoryStore;       // optional, created from workspace if not provided
   actorContextService?: Pick<ActorContextService, 'authenticateAccessToken' | 'revalidateActor'>;
   heartbeatIntervalMs?: number;
+  streamingLimits?: import('@slide/agent-core').StreamingLimits;
+  socketWriteLimits?: import('./bounded-socket-writer.js').SocketWriteLimits;
   memoryWorkspaceId?: string;
   memoryPipeline?: import('@slide/agent-core').MemoryPipeline;
   memoryRetrievalLimits?: Partial<import('@slide/agent-core').MemoryRetrievalLimits>;
@@ -178,6 +185,8 @@ export interface DirectAdapterOptions {
 
 export class DirectAdapter implements IAgentEngine {
   private runner: AgentRunner;
+  private readonly socketWriter: BoundedSocketWriter;
+  private readonly streamingLimits?: import('@slide/agent-core').StreamingLimits;
   private businessMemory: BusinessMemoryService;
   private providerForPurpose?: DirectAdapterOptions['providerForPurpose'];
   private registry: ToolRegistry;
@@ -201,6 +210,10 @@ export class DirectAdapter implements IAgentEngine {
 
   constructor(opts: DirectAdapterOptions) {
     this.runner = new AgentRunner(opts.llmProvider);
+    this.streamingLimits = opts.streamingLimits;
+    this.socketWriter = new BoundedSocketWriter(opts.socketWriteLimits, code => {
+      platformLogs.record({ component: 'ws', eventType: 'stream.delivery_failed', status: 'failed', errorCode: code });
+    });
     this.providerForPurpose = opts.providerForPurpose;
     this.registry = opts.tools;
     this.toolsForActor = opts.toolsForActor;
@@ -323,7 +336,7 @@ export class DirectAdapter implements IAgentEngine {
         const serialized = JSON.stringify(payload);
         for (const subscriber of this.sessionSubscribers.get(sessionKey) ?? []) {
           if (subscriber.readyState !== WebSocket.OPEN) continue;
-          try { subscriber.send(serialized); } catch { /* close logging captures the transport failure */ }
+          try { this.socketWriter.send(subscriber, serialized); } catch { /* close logging captures the transport failure */ }
         }
       };
 
@@ -419,12 +432,12 @@ export class DirectAdapter implements IAgentEngine {
         try {
           msg = JSON.parse(raw.toString());
         } catch {
-          ws.send(JSON.stringify({ type: 'error', error: 'Invalid JSON' }));
+          this.socketWriter.send(ws, JSON.stringify({ type: 'error', error: 'Invalid JSON' }));
           return;
         }
 
         if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.type !== 'string') {
-          ws.send(JSON.stringify({ type: 'error', error: 'Invalid message envelope' }));
+          this.socketWriter.send(ws, JSON.stringify({ type: 'error', error: 'Invalid message envelope' }));
           return;
         }
 
@@ -470,7 +483,7 @@ export class DirectAdapter implements IAgentEngine {
               (ws as any)._actorContext = authenticatedActor;
               (ws as any)._authState = authState;
               clearTimeout(authTimer);
-              ws.send(JSON.stringify({ type: 'auth_ok' }));
+              this.socketWriter.send(ws, JSON.stringify({ type: 'auth_ok' }));
               console.log('[DirectAdapter] WS authenticated', JSON.stringify({ connectionId, userId: authenticatedUserId }));
             }
           } catch {
@@ -506,18 +519,18 @@ export class DirectAdapter implements IAgentEngine {
             if ((msg as any).protocolVersion === 2) {
               const parsed = validateChatSendV2(msg);
               if (!parsed.ok) {
-                ws.send(JSON.stringify({ type: 'protocol.error', code: 'error' in parsed ? parsed.error : 'PROTOCOL_INVALID' }));
+                this.socketWriter.send(ws, JSON.stringify({ type: 'protocol.error', code: 'error' in parsed ? parsed.error : 'PROTOCOL_INVALID' }));
                 return;
               }
             } else if ((msg as any).protocolVersion !== undefined) {
-              ws.send(JSON.stringify({ type: 'protocol.error', code: 'PROTOCOL_VERSION_UNSUPPORTED' }));
+              this.socketWriter.send(ws, JSON.stringify({ type: 'protocol.error', code: 'PROTOCOL_VERSION_UNSUPPORTED' }));
               return;
             }
             const messageActor = connectionActor;
             const rawSessionKey = (msg.sessionKey as string | undefined)?.trim() || '';
             // Validate sessionKey length to prevent resource exhaustion (WR-03)
             if (rawSessionKey.length > 512) {
-              ws.send(JSON.stringify({ type: 'error', error: 'Session key too long' }));
+              this.socketWriter.send(ws, JSON.stringify({ type: 'error', error: 'Session key too long' }));
               return;
             }
             // Parse session key (agent format): agent:<agentId>:<actualKey> → actualKey
@@ -526,11 +539,11 @@ export class DirectAdapter implements IAgentEngine {
               : rawSessionKey;
             const userMessage = (msg.message as string) || '';
             if (!userMessage) {
-              ws.send(JSON.stringify({ type: 'error', error: 'Message is required' }));
+              this.socketWriter.send(ws, JSON.stringify({ type: 'error', error: 'Message is required' }));
               return;
             }
             if (userMessage.length > this.runtimeLimits.maxMessageChars) {
-              ws.send(JSON.stringify({ type: 'protocol.error', code: 'MESSAGE_TOO_LARGE' }));
+              this.socketWriter.send(ws, JSON.stringify({ type: 'protocol.error', code: 'MESSAGE_TOO_LARGE' }));
               return;
             }
 
@@ -546,7 +559,7 @@ export class DirectAdapter implements IAgentEngine {
                 if (existingRun) {
                   if (existingRun.messageId !== messageId
                     || (rawSessionKey && existingRun.sessionId !== sessionKey)) {
-                    ws.send(JSON.stringify({ type: 'protocol.error', code: 'IDEMPOTENCY_CONFLICT' }));
+                    this.socketWriter.send(ws, JSON.stringify({ type: 'protocol.error', code: 'IDEMPOTENCY_CONFLICT' }));
                     return;
                   }
                   await chatDatabaseService.authorizeSession(messageActor, existingRun.sessionId, 'append');
@@ -554,12 +567,12 @@ export class DirectAdapter implements IAgentEngine {
                   try {
                     existingRun = await agentRunService.recoverCompletion(existingRun);
                   } catch {
-                    ws.send(JSON.stringify({ type: 'run.snapshot', run: existingRun, messageId, sessionKey: existingRun.sessionId }));
-                    ws.send(JSON.stringify({ type: 'error', code: 'COMPLETION_STORAGE_FAILED', retryable: true,
+                    this.socketWriter.send(ws, JSON.stringify({ type: 'run.snapshot', run: existingRun, messageId, sessionKey: existingRun.sessionId }));
+                    this.socketWriter.send(ws, JSON.stringify({ type: 'error', code: 'COMPLETION_STORAGE_FAILED', retryable: true,
                       error: '回答保存未确认，请重试或重连恢复。', runId: existingRun.id, sessionKey: existingRun.sessionId }));
                     return;
                   }
-                  ws.send(JSON.stringify({
+                  this.socketWriter.send(ws, JSON.stringify({
                     type: 'run.snapshot',
                     run: existingRun,
                     messageId,
@@ -570,13 +583,13 @@ export class DirectAdapter implements IAgentEngine {
                 }
               } catch (err) {
                 const errorMsg = err instanceof Error ? err.message : String(err);
-                ws.send(JSON.stringify({ type: 'error', error: errorMsg }));
+                this.socketWriter.send(ws, JSON.stringify({ type: 'error', error: errorMsg }));
                 return;
               }
             }
 
             if (!this.runLimiter.acquire(messageActor.userId)) {
-              ws.send(JSON.stringify({ type: 'protocol.error', code: 'RUN_CONCURRENCY_LIMIT' }));
+              this.socketWriter.send(ws, JSON.stringify({ type: 'protocol.error', code: 'RUN_CONCURRENCY_LIMIT' }));
               return;
             }
 
@@ -590,7 +603,7 @@ export class DirectAdapter implements IAgentEngine {
               if (!sessionKey) {
                 const created = await chatDatabaseService.createSession(messageActor, { title: '新会话' });
                 sessionKey = created.session_id;
-                ws.send(JSON.stringify({ type: 'session.created', sessionKey, messageId }));
+                this.socketWriter.send(ws, JSON.stringify({ type: 'session.created', sessionKey, messageId }));
               } else {
                 await chatDatabaseService.authorizeSession(messageActor, sessionKey, 'append');
               }
@@ -600,14 +613,14 @@ export class DirectAdapter implements IAgentEngine {
                 : undefined;
               if (persistentRun && !persistentRun.created) {
                 if (persistentRun.run.messageId !== messageId) {
-                  ws.send(JSON.stringify({ type: 'protocol.error', code: 'IDEMPOTENCY_CONFLICT' }));
+                  this.socketWriter.send(ws, JSON.stringify({ type: 'protocol.error', code: 'IDEMPOTENCY_CONFLICT' }));
                   return;
                 }
                 sessionKey = persistentRun.run.sessionId;
                 await chatDatabaseService.authorizeSession(messageActor, sessionKey, 'append');
                 persistentRun.run = await agentRunService.recoverCompletion(persistentRun.run);
                 subscribeToSession(sessionKey);
-                ws.send(JSON.stringify({
+                this.socketWriter.send(ws, JSON.stringify({
                   type: 'run.snapshot',
                   run: persistentRun.run,
                   messageId,
@@ -619,7 +632,7 @@ export class DirectAdapter implements IAgentEngine {
               if (persistentRun) {
                 this.activeRuns.set(persistentRun.run.id, { actorId: messageActor.userId, sessionId: sessionKey, controller });
                 subscribeToSession(sessionKey);
-                ws.send(JSON.stringify({ type: 'run.started', runId: persistentRun.run.id, sessionKey, messageId }));
+                this.socketWriter.send(ws, JSON.stringify({ type: 'run.started', runId: persistentRun.run.id, sessionKey, messageId }));
               }
 
               const userFactId = persistentRun ? `run_${persistentRun.run.id}_user` : `msg_${randomUUID()}_user`;
@@ -707,7 +720,7 @@ export class DirectAdapter implements IAgentEngine {
                 ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
               };
               if (this.sessionSubscribers.get(sessionKey)?.has(ws)) sendToSession(sessionKey, failure);
-              else if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(failure));
+              else if (ws.readyState === WebSocket.OPEN) this.socketWriter.send(ws, JSON.stringify(failure));
             } finally {
               if (persistentRun?.created) this.activeRuns.delete(persistentRun.run.id);
               clearTimeout(runTimeout);
@@ -724,12 +737,12 @@ export class DirectAdapter implements IAgentEngine {
             const cancelSession = typeof msg.sessionKey === 'string' ? msg.sessionKey : '';
             const active = this.activeRuns.get(runId);
             if (!active || active.actorId !== connectionActor.userId || active.sessionId !== cancelSession) {
-              ws.send(JSON.stringify({ type: 'protocol.error', code: 'RUN_NOT_CANCELLABLE' }));
+              this.socketWriter.send(ws, JSON.stringify({ type: 'protocol.error', code: 'RUN_NOT_CANCELLABLE' }));
               return;
             }
             if (await agentRunService.cancelForActor(runId, connectionActor.userId, cancelSession)) {
               active.controller.abort();
-            } else ws.send(JSON.stringify({ type: 'protocol.error', code: 'RUN_NOT_CANCELLABLE' }));
+            } else this.socketWriter.send(ws, JSON.stringify({ type: 'protocol.error', code: 'RUN_NOT_CANCELLABLE' }));
             break;
           }
 
@@ -742,9 +755,9 @@ export class DirectAdapter implements IAgentEngine {
           case 'memory.retry': {
             try {
               const result = await this.businessMemory.request(connectionActor, String(msg.sessionKey ?? ''), msg.type!, msg);
-              if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'memory.result', operation: msg.type, messageId: msg.messageId, result }));
+              if (ws.readyState === WebSocket.OPEN) this.socketWriter.send(ws, JSON.stringify({ type: 'memory.result', operation: msg.type, messageId: msg.messageId, result }));
             } catch {
-              if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'error', messageId: msg.messageId, error: 'Memory request failed' }));
+              if (ws.readyState === WebSocket.OPEN) this.socketWriter.send(ws, JSON.stringify({ type: 'error', messageId: msg.messageId, error: 'Memory request failed' }));
             }
             break;
           }
@@ -761,10 +774,10 @@ export class DirectAdapter implements IAgentEngine {
                 content: m.content,
                 createdAt: m.created_at instanceof Date ? m.created_at.toISOString() : m.created_at,
               }));
-              ws.send(JSON.stringify({ type: 'complete', messages: mapped }));
+              this.socketWriter.send(ws, JSON.stringify({ type: 'complete', messages: mapped }));
             } catch (dbErr) {
               console.error('[DirectAdapter] chat.history failed:', dbErr instanceof Error ? dbErr.message : String(dbErr));
-              ws.send(JSON.stringify({ type: 'error', error: 'Failed to load chat history' }));
+              this.socketWriter.send(ws, JSON.stringify({ type: 'error', error: 'Failed to load chat history' }));
             }
             break;
           }
@@ -789,20 +802,20 @@ export class DirectAdapter implements IAgentEngine {
                       await this.extractCompletedMemory(connectionActor, watchKey, recovered.id);
                     }
                   } catch {
-                    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'run.snapshot', run: pending, messageId: pending.messageId, sessionKey: watchKey }));
+                    if (ws.readyState === WebSocket.OPEN) this.socketWriter.send(ws, JSON.stringify({ type: 'run.snapshot', run: pending, messageId: pending.messageId, sessionKey: watchKey }));
                     sendToSession(watchKey, { type: 'error', code: 'COMPLETION_STORAGE_FAILED', retryable: true,
                       error: '回答保存未确认，请重试或重连恢复。', runId: pending.id, sessionKey: watchKey });
                   }
                 }
               } catch {
-                ws.send(JSON.stringify({ type: 'error', error: 'Chat session not found' }));
+                this.socketWriter.send(ws, JSON.stringify({ type: 'error', error: 'Chat session not found' }));
               }
             }
             break;
           }
 
           default:
-            ws.send(JSON.stringify({ type: 'error', error: `Unknown message type: ${msg.type}` }));
+            this.socketWriter.send(ws, JSON.stringify({ type: 'error', error: `Unknown message type: ${msg.type}` }));
         }
       };
 
@@ -869,7 +882,7 @@ export class DirectAdapter implements IAgentEngine {
   async chat(
     sessionKey: string,
     message: string,
-    onEvent: (event: ChatEvent) => void,
+    onEvent: ChatEventConsumer,
     _actor?: ActorContext,
     signal?: AbortSignal,
     idempotencyKey?: string,
@@ -884,7 +897,7 @@ export class DirectAdapter implements IAgentEngine {
   private async runChat(
     sessionKey: string,
     message: string,
-    onEvent: (event: ChatEvent) => void,
+    onEvent: ChatEventConsumer,
     _actor?: ActorContext,
     signal?: AbortSignal,
     idempotencyKey?: string,
@@ -978,7 +991,12 @@ export class DirectAdapter implements IAgentEngine {
     // streamHolder accumulates text deltas for progressive display.
     const thinkingHolder: { text: string } = { text: '' };
     const streamHolder: { text: string; safeContent?: string } = { text: '' };
-    const hook = mapHookEventToChatEvent({}, onEvent, thinkingHolder, streamHolder);
+    let sequence = 0;
+    let attempt = 0;
+    const consume = orderedChatConsumer(onEvent, this.streamingLimits);
+    const deliver: ChatEventConsumer = (event, writerSignal) => consume({ ...event, sequence: ++sequence, attempt },
+      writerSignal ?? (['complete', 'error', 'cancelled'].includes(event.type) ? undefined : signal));
+    const hook = mapHookEventToChatEvent({ beforeIteration: () => { attempt++; } }, deliver, thinkingHolder, streamHolder);
 
     let terminalEmitted = false;
     try {
@@ -990,6 +1008,7 @@ export class DirectAdapter implements IAgentEngine {
         tools: _actor && this.toolsForActor ? this.toolsForActor(_actor) : new ToolRegistry(),
         model: provider.getDefaultModel(),
         ...runtimeSpec(policy),
+        streamingLimits: this.streamingLimits,
         runtimeRunId: runId,
         onRuntimeEvent: recordRuntimeEvent,
         maxToolResultChars: this.runtimeLimits.maxToolResultChars,
@@ -1007,8 +1026,22 @@ export class DirectAdapter implements IAgentEngine {
         idempotencyKey,
         toolProgressCallback: async (progress) => {
           const toolName = typeof progress.toolName === 'string' ? progress.toolName : 'tool';
-          onEvent({ type: 'tool_progress', toolName, progress });
+          await deliver({ type: 'tool_progress', toolName, progress });
         },
+      }).catch(async error => {
+        if (!signal?.aborted || !(error === signal.reason || error instanceof RuntimeError
+          && ['USER_CANCELLED', 'RUN_DEADLINE'].includes(error.code))) throw error;
+        const cancelled = cancellationError(signal);
+        const stopReason = cancelled.code === 'RUN_DEADLINE' ? 'timed_out' as const : 'cancelled' as const;
+        const resolution = { kind: stopReason, reasonCode: cancelled.code, retryable: false,
+          safePartialContent: streamHolder.safeContent ?? streamHolder.text };
+        const checkpoint = session.metadata.runtime_checkpoint;
+        const counters = checkpoint?.runtime_state_v1 as { usage?: Record<string, number> } | undefined;
+        // Cancellation inside a control hook bypasses TurnLoop's normal exit.
+        // Preserve cumulative counters and the terminal marker; storage errors
+        // still propagate and cannot be converted into a successful cancellation.
+        if (checkpoint) await checkpointCallback({ ...checkpoint, terminal_resolution: resolution });
+        return { stopReason, finalContent: null, usage: counters?.usage, error: cancelled.message, resolution };
       });
 
       // Embed reasoning as <think> tags in the session/DB content string.
@@ -1045,18 +1078,18 @@ export class DirectAdapter implements IAgentEngine {
       terminalEmitted = true;
       const terminalContent = { finalContent: cleanContent, thinkingContent, stopReason, resolution: result.resolution };
       if (stopReason === 'completed') {
-        await onEvent({ type: 'complete', ...terminalContent });
+        await deliver({ type: 'complete', ...terminalContent });
       } else if (stopReason === 'cancelled') {
-        await onEvent({ type: 'cancelled', ...terminalContent });
+        await deliver({ type: 'cancelled', ...terminalContent });
       } else {
-        await onEvent({ type: 'error', error: result.error || `Agent run ended: ${stopReason}`, ...terminalContent });
+        await deliver({ type: 'error', error: result.error || `Agent run ended: ${stopReason}`, ...terminalContent });
       }
       return { finalContent: cleanContent, thinkingContent, usage: result.usage, stopReason, resolution: result.resolution };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       // Do not emit a second terminal event if persistence or delivery failed.
       if (!terminalEmitted) {
-        await onEvent({ type: 'error', error: errorMessage, stopReason: 'error',
+        await deliver({ type: 'error', error: errorMessage, stopReason: 'error',
           finalContent: streamHolder.safeContent ?? streamHolder.text, thinkingContent: thinkingHolder.text || undefined });
       }
       throw err;
@@ -1188,7 +1221,7 @@ ${result.finalContent || ''}`
           ? { type: 'complete', finalContent, stopReason: result.stopReason, resolution: result.resolution }
           : { type: 'error', finalContent, stopReason: result.stopReason, resolution: result.resolution, error: result.error || result.resolution?.reasonCode || result.stopReason });
         for (const ws of subs) {
-          try { ws.send(msg); } catch { /* client may have disconnected */ }
+          try { this.socketWriter.send(ws, msg); } catch { /* client may have disconnected */ }
         }
       }
 

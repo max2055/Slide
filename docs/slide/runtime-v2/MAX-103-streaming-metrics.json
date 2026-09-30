@@ -1,0 +1,80 @@
+{
+  "node": "v24.18.0",
+  "pid": 38827,
+  "limits": {
+    "maxPendingEvents": 32,
+    "maxPendingBytes": 4096,
+    "consumerTimeoutMs": 1000
+  },
+  "sourceSha256": "6b97c6157cecde98665cb7a7ba8fb2a96fed16173ce1c7a54a7d14582ac09717",
+  "notes": "Controlled 1ms hook; heap samples are process observations, not isolated retained-heap accounting. WS uses real loopback peers, not browser consumption acknowledgements. WS throughput changes are overhead/noise, not evidence of relieved SSE backpressure.",
+  "results": [
+    {
+      "mode": "direct-await",
+      "sourceEvents": 1000,
+      "consumerWrites": 1000,
+      "readerMs": 1269.1,
+      "totalMs": 1269.11,
+      "throughputEventsPerS": 787.96,
+      "firstTokenMs": 1.35,
+      "drainMs": 0,
+      "peakPendingBytes": 100,
+      "peakPendingEvents": 1,
+      "heapStart": 10147680,
+      "heapPeak": 10852464,
+      "heapGrowthBytes": 704784
+    },
+    {
+      "mode": "queued",
+      "sourceEvents": 1000,
+      "consumerWrites": 1000,
+      "readerMs": 1267.53,
+      "totalMs": 1308.96,
+      "throughputEventsPerS": 763.97,
+      "firstTokenMs": 3.97,
+      "drainMs": 41.42,
+      "peakPendingBytes": 3200,
+      "peakPendingEvents": 32,
+      "heapStart": 11202416,
+      "heapPeak": 12120760,
+      "heapGrowthBytes": 918344
+    },
+    {
+      "mode": "queued-text-merge",
+      "sourceEvents": 1000,
+      "consumerWrites": 200,
+      "readerMs": 245.98,
+      "totalMs": 259.26,
+      "throughputEventsPerS": 3857.17,
+      "firstTokenMs": 1.3,
+      "drainMs": 13.27,
+      "peakPendingBytes": 4092,
+      "peakPendingEvents": 12,
+      "heapStart": 12401416,
+      "heapPeak": 12672232,
+      "heapGrowthBytes": 270816
+    },
+    {
+      "mode": "legacy-ws-send",
+      "sourceEvents": 1000,
+      "readerMs": 14.16,
+      "totalMs": 14.21,
+      "firstTokenMs": 1.23,
+      "drainMs": 0.05,
+      "peakBufferedBytes": 0,
+      "throughputEventsPerS": 70382.88,
+      "heapUsed": 10093568
+    },
+    {
+      "mode": "bounded-ws-send",
+      "sourceEvents": 1000,
+      "readerMs": 11.02,
+      "totalMs": 11.05,
+      "firstTokenMs": 0.6,
+      "drainMs": 0.03,
+      "peakBufferedBytes": 0,
+      "throughputEventsPerS": 90518.56,
+      "heapUsed": 11202712
+    }
+  ]
+}

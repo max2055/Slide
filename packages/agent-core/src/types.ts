@@ -104,6 +104,8 @@ export interface LLMCallOptions {
 }
 
 export interface StreamCallbacks {
+  /** Providers must await each delta callback; resolution means bounded admission.
+   * The model boundary drains consumers before returning the response. */
   onActivity?: () => void;
   onContentDelta: (delta: string) => Promise<void> | void;
   onThinkingDelta?: (delta: string) => Promise<void> | void;
@@ -176,10 +178,10 @@ export interface AgentHook {
   onCandidateRejected?(ctx: AgentHookContext, safeContent: string, reasonCode: string): Promise<void> | void;
   wantsStreaming(): boolean;
   beforeIteration(ctx: AgentHookContext): Promise<void> | void;
-  onStream(ctx: AgentHookContext, delta: string): Promise<void> | void;
+  onStream(ctx: AgentHookContext, delta: string, signal?: AbortSignal): Promise<void> | void;
   onStreamEnd(ctx: AgentHookContext, resuming: boolean): Promise<void> | void;
   beforeExecuteTools(ctx: AgentHookContext): Promise<void> | void;
-  emitReasoning(text: string | null): Promise<void> | void;
+  emitReasoning(text: string | null, signal?: AbortSignal): Promise<void> | void;
   emitReasoningEnd(): Promise<void> | void;
   afterIteration(ctx: AgentHookContext): Promise<void> | void;
   finalizeContent(ctx: AgentHookContext, content: string | null): string | null;
@@ -188,6 +190,7 @@ export interface AgentHook {
 // ── Agent run spec & result ──
 
 export interface AgentRunSpec {
+  streamingLimits?: import('./runtime/streaming-coordinator.js').StreamingLimits;
   runtimeRunId?: string;
   onRuntimeEvent?: (event: import("./runtime/events.js").RuntimeEvent) => void | Promise<void>;
   budgetLimits?: import("./runtime/contracts.js").RuntimeBudgetLimits;

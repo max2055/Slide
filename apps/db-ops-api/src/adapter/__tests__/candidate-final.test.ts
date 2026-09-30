@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { SessionManager, ToolRegistry, type LLMProvider, type LLMResponse, type Message, type StreamCallbacks } from '@slide/agent-core';
+import { SessionManager, ToolRegistry, RuntimeError, type LLMProvider, type LLMResponse, type Message, type StreamCallbacks } from '@slide/agent-core';
 import { DirectAdapter } from '../direct-adapter.js';
 import { ChatResponse } from '../chat-response.js';
 import type { ChatEvent } from '../types.js';
@@ -44,7 +44,9 @@ it('retracts rejected attempts, excludes them from memory/file/next context, ign
   const events: ChatEvent[] = [];
   const result = await adapter.chat('test', '诊断数据库', e => { events.push(e); });
   expect(result.stopReason).toBe('completed');
-  expect(events).toContainEqual({ type: 'text_delta', delta: '' });
+  expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'text_delta', delta: '' })]));
+  expect(events.map(e => e.sequence)).toEqual(events.map((_, i) => i + 1));
+  expect(events.filter(e => e.type === 'text_delta').map(e => e.attempt)).toEqual([1, 1, 2]);
   const count = events.length;
   await mock.callbacks[0].onContentDelta(bad);
   expect(events).toHaveLength(count);
@@ -92,10 +94,37 @@ it('invoke cannot broadcast completed for a rejected candidate even when thinkin
   mock.value.chat = async () => ({ content: bad, reasoningContent: 'private analysis', finishReason: 'stop', toolCalls: [], usage: {}, shouldExecuteTools: false, hasToolCalls: false });
   const adapter = new DirectAdapter({ workspace: directory, tools: new ToolRegistry(), llmProvider: mock.value });
   const sent: string[] = [];
-  (adapter as any).sessionSubscribers.set('invoke-failure', new Set([{ send: (message: string) => sent.push(message) }]));
+  (adapter as any).sessionSubscribers.set('invoke-failure', new Set([{ readyState: 1, bufferedAmount: 0,
+    send: (message: string, callback: () => void) => { sent.push(message); callback(); } }]));
   const result = await adapter.invoke('invoke-failure', '诊断数据库');
   expect(result.stopReason).toBe('error');
   expect(result.resolution?.reasonCode).toBe('MODEL_REPETITION_LOOP');
   expect(sent.map(message => JSON.parse(message).type)).toEqual(['error']);
   expect(JSON.stringify([result, sent])).not.toContain('正在分析');
+});
+
+it.each(['USER_CANCELLED', 'RUN_DEADLINE'])('async retraction %s preserves counters and terminal marker', async code => {
+  const directory = await mkdtemp(join(tmpdir(), 'candidate-async-stop-')); directories.push(directory);
+  const sessions = new SessionManager(directory); const mock = provider([bad]);
+  const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: mock.value, sessionManager: sessions });
+  const controller = new AbortController();
+  const result = await adapter.chat('async-stop', '诊断数据库', async event => {
+    if (event.type === 'text_delta' && event.delta === '') { controller.abort(new RuntimeError(code, 'stop')); await Promise.resolve(); }
+  }, undefined, controller.signal);
+  const kind = code === 'RUN_DEADLINE' ? 'timed_out' : 'cancelled';
+  expect(result.stopReason).toBe(kind);
+  const checkpoint = sessions.getOrCreate('async-stop').metadata.runtime_checkpoint!;
+  expect(checkpoint.terminal_resolution).toMatchObject({ kind, reasonCode: code });
+  expect(checkpoint.runtime_state_v1).toMatchObject({ modelSteps: 1, providerAttempts: 1, unknownRequests: 1 });
+  expect(JSON.stringify(sessions.getOrCreate('async-stop').getHistory(120))).not.toContain('正在分析');
+});
+
+it('a persistence failure concurrent with Stop stays a failure and cannot emit cancelled/complete', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'candidate-storage-stop-')); directories.push(directory);
+  const sessions = new SessionManager(directory); const mock = provider(['safe']);
+  const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: mock.value, sessionManager: sessions });
+  const controller = new AbortController(); const events: ChatEvent[] = [];
+  vi.spyOn(sessions, 'save').mockImplementationOnce(async () => { controller.abort(); throw new Error('storage failed'); });
+  await expect(adapter.chat('storage-stop', '诊断数据库', event => { events.push(event); }, undefined, controller.signal)).rejects.toThrow('storage failed');
+  expect(events.map(e => e.type)).toEqual(['error']);
 });
