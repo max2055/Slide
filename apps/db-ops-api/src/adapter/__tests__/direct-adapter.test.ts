@@ -397,10 +397,10 @@ describe('DirectAdapter', () => {
       const { socket, handle, authenticateAccessToken } = await connect();
       const send = vi.spyOn(socket, 'send');
       await expect(handle(value)).resolves.toBeUndefined();
-      expect(send).toHaveBeenCalledWith(JSON.stringify({ type: 'error', error: 'Invalid message envelope' }));
+      expect(send).toHaveBeenCalledWith(JSON.stringify({ type: 'error', error: 'Invalid message envelope' }), expect.any(Function));
       expect(authenticateAccessToken).not.toHaveBeenCalled();
       await handle({ type: 'auth', token: 'test-token' });
-      expect(send).toHaveBeenCalledWith(JSON.stringify({ type: 'auth_ok' }));
+      expect(send).toHaveBeenCalledWith(JSON.stringify({ type: 'auth_ok' }), expect.any(Function));
     });
 
     it('contains handler failures to one connection without leaking exception text', async () => {
@@ -409,15 +409,15 @@ describe('DirectAdapter', () => {
       const { socket, handle } = await connect();
       await handle({ type: 'auth', token: 'test-token' });
       vi.spyOn(socket, 'send').mockImplementationOnce(() => { throw new Error('private-token-in-error'); });
-      const close = vi.spyOn(socket, 'close');
+      const terminate = vi.spyOn(socket, 'terminate');
       await expect(handle({ type: 'unknown' })).resolves.toBeUndefined();
-      expect(close).toHaveBeenCalledWith(1011, 'Message handling failed');
-      expect(record).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'message.error', errorCode: 'WS_MESSAGE_HANDLER_ERROR' }));
+      expect(terminate).toHaveBeenCalled();
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'stream.delivery_failed', errorCode: 'WS_WRITE_FAILED' }));
       expect(JSON.stringify(error.mock.calls)).not.toContain('private-token-in-error');
       const healthy = await connect();
       const send = vi.spyOn(healthy.socket, 'send');
       await healthy.handle({ type: 'auth', token: 'test-token' });
-      expect(send).toHaveBeenCalledWith(JSON.stringify({ type: 'auth_ok' }));
+      expect(send).toHaveBeenCalledWith(JSON.stringify({ type: 'auth_ok' }), expect.any(Function));
     });
 
     it.each(['unauthenticated', 'authenticating'])('expires %s connections and ignores late auth results', async state => {
@@ -868,6 +868,40 @@ describe('DirectAdapter', () => {
   });
 
   describe('chat()', () => {
+    it('awaits slow async consumers and delivers ordered metadata before the sole terminal', async () => {
+      const adapter = isolatedAdapter({ tools: new ToolRegistry(), llmProvider: new ThinkingStreamingProvider() });
+      adaptersToCleanup.push(adapter);
+      const events: ChatEvent[] = [];
+      await adapter.chat('async-consumer', 'Hello', async event => {
+        await new Promise<void>(r => setTimeout(r, 2)); events.push(event);
+      });
+      expect(events.map(e => e.sequence)).toEqual([1, 2, 3, 4, 5]);
+      expect(events.every(e => e.attempt === 1)).toBe(true);
+      expect(events.map(e => e.type)).toEqual(['thinking_delta', 'thinking_delta', 'thinking_end', 'text_delta', 'complete']);
+    });
+
+    it('consumer rejection cancels the reader and produces a precise failed outcome without completion', async () => {
+      const adapter = isolatedAdapter({ tools: new ToolRegistry(), llmProvider: new MockLLMProvider() });
+      adaptersToCleanup.push(adapter);
+      const events: ChatEvent[] = [];
+      const result = await adapter.chat('reject-consumer', 'Hello', async event => {
+        events.push(event); if (event.type === 'text_delta') throw new Error('writer rejected');
+      });
+      expect(result.stopReason).toBe('error');
+      expect(result.resolution?.reasonCode).toBe('STREAM_CONSUMER_FAILED');
+      expect(events.filter(e => e.type === 'error')).toHaveLength(1);
+      expect(events.some(e => e.type === 'complete')).toBe(false);
+    });
+
+    it('terminal consumer rejection remains observable and is never retried as another terminal', async () => {
+      const adapter = isolatedAdapter({ tools: new ToolRegistry(), llmProvider: new MockLLMProvider() });
+      adaptersToCleanup.push(adapter);
+      let terminals = 0;
+      await expect(adapter.chat('reject-terminal', 'Hello', async event => {
+        if (event.type === 'complete') { terminals++; throw new Error('terminal rejected'); }
+      })).rejects.toThrow('terminal rejected');
+      expect(terminals).toBe(1);
+    });
     it('retains partial streaming output on cancellation and awaits the terminal consumer', async () => {
       const controller = new AbortController();
       const provider = new MockLLMProvider();
@@ -940,7 +974,7 @@ describe('DirectAdapter', () => {
         'thinking_delta', 'thinking_delta', 'thinking_end', 'text_delta', 'complete',
       ]);
       expect(events.find((event) => event.type === 'text_delta')).toMatchObject({ delta: 'final answer' });
-      expect(events.filter((event) => event.type === 'thinking_delta')).toEqual([
+      expect(events.filter((event) => event.type === 'thinking_delta').map(({ type, delta }) => ({ type, delta }))).toEqual([
         { type: 'thinking_delta', delta: 'first reason' },
         { type: 'thinking_delta', delta: ' second reason' },
       ]);

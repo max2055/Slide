@@ -76,7 +76,7 @@ export interface CancelledEvent extends ChatTerminalContent {
   type: 'cancelled';
 }
 
-export type ChatEvent =
+export type ChatEvent = (
   | TextDeltaEvent
   | ToolStartEvent
   | ToolResultEvent
@@ -86,7 +86,16 @@ export type ChatEvent =
   | ToolProgressEvent
   | CompleteEvent
   | CancelledEvent
-  | ErrorEvent;
+  | ErrorEvent) & {
+    /** Advisory order within this chat delivery; not a durable recovery cursor. */
+    sequence?: number;
+    /** Model request ordinal within this run; S2 owns durable recovery epochs. */
+    attempt?: number;
+  };
+
+/** Async consumers are awaited. Honor signal to stop external work on abort. */
+export type ChatEventConsumer = ((event: ChatEvent, signal?: AbortSignal) => void)
+  | ((event: ChatEvent, signal?: AbortSignal) => Promise<void>);
 
 // ── Adapter capabilities ──
 
@@ -171,7 +180,7 @@ export interface IAgentEngine {
   chat(
     sessionKey: string,
     message: string,
-    onEvent: (event: ChatEvent) => void,
+    onEvent: ChatEventConsumer,
   ): Promise<ChatResult>;
 
   /**

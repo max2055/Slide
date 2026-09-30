@@ -185,6 +185,7 @@ export class OpenAIProvider implements LLMProvider {
               if (tc.id) toolCalls[idx].id = tc.id;
               if (tc.function?.name) toolCalls[idx].name = tc.function.name;
               if (tc.function?.arguments) toolCalls[idx].arguments += tc.function.arguments;
+              await callbacks.onToolCallDelta?.(tc);
             }
           }
           continue;
@@ -260,6 +261,7 @@ export class OpenAIProvider implements LLMProvider {
             if (tc.id) toolCalls[idx].id = tc.id;
             if (tc.function?.name) toolCalls[idx].name = tc.function.name;
             if (tc.function?.arguments) toolCalls[idx].arguments += tc.function.arguments;
+            await callbacks.onToolCallDelta?.(tc);
           }
         }
       }

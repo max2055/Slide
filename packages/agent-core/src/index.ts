@@ -41,6 +41,8 @@
 export { ToolRegistry } from "./tool-registry.js";
 export { AgentRunner, NoopHook } from "./runner.js";
 export { AgentRuntime } from './runtime/agent-runtime.js';
+export { StreamingCoordinator } from './runtime/streaming-coordinator.js';
+export type { StreamingLimits, StreamingMetrics } from './runtime/streaming-coordinator.js';
 export { createTurnState, transition, snapshotTurnState, restoreTurnState } from './runtime/turn-state.js';
 export type { TurnState } from './runtime/turn-state.js';
 export type { TurnPhase, RunControl, RuntimeStateSnapshot } from './runtime/contracts.js';
