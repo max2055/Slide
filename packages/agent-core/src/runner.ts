@@ -3,6 +3,7 @@ import type { AgentRunSpec, AgentRunResult, LLMProvider, AgentHook, AgentHookCon
 import { AgentRuntime } from "./runtime/agent-runtime.js";
 import { ToolExecutor } from "./runtime/tool-executor.js";
 import { LegacyCheckpoint } from "./runtime/checkpoint.js";
+import { randomUUID } from 'node:crypto';
 
 export class AgentRunner extends LegacyCheckpoint {
   private readonly executor = new ToolExecutor();
@@ -11,7 +12,10 @@ export class AgentRunner extends LegacyCheckpoint {
   constructor(private provider: LLMProvider) { super(); }
   setProvider(provider: LLMProvider): void { this.provider = provider; }
   getDefaultModel(): string { return this.provider.getDefaultModel(); }
-  run(spec: AgentRunSpec): Promise<AgentRunResult> { return this.runtime.run(spec); }
+  run(spec: AgentRunSpec): Promise<AgentRunResult> {
+    const runId = spec.runtimeRunId ?? (spec.resumeCheckpoint?.canonical_run_id as string | undefined) ?? randomUUID();
+    return this.runtime.run({ ...spec, runtimeRunId: runId });
+  }
   runTool(...args: Parameters<ToolExecutor["runTool"]>): ReturnType<ToolExecutor["runTool"]> {
     return this.executor.runTool(...args);
   }

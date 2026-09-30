@@ -1,3 +1,4 @@
+import { canonicalStore } from '../canonical-store.js';
 import { expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { ToolRegistry } from '@slide/agent-core';
@@ -10,6 +11,10 @@ it.each(['legacy', 'durable'])('%s assistant persistence failure never announces
   vi.stubEnv('JWT_SECRET_KEY', 'isolated-audit-websocket-secret-long-enough');
   const actor = { userId: 74, username: 'probe', roles: ['viewer'], permissions: [], sessionVersion: 1, instanceScopes: {}, requestId: 'probe' };
   vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
+  vi.spyOn(chatDatabaseService, 'authorizeSession').mockResolvedValue({} as any);
+  vi.spyOn(canonicalStore, 'getPage').mockResolvedValue({ messages: [], nextBefore: null });
+  vi.spyOn(canonicalStore, 'appendToolFacts').mockResolvedValue(undefined);
+  vi.spyOn(canonicalStore, 'saveCheckpoint').mockResolvedValue(undefined);
   vi.spyOn(chatDatabaseService, 'createSession').mockResolvedValue({ session_id: 'probe-session' } as any);
   const durable: string[] = [];
   const addMessage = vi.spyOn(chatDatabaseService, 'addMessage').mockImplementation(async (_actor, _session, message) => {

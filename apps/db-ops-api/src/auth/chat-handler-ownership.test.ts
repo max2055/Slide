@@ -69,6 +69,7 @@ describe('chat ownership handler boundary', () => {
       'new session',
       expect.any(Function),
       actor,
+      undefined, undefined, undefined, expect.any(String),
     );
     expect(mocks.addMessage).toHaveBeenNthCalledWith(2, actor, 'server-generated-key', expect.objectContaining({
       role: 'assistant',

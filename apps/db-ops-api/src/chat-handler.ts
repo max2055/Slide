@@ -78,6 +78,7 @@ export async function handleChatSend(
       messageId: userMessageId,
       role: 'user',
       content: message,
+      metadata: { canonicalRunId: userMessageId, canonicalTurnId: userMessageId },
     },
   );
 
@@ -90,7 +91,7 @@ export async function handleChatSend(
     result = await (engine.chat as any)(sessionKey, message, (event: ChatEvent) => {
       response.observe(event);
       onEvent?.(event);
-    }, actor) as ChatResult;
+    }, actor, undefined, undefined, undefined, userMessageId) as ChatResult;
   } finally {
     // Also save the observed stream when the engine throws before returning.
     const assistant = response.message(result);
@@ -99,6 +100,7 @@ export async function handleChatSend(
         messageId: assistantMessageId,
         role: 'assistant',
         ...assistant,
+        metadata: { ...assistant.metadata, canonicalRunId: userMessageId, canonicalTurnId: userMessageId },
         parentId: userMessageId,
       });
     }

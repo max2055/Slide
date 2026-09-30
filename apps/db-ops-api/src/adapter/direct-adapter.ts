@@ -18,6 +18,7 @@ import { resolveRuntimePolicy, runtimeSpec } from './runtime-policy.js';
  *     └── WebSocketServer (minimal WS transport on AGENT_WS_PORT)
  */
 
+import { canonicalStore } from './canonical-store.js';
 import { ChatResponse } from './chat-response.js';
 import { WebSocketServer, WebSocket } from 'ws';
 import { recordRuntimeEvent } from '../platform/runtime-events.js';
@@ -29,6 +30,8 @@ import {
   NoopHook,
   ToolRegistry,
   SessionManager,
+  Session,
+  checkpointFacts,
   ContextBuilder,
   SkillsLoader,
   MemoryStore,
@@ -603,10 +606,12 @@ export class DirectAdapter implements IAgentEngine {
                 ws.send(JSON.stringify({ type: 'run.started', runId: persistentRun.run.id, sessionKey, messageId }));
               }
 
+              const userFactId = persistentRun ? `run_${persistentRun.run.id}_user` : `msg_${randomUUID()}_user`;
               await chatDatabaseService.addMessage(messageActor, sessionKey, {
-                messageId: `msg_${randomUUID()}_user`,
+                messageId: userFactId,
                 role: 'user',
                 content: userMessage,
+                metadata: { canonicalRunId: persistentRun?.run.id ?? userFactId, canonicalTurnId: userFactId },
               });
 
               // Authorization succeeds before the connection joins broadcasts.
@@ -626,6 +631,7 @@ export class DirectAdapter implements IAgentEngine {
                       messageId: `msg_${randomUUID()}_asst`,
                       role: 'assistant',
                       ...assistant,
+                      parentId: userFactId,
                     }) };
                   }
                 }
@@ -639,7 +645,7 @@ export class DirectAdapter implements IAgentEngine {
                   ...event,
                   ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
                 });
-              }, messageActor, controller.signal, idempotencyKey, persistentRun?.run.id);
+              }, messageActor, controller.signal, idempotencyKey, persistentRun?.run.id, userFactId);
               if (chatResult.stopReason === 'completed') {
                 completionAttempted = true;
                 const event = completionEvent ?? { type: 'complete' as const, finalContent: chatResult.finalContent ?? '', resolution: chatResult.resolution };
@@ -654,7 +660,7 @@ export class DirectAdapter implements IAgentEngine {
                     const content = event.thinkingContent
                       ? `<think>${event.thinkingContent}</think>\n\n${event.finalContent || ''}` : event.finalContent!;
                     event.messageSequence = await chatDatabaseService.addMessage(messageActor, sessionKey, {
-                      messageId: `msg_${randomUUID()}_asst`, role: 'assistant', content,
+                      messageId: `msg_${randomUUID()}_asst`, role: 'assistant', content, parentId: userFactId,
                     });
                   }
                   sendToSession(sessionKey, { ...event });
@@ -834,9 +840,10 @@ export class DirectAdapter implements IAgentEngine {
     signal?: AbortSignal,
     idempotencyKey?: string,
     runtimeRunId?: string,
+    persistedUserId?: string,
   ): Promise<ChatResult> {
     return this.withSessionLock(sessionKey, () =>
-      this.runChat(sessionKey, message, onEvent, _actor, signal, idempotencyKey, runtimeRunId),
+      this.runChat(sessionKey, message, onEvent, _actor, signal, idempotencyKey, runtimeRunId, persistedUserId),
     );
   }
 
@@ -848,35 +855,56 @@ export class DirectAdapter implements IAgentEngine {
     signal?: AbortSignal,
     idempotencyKey?: string,
     runtimeRunId?: string,
+    persistedUserId?: string,
   ): Promise<ChatResult> {
     const policy = this.policies.chat;
-    // Get or create session via SessionManager (D-07)
-    const session = this.sessionManager.getOrCreate(sessionKey);
-
-    // Restore messages and accrued budgets before the provider context is built.
-    let resumeCheckpoint = session.metadata?.runtime_checkpoint as Record<string, unknown> | undefined;
+    // Actor-owned facts/checkpoints come from MySQL. File entries cannot confer
+    // access or become durable business answers before the completion transaction.
+    const cacheKey = _actor ? `db:${_actor.userId}:${sessionKey}` : sessionKey;
     const requestKey = idempotencyKey ? createHash('sha256').update(idempotencyKey).digest('hex') : randomUUID();
+    let session: Session;
+    try { session = this.sessionManager.getOrCreate(cacheKey); }
+    catch (error) { if (!_actor) throw error; session = new Session(cacheKey); }
+    const sessMeta = _actor ? await chatDatabaseService.getSessionMetadata(_actor, sessionKey) : null;
+    if (_actor) {
+      await chatDatabaseService.authorizeSession(_actor, sessionKey, 'append');
+      const page = await canonicalStore.getPage(_actor, sessionKey, 1000);
+      session.messages = [];
+      session.appendFacts(page.messages);
+      session.last_consolidated = 0;
+      session.metadata.runtime_checkpoint = sessMeta?.canonicalRuntimeCheckpoint as Record<string, unknown> | undefined;
+      if (sessMeta?.canonicalRuntimeCheckpoint === undefined) {
+        // Upgrade only a checkpoint bound to this exact request; unbound file
+        // facts never become actor-owned database authority by content similarity.
+        const legacy = this.sessionManager._load(sessionKey)?.metadata.runtime_checkpoint;
+        const pendingLegacy = legacy?.pendingToolCalls ?? legacy?.pending_tool_calls;
+        if (legacy?.runtime_request_key === requestKey) {
+          session.metadata.runtime_checkpoint = legacy;
+          await canonicalStore.saveCheckpoint(_actor, sessionKey, legacy);
+        } else if (Array.isArray(pendingLegacy) && pendingLegacy.length) {
+          throw new Error('LEGACY_CHECKPOINT_RECONCILIATION_REQUIRED');
+        }
+      }
+    }
+    let resumeCheckpoint = session.metadata?.runtime_checkpoint as Record<string, unknown> | undefined;
     const pending = resumeCheckpoint?.pendingToolCalls ?? resumeCheckpoint?.pending_tool_calls;
-    // A new request after a terminal turn is a new budget, not a retry. Unknown tool
-    // intents still require reconciliation even when the user sends a new request.
     if (resumeCheckpoint?.terminal_resolution && resumeCheckpoint.runtime_request_key
       && resumeCheckpoint.runtime_request_key !== requestKey && !(Array.isArray(pending) && pending.length)) {
       delete session.metadata.runtime_checkpoint;
       resumeCheckpoint = undefined;
     }
-    if (resumeCheckpoint) this.runner._restoreRuntimeCheckpoint(session as any);
-
-    // Capture history before adding this turn. ContextBuilder appends the
-    // current user message itself, so including the just-added entry would
-    // send the same question to the model twice.
-    const historyBeforeCurrentMessage = [...session.getHistory(120)] as any[];
-    session.addMessage('user', message);
-
-    // Read session settings (model, thinkingLevel) from DB metadata.
-    // The frontend stores these via sessions.patch → chat_sessions.metadata.
-    const sessMeta = _actor
-      ? await chatDatabaseService.getSessionMetadata(_actor, sessionKey)
-      : null;
+    // The business history already contains every durably recorded tool fact.
+    if (resumeCheckpoint && !_actor) this.runner._restoreRuntimeCheckpoint(session as any);
+    const userFactId = persistedUserId ?? randomUUID();
+    const runId = runtimeRunId ?? userFactId;
+    if (_actor && !persistedUserId) await chatDatabaseService.addMessage(_actor, sessionKey, {
+      messageId: userFactId, role: 'user', content: message,
+      metadata: { canonicalRunId: runId, canonicalTurnId: userFactId },
+    });
+    const currentIndex = session.messages.findIndex(m => m.id === userFactId);
+    if (currentIndex >= 0) session.messages = session.messages.slice(0, currentIndex);
+    const historyBeforeCurrentMessage = session.getHistory(120) as any[];
+    session.addMessage('user', message, { id: userFactId, runId, turnId: userFactId });
     const sessThinkingLevel = (sessMeta?.thinkingLevel as string) || undefined;
     const reasoningEffort = normalizeThinkingLevel(sessThinkingLevel);
 
@@ -890,11 +918,20 @@ export class DirectAdapter implements IAgentEngine {
 
     // Create checkpoint callback that persists to session metadata
     const checkpointCallback = async (payload: Record<string, unknown>) => {
-      if (session.metadata) {
-        session.metadata['runtime_checkpoint'] = { ...payload, runtime_request_key: requestKey,
-          runtime_policy: { entry: policy.entry, source: policy.source, longChat: policy.longChat, maxIterations: policy.maxIterations, runTimeoutMs: policy.runTimeoutMs } };
+      const checkpoint = { ...payload, canonical_run_id: runId, canonical_turn_id: userFactId,
+        runtime_request_key: requestKey,
+        runtime_policy: { entry: policy.entry, source: policy.source, longChat: policy.longChat, maxIterations: policy.maxIterations, runTimeoutMs: policy.runTimeoutMs } };
+      // Final response_ready is a candidate, retained in checkpoint until durable commit.
+      const facts = checkpointFacts(checkpoint, runId).filter(m => m.role === 'tool' || m.tool_calls?.length)
+        .map(m => ({ ...m, runId, turnId: userFactId }));
+      if (_actor) {
+        if (facts.length) await canonicalStore.appendToolFacts(_actor, sessionKey, userFactId, facts, Number(payload.iteration ?? 0), checkpoint);
+        else await canonicalStore.saveCheckpoint(_actor, sessionKey, checkpoint);
       }
-      await this.sessionManager.save(session);
+      session.appendFacts(facts);
+      session.metadata.runtime_checkpoint = checkpoint;
+      try { await this.sessionManager.save(session); }
+      catch (error) { if (!_actor) throw error; this.sessionManager.invalidate(cacheKey); }
     };
 
     // Create streaming hook that maps to ChatEvent.
@@ -915,7 +952,7 @@ export class DirectAdapter implements IAgentEngine {
         tools: _actor && this.toolsForActor ? this.toolsForActor(_actor) : new ToolRegistry(),
         model: provider.getDefaultModel(),
         ...runtimeSpec(policy),
-        runtimeRunId,
+        runtimeRunId: runId,
         onRuntimeEvent: recordRuntimeEvent,
         maxToolResultChars: this.runtimeLimits.maxToolResultChars,
         temperature: 0.0,
@@ -954,18 +991,18 @@ export class DirectAdapter implements IAgentEngine {
         : cleanContent;
 
       // Keep partial replies in the session context as well as database history.
-      if (displayContent) {
+      if (displayContent && !_actor) {
         const extra: any = {};
         if (thinkingContent) extra.reasoning_content = thinkingContent;
-        session.addMessage('assistant', displayContent, extra);
+        session.addMessage('assistant', displayContent, { ...extra, id: `run_${runId}_assistant`, runId, turnId: userFactId });
       }
 
       // Clear checkpoint on successful completion
-      if (stopReason === 'completed' && session.metadata && 'runtime_checkpoint' in session.metadata) {
+      if (!_actor && stopReason === 'completed' && session.metadata && 'runtime_checkpoint' in session.metadata) {
         delete session.metadata['runtime_checkpoint'];
       }
 
-      await this.sessionManager.save(session);
+      if (!_actor) await this.sessionManager.save(session);
 
       terminalEmitted = true;
       const terminalContent = { finalContent: cleanContent, thinkingContent, stopReason, resolution: result.resolution };
@@ -1026,7 +1063,8 @@ export class DirectAdapter implements IAgentEngine {
     // invoke() is intentionally detached from a browser ActorContext. It may retain
     // ephemeral agent state, but must never use a maintenance path to mutate a
     // user-owned chat session.
-    session.addMessage('user', message);
+    const invokeRunId = randomUUID();
+    session.addMessage('user', message, { runId: invokeRunId, turnId: invokeRunId });
 
     const thinkingHolder: { text: string } = { text: '' };
     const toolCalls: Array<{ name: string; args: any; result?: string; status: string }> = [];
@@ -1078,6 +1116,13 @@ export class DirectAdapter implements IAgentEngine {
         maxToolResultChars: 20000,
         temperature: 0.0,
         hook: invokeHook as any,
+        runtimeRunId: invokeRunId,
+        checkpointCallback: async payload => {
+          const cp = { ...payload, canonical_run_id: invokeRunId, canonical_turn_id: invokeRunId };
+          session.appendFacts(checkpointFacts(cp, invokeRunId).filter(m => m.role === 'tool' || m.tool_calls?.length));
+          session.metadata.runtime_checkpoint = cp;
+          await this.sessionManager.save(session);
+        },
         contextWindowTokens: 200_000,
         maxTokens: 4096,
         signal: controller.signal,
@@ -1093,8 +1138,9 @@ export class DirectAdapter implements IAgentEngine {
 ${result.finalContent || ''}`
         : (result.finalContent || '');
       if (finalContent) {
-        session.addMessage('assistant', finalContent);
+        if (result.stopReason === 'completed') session.addMessage('assistant', finalContent, { id: `run_${invokeRunId}_assistant`, runId: invokeRunId, turnId: invokeRunId });
       }
+      if (result.stopReason === 'completed') delete session.metadata.runtime_checkpoint;
       await this.sessionManager.save(session);
 
       // Broadcast completion to WebSocket clients viewing this session

@@ -6,7 +6,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { Session, SessionManager } from "../session.js";
+import { Session, SessionManager, AutoCompact } from "../session.js";
+import { microcompact } from '../runtime/context-manager.js';
 import type { SessionEntry } from "../session.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -98,6 +99,13 @@ describe("Session", () => {
     expect(session.last_consolidated).toBe(0);
   });
 
+  it('derived/runtime/synthetic projections cannot append canonical facts', () => {
+    session.addMessage('user', 'real');
+    const hash = session.canonicalHash();
+    for (const source of ['derived', 'runtime', 'synthetic'] as const) session.addMessage('tool', 'context only', { source });
+    expect(session.canonicalHash()).toBe(hash);
+  });
+
   it("getHistory with last_consolidated skips consolidated messages", () => {
     session.addMessage("user", "Old message 1");
     session.addMessage("assistant", "Old reply 1");
@@ -116,16 +124,18 @@ describe("Session", () => {
     }
     expect(session.messages.length).toBe(10);
     session.retainRecentLegalSuffix(4);
-    expect(session.messages.length).toBeLessThanOrEqual(4);
+    expect(session.messages.length).toBe(10);
+    expect(session.getHistory().length).toBeLessThanOrEqual(4);
   });
 
-  it("enforceFileCap trims messages", () => {
+  it("legacy enforceFileCap only bounds the projection", () => {
     for (let i = 0; i < 15; i++) {
       session.addMessage(i % 2 === 0 ? "user" : "assistant", `Message ${i}`);
     }
     expect(session.messages.length).toBe(15);
     session.enforceFileCap(5);
-    expect(session.messages.length).toBeLessThanOrEqual(5);
+    expect(session.messages.length).toBe(15);
+    expect(session.getHistory().length).toBeLessThanOrEqual(5);
   });
 });
 
@@ -140,6 +150,84 @@ describe("SessionManager", () => {
 
   afterEach(() => {
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('retains 501+ facts and parallel tool batches across save/load/projection/summary', async () => {
+    const session = manager.getOrCreate('parallel');
+    for (let i = 0; i < 101; i++) {
+      session.addMessage('user', `turn ${i}`);
+      session.addMessage('assistant', null, { tool_calls: ['a', 'b'].map(n => ({ id: `${i}-${n}`, type: 'function', function: { name: 'read_file', arguments: '{}' } })) });
+      for (const name of ['a', 'b']) session.addMessage('tool', 'large result '.repeat(100), { name: 'read_file', tool_call_id: `${i}-${name}` });
+      session.addMessage('assistant', 'done');
+    }
+    const hash = session.canonicalHash();
+    const facts = structuredClone(session.messages);
+    const projection = session.getHistory(7, 20);
+    expect(projection).toHaveLength(5); // newest complete turn is protected even over budget
+    expect(projection[1].tool_calls).toHaveLength(2);
+    expect(projection.filter(m => m.role === 'tool')).toHaveLength(2);
+    microcompact(session.getHistory() as any);
+    new AutoCompact({ maxMessagesPerSession: 5 }).compactSession(session, 'summary');
+    expect(session.canonicalHash()).toBe(hash);
+    await manager.save(session, { fsync: true });
+    for (let cold = 0; cold < 3; cold++) {
+      manager = new SessionManager(dir);
+      const loaded = manager.getOrCreate('parallel');
+      expect(loaded.messages).toEqual(facts);
+      expect(loaded.canonicalHash()).toBe(hash);
+      await manager.save(loaded);
+    }
+    const page = session.getCanonicalPage(100);
+    (page.messages[0] as SessionEntry).content = 'caller mutation';
+    expect(session.canonicalHash()).toBe(hash);
+    expect(session.getCanonicalPage(100, page.nextAfter!).messages[0].id).toBe(facts[100].id);
+  });
+
+  it('persists deterministic legacy IDs, repair gaps and excludes repeated injected summaries', async () => {
+    fs.mkdirSync(path.join(dir, '.slide', 'sessions'), { recursive: true });
+    const file = path.join(dir, '.slide', 'sessions', manager.safeKey('legacy') + '.jsonl');
+    fs.writeFileSync(file, [JSON.stringify({ role: 'user', content: 'same' }), '{broken',
+      JSON.stringify({ role: 'user', content: 'same' }),
+      JSON.stringify({ role: 'system', content: 'Previous conversation summary:\nold' }),
+      JSON.stringify({ __meta__: true, sessionKey: 'legacy', metadata: { _last_summary: 'old' } })].join('\n'));
+    const loaded = manager.getOrCreate('legacy');
+    expect(loaded.messages).toHaveLength(2);
+    expect(loaded.messages[0].id).not.toBe(loaded.messages[1].id);
+    const original = structuredClone(loaded.messages);
+    for (let i = 0; i < 3; i++) {
+      const cold = new SessionManager(dir).getOrCreate('legacy');
+      expect(cold.messages).toEqual(original);
+      expect(cold.metadata.history_gaps).toEqual(loaded.metadata.history_gaps);
+      await manager.save(cold);
+    }
+  });
+
+  it('refuses capacity overflow and failed writes without trimming durable facts', async () => {
+    const bounded = new SessionManager(dir, { maxCanonicalMessages: 2 });
+    const session = bounded.getOrCreate('bounded');
+    session.addMessage('user', 'old');
+    await bounded.save(session);
+    session.addMessage('assistant', 'reply'); session.addMessage('user', 'over limit');
+    const hash = session.canonicalHash();
+    await expect(bounded.save(session)).rejects.toThrow('CANONICAL_CAPACITY_EXCEEDED');
+    expect(session.canonicalHash()).toBe(hash);
+    expect(new SessionManager(dir).getOrCreate('bounded').messages).toHaveLength(1);
+    const brokenDir = path.join(dir, 'file-not-directory'); fs.writeFileSync(brokenDir, 'x');
+    await expect(new SessionManager(brokenDir).save(session)).rejects.toThrow();
+    expect(session.canonicalHash()).toBe(hash);
+  });
+
+  it('explicit retention records complete turn boundaries and refuses unsettled intents', () => {
+    const session = manager.getOrCreate('retention');
+    session.addMessage('user', 'old');
+    session.addMessage('assistant', null, { tool_calls: [{ id: 'intent', type: 'function', function: { name: 'write', arguments: '{}' } }] });
+    session.addMessage('user', 'new');
+    expect(() => session.retainCanonicalRecentTurns(1, 'policy')).toThrow('UNSETTLED');
+    session.messages.splice(2, 0, { role: 'tool', content: 'settled', tool_call_id: 'intent' });
+    session.ensureFactIds();
+    session.retainCanonicalRecentTurns(1, 'operator policy');
+    expect(session.messages).toHaveLength(1);
+    expect(session.metadata.retention_boundaries).toMatchObject([{ count: 3, reason: 'operator policy', firstId: expect.any(String), lastId: expect.any(String) }]);
   });
 
   it("getOrCreate returns same session for same key", () => {

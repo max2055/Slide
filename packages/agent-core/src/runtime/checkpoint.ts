@@ -2,6 +2,21 @@ import { RapidRefill } from './rapid-refill.js';
 import { validateSummaryRecord } from './auto-compact.js';
 import { validateRecoverySnapshot } from "./recovery-policy.js";
 import type { AgentRunSpec } from "../types.js";
+import { createHash } from 'node:crypto';
+import type { SessionEntry } from '../session.js';
+
+/** IDs include run and iteration, so identical replies in different turns differ. */
+export function checkpointFacts(payload: Record<string, unknown>, scope: string): SessionEntry[] {
+  const runId = typeof payload.canonical_run_id === 'string' ? payload.canonical_run_id : scope;
+  const turnId = typeof payload.canonical_turn_id === 'string' ? payload.canonical_turn_id : runId;
+  const assistant = (payload.assistantMessage ?? payload.assistant_message) as SessionEntry | undefined;
+  const results = (payload.completedToolResults ?? payload.completed_tool_results ?? []) as SessionEntry[];
+  return [assistant, ...results].filter((m): m is SessionEntry => !!m && (!m.source || m.source === 'fact')).map(m => ({
+    ...m, source: 'fact', runId: m.runId ?? runId, turnId: m.turnId ?? turnId,
+    id: m.id ?? `cp_${createHash('sha256').update(JSON.stringify([runId, payload.iteration ?? 0,
+      m.role, m.role === 'tool' ? m.tool_call_id : m.tool_calls?.map(c => c.id) ?? m.content])).digest('hex')}`,
+  }));
+}
 
 export class LegacyCheckpoint {
   private static readonly _RUNTIME_CHECKPOINT_KEY = 'runtime_checkpoint';
@@ -27,6 +42,7 @@ export class LegacyCheckpoint {
    * Build a stable deduplication key for checkpoint messages.
    */
   static _checkpointMessageKey(message: Record<string, unknown>): unknown[] {
+    if (message.id) return ['id', message.id];
     return [
       message['role'],
       message['content'],
@@ -44,6 +60,8 @@ export class LegacyCheckpoint {
   _restoreRuntimeCheckpoint(session: {
     metadata: Record<string, unknown>;
     messages: Record<string, unknown>[];
+    sessionKey?: string;
+    appendFacts?: (entries: SessionEntry[]) => void;
   }): boolean {
     const checkpoint = session.metadata[LegacyCheckpoint._RUNTIME_CHECKPOINT_KEY];
     if (!checkpoint || typeof checkpoint !== 'object' || Array.isArray(checkpoint)) {
@@ -81,8 +99,10 @@ export class LegacyCheckpoint {
       }
     }
 
-    // Backfill interrupted tool calls
+    // Legacy plain-object consumers retain their projection-only compatibility.
+    // Canonical Session stores only returned facts; normalize generates placeholders.
     for (const toolCall of pendingToolCalls) {
+      if (session.appendFacts) continue;
       if (!toolCall || typeof toolCall !== 'object') continue;
       const toolId = toolCall['id'] as string | undefined;
       const func = toolCall['function'] as Record<string, unknown> | undefined;
@@ -104,7 +124,7 @@ export class LegacyCheckpoint {
       const restored = restoredMessages.slice(0, size);
       let allMatch = true;
       for (let i = 0; i < size; i++) {
-        const leftKey = LegacyCheckpoint._checkpointMessageKey(existing[i]);
+        const leftKey = LegacyCheckpoint._checkpointMessageKey(restored[i].id ? existing[i] : { ...existing[i], id: undefined });
         const rightKey = LegacyCheckpoint._checkpointMessageKey(restored[i]);
         if (JSON.stringify(leftKey) !== JSON.stringify(rightKey)) {
           allMatch = false;
@@ -118,7 +138,11 @@ export class LegacyCheckpoint {
     }
 
     // Append only non-overlapping messages
-    session.messages.push(...restoredMessages.slice(overlap));
+    if (session.appendFacts) {
+      const facts = checkpointFacts(cp, `legacy_checkpoint_${session.sessionKey ?? ''}_${JSON.stringify(LegacyCheckpoint._checkpointMessageKey(assistantMessage ?? {}))}`);
+      // ID-less legacy checkpoints may overlap the end of pre-migration history.
+      session.appendFacts(facts.slice(assistantMessage?.id ? 0 : overlap));
+    } else session.messages.push(...restoredMessages.slice(overlap));
 
     // Legacy callers retain their clear-on-restore contract. New ledgers survive;
     // materialized evidence must not be appended again after another user message.
@@ -150,7 +174,11 @@ export async function emitCheckpoint(
   payload: Record<string, unknown>
 ): Promise<void> {
   if (spec.checkpointCallback) {
-    await spec.checkpointCallback(payload);
+    const scope = spec.runtimeRunId ?? spec.idempotencyKey ?? spec.sessionKey ?? 'legacy';
+    const facts = checkpointFacts(payload, scope);
+    const next: Record<string, unknown> = { ...payload, canonical_run_id: scope };
+    if (payload.assistantMessage) next.assistantMessage = facts.find(m => m.role === 'assistant');
+    if (payload.completedToolResults) next.completedToolResults = facts.filter(m => m.role === 'tool');
+    await spec.checkpointCallback(next);
   }
 }
-
