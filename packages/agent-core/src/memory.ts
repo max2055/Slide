@@ -8,19 +8,19 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { MemoryHistory, type MemoryHistoryEntry, withMemoryLock, writeMemoryFile } from './memory-history.js';
 
 // ── Constants ──
-
-const MEMORY_DIR = '.slide';
-const HISTORY_FILE = 'history.jsonl';
 
 // ── MemoryStore ──
 
 export class MemoryStore {
   private workspace: string;
+  private history: MemoryHistory;
 
   constructor(workspace: string) {
-    this.workspace = workspace;
+    this.workspace = fs.existsSync(workspace) ? fs.realpathSync(workspace) : path.resolve(workspace);
+    this.history = new MemoryHistory(this.workspace);
   }
 
   /** Read the MEMORY.md file content. */
@@ -31,7 +31,7 @@ export class MemoryStore {
   /** Write MEMORY.md with atomic tmp+fsync+rename at workspace root. */
   async writeMemory(content: string): Promise<void> {
     const filePath = path.join(this.workspace, 'MEMORY.md');
-    await this._atomicWrite(filePath, content);
+    await withMemoryLock(filePath, () => this._atomicWrite(filePath, content));
   }
 
   /** Read SOUL.md content. */
@@ -51,48 +51,38 @@ export class MemoryStore {
 
   /** Append a message to history.jsonl. */
   async appendHistory(entry: Record<string, unknown>): Promise<void> {
-    const filePath = path.join(this.workspace, MEMORY_DIR, HISTORY_FILE);
-    await fsp.mkdir(path.dirname(filePath), { recursive: true });
-    const line = JSON.stringify(entry) + '\n';
-    await fsp.appendFile(filePath, line, 'utf-8');
+    await this.history.append(entry);
   }
 
   /** Read unprocessed history entries (after a cursor). */
-  async readUnprocessedHistory(cursor: number): Promise<Array<{ index: number; entry: Record<string, unknown> }>> {
-    const filePath = path.join(this.workspace, MEMORY_DIR, HISTORY_FILE);
-    if (!fs.existsSync(filePath)) return [];
-
-    try {
-      const content = await fsp.readFile(filePath, 'utf-8');
-      const lines = content.trim().split('\n').filter(Boolean);
-      return lines
-        .map((line: string, index: number) => ({
-          index,
-          entry: JSON.parse(line) as Record<string, unknown>,
-        }))
-        .filter((item: { index: number; entry: Record<string, unknown> }) => item.index >= cursor);
-    } catch {
-      return [];
-    }
+  async readUnprocessedHistory(cursor: number): Promise<MemoryHistoryEntry[]> {
+    return this.history.list(cursor);
   }
 
-  /** Compact history file, keeping only the most recent entries. */
+  /** Archive prefixes durably before retaining recent entries; append can continue. */
   async compactHistory(keepCount: number): Promise<void> {
-    const filePath = path.join(this.workspace, MEMORY_DIR, HISTORY_FILE);
-    if (!fs.existsSync(filePath)) return;
+    await this.history.compact(keepCount, (id, entries) => this.publishArchive(id, entries));
+  }
 
-    try {
-      const content = await fsp.readFile(filePath, 'utf-8');
-      const lines = content.trim().split('\n').filter(Boolean);
-      if (lines.length <= keepCount) return;
+  /** Recover a pending batch first; each new batch contains at most 50 sources. */
+  async archiveHistoryBatch(limit = 50): Promise<number> {
+    return this.history.archiveBatch(limit, (id, entries) => this.publishArchive(id, entries));
+  }
 
-      const kept = lines.slice(-keepCount);
-      const tmpPath = filePath + '.tmp';
-      await fsp.writeFile(tmpPath, kept.join('\n') + '\n', 'utf-8');
-      await fsp.rename(tmpPath, filePath);
-    } catch {
-      // Best-effort compaction
-    }
+  private async publishArchive(id: string, entries: Array<{ id: string; entry: Record<string, unknown> }>): Promise<void> {
+    const filePath = path.join(this.workspace, 'MEMORY.md');
+    await withMemoryLock(filePath, async () => {
+      let existing: string;
+      try { existing = await fsp.readFile(filePath, 'utf8'); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        existing = '# Memory\n';
+      }
+      const marker = `<!-- slide-memory-archive:${id} -->`;
+      if (existing.split('\n').includes(marker)) return;
+      const sources = entries.map(item => JSON.stringify(item)).join('\n');
+      await this._atomicWrite(filePath, `${existing.trimEnd()}\n\n${marker}\n${sources}\n`);
+    });
   }
 
   /** Get memory context string for system prompt injection. */
@@ -110,32 +100,32 @@ export class MemoryStore {
   /** Delete the MEMORY.md file. */
   async deleteMemory(): Promise<void> {
     const filePath = path.join(this.workspace, 'MEMORY.md');
-    try {
-      await fsp.unlink(filePath);
-    } catch {
-      // File doesn't exist — already deleted
-    }
+    await withMemoryLock(filePath, async () => {
+      try { await fsp.unlink(filePath); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    });
   }
 
   /** Append content to the MEMORY.md file (creates if not exists). */
   async updateMemory(append: string): Promise<void> {
-    const existing = await this.readMemory();
-    const now = new Date().toISOString().split('T')[0];
-    const entry = `\n\n### ${now}\n${append.trim()}`;
-    const content = existing ? `${existing.trimEnd()}${entry}` : `# Memory\n${entry}`;
-    await this.writeMemory(content);
+    const filePath = path.join(this.workspace, 'MEMORY.md');
+    await withMemoryLock(filePath, async () => {
+      let existing: string | null;
+      try { existing = await fsp.readFile(filePath, 'utf8'); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        existing = null;
+      }
+      const now = new Date().toISOString().split('T')[0];
+      const entry = `\n\n### ${now}\n${append.trim()}`;
+      const content = existing ? `${existing.trimEnd()}${entry}` : `# Memory\n${entry}`;
+      await this._atomicWrite(filePath, content);
+    });
   }
 
   /** Get the total count of entries in the history file. */
   async getHistoryCount(): Promise<number> {
-    const filePath = path.join(this.workspace, MEMORY_DIR, HISTORY_FILE);
-    if (!fs.existsSync(filePath)) return 0;
-    try {
-      const content = await fsp.readFile(filePath, 'utf-8');
-      return content.trim().split('\n').filter(Boolean).length;
-    } catch {
-      return 0;
-    }
+    return (await this.history.list()).length;
   }
 
   /** Read history entries after a given ISO timestamp. */
@@ -149,18 +139,17 @@ export class MemoryStore {
 
   /** Clear all history entries (truncate the history file). */
   async clearHistory(): Promise<void> {
-    const filePath = path.join(this.workspace, MEMORY_DIR, HISTORY_FILE);
-    await this._atomicWrite(filePath, '');
+    await this.history.clear();
   }
 
   /** Get the full path to the history file. */
   getHistoryPath(): string {
-    return path.join(this.workspace, MEMORY_DIR, HISTORY_FILE);
+    return this.history.file;
   }
 
   /** Get the path to the .slide memory directory. */
   getMemoryDir(): string {
-    return path.join(this.workspace, MEMORY_DIR);
+    return this.history.directory;
   }
 
   /** Get the workspace path used by this store. */
@@ -193,10 +182,7 @@ export class MemoryStore {
   }
 
   private async _atomicWrite(filePath: string, content: string): Promise<void> {
-    await fsp.mkdir(path.dirname(filePath), { recursive: true });
-    const tmpPath = filePath + '.tmp';
-    await fsp.writeFile(tmpPath, content, 'utf-8');
-    await fsp.rename(tmpPath, filePath);
+    await writeMemoryFile(filePath, content);
   }
 }
 
@@ -225,17 +211,12 @@ export class Consolidator {
   }
 
   /**
-   * Merge recent history into MEMORY.md as structured entries,
-   * then compact the history file to prevent unbounded growth.
-   * This is the Slide session consolidation pipeline.
+   * Archive one oldest-first batch into MEMORY.md and immutable source files.
+   * keepCount is a batch limit (default/maximum 50), not a destructive retention
+   * cursor. Repeated calls drain pending entries without deleting later appends.
    */
   async consolidateToMemory(store: MemoryStore, keepCount?: number): Promise<void> {
-    const summary = await this.summarize(store);
-    if (summary && summary !== 'No recent memory entries.') {
-      await store.updateMemory(summary);
-    }
-    await store.clearHistory();
-    // Any future entries start fresh after the consolidation point
+    await store.archiveHistoryBatch(keepCount ?? 50);
   }
 
   /**
