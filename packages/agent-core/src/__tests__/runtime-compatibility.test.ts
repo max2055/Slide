@@ -11,6 +11,7 @@ const response = (content: string, finishReason = 'stop'): LLMResponse => ({
 // Frozen against main@07b3e6ce458b0b4576d356a97d78ab17df3ddd66 BEFORE migration.
 // Original traces remain in docs/slide/runtime-v2-source/legacy-runtime-traces.snap.
 // Current snapshots change only for explicitly fixed defects/contracts.
+// MAX-105 reserves the configured total window (input + output), not window + output twice.
 const scenarios = [
   { name: 'legacy defect: repeated_text_accepted', responses: [response('正在分析数据库状态……\n'.repeat(20))] },
   { name: 'legacy defect: length_exhaustion_accepted', responses: [1, 2, 3, 4].map(i => response(`截断片段${i}`, 'length')) },
@@ -24,7 +25,7 @@ const scenarios = [
 // that new frame and reminder provenance when comparing the frozen legacy API.
 const copy = (value: unknown) => JSON.parse(JSON.stringify(value, (key, item) => {
   // S2 metadata has dedicated persistence/epoch assertions; legacy traces exclude it.
-  if (['streamAttempt', 'sourceRequestId', 'provisionalBytes', 'streamReset', 'checkpoint_id', 'stream_state_v1'].includes(key)) return undefined;
+  if (['streamAttempt', 'sourceRequestId', 'provisionalBytes', 'streamReset', 'checkpoint_id', 'stream_state_v1', 'context_estimate_v1', 'context_config_v1'].includes(key)) return undefined;
   if (Array.isArray(item)) return item.filter(m => !(m?.source === 'runtime' && String(m.content).startsWith('Current Time:')));
   if (item?.source === 'runtime') { const { source: _source, ...rest } = item; return rest; }
   return item;
@@ -57,6 +58,7 @@ describe('frozen legacy compatibility traces', () => {
     const result = await new AgentRunner({ chat, chatStream: (messages, tools, _callbacks, options) => chat(messages, tools, options), getDefaultModel: () => 'fixture' }).run({
       initialMessages: [{ role: 'user', content: '诊断数据库并输出结论' }], tools: new ToolRegistry(),
       model: 'fixture', maxIterations: 10, maxToolResultChars: 1000, hook,
+      contextWindowTokens: 200_000, maxTokens: 4096,
       checkpointCallback: async payload => { trace.push(['checkpoint', legacyCheckpointCopy(payload)]); },
       onProviderRequest: promise => { trace.push(['request-observed']); void promise.then(() => trace.push(['settled'])); },
     });
@@ -91,6 +93,7 @@ describe('frozen legacy compatibility traces', () => {
     let drains = 0;
     const result = await runner.run({
       initialMessages: [{ role: 'user', content: 'first' }], tools: new ToolRegistry(), model: 'fixture',
+      contextWindowTokens: 200_000, maxTokens: 4096,
       maxIterations: 4, maxToolResultChars: 1000, hook,
       injectionCallback: async () => ++drains === 1 ? [{ role: 'user', content: 'follow-up' }] : [],
       checkpointCallback: async payload => { events.push(['checkpoint', legacyCheckpointCopy(payload)]); },

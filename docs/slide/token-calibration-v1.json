@@ -1,0 +1,5259 @@
+{
+  "schemaVersion": 1,
+  "corpusSha256": "2f18171fbdb22a73e87df6f97e4ad3f969a2274c8c92894d53cff4fbd6cf1291",
+  "sampleCount": 140,
+  "groundTruthScope": "Python tiktoken 0.12.0 serialized-payload encoding; NOT measured provider chat usage",
+  "methods": {
+    "exact": {
+      "samples": 0,
+      "groundTruthSamples": 0,
+      "p50AbsoluteRelativeError": null,
+      "p95AbsoluteRelativeError": null,
+      "rawP50AbsoluteRelativeError": null,
+      "rawP95AbsoluteRelativeError": null,
+      "underestimationRate": null
+    },
+    "family-tokenizer": {
+      "samples": 100,
+      "groundTruthSamples": 100,
+      "p50AbsoluteRelativeError": 2.808353808353808,
+      "p95AbsoluteRelativeError": 3.7857142857142856,
+      "rawP50AbsoluteRelativeError": 0,
+      "rawP95AbsoluteRelativeError": 0,
+      "underestimationRate": 0
+    },
+    "conservative-heuristic": {
+      "samples": 140,
+      "groundTruthSamples": 100,
+      "p50AbsoluteRelativeError": 2.808353808353808,
+      "p95AbsoluteRelativeError": 3.7857142857142856,
+      "rawP50AbsoluteRelativeError": 2.808353808353808,
+      "rawP95AbsoluteRelativeError": 3.7857142857142856,
+      "underestimationRate": 0
+    }
+  },
+  "categories": {
+    "english": {
+      "family-tokenizer": {
+        "samples": 20,
+        "groundTruthSamples": 20,
+        "p50AbsoluteRelativeError": 3.7425474254742546,
+        "p95AbsoluteRelativeError": 3.9876543209876543,
+        "rawP50AbsoluteRelativeError": 0,
+        "rawP95AbsoluteRelativeError": 0,
+        "underestimationRate": 0
+      },
+      "conservative-heuristic": {
+        "samples": 20,
+        "groundTruthSamples": 20,
+        "p50AbsoluteRelativeError": 3.7425474254742546,
+        "p95AbsoluteRelativeError": 3.9876543209876543,
+        "rawP50AbsoluteRelativeError": 3.7425474254742546,
+        "rawP95AbsoluteRelativeError": 3.9876543209876543,
+        "underestimationRate": 0
+      }
+    },
+    "chinese": {
+      "family-tokenizer": {
+        "samples": 20,
+        "groundTruthSamples": 20,
+        "p50AbsoluteRelativeError": 2.2949640287769784,
+        "p95AbsoluteRelativeError": 2.947019867549669,
+        "rawP50AbsoluteRelativeError": 0,
+        "rawP95AbsoluteRelativeError": 0,
+        "underestimationRate": 0
+      },
+      "conservative-heuristic": {
+        "samples": 20,
+        "groundTruthSamples": 20,
+        "p50AbsoluteRelativeError": 2.2949640287769784,
+        "p95AbsoluteRelativeError": 2.947019867549669,
+        "rawP50AbsoluteRelativeError": 2.2949640287769784,
+        "rawP95AbsoluteRelativeError": 2.947019867549669,
+        "underestimationRate": 0
+      }
+    },
+    "sql": {
+      "family-tokenizer": {
+        "samples": 20,
+        "groundTruthSamples": 20,
+        "p50AbsoluteRelativeError": 2.7911164465786316,
+        "p95AbsoluteRelativeError": 3.1503759398496243,
+        "rawP50AbsoluteRelativeError": 0,
+        "rawP95AbsoluteRelativeError": 0,
+        "underestimationRate": 0
+      },
+      "conservative-heuristic": {
+        "samples": 20,
+        "groundTruthSamples": 20,
+        "p50AbsoluteRelativeError": 2.7911164465786316,
+        "p95AbsoluteRelativeError": 3.1503759398496243,
+        "rawP50AbsoluteRelativeError": 2.7911164465786316,
+        "rawP95AbsoluteRelativeError": 3.1503759398496243,
+        "underestimationRate": 0
+      }
+    },
+    "json": {
+      "family-tokenizer": {
+        "samples": 20,
+        "groundTruthSamples": 20,
+        "p50AbsoluteRelativeError": 2.8612099644128115,
+        "p95AbsoluteRelativeError": 3.2934782608695654,
+        "rawP50AbsoluteRelativeError": 0,
+        "rawP95AbsoluteRelativeError": 0,
+        "underestimationRate": 0
+      },
+      "conservative-heuristic": {
+        "samples": 20,
+        "groundTruthSamples": 20,
+        "p50AbsoluteRelativeError": 2.8612099644128115,
+        "p95AbsoluteRelativeError": 3.2934782608695654,
+        "rawP50AbsoluteRelativeError": 2.8612099644128115,
+        "rawP95AbsoluteRelativeError": 3.2934782608695654,
+        "underestimationRate": 0
+      }
+    },
+    "schemas": {
+      "family-tokenizer": {
+        "samples": 20,
+        "groundTruthSamples": 20,
+        "p50AbsoluteRelativeError": 2.5485714285714285,
+        "p95AbsoluteRelativeError": 2.9076923076923076,
+        "rawP50AbsoluteRelativeError": 0,
+        "rawP95AbsoluteRelativeError": 0,
+        "underestimationRate": 0
+      },
+      "conservative-heuristic": {
+        "samples": 20,
+        "groundTruthSamples": 20,
+        "p50AbsoluteRelativeError": 2.5485714285714285,
+        "p95AbsoluteRelativeError": 2.9076923076923076,
+        "rawP50AbsoluteRelativeError": 2.5485714285714285,
+        "rawP95AbsoluteRelativeError": 2.9076923076923076,
+        "underestimationRate": 0
+      }
+    },
+    "unknown": {
+      "family-tokenizer": {
+        "samples": 0,
+        "groundTruthSamples": 0,
+        "p50AbsoluteRelativeError": null,
+        "p95AbsoluteRelativeError": null,
+        "rawP50AbsoluteRelativeError": null,
+        "rawP95AbsoluteRelativeError": null,
+        "underestimationRate": null
+      },
+      "conservative-heuristic": {
+        "samples": 20,
+        "groundTruthSamples": 0,
+        "p50AbsoluteRelativeError": null,
+        "p95AbsoluteRelativeError": null,
+        "rawP50AbsoluteRelativeError": null,
+        "rawP95AbsoluteRelativeError": null,
+        "underestimationRate": null
+      }
+    },
+    "image": {
+      "family-tokenizer": {
+        "samples": 0,
+        "groundTruthSamples": 0,
+        "p50AbsoluteRelativeError": null,
+        "p95AbsoluteRelativeError": null,
+        "rawP50AbsoluteRelativeError": null,
+        "rawP95AbsoluteRelativeError": null,
+        "underestimationRate": null
+      },
+      "conservative-heuristic": {
+        "samples": 20,
+        "groundTruthSamples": 0,
+        "p50AbsoluteRelativeError": null,
+        "p95AbsoluteRelativeError": null,
+        "rawP50AbsoluteRelativeError": null,
+        "rawP95AbsoluteRelativeError": null,
+        "underestimationRate": null
+      }
+    }
+  },
+  "samples": [
+    {
+      "id": "english-00",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 58,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 293,
+      "rawTokens": 58,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 293
+      },
+      "relativeError": 4.051724137931035,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-00",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 58,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 293,
+      "rawTokens": 293,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 293
+      },
+      "relativeError": 4.051724137931035,
+      "rawRelativeError": 4.051724137931035
+    },
+    {
+      "id": "english-01",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 81,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 404,
+      "rawTokens": 81,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 404
+      },
+      "relativeError": 3.9876543209876543,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-01",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 81,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 404,
+      "rawTokens": 404,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 404
+      },
+      "relativeError": 3.9876543209876543,
+      "rawRelativeError": 3.9876543209876543
+    },
+    {
+      "id": "english-02",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 106,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 515,
+      "rawTokens": 106,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 515
+      },
+      "relativeError": 3.858490566037736,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-02",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 106,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 515,
+      "rawTokens": 515,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 515
+      },
+      "relativeError": 3.858490566037736,
+      "rawRelativeError": 3.858490566037736
+    },
+    {
+      "id": "english-03",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 129,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 626,
+      "rawTokens": 129,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 626
+      },
+      "relativeError": 3.852713178294574,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-03",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 129,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 626,
+      "rawTokens": 626,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 626
+      },
+      "relativeError": 3.852713178294574,
+      "rawRelativeError": 3.852713178294574
+    },
+    {
+      "id": "english-04",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 154,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 737,
+      "rawTokens": 154,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 737
+      },
+      "relativeError": 3.7857142857142856,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-04",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 154,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 737,
+      "rawTokens": 737,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 737
+      },
+      "relativeError": 3.7857142857142856,
+      "rawRelativeError": 3.7857142857142856
+    },
+    {
+      "id": "english-05",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 177,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 848,
+      "rawTokens": 177,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 848
+      },
+      "relativeError": 3.790960451977401,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-05",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 177,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 848,
+      "rawTokens": 848,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 848
+      },
+      "relativeError": 3.790960451977401,
+      "rawRelativeError": 3.790960451977401
+    },
+    {
+      "id": "english-06",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 202,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 959,
+      "rawTokens": 202,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 959
+      },
+      "relativeError": 3.7475247524752477,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-06",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 202,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 959,
+      "rawTokens": 959,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 959
+      },
+      "relativeError": 3.7475247524752477,
+      "rawRelativeError": 3.7475247524752477
+    },
+    {
+      "id": "english-07",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 225,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1070,
+      "rawTokens": 225,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1070
+      },
+      "relativeError": 3.7555555555555555,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-07",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 225,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1070,
+      "rawTokens": 1070,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1070
+      },
+      "relativeError": 3.7555555555555555,
+      "rawRelativeError": 3.7555555555555555
+    },
+    {
+      "id": "english-08",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 250,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1181,
+      "rawTokens": 250,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1181
+      },
+      "relativeError": 3.724,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-08",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 250,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1181,
+      "rawTokens": 1181,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1181
+      },
+      "relativeError": 3.724,
+      "rawRelativeError": 3.724
+    },
+    {
+      "id": "english-09",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 273,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1292,
+      "rawTokens": 273,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1292
+      },
+      "relativeError": 3.7326007326007327,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-09",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 273,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1292,
+      "rawTokens": 1292,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1292
+      },
+      "relativeError": 3.7326007326007327,
+      "rawRelativeError": 3.7326007326007327
+    },
+    {
+      "id": "english-10",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 298,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1414,
+      "rawTokens": 298,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1414
+      },
+      "relativeError": 3.7449664429530203,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-10",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 298,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1414,
+      "rawTokens": 1414,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1414
+      },
+      "relativeError": 3.7449664429530203,
+      "rawRelativeError": 3.7449664429530203
+    },
+    {
+      "id": "english-11",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 321,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1526,
+      "rawTokens": 321,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1526
+      },
+      "relativeError": 3.7538940809968846,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-11",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 321,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1526,
+      "rawTokens": 1526,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1526
+      },
+      "relativeError": 3.7538940809968846,
+      "rawRelativeError": 3.7538940809968846
+    },
+    {
+      "id": "english-12",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 346,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1638,
+      "rawTokens": 346,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1638
+      },
+      "relativeError": 3.7341040462427744,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-12",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 346,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1638,
+      "rawTokens": 1638,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1638
+      },
+      "relativeError": 3.7341040462427744,
+      "rawRelativeError": 3.7341040462427744
+    },
+    {
+      "id": "english-13",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 369,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1750,
+      "rawTokens": 369,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1750
+      },
+      "relativeError": 3.7425474254742546,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-13",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 369,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1750,
+      "rawTokens": 1750,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1750
+      },
+      "relativeError": 3.7425474254742546,
+      "rawRelativeError": 3.7425474254742546
+    },
+    {
+      "id": "english-14",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 394,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1862,
+      "rawTokens": 394,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1862
+      },
+      "relativeError": 3.7258883248730963,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-14",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 394,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1862,
+      "rawTokens": 1862,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1862
+      },
+      "relativeError": 3.7258883248730963,
+      "rawRelativeError": 3.7258883248730963
+    },
+    {
+      "id": "english-15",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 417,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1974,
+      "rawTokens": 417,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1974
+      },
+      "relativeError": 3.7338129496402876,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-15",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 417,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1974,
+      "rawTokens": 1974,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1974
+      },
+      "relativeError": 3.7338129496402876,
+      "rawRelativeError": 3.7338129496402876
+    },
+    {
+      "id": "english-16",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 442,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2086,
+      "rawTokens": 442,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2086
+      },
+      "relativeError": 3.7194570135746607,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-16",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 442,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2086,
+      "rawTokens": 2086,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2086
+      },
+      "relativeError": 3.7194570135746607,
+      "rawRelativeError": 3.7194570135746607
+    },
+    {
+      "id": "english-17",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 465,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2198,
+      "rawTokens": 465,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2198
+      },
+      "relativeError": 3.7268817204301077,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-17",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 465,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2198,
+      "rawTokens": 2198,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2198
+      },
+      "relativeError": 3.7268817204301077,
+      "rawRelativeError": 3.7268817204301077
+    },
+    {
+      "id": "english-18",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 490,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2310,
+      "rawTokens": 490,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2310
+      },
+      "relativeError": 3.7142857142857144,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-18",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 490,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2310,
+      "rawTokens": 2310,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2310
+      },
+      "relativeError": 3.7142857142857144,
+      "rawRelativeError": 3.7142857142857144
+    },
+    {
+      "id": "english-19",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 513,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2422,
+      "rawTokens": 513,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2422
+      },
+      "relativeError": 3.7212475633528266,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "english-19",
+      "category": "english",
+      "groundTruth": {
+        "tokens": 513,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2422,
+      "rawTokens": 2422,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2422
+      },
+      "relativeError": 3.7212475633528266,
+      "rawRelativeError": 3.7212475633528266
+    },
+    {
+      "id": "chinese-00",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 73,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 320,
+      "rawTokens": 73,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 320
+      },
+      "relativeError": 3.3835616438356166,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-00",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 73,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 320,
+      "rawTokens": 320,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 320
+      },
+      "relativeError": 3.3835616438356166,
+      "rawRelativeError": 3.3835616438356166
+    },
+    {
+      "id": "chinese-01",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 139,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 458,
+      "rawTokens": 139,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 458
+      },
+      "relativeError": 2.2949640287769784,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-01",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 139,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 458,
+      "rawTokens": 458,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 458
+      },
+      "relativeError": 2.2949640287769784,
+      "rawRelativeError": 2.2949640287769784
+    },
+    {
+      "id": "chinese-02",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 151,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 596,
+      "rawTokens": 151,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 596
+      },
+      "relativeError": 2.947019867549669,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-02",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 151,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 596,
+      "rawTokens": 596,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 596
+      },
+      "relativeError": 2.947019867549669,
+      "rawRelativeError": 2.947019867549669
+    },
+    {
+      "id": "chinese-03",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 245,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 734,
+      "rawTokens": 245,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 734
+      },
+      "relativeError": 1.9959183673469387,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-03",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 245,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 734,
+      "rawTokens": 734,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 734
+      },
+      "relativeError": 1.9959183673469387,
+      "rawRelativeError": 1.9959183673469387
+    },
+    {
+      "id": "chinese-04",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 229,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 872,
+      "rawTokens": 229,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 872
+      },
+      "relativeError": 2.8078602620087336,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-04",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 229,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 872,
+      "rawTokens": 872,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 872
+      },
+      "relativeError": 2.8078602620087336,
+      "rawRelativeError": 2.8078602620087336
+    },
+    {
+      "id": "chinese-05",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 351,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1010,
+      "rawTokens": 351,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1010
+      },
+      "relativeError": 1.8774928774928774,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-05",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 351,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1010,
+      "rawTokens": 1010,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1010
+      },
+      "relativeError": 1.8774928774928774,
+      "rawRelativeError": 1.8774928774928774
+    },
+    {
+      "id": "chinese-06",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 307,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1148,
+      "rawTokens": 307,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1148
+      },
+      "relativeError": 2.739413680781759,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-06",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 307,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1148,
+      "rawTokens": 1148,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1148
+      },
+      "relativeError": 2.739413680781759,
+      "rawRelativeError": 2.739413680781759
+    },
+    {
+      "id": "chinese-07",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 457,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1286,
+      "rawTokens": 457,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1286
+      },
+      "relativeError": 1.8140043763676148,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-07",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 457,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1286,
+      "rawTokens": 1286,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1286
+      },
+      "relativeError": 1.8140043763676148,
+      "rawRelativeError": 1.8140043763676148
+    },
+    {
+      "id": "chinese-08",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 385,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1424,
+      "rawTokens": 385,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1424
+      },
+      "relativeError": 2.6987012987012986,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-08",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 385,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1424,
+      "rawTokens": 1424,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1424
+      },
+      "relativeError": 2.6987012987012986,
+      "rawRelativeError": 2.6987012987012986
+    },
+    {
+      "id": "chinese-09",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 563,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1562,
+      "rawTokens": 563,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1562
+      },
+      "relativeError": 1.7744227353463589,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-09",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 563,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1562,
+      "rawTokens": 1562,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1562
+      },
+      "relativeError": 1.7744227353463589,
+      "rawRelativeError": 1.7744227353463589
+    },
+    {
+      "id": "chinese-10",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 463,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1711,
+      "rawTokens": 463,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1711
+      },
+      "relativeError": 2.695464362850972,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-10",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 463,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1711,
+      "rawTokens": 1711,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1711
+      },
+      "relativeError": 2.695464362850972,
+      "rawRelativeError": 2.695464362850972
+    },
+    {
+      "id": "chinese-11",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 669,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1850,
+      "rawTokens": 669,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1850
+      },
+      "relativeError": 1.765321375186846,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-11",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 669,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1850,
+      "rawTokens": 1850,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1850
+      },
+      "relativeError": 1.765321375186846,
+      "rawRelativeError": 1.765321375186846
+    },
+    {
+      "id": "chinese-12",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 541,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1989,
+      "rawTokens": 541,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1989
+      },
+      "relativeError": 2.6765249537892792,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-12",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 541,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1989,
+      "rawTokens": 1989,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1989
+      },
+      "relativeError": 2.6765249537892792,
+      "rawRelativeError": 2.6765249537892792
+    },
+    {
+      "id": "chinese-13",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 775,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2128,
+      "rawTokens": 775,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2128
+      },
+      "relativeError": 1.7458064516129033,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-13",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 775,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2128,
+      "rawTokens": 2128,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2128
+      },
+      "relativeError": 1.7458064516129033,
+      "rawRelativeError": 1.7458064516129033
+    },
+    {
+      "id": "chinese-14",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 619,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2267,
+      "rawTokens": 619,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2267
+      },
+      "relativeError": 2.6623586429725363,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-14",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 619,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2267,
+      "rawTokens": 2267,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2267
+      },
+      "relativeError": 2.6623586429725363,
+      "rawRelativeError": 2.6623586429725363
+    },
+    {
+      "id": "chinese-15",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 881,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2406,
+      "rawTokens": 881,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2406
+      },
+      "relativeError": 1.7309875141884223,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-15",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 881,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2406,
+      "rawTokens": 2406,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2406
+      },
+      "relativeError": 1.7309875141884223,
+      "rawRelativeError": 1.7309875141884223
+    },
+    {
+      "id": "chinese-16",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 697,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2545,
+      "rawTokens": 697,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2545
+      },
+      "relativeError": 2.6513629842180775,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-16",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 697,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2545,
+      "rawTokens": 2545,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2545
+      },
+      "relativeError": 2.6513629842180775,
+      "rawRelativeError": 2.6513629842180775
+    },
+    {
+      "id": "chinese-17",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 987,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2684,
+      "rawTokens": 987,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2684
+      },
+      "relativeError": 1.7193515704154,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-17",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 987,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2684,
+      "rawTokens": 2684,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2684
+      },
+      "relativeError": 1.7193515704154,
+      "rawRelativeError": 1.7193515704154
+    },
+    {
+      "id": "chinese-18",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 775,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2823,
+      "rawTokens": 775,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2823
+      },
+      "relativeError": 2.6425806451612903,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-18",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 775,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2823,
+      "rawTokens": 2823,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2823
+      },
+      "relativeError": 2.6425806451612903,
+      "rawRelativeError": 2.6425806451612903
+    },
+    {
+      "id": "chinese-19",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 1093,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2962,
+      "rawTokens": 1093,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2962
+      },
+      "relativeError": 1.7099725526075022,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "chinese-19",
+      "category": "chinese",
+      "groundTruth": {
+        "tokens": 1093,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2962,
+      "rawTokens": 2962,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2962
+      },
+      "relativeError": 1.7099725526075022,
+      "rawRelativeError": 1.7099725526075022
+    },
+    {
+      "id": "sql-00",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 85,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 367,
+      "rawTokens": 85,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 367
+      },
+      "relativeError": 3.3176470588235296,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-00",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 85,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 367,
+      "rawTokens": 367,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 367
+      },
+      "relativeError": 3.3176470588235296,
+      "rawRelativeError": 3.3176470588235296
+    },
+    {
+      "id": "sql-01",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 133,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 552,
+      "rawTokens": 133,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 552
+      },
+      "relativeError": 3.1503759398496243,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-01",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 133,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 552,
+      "rawTokens": 552,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 552
+      },
+      "relativeError": 3.1503759398496243,
+      "rawRelativeError": 3.1503759398496243
+    },
+    {
+      "id": "sql-02",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 187,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 737,
+      "rawTokens": 187,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 737
+      },
+      "relativeError": 2.9411764705882355,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-02",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 187,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 737,
+      "rawTokens": 737,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 737
+      },
+      "relativeError": 2.9411764705882355,
+      "rawRelativeError": 2.9411764705882355
+    },
+    {
+      "id": "sql-03",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 233,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 922,
+      "rawTokens": 233,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 922
+      },
+      "relativeError": 2.9570815450643777,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-03",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 233,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 922,
+      "rawTokens": 922,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 922
+      },
+      "relativeError": 2.9570815450643777,
+      "rawRelativeError": 2.9570815450643777
+    },
+    {
+      "id": "sql-04",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 289,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1107,
+      "rawTokens": 289,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1107
+      },
+      "relativeError": 2.830449826989619,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-04",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 289,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1107,
+      "rawTokens": 1107,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1107
+      },
+      "relativeError": 2.830449826989619,
+      "rawRelativeError": 2.830449826989619
+    },
+    {
+      "id": "sql-05",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 333,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1292,
+      "rawTokens": 333,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1292
+      },
+      "relativeError": 2.87987987987988,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-05",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 333,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1292,
+      "rawTokens": 1292,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1292
+      },
+      "relativeError": 2.87987987987988,
+      "rawRelativeError": 2.87987987987988
+    },
+    {
+      "id": "sql-06",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 391,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1477,
+      "rawTokens": 391,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1477
+      },
+      "relativeError": 2.7774936061381075,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-06",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 391,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1477,
+      "rawTokens": 1477,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1477
+      },
+      "relativeError": 2.7774936061381075,
+      "rawRelativeError": 2.7774936061381075
+    },
+    {
+      "id": "sql-07",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 433,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1662,
+      "rawTokens": 433,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1662
+      },
+      "relativeError": 2.838337182448037,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-07",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 433,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1662,
+      "rawTokens": 1662,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1662
+      },
+      "relativeError": 2.838337182448037,
+      "rawRelativeError": 2.838337182448037
+    },
+    {
+      "id": "sql-08",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 493,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1847,
+      "rawTokens": 493,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1847
+      },
+      "relativeError": 2.746450304259635,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-08",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 493,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1847,
+      "rawTokens": 1847,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1847
+      },
+      "relativeError": 2.746450304259635,
+      "rawRelativeError": 2.746450304259635
+    },
+    {
+      "id": "sql-09",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 533,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2032,
+      "rawTokens": 533,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2032
+      },
+      "relativeError": 2.8123827392120075,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-09",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 533,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2032,
+      "rawTokens": 2032,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2032
+      },
+      "relativeError": 2.8123827392120075,
+      "rawRelativeError": 2.8123827392120075
+    },
+    {
+      "id": "sql-10",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 595,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2228,
+      "rawTokens": 595,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2228
+      },
+      "relativeError": 2.7445378151260504,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-10",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 595,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2228,
+      "rawTokens": 2228,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2228
+      },
+      "relativeError": 2.7445378151260504,
+      "rawRelativeError": 2.7445378151260504
+    },
+    {
+      "id": "sql-11",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 633,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2414,
+      "rawTokens": 633,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2414
+      },
+      "relativeError": 2.8135860979462874,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-11",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 633,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2414,
+      "rawTokens": 2414,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2414
+      },
+      "relativeError": 2.8135860979462874,
+      "rawRelativeError": 2.8135860979462874
+    },
+    {
+      "id": "sql-12",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 697,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2600,
+      "rawTokens": 697,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2600
+      },
+      "relativeError": 2.7302725968436157,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-12",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 697,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2600,
+      "rawTokens": 2600,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2600
+      },
+      "relativeError": 2.7302725968436157,
+      "rawRelativeError": 2.7302725968436157
+    },
+    {
+      "id": "sql-13",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 733,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2786,
+      "rawTokens": 733,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2786
+      },
+      "relativeError": 2.800818553888131,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-13",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 733,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2786,
+      "rawTokens": 2786,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2786
+      },
+      "relativeError": 2.800818553888131,
+      "rawRelativeError": 2.800818553888131
+    },
+    {
+      "id": "sql-14",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 799,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2972,
+      "rawTokens": 799,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2972
+      },
+      "relativeError": 2.7196495619524406,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-14",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 799,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2972,
+      "rawTokens": 2972,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2972
+      },
+      "relativeError": 2.7196495619524406,
+      "rawRelativeError": 2.7196495619524406
+    },
+    {
+      "id": "sql-15",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 833,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3158,
+      "rawTokens": 833,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 3158
+      },
+      "relativeError": 2.7911164465786316,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-15",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 833,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3158,
+      "rawTokens": 3158,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 3158
+      },
+      "relativeError": 2.7911164465786316,
+      "rawRelativeError": 2.7911164465786316
+    },
+    {
+      "id": "sql-16",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 901,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3344,
+      "rawTokens": 901,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 3344
+      },
+      "relativeError": 2.7114317425083243,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-16",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 901,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3344,
+      "rawTokens": 3344,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 3344
+      },
+      "relativeError": 2.7114317425083243,
+      "rawRelativeError": 2.7114317425083243
+    },
+    {
+      "id": "sql-17",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 933,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3530,
+      "rawTokens": 933,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 3530
+      },
+      "relativeError": 2.7834941050375135,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-17",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 933,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3530,
+      "rawTokens": 3530,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 3530
+      },
+      "relativeError": 2.7834941050375135,
+      "rawRelativeError": 2.7834941050375135
+    },
+    {
+      "id": "sql-18",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 1003,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3716,
+      "rawTokens": 1003,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 3716
+      },
+      "relativeError": 2.7048853439680958,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-18",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 1003,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3716,
+      "rawTokens": 3716,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 3716
+      },
+      "relativeError": 2.7048853439680958,
+      "rawRelativeError": 2.7048853439680958
+    },
+    {
+      "id": "sql-19",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 1033,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3902,
+      "rawTokens": 1033,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 3902
+      },
+      "relativeError": 2.777347531461762,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "sql-19",
+      "category": "sql",
+      "groundTruth": {
+        "tokens": 1033,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3902,
+      "rawTokens": 3902,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 3902
+      },
+      "relativeError": 2.777347531461762,
+      "rawRelativeError": 2.777347531461762
+    },
+    {
+      "id": "json-00",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 71,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 318,
+      "rawTokens": 71,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 318
+      },
+      "relativeError": 3.4788732394366195,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-00",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 71,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 318,
+      "rawTokens": 318,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 318
+      },
+      "relativeError": 3.4788732394366195,
+      "rawRelativeError": 3.4788732394366195
+    },
+    {
+      "id": "json-01",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 92,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 395,
+      "rawTokens": 92,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 395
+      },
+      "relativeError": 3.2934782608695654,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-01",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 92,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 395,
+      "rawTokens": 395,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 395
+      },
+      "relativeError": 3.2934782608695654,
+      "rawRelativeError": 3.2934782608695654
+    },
+    {
+      "id": "json-02",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 113,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 471,
+      "rawTokens": 113,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 471
+      },
+      "relativeError": 3.168141592920354,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-02",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 113,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 471,
+      "rawTokens": 471,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 471
+      },
+      "relativeError": 3.168141592920354,
+      "rawRelativeError": 3.168141592920354
+    },
+    {
+      "id": "json-03",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 134,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 548,
+      "rawTokens": 134,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 548
+      },
+      "relativeError": 3.08955223880597,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-03",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 134,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 548,
+      "rawTokens": 548,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 548
+      },
+      "relativeError": 3.08955223880597,
+      "rawRelativeError": 3.08955223880597
+    },
+    {
+      "id": "json-04",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 155,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 624,
+      "rawTokens": 155,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 624
+      },
+      "relativeError": 3.0258064516129033,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-04",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 155,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 624,
+      "rawTokens": 624,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 624
+      },
+      "relativeError": 3.0258064516129033,
+      "rawRelativeError": 3.0258064516129033
+    },
+    {
+      "id": "json-05",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 176,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 701,
+      "rawTokens": 176,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 701
+      },
+      "relativeError": 2.9829545454545454,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-05",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 176,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 701,
+      "rawTokens": 701,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 701
+      },
+      "relativeError": 2.9829545454545454,
+      "rawRelativeError": 2.9829545454545454
+    },
+    {
+      "id": "json-06",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 197,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 777,
+      "rawTokens": 197,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 777
+      },
+      "relativeError": 2.9441624365482233,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-06",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 197,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 777,
+      "rawTokens": 777,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 777
+      },
+      "relativeError": 2.9441624365482233,
+      "rawRelativeError": 2.9441624365482233
+    },
+    {
+      "id": "json-07",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 218,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 854,
+      "rawTokens": 218,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 854
+      },
+      "relativeError": 2.9174311926605503,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-07",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 218,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 854,
+      "rawTokens": 854,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 854
+      },
+      "relativeError": 2.9174311926605503,
+      "rawRelativeError": 2.9174311926605503
+    },
+    {
+      "id": "json-08",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 239,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 930,
+      "rawTokens": 239,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 930
+      },
+      "relativeError": 2.8912133891213387,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-08",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 239,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 930,
+      "rawTokens": 930,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 930
+      },
+      "relativeError": 2.8912133891213387,
+      "rawRelativeError": 2.8912133891213387
+    },
+    {
+      "id": "json-09",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 260,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1007,
+      "rawTokens": 260,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1007
+      },
+      "relativeError": 2.873076923076923,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-09",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 260,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1007,
+      "rawTokens": 1007,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1007
+      },
+      "relativeError": 2.873076923076923,
+      "rawRelativeError": 2.873076923076923
+    },
+    {
+      "id": "json-10",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 281,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1085,
+      "rawTokens": 281,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1085
+      },
+      "relativeError": 2.8612099644128115,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-10",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 281,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1085,
+      "rawTokens": 1085,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1085
+      },
+      "relativeError": 2.8612099644128115,
+      "rawRelativeError": 2.8612099644128115
+    },
+    {
+      "id": "json-11",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 302,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1163,
+      "rawTokens": 302,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1163
+      },
+      "relativeError": 2.8509933774834435,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-11",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 302,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1163,
+      "rawTokens": 1163,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1163
+      },
+      "relativeError": 2.8509933774834435,
+      "rawRelativeError": 2.8509933774834435
+    },
+    {
+      "id": "json-12",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 323,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1240,
+      "rawTokens": 323,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1240
+      },
+      "relativeError": 2.8390092879256965,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-12",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 323,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1240,
+      "rawTokens": 1240,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1240
+      },
+      "relativeError": 2.8390092879256965,
+      "rawRelativeError": 2.8390092879256965
+    },
+    {
+      "id": "json-13",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 344,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1318,
+      "rawTokens": 344,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1318
+      },
+      "relativeError": 2.8313953488372094,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-13",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 344,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1318,
+      "rawTokens": 1318,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1318
+      },
+      "relativeError": 2.8313953488372094,
+      "rawRelativeError": 2.8313953488372094
+    },
+    {
+      "id": "json-14",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 365,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1395,
+      "rawTokens": 365,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1395
+      },
+      "relativeError": 2.8219178082191783,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-14",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 365,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1395,
+      "rawTokens": 1395,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1395
+      },
+      "relativeError": 2.8219178082191783,
+      "rawRelativeError": 2.8219178082191783
+    },
+    {
+      "id": "json-15",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 386,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1473,
+      "rawTokens": 386,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1473
+      },
+      "relativeError": 2.816062176165803,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-15",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 386,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1473,
+      "rawTokens": 1473,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1473
+      },
+      "relativeError": 2.816062176165803,
+      "rawRelativeError": 2.816062176165803
+    },
+    {
+      "id": "json-16",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 407,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1550,
+      "rawTokens": 407,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1550
+      },
+      "relativeError": 2.808353808353808,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-16",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 407,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1550,
+      "rawTokens": 1550,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1550
+      },
+      "relativeError": 2.808353808353808,
+      "rawRelativeError": 2.808353808353808
+    },
+    {
+      "id": "json-17",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 428,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1628,
+      "rawTokens": 428,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1628
+      },
+      "relativeError": 2.803738317757009,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-17",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 428,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1628,
+      "rawTokens": 1628,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1628
+      },
+      "relativeError": 2.803738317757009,
+      "rawRelativeError": 2.803738317757009
+    },
+    {
+      "id": "json-18",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 449,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1705,
+      "rawTokens": 449,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1705
+      },
+      "relativeError": 2.797327394209354,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-18",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 449,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1705,
+      "rawTokens": 1705,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1705
+      },
+      "relativeError": 2.797327394209354,
+      "rawRelativeError": 2.797327394209354
+    },
+    {
+      "id": "json-19",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 470,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1783,
+      "rawTokens": 470,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1783
+      },
+      "relativeError": 2.793617021276596,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "json-19",
+      "category": "json",
+      "groundTruth": {
+        "tokens": 470,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1783,
+      "rawTokens": 1783,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1783
+      },
+      "relativeError": 2.793617021276596,
+      "rawRelativeError": 2.793617021276596
+    },
+    {
+      "id": "schemas-00",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 137,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 578,
+      "rawTokens": 137,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 578
+      },
+      "relativeError": 3.218978102189781,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-00",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 137,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 578,
+      "rawTokens": 578,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 578
+      },
+      "relativeError": 3.218978102189781,
+      "rawRelativeError": 3.218978102189781
+    },
+    {
+      "id": "schemas-01",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 195,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 762,
+      "rawTokens": 195,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 762
+      },
+      "relativeError": 2.9076923076923076,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-01",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 195,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 762,
+      "rawTokens": 762,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 762
+      },
+      "relativeError": 2.9076923076923076,
+      "rawRelativeError": 2.9076923076923076
+    },
+    {
+      "id": "schemas-02",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 245,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 945,
+      "rawTokens": 245,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 945
+      },
+      "relativeError": 2.857142857142857,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-02",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 245,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 945,
+      "rawTokens": 945,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 945
+      },
+      "relativeError": 2.857142857142857,
+      "rawRelativeError": 2.857142857142857
+    },
+    {
+      "id": "schemas-03",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 305,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1129,
+      "rawTokens": 305,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1129
+      },
+      "relativeError": 2.7016393442622952,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-03",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 305,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1129,
+      "rawTokens": 1129,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1129
+      },
+      "relativeError": 2.7016393442622952,
+      "rawRelativeError": 2.7016393442622952
+    },
+    {
+      "id": "schemas-04",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 353,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1312,
+      "rawTokens": 353,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1312
+      },
+      "relativeError": 2.71671388101983,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-04",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 353,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1312,
+      "rawTokens": 1312,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1312
+      },
+      "relativeError": 2.71671388101983,
+      "rawRelativeError": 2.71671388101983
+    },
+    {
+      "id": "schemas-05",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 415,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1496,
+      "rawTokens": 415,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1496
+      },
+      "relativeError": 2.6048192771084335,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-05",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 415,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1496,
+      "rawTokens": 1496,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1496
+      },
+      "relativeError": 2.6048192771084335,
+      "rawRelativeError": 2.6048192771084335
+    },
+    {
+      "id": "schemas-06",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 461,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1679,
+      "rawTokens": 461,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1679
+      },
+      "relativeError": 2.6420824295010847,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-06",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 461,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1679,
+      "rawTokens": 1679,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1679
+      },
+      "relativeError": 2.6420824295010847,
+      "rawRelativeError": 2.6420824295010847
+    },
+    {
+      "id": "schemas-07",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 525,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1863,
+      "rawTokens": 525,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 1863
+      },
+      "relativeError": 2.5485714285714285,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-07",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 525,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 1863,
+      "rawTokens": 1863,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 1863
+      },
+      "relativeError": 2.5485714285714285,
+      "rawRelativeError": 2.5485714285714285
+    },
+    {
+      "id": "schemas-08",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 569,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2046,
+      "rawTokens": 569,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2046
+      },
+      "relativeError": 2.5957820738137083,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-08",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 569,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2046,
+      "rawTokens": 2046,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2046
+      },
+      "relativeError": 2.5957820738137083,
+      "rawRelativeError": 2.5957820738137083
+    },
+    {
+      "id": "schemas-09",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 635,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2230,
+      "rawTokens": 635,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2230
+      },
+      "relativeError": 2.5118110236220472,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-09",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 635,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2230,
+      "rawTokens": 2230,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2230
+      },
+      "relativeError": 2.5118110236220472,
+      "rawRelativeError": 2.5118110236220472
+    },
+    {
+      "id": "schemas-10",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 677,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2417,
+      "rawTokens": 677,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2417
+      },
+      "relativeError": 2.570162481536189,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-10",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 677,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2417,
+      "rawTokens": 2417,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2417
+      },
+      "relativeError": 2.570162481536189,
+      "rawRelativeError": 2.570162481536189
+    },
+    {
+      "id": "schemas-11",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 745,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2604,
+      "rawTokens": 745,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2604
+      },
+      "relativeError": 2.495302013422819,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-11",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 745,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2604,
+      "rawTokens": 2604,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2604
+      },
+      "relativeError": 2.495302013422819,
+      "rawRelativeError": 2.495302013422819
+    },
+    {
+      "id": "schemas-12",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 785,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2790,
+      "rawTokens": 785,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2790
+      },
+      "relativeError": 2.554140127388535,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-12",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 785,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2790,
+      "rawTokens": 2790,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2790
+      },
+      "relativeError": 2.554140127388535,
+      "rawRelativeError": 2.554140127388535
+    },
+    {
+      "id": "schemas-13",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 855,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2977,
+      "rawTokens": 855,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 2977
+      },
+      "relativeError": 2.48187134502924,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-13",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 855,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 2977,
+      "rawTokens": 2977,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 2977
+      },
+      "relativeError": 2.48187134502924,
+      "rawRelativeError": 2.48187134502924
+    },
+    {
+      "id": "schemas-14",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 893,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3163,
+      "rawTokens": 893,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 3163
+      },
+      "relativeError": 2.541993281075028,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-14",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 893,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3163,
+      "rawTokens": 3163,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 3163
+      },
+      "relativeError": 2.541993281075028,
+      "rawRelativeError": 2.541993281075028
+    },
+    {
+      "id": "schemas-15",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 965,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3350,
+      "rawTokens": 965,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 3350
+      },
+      "relativeError": 2.471502590673575,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-15",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 965,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3350,
+      "rawTokens": 3350,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 3350
+      },
+      "relativeError": 2.471502590673575,
+      "rawRelativeError": 2.471502590673575
+    },
+    {
+      "id": "schemas-16",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 1001,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3536,
+      "rawTokens": 1001,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 3536
+      },
+      "relativeError": 2.5324675324675323,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-16",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 1001,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3536,
+      "rawTokens": 3536,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 3536
+      },
+      "relativeError": 2.5324675324675323,
+      "rawRelativeError": 2.5324675324675323
+    },
+    {
+      "id": "schemas-17",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 1075,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3723,
+      "rawTokens": 1075,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 3723
+      },
+      "relativeError": 2.4632558139534884,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-17",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 1075,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3723,
+      "rawTokens": 3723,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 3723
+      },
+      "relativeError": 2.4632558139534884,
+      "rawRelativeError": 2.4632558139534884
+    },
+    {
+      "id": "schemas-18",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 1109,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3909,
+      "rawTokens": 1109,
+      "method": "family-tokenizer",
+      "model": "gpt-4o",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;o200k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 3909
+      },
+      "relativeError": 2.5247971145175834,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-18",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 1109,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "o200k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 3909,
+      "rawTokens": 3909,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 3909
+      },
+      "relativeError": 2.5247971145175834,
+      "rawRelativeError": 2.5247971145175834
+    },
+    {
+      "id": "schemas-19",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 1185,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 4096,
+      "rawTokens": 1185,
+      "method": "family-tokenizer",
+      "model": "gpt-4",
+      "version": "js-tiktoken/1.0.21;serialized-payload/v1;cl100k_base",
+      "margin": {
+        "ratio": 0.15,
+        "fixedTokens": 128,
+        "floorTokens": 4096
+      },
+      "relativeError": 2.4565400843881857,
+      "rawRelativeError": 0
+    },
+    {
+      "id": "schemas-19",
+      "category": "schemas",
+      "groundTruth": {
+        "tokens": 1185,
+        "source": "python-tiktoken/0.12.0",
+        "encoding": "cl100k_base",
+        "scope": "serialized-payload-only;not-provider-chat-usage"
+      },
+      "tokens": 4096,
+      "rawTokens": 4096,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4096
+      },
+      "relativeError": 2.4565400843881857,
+      "rawRelativeError": 2.4565400843881857
+    },
+    {
+      "id": "unknown-00",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 240,
+      "rawTokens": 240,
+      "method": "conservative-heuristic",
+      "model": "custom-model-0",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 240
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-01",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 240,
+      "rawTokens": 240,
+      "method": "conservative-heuristic",
+      "model": "custom-model-1",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 240
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-02",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 240,
+      "rawTokens": 240,
+      "method": "conservative-heuristic",
+      "model": "custom-model-2",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 240
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-03",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 240,
+      "rawTokens": 240,
+      "method": "conservative-heuristic",
+      "model": "custom-model-3",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 240
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-04",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 240,
+      "rawTokens": 240,
+      "method": "conservative-heuristic",
+      "model": "custom-model-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 240
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-05",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 240,
+      "rawTokens": 240,
+      "method": "conservative-heuristic",
+      "model": "custom-model-5",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 240
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-06",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 240,
+      "rawTokens": 240,
+      "method": "conservative-heuristic",
+      "model": "custom-model-6",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 240
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-07",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 240,
+      "rawTokens": 240,
+      "method": "conservative-heuristic",
+      "model": "custom-model-7",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 240
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-08",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 240,
+      "rawTokens": 240,
+      "method": "conservative-heuristic",
+      "model": "custom-model-8",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 240
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-09",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 240,
+      "rawTokens": 240,
+      "method": "conservative-heuristic",
+      "model": "custom-model-9",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 240
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-10",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 241,
+      "rawTokens": 241,
+      "method": "conservative-heuristic",
+      "model": "custom-model-10",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 241
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-11",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 241,
+      "rawTokens": 241,
+      "method": "conservative-heuristic",
+      "model": "custom-model-11",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 241
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-12",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 241,
+      "rawTokens": 241,
+      "method": "conservative-heuristic",
+      "model": "custom-model-12",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 241
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-13",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 241,
+      "rawTokens": 241,
+      "method": "conservative-heuristic",
+      "model": "custom-model-13",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 241
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-14",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 241,
+      "rawTokens": 241,
+      "method": "conservative-heuristic",
+      "model": "custom-model-14",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 241
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-15",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 241,
+      "rawTokens": 241,
+      "method": "conservative-heuristic",
+      "model": "custom-model-15",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 241
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-16",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 241,
+      "rawTokens": 241,
+      "method": "conservative-heuristic",
+      "model": "custom-model-16",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 241
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-17",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 241,
+      "rawTokens": 241,
+      "method": "conservative-heuristic",
+      "model": "custom-model-17",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 241
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-18",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 241,
+      "rawTokens": 241,
+      "method": "conservative-heuristic",
+      "model": "custom-model-18",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 241
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "unknown-19",
+      "category": "unknown",
+      "groundTruth": null,
+      "tokens": 241,
+      "rawTokens": 241,
+      "method": "conservative-heuristic",
+      "model": "custom-model-19",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 241
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-00",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4437,
+      "rawTokens": 4437,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4437
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-01",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4437,
+      "rawTokens": 4437,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4437
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-02",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4437,
+      "rawTokens": 4437,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4437
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-03",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4437,
+      "rawTokens": 4437,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4437
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-04",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4437,
+      "rawTokens": 4437,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4437
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-05",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4437,
+      "rawTokens": 4437,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4437
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-06",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4437,
+      "rawTokens": 4437,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4437
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-07",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4437,
+      "rawTokens": 4437,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4437
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-08",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4437,
+      "rawTokens": 4437,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4437
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-09",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4437,
+      "rawTokens": 4437,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4437
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-10",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4439,
+      "rawTokens": 4439,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4439
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-11",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4439,
+      "rawTokens": 4439,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4439
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-12",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4439,
+      "rawTokens": 4439,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4439
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-13",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4439,
+      "rawTokens": 4439,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4439
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-14",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4439,
+      "rawTokens": 4439,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4439
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-15",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4439,
+      "rawTokens": 4439,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4439
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-16",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4439,
+      "rawTokens": 4439,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4439
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-17",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4439,
+      "rawTokens": 4439,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4439
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-18",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4439,
+      "rawTokens": 4439,
+      "method": "conservative-heuristic",
+      "model": "gpt-4o",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4439
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    },
+    {
+      "id": "image-19",
+      "category": "image",
+      "groundTruth": null,
+      "tokens": 4439,
+      "rawTokens": 4439,
+      "method": "conservative-heuristic",
+      "model": "gpt-4",
+      "version": "utf8-upper-bound/v1",
+      "margin": {
+        "ratio": 0,
+        "fixedTokens": 0,
+        "floorTokens": 4439
+      },
+      "relativeError": null,
+      "rawRelativeError": null
+    }
+  ]
+}

@@ -78,7 +78,9 @@ export class TurnLoop {
     let checkpoint = spec.resumeCheckpoint ?? {};
     const saveCheckpoint = spec.checkpointCallback;
     spec = { ...spec, checkpointCallback: async payload => {
-      const next: Record<string, unknown> = { ...checkpoint, context_state_v1: compact.snapshot(), ...payload, runtime_state_v1: recovery.snapshot(), continuation_content: continuation.content };
+      const next: Record<string, unknown> = { ...checkpoint, context_state_v1: compact.snapshot(), ...payload,
+        ...(manager?.lastEstimate ? { context_estimate_v1: structuredClone(manager.lastEstimate), context_config_v1: { ...manager.contextConfig } } : {}),
+        runtime_state_v1: recovery.snapshot(), continuation_content: continuation.content };
       if ('assistantMessage' in payload) { delete next.assistant_message; next.messages_restored = false; }
       if ('completedToolResults' in payload) delete next.completed_tool_results;
       if ('pendingToolCalls' in payload) delete next.pending_tool_calls;
@@ -186,7 +188,7 @@ export class TurnLoop {
       };
       currentContext = context;
       reminder = undefined;
-      const reservation = (spec.contextWindowTokens ?? 200_000) + (spec.maxTokens ?? 4096);
+      const reservation = manager.requestReservation();
       try { assertRequestBudget(spec, recovery.state, reservation); } catch (error) { stopForBudget(error); break; }
       boundary.begin(context);
       if (spec.budgetLimits) recovery.state.noProgressSteps = (recovery.state.noProgressSteps ?? 0) + 1;

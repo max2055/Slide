@@ -13,6 +13,7 @@
   },
   "files": ["src/"],
   "dependencies": {
+    "js-tiktoken": "1.0.21",
     "openai": "^4.28.0"
   },
   "devDependencies": {

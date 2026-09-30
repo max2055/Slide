@@ -75,7 +75,7 @@ it('new user suffix arriving during save survives the committed projection', asy
 it('unknown summary usage stays reserved and summary cancellation is billed', async () => {
   const f = fixture(); f.provider.chatStream = async () => ({ ...reply(), usage: {} });
   await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {});
-  expect(f.recovery.snapshot()).toMatchObject({ unknownRequests: 1, reservedTokens: 15500 });
+  expect(f.recovery.snapshot()).toMatchObject({ unknownRequests: 1, reservedTokens: 15000 });
 });
 it('run performs one proactive summary and keeps summary accounting alongside normal model usage', async () => {
   const f = fixture({ contextPolicy: { watermark: 0.6 } });

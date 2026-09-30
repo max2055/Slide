@@ -70,8 +70,9 @@ export interface ToolCallRequest {
 }
 
 export interface LLMProvider {
-  /** Optional exact provider-aware count including schemas and images. */
-  countPromptTokens?(messages: Message[], tools: ToolSchema[]): number;
+  /** Legacy numbers are exact default-model counts; estimates must carry provenance. */
+  countPromptTokens?(messages: Message[], tools: ToolSchema[], model?: string): number | import('./token-estimation.js').PromptTokenEstimate | undefined;
+  getModelCapabilities?(model?: string): import('./model-context.js').ModelCapabilities | undefined;
   /** Default model name. */
   getDefaultModel(): string;
 

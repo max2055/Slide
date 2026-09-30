@@ -16,6 +16,8 @@ function provider(outputs: string[]) {
   const callbacks: StreamCallbacks[] = [];
   const value: LLMProvider = {
     getDefaultModel: () => 'fixture',
+    getModelCapabilities: model => ({ model: model ?? 'fixture', contextWindowTokens: 200_000, preferredOutputTokens: 4096,
+      source: 'configuration', version: 'test-fixture/v1' }),
     chat: async () => { throw new Error('unexpected non-streaming request'); },
     chatStream: async (messages, _tools, stream): Promise<LLMResponse> => {
       contexts.push(structuredClone(messages)); callbacks.push(stream);
@@ -184,7 +186,10 @@ it('failed local finalization retains only the durable checkpoint and never rest
 it('accepted continuation stays anchored while final candidate reasoning is cancelled', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'continuation-anchor-')); directories.push(directory);
   const sessions = new SessionManager(directory); const controller = new AbortController(); let requests = 0;
-  const provider: LLMProvider = { getDefaultModel: () => 'fixture', chat: async () => { throw new Error('unused'); }, chatStream: async (_m, _t, c) => {
+  const provider: LLMProvider = { getDefaultModel: () => 'fixture',
+    getModelCapabilities: model => ({ model: model ?? 'fixture', contextWindowTokens: 200_000, preferredOutputTokens: 4096,
+      source: 'configuration', version: 'test-fixture/v1' }),
+    chat: async () => { throw new Error('unused'); }, chatStream: async (_m, _t, c) => {
     const first = ++requests === 1; const text = first ? 'durable prefix' : 'discarded suffix';
     await c.onThinkingDelta?.(first ? 'durable reasoning' : 'discarded reasoning'); await c.onContentDelta(text);
     return { content: text, finishReason: first ? 'length' : 'stop', toolCalls: [], usage: {}, hasToolCalls: false, shouldExecuteTools: false };

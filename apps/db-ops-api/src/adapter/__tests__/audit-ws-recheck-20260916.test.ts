@@ -30,6 +30,8 @@ it.each(['legacy', 'durable'])('%s assistant persistence failure never announces
   const answer = { content: 'visible answer', finishReason: 'stop', toolCalls: [], usage: {}, shouldExecuteTools: false, hasToolCalls: false };
   const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: {
     getDefaultModel: () => 'probe', chat: async () => answer,
+    getModelCapabilities: model => ({ model: model ?? 'probe', contextWindowTokens: 200_000, preferredOutputTokens: 4096,
+      source: 'configuration', version: 'test-fixture/v1' }),
     chatStream: async (_m: any, _t: any, callbacks: any) => { await callbacks.onContentDelta('visible answer'); return answer; },
   } as any, actorContextService: { authenticateAccessToken: async () => actor, revalidateActor: async () => actor } });
   let ws: WebSocket | undefined;

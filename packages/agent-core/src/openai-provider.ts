@@ -6,6 +6,8 @@
  */
 
 import OpenAI from "openai";
+import { FamilyTokenCounter } from './token-estimation.js';
+import { isNativeOpenAIEndpoint, openAIModelCapabilities, type ModelCapabilities } from './model-context.js';
 import type {
   LLMProvider,
   Message,
@@ -75,11 +77,15 @@ function normalizeError(error: unknown): NormalizedProviderError {
 export class OpenAIProvider implements LLMProvider {
   private client: OpenAI;
   private model: string;
+  private readonly tokenCounter = new FamilyTokenCounter();
+  private readonly nativeOpenAI: boolean;
+  private readonly capabilities?: ModelCapabilities;
 
   constructor(opts: {
     apiKey: string;
     baseURL?: string;
     model?: string;
+    capabilities?: ModelCapabilities;
   }) {
     this.client = new OpenAI({
       maxRetries: 0, // Runtime owns the shared attempt/recovery budget.
@@ -87,7 +93,18 @@ export class OpenAIProvider implements LLMProvider {
       baseURL: opts.baseURL || undefined,
     });
     this.model = opts.model || "gpt-4.1";
+    this.nativeOpenAI = isNativeOpenAIEndpoint(this.client.baseURL);
+    this.capabilities = opts.capabilities ? { ...opts.capabilities } : undefined;
   }
+
+  getModelCapabilities(model = this.model): ModelCapabilities | undefined {
+    if (this.capabilities?.model === model) return { ...this.capabilities };
+    return this.nativeOpenAI ? openAIModelCapabilities(model) : undefined;
+  }
+  countPromptTokens(messages: Message[], tools: ToolSchema[], model = this.model) {
+    return this.nativeOpenAI ? this.tokenCounter.count(messages, tools, model) : undefined;
+  }
+  invalidateTokenCache(): void { this.tokenCounter.invalidate(); }
 
   getDefaultModel(): string {
     return this.model;

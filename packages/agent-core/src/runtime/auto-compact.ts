@@ -80,7 +80,7 @@ export async function autoCompact(
   const summaryManager = new ContextManager(summarySpec, provider);
   summaryManager.assertFits(messages);
   if (recovery.state.counts.context >= recovery.limits.context) throw new RuntimeError('RECOVERY_LIMIT', 'Compaction failure budget exhausted');
-  const reservation = (spec.contextWindowTokens ?? 200_000) + maxTokens;
+  const reservation = summaryManager.requestReservation();
   assertRequestBudget(spec, recovery.state, reservation);
   tracker.begin();
   try {

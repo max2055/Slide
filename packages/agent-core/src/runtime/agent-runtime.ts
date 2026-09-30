@@ -2,6 +2,7 @@ import type { AgentRunResult, AgentRunSpec, LLMProvider } from '../types.js';
 import { RuntimeError, validateRecoverySnapshot } from './recovery-policy.js';
 import { TurnLoop } from './turn-loop.js';
 import type { ToolExecutor } from './tool-executor.js';
+import { resolveContextConfig } from '../model-context.js';
 
 export class AgentRuntime {
   constructor(
@@ -10,8 +11,12 @@ export class AgentRuntime {
   ) {}
 
   async run(spec: AgentRunSpec): Promise<AgentRunResult> {
+    try {
+      const context = resolveContextConfig(spec, this.getProvider());
+      spec = { ...spec, maxTokens: context.maxTokens };
+    } catch { throw new RuntimeError('INVALID_POLICY', 'Invalid model context configuration'); }
     if (spec.budgetLimits) {
-      for (const value of [spec.maxIterations, spec.contextWindowTokens ?? 200_000, spec.maxTokens ?? 4096, spec.budgetLimits.maxToolCalls, spec.budgetLimits.maxProviderAttempts, spec.budgetLimits.maxTotalTokens, spec.budgetLimits.maxNoProgressSteps]) {
+      for (const value of [spec.maxIterations, spec.maxTokens!, spec.budgetLimits.maxToolCalls, spec.budgetLimits.maxProviderAttempts, spec.budgetLimits.maxTotalTokens, spec.budgetLimits.maxNoProgressSteps]) {
         if (!Number.isSafeInteger(value) || value < 1) throw new RuntimeError('INVALID_POLICY', 'Runtime budgets must be finite positive integers');
       }
     }

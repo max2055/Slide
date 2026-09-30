@@ -10,6 +10,7 @@ function spec(extra: Partial<AgentRunSpec> = {}): AgentRunSpec {
   const tools = new ToolRegistry();
   tools.register({ name: 'read', description: 'read', parameters: { type: 'object', properties: {} }, readOnly: true, concurrencySafe: true, exclusive: false, execute: async args => args.n });
   return { initialMessages: [{ role: 'user', content: 'Inspect resources.' }], tools, model: 'test', maxIterations: 200, maxToolResultChars: 1000, hook: new NoopHook(),
+    contextWindowTokens: 200_000, maxTokens: 4096,
     budgetLimits: { maxToolCalls: 500, maxProviderAttempts: 600, maxTotalTokens: 1_000_000, maxNoProgressSteps: 12 }, ...extra };
 }
 function provider(chat: LLMProvider['chat']): LLMProvider { return { getDefaultModel: () => 'test', chat, chatStream: (m, t, _c, o) => chat(m, t, o) }; }
@@ -53,14 +54,14 @@ it('does not execute any part of a batch exceeding tool allowance', async () => 
 it('preserves unknown reservations across restart and fails closed before dispatch', async () => {
   const chat = vi.fn(async () => ({ ...call(), usage: {} }));
   const first = await new AgentRunner(provider(chat)).run(spec({ maxIterations: 2 }));
-  expect(first.runtimeState).toMatchObject({ reservedTokens: 408192, unknownRequests: 2 });
+  expect(first.runtimeState).toMatchObject({ reservedTokens: 400000, unknownRequests: 2 });
   const config = spec({ resumeCheckpoint: { runtime_state_v1: first.runtimeState } }); config.budgetLimits!.maxTotalTokens = 500_000;
   const second = await new AgentRunner(provider(chat)).run(config);
   expect(second.resolution?.reasonCode).toBe('TOKEN_BUDGET'); expect(chat).toHaveBeenCalledTimes(2);
 });
 it('counts cached tokens as input subset and allows exactly covered reservations', async () => {
-  const config = spec(); config.budgetLimits!.maxTotalTokens = 204096;
-  const result = await new AgentRunner(provider(async () => ({ ...ok, usage: { prompt_tokens: 204000, completion_tokens: 96, cached_tokens: 204000 } }))).run(config);
+  const config = spec(); config.budgetLimits!.maxTotalTokens = 200000;
+  const result = await new AgentRunner(provider(async () => ({ ...ok, usage: { prompt_tokens: 199904, completion_tokens: 96, cached_tokens: 199904 } }))).run(config);
   expect(result.stopReason).toBe('completed');
 });
 it('checks real usage before accepting a final result', async () => {

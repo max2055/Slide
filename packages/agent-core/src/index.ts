@@ -41,6 +41,10 @@
 export { ToolRegistry } from "./tool-registry.js";
 export { AgentRunner, NoopHook } from "./runner.js";
 export { AgentRuntime } from './runtime/agent-runtime.js';
+export { conservativePromptEstimate, conservativeTextTokens, estimateWithProvider, FamilyTokenCounter, tokenPayload } from './token-estimation.js';
+export type { PromptTokenEstimate, TokenMethod } from './token-estimation.js';
+export { resolveContextConfig, UNKNOWN_CONTEXT_WINDOW, openAIModelCapabilities, isNativeOpenAIEndpoint } from './model-context.js';
+export type { ModelCapabilities } from './model-context.js';
 export { StreamingCoordinator } from './runtime/streaming-coordinator.js';
 export type { StreamingLimits, StreamingMetrics } from './runtime/streaming-coordinator.js';
 export { createTurnState, transition, snapshotTurnState, restoreTurnState } from './runtime/turn-state.js';

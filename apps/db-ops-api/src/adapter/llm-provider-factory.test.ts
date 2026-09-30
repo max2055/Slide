@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createConfiguredAgentProvider } from './llm-provider-factory.js';
+import { createConfiguredAgentProvider, configuredModelCapabilities } from './llm-provider-factory.js';
+import { resolveContextConfig } from '@slide/agent-core';
 import { createServiceProviderClient } from '../llm/provider-connection.js';
 import { llmService } from '../llm-service.js';
 import { dbConnection } from '../db-connection.js';
@@ -8,6 +9,19 @@ import { llmDatabaseService } from '../llm-database-service.js';
 const config = { name: 'proxy', enabled: true, is_default: true, supports_function_call: true, deployment_type: 'api', api_format: 'anthropic-messages', default_model: 'test-model', api_base_url: 'https://proxy.invalid' } as any;
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 describe('configured provider consistency', () => {
+  it('passes selected scene model limits and capability configuration through without assuming a 200k window', async () => {
+    const selected = { ...config, context_window: 32768, max_tokens: 2048, supports_vision: false };
+    const agent = await createConfiguredAgentProvider({ getSceneBindings: async () => [], getAllProviders: async () => [selected], getProviderApiKey: async () => 'fixture' });
+    expect(agent.getModelCapabilities?.()).toMatchObject({ model: 'test-model', contextWindowTokens: 32768,
+      preferredOutputTokens: 2048, supportsTools: true, supportsVision: false, source: 'configuration' });
+    expect(resolveContextConfig({ model: agent.getDefaultModel() }, agent)).toMatchObject({ contextWindowTokens: 32768, maxTokens: 2048 });
+  });
+  it('a model catalog tightens larger stored windows and never replaces a smaller explicit configuration', () => {
+    expect(configuredModelCapabilities({ ...config, context_window: 200000 }, 'gpt-4o').contextWindowTokens).toBe(128000);
+    expect(configuredModelCapabilities({ ...config, context_window: 8192 }, 'gpt-4o').contextWindowTokens).toBe(8192);
+    expect(configuredModelCapabilities(config, 'unknown')).toMatchObject({ contextWindowTokens: 8192, source: 'conservative-fallback' });
+    expect(() => configuredModelCapabilities({ ...config, context_window: -1 }, 'unknown')).toThrow('INVALID_MODEL_CONTEXT');
+  });
   it('uses the same explicit Anthropic endpoint/key/model without mutating the environment', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'old-key'); vi.stubEnv('ANTHROPIC_MODEL', 'old-model');
     const agent = await createConfiguredAgentProvider({ getSceneBindings: async () => [], getAllProviders: async () => [config], getProviderApiKey: async () => 'configured-key' });

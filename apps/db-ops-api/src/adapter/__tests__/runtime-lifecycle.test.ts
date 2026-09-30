@@ -26,7 +26,9 @@ async function adapter(provider: LLMProvider, tools = new ToolRegistry()) {
   vi.spyOn(canonicalStore, 'getPage').mockResolvedValue({ messages: [], nextBefore: null });
   vi.spyOn(canonicalStore, 'appendToolFacts').mockImplementation(async (_actor, _session, _user, _facts, _iteration, cp) => { if (cp) checkpoint = cp; });
   vi.spyOn(canonicalStore, 'saveCheckpoint').mockImplementation(async (_actor, _session, cp) => { checkpoint = cp; });
-  return new DirectAdapter({ llmProvider: provider, sessionManager: sessions, tools, toolsForActor: () => tools });
+  return new DirectAdapter({ llmProvider: { ...provider, getModelCapabilities: model => ({
+    model: model ?? provider.getDefaultModel(), contextWindowTokens: 200_000, preferredOutputTokens: 4096,
+    source: 'configuration', version: 'test-fixture/v1' }) }, sessionManager: sessions, tools, toolsForActor: () => tools });
 }
 it('actual chat entry passes 120s with LONG_CHAT and still emits one terminal', async () => {
   vi.stubEnv('AGENT_RUNTIME_LONG_CHAT', 'true'); vi.useFakeTimers();

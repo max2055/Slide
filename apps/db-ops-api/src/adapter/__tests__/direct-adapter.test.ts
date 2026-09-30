@@ -44,6 +44,10 @@ afterEach(() => vi.restoreAllMocks());
 // ── Mock LLMProvider — returns hardcoded responses ──
 
 class MockLLMProvider implements LLMProvider {
+  getModelCapabilities(model = this.getDefaultModel()) {
+    return { model, contextWindowTokens: 200_000, preferredOutputTokens: 4096,
+      source: 'configuration' as const, version: 'test-fixture/v1' };
+  }
   getDefaultModel(): string {
     return 'mock-model';
   }
