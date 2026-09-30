@@ -89,6 +89,9 @@ try {
     const replay = await socketExchange({ type: 'chat.send', sessionKey: started.sessionKey, message: '检查数据库', messageId, idempotencyKey }, 'run.snapshot');
     assert.equal(requests, before, 'replay re-executed provider');
     const history = await socketExchange({ type: 'chat.history', sessionKey: started.sessionKey }, 'complete');
+    const historyMessages = history.find(e => Array.isArray(e.messages))?.messages ?? [];
+    assert(historyMessages.every((m: any) => m.messageParts?.version === 1 && m.messageParts.id === m.id && m.messageParts.legacy.content === m.content));
+    if (success) assert(historyMessages.filter((m: any) => m.role === 'assistant').every((m: any) => m.messageParts.status === 'completed' && m.messageParts.durable.kind === 'mysql'));
     assert(!JSON.stringify(history).includes('正在分析数据库状态'));
     const run = replay.find(e => e.type === 'run.snapshot').run;
     assert.equal(run.state, success ? 'completed' : scenario === 'deadline' ? 'timed_out' : scenario === 'cancel' ? 'cancelled' : 'failed');

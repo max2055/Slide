@@ -6,6 +6,7 @@
  */
 
 import OpenAI from "openai";
+import { projectProviderMessages, hasMessageAttachments } from './message-parts.js';
 import { FamilyTokenCounter } from './token-estimation.js';
 import { isNativeOpenAIEndpoint, openAIModelCapabilities, type ModelCapabilities } from './model-context.js';
 import type {
@@ -39,12 +40,13 @@ export interface NormalizedProviderError {
 }
 
 /** Convert provider HTTP failures into messages an operator can act on. */
-export function normalizeProviderError(error: unknown): NormalizedProviderError {
+export function normalizeProviderError(error: unknown, options?: { media?: boolean }): NormalizedProviderError {
   const normalized = normalizeError(error);
   const headers = (error as { headers?: Headers | Record<string, string> })?.headers;
   const retry = headers instanceof Headers ? headers.get('retry-after') : headers?.['retry-after'];
   const delay = retry == null ? NaN : /^\d+(\.\d+)?$/.test(retry) ? Number(retry) * 1000 : Date.parse(retry) - Date.now();
-  return { ...normalized, ...(Number.isFinite(delay) ? { retryAfterMs: Math.max(0, delay) } : {}) };
+  return { ...normalized, ...(options?.media ? { message: `LLM_MEDIA_REQUEST_FAILED${normalized.status ? ` (${normalized.status})` : ''}` } : {}),
+    ...(Number.isFinite(delay) ? { retryAfterMs: Math.max(0, delay) } : {}) };
 }
 function normalizeError(error: unknown): NormalizedProviderError {
   const candidate = error as { status?: unknown; code?: unknown; message?: unknown; error?: { message?: unknown } } | null;
@@ -75,6 +77,10 @@ function normalizeError(error: unknown): NormalizedProviderError {
 }
 
 export class OpenAIProvider implements LLMProvider {
+  projectMessages(messages: Message[], model = this.getDefaultModel()): Message[] {
+    return projectProviderMessages(messages, { supportsVision: this.getModelCapabilities(model)?.supportsVision === true,
+      reasoning: /deepseek|kimi|glm/i.test(model) ? 'tool-turn' : 'omit' });
+  }
   private client: OpenAI;
   private model: string;
   private readonly tokenCounter = new FamilyTokenCounter();
@@ -115,6 +121,8 @@ export class OpenAIProvider implements LLMProvider {
     tools: ToolSchema[],
     options?: LLMCallOptions,
   ): Promise<LLMResponse> {
+    const media = hasMessageAttachments(messages);
+    if (messages.some(m => m.messageParts || Array.isArray(m.content) || (m as any).attachments)) messages = this.projectMessages(messages, options?.model);
     try {
       const response = await this.client.chat.completions.create({
         model: options?.model || this.model,
@@ -126,7 +134,7 @@ export class OpenAIProvider implements LLMProvider {
 
       return { ...parseOpenAIResponse(response), requestId: response._request_id ?? undefined };
     } catch (err) {
-      const normalized = normalizeProviderError(err);
+      const normalized = normalizeProviderError(err, { media });
       const message = normalized.message;
       console.error("[OpenAIProvider] chat() failed:", message);
       return {
@@ -151,6 +159,8 @@ export class OpenAIProvider implements LLMProvider {
     callbacks: StreamCallbacks,
     options?: LLMCallOptions,
   ): Promise<LLMResponse> {
+    const media = hasMessageAttachments(messages);
+    if (messages.some(m => m.messageParts || Array.isArray(m.content) || (m as any).attachments)) messages = this.projectMessages(messages, options?.model);
     try {
       const stream = await this.client.chat.completions.create({
         model: options?.model || this.model,
@@ -307,7 +317,7 @@ export class OpenAIProvider implements LLMProvider {
         ...(reasoningContent ? { _extra: { reasoning_content: reasoningContent } } as any : {}),
       };
     } catch (err) {
-      const normalized = normalizeProviderError(err);
+      const normalized = normalizeProviderError(err, { media });
       const message = normalized.message;
       console.error("[OpenAIProvider] chatStream() failed:", message);
       return {
@@ -364,10 +374,10 @@ function toOpenAIMessage(msg: Message): OpenAI.ChatCompletionMessageParam {
   }
   return {
     role: msg.role === "assistant" ? "assistant" : "user",
-    content: typeof msg.content === "string" ? msg.content : "",
+    content: Array.isArray(msg.content) ? msg.content.map(block => block.type === 'text' ? { type: 'text', text: block.text } : { type: 'image_url', image_url: block.image_url }) : msg.content ?? "",
     ...(msg.role === "assistant" && reasoningContent ? { reasoning_content: reasoningContent } : {}),
     ...extra,
-  };
+  } as OpenAI.ChatCompletionMessageParam;
 }
 
 function toOpenAITool(tool: ToolSchema): OpenAI.ChatCompletionTool {

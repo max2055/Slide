@@ -48,7 +48,7 @@ it('tool checkpoint survives reset and restart without replaying a tool or consu
     const session = new Session('fixture'); session.messages = [{ id: 'user-fact', role: 'user', content: 'diagnose' }]; session.metadata.runtime_checkpoint = saved;
     new AgentRunner(provider)._restoreRuntimeCheckpoint(session as any);
     const second = await spec(provider, { tools, hook, initialMessages: session.messages as any, resumeCheckpoint: saved, checkpointCallback: async cp => { saved = structuredClone(cp); } });
-    expect(second.stopReason).toBe('completed'); expect(execute).toHaveBeenCalledTimes(1); expect(approval).toHaveBeenCalledTimes(1);
+    expect(second.stopReason, JSON.stringify({ error: second.error, resolution: second.resolution })).toBe('completed'); expect(execute).toHaveBeenCalledTimes(1); expect(approval).toHaveBeenCalledTimes(1);
     expect(saved.stream_state_v1).toMatchObject({ attempt: 3, discardedBytes: discarded });
     expect(second.runtimeState).toMatchObject({ providerAttempts: 3, counts: { stream: 1 }, unknownRequests: 1, usage: { prompt_tokens: 4, completion_tokens: 6 } });
     expect(JSON.stringify(contexts)).not.toContain('discard');

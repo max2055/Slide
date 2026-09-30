@@ -10,7 +10,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { normalizeProviderError } from '@slide/agent-core';
+import { normalizeProviderError, projectProviderMessages, hasMessageAttachments } from '@slide/agent-core';
 import type {
   LLMProvider,
   Message,
@@ -55,7 +55,7 @@ function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
 
     // Handle assistant messages with tool calls
     if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
-      const blocks: (TextBlockParam | ToolUseBlockParam)[] = [];
+      const blocks: any[] = structuredClone(msg.thinking_blocks ?? []);
       if (content) {
         blocks.push({ type: 'text', text: content });
       }
@@ -72,9 +72,14 @@ function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
       continue;
     }
 
+    const blocks: any[] | string = Array.isArray(msg.content) ? msg.content.map(block => {
+      if (block.type === 'text') return { type: 'text', text: block.text };
+      const data = /^data:(image\/(?:png|jpeg|gif|webp));base64,([\s\S]+)$/.exec(block.image_url.url);
+      return { type: 'image', source: data ? { type: 'base64', media_type: data[1] as 'image/png', data: data[2] } : { type: 'url', url: block.image_url.url } };
+    }) : content;
     anthropicMessages.push({
       role: msg.role === 'assistant' ? 'assistant' : 'user',
-      content,
+      content: blocks,
     });
   }
 
@@ -117,6 +122,9 @@ function toAnthropicTools(tools: ToolSchema[]): AnthropicTool[] {
 }
 
 export class AnthropicProvider implements LLMProvider {
+  projectMessages(messages: Message[], model = this.getDefaultModel()): Message[] {
+    return projectProviderMessages(messages, { supportsVision: this.getModelCapabilities(model)?.supportsVision === true, reasoning: 'tool-turn' });
+  }
   private client_: Anthropic | null = null;
 
   private readonly config: { apiKey?: string; baseURL?: string; model?: string; capabilities?: ModelCapabilities };
@@ -147,7 +155,9 @@ export class AnthropicProvider implements LLMProvider {
     tools: ToolSchema[],
     options?: LLMCallOptions,
   ): Promise<LLMResponse> {
+    const media = hasMessageAttachments(messages);
     const model = options?.model || this.getDefaultModel();
+    messages = this.projectMessages(messages, model);
     const systemPrompt = extractSystemPrompt(messages);
     const anthropicMessages = toAnthropicMessages(messages);
     const anthropicTools = tools.length > 0 ? toAnthropicTools(tools) : undefined;
@@ -164,7 +174,7 @@ export class AnthropicProvider implements LLMProvider {
 
       return { ...this.parseResponse(response), requestId: httpResponse.headers.get('request-id') ?? undefined };
     } catch (err) {
-      const normalized = normalizeProviderError(err);
+      const normalized = normalizeProviderError(err, { media });
       const message = normalized.message;
       console.error('[AnthropicProvider] chat() failed:', message);
       return {
@@ -189,7 +199,9 @@ export class AnthropicProvider implements LLMProvider {
     callbacks: StreamCallbacks,
     options?: LLMCallOptions,
   ): Promise<LLMResponse> {
+    const media = hasMessageAttachments(messages);
     const model = options?.model || this.getDefaultModel();
+    messages = this.projectMessages(messages, model);
     const systemPrompt = extractSystemPrompt(messages);
     const anthropicMessages = toAnthropicMessages(messages);
     const anthropicTools = tools.length > 0 ? toAnthropicTools(tools) : undefined;
@@ -216,7 +228,7 @@ export class AnthropicProvider implements LLMProvider {
       const finalMessage = await stream.finalMessage();
       return this.parseResponse(finalMessage);
     } catch (err) {
-      const normalized = normalizeProviderError(err);
+      const normalized = normalizeProviderError(err, { media });
       const message = normalized.message;
       console.error('[AnthropicProvider] chatStream() failed:', message);
       return {
@@ -238,6 +250,7 @@ export class AnthropicProvider implements LLMProvider {
   private parseResponse(response: Anthropic.Message): LLMResponse {
     let content = '';
     const toolCalls: { id: string; name: string; arguments: Record<string, unknown> }[] = [];
+    const thinkingBlocks = (response.content as unknown as Array<{ type: string; thinking?: string; signature?: string; data?: string }>).filter(block => block.type === 'thinking' || block.type === 'redacted_thinking');
 
     for (const block of response.content) {
       if (block.type === 'text') {
@@ -259,6 +272,7 @@ export class AnthropicProvider implements LLMProvider {
 
     return {
       content: content || null,
+      ...(thinkingBlocks.length ? { thinkingBlocks, reasoningContent: thinkingBlocks.filter(b => b.type === 'thinking').map(b => b.thinking).join(''), _extra: { thinking_blocks: thinkingBlocks } } : {}),
       finishReason,
       toolCalls,
       usage,

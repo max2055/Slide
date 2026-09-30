@@ -39,6 +39,8 @@
  */
 
 export { ToolRegistry } from "./tool-registry.js";
+export { migrateMessageParts, readMessageParts, restoreLegacyMessage, acknowledgeMessageParts, compatibleMessageParts, projectProviderMessages, hasMessageAttachments, statusForStopReason, AttachmentProjectionError } from './message-parts.js';
+export type { MessageParts, MessagePart, PartStatus, PartBoundary, AttachmentSource, AttachmentBudget, ProviderPartPolicy } from './message-parts.js';
 export { AgentRunner, NoopHook } from "./runner.js";
 export { AgentRuntime } from './runtime/agent-runtime.js';
 export { conservativePromptEstimate, conservativeTextTokens, estimateWithProvider, FamilyTokenCounter, tokenPayload } from './token-estimation.js';

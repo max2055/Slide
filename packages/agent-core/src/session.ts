@@ -17,6 +17,7 @@ import { referenceMessages } from './context-block.js';
 import { sourceHash, normalizeToolGroups, estimatePromptTokens } from './runtime/context-manager.js';
 import { conservativeTextTokens } from './token-estimation.js';
 import type { Message } from './types.js';
+import { compatibleMessageParts, acknowledgeMessageParts, statusForStopReason } from './message-parts.js';
 
 // ── Constants ──
 
@@ -29,6 +30,8 @@ const INTERNAL_SESSION_PREFIXES = ['subagent:', 'dream:', 'cron:'];
 // ── Types ──
 
 export interface SessionEntry {
+  messageParts?: import('./message-parts.js').MessageParts;
+  attachments?: import('./message-parts.js').AttachmentSource[];
   id?: string;
   runId?: string;
   turnId?: string;
@@ -123,6 +126,7 @@ export class Session {
       entry.turnId ??= turnId ?? `legacy_turn_${this.sessionKey}`;
       entry.runId ??= `legacy_run_${entry.turnId}`;
       entry.source ??= 'fact';
+      if (!entry.messageParts) this.messages[i] = compatibleMessageParts(entry);
     }
   }
 
@@ -132,7 +136,7 @@ export class Session {
       if (entry.source && entry.source !== 'fact') continue;
       const existing = entry.id && this.messages.find(m => m.id === entry.id);
       if (existing) {
-        const payload = (m: SessionEntry) => JSON.stringify([m.role, m.content, m.tool_calls, m.tool_call_id, m.reasoning_content, m.thinking_blocks]);
+        const payload = (m: SessionEntry) => JSON.stringify([m.role, m.content, m.tool_calls, m.tool_call_id, m.reasoning_content, m.thinking_blocks, m.attachments]);
         if (payload(existing) !== payload(entry)) throw new Error('CANONICAL_ID_CONFLICT');
         continue;
       }
@@ -153,7 +157,7 @@ export class Session {
 
   canonicalHash(): string {
     this.ensureFactIds();
-    return crypto.createHash('sha256').update(JSON.stringify(this.messages)).digest('hex');
+    return crypto.createHash('sha256').update(JSON.stringify(this.messages.map(({ messageParts: _parts, ...fact }) => fact))).digest('hex');
   }
 
   /**
@@ -442,7 +446,14 @@ export class SessionManager {
 
     // Build JSONL lines: one per message + metadata as last line
     const lines: string[] = [];
-    for (const msg of session.messages) {
+    const completedTools = new Set(session.messages.filter(m => m.role === 'tool').map(m => m.tool_call_id));
+    const storedMessages = session.messages.map(msg => {
+      const pending = msg.tool_calls?.some(call => !completedTools.has(call.id));
+      try { return acknowledgeMessageParts(msg, { status: msg.messageParts?.status === 'failed' || msg.messageParts?.status === 'discarded' ? msg.messageParts.status :
+        pending ? 'partial' : statusForStopReason(msg.metadata?.stopReason), durable: { kind: 'jsonl', reference: msg.id! } }); }
+      catch { return structuredClone(msg); }
+    });
+    for (const msg of storedMessages) {
       lines.push(JSON.stringify(msg));
     }
     // Metadata line
@@ -475,6 +486,7 @@ export class SessionManager {
       const directory = await fsp.open(this.sessionsDir, 'r');
       try { await directory.sync(); } finally { await directory.close(); }
     }
+    session.messages = storedMessages;
   }
 
   /** Load and atomically migrate valid facts. Repair never invents missing data. */
@@ -529,12 +541,19 @@ export class SessionManager {
       });
     }
     const missingIds = session.messages.some(m => !m.id || !m.turnId || !m.runId);
+    const missingParts = session.messages.some(m => !m.messageParts);
     session.ensureFactIds();
+    const completedTools = new Set(session.messages.filter(m => m.role === 'tool').map(m => m.tool_call_id));
+    if (missingParts) session.messages = session.messages.map(m => {
+      const pending = m.tool_calls?.some(call => !completedTools.has(call.id));
+      try { return acknowledgeMessageParts(m, { status: pending ? 'partial' : statusForStopReason(m.metadata?.stopReason), durable: { kind: 'jsonl', reference: m.id! } }); }
+      catch { return m; }
+    });
     if (!version) session.metadata.history_gaps = [...((session.metadata.history_gaps ?? []) as unknown[]),
       { kind: 'legacy_retention_unknown', detail: 'Older versions may have trimmed facts; unavailable facts cannot be recovered.' }];
     if (corrupt || derived) session.metadata.history_gaps = [...((session.metadata.history_gaps ?? []) as unknown[]),
       { kind: 'repair', corruptLines: corrupt, excludedDerived: derived }];
-    if (!version || missingIds || corrupt || derived) {
+    if (!version || missingIds || missingParts || corrupt || derived) {
       const lines = session.messages.map(m => JSON.stringify(m));
       lines.push(JSON.stringify({ _type: 'session', __meta__: true, sessionKey, canonical_version: 1,
         metadata: session.metadata, createdAt: session.createdAt, updatedAt: session.updatedAt,

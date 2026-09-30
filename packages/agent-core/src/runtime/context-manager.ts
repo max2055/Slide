@@ -42,7 +42,7 @@ export function estimatePromptTokens(messages: Message[], tools: unknown[]): num
   return conservativePromptEstimate(messages, tools).tokens;
 }
 export function sourceHash(messages: Message[]): string {
-  return createHash('sha256').update(JSON.stringify(messages)).digest('hex');
+  return createHash('sha256').update(JSON.stringify(messages.map(({ messageParts: _parts, ...fact }) => fact))).digest('hex');
 }
 /** Historical data stays at tool authority; synthetic calls never enter the executor. */
 export function historicalData(kind: string, value: unknown, key: string): Message[] {

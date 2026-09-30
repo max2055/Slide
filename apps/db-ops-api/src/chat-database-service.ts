@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { dbConnection } from './db-connection.js';
 import type { ActorContext } from './auth/actor-context.js';
+import { recordMessageParts, persistedMessageParts } from './adapter/message-parts.js';
 
 export type ChatAction =
   | 'read'
@@ -40,6 +41,7 @@ export interface ChatSessionRecord {
 }
 
 export interface ChatMessageRecord {
+  messageParts?: import('@slide/agent-core').MessageParts;
   id: number;
   /** Global database sequence; monotonic across processes and sessions. */
   sequence: number;
@@ -289,7 +291,9 @@ export class ChatDatabaseService {
         message.content,
         message.relatedTool ?? null,
         message.relatedSkill ?? null,
-        message.metadata ? JSON.stringify(message.metadata) : null,
+        JSON.stringify({ ...message.metadata, messageParts: persistedMessageParts({ id: message.messageId, role: message.role, content: message.content,
+          runId: message.metadata?.canonicalRunId as string | undefined, turnId: message.metadata?.canonicalTurnId as string | undefined,
+          metadata: message.metadata }).messageParts }),
         sessionId,
         ...this.accessValues(actor, 'append'),
       ],
@@ -312,7 +316,9 @@ export class ChatDatabaseService {
         message.content,
         message.relatedTool ?? null,
         message.relatedSkill ?? null,
-        message.metadata ? JSON.stringify(message.metadata) : null,
+        JSON.stringify({ ...message.metadata, messageParts: persistedMessageParts({ id: message.messageId, role: message.role, content: message.content,
+          runId: message.metadata?.canonicalRunId as string | undefined, turnId: message.metadata?.canonicalTurnId as string | undefined,
+          metadata: message.metadata }).messageParts }),
         sessionId,
       ],
     );
@@ -559,6 +565,7 @@ export class ChatDatabaseService {
 
   private mapMessageRow(row: RowDataPacket): ChatMessageRecord {
     return {
+      messageParts: recordMessageParts(row as any).messageParts,
       id: row.id,
       sequence: Number(row.id),
       message_id: row.message_id,

@@ -54,7 +54,8 @@ export class ModelStep {
         // Ordinary requests carry the step's snapshot; internal summary requests
         // receive one here. Text that resembles a clock inside user data is untouched.
         const hasTime = messages.some(m => m.source === 'runtime' && String(m.content).startsWith('Current Time:'));
-        const projection = normalizeToolGroups(hasTime ? messages : [...messages, ...projectContextBlocks([runtimeBlock('runtime', currentTime())])]);
+        const normalized = normalizeToolGroups(hasTime ? messages : [...messages, ...projectContextBlocks([runtimeBlock('runtime', currentTime())])]);
+        const projection = this.provider.projectMessages?.(normalized, spec.model) ?? normalized;
         new ContextManager(spec, this.provider).assertFits(projection, undefined, definitions);
         return hook.wantsStreaming() ? this.provider.chatStream(projection, definitions, {
           onActivity: activity,

@@ -1,9 +1,9 @@
 import { createServer, type Server, type RequestListener } from 'node:http';
-import { afterEach, expect, it } from 'vitest';
-import { AgentRunner, NoopHook, OpenAIProvider, ToolRegistry, type LLMProvider, projectContextBlocks, conservativePromptEstimate } from '@slide/agent-core';
+import { afterEach, expect, it, vi } from 'vitest';
+import { AgentRunner, NoopHook, OpenAIProvider, ToolRegistry, type LLMProvider, projectContextBlocks, conservativePromptEstimate, migrateMessageParts } from '@slide/agent-core';
 import { AnthropicProvider } from './llm-provider.js';
 const servers: Server[] = [];
-afterEach(async () => { for (const server of servers.splice(0)) { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); } });
+afterEach(async () => { vi.restoreAllMocks(); for (const server of servers.splice(0)) { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); } });
 async function fixture(handler: RequestListener) {
   const server = createServer(handler); servers.push(server);
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
@@ -13,6 +13,58 @@ const providers = [
   ['OpenAI', (baseURL: string) => new OpenAIProvider({ apiKey: 'fixture', baseURL })],
   ['Anthropic', (baseURL: string) => new AnthropicProvider({ apiKey: 'fixture', baseURL })],
 ] as const;
+it.each(['OpenAI', 'Anthropic'])('%s suppresses media URLs/data echoed by provider errors', async name => {
+  const logs = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const secret = 'private-media-credential';
+  const baseURL = await fixture((_req, res) => { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: { message: `https://media.test/image?token=${secret}`, type: 'invalid_request_error' } })); });
+  const capabilities = { model: 'vision', contextWindowTokens: 32768, supportsVision: true, source: 'configuration' as const, version: 'fixture/v1' };
+  const provider = name === 'OpenAI' ? new OpenAIProvider({ apiKey: 'fixture', baseURL, capabilities, model: 'vision' }) : new AnthropicProvider({ apiKey: 'fixture', baseURL, capabilities, model: 'vision' });
+  const response = await provider.chat([{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,aGVsbG8=' } }] }], []);
+  expect(response.providerStatus).toBe(400); expect(response.error).toBe('LLM_MEDIA_REQUEST_FAILED (400)');
+  expect(JSON.stringify(logs.mock.calls)).not.toContain(secret);
+});
+it.each(['OpenAI', 'Anthropic'])('%s SDK projects mixed images without leaking parts/metadata and rejects unsupported capability', async name => {
+  let wire: any; let calls = 0;
+  const baseURL = await fixture(async (req, res) => {
+    calls++; let body = ''; for await (const chunk of req) body += chunk; wire = JSON.parse(body);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(name === 'OpenAI' ? { choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] }
+      : { id: 'fixture', type: 'message', role: 'assistant', model: 'vision', stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 1, output_tokens: 1 } }));
+  });
+  const capabilities = { model: 'vision', contextWindowTokens: 32768, supportsVision: true, source: 'configuration' as const, version: 'fixture/v1' };
+  const provider = name === 'OpenAI' ? new OpenAIProvider({ apiKey: 'fixture', baseURL, model: 'vision', capabilities }) : new AnthropicProvider({ apiKey: 'fixture', baseURL, model: 'vision', capabilities });
+  const message = migrateMessageParts({ id: 'private-source', role: 'user', content: [{ type: 'text', text: 'inspect' },
+    { type: 'image_url', image_url: { url: 'data:image/png;base64,aGVsbG8=' }, _meta: { bytes: 5, tokens: 4096 } }] });
+  await provider.chat([message], [], { model: 'vision' });
+  expect(calls).toBe(1); expect(wire.messages[0].content).toHaveLength(2);
+  expect(JSON.stringify(wire)).not.toMatch(/messageParts|private-source|_meta/);
+  expect(wire.messages[0].content[1]).toEqual(name === 'OpenAI' ? { type: 'image_url', image_url: { url: 'data:image/png;base64,aGVsbG8=' } }
+    : { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aGVsbG8=' } });
+  const unsupported = name === 'OpenAI' ? new OpenAIProvider({ apiKey: 'fixture', baseURL, model: 'text' }) : new AnthropicProvider({ apiKey: 'fixture', baseURL, model: 'text' });
+  await expect(unsupported.chat([message], [], { model: 'text' })).rejects.toThrow('ATTACHMENT_UNSUPPORTED');
+  expect(calls).toBe(1); expect(message.messageParts.parts.at(-1)).toMatchObject({ type: 'attachment', attachment: { reference: 'data:image/png;base64,aGVsbG8=' } });
+});
+it('Anthropic roundtrips opaque thinking signatures only within the active tool turn', async () => {
+  let wire: any;
+  const signed = { type: 'thinking', thinking: 'opaque thinking', signature: 'signed-provider-block' };
+  const redacted = { type: 'redacted_thinking', data: 'redacted-provider-block' };
+  const baseURL = await fixture(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk; wire = JSON.parse(body);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'fixture', type: 'message', role: 'assistant', model: 'fixture', stop_reason: 'tool_use',
+      content: [signed, redacted, { type: 'tool_use', id: 'call', name: 'read', input: {} }], usage: { input_tokens: 1, output_tokens: 1 } }));
+  });
+  const provider = new AnthropicProvider({ apiKey: 'fixture', baseURL });
+  const response = await provider.chat([{ role: 'user', content: 'test' }], []);
+  expect(response.thinkingBlocks).toEqual([signed, redacted]);
+  const assistant = migrateMessageParts({ id: 'a', role: 'assistant', content: null, thinking_blocks: response.thinkingBlocks,
+    tool_calls: [{ id: 'call', type: 'function', function: { name: 'read', arguments: '{}' } }] });
+  await provider.chat([{ role: 'user', content: 'test' }, assistant, { role: 'tool', tool_call_id: 'call', content: 'result' },
+    { role: 'user', source: 'runtime', content: 'Current Time: now' }], []);
+  expect(wire.messages[1].content.slice(0, 2)).toEqual([signed, redacted]);
+  await provider.chat([assistant, { role: 'tool', tool_call_id: 'call', content: 'result' }, { role: 'user', content: 'next turn' }], []);
+  expect(wire.messages[0].content.some((block: any) => block.type === 'thinking' || block.type === 'redacted_thinking')).toBe(false);
+});
 it('SDK dispatch uses the configured window/output and blocks an overflowing schema before any HTTP request', async () => {
   let calls = 0; let wire: any; let checkpoint: any;
   const baseURL = await fixture(async (req, res) => {

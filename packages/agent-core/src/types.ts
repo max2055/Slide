@@ -70,6 +70,7 @@ export interface ToolCallRequest {
 }
 
 export interface LLMProvider {
+  projectMessages?(messages: Message[], model?: string): Message[];
   /** Legacy numbers are exact default-model counts; estimates must carry provenance. */
   countPromptTokens?(messages: Message[], tools: ToolSchema[], model?: string): number | import('./token-estimation.js').PromptTokenEstimate | undefined;
   getModelCapabilities?(model?: string): import('./model-context.js').ModelCapabilities | undefined;
@@ -116,6 +117,8 @@ export interface StreamCallbacks {
 // ── Messages ──
 
 export interface Message {
+  attachments?: import('./message-parts.js').AttachmentSource[];
+  messageParts?: import('./message-parts.js').MessageParts;
   id?: string;
   runId?: string;
   turnId?: string;
@@ -134,7 +137,7 @@ export interface Message {
 
 export interface ToolCall {
   id: string;
-  type: "function";
+  type: string;
   function: {
     name: string;
     arguments: string;

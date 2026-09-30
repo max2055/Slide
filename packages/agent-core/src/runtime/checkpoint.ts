@@ -4,6 +4,7 @@ import { validateRecoverySnapshot } from "./recovery-policy.js";
 import type { AgentRunSpec } from "../types.js";
 import { createHash } from 'node:crypto';
 import type { SessionEntry } from '../session.js';
+import { compatibleMessageParts } from '../message-parts.js';
 
 /** IDs include run and iteration, so identical replies in different turns differ. */
 export function checkpointFacts(payload: Record<string, unknown>, scope: string): SessionEntry[] {
@@ -12,10 +13,12 @@ export function checkpointFacts(payload: Record<string, unknown>, scope: string)
   const assistant = (payload.assistantMessage ?? payload.assistant_message) as SessionEntry | undefined;
   const results = (payload.completedToolResults ?? payload.completed_tool_results ?? []) as SessionEntry[];
   return [assistant, ...results].filter((m): m is SessionEntry => !!m && (!m.source || m.source === 'fact')).map(m => ({
-    ...m, source: 'fact', runId: m.runId ?? runId, turnId: m.turnId ?? turnId,
+    ...m, source: 'fact' as const, runId: m.runId ?? runId, turnId: m.turnId ?? turnId,
     id: m.id ?? `cp_${createHash('sha256').update(JSON.stringify([runId, payload.iteration ?? 0,
       m.role, m.role === 'tool' ? m.tool_call_id : m.tool_calls?.map(c => c.id) ?? m.content])).digest('hex')}`,
-  }));
+  })).map(m => compatibleMessageParts(m, { status: 'partial',
+    attempt: (payload.stream_state_v1 as { attempt?: number } | undefined)?.attempt,
+    sourceRequestId: (payload.stream_state_v1 as { sourceRequestId?: string } | undefined)?.sourceRequestId }));
 }
 
 export class LegacyCheckpoint {

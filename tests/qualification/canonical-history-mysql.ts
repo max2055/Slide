@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID, createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -11,7 +11,7 @@ import { chatDatabaseService } from '../../apps/db-ops-api/src/chat-database-ser
 import { CanonicalStore, canonicalStore } from '../../apps/db-ops-api/src/adapter/canonical-store.js';
 import { AgentRunService } from '../../apps/db-ops-api/src/adapter/agent-run-service.js';
 import { DirectAdapter } from '../../apps/db-ops-api/src/adapter/direct-adapter.js';
-import { ToolRegistry, Session, SessionManager, checkpointFacts } from '../../packages/agent-core/src/index.js';
+import { ToolRegistry, Session, SessionManager, checkpointFacts, restoreLegacyMessage } from '../../packages/agent-core/src/index.js';
 import type { ActorContext } from '../../apps/db-ops-api/src/auth/actor-context.js';
 const require = createRequire(new URL('../../apps/db-ops-api/package.json', import.meta.url));
 const mysql = require('mysql2/promise');
@@ -53,6 +53,8 @@ try {
     return facts;
   }
   const facts = await allFacts(); assert.equal(facts.length, 505); assert.deepEqual(facts.map(f => f.id), expected);
+  assert(facts.every(f => f.messageParts?.version === 1 && f.messageParts.id === f.id && f.messageParts.status === 'completed'));
+  assert(facts.every(f => restoreLegacyMessage(f.messageParts!).content === f.content));
   const hash = createHash('sha256').update(JSON.stringify(facts)).digest('hex');
   assert.equal(createHash('sha256').update(JSON.stringify(await allFacts())).digest('hex'), hash);
   const fileManager = new SessionManager(workspace); const file = fileManager.getOrCreate(session.session_id); file.appendFacts(facts);
@@ -68,6 +70,17 @@ try {
   assert.equal((await canonicalStore.getPage(other, session.session_id, 1000)).messages.length, 505);
   await assert.rejects(canonicalStore.appendToolFacts(other, session.session_id, 'legacy-user-0', [facts[1]], 1), /Chat session not found/);
   console.log(JSON.stringify({ scenario: '505-real-facts-legacy-ID-pagination-JSONL-roundtrip-actor-isolation', passed: true, hash }));
+  const intentUser = `intent-user-${randomUUID()}`;
+  await chatDatabaseService.addMessage(actor, session.session_id, { messageId: intentUser, role: 'user', content: 'pending tool intent' });
+  const intentCheckpoint = { canonical_run_id: intentUser, canonical_turn_id: intentUser, iteration: 1,
+    assistantMessage: { role: 'assistant', content: null, tool_calls: [{ id: 'intent-call', type: 'function', function: { name: 'read', arguments: '{}' } }] }, completedToolResults: [] };
+  const intentFacts = checkpointFacts(intentCheckpoint, intentUser);
+  await canonicalStore.appendToolFacts(actor, session.session_id, intentUser, intentFacts, 1, intentCheckpoint);
+  assert.equal((await canonicalStore.getPage(actor, session.session_id)).messages.find(m => m.id === intentFacts[0].id)?.messageParts?.status, 'partial');
+  const settledCheckpoint = { ...intentCheckpoint, completedToolResults: [{ role: 'tool', content: 'settled', tool_call_id: 'intent-call' }] };
+  await canonicalStore.appendToolFacts(actor, session.session_id, intentUser, checkpointFacts(settledCheckpoint, intentUser), 1, settledCheckpoint);
+  assert.equal((await canonicalStore.getPage(actor, session.session_id)).messages.find(m => m.id === intentFacts[0].id)?.messageParts?.status, 'completed');
+  console.log(JSON.stringify({ scenario: 'parts-tool-intent-partial-until-result-transaction', passed: true }));
 
   // Real COMMIT succeeds, then its acknowledgement is lost. Replay must find one answer.
   const run = (await service.claim(actor.userId, session.session_id, randomUUID(), randomUUID())).run;
@@ -81,6 +94,14 @@ try {
   const durable = await service.getForActor(run.id, actor.userId, session.session_id); assert.equal(durable?.state, 'completed');
   await service.recoverCompletion(durable!);
   const [answers] = await pool.query<any[]>('SELECT * FROM chat_messages WHERE message_id = ?', [`run_${run.id}_assistant`]); assert.equal(answers.length, 1);
+  const answerParts = (typeof answers[0].metadata === 'string' ? JSON.parse(answers[0].metadata) : answers[0].metadata).messageParts;
+  assert.equal(answerParts.status, 'completed'); assert.equal(answerParts.durable.kind, 'mysql');
+  const oldMetadata = typeof answers[0].metadata === 'string' ? JSON.parse(answers[0].metadata) : answers[0].metadata;
+  const { messageParts: _parts, ...rollbackMetadata } = oldMetadata;
+  await pool.query('UPDATE chat_messages SET metadata = ? WHERE message_id = ?', [JSON.stringify(rollbackMetadata), answers[0].message_id]);
+  assert.equal((await canonicalStore.getPage(actor, session.session_id)).messages.find(m => m.id === answers[0].message_id)?.content, answers[0].content);
+  await pool.query('UPDATE chat_messages SET metadata = ? WHERE message_id = ?', [JSON.stringify(oldMetadata), answers[0].message_id]);
+  console.log(JSON.stringify({ scenario: 'parts-DB-metadata-reversible-rollback-no-side-effect-replay', passed: true }));
   console.log(JSON.stringify({ scenario: 'real-COMMIT-ack-loss-unique-durable-final', passed: true }));
 
   const toolUser = `run_${randomUUID()}_user`;
@@ -108,7 +129,8 @@ try {
 
   // Adapter uses DB history despite a missing/broken JSONL cache. No real LLM calls.
   let observed: any[] = [];
-  const provider: any = { getDefaultModel: () => 'controlled', chatStream: async (messages: any[], _tools: any[], callbacks: any) => {
+  const provider: any = { getDefaultModel: () => 'controlled', getModelCapabilities: () => ({ model: 'controlled', contextWindowTokens: 131072,
+    source: 'configuration', version: 'qualification/v1' }), chatStream: async (messages: any[], _tools: any[], callbacks: any) => {
     observed = messages; await callbacks.onContentDelta('cache independent');
     return { content: 'cache independent', finishReason: 'stop', toolCalls: [], usage: {}, shouldExecuteTools: false, hasToolCalls: false };
   }, chat: async () => { throw new Error('unexpected nonstream request'); } };
@@ -119,12 +141,16 @@ try {
   await chatDatabaseService.addMessage(actor, session.session_id, { messageId: currentUser, role: 'user', content: 'new request' });
   let candidate: any;
   const result = await adapter.chat(session.session_id, 'new request', event => { if (event.type === 'complete') candidate = event; }, actor, undefined, current.idempotencyKey, current.id, currentUser);
-  assert.equal(result.stopReason, 'completed'); assert(observed.some(m => m.content === 'unique answer'));
+  assert.equal(result.stopReason, 'completed', JSON.stringify({ error: result.error, resolution: result.resolution })); assert(observed.some(m => m.content === 'unique answer'));
   const beforeCommit = await canonicalStore.getPage(actor, session.session_id);
   assert(!beforeCommit.messages.some(m => m.content === 'cache independent'), 'response_ready leaked into canonical facts');
   const committed = await service.complete(current, candidate); assert.equal(committed.state, 'completed');
   const cold = new CanonicalStore(); const coldPage = await cold.getPage(actor, session.session_id);
   assert.equal(coldPage.messages.filter(m => m.content === 'cache independent').length, 1);
+  if (process.env.PARTS_HISTORY_OUTPUT) {
+    const rows = await chatDatabaseService.getMessages(actor, session.session_id, 4);
+    await writeFile(process.env.PARTS_HISTORY_OUTPUT, JSON.stringify(rows.map(row => ({ id: row.message_id, role: row.role, content: row.content, messageParts: row.messageParts, timestamp: new Date(row.created_at).getTime() }))), 'utf8');
+  }
   console.log(JSON.stringify({ scenario: 'JSONL-write-failure-DB-rebuild-response-ready-excluded', passed: true }));
 
   // Explicit retention keeps complete turns and records the deletion boundary.
