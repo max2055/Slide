@@ -1,3 +1,4 @@
+import { currentTime, projectContextBlocks, runtimeBlock } from '../context-block.js';
 import type { AgentHook, AgentHookContext, AgentRunSpec, LLMResponse, Message } from '../types.js';
 import { ContextManager, normalizeToolGroups } from './context-manager.js';
 import { RuntimeError, cancellationError } from './recovery-policy.js';
@@ -35,7 +36,10 @@ export class ModelStep {
       const request = Promise.resolve().then(() => {
         controller.signal.throwIfAborted();
         const definitions = spec.tools.getDefinitions();
-        const projection = normalizeToolGroups(messages);
+        // Ordinary requests carry the step's snapshot; internal summary requests
+        // receive one here. Text that resembles a clock inside user data is untouched.
+        const hasTime = messages.some(m => m.source === 'runtime' && String(m.content).startsWith('Current Time:'));
+        const projection = normalizeToolGroups(hasTime ? messages : [...messages, ...projectContextBlocks([runtimeBlock('runtime', currentTime())])]);
         new ContextManager(spec, this.provider).assertFits(projection, undefined, definitions);
         return hook.wantsStreaming() ? this.provider.chatStream(projection, definitions, {
           onActivity: activity,

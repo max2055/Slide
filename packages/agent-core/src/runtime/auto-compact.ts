@@ -7,7 +7,14 @@ import { RecoveryPolicy, RuntimeError, cancellationError } from './recovery-poli
 import { RapidRefill } from './rapid-refill.js';
 
 export interface Summary { goal: string[]; constraints: string[]; done: string[]; pending: string[]; evidence: string[]; uncertain: string[] }
-export interface SummaryRecord { schemaVersion: 1; sourceStart: 0; sourceEnd: number; sourceHash: string; summary: Summary }
+export interface SummaryDependency { generation: number; sourceHash: string; summaryHash: string }
+export interface SummaryRecord {
+  schemaVersion: 1; sourceStart: 0; sourceEnd: number; sourceHash: string; summary: Summary;
+  generation?: number;
+  provenance?: 'original' | 'legacy/unknown';
+  originalSourceIds?: string[];
+  previousSummary?: SummaryDependency;
+}
 const fields = ['goal', 'constraints', 'done', 'pending', 'evidence', 'uncertain'] as const;
 export function validateSummary(text: string): Summary {
   let value: Summary;
@@ -23,7 +30,22 @@ export function validateSummaryRecord(value: unknown): SummaryRecord {
   if (!s || s.schemaVersion !== 1 || s.sourceStart !== 0 || !Number.isSafeInteger(s.sourceEnd) || s.sourceEnd <= 0 || !/^[a-f0-9]{64}$/.test(s.sourceHash)) {
     throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid summary source range/hash');
   }
-  return { schemaVersion: 1, sourceStart: 0, sourceEnd: s.sourceEnd, sourceHash: s.sourceHash, summary: validateSummary(JSON.stringify(s.summary)) };
+  if (s.generation !== undefined && (!Number.isSafeInteger(s.generation) || s.generation < 1 ||
+    !['original', 'legacy/unknown'].includes(s.provenance ?? '') || !Array.isArray(s.originalSourceIds) ||
+    (s.provenance === 'original' && s.originalSourceIds.length !== s.sourceEnd) ||
+    (s.generation > 1 && !s.previousSummary) ||
+    !s.originalSourceIds.every(id => typeof id === 'string' && id.length > 0) || new Set(s.originalSourceIds).size !== s.originalSourceIds.length)) {
+    throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid summary generation/source IDs');
+  }
+  if (s.previousSummary && (s.generation === undefined || !Number.isSafeInteger(s.previousSummary.generation) ||
+    s.previousSummary.generation < 0 || s.previousSummary.generation !== s.generation - 1 ||
+    !/^[a-f0-9]{64}$/.test(s.previousSummary.sourceHash) || !/^[a-f0-9]{64}$/.test(s.previousSummary.summaryHash))) {
+    throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid previous summary dependency');
+  }
+  return { schemaVersion: 1, sourceStart: 0, sourceEnd: s.sourceEnd, sourceHash: s.sourceHash,
+    summary: validateSummary(JSON.stringify(s.summary)),
+    ...(s.generation !== undefined ? { generation: s.generation, provenance: s.provenance, originalSourceIds: [...s.originalSourceIds!] } : { provenance: 'legacy/unknown' as const }),
+    ...(s.previousSummary ? { previousSummary: { ...s.previousSummary } } : {}) };
 }
 
 /** Streaming is internal only, so request and idle deadlines apply without exposing summary text. */
@@ -81,7 +103,12 @@ export async function autoCompact(
     if (response.error || response.errorKind || response.finishReason !== 'stop' || response.hasToolCalls || response.toolCalls.length) throw new RuntimeError('SUMMARY_INVALID', 'Summary response incomplete or contains tool intent');
     assertTokenBudget(spec, recovery.state);
     const summary = validateSummary(response.content ?? '');
-    const record: SummaryRecord = { schemaVersion: 1, sourceStart: 0, sourceEnd: end, sourceHash: hash, summary };
+    const previous = manager.summary;
+    const sourceIds = original.flatMap(m => m.id ? [m.id] : []);
+    const record: SummaryRecord = { schemaVersion: 1, sourceStart: 0, sourceEnd: end, sourceHash: hash, summary,
+      generation: (previous?.generation ?? 0) + 1,
+      provenance: sourceIds.length === original.length ? 'original' : 'legacy/unknown', originalSourceIds: sourceIds,
+      ...(previous ? { previousSummary: { generation: previous.generation ?? 0, sourceHash: previous.sourceHash, summaryHash: sourceHash([{ role: 'tool', content: JSON.stringify(previous.summary) }]) } } : {}) };
     const assertSource = () => {
       if (spec.signal?.aborted) throw cancellationError(spec.signal);
       if (sourceHash(raw.slice(0, end)) !== hash) throw new RuntimeError('SUMMARY_SOURCE_CHANGED', 'History changed while summarizing');

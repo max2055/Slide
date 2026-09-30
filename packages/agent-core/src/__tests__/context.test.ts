@@ -83,7 +83,7 @@ describe("ContextBuilder", () => {
     expect(messages[messages.length - 1].role).toBe("user");
   });
 
-  it("user message contains runtime context appended", async () => {
+  it("user message stays byte-identical and runtime time appears once separately", async () => {
     writeFile(tempDir, "SOUL.md", "You are an assistant.");
 
     const builder = new ContextBuilder(tempDir);
@@ -92,8 +92,9 @@ describe("ContextBuilder", () => {
     const lastMsg = messages[messages.length - 1];
     expect(typeof lastMsg.content).toBe("string");
     const content = lastMsg.content as string;
-    expect(content).toContain("Hello");
-    expect(content).toContain("Current Time:");
+    expect(content).toBe("Hello");
+    expect(messages.filter(m => String(m.content).includes("Current Time:"))).toHaveLength(1);
+    expect(messages.find(m => String(m.content).includes("Current Time:"))?.source).toBe("runtime");
   });
 
   it("includes history messages in the messages array", async () => {
@@ -124,7 +125,7 @@ describe("ContextBuilder", () => {
     const builder = new ContextBuilder(tempDir);
     const messages = await builder.buildMessages([], "Hello");
 
-    expect(messages.length).toBe(2);
+    expect(messages.length).toBe(3);
   });
 
   it("getIdentity() returns description from SOUL.md", async () => {

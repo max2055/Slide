@@ -1,3 +1,4 @@
+import { currentTime, projectContextBlocks, runtimeBlock } from '../context-block.js';
 import { runtimeEvents } from './events.js';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { assertRequestBudget, assertTokenBudget, assertToolBudget, withBudgetContext } from './budget.js';
@@ -73,7 +74,7 @@ export class TurnLoop {
     };
     let progressEpoch = 0;
     let request = currentRequest(spec.initialMessages);
-    let state = createTurnState(spec.initialMessages);
+    let state = createTurnState(spec.initialMessages.filter(m => m.source !== 'runtime' || (m.role === 'system' && m.contextAuthority === 'policy')));
     const pendingTools = spec.resumeCheckpoint?.pendingToolCalls ?? spec.resumeCheckpoint?.pending_tool_calls;
     if (Array.isArray(pendingTools) && pendingTools.length) {
       const error = new RuntimeError('TOOL_SETTLEMENT_UNKNOWN', 'Interrupted tool intent requires reconciliation', 'tool');
@@ -114,7 +115,7 @@ export class TurnLoop {
         }
         forceCompact = false;
         messagesForModel = continuation.project(messagesForModel);
-        if (reminder) messagesForModel = [...messagesForModel, { role: 'user', content: reminder }];
+        messagesForModel = [...messagesForModel, ...projectContextBlocks([runtimeBlock('runtime', currentTime()), ...(reminder ? [runtimeBlock('reminder', reminder)] : [])])];
         manager.assertFits(messagesForModel);
       } catch (cause) {
         const error = cause instanceof RuntimeError ? cause : new RuntimeError('CONTEXT_GOVERNANCE_ERROR', 'Context governance failed');

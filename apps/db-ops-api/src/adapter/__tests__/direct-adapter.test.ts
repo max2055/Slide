@@ -957,9 +957,10 @@ describe('DirectAdapter', () => {
       const question = `single-context-${Date.now()}-${Math.random()}`;
       await adapter.chat(`test-session-${question}`, question, () => {});
 
-      const userMessages = provider.seenMessages.filter((message) => message.role === 'user');
+      const userMessages = provider.seenMessages.filter((message) => message.role === 'user' && message.source !== 'runtime');
       expect(userMessages).toHaveLength(1);
-      expect(userMessages[0]?.content).toContain(question);
+      expect(userMessages[0]?.content).toBe(question);
+      expect(provider.seenMessages.filter(message => message.source === 'runtime' && String(message.content).startsWith('Current Time:'))).toHaveLength(1);
     });
 
     it('binds an authenticated actor to a dangerous tool call and denies the handler', async () => {

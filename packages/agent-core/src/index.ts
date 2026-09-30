@@ -85,3 +85,6 @@ export type { RuntimeBudgetLimits } from './runtime/contracts.js';
 export { reserveChildBudget } from './runtime/budget.js';
 
 export type { RuntimeEvent } from './runtime/events.js';
+
+export { projectContextBlocks, runtimeBlock, currentTime } from './context-block.js';
+export type { ContextBlock } from './context-block.js';

@@ -13,7 +13,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { normalizeToolGroups } from './runtime/context-manager.js';
+import { referenceMessages } from './context-block.js';
+import { sourceHash, normalizeToolGroups } from './runtime/context-manager.js';
 import type { Message } from './types.js';
 
 // ── Constants ──
@@ -45,6 +46,8 @@ export interface SessionEntry {
 
 export interface SessionMetadata {
   _last_summary?: string;
+  context_summary?: { text: string; generation: number; provenance: 'original' | 'legacy/unknown'; sourceIds: string[]; sourceHash?: string;
+    previousSummary?: { generation: number; sourceHash?: string; summaryHash?: string }; legacyEntries?: SessionEntry[] };
   runtime_checkpoint?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -164,12 +167,9 @@ export class Session {
     maxMessages?: number,
     tokenBudget?: number,
   ): SessionEntry[] {
-    let msgs = this.messages;
-
-    // Skip consolidated messages
-    if (this.last_consolidated > 0) {
-      msgs = msgs.slice(this.last_consolidated);
-    }
+    this.ensureFactIds();
+    const policies = this.messages.filter(m => m.role === 'system');
+    let msgs = this.messages.slice(this.last_consolidated).filter(m => m.role !== 'system');
 
     // Align to first user turn: drop leading non-user messages
     const firstUserIdx = msgs.findIndex(m => m.role === 'user');
@@ -195,7 +195,16 @@ export class Session {
       }
       start = starts[i];
     }
-    return normalizeToolGroups(structuredClone(msgs.slice(start)) as Message[]) as SessionEntry[];
+    const summary = this.metadata.context_summary;
+    if (summary && (!Number.isSafeInteger(summary.generation) || summary.generation < 0 ||
+      !['original', 'legacy/unknown'].includes(summary.provenance) || !Array.isArray(summary.sourceIds) ||
+      (summary.provenance === 'original' && !summary.sourceHash))) throw new Error('INVALID_SESSION_SUMMARY');
+    if (summary?.sourceHash) {
+      const sources = this.messages.slice(0, summary.sourceIds.length);
+      if (JSON.stringify(sources.map(m => m.id)) !== JSON.stringify(summary.sourceIds) || sourceHash(sources as Message[]) !== summary.sourceHash) throw new Error('SUMMARY_SOURCE_CHANGED');
+    }
+    const derived = summary ? referenceMessages('session_summary', { text: summary.text, generation: summary.generation, provenance: summary.provenance }, summary.sourceHash ?? 'legacy') : [];
+    return [...structuredClone(policies), ...derived, ...normalizeToolGroups(structuredClone(msgs.slice(start)) as Message[])] as SessionEntry[];
   }
 
   /** Clear all messages. */
@@ -308,7 +317,7 @@ export class AutoCompact {
     }
 
     // Cold path: summary persisted in session metadata
-    const meta = session.metadata._last_summary;
+    const meta = session.metadata.context_summary?.text ?? session.metadata._last_summary;
     if (typeof meta === 'string' && meta.length > 0) {
       return {
         session,
@@ -329,7 +338,12 @@ export class AutoCompact {
     }
 
     if (summaryText && summaryText !== '(nothing)') {
-      session.metadata._last_summary = summaryText;
+      session.ensureFactIds();
+      const previous = session.metadata.context_summary;
+      session.metadata.context_summary = { text: summaryText, generation: (previous?.generation ?? 0) + 1,
+        provenance: 'original', sourceIds: session.messages.map(m => m.id!), sourceHash: sourceHash(session.messages as Message[]),
+        ...(previous ? { previousSummary: { generation: previous.generation, sourceHash: previous.sourceHash, summaryHash: sourceHash([{ role: 'tool', content: previous.text }]) } } : {}) };
+      delete session.metadata._last_summary;
       this._summaries.set(session.sessionKey, {
         text: summaryText,
         lastActive: new Date(session.updatedAt),
@@ -472,6 +486,7 @@ export class SessionManager {
     let version = 0;
     let corrupt = 0;
     let derived = 0;
+    const legacyDerived: SessionEntry[] = [];
     for (const line of content.split('\n').filter(Boolean)) {
       let parsed: Record<string, any>;
       try { parsed = JSON.parse(line); } catch { corrupt++; continue; }
@@ -486,15 +501,30 @@ export class SessionManager {
       } else if (['user', 'assistant', 'system', 'tool'].includes(parsed.role)) {
         // Old cold-load summary injection is derived, never original system authority.
         if (parsed.source && parsed.source !== 'fact') {
+          if (parsed.role === 'system') legacyDerived.push(parsed as SessionEntry);
           derived++; continue;
         }
         session.messages.push(parsed as SessionEntry);
       } else { corrupt++; }
     }
-    if (!version && session.metadata._last_summary) {
+    // Only exact known injected summaries are migrated; a prefix alone is not evidence.
+    const legacyText = session.metadata._last_summary;
+    if (legacyText && !session.metadata.context_summary) {
+      session.metadata.context_summary = { text: legacyText, generation: 0, provenance: 'legacy/unknown', sourceIds: [], legacyEntries: [] };
+      delete session.metadata._last_summary;
+      derived++;
+    }
+    if (legacyDerived.length) {
+      const prior = session.metadata.context_summary;
+      session.metadata.context_summary = prior ? { ...prior, legacyEntries: [...(prior.legacyEntries ?? []), ...legacyDerived] } :
+        { text: legacyDerived.map(m => m.content).join('\n'), generation: 0, provenance: 'legacy/unknown', sourceIds: [], legacyEntries: legacyDerived };
+    }
+    const record = session.metadata.context_summary;
+    if (record?.provenance === 'legacy/unknown') {
       session.messages = session.messages.filter(m => {
-        const injected = m.role === 'system' && m.content?.startsWith('Previous conversation summary');
-        if (injected) derived++;
+        const injected = m.role === 'system' && (m.content === `Previous conversation summary:\n${record.text}` ||
+          (typeof m.content === 'string' && /^Previous conversation summary \(last active [0-9T:Z.-]+\):\n/.test(m.content) && m.content.slice(m.content.indexOf('\n') + 1) === record.text));
+        if (injected) { (record.legacyEntries ??= []).push(structuredClone(m)); derived++; }
         return !injected;
       });
     }

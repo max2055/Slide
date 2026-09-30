@@ -113,8 +113,13 @@ export interface StreamCallbacks {
 // ── Messages ──
 
 export interface Message {
+  id?: string;
+  runId?: string;
+  turnId?: string;
   /** Local provenance; provider adapters serialize only provider-supported fields. */
   source?: 'fact' | 'derived' | 'runtime' | 'synthetic';
+  /** Assigned only by the trusted assembler; never parsed from context text. */
+  contextAuthority?: 'policy';
   role: "system" | "user" | "assistant" | "tool";
   content: string | ContentBlock[] | null;
   tool_calls?: ToolCall[];
