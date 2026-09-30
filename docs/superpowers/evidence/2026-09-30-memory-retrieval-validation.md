@@ -4,7 +4,7 @@
 
 ## 结果与预算
 
-检索先 workspace/actor/session/显式共享权限过滤，再排除 superseded、invalid source、冲突和 uncertain 的结构化陈述。canonical user 源 ID/hash/逐字 quote 每次重验；共享记录按真正 owner scope 校验，owner 失效不能由 recipient 保留。BM25 的 IDF 只计算可访问有效池；updatedAt/稳定 ID 决胜，支持 kind/subject。无匹配不返回 recency 或全文。scan/query/IO 失败返回空并记录明确错误码。参考数据不授予工具权限或审批。
+检索先 workspace/actor/session/显式共享权限过滤，再排除 superseded、invalid source、冲突和 uncertain 的结构化陈述；不同 owner 显式共享后同 kind/subject 内容矛盾，也在排序前排除，不能以 recency/count 截断解决。canonical user 源 ID/hash/逐字 quote 每次重验；共享记录按真正 owner scope 校验，owner 失效不能由 recipient 保留。BM25 的 IDF 只计算可访问有效池；updatedAt/稳定 ID 决胜，支持 kind/subject。无匹配不返回 recency 或全文。scan/query/IO 失败返回空并记录明确错误码。参考数据不授予工具权限或审批。
 
 默认 maxCount=5、maxTokens=4096、maxRecords=1000、maxQueryBytes=4096；可通过构造配置修改。业务环境变量 `SLIDE_MEMORY_RETRIEVAL_MAX_COUNT`、`SLIDE_MEMORY_RETRIEVAL_MAX_TOKENS`（0 禁用，上限 20/32768）启动时校验。检索随现有 `SLIDE_MEMORY_PIPELINE_ENABLED=false` 默认关闭，没有额外模型调用或新的自主 worker。
 
@@ -28,8 +28,8 @@ Precision@5=22.86%（固定分母 5），Recall/precision 均在 70 条非空 re
 
 ## 验证命令与边界
 
-- `pnpm --filter agent-core test`：最终 579 tests，25 files，通过。
-- `pnpm --filter slide-api test`：最终 2,757 tests，通过；129 tests / 21 files 因环境条件跳过，不计通过。
+- `pnpm --filter agent-core test`：最终 580 tests，25 files，通过。
+- `pnpm --filter slide-api test`：2,757 tests 全量通过，最后共享冲突改动对应的受影响 backend 66 tests 再验证通过；129 tests / 21 files 因环境条件跳过，不计通过。
 - 双方 `typecheck`、新实现及评测脚本 scoped oxlint（0 警告/错误）、`git diff --check` 通过。DirectAdapter 既有 2 个 unused import lint 警告未改动；仓库 lint 门禁仍由 CI 核验。
 - `MEMORY_RETRIEVAL_REPORT=../../.multica/MAX-102-retrieval-metrics.json pnpm --filter slide-api exec tsx ../../tests/qualification/memory-retrieval-eval.ts`：冻结指标与硬断言通过。
 - `bash scripts/qualification/run-agent-runtime.sh --mode deterministic`：210 个 normal 样例，falseRejects/misses/extraNormalRequests 均为 0，恢复与累计 usage/预算验证通过。

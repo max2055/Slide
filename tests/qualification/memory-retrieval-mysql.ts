@@ -66,7 +66,7 @@ try {
       void work.then(() => handlers.delete(work), () => handlers.delete(work));
     });
   });
-  results.push({ scenario: 'isolated-instance-identity', pid: process.pid, port, cwd: process.cwd(), command: 'tsx memory-retrieval-mysql.ts', database, model: 'controlled-retrieval', paidProvider: false });
+  results.push({ scenario: 'isolated-instance-identity', pid: process.pid, port, cwd: process.cwd(), command: 'tsx memory-retrieval-mysql.ts', database, branch: spawnSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).stdout.trim(), commit: spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(), trackedDirty: spawnSync('git', ['diff', '--quiet']).status !== 0, log: process.env.MEMORY_RETRIEVAL_MYSQL_LOG, model: 'controlled-retrieval', paidProvider: false });
   async function exchange(owner: typeof actor, command: Record<string, unknown>, terminal: string) {
     const client = new WebSocket(`ws://127.0.0.1:${port}`); const events: any[] = [];
     try { return await new Promise<any[]>((resolve, reject) => {

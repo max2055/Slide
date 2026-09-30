@@ -132,7 +132,15 @@ export class MemoryRetriever {
         })));
       }
       if (valid.length > this.limits.maxRecords) return emptyRetrieval(this.limits, 'degraded', 'MEMORY_SCAN_LIMIT');
-      return projectMemory(valid, query, this.limits);
+      // Sharing does not resolve contradictory owners' statements. Exclude the
+      // topic before ranking/budget selection can silently retain only one side.
+      const topic = (r: MemoryRecord) => memoryHash([r.kind, r.subject.normalize('NFKC').trim().toLowerCase()]);
+      const statements = new Map<string, Set<string>>();
+      for (const r of valid.filter(r => r.evidence === 'user_statement')) {
+        const key = topic(r); const contents = statements.get(key) ?? new Set<string>();
+        contents.add(r.content); statements.set(key, contents);
+      }
+      return projectMemory(valid.filter(r => r.evidence === 'legacy/unknown' || statements.get(topic(r))!.size === 1), query, this.limits);
     } catch {
       // No exception text or full-memory fallback: corruption, DB outage and source-read errors are contained.
       return emptyRetrieval(this.limits, 'degraded', 'MEMORY_RETRIEVAL_FAILED');

@@ -14,7 +14,7 @@ function setup(records: MemoryRecord[], limits = {}) {
 describe('source-valid bounded memory retrieval', () => {
   it('filters permissions before source IO/ranking and supports explicit share', async () => {
     const own = record('own');
-    const foreign = record('foreign', 'MySQL production backup retention is 3 days.', { scope: { ...scope, actorId: 'B' } });
+    const foreign = record('foreign', 'MySQL replica backup retention is 3 days.', { subject: 'replica backup retention', scope: { ...scope, actorId: 'B' } });
     const session = record('session', undefined, { scope: { ...scope, sessionId: 'other' } });
     const workspace = record('workspace', undefined, { scope: { ...scope, workspaceId: 'other' }, sharedWith: ['A'] });
     const { retriever, reader } = setup([foreign, own, session, workspace]);
@@ -34,6 +34,14 @@ describe('source-valid bounded memory retrieval', () => {
     expect((await retriever.retrieve(scope, { text: 'backup' })).count).toBe(0);
     old.status = 'superseded';
     expect((await retriever.retrieve(scope, { text: 'backup' })).items.map(r => r.id)).toEqual([next.id]);
+  });
+  it('does not let recency or a small count cap silently resolve contradictory shared owners', async () => {
+    const own = record('own');
+    const shared = record('shared', 'MySQL production backup retention is 30 days.', { scope: { ...scope, actorId: 'B' }, sharedWith: ['A'], updatedAt: '2026-09-30T00:00:00Z' });
+    const { retriever } = setup([own, shared], { maxCount: 1 });
+    expect((await retriever.retrieve(scope, { text: 'backup' })).count).toBe(0);
+    shared.sharedWith = [];
+    expect((await retriever.retrieve(scope, { text: 'backup' })).items.map(r => r.id)).toEqual([own.id]);
   });
   it('never returns deleted/edited/invalid/hash-forged sources or unsafe content', async () => {
     const r = record('source'); const { retriever, reader } = setup([r]);
