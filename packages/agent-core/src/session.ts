@@ -13,6 +13,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { normalizeToolGroups } from './runtime/context-manager.js';
+import type { Message } from './types.js';
 
 // ── Constants ──
 
@@ -25,6 +27,10 @@ const INTERNAL_SESSION_PREFIXES = ['subagent:', 'dream:', 'cron:'];
 // ── Types ──
 
 export interface SessionEntry {
+  id?: string;
+  runId?: string;
+  turnId?: string;
+  source?: 'fact' | 'derived' | 'runtime' | 'synthetic';
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | null;
   tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>;
@@ -60,6 +66,7 @@ export class Session {
   public createdAt: number;
   public updatedAt: number;
   public last_consolidated: number;
+  private projectionLimit?: number;
 
   constructor(sessionKey: string) {
     this.sessionKey = sessionKey;
@@ -93,9 +100,57 @@ export class Session {
       content,
       timestamp: new Date().toISOString(),
       ...extra,
+      id: extra?.id ?? crypto.randomUUID(),
+      source: extra?.source ?? 'fact',
     };
-    this.messages.push(entry);
+    if (entry.role === 'user') entry.turnId ??= entry.id;
+    else entry.turnId ??= [...this.messages].reverse().find(m => m.role === 'user')?.turnId;
+    this.appendFacts([entry]);
     this.updatedAt = Date.now();
+  }
+
+  /** Migrate legacy IDs deterministically; identical repeated text remains distinct. */
+  ensureFactIds(): void {
+    let turnId: string | undefined;
+    for (let i = 0; i < this.messages.length; i++) {
+      const entry = this.messages[i];
+      if (entry.source && entry.source !== 'fact') throw new Error('INVALID_CANONICAL_FACT');
+      entry.id ??= `legacy_${crypto.createHash('sha256').update(this.sessionKey + ':' + i + ':' + JSON.stringify(entry)).digest('hex')}`;
+      if (entry.role === 'user') turnId = entry.turnId ?? entry.id;
+      entry.turnId ??= turnId ?? `legacy_turn_${this.sessionKey}`;
+      entry.runId ??= `legacy_run_${entry.turnId}`;
+      entry.source ??= 'fact';
+    }
+  }
+
+  appendFacts(entries: SessionEntry[]): void {
+    this.ensureFactIds();
+    for (const entry of entries) {
+      if (entry.source && entry.source !== 'fact') continue;
+      const existing = entry.id && this.messages.find(m => m.id === entry.id);
+      if (existing) {
+        const payload = (m: SessionEntry) => JSON.stringify([m.role, m.content, m.tool_calls, m.tool_call_id, m.reasoning_content, m.thinking_blocks]);
+        if (payload(existing) !== payload(entry)) throw new Error('CANONICAL_ID_CONFLICT');
+        continue;
+      }
+      this.messages.push(structuredClone(entry));
+    }
+    this.ensureFactIds();
+  }
+
+  /** Read-only snapshot. Cursor is a stable message ID, never a model offset. */
+  getCanonicalPage(limit = 200, after?: string): { messages: Readonly<SessionEntry>[]; nextAfter: string | null } {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error('INVALID_CANONICAL_PAGE');
+    this.ensureFactIds();
+    const index = after === undefined ? -1 : this.messages.findIndex(m => m.id === after);
+    if (after !== undefined && index < 0) throw new Error('CANONICAL_CURSOR_NOT_FOUND');
+    const page = this.messages.slice(index + 1, index + 1 + limit);
+    return { messages: structuredClone(page), nextAfter: index + 1 + limit < this.messages.length ? page.at(-1)!.id! : null };
+  }
+
+  canonicalHash(): string {
+    this.ensureFactIds();
+    return crypto.createHash('sha256').update(JSON.stringify(this.messages)).digest('hex');
   }
 
   /**
@@ -127,28 +182,25 @@ export class Session {
       msgs = msgs.slice(1);
     }
 
-    if (maxMessages && maxMessages > 0 && msgs.length > maxMessages) {
-      msgs = msgs.slice(-maxMessages);
-    }
-
-    if (tokenBudget && tokenBudget > 0) {
-      let total = 0;
-      const result: SessionEntry[] = [];
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const text = typeof msgs[i].content === 'string' ? msgs[i].content as string : '';
-        const tokens = Session.estimateTokens(text);
-        if (total + tokens > tokenBudget && result.length > 0) break;
-        total += tokens;
-        result.unshift(msgs[i]);
+    // Slice whole user turns; a count/token budget must never cut a parallel batch.
+    const limit = Math.min(maxMessages && maxMessages > 0 ? maxMessages : Infinity, this.projectionLimit ?? Infinity);
+    const starts = msgs.flatMap((m, i) => m.role === 'user' ? [i] : []);
+    let start = starts.at(-1) ?? 0;
+    for (let i = starts.length - 1; i >= 0; i--) {
+      const candidate = msgs.slice(starts[i]);
+      const tokens = candidate.reduce((n, m) => n + Session.estimateTokens(JSON.stringify(m)), 0);
+      if (candidate.length > limit || (tokenBudget && tokenBudget > 0 && tokens > tokenBudget)) {
+        if (i === starts.length - 1) start = starts[i];
+        break;
       }
-      return result;
+      start = starts[i];
     }
-
-    return msgs;
+    return normalizeToolGroups(structuredClone(msgs.slice(start)) as Message[]) as SessionEntry[];
   }
 
   /** Clear all messages. */
   clear(): void {
+    this.recordRetention(this.messages, 'clear');
     this.messages = [];
     this.last_consolidated = 0;
     this.updatedAt = Date.now();
@@ -156,25 +208,37 @@ export class Session {
 
   /** Retain only a legal suffix of messages that keeps user-turn alignment. */
   retainRecentLegalSuffix(count: number): void {
-    if (count <= 0 || count >= this.messages.length) return;
-    // Keep last `count` messages aligned to user turns
-    const suffix = this.messages.slice(-count);
-    // Ensure first message of suffix is a user message
-    const firstUserIdx = suffix.findIndex(m => m.role === 'user');
-    if (firstUserIdx > 0) {
-      this.messages = suffix.slice(firstUserIdx);
-    } else {
-      this.messages = suffix;
-    }
-    this.updatedAt = Date.now();
+    if (count > 0) this.projectionLimit = count;
   }
 
   /** Enforce file cap by removing older messages. */
   enforceFileCap(maxMessages: number): void {
-    if (this.messages.length > maxMessages) {
-      this.messages = this.messages.slice(-maxMessages);
-      this.updatedAt = Date.now();
-    }
+    this.retainRecentLegalSuffix(maxMessages);
+  }
+
+  /** Explicit fact retention, independent of model budgets. Keeps the last turn. */
+  retainCanonicalRecentTurns(turns: number, reason: string): void {
+    if (!Number.isSafeInteger(turns) || turns < 1 || !reason.trim()) throw new Error('INVALID_RETENTION_POLICY');
+    const starts = this.messages.flatMap((m, i) => m.role === 'user' ? [i] : []);
+    const end = starts.at(-turns) ?? 0;
+    if (!end) return;
+    this.recordRetention(this.messages.slice(0, end), reason);
+    this.messages = this.messages.slice(end);
+    this.last_consolidated = Math.max(0, this.last_consolidated - end);
+  }
+
+  private recordRetention(removed: SessionEntry[], reason: string): void {
+    const cp = this.metadata.runtime_checkpoint;
+    const pending = cp?.pendingToolCalls ?? cp?.pending_tool_calls;
+    if (Array.isArray(pending) && pending.length) throw new Error('UNSETTLED_INTENT_RETENTION_DENIED');
+    const results = new Set(removed.filter(m => m.role === 'tool').map(m => m.tool_call_id));
+    if (removed.some(m => m.tool_calls?.some(c => !results.has(c.id)))) throw new Error('UNSETTLED_INTENT_RETENTION_DENIED');
+    if (!removed.length) return;
+    this.ensureFactIds();
+    const boundaries = (this.metadata.retention_boundaries ?? []) as unknown[];
+    if (boundaries.length >= 1000) throw new Error('RETENTION_AUDIT_CAPACITY_EXCEEDED');
+    this.metadata.retention_boundaries = [...boundaries, { reason, at: new Date().toISOString(), count: removed.length,
+      firstId: removed[0].id, lastId: removed.at(-1)!.id, hash: crypto.createHash('sha256').update(JSON.stringify(removed)).digest('hex') }];
   }
 }
 
@@ -272,7 +336,7 @@ export class AutoCompact {
       });
     }
 
-    session.last_consolidated = session.messages.length;
+    // Summary/compaction never changes canonical facts.
     session.updatedAt = Date.now();
   }
 
@@ -295,6 +359,8 @@ export interface SessionManagerOptions {
   maxSessions?: number;
   sessionTtlMinutes?: number;
   maxMessagesPerSession?: number;
+  maxCanonicalMessages?: number;
+  maxCanonicalBytes?: number;
 }
 
 export class SessionManager {
@@ -302,6 +368,8 @@ export class SessionManager {
   private sessionsDir: string;
   private cache: Map<string, Session>;
   private maxSessions: number;
+  private maxCanonicalMessages: number;
+  private maxCanonicalBytes: number;
   autoCompact: AutoCompact;
 
   constructor(workspace: string, options?: SessionManagerOptions) {
@@ -309,6 +377,8 @@ export class SessionManager {
     this.sessionsDir = path.join(workspace, '.slide', 'sessions');
     this.cache = new Map();
     this.maxSessions = options?.maxSessions ?? DEFAULT_MAX_SESSIONS;
+    this.maxCanonicalMessages = options?.maxCanonicalMessages ?? 100_000;
+    this.maxCanonicalBytes = options?.maxCanonicalBytes ?? 64 * 1024 * 1024;
     this.autoCompact = new AutoCompact({
       sessionTtlMinutes: options?.sessionTtlMinutes,
       maxMessagesPerSession: options?.maxMessagesPerSession,
@@ -335,15 +405,9 @@ export class SessionManager {
     const loaded = this._load(sessionKey) ?? this._repair(sessionKey);
     if (loaded) {
       // Run auto-compaction check
-      const { session, summary } = this.autoCompact.prepareSession(loaded, sessionKey);
-      if (summary) {
-        // Inject summary as a system message so the LLM knows previous context
-        session.addMessage('system', summary);
-      }
+      const session = loaded;
       if (loaded.messages.length > this.autoCompact['_maxMessages']) {
         loaded.retainRecentLegalSuffix(DEFAULT_RECENT_SUFFIX_MESSAGES);
-        loaded.last_consolidated = loaded.messages.length;
-        loaded.updatedAt = Date.now();
       }
       this.cache.set(sessionKey, session);
       return session;
@@ -358,8 +422,7 @@ export class SessionManager {
   async save(session: Session, opts?: { fsync?: boolean }): Promise<void> {
     await fsp.mkdir(this.sessionsDir, { recursive: true });
 
-    // Enforce file cap before saving
-    session.enforceFileCap(DEFAULT_MAX_MESSAGES_PER_SESSION);
+    session.ensureFactIds();
 
     const filePath = path.join(this.sessionsDir, `${this.safeKey(session.sessionKey)}.jsonl`);
 
@@ -377,133 +440,88 @@ export class SessionManager {
       createdAt: session.createdAt,
       updatedAt: Date.now(),
       last_consolidated: session.last_consolidated,
+      canonical_version: 1,
     }));
 
     // Atomic write: tmp + rename
-    const tmpPath = filePath + '.tmp';
-    await fsp.writeFile(tmpPath, lines.join('\n') + '\n', 'utf-8');
+    const content = lines.join('\n') + '\n';
+    if (session.messages.length > this.maxCanonicalMessages || Buffer.byteLength(content) > this.maxCanonicalBytes) {
+      throw new Error('CANONICAL_CAPACITY_EXCEEDED');
+    }
+    const tmpPath = filePath + '.' + crypto.randomUUID() + '.tmp';
+    await fsp.writeFile(tmpPath, content, 'utf-8');
 
     if (opts?.fsync) {
       const fd = await fsp.open(tmpPath, 'r+');
-      await fd.sync();
-      await fd.close();
+      try { await fd.sync(); } finally { await fd.close(); }
     }
 
     await fsp.rename(tmpPath, filePath);
+    if (opts?.fsync) {
+      const directory = await fsp.open(this.sessionsDir, 'r');
+      try { await directory.sync(); } finally { await directory.close(); }
+    }
   }
 
-  /** Load session from disk. Returns null if missing or completely unreadable. */
+  /** Load and atomically migrate valid facts. Repair never invents missing data. */
   _load(sessionKey: string): Session | null {
     const filePath = path.join(this.sessionsDir, `${this.safeKey(sessionKey)}.jsonl`);
     if (!fs.existsSync(filePath)) return null;
-
-    try {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      const lines = content.trim().split('\n').filter(Boolean);
-      if (lines.length === 0) return null;
-
-      const session = new Session(sessionKey);
-
-      for (const line of lines) {
-        try {
-          const parsed = JSON.parse(line);
-          if (parsed.__meta__ || parsed._type === 'session') {
-            session.metadata = parsed.metadata || {};
-            session.createdAt = parsed.createdAt || Date.now();
-            session.updatedAt = parsed.updatedAt || Date.now();
-            if (parsed.last_consolidated !== undefined) {
-              session.last_consolidated = parsed.last_consolidated;
-            }
-          } else {
-            session.messages.push(parsed as SessionEntry);
-          }
-        } catch {
-          // Skip corrupted line — repair mode would handle this
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const session = new Session(sessionKey);
+    let version = 0;
+    let corrupt = 0;
+    let derived = 0;
+    for (const line of content.split('\n').filter(Boolean)) {
+      let parsed: Record<string, any>;
+      try { parsed = JSON.parse(line); } catch { corrupt++; continue; }
+      if (!parsed || typeof parsed !== 'object') { corrupt++; continue; }
+      if (parsed.__meta__ || parsed._type === 'session') {
+        if (parsed.sessionKey && parsed.sessionKey !== sessionKey) throw new Error('CANONICAL_SESSION_MISMATCH');
+        session.metadata = parsed.metadata || {};
+        session.createdAt = parsed.createdAt || 0;
+        session.updatedAt = parsed.updatedAt || 0;
+        session.last_consolidated = parsed.last_consolidated ?? 0;
+        version = parsed.canonical_version ?? 0;
+      } else if (['user', 'assistant', 'system', 'tool'].includes(parsed.role)) {
+        // Old cold-load summary injection is derived, never original system authority.
+        if (parsed.source && parsed.source !== 'fact') {
+          derived++; continue;
         }
-      }
-
-      return session;
-    } catch {
-      return null;
+        session.messages.push(parsed as SessionEntry);
+      } else { corrupt++; }
     }
+    if (!version && session.metadata._last_summary) {
+      session.messages = session.messages.filter(m => {
+        const injected = m.role === 'system' && m.content?.startsWith('Previous conversation summary');
+        if (injected) derived++;
+        return !injected;
+      });
+    }
+    const missingIds = session.messages.some(m => !m.id || !m.turnId || !m.runId);
+    session.ensureFactIds();
+    if (!version) session.metadata.history_gaps = [...((session.metadata.history_gaps ?? []) as unknown[]),
+      { kind: 'legacy_retention_unknown', detail: 'Older versions may have trimmed facts; unavailable facts cannot be recovered.' }];
+    if (corrupt || derived) session.metadata.history_gaps = [...((session.metadata.history_gaps ?? []) as unknown[]),
+      { kind: 'repair', corruptLines: corrupt, excludedDerived: derived }];
+    if (!version || missingIds || corrupt || derived) {
+      const lines = session.messages.map(m => JSON.stringify(m));
+      lines.push(JSON.stringify({ _type: 'session', __meta__: true, sessionKey, canonical_version: 1,
+        metadata: session.metadata, createdAt: session.createdAt, updatedAt: session.updatedAt,
+        last_consolidated: session.last_consolidated }));
+      const repaired = lines.join('\n') + '\n';
+      if (session.messages.length > this.maxCanonicalMessages || Buffer.byteLength(repaired) > this.maxCanonicalBytes) throw new Error('CANONICAL_CAPACITY_EXCEEDED');
+      const tmp = filePath + '.' + crypto.randomUUID() + '.tmp';
+      const fd = fs.openSync(tmp, 'w');
+      try { fs.writeFileSync(fd, repaired, 'utf-8'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      fs.renameSync(tmp, filePath);
+      const directory = fs.openSync(this.sessionsDir, 'r');
+      try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+    }
+    return session;
   }
 
-  /**
-   * Attempt to repair a corrupted session file.
-   * Reads line by line, keeping only valid JSON lines.
-   * Repair a corrupted JSONL session file by retaining valid lines.
-   */
-  _repair(sessionKey: string): Session | null {
-    const filePath = path.join(this.sessionsDir, `${this.safeKey(sessionKey)}.jsonl`);
-    if (!fs.existsSync(filePath)) return null;
-
-    try {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      const lines = content.trim().split('\n').filter(Boolean);
-      if (lines.length === 0) return null;
-
-      const session = new Session(sessionKey);
-      let validLines = 0;
-      let metaLine: Record<string, unknown> | null = null;
-
-      for (const line of lines) {
-        try {
-          const parsed = JSON.parse(line);
-          if (parsed.__meta__ || parsed._type === 'session') {
-            metaLine = parsed;
-            validLines++;
-          } else if (parsed.role) {
-            session.messages.push(parsed as SessionEntry);
-            validLines++;
-          }
-        } catch {
-          // Skip corrupted lines
-        }
-      }
-
-      // Must have at least metadata or one message
-      if (validLines === 0) {
-        // Delete the corrupted file so we start fresh
-        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
-        return null;
-      }
-
-      if (metaLine) {
-        session.metadata = (metaLine.metadata as SessionMetadata) || {};
-        session.createdAt = (metaLine.createdAt as number) || Date.now();
-        session.updatedAt = (metaLine.updatedAt as number) || Date.now();
-        if (metaLine.last_consolidated !== undefined) {
-          session.last_consolidated = metaLine.last_consolidated as number;
-        }
-      }
-
-      // Rewrite repaired file
-      const repairedLines: string[] = [];
-      for (const msg of session.messages) {
-        repairedLines.push(JSON.stringify(msg));
-      }
-      repairedLines.push(JSON.stringify({
-        _type: 'session', __meta__: true,
-        sessionKey: session.sessionKey,
-        metadata: session.metadata,
-        createdAt: session.createdAt,
-        updatedAt: Date.now(),
-        last_consolidated: session.last_consolidated,
-      }));
-
-      try {
-        fs.writeFileSync(filePath, repairedLines.join('\n') + '\n', 'utf-8');
-      } catch {
-        // Can't repair — delete and start fresh
-        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
-        return null;
-      }
-
-      return session;
-    } catch {
-      return null;
-    }
-  }
+  _repair(sessionKey: string): Session | null { return this._load(sessionKey); }
 
   /** Flush all cached sessions to disk. Returns count of sessions saved. */
   async flushAll(): Promise<number> {

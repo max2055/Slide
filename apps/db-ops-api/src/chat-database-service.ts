@@ -280,7 +280,8 @@ export class ChatDatabaseService {
          (session_id, message_id, parent_id, role, content, related_tool, related_skill, metadata)
        SELECT cs.session_id, ?, ?, ?, ?, ?, ?, ?
        FROM chat_sessions cs
-       WHERE cs.session_id = ? AND ${this.accessPredicate('append')}`,
+       WHERE cs.session_id = ? AND ${this.accessPredicate('append')}
+         AND (SELECT COUNT(*) FROM chat_messages bounded WHERE bounded.session_id = cs.session_id) < 99999`,
       [
         message.messageId,
         message.parentId ?? null,
@@ -489,17 +490,33 @@ export class ChatDatabaseService {
         return 0;
       }
 
+      const [active] = await connection.query<RowDataPacket[]>(
+        "SELECT id FROM agent_runs WHERE session_id = ? AND state = 'running' LIMIT 1", [sessionId]);
+      if (active.length) throw new Error('UNSETTLED_INTENT_RETENTION_DENIED');
+      // Move the requested count boundary backwards to its complete user turn.
+      const [boundaries] = await connection.query<RowDataPacket[]>(
+        `SELECT MAX(id) AS boundary FROM chat_messages WHERE session_id = ? AND role = 'user' AND id <= (
+          SELECT MIN(id) FROM (SELECT id FROM chat_messages WHERE session_id = ? ORDER BY id DESC LIMIT ?) retained
+        )`, [sessionId, sessionId, maxMessages]);
+      const boundary = Number(boundaries[0]?.boundary ?? 0);
+      if (!boundary) { await connection.commit(); return 0; }
+      const [checkpointRows] = await connection.query<RowDataPacket[]>(
+        "SELECT metadata FROM chat_sessions WHERE session_id = ?", [sessionId]);
+      const metadata = typeof checkpointRows[0]?.metadata === 'string' ? JSON.parse(checkpointRows[0].metadata) : checkpointRows[0]?.metadata;
+      const cp = metadata?.canonicalRuntimeCheckpoint;
+      if ((cp?.pendingToolCalls ?? cp?.pending_tool_calls ?? []).length) throw new Error('UNSETTLED_INTENT_RETENTION_DENIED');
+      const prior = metadata?.canonicalRetentionBoundaries ?? [];
+      if (prior.length >= 1000) throw new Error('RETENTION_AUDIT_CAPACITY_EXCEEDED');
+      await connection.query(
+        "UPDATE chat_sessions SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.canonicalRetentionBoundaries', CAST(? AS JSON)) WHERE session_id = ?",
+        [JSON.stringify([...prior, { beforeSequence: boundary, at: new Date().toISOString(), requestedMaxMessages: maxMessages, reason: 'explicit_message_cap' }]), sessionId]);
+      await connection.query('DELETE FROM agent_canonical_facts WHERE session_id = ? AND turn_sequence < ?', [sessionId, boundary]);
+
       const [result] = await connection.query<ResultSetHeader>(
-        `DELETE FROM chat_messages
-         WHERE session_id = ? AND id NOT IN (
-           SELECT id FROM (
-             SELECT id FROM chat_messages
-             WHERE session_id = ?
-             ORDER BY created_at DESC, id DESC
-             LIMIT ?
-           ) AS retained_messages
-         )`,
-        [sessionId, sessionId, maxMessages],
+        `DELETE cm FROM chat_messages cm
+         LEFT JOIN chat_messages parent_turn ON parent_turn.session_id = cm.session_id AND parent_turn.message_id = cm.parent_id AND parent_turn.role = 'user'
+         WHERE cm.session_id = ? AND (cm.id < ? OR parent_turn.id < ?)`,
+        [sessionId, boundary, boundary],
       );
       await this.updateSessionStats(connection, sessionId, actor?.userId);
       await connection.commit();

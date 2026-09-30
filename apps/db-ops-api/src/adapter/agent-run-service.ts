@@ -94,9 +94,10 @@ export class AgentRunService {
           ? `<think>${event.thinkingContent}</think>\n\n${event.finalContent || ''}` : event.finalContent;
         const messageId = `run_${run.id}_assistant`;
         await connection.query(
-          `INSERT INTO chat_messages (session_id, message_id, role, content)
-           VALUES (?, ?, 'assistant', ?) ON DUPLICATE KEY UPDATE message_id = message_id`,
-          [run.sessionId, messageId, content],
+          `INSERT INTO chat_messages (session_id, message_id, role, content, parent_id, metadata)
+           VALUES (?, ?, 'assistant', ?, ?, ?) ON DUPLICATE KEY UPDATE message_id = message_id`,
+          [run.sessionId, messageId, content, `run_${run.id}_user`,
+            JSON.stringify({ canonicalRunId: run.id, canonicalTurnId: `run_${run.id}_user` })],
         );
         const [messages] = await connection.query<any[]>(
           'SELECT id, content FROM chat_messages WHERE session_id = ? AND message_id = ?', [run.sessionId, messageId],

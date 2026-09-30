@@ -12,7 +12,7 @@
  * Uses mock LLMProvider (no real SDK calls).
  */
 
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,10 +26,20 @@ import type { ActorContext } from '../../auth/actor-context.js';
 import type { AnyAgentTool } from '../../tools/types.js';
 import { chatDatabaseService } from '../../chat-database-service.js';
 import { createActorBoundToolRegistry, createCronToolRegistry, loadPlatformTools } from '../get-agent-engine.js';
+import { canonicalStore } from '../canonical-store.js';
 import { agentRunService } from '../agent-run-service.js';
 import { instanceDatabaseService } from '../../instance-database-service.js';
 import { completeAnalysisTool } from '../../tools/generated/slide-self-mgmt/complete_analysis.js';
 import { platformLogs } from '../../platform/structured-log-evidence-adapter.js';
+
+// Persistence-boundary mocks; these tests exercise transport/tool policy.
+// Real actor-scoped canonical SQL and failure recovery use the MySQL qualification.
+beforeEach(() => {
+  vi.spyOn(canonicalStore, 'getPage').mockResolvedValue({ messages: [], nextBefore: null });
+  vi.spyOn(canonicalStore, 'appendToolFacts').mockResolvedValue(undefined);
+  vi.spyOn(canonicalStore, 'saveCheckpoint').mockResolvedValue(undefined);
+});
+afterEach(() => vi.restoreAllMocks());
 
 // ── Mock LLMProvider — returns hardcoded responses ──
 
@@ -609,6 +619,7 @@ describe('DirectAdapter', () => {
         requestId: 'ws-catalog-policy-test',
       });
       const metadata = vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
+      vi.spyOn(chatDatabaseService, 'authorizeSession').mockResolvedValue({} as any);
       const createSession = vi.spyOn(chatDatabaseService, 'createSession').mockResolvedValue({ session_id: 'ws-catalog-policy-session' } as any);
       const addMessage = vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
       const decryptedInstanceLookup = vi.spyOn(instanceDatabaseService, 'getInstanceWithDecryptedPassword');
@@ -684,6 +695,7 @@ describe('DirectAdapter', () => {
         sessionVersion: 1, instanceScopes: Object.freeze({}), requestId: 'ws-provider-failure-test',
       });
       const metadata = vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
+      vi.spyOn(chatDatabaseService, 'authorizeSession').mockResolvedValue({} as any);
       const createSession = vi.spyOn(chatDatabaseService, 'createSession').mockResolvedValue({ session_id: 'ws-provider-failure-session' } as any);
       const addMessage = vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
       const findByIdempotencyKey = vi.spyOn(agentRunService, 'findByIdempotencyKey').mockResolvedValue(null);
@@ -756,6 +768,7 @@ describe('DirectAdapter', () => {
         sessionVersion: 1, instanceScopes: Object.freeze({}), requestId: 'ws-provider-failure-test',
       });
       const metadata = vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
+      vi.spyOn(chatDatabaseService, 'authorizeSession').mockResolvedValue({} as any);
       const createSession = vi.spyOn(chatDatabaseService, 'createSession').mockResolvedValue({ session_id: 'ws-provider-failure-session' } as any);
       const addMessage = vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
       const findByIdempotencyKey = vi.spyOn(agentRunService, 'findByIdempotencyKey').mockResolvedValue(null);
@@ -951,6 +964,7 @@ describe('DirectAdapter', () => {
 
     it('binds an authenticated actor to a dangerous tool call and denies the handler', async () => {
       const metadata = vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
+      vi.spyOn(chatDatabaseService, 'authorizeSession').mockResolvedValue({} as any);
       const handler = vi.fn().mockResolvedValue({ success: true, data: 'must not execute' });
       const dangerousTool: AnyAgentTool = {
         name: 'dangerous_tool',
@@ -993,6 +1007,7 @@ describe('DirectAdapter', () => {
       const events: ChatEvent[] = [];
 
       try {
+        vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
         await adapter.chat('adapter-policy-session', 'run the dangerous tool', (event) => events.push(event), viewer);
         expect(handler).not.toHaveBeenCalled();
         expect(events.some((event) => event.type === 'tool_result')).toBe(true);
@@ -1003,6 +1018,7 @@ describe('DirectAdapter', () => {
 
     it('denies a viewer in the real production catalog before the connection tool handler runs', async () => {
       const metadata = vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
+      vi.spyOn(chatDatabaseService, 'authorizeSession').mockResolvedValue({} as any);
       const viewer: ActorContext = Object.freeze({
         userId: 72,
         username: 'catalog-viewer',
@@ -1026,6 +1042,7 @@ describe('DirectAdapter', () => {
       const events: ChatEvent[] = [];
 
       try {
+        vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
         await adapter.chat('catalog-policy-session', 'show the connection', (event) => events.push(event), viewer);
         const result = events.find((event) => event.type === 'tool_result');
         expect(result).toMatchObject({

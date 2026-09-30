@@ -1,3 +1,4 @@
+import { canonicalStore } from '../canonical-store.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -18,7 +19,13 @@ async function adapter(provider: LLMProvider, tools = new ToolRegistry()) {
   const directory = await mkdtemp(join(tmpdir(), 'runtime-lifecycle-')); directories.push(directory);
   const sessions = new SessionManager(directory);
   vi.spyOn(sessions, 'save').mockResolvedValue(undefined);
-  vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue({});
+  let checkpoint: Record<string, unknown> | null = null;
+  vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockImplementation(async () => ({ canonicalRuntimeCheckpoint: checkpoint }));
+  vi.spyOn(chatDatabaseService, 'authorizeSession').mockResolvedValue({} as any);
+  vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
+  vi.spyOn(canonicalStore, 'getPage').mockResolvedValue({ messages: [], nextBefore: null });
+  vi.spyOn(canonicalStore, 'appendToolFacts').mockImplementation(async (_actor, _session, _user, _facts, _iteration, cp) => { if (cp) checkpoint = cp; });
+  vi.spyOn(canonicalStore, 'saveCheckpoint').mockImplementation(async (_actor, _session, cp) => { checkpoint = cp; });
   return new DirectAdapter({ llmProvider: provider, sessionManager: sessions, tools, toolsForActor: () => tools });
 }
 it('actual chat entry passes 120s with LONG_CHAT and still emits one terminal', async () => {

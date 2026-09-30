@@ -113,6 +113,8 @@ export interface StreamCallbacks {
 // ── Messages ──
 
 export interface Message {
+  /** Local provenance; provider adapters serialize only provider-supported fields. */
+  source?: 'fact' | 'derived' | 'runtime' | 'synthetic';
   role: "system" | "user" | "assistant" | "tool";
   content: string | ContentBlock[] | null;
   tool_calls?: ToolCall[];

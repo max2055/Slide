@@ -11,6 +11,11 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { AgentRunner } from '../runner.js';
+import { Session, SessionManager } from '../session.js';
+import { checkpointFacts } from '../runtime/checkpoint.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // We need Session class which is a peer dependency
 // Re-create minimal test helper instead of importing from session.ts
@@ -67,6 +72,38 @@ describe('AgentRunner checkpoint restore', () => {
       }),
     };
     runner = new AgentRunner(mockProvider as any);
+  });
+
+  it('canonical restore deduplicates stable IDs beyond the suffix and leaves placeholders in projection only', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'canonical-cp-'));
+    try {
+      const manager = new SessionManager(dir);
+      const session = manager.getOrCreate('restore');
+      session.addMessage('user', 'execute');
+      const cp = { canonical_run_id: 'run1', iteration: 1,
+        assistantMessage: { role: 'assistant', content: null, tool_calls: [
+          { id: 'a', type: 'function', function: { name: 'read', arguments: '{}' } },
+          { id: 'b', type: 'function', function: { name: 'write', arguments: '{}' } }] },
+        completedToolResults: [{ role: 'tool', content: 'real result', tool_call_id: 'a' }],
+        pendingToolCalls: [{ id: 'b', function: { name: 'write' } }],
+        runtime_state_v1: { schemaVersion: 1, modelSteps: 2, providerAttempts: 2, toolCalls: 2, total: 0,
+          counts: { empty: 0, repetition: 0, continuation: 0, stream: 0, context: 0 }, unknownRequests: 0, reservedTokens: 0, usage: {} } };
+      const facts = checkpointFacts(cp, 'restore');
+      session.appendFacts(facts);
+      session.addMessage('user', 'later unrelated text');
+      session.metadata.runtime_checkpoint = cp;
+      runner._restoreRuntimeCheckpoint(session as any);
+      expect(session.messages).toHaveLength(4);
+      expect(session.messages.every(m => !m.content?.includes('interrupted'))).toBe(true);
+      const projection = session.getHistory();
+      expect(projection.some(m => m.role === 'tool' && m.tool_call_id === 'b' && m.content?.includes('interrupted'))).toBe(true);
+      await manager.save(session);
+      const cold = new SessionManager(dir).getOrCreate('restore');
+      const hash = cold.canonicalHash();
+      runner._restoreRuntimeCheckpoint(cold as any);
+      expect(cold.canonicalHash()).toBe(hash);
+      expect(cold.metadata.runtime_checkpoint?.runtime_state_v1).toEqual(cp.runtime_state_v1);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   describe('_checkpointMessageKey', () => {

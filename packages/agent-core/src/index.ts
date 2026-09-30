@@ -45,6 +45,7 @@ export { createTurnState, transition, snapshotTurnState, restoreTurnState } from
 export type { TurnState } from './runtime/turn-state.js';
 export type { TurnPhase, RunControl, RuntimeStateSnapshot } from './runtime/contracts.js';
 export { Session, SessionManager, AutoCompact } from "./session.js";
+export { checkpointFacts } from './runtime/checkpoint.js';
 export type { SessionEntry, SessionMetadata, SessionData, SessionManagerOptions, AutoCompactOptions } from "./session.js";
 export { SkillsLoader } from "./skills.js";
 export type { Skill, SkillMeta } from "./skills.js";
