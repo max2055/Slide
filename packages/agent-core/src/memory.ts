@@ -8,6 +8,8 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import type { MemoryScope } from './memory-record.js';
+import type { MemoryQuery, MemoryRetrievalLimits, MemoryRetrievalResult } from './memory-retrieval.js';
 import { MemoryHistory, type MemoryHistoryEntry, withMemoryLock, writeMemoryFile } from './memory-history.js';
 
 // ── Constants ──
@@ -85,11 +87,33 @@ export class MemoryStore {
     });
   }
 
-  /** Get memory context string for system prompt injection. */
-  async getMemoryContext(): Promise<string | null> {
-    const memory = await this.readMemory();
-    if (!memory) return null;
-    return `## Memory\n\n${memory.trim()}`;
+  /** Compatibility reference only. Empty query/scope never returns the entire file. */
+  async getMemoryContext(query?: string, scope?: MemoryScope, limits?: Partial<MemoryRetrievalLimits>): Promise<string | null> {
+    if (!query || !scope) return null;
+    const result = await this.retrieveLegacy(scope, { text: query }, limits);
+    return result.count ? JSON.stringify({ records: result.items }) : null;
+  }
+
+  /** File ownership is explicitly supplied by the authenticated caller, never inferred from cwd. */
+  async retrieveLegacy(scope: MemoryScope, query: MemoryQuery, config?: Partial<MemoryRetrievalLimits>): Promise<MemoryRetrievalResult> {
+    // Persistence/archive recovery remains independent of context projection dependencies.
+    const { emptyRetrieval, legacyMemoryRecords, projectMemory, retrievalLimits } = await import('./memory-retrieval.js');
+    const limits = retrievalLimits(config);
+    let handle;
+    try {
+      handle = await fsp.open(path.join(this.workspace, 'MEMORY.md'), 'r');
+      if ((await handle.stat()).size > 65536) return emptyRetrieval(limits, 'degraded', 'MEMORY_SCAN_LIMIT');
+      // A fixed-size read also bounds a concurrent file append after stat().
+      const bytes = Buffer.alloc(65537);
+      const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+      if (bytesRead > 65536) return emptyRetrieval(limits, 'degraded', 'MEMORY_SCAN_LIMIT');
+      const records = legacyMemoryRecords(bytes.subarray(0, bytesRead).toString('utf8'), scope, limits.maxRecords);
+      if (records.length > limits.maxRecords) return emptyRetrieval(limits, 'degraded', 'MEMORY_SCAN_LIMIT');
+      return projectMemory(records, query, limits);
+    } catch (error) {
+      return emptyRetrieval(limits, (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'empty' : 'degraded',
+        (error as NodeJS.ErrnoException).code === 'ENOENT' ? undefined : 'MEMORY_RETRIEVAL_FAILED');
+    } finally { await handle?.close(); }
   }
 
   /** Check if MEMORY.md file exists. */

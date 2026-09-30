@@ -171,6 +171,7 @@ export interface DirectAdapterOptions {
   heartbeatIntervalMs?: number;
   memoryWorkspaceId?: string;
   memoryPipeline?: import('@slide/agent-core').MemoryPipeline;
+  memoryRetrievalLimits?: Partial<import('@slide/agent-core').MemoryRetrievalLimits>;
 }
 
 // ── DirectAdapter ──
@@ -210,12 +211,13 @@ export class DirectAdapter implements IAgentEngine {
     const workspace = opts.workspace || process.cwd();
     this.memoryStore = opts.memoryStore || new MemoryStore(workspace);
     this.businessMemory = new BusinessMemoryService(workspace, opts.memoryWorkspaceId ?? process.env.SLIDE_MEMORY_WORKSPACE_ID,
-      async () => this.providerForPurpose ? this.providerForPurpose('memory') : this.provider, opts.memoryPipeline);
+      async () => this.providerForPurpose ? this.providerForPurpose('memory') : this.provider, opts.memoryPipeline, opts.memoryRetrievalLimits);
     this.skillsLoader = opts.skillsLoader || new SkillsLoader(workspace);
     this.sessionManager = opts.sessionManager || new SessionManager(workspace);
     this.contextBuilder = opts.contextBuilder || new ContextBuilder(workspace, {
       memoryStore: this.memoryStore,
       skillsLoader: this.skillsLoader,
+      memoryRetrievalLimits: this.businessMemory.retriever.limits,
     });
   }
 
@@ -942,10 +944,14 @@ export class DirectAdapter implements IAgentEngine {
 
     // Build messages with ContextBuilder (D-12)
     const skillNames = this.skillsLoader.listSkills().map(s => s.name);
+    const memoryScope = _actor ? this.businessMemory.contextScope(_actor, sessionKey) : undefined;
+    const retrieved = memoryScope && _actor ? await this.businessMemory.retrieve(_actor, sessionKey, message, runId) : undefined;
     const contextMessages = await this.contextBuilder.buildMessages(
       historyBeforeCurrentMessage,
       message,
       skillNames,
+      // Retrieval is request-local: do not retain actor identity or selections on the shared builder.
+      { memoryScope, memory: retrieved },
     );
 
     // Create checkpoint callback that persists to session metadata

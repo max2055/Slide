@@ -121,3 +121,50 @@ it('explicit Stop cancels memory without changing completed chat state; close dr
   await handle({ type: 'memory.stop', sessionKey: 's1', runId: 'r1' }); await active; await adapter.dispose();
   expect(run.state).toBe('completed'); expect((await p.store.transaction(s => s.jobs))[0]).toMatchObject({ state: 'cancelled', attempts: 1 });
 });
+
+it('retrieves only source-valid records with budget and safe ID diagnostics; foreign actor is rejected', async () => {
+  const p = pipeline(); const service = new BusinessMemoryService(directory, 'workspace', async () => provider, p, { maxCount: 1, maxTokens: 1500 });
+  await service.completed(actor, 's1', 'r1');
+  const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const result = await service.retrieve(actor, 's1', 'concise Chinese', 'request');
+  expect(result.count).toBe(1); expect(result.tokens).toBeLessThanOrEqual(1500);
+  expect(result.items[0].sources[0].id).toBe('run_r1_user');
+  expect(JSON.stringify(log.mock.calls)).not.toContain(inputs[0].content); expect(JSON.stringify(log.mock.calls)).not.toContain('concise Chinese');
+  await expect(service.retrieve({ ...actor, userId: 2 }, 's1', 'Chinese', 'request')).rejects.toThrow('not owner');
+  inputs = []; expect((await service.retrieve(actor, 's1', 'Chinese', 'request2')).count).toBe(0);
+});
+it('chat provider sees selected reference with IDs; no identity invoke cannot read actor memory', async () => {
+  const p = pipeline(); const { adapter } = await connection(p);
+  await adapter.extractCompletedMemory(actor, 's1', 'r1');
+  vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue({});
+  vi.spyOn(canonicalStore, 'getPage').mockResolvedValue({ messages: [], nextCursor: undefined } as any);
+  vi.spyOn(canonicalStore, 'saveCheckpoint').mockResolvedValue();
+  vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
+  vi.mocked(provider.chat).mockResolvedValue({ content: 'Acknowledged.', finishReason: 'stop', toolCalls: [], usage: { prompt_tokens: 10, completion_tokens: 2 }, shouldExecuteTools: false, hasToolCalls: false });
+  provider.chatStream = vi.fn(async (messages, tools) => provider.chat(messages, tools));
+  await adapter.chat('s1', 'concise Chinese', async () => {}, actor);
+  const messages = vi.mocked(provider.chat).mock.calls[0][0];
+  expect(messages.find(m => m.role === 'tool')).toMatchObject({ source: 'derived', content: expect.stringContaining('run_r1_user') });
+  expect(messages.filter(m => m.role === 'system').some(m => String(m.content).includes('concise Chinese'))).toBe(false);
+  expect(messages.find(m => m.role === 'user' && m.content === 'concise Chinese')).toBeDefined();
+  vi.mocked(provider.chat).mockClear();
+  await adapter.invoke('internal', 'concise Chinese');
+  expect(vi.mocked(provider.chat).mock.calls[0][0].some(m => m.role === 'tool')).toBe(false);
+});
+it('source lookup failure logs a bounded degradation and chat still completes without full legacy fallback', async () => {
+  const p = pipeline(); const { adapter } = await connection(p);
+  await adapter.extractCompletedMemory(actor, 's1', 'r1');
+  await fs.writeFile(path.join(directory, 'MEMORY.md'), 'Never inject this legacy file on failure.');
+  vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue({});
+  vi.spyOn(canonicalStore, 'getPage').mockResolvedValue({ messages: [] } as any);
+  vi.spyOn(canonicalStore, 'saveCheckpoint').mockResolvedValue();
+  vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
+  vi.mocked(canonicalStore.getCommittedMemoryInputs).mockRejectedValue(new Error('private-source-error'));
+  provider.chatStream = vi.fn(async messages => ({ content: 'Completed without memory.', finishReason: 'stop', toolCalls: [], usage: { prompt_tokens: 10, completion_tokens: 2 }, shouldExecuteTools: false, hasToolCalls: false }));
+  const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const result = await adapter.chat('s1', 'Chinese replies', async () => {}, actor);
+  expect(result.stopReason).toBe('completed');
+  expect(JSON.stringify(vi.mocked(provider.chatStream).mock.calls[0][0])).not.toContain('legacy file');
+  expect(vi.mocked(provider.chatStream).mock.calls[0][0].some(m => m.name === 'runtime_memory')).toBe(false);
+  expect(JSON.stringify(log.mock.calls)).toContain('MEMORY_RETRIEVAL_FAILED'); expect(JSON.stringify(log.mock.calls)).not.toContain('private-source-error');
+});

@@ -12,6 +12,10 @@ import { SkillsLoader } from './skills.js';
 import type { SessionEntry } from './session.js';
 import type { Message } from './types.js';
 import { currentTime, projectContextBlocks, runtimeBlock, type ContextBlock } from './context-block.js';
+import { scopeKey, type MemoryScope } from './memory-record.js';
+import { emptyRetrieval, memoryReferenceBlock, memoryReferenceTokens, retrievalLimits, type MemoryReference, type MemoryRetrievalLimits, type MemoryRetrievalResult } from './memory-retrieval.js';
+
+export interface ContextRequest { memoryScope?: MemoryScope; memory?: MemoryRetrievalResult; }
 
 // ── Constants ──
 
@@ -24,6 +28,9 @@ export class ContextBuilder {
   private memoryStore: MemoryStore;
   private skillsLoader: SkillsLoader;
   private disabledSkills: Set<string>;
+  private memoryRetrieval?: (scope: MemoryScope, query: string) => Promise<MemoryRetrievalResult>;
+  private legacyMemoryScope?: MemoryScope;
+  private memoryLimits: MemoryRetrievalLimits;
 
   constructor(
     workspace: string,
@@ -31,10 +38,16 @@ export class ContextBuilder {
       memoryStore?: MemoryStore;
       skillsLoader?: SkillsLoader;
       disabledSkills?: string[];
+      memoryRetrieval?: (scope: MemoryScope, query: string) => Promise<MemoryRetrievalResult>;
+      legacyMemoryScope?: MemoryScope;
+      memoryRetrievalLimits?: Partial<MemoryRetrievalLimits>;
     },
   ) {
     this.workspace = workspace;
     this.memoryStore = options?.memoryStore ?? new MemoryStore(workspace);
+    this.memoryRetrieval = options?.memoryRetrieval;
+    this.legacyMemoryScope = options?.legacyMemoryScope;
+    this.memoryLimits = retrievalLimits(options?.memoryRetrievalLimits);
     this.skillsLoader = options?.skillsLoader ?? new SkillsLoader(workspace, {
       disabledSkills: options?.disabledSkills,
     });
@@ -71,20 +84,35 @@ export class ContextBuilder {
   }
 
   /** Build a complete message array: system prompt + history + user message. */
-  async buildBlocks(history: SessionEntry[], userMessage: string, skillNames?: string[]): Promise<ContextBlock[]> {
+  async buildBlocks(history: SessionEntry[], userMessage: string, skillNames?: string[], request?: ContextRequest): Promise<ContextBlock[]> {
     const policy = await this.buildSystemPrompt(skillNames);
-    const memory = await this.memoryStore.getMemoryContext();
+    let memory = emptyRetrieval(this.memoryLimits);
+    if (request?.memoryScope) {
+      try {
+        if (request.memory) memory = request.memory;
+        else if (this.memoryRetrieval) memory = await this.memoryRetrieval(request.memoryScope, userMessage);
+        else if (this.legacyMemoryScope && scopeKey(this.legacyMemoryScope) === scopeKey(request.memoryScope)) {
+          memory = await this.memoryStore.retrieveLegacy(request.memoryScope, { text: userMessage }, this.memoryLimits);
+        }
+      } catch { memory = emptyRetrieval(this.memoryLimits, 'degraded', 'MEMORY_RETRIEVAL_FAILED'); }
+    }
+    // Recompute at the projection boundary, including reference envelope/JSON escaping.
+    const selected: MemoryReference[] = [];
+    if (memory.status === 'ok') for (const item of memory.items) {
+      if (selected.length >= this.memoryLimits.maxCount) break;
+      if (memoryReferenceTokens([...selected, item]) <= this.memoryLimits.maxTokens) selected.push(item);
+    }
     return [
       { kind: 'policy', sourceIds: [...BOOTSTRAP_FILES], authority: 'policy', lifetime: 'session', priority: 100, tokenPolicy: 'protected', messages: [{ role: 'system', content: policy }] },
-      ...(memory ? [{ kind: 'memory' as const, sourceIds: ['MEMORY.md'], authority: 'reference' as const, lifetime: 'request' as const, priority: 40, tokenPolicy: 'bounded' as const, value: memory }] : []),
+      ...(selected.length ? [memoryReferenceBlock(selected)] : []),
       { kind: 'history', sourceIds: history.flatMap(m => m.id ? [m.id] : []), authority: 'user', lifetime: 'session', priority: 50, tokenPolicy: 'bounded', messages: history as Message[] },
       runtimeBlock('runtime', currentTime()),
       { kind: 'current_user', sourceIds: [], authority: 'user', lifetime: 'session', priority: 100, tokenPolicy: 'protected', messages: [{ role: 'user', content: userMessage }] },
     ];
   }
 
-  async buildMessages(history: SessionEntry[], userMessage: string, skillNames?: string[]): Promise<Message[]> {
-    return projectContextBlocks(await this.buildBlocks(history, userMessage, skillNames));
+  async buildMessages(history: SessionEntry[], userMessage: string, skillNames?: string[], request?: ContextRequest): Promise<Message[]> {
+    return projectContextBlocks(await this.buildBlocks(history, userMessage, skillNames, request));
   }
 
   /** Get the workspace path used by this builder. */

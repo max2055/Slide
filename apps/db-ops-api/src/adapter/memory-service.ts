@@ -1,7 +1,7 @@
 import path from 'node:path';
 import {
   MemoryPipeline, ProviderMemoryExtractor, StructuredMemoryStore, memoryHash,
-  type LLMProvider, type MemoryScope,
+  MemoryRetriever, emptyRetrieval, type LLMProvider, type MemoryScope, type MemoryRetrievalLimits, type MemorySourceReader,
 } from '@slide/agent-core';
 import type { ActorContext } from '../auth/actor-context.js';
 import { canonicalStore } from './canonical-store.js';
@@ -11,22 +11,44 @@ import { chatDatabaseService } from '../chat-database-service.js';
 /** Authenticated business entrance. Extraction has no registry, tools, approvals or write-to-chat capability. */
 export class BusinessMemoryService {
   readonly pipeline: MemoryPipeline;
-  constructor(workspace: string, private workspaceId: string | undefined, provider: () => Promise<LLMProvider>, pipeline?: MemoryPipeline) {
+  readonly retriever: MemoryRetriever;
+  constructor(workspace: string, private workspaceId: string | undefined, provider: () => Promise<LLMProvider>, pipeline?: MemoryPipeline,
+    limits: Partial<MemoryRetrievalLimits> = {}) {
     const enabled = process.env.SLIDE_MEMORY_PIPELINE_ENABLED === 'true';
     if ((enabled || pipeline?.enabled) && !workspaceId?.trim()) throw new Error('MEMORY_WORKSPACE_ID_REQUIRED');
-    this.pipeline = pipeline ?? new MemoryPipeline(new StructuredMemoryStore(path.join(workspace, '.slide', 'structured-memory')),
-      new ProviderMemoryExtractor(provider), async (scope, ids) => {
+    const reader: MemorySourceReader = async (scope, ids) => {
         if (scope.workspaceId !== this.workspaceId || !/^\d+$/.test(scope.actorId)) throw new Error('MEMORY_SCOPE_INVALID');
         // The record's stored owner scope is trusted server metadata. This check
         // is also used to invalidate a deliberately shared record on owner deletion.
         const live = [];
         for (let offset = 0; offset < ids.length; offset += 1000) live.push(...await canonicalStore.getCommittedMemoryInputs(Number(scope.actorId), scope.sessionId, ids.slice(offset, offset + 1000)));
         return live;
-      }, enabled);
+      };
+    this.pipeline = pipeline ?? new MemoryPipeline(new StructuredMemoryStore(path.join(workspace, '.slide', 'structured-memory')),
+      new ProviderMemoryExtractor(provider), reader, enabled);
+    this.retriever = new MemoryRetriever(scope => this.pipeline.store.list(scope), reader, {
+      ...(process.env.SLIDE_MEMORY_RETRIEVAL_MAX_COUNT !== undefined ? { maxCount: Number(process.env.SLIDE_MEMORY_RETRIEVAL_MAX_COUNT) } : {}),
+      ...(process.env.SLIDE_MEMORY_RETRIEVAL_MAX_TOKENS !== undefined ? { maxTokens: Number(process.env.SLIDE_MEMORY_RETRIEVAL_MAX_TOKENS) } : {}),
+      ...limits,
+    });
   }
   private scope(actor: ActorContext, sessionId: string): MemoryScope {
     if (!this.workspaceId) throw new Error('MEMORY_WORKSPACE_ID_REQUIRED');
     return { workspaceId: this.workspaceId, actorId: String(actor.userId), sessionId };
+  }
+  contextScope(actor: ActorContext, sessionId: string): MemoryScope | undefined {
+    return this.pipeline.enabled ? this.scope(actor, sessionId) : undefined;
+  }
+  async retrieve(actor: ActorContext, sessionId: string, text: string, requestId: string) {
+    if (!this.pipeline.enabled) return emptyRetrieval(this.retriever.limits, 'disabled');
+    // This is an admission check; errors cannot grant access or expose foreign IDs.
+    await chatDatabaseService.authorizeSession(actor, sessionId, 'append');
+    const result = await this.retriever.retrieve(this.scope(actor, sessionId), { text });
+    console.info('[MemoryRetrieval]', JSON.stringify({ requestId: memoryHash(requestId), status: result.status,
+      errorCode: result.errorCode, recordIds: result.items.map(r => r.id),
+      sourceIds: result.items.flatMap(r => r.sources.map(s => s.id)), count: result.count,
+      tokens: result.tokens, method: result.method, maxCount: result.limits.maxCount, maxTokens: result.limits.maxTokens }));
+    return result;
   }
   async completed(actor: ActorContext, sessionId: string, runId: string, signal?: AbortSignal): Promise<void> {
     if (!this.pipeline.enabled) return;
