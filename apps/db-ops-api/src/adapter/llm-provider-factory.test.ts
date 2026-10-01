@@ -17,7 +17,7 @@ describe('configured provider consistency', () => {
     const dispatch = vi.spyOn(agent, 'chat').mockResolvedValue({ content: 'ok', toolCalls: [], finishReason: 'stop', usage: {}, shouldExecuteTools: false, hasToolCalls: false });
     const result = await new AgentRunner(agent).run({ model: agent.getDefaultModel(), initialMessages: [{ role: 'system', content: 'x'.repeat(30000) }, { role: 'user', content: '你好' }], tools: new ToolRegistry(), maxIterations: 1, maxToolResultChars: 1000, hook: new NoopHook() });
     expect(dispatch).toHaveBeenCalledOnce();
-    expect(result.content).toBe('ok');
+    expect(result.finalContent).toBe('ok');
   });
   it('uses bound-model capabilities and output limits independently of the default model', async () => {
     const selected = { ...config, id: 1, context_window: 4096, max_tokens: 12000, models_supported: [{ id: 'fast', contextWindow: 64000, maxTokens: 8000, supportsFunctionCall: true }] };

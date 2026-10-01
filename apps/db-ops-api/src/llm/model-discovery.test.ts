@@ -15,7 +15,7 @@ describe('authenticated model discovery', () => {
     expect(result.models[0]).toMatchObject({ id, contextWindow, maxTokens, supportsFunctionCall: true, parameterSource: 'catalog' });
     expect(result.models[1]).toMatchObject({ id: 'unknown-new-model', parameterSource: 'unknown' });
     expect(result.models[1].contextWindow).toBeUndefined();
-    expect(fetcher.mock.calls[0][0]).toBe(baseURL.replace(/\/+$/, '').replace(/(?<!\/v1)$/, '') + (baseURL.replace(/\/+$/, '').endsWith('/v1') ? '/models' : '/v1/models'));
+    expect(fetcher.mock.calls[0][0]).toBe(baseURL.replace(/\/+$/, '') + (baseURL.replace(/\/+$/, '').endsWith('/v1') ? '/models' : '/v1/models'));
     const headers = fetcher.mock.calls[0][1].headers;
     expect(headers[providerName === 'mimo' ? 'api-key' : 'Authorization']).toBe(providerName === 'mimo' ? 'draft-key' : 'Bearer draft-key');
     expect(fetcher.mock.calls[0][1].redirect).toBe('error');
@@ -47,7 +47,7 @@ describe('authenticated model discovery', () => {
   it('requires management access and reuses saved keys only when no draft key is provided', async () => {
     const app = Fastify();
     const store = { getProviderApiKey: vi.fn().mockResolvedValue('stored-secret'), getProviderByName: vi.fn().mockResolvedValue({ name: 'step', api_base_url: 'https://api.stepfun.com/v1' }) };
-    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: 'step-3.5-flash-2603' }] })));
+    const fetcher = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ data: [{ id: 'step-3.5-flash-2603' }] })));
     await registerModelDiscoveryRoutes(app, async (req, reply) => { if (!req.headers.authorization) return reply.code(401).send({}); }, async (req, reply) => { if (req.headers.authorization !== 'manager') return reply.code(403).send({}); }, store as any, fetcher);
     try {
       const payload = { providerName: 'step', baseURL: 'https://api.stepfun.com/v1' };

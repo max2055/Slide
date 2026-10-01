@@ -19,7 +19,7 @@ describe('model loading and parameter selection', () => {
     document.body.append(element); await element._load(); await element.updateComplete;
     return element;
   }
-  it('loads using the unsaved draft then selects and saves effective limits without persisting a temporary key', async () => {
+  it('loads using the unsaved draft then selects and saves effective limits and clears the saved key field', async () => {
     const element = await page();
     element.form = { ...element.form, api_base_url: 'https://api.stepfun.com/v1', api_key: 'draft-key' };
     await element.updateComplete;
@@ -28,7 +28,7 @@ describe('model loading and parameter selection', () => {
     load.click(); await vi.waitFor(() => expect(post).toHaveBeenCalled());
     await vi.waitFor(() => expect(element.form.models).toHaveLength(1)); await element.updateComplete;
     expect(post).toHaveBeenCalledWith('/llm/models', expect.objectContaining({ providerName: 'step', baseURL: 'https://api.stepfun.com/v1', apiKey: 'draft-key' }));
-    expect(element.form.api_key).toBe('');
+    expect(element.form.api_key).toBe('draft-key');
     const select = element.shadowRoot.querySelector('select[aria-label="选择模型"]');
     select.value = model.id; select.dispatchEvent(new Event('change')); await element.updateComplete;
     expect(element.shadowRoot.querySelector('input[aria-label="上下文窗口"]').value).toBe('256000');
@@ -36,7 +36,8 @@ describe('model loading and parameter selection', () => {
     expect(element.shadowRoot.querySelector('input[aria-label="支持工具调用"]').checked).toBe(true);
     await element._save();
     expect(put).toHaveBeenCalledWith('/llm/configs/11', expect.objectContaining({ contextWindow: 256000, maxTokens: 4096, supportsFunctionCall: true, modelsSupported: [model] }));
-    expect(put.mock.calls[0][1].apiKey).toBeUndefined();
+    expect(put.mock.calls[0][1].apiKey).toBe('draft-key');
+    expect(element.form.api_key).toBe('');
   });
   it('surfaces load failures and keeps existing model parameters', async () => {
     const element = await page();
@@ -44,7 +45,7 @@ describe('model loading and parameter selection', () => {
     post.mockRejectedValue(new Error('MODEL_DISCOVERY_HTTP_401'));
     await element._fetchModels(); await element.updateComplete;
     expect(element.shadowRoot.textContent).toContain('MODEL_DISCOVERY_HTTP_401');
-    expect(element.form.models).toEqual([model]); expect(element.form.api_key).toBe('');
+    expect(element.form.models).toEqual([model]); expect(element.form.api_key).toBe('draft-key');
   });
   it('ignores a late discovery response after switching providers', async () => {
     const element = await page();
