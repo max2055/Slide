@@ -17,6 +17,7 @@ interface LLMProvider {
   api_base_url?: string; default_model?: string;
   models_supported?: ModelConfig[];
   enabled: boolean; is_default: boolean; supports_function_call?: boolean;
+  context_window?: number; max_tokens?: number; supports_vision?: boolean;
 }
 
 interface ModelConfig {
@@ -25,6 +26,10 @@ interface ModelConfig {
   contextWindow?: number;
   maxTokens?: number;
   cost?: { input?: number; output?: number };
+  supportsFunctionCall?: boolean;
+  supportsVision?: boolean;
+  parameterSource?: 'api' | 'catalog' | 'unknown' | 'manual';
+  parameterProvider?: string;
 }
 
 interface FormData {
@@ -32,6 +37,8 @@ interface FormData {
   default_model: string; deployment_type: string; api_format: string;
   api_key: string; enabled: boolean; is_default: boolean;
   models: ModelConfig[]; supports_function_call?: boolean;
+  context_window?: number; max_tokens?: number; supports_vision?: boolean;
+  provider_type?: string;
 }
 
 const API_FORMATS = [
@@ -57,6 +64,8 @@ interface ProviderTemplate {
 }
 
 const PROVIDER_TEMPLATES: ProviderTemplate[] = [
+  { id: "stepfun", name: "stepfun", displayName: "StepFun 阶跃星辰", color: "var(--accent)", bg: "var(--accent-subtle)", baseUrl: "https://api.stepfun.com/v1", defaultModel: "step-3.5-flash-2603", deploymentType: "api", description: "Step 3.5 / 3.7 Flash", models: ["step-3.5-flash-2603", "step-3.5-flash", "step-3.7-flash"] },
+  { id: "mimo", name: "mimo", displayName: "Xiaomi MiMo", color: "var(--accent)", bg: "var(--accent-subtle)", baseUrl: "https://api.xiaomimimo.com/v1", defaultModel: "mimo-v2-flash", deploymentType: "api", description: "MiMo Flash / Pro", models: ["mimo-v2-flash", "mimo-v2-pro", "mimo-v2.6-flash", "mimo-v2.6-pro"] },
   { id: "anthropic", name: "anthropic", displayName: "Anthropic Claude", color: "#d97706", bg: "rgba(217,119,6,0.12)", baseUrl: "https://api.anthropic.com/v1", defaultModel: "claude-sonnet-4-6", deploymentType: "api", description: "Claude Sonnet / Opus / Haiku", models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-5", "claude-sonnet-4-5", "claude-3.5-sonnet", "claude-3.5-haiku"] },
   { id: "openai", name: "openai", displayName: "OpenAI", color: "#10a37f", bg: "rgba(16,163,127,0.12)", baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4.1", deploymentType: "api", description: "GPT-4.1 / GPT-4o / o4-mini", models: ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "o4-mini", "o3-mini", "gpt-4-turbo"] },
   { id: "deepseek", name: "deepseek", displayName: "DeepSeek", color: "#4f46e5", bg: "rgba(79,70,229,0.12)", baseUrl: "https://api.deepseek.com/v1", defaultModel: "deepseek-v4-pro", deploymentType: "api", description: "DeepSeek V4 Pro / Flash", models: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-reasoner", "deepseek-chat", "deepseek-coder"] },
@@ -141,6 +150,9 @@ export class LLMConfigPage extends LitElement {
   @state() private savedOk = false;
   @state() private showKey = false;
   @state() private modelSuggestions: string[] = [];
+  @state() private modelsLoading = false;
+  @state() private modelsMessage = '';
+  private _modelRequestVersion = 0;
   private _savedOkTimer: ReturnType<typeof setTimeout> | null = null;
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
 
@@ -206,6 +218,8 @@ export class LLMConfigPage extends LitElement {
     .form-hint { font-size: var(--text-xs); color: var(--muted); margin-top: 2px; }
     .form-row { display: flex; gap: 10px; }
     .form-row > .form-group { flex: 1; }
+    .model-controls { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-md); margin-bottom: var(--space-md); }
+    .model-controls app-form-field { flex: 1; min-width: 180px; }
     .key-wrapper { position: relative; }
     .key-wrapper .form-input { padding-right: 34px; }
     .key-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; padding: 0; border: none; background: transparent; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; }
@@ -240,6 +254,7 @@ export class LLMConfigPage extends LitElement {
   override disconnectedCallback() {
     super.disconnectedCallback();
     if (this._savedOkTimer) clearTimeout(this._savedOkTimer);
+    this._modelRequestVersion++;
   }
 
   // ── Data ─────────────────────────────────────────────────────────────────
@@ -283,6 +298,7 @@ export class LLMConfigPage extends LitElement {
   // ── Sidebar actions ──────────────────────────────────────────────────────
 
   _selectProvider(p: LLMProvider) {
+    this._resetDiscovery();
     this.selectedId = p.id;
     this.editing = p;
     this.form = {
@@ -291,7 +307,11 @@ export class LLMConfigPage extends LitElement {
       deployment_type: p.deployment_type || "api",
       api_format: p.api_format || "", api_key: "",
       enabled: p.enabled, is_default: p.is_default, supports_function_call: Boolean(p.supports_function_call),
+      context_window: p.models_supported?.find(m => m.id === p.default_model)?.contextWindow ?? p.context_window,
+      max_tokens: p.max_tokens ?? 4096, supports_vision: Boolean(p.supports_vision),
+      provider_type: p.models_supported?.find(m => m.id === p.default_model)?.parameterProvider,
       models: (p.models_supported || []).map((m: any) => ({
+        ...m,
         id: m.id || "", name: m.name || "",
         contextWindow: m.contextWindow || m.context_window,
         maxTokens: m.maxTokens || m.max_tokens,
@@ -302,6 +322,7 @@ export class LLMConfigPage extends LitElement {
     this.formMsg = null;
     this.testResult = null;
     this.showKey = false;
+    this.modelSuggestions = this.form.models.map(m => m.id);
   }
 
   _openAddPicker() {
@@ -313,6 +334,7 @@ export class LLMConfigPage extends LitElement {
   }
 
   _selectTemplate(tpl: ProviderTemplate) {
+    this._resetDiscovery();
     this.editing = null;
     this.form = {
       name: tpl.name, display_name: tpl.displayName,
@@ -320,6 +342,7 @@ export class LLMConfigPage extends LitElement {
       deployment_type: tpl.deploymentType, api_format: "", api_key: "",
       enabled: true, is_default: this.providers.length === 0,
       models: [],
+      max_tokens: 4096, provider_type: ['deepseek', 'stepfun', 'mimo'].includes(tpl.id) ? tpl.id : undefined,
     };
     this.modelSuggestions = tpl.models;
     this.viewMode = "form";
@@ -329,6 +352,7 @@ export class LLMConfigPage extends LitElement {
   }
 
   _openCustomForm() {
+    this._resetDiscovery();
     this.editing = null;
     this.form = { ...blankForm(), is_default: this.providers.length === 0 };
     this.viewMode = "form";
@@ -342,6 +366,13 @@ export class LLMConfigPage extends LitElement {
   private async _save() {
     this.saving = true; this.formMsg = null; this.savedOk = false;
     try {
+      const window = this.form.context_window;
+      const output = this.form.max_tokens;
+      const selected = this.form.models.find(m => m.id === this.form.default_model);
+      if (!this.form.default_model.trim()) throw new Error('请选择或填写模型 ID。');
+      if (!Number.isSafeInteger(window) || !window || window <= 1025) throw new Error('请填写有效的上下文窗口，未知模型需要手动配置。');
+      if (!Number.isSafeInteger(output) || !output || output <= 0 || output + 1024 >= window) throw new Error('Max Tokens 必须大于 0，并为输入保留空间（Max Tokens + 1024 < 上下文窗口）。');
+      if (selected?.maxTokens !== undefined && output > selected.maxTokens) throw new Error('Max Tokens 超过所选模型的最大输出限制。');
       const body: any = {
         name: this.form.name,
         displayName: this.form.display_name || undefined,
@@ -352,14 +383,19 @@ export class LLMConfigPage extends LitElement {
         model: this.form.default_model || undefined,
         enabled: this.form.enabled,
         supportsFunctionCall: Boolean(this.form.supports_function_call),
+        supportsVision: Boolean(this.form.supports_vision),
+        contextWindow: window, maxTokens: output,
         modelsSupported: this.form.models.length > 0 ? this.form.models : undefined,
       };
       if (!body.apiKey) delete body.apiKey;
       if (this.editing) {
-        await apiClient.put(`/llm/configs/${this.editing.id}`, body);
+        const result = await apiClient.put<{ success: boolean; error?: string }>(`/llm/configs/${this.editing.id}`, body);
+        if (result?.success === false) throw new Error(result.error || '保存失败');
       } else {
-        await apiClient.post("/llm/configs", body);
+        const result = await apiClient.post<{ success: boolean; error?: string }>("/llm/configs", body);
+        if (result?.success === false) throw new Error(result.error || '保存失败');
       }
+      this.form = { ...this.form, api_key: '' };
       this.savedOk = true;
       if (this._savedOkTimer) clearTimeout(this._savedOkTimer);
       this._savedOkTimer = setTimeout(() => { this.savedOk = false; }, 2500);
@@ -433,18 +469,53 @@ export class LLMConfigPage extends LitElement {
 
   _updateModel(idx: number, patch: Partial<ModelConfig>) {
     const models = this.form.models.map((m, i) => i === idx ? { ...m, ...patch } : m);
-    this.form = { ...this.form, models };
+    const selected = models[idx]?.id === this.form.default_model;
+    this.form = { ...this.form, models, ...(selected && patch.contextWindow !== undefined ? { context_window: patch.contextWindow } : {}) };
+  }
+
+  private _resetDiscovery() {
+    this._modelRequestVersion++; this.modelsLoading = false; this.modelsMessage = ''; this.modelSuggestions = [];
+  }
+
+  private _selectModel(id: string) {
+    const selected = this.form.models.find(m => m.id === id);
+    this.form = { ...this.form, default_model: id,
+      context_window: selected?.contextWindow,
+      max_tokens: Math.min(4096, selected?.maxTokens ?? 4096, Math.max(1, (selected?.contextWindow ?? 8192) - 1025)),
+      supports_function_call: selected?.supportsFunctionCall ?? false, supports_vision: selected?.supportsVision ?? false };
+    this.modelsMessage = selected?.contextWindow ? '已应用所选模型参数，可按需要修改后保存。' : '未知模型参数，请手动填写上下文窗口、Max Tokens 和工具调用能力。';
+  }
+
+  private _setSelectedParameters(patch: Partial<FormData>) {
+    const models = this.form.models.map(m => m.id !== this.form.default_model ? m : { ...m,
+      ...(patch.context_window !== undefined ? { contextWindow: patch.context_window } : {}),
+      ...(patch.supports_function_call !== undefined ? { supportsFunctionCall: patch.supports_function_call } : {}),
+      ...(patch.supports_vision !== undefined ? { supportsVision: patch.supports_vision } : {}),
+      parameterSource: 'manual' as const });
+    this.form = { ...this.form, ...patch, models };
   }
 
   private async _fetchModels() {
     const url = this.form.api_base_url.trim();
-    if (!url) return;
+    if (!url || !this.form.name.trim() || this.modelsLoading) return;
+    const version = ++this._modelRequestVersion;
+    const name = this.form.name;
+    const type = this.form.provider_type;
+    this.modelsLoading = true; this.modelsMessage = '';
     try {
-      const res = await apiClient.get<{ models: { id: string; name: string }[] }>(`/llm/models?baseUrl=${encodeURIComponent(url)}`);
-      if (Array.isArray(res?.models) && res.models.length > 0) {
-        this.modelSuggestions = res.models.map(m => m.id);
-      }
-    } catch (_) { /* catalog might not have this provider */ }
+      const res = await apiClient.post<{ models: ModelConfig[]; source: string; warning?: string }>('/llm/models', {
+        providerName: name, baseURL: url, apiKey: this.form.api_key.trim() || undefined,
+        apiFormat: this.form.api_format || undefined, deploymentType: this.form.deployment_type, providerType: type || undefined,
+      });
+      if (version !== this._modelRequestVersion || this.form.name !== name || this.form.api_base_url.trim() !== url || this.form.provider_type !== type) return;
+      if (!Array.isArray(res?.models)) throw new Error('供应商未返回有效模型列表');
+      this.form = { ...this.form, models: res.models };
+      this.modelSuggestions = res.models.map(m => m.id);
+      if (res.models.some(m => m.id === this.form.default_model)) this._selectModel(this.form.default_model);
+      this.modelsMessage = res.warning || `已加载 ${res.models.length} 个模型，请选择模型以应用参数。`;
+    } catch (error: any) {
+      if (version === this._modelRequestVersion) this.modelsMessage = `加载模型失败：${error.message}`;
+    } finally { if (version === this._modelRequestVersion) this.modelsLoading = false; }
   }
 
   private async _test(p: LLMProvider) {
@@ -677,19 +748,48 @@ export class LLMConfigPage extends LitElement {
         <span class="form-hint">Key 将加密存储到数据库${isEdit ? ' · 留空则不修改' : ''}</span>
       </div>
 
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Base URL</label>
-          <input class="form-input" .value=${this.form.api_base_url} @input=${(e: any) => this.form.api_base_url = e.target.value} @blur=${this._fetchModels} placeholder="https://api.anthropic.com/v1" style="font-family:var(--font-mono,monospace)" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">默认模型</label>
-          <input class="form-input" .value=${this.form.default_model} @input=${(e: any) => this.form.default_model = e.target.value} @blur=${this._fetchModels} placeholder="claude-sonnet-4-6" style="font-family:var(--font-mono,monospace)" list="model-suggestions" autocomplete="off" />
-          <datalist id="model-suggestions">
-            ${this.modelSuggestions.map(m => html`<option value=${m} />`)}
-          </datalist>
-        </div>
+      <div class="model-controls">
+        <app-form-field label="供应商参数目录" hint="自动识别官方地址；自定义代理可指定供应商。">
+          <select class="form-select" aria-label="供应商参数目录" .value=${this.form.provider_type || ''}
+            @change=${(e: Event) => { this._resetDiscovery(); this.form = { ...this.form, provider_type: (e.target as HTMLSelectElement).value }; }}>
+            <option value="">自动识别 / 其他</option><option value="deepseek">DeepSeek</option><option value="stepfun">StepFun 阶跃星辰</option><option value="mimo">Xiaomi MiMo</option>
+          </select>
+        </app-form-field>
+        <app-form-field label="Base URL">
+          <input class="form-input" aria-label="Base URL" .value=${this.form.api_base_url}
+            @input=${(e: Event) => { this._resetDiscovery(); this.form = { ...this.form, api_base_url: (e.target as HTMLInputElement).value }; }} placeholder="https://api.stepfun.com/v1" />
+        </app-form-field>
+        <button class="btn" data-testid="load-models" .disabled=${this.modelsLoading || !this.form.name.trim() || !this.form.api_base_url.trim()} @click=${this._fetchModels}>
+          ${this.modelsLoading ? '加载中…' : '加载模型'}
+        </button>
       </div>
+      ${this.modelsMessage ? html`<p class="form-hint" role="status" aria-live="polite">${this.modelsMessage}</p>` : ''}
+      <div class="model-controls">
+        <app-form-field label="选择模型" hint="选择后自动应用参数，保存后生效。">
+          <select class="form-select" aria-label="选择模型" .value=${this.form.default_model} .disabled=${this.modelsLoading}
+            @change=${(e: Event) => this._selectModel((e.target as HTMLSelectElement).value)}>
+            <option value="">请选择模型</option>
+            ${this.form.default_model && !this.form.models.some(m => m.id === this.form.default_model) ? html`<option value=${this.form.default_model} .selected=${true}>${this.form.default_model}（手动配置）</option>` : ''}
+            ${this.form.models.filter(m => m.id).map(m => html`<option value=${m.id} .selected=${m.id === this.form.default_model}>${m.name && m.name !== m.id ? `${m.name} · ${m.id}` : m.id}</option>`)}
+          </select>
+        </app-form-field>
+        <app-form-field label="手动模型 ID" hint="列表中没有的模型仍可手动添加。">
+          <input class="form-input" aria-label="手动模型 ID" .value=${this.form.default_model} @change=${(e: Event) => this._selectModel((e.target as HTMLInputElement).value.trim())}
+            list="model-suggestions" autocomplete="off" />
+          <datalist id="model-suggestions">${this.modelSuggestions.map(m => html`<option value=${m} />`)}</datalist>
+        </app-form-field>
+      </div>
+      <div class="model-controls">
+        <app-form-field label="上下文窗口" hint="输入、系统提示词、工具定义和输出共享此窗口。">
+          <input class="form-input" aria-label="上下文窗口" type="number" min="1026" step="1" .value=${this.form.context_window !== undefined ? String(this.form.context_window) : ''}
+            @input=${(e: Event) => this._setSelectedParameters({ context_window: Number((e.target as HTMLInputElement).value) })} />
+        </app-form-field>
+        <app-form-field label="Max Tokens（每次请求输出）" hint="默认预留 4096，需小于上下文窗口；不是模型总容量。">
+          <input class="form-input" aria-label="Max Tokens" type="number" min="1" step="1" .value=${this.form.max_tokens !== undefined ? String(this.form.max_tokens) : ''}
+            @input=${(e: Event) => { this.form = { ...this.form, max_tokens: Number((e.target as HTMLInputElement).value) }; }} />
+        </app-form-field>
+      </div>
+      ${this.form.models.find(m => m.id === this.form.default_model)?.maxTokens ? html`<p class="form-hint">模型最大输出：${this.form.models.find(m => m.id === this.form.default_model)!.maxTokens} tokens · 参数来源：${({ api: '供应商 API', catalog: '参数目录', manual: '手动配置', unknown: '未知' } as Record<string, string>)[this.form.models.find(m => m.id === this.form.default_model)?.parameterSource || 'manual']}</p>` : ''}
 
       <!-- Models -->
       <div style="margin-top:var(--space-xs);padding-top:var(--space-lg);border-top:1px solid var(--border)">
@@ -729,7 +829,7 @@ export class LLMConfigPage extends LitElement {
                   placeholder="200000" />
               </div>
               <div class="form-group" style="margin-bottom:0">
-                <label class="form-label" style="font-size:10px">Max Tokens</label>
+                <label class="form-label" style="font-size:10px">最大输出限制</label>
                 <input class="form-input" style="font-size:var(--text-sm);padding:var(--space-xs) var(--space-sm)" type="number"
                   .value=${m.maxTokens !== undefined ? String(m.maxTokens) : ""}
                   @input=${(e: any) => this._updateModel(i, { maxTokens: e.target.value ? parseInt(e.target.value) : undefined })}
@@ -756,7 +856,7 @@ export class LLMConfigPage extends LitElement {
 
       <app-form-field label="工具调用能力" hint="仅在提供商及所用模型支持工具调用时启用；智能对话和后台分析需要此能力。">
         <input type="checkbox" aria-label="支持工具调用" .checked=${Boolean(this.form.supports_function_call)}
-          @change=${(e: Event) => { this.form = { ...this.form, supports_function_call: (e.target as HTMLInputElement).checked }; }} />
+          @change=${(e: Event) => this._setSelectedParameters({ supports_function_call: (e.target as HTMLInputElement).checked })} />
       </app-form-field>
       <!-- Provider info bar -->
       ${isEdit ? html`

@@ -5,16 +5,20 @@ import { resolveProviderConnection } from '../llm/provider-connection.js';
 import { AnthropicProvider } from './llm-provider.js';
 import { getAllProviders } from '../llm/provider-catalog.js';
 import type { LLMProvider } from '../llm-database-service.js';
+import { providerForModel } from '../llm/model-parameters.js';
 
 type ProviderStore = Pick<typeof llmDatabaseService, 'getAllProviders' | 'getSceneBindings' | 'getProviderApiKey'>;
 
 /** Stored limits remain authoritative; a catalog can only tighten them. No route changes. */
 export function configuredModelCapabilities(provider: LLMProvider, model: string): ModelCapabilities {
+  provider = providerForModel(provider, model);
+  const selected = provider.models_supported?.find(m => m.id === model);
   const catalogs = getAllProviders();
   const catalog = catalogs.flatMap(p => p.models).find(m => m.id === model);
   const configured = provider.context_window;
   if (configured !== undefined && (!Number.isSafeInteger(configured) || configured <= 0)) throw new Error('INVALID_MODEL_CONTEXT');
   if (provider.max_tokens !== undefined && (!Number.isSafeInteger(provider.max_tokens) || provider.max_tokens <= 0)) throw new Error('INVALID_MODEL_OUTPUT');
+  if (selected?.maxTokens !== undefined && (!Number.isSafeInteger(selected.maxTokens) || selected.maxTokens <= 0)) throw new Error('INVALID_MODEL_OUTPUT');
   const nativeCatalog = catalogs.find(p => {
     try {
       const actual = new URL(provider.api_base_url ?? '');
@@ -25,8 +29,8 @@ export function configuredModelCapabilities(provider: LLMProvider, model: string
   const window = configured !== undefined ? Math.min(configured, catalog?.contextWindow ?? Infinity)
     : nativeCatalog?.contextWindow ?? UNKNOWN_CONTEXT_WINDOW;
   return { model, contextWindowTokens: window,
-    ...(catalog ? { maxOutputTokens: catalog.maxTokens } : {}),
-    ...(provider.max_tokens !== undefined ? { preferredOutputTokens: provider.max_tokens } : {}),
+    ...(selected?.maxTokens !== undefined || catalog ? { maxOutputTokens: selected?.maxTokens ?? catalog!.maxTokens } : {}),
+    ...(provider.max_tokens !== undefined ? { preferredOutputTokens: Math.min(provider.max_tokens, selected?.maxTokens ?? catalog?.maxTokens ?? Infinity, window - 1025) } : {}),
     supportsTools: !!provider.supports_function_call,
     supportsVision: !!provider.supports_vision && (!catalog || catalog.input.includes('image')),
     source: configured !== undefined ? 'configuration' : nativeCatalog ? 'catalog' : 'conservative-fallback',

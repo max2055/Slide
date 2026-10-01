@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import type { LLMProvider } from '../llm-database-service.js';
+import { modelProviderId } from './model-parameters.js';
 
 export function resolveProviderConnection(provider: LLMProvider, apiKey: string | null) {
   const local = provider.deployment_type === 'local';
@@ -10,11 +11,14 @@ export function resolveProviderConnection(provider: LLMProvider, apiKey: string 
   }
   const key = apiKey || (local ? 'ollama' : '');
   if (!key) throw new Error('LLM_CREDENTIAL_NOT_CONFIGURED');
+  const selected = provider.models_supported?.find(m => m.id === provider.default_model);
+  const mimo = modelProviderId(provider.name, provider.api_base_url || undefined, selected?.parameterProvider) === 'mimo';
   return {
     format,
     apiKey: key,
     baseURL: provider.api_base_url || (local ? 'http://localhost:11434' : undefined),
     model: provider.default_model || (format === 'anthropic-messages' ? 'claude-sonnet-4-20250929' : 'gpt-4.1'),
+    ...(mimo && format === 'openai-completions' ? { defaultHeaders: { 'api-key': key } } : {}),
   };
 }
 

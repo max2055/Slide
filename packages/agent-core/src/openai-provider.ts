@@ -92,11 +92,13 @@ export class OpenAIProvider implements LLMProvider {
     baseURL?: string;
     model?: string;
     capabilities?: ModelCapabilities;
+    defaultHeaders?: Record<string, string>;
   }) {
     this.client = new OpenAI({
       maxRetries: 0, // Runtime owns the shared attempt/recovery budget.
       apiKey: opts.apiKey,
       baseURL: opts.baseURL || undefined,
+      defaultHeaders: opts.defaultHeaders,
     });
     this.model = opts.model || "gpt-4.1";
     this.nativeOpenAI = isNativeOpenAIEndpoint(this.client.baseURL);

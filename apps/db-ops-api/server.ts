@@ -1,6 +1,7 @@
 import { registerWorkflowHandlers } from './src/workflows/register-workflow-handlers.js';
 import { registerHealthRoutes } from './src/health-routes.js';
 import { registerLLMSceneRoutes } from './src/llm/scene-routes.js';
+import { registerModelDiscoveryRoutes } from './src/llm/model-discovery.js';
 import { capacityInstanceIds } from './src/capacity-scope.js';
 /**
  * Slide - Database Operations API Server
@@ -669,6 +670,7 @@ async function start() {
   await registerInstanceListRoutes(fastify, verifyToken);
 
   await registerLLMSceneRoutes(fastify, verifyToken, requirePermission('llm:manage'));
+  await registerModelDiscoveryRoutes(fastify, verifyToken, requirePermission('llm:manage'), llmDatabaseService);
 
   // ========== LLM 配置管理 API (CRUD) ==========
 

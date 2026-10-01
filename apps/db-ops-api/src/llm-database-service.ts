@@ -15,6 +15,13 @@ export interface ModelInfo {
   name: string;
   recommended?: boolean;
   desc?: string;
+  contextWindow?: number;
+  /** Advertised model output ceiling; provider.max_tokens is the per-request reservation. */
+  maxTokens?: number;
+  supportsFunctionCall?: boolean;
+  supportsVision?: boolean;
+  parameterProvider?: string;
+  parameterSource?: 'api' | 'catalog' | 'unknown' | 'manual';
 }
 
 // LLM Provider 完整配置
@@ -342,6 +349,16 @@ class LLMDatabaseService {
    * 配置提供商
    */
   async configureProvider(config: LLMProviderConfig): Promise<{ success: boolean; error?: string; providerId?: number }> {
+    const invalid = () => ({ success: false, error: 'LLM_MODEL_PARAMETERS_INVALID：上下文和输出必须为正整数，且 Max Tokens + 1024 必须小于上下文窗口' });
+    const positive = (n: unknown) => Number.isSafeInteger(n) && Number(n) > 0;
+    if ((config.contextWindow !== undefined && (!positive(config.contextWindow) || config.contextWindow <= 1025))
+      || (config.maxTokens !== undefined && !positive(config.maxTokens))
+      || (config.contextWindow !== undefined && config.maxTokens !== undefined && config.maxTokens + 1024 >= config.contextWindow)
+      || (config.modelsSupported !== undefined && (!Array.isArray(config.modelsSupported) || config.modelsSupported.some(m => !m || typeof m.id !== 'string' || !m.id.trim()
+        || (m.contextWindow !== undefined && (!positive(m.contextWindow) || m.contextWindow <= 1025))
+        || (m.maxTokens !== undefined && !positive(m.maxTokens))
+        || (m.supportsFunctionCall !== undefined && typeof m.supportsFunctionCall !== 'boolean')
+        || (m.supportsVision !== undefined && typeof m.supportsVision !== 'boolean'))))) return invalid();
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
@@ -349,6 +366,11 @@ class LLMDatabaseService {
 
     try {
       const existing = await this.getProviderByName(config.name);
+      const model = config.model ?? existing?.default_model;
+      const selected = (config.modelsSupported ?? existing?.models_supported)?.find(m => m.id === model);
+      const window = selected?.contextWindow ?? config.contextWindow ?? existing?.context_window ?? 4096;
+      const output = config.maxTokens ?? existing?.max_tokens ?? 2048;
+      if (output + 1024 >= window || (selected?.maxTokens !== undefined && output > selected.maxTokens)) return invalid();
 
       if (existing) {
         // 更新
