@@ -9,6 +9,11 @@ import { llmDatabaseService } from '../llm-database-service.js';
 const config = { name: 'proxy', enabled: true, is_default: true, supports_function_call: true, deployment_type: 'api', api_format: 'anthropic-messages', default_model: 'test-model', api_base_url: 'https://proxy.invalid' } as any;
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 describe('configured provider consistency', () => {
+  it('surfaces routing configuration errors before budgeting on a request while permitting bootstrap', async () => {
+    const store = { getSceneBindings: async () => [], getAllProviders: async () => [{ ...config, supports_function_call: false }], getProviderApiKey: async () => 'fixture' };
+    await expect(createConfiguredAgentProvider(store, 'chat', true, false)).rejects.toThrow('提供商不支持工具调用');
+    expect((await createConfiguredAgentProvider(store)).getDefaultModel()).toBe('unconfigured');
+  });
   it('uses persisted selected-model parameters rather than the legacy 4096 provider window', async () => {
     const selected = { ...config, name: 'step', api_format: 'openai-completions', default_model: 'step-3.5-flash-2603',
       context_window: 4096, max_tokens: 2048, models_supported: [{ id: 'step-3.5-flash-2603', contextWindow: 262144, maxTokens: 262144 }] };

@@ -1,5 +1,61 @@
 import { expect, test } from '@playwright/test';
 
+for (const width of [390, 1280]) test(`loads models, applies parameters and saves the selected model at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 900 });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const model = { id: 'step-3.5-flash-2603', name: 'Step 3.5 Flash 2603', contextWindow: 256000, maxTokens: 256000, supportsFunctionCall: true, supportsVision: false, parameterProvider: 'stepfun', parameterSource: 'catalog' };
+  const provider = { id: 11, name: 'step', display_name: 'StepFun', enabled: true, is_default: true,
+    api_base_url: 'https://api.stepfun.com/step_plan/v1', default_model: model.id, context_window: 4096, max_tokens: 2048, supports_function_call: true, models_supported: [] as any[] };
+  const writes: any[] = [];
+  let fail = false;
+  await page.route('**/api/llm/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/models')) {
+      expect(route.request().method()).toBe('POST');
+      expect(route.request().postDataJSON()).toMatchObject({ providerName: 'step', baseURL: provider.api_base_url });
+      return route.fulfill(fail ? { status: 502, json: { error: 'MODEL_DISCOVERY_HTTP_401' } } : { json: { source: 'api', models: [model, { id: 'unknown-next', parameterSource: 'unknown' }] } });
+    }
+    if (route.request().method() === 'PUT') {
+      const body = route.request().postDataJSON(); writes.push(body);
+      Object.assign(provider, { context_window: body.contextWindow, max_tokens: body.maxTokens, default_model: body.model, supports_function_call: body.supportsFunctionCall, models_supported: body.modelsSupported });
+      return route.fulfill({ json: { success: true } });
+    }
+    return route.fulfill({ json: path.endsWith('/configs') ? [provider] : [] });
+  });
+  await page.route('**/settings/ai/models?**', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body>
+    <settings-shell></settings-shell>
+    <script type="module">import '/src/app/styles.css'; import '/src/app/ui/views/settings-shell.ts'; import '/src/app/ui/views/llm-config.ts';</script>
+    </body></html>` }));
+  await page.goto('/settings/ai/models?view=providers');
+  await expect(page.getByLabel('上下文窗口', { exact: true })).toHaveValue('4096');
+  await page.getByRole('button', { name: '加载模型', exact: true }).click();
+  await expect(page.getByLabel('选择模型', { exact: true })).toContainText(model.name);
+  await page.getByLabel('选择模型', { exact: true }).selectOption(model.id);
+  await expect(page.getByLabel('上下文窗口', { exact: true })).toHaveValue('256000');
+  await expect(page.getByLabel('Max Tokens', { exact: true })).toHaveValue('4096');
+  await expect(page.getByLabel('支持工具调用', { exact: true })).toBeChecked();
+  await page.screenshot({ path: testInfo.outputPath('model-parameters.png'), fullPage: true });
+  const contextBox = await page.getByLabel('上下文窗口', { exact: true }).boundingBox();
+  const panelBox = await page.locator('llm-config-page').boundingBox();
+  expect(contextBox!.x + contextBox!.width).toBeLessThanOrEqual(panelBox!.x + panelBox!.width + 1);
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByRole('button', { name: '✓ 已保存' })).toBeVisible();
+  expect(writes.at(-1)).toMatchObject({ contextWindow: 256000, maxTokens: 4096, supportsFunctionCall: true, model: model.id });
+  await page.reload();
+  await expect(page.getByLabel('上下文窗口', { exact: true })).toHaveValue('256000');
+  fail = true;
+  await page.getByRole('button', { name: '加载模型', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('MODEL_DISCOVERY_HTTP_401');
+  await expect(page.getByLabel('选择模型', { exact: true })).toHaveValue(model.id);
+  await page.getByLabel('选择模型', { exact: true }).selectOption('unknown-next');
+  await expect(page.getByRole('status')).toContainText('未知模型参数');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.locator('.msg-err')).toContainText('上下文窗口');
+  expect(writes).toHaveLength(1);
+  expect(errors).toEqual([]);
+});
+
 for (const width of [390, 1280]) test(`scene assignments persist and report invalid bindings at ${width}px`, async ({ page }, testInfo) => {
   await page.setViewportSize({ width, height: 900 });
   const errors: string[] = [];

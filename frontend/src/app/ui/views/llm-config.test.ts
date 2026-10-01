@@ -68,6 +68,12 @@ describe('model loading and parameter selection', () => {
     await element._save();
     expect(put).not.toHaveBeenCalled();
   });
+  it('persists manually entered model parameters and supplier type for a custom proxy', async () => {
+    const element = await page();
+    element.form = { ...element.form, provider_type: 'mimo', default_model: 'custom-id', context_window: 64000, max_tokens: 2048, supports_function_call: true, models: [] };
+    await element._save();
+    expect(put).toHaveBeenCalledWith('/llm/configs/11', expect.objectContaining({ modelsSupported: [expect.objectContaining({ id: 'custom-id', contextWindow: 64000, supportsFunctionCall: true, parameterProvider: 'mimo', parameterSource: 'manual' })] }));
+  });
 });
 
 describe("llm-config-page connection testing", () => {

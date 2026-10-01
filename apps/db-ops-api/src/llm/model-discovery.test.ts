@@ -26,6 +26,11 @@ describe('authenticated model discovery', () => {
     expect(fetcher.mock.calls[0][0]).toBe('https://proxy.example/step_plan/v1/models');
     expect(result.models[0]).toMatchObject({ contextWindow: 64000, maxTokens: 8000, supportsFunctionCall: false, parameterSource: 'api' });
   });
+  it('recognizes the current DeepSeek Flash ID even when listing only includes limits', async () => {
+    const result = await discoverModels({ providerName: 'deepseek', baseURL: 'https://api.deepseek.com/v1', apiKey: 'key' },
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: 'deepseek-flash', context_window: 1048576, max_output_tokens: 393216 }] }))));
+    expect(result.models[0]).toMatchObject({ contextWindow: 1048576, maxTokens: 393216, supportsFunctionCall: true, supportsVision: true });
+  });
   it('does not hide authentication errors or expose keys in errors', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response('draft-secret', { status: 401 }));
     await expect(discoverModels({ providerName: 'step', baseURL: 'https://api.stepfun.com/v1', apiKey: 'draft-secret' }, fetcher)).rejects.toThrow('MODEL_DISCOVERY_HTTP_401');
