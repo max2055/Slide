@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createConfiguredAgentProvider, configuredModelCapabilities } from './llm-provider-factory.js';
-import { resolveContextConfig } from '@slide/agent-core';
+import { resolveContextConfig, AgentRunner, NoopHook, ToolRegistry } from '@slide/agent-core';
 import { createServiceProviderClient } from '../llm/provider-connection.js';
 import { llmService } from '../llm-service.js';
 import { dbConnection } from '../db-connection.js';
@@ -9,6 +9,21 @@ import { llmDatabaseService } from '../llm-database-service.js';
 const config = { name: 'proxy', enabled: true, is_default: true, supports_function_call: true, deployment_type: 'api', api_format: 'anthropic-messages', default_model: 'test-model', api_base_url: 'https://proxy.invalid' } as any;
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 describe('configured provider consistency', () => {
+  it('uses persisted selected-model parameters rather than the legacy 4096 provider window', async () => {
+    const selected = { ...config, name: 'step', api_format: 'openai-completions', default_model: 'step-3.5-flash-2603',
+      context_window: 4096, max_tokens: 2048, models_supported: [{ id: 'step-3.5-flash-2603', contextWindow: 262144, maxTokens: 262144 }] };
+    const agent = await createConfiguredAgentProvider({ getSceneBindings: async () => [], getAllProviders: async () => [selected], getProviderApiKey: async () => 'fixture' });
+    expect(resolveContextConfig({ model: agent.getDefaultModel() }, agent)).toMatchObject({ contextWindowTokens: 262144, maxTokens: 2048 });
+    const dispatch = vi.spyOn(agent, 'chat').mockResolvedValue({ content: 'ok', toolCalls: [], finishReason: 'stop', usage: {}, shouldExecuteTools: false, hasToolCalls: false });
+    const result = await new AgentRunner(agent).run({ model: agent.getDefaultModel(), initialMessages: [{ role: 'system', content: 'x'.repeat(30000) }, { role: 'user', content: '你好' }], tools: new ToolRegistry(), maxIterations: 1, maxToolResultChars: 1000, hook: new NoopHook() });
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(result.content).toBe('ok');
+  });
+  it('uses bound-model capabilities and output limits independently of the default model', async () => {
+    const selected = { ...config, id: 1, context_window: 4096, max_tokens: 12000, models_supported: [{ id: 'fast', contextWindow: 64000, maxTokens: 8000, supportsFunctionCall: true }] };
+    const agent = await createConfiguredAgentProvider({ getSceneBindings: async () => [{ scene: 'chat', provider_id: 1, model: 'fast' }], getAllProviders: async () => [selected], getProviderApiKey: async () => 'fixture' });
+    expect(resolveContextConfig({ model: 'fast' }, agent)).toMatchObject({ contextWindowTokens: 64000, maxTokens: 8000 });
+  });
   it('passes selected scene model limits and capability configuration through without assuming a 200k window', async () => {
     const selected = { ...config, context_window: 32768, max_tokens: 2048, supports_vision: false };
     const agent = await createConfiguredAgentProvider({ getSceneBindings: async () => [], getAllProviders: async () => [selected], getProviderApiKey: async () => 'fixture' });
