@@ -7,9 +7,10 @@ import { getAllProviders } from './provider-catalog.js';
 // https://models.dev/api.json (xiaomi / stepfun / deepseek)
 const PROFILES: Record<string, ModelInfo[]> = {
   deepseek: [
+    ['deepseek-flash', 1000000, 393216],
     ['deepseek-v4-flash', 1000000, 393216], ['deepseek-v4-pro', 1000000, 393216],
     ['deepseek-chat', 128000, 8192], ['deepseek-reasoner', 128000, 65536],
-  ].map(([id, contextWindow, maxTokens]) => ({ id: String(id), name: String(id), contextWindow: Number(contextWindow), maxTokens: Number(maxTokens), supportsFunctionCall: true, supportsVision: false })),
+  ].map(([id, contextWindow, maxTokens]) => ({ id: String(id), name: String(id), contextWindow: Number(contextWindow), maxTokens: Number(maxTokens), supportsFunctionCall: true, supportsVision: id === 'deepseek-flash' })),
   stepfun: [
     ['step-3.5-flash', 256000, 256000, false], ['step-3.5-flash-2603', 256000, 256000, false],
     ['step-3.7-flash', 256000, 256000, true], ['step-5-preview', 1000000, 65536, true],

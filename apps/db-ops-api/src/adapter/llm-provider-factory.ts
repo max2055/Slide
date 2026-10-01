@@ -37,14 +37,14 @@ export function configuredModelCapabilities(provider: LLMProvider, model: string
     version: 'slide-provider-config/catalog-v1' };
 }
 
-export async function createConfiguredAgentProvider(store: ProviderStore, purpose = 'chat', requiresFunctionCall = true): Promise<AgentProvider> {
+export async function createConfiguredAgentProvider(store: ProviderStore, purpose = 'chat', requiresFunctionCall = true, allowUnconfigured = true): Promise<AgentProvider> {
   let provider;
   let model;
   try {
     ({ provider, model } = await resolveSceneModel(store, purpose, { requiresFunctionCall }));
   } catch (error) {
-    if (!(error instanceof LLMConfigurationError)) throw error;
-    // Keep configuration repair available at bootstrap; requests fail with the exact error.
+    if (!(error instanceof LLMConfigurationError) || !allowUnconfigured) throw error;
+    // Keep configuration repair available at bootstrap; request resolution is strict.
     const unavailable = async (): Promise<never> => { throw error; };
     return { getDefaultModel: () => 'unconfigured', chat: unavailable, chatStream: unavailable };
   }

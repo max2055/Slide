@@ -299,6 +299,7 @@ export class LLMConfigPage extends LitElement {
 
   _selectProvider(p: LLMProvider) {
     this._resetDiscovery();
+    const selectedModel = p.models_supported?.find(m => m.id === p.default_model);
     this.selectedId = p.id;
     this.editing = p;
     this.form = {
@@ -306,9 +307,9 @@ export class LLMConfigPage extends LitElement {
       api_base_url: p.api_base_url || "", default_model: p.default_model || "",
       deployment_type: p.deployment_type || "api",
       api_format: p.api_format || "", api_key: "",
-      enabled: p.enabled, is_default: p.is_default, supports_function_call: Boolean(p.supports_function_call),
+      enabled: p.enabled, is_default: p.is_default, supports_function_call: selectedModel?.supportsFunctionCall ?? Boolean(p.supports_function_call),
       context_window: p.models_supported?.find(m => m.id === p.default_model)?.contextWindow ?? p.context_window,
-      max_tokens: p.max_tokens ?? 4096, supports_vision: Boolean(p.supports_vision),
+      max_tokens: p.max_tokens ?? 4096, supports_vision: selectedModel?.supportsVision ?? Boolean(p.supports_vision),
       provider_type: p.models_supported?.find(m => m.id === p.default_model)?.parameterProvider,
       models: (p.models_supported || []).map((m: any) => ({
         ...m,
@@ -373,6 +374,11 @@ export class LLMConfigPage extends LitElement {
       if (!Number.isSafeInteger(window) || !window || window <= 1025) throw new Error('请填写有效的上下文窗口，未知模型需要手动配置。');
       if (!Number.isSafeInteger(output) || !output || output <= 0 || output + 1024 >= window) throw new Error('Max Tokens 必须大于 0，并为输入保留空间（Max Tokens + 1024 < 上下文窗口）。');
       if (selected?.maxTokens !== undefined && output > selected.maxTokens) throw new Error('Max Tokens 超过所选模型的最大输出限制。');
+      const models = selected ? this.form.models : [...this.form.models, {
+        id: this.form.default_model, name: this.form.default_model, contextWindow: window,
+        supportsFunctionCall: Boolean(this.form.supports_function_call), supportsVision: Boolean(this.form.supports_vision),
+        parameterProvider: this.form.provider_type || undefined, parameterSource: 'manual' as const,
+      }];
       const body: any = {
         name: this.form.name,
         displayName: this.form.display_name || undefined,
@@ -385,7 +391,7 @@ export class LLMConfigPage extends LitElement {
         supportsFunctionCall: Boolean(this.form.supports_function_call),
         supportsVision: Boolean(this.form.supports_vision),
         contextWindow: window, maxTokens: output,
-        modelsSupported: this.form.models.length > 0 ? this.form.models : undefined,
+        modelsSupported: models,
       };
       if (!body.apiKey) delete body.apiKey;
       if (this.editing) {
