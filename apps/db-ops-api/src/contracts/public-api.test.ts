@@ -79,6 +79,7 @@ describe('generated public API contract', () => {
       '/api/cron/jobs/{id}/runs',
       '/api/cron/jobs/{id}/runs/{runId}',
       '/api/database/instances',
+      '/api/database/instances/{id}',
       '/api/database/instances/{id}/host-evidence',
       '/api/database/instances/{id}/hosts',
       '/api/database/instances/{id}/hosts/{serverId}',

@@ -1,3 +1,4 @@
+import { instanceAccessLifecycle } from './resources/instance-access-lifecycle.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 定时监控采集服务
@@ -117,6 +118,15 @@ class MonitorCollector {
     console.log('⏹️  监控采集已停止');
   }
 
+  async stopInstance(id: number): Promise<void> {
+    this.schedule.delete(id);
+    this.lastHealthAttempt.delete(id);
+    collectionCapabilityTracker.clearInstance(id);
+    await this.instanceCollections.get(id);
+    this.schedule.delete(id);
+    collectionCapabilityTracker.clearInstance(id);
+  }
+
   /**
    * 获取采集状态
    */
@@ -140,6 +150,7 @@ class MonitorCollector {
 
   /** Immediately collect one active instance and advance its normal schedule. */
   async collectInstanceNow(instanceId: number): Promise<InstanceCollectionResult> {
+    await instanceAccessLifecycle.assertAvailable(instanceId);
     const instance = await instanceDatabaseService.getInstanceById(instanceId);
     if (!instance || instance.status !== 'active') {
       throw new Error('INSTANCE_NOT_ACTIVE');
@@ -213,6 +224,7 @@ class MonitorCollector {
     const collection = (async () => {
       const metricIds = definitions.map((metric) => metric.id);
       const results = await this.collectInstanceMetrics(instance, metricIds, checkHealth);
+      await instanceAccessLifecycle.assertAvailable(instance.id);
       const collectedAt = Date.now();
       const status = this.schedule.get(instance.id) ?? { lastSuccessByMetric: new Map<string, number>() };
       this.schedule.set(instance.id, status);
@@ -243,6 +255,13 @@ class MonitorCollector {
    * 采集单个实例的指标
    */
   private async collectInstanceMetrics(instance: any, dueMetricIds: readonly string[], checkHealth = true): Promise<Record<string, boolean>> {
+    return instanceAccessLifecycle.track(instance.id, async () => {
+      await instanceAccessLifecycle.assertAvailable(instance.id);
+      return this.performInstanceMetrics(instance, dueMetricIds, checkHealth);
+    });
+  }
+
+  private async performInstanceMetrics(instance: any, dueMetricIds: readonly string[], checkHealth = true): Promise<Record<string, boolean>> {
     // A pending-credentials instance has no meaningful health observation.
     // Guard before invoking checkHealth, which represents a missing connection
     // as a synthetic critical result.
@@ -276,12 +295,14 @@ class MonitorCollector {
       }
 
       const results = dueMetricIds.length > 0 ? await unifiedCollector.collectInstance(instance, dueMetricIds) : {};
+      await instanceAccessLifecycle.assertAvailable(instance.id);
       for (const metricId of dueMetricIds) {
         collectionCapabilityTracker.recordMetricAttempt(instance.id, metricId, Boolean(results[metricId]));
       }
       if (checkHealth) await this.updateHealthStatusFromCheck(instance.id);
       return results;
     } catch (error) {
+      if (instanceAccessLifecycle.isRevoked(instance.id)) return {};
       console.error(`采集实例 ${instance.name} 指标失败:`, error);
       // 记录采集失败
       for (const metricId of dueMetricIds) {
@@ -371,6 +392,7 @@ class MonitorCollector {
   private async updateHealthStatusFromCheck(instanceId: number) {
     try {
       const health = await databaseService.checkHealth(instanceId);
+      await instanceAccessLifecycle.assertAvailable(instanceId);
       if (health) {
         let healthStatus: 'healthy' | 'warning' | 'critical' | 'unknown' = 'unknown';
         if (health.status === 'healthy') healthStatus = 'healthy';
@@ -417,6 +439,7 @@ class MonitorCollector {
           if (slowQueries && slowQueries.length > 0) {
             for (const query of slowQueries) {
               const sqlHash = crypto.createHash('md5').update(query.sql_text).digest('hex');
+              await instanceAccessLifecycle.assertAvailable(instance.id);
               await metricsDatabaseService.recordSlowQuery({
                 instance_id: instance.id,
                 sql_text: query.sql_text,
@@ -454,6 +477,7 @@ class MonitorCollector {
               ? capacity.databases.reduce((sum: number, db: any) => sum + (db.table_count || 0), 0)
               : 0;
             assertWorkflowActive();
+            await instanceAccessLifecycle.assertAvailable(inst.id);
             const saved = await metricsDatabaseService.recordCapacity({
               instance_id: inst.id,
               total_size_gb: capacity.total_size_gb,

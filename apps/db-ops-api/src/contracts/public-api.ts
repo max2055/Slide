@@ -328,7 +328,18 @@ export const DatabaseInstanceSchema = Type.Object({
   description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   hasCredential: Type.Boolean(),
   credentialVersion: Type.Number(),
+  lifecycle_state: Type.Optional(Type.Union([Type.Literal('available'), Type.Literal('deleting'), Type.Literal('deleted')])),
+  removal_requested_at: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  removed_at: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  removal_reasons: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Null()])),
 }, { $id: 'DatabaseInstance', additionalProperties: true });
+
+export const InstanceRemovalResponseSchema = Type.Object({
+  message: Type.Optional(Type.String()),
+  error: Type.Optional(Type.String()),
+  lifecycle_state: Type.Union([Type.Literal('deleting'), Type.Literal('deleted')]),
+  reasons: Type.Optional(Type.Array(Type.String())),
+}, { $id: 'InstanceRemovalResponse', additionalProperties: false });
 
 export const DatabaseInstancesResponseSchema = Type.Array(DatabaseInstanceSchema, {
   $id: 'DatabaseInstancesResponse',
@@ -708,6 +719,7 @@ export const PublicApiSchemas = {
   ResourceAgentDiagnosisResponse: ResourceAgentDiagnosisResponseSchema,
   DatabaseInstance: DatabaseInstanceSchema,
   DatabaseInstancesResponse: DatabaseInstancesResponseSchema,
+  InstanceRemovalResponse: InstanceRemovalResponseSchema,
   InstanceHostRole: InstanceHostRoleSchema,
   InstanceHostMapping: InstanceHostMappingSchema,
   InstanceHost: InstanceHostSchema,

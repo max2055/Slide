@@ -101,7 +101,7 @@ describe('slide_test_connection boundary scenarios', () => {
       errorCode: 'CONNECTION_FAILED',
     });
     expect(query).not.toHaveBeenCalled();
-    expect(instanceService.testConnection).toHaveBeenCalledWith(expect.objectContaining({ password: '' }));
+    expect(instanceService.testConnection).toHaveBeenCalledWith(expect.objectContaining({ password: '' }), 44);
   });
 
   it('preserves a missing stored username for service-side validation', async () => {
@@ -119,6 +119,6 @@ describe('slide_test_connection boundary scenarios', () => {
       error: '连接失败：请输入用户名',
       errorCode: 'CONNECTION_FAILED',
     });
-    expect(instanceService.testConnection).toHaveBeenCalledWith(expect.objectContaining({ username: '' }));
+    expect(instanceService.testConnection).toHaveBeenCalledWith(expect.objectContaining({ username: '' }), 45);
   });
 });

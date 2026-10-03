@@ -7,7 +7,8 @@
  * - removeConnection() handles dmConnection.close()
  * - All dispatch guards use conn.dmConnection for dameng type
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { databaseService } from '../database-service.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -54,9 +55,13 @@ describe('Dameng: testConnection() 达梦连接参数', () => {
 });
 
 describe('Dameng: removeConnection()', () => {
-  it('removeConnection 应关闭 dmConnection', () => {
-    expect(source).toContain('conn?.dmConnection');
-    expect(source).toContain('conn.dmConnection.close()');
+  it('removeConnection 应关闭 dmConnection 并移除连接', async () => {
+    const service = new (databaseService.constructor as any)();
+    const dmConnection = { close: vi.fn().mockResolvedValue(undefined) };
+    service.connections.set(9, { id: 9, dmConnection, connected: true });
+    await service.removeConnection(9);
+    expect(dmConnection.close).toHaveBeenCalledOnce();
+    expect(service.getConnection(9)).toBeNull();
   });
 });
 

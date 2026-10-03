@@ -7,7 +7,8 @@
  *
  * These are source-level checks since we cannot run against a real Oracle database.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { databaseService } from '../database-service.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -73,8 +74,16 @@ describe('GAP-07 / D-14: Oracle pool management', () => {
     expect(source).toContain('poolTimeout:');
   });
 
-  it('removeConnection 应包含 oraclePool.close', () => {
-    expect(source).toContain('oraclePool.close');
+  it('removeConnection 应先关闭 session 再关闭 pool', async () => {
+    const service = new (databaseService.constructor as any)();
+    const closed: string[] = [];
+    const oracleConnection = { close: vi.fn(async () => { closed.push('session'); }) };
+    const oraclePool = { close: vi.fn(async () => { closed.push('pool'); }) };
+    service.connections.set(9, { id: 9, oracleConnection, oraclePool, connected: true });
+    await service.removeConnection(9);
+    expect(closed).toEqual(['session', 'pool']);
+    expect(oraclePool.close).toHaveBeenCalledWith(0);
+    expect(service.getConnection(9)).toBeNull();
   });
 });
 

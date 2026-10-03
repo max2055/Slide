@@ -29,6 +29,7 @@ export interface AiAnalysisRecord {
   completed_at: Date | null;
   created_at: Date;
   updated_at: Date;
+  instance_lifecycle_state?: 'available' | 'deleting' | 'deleted' | null;
   recovery_reason?: string | null;
   legacy_status?: string | null;
   request_state?: string | null;
@@ -337,9 +338,9 @@ class AiAnalysisDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT a.*, d.job_id, d.request_state, d.attempt_number, d.current_run_id, d.authorization_version,
+        `SELECT a.*, i.lifecycle_state AS instance_lifecycle_state, d.job_id, d.request_state, d.attempt_number, d.current_run_id, d.authorization_version,
          JSON_UNQUOTE(JSON_EXTRACT(d.request_snapshot, '$.actor.userId')) AS request_actor_id
-         FROM ai_analysis a LEFT JOIN analysis_dispatches d ON d.analysis_id = a.id WHERE a.id = ?`,
+         FROM ai_analysis a LEFT JOIN analysis_dispatches d ON d.analysis_id = a.id LEFT JOIN database_instances i ON i.id = a.instance_id WHERE a.id = ?`,
         [analysisId]
       ) as any;
 
@@ -388,7 +389,7 @@ class AiAnalysisDatabaseService {
 
     try {
       let sql = `
-        SELECT * FROM ai_analysis WHERE 1=1
+        SELECT ai_analysis.*, (SELECT lifecycle_state FROM database_instances WHERE id = ai_analysis.instance_id) AS instance_lifecycle_state FROM ai_analysis WHERE 1=1
       `;
       const params: any[] = [];
 

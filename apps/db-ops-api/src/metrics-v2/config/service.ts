@@ -1,3 +1,4 @@
+import { instanceAccessLifecycle } from '../../resources/instance-access-lifecycle.js';
 import { randomUUID } from 'node:crypto';
 import type { ActorContext } from '../../auth/actor-context.js';
 import type { CollectionAttempt } from '../../contracts/metrics-v2/index.js';
@@ -37,16 +38,17 @@ export class MetricConfigurationService {
     const reservation = await this.store.reserve(ref);
     rule(reservation, 'TRIAL_BUSY', 409);
     const controller = new AbortController();
+    const signal = ref.type === 'instance' ? AbortSignal.any([controller.signal, instanceAccessLifecycle.signal(ref.id)]) : controller.signal;
     const timer = setTimeout(() => controller.abort(), Math.min(plan.timeoutMs, 30000));
     try {
       const check = async () => {
-        controller.signal.throwIfAborted();
+        signal.throwIfAborted();
         await reservation.connection.ping();
         const current = await this.policy.changeBinding(actor, ref, input, false);
         rule(stable(current.resources[0].resolved.settings) === stable(next.resolved.settings)
           && stable(current.resources[0].resolved.metric_sources) === stable(next.resolved.metric_sources)
           && current.resources[0].resolved.plan.binding.policy_revision === next.resolved.plan.binding.policy_revision, 'POLICY_REVISION_CONFLICT', 409);
-        controller.signal.throwIfAborted();
+        signal.throwIfAborted();
       };
       await check();
       const access = await this.access.resolve(ref);
@@ -57,7 +59,7 @@ export class MetricConfigurationService {
         overrides: { enabled: s.enabled, interval_ms: s.interval_ms, timeout_ms: s.timeout_ms, stale_after_ms: s.stale_after_ms,
           max_counter_gap_ms: s.max_counter_gap_ms, max_rows: s.max_rows } }, {
         ...access, binding_id: refKey(ref), attempt_id: `trial:${randomUUID()}`, config_revision: next.binding.revision,
-        observed_at: new Date().toISOString(), signal: controller.signal, before_request: async () => { await check(); await access.assertCurrent?.(); },
+        observed_at: new Date().toISOString(), signal, before_request: async () => { await check(); await access.assertCurrent?.(); },
         collector_ids: plan.collectorIds, metric_keys: plan.metricKeys,
         previous_capabilities: next.resolved.metric_templates.map(t => t.capability),
       });

@@ -2835,11 +2835,60 @@
           "id": {
             "type": "number"
           },
+          "lifecycle_state": {
+            "anyOf": [
+              {
+                "const": "available",
+                "type": "string"
+              },
+              {
+                "const": "deleting",
+                "type": "string"
+              },
+              {
+                "const": "deleted",
+                "type": "string"
+              }
+            ]
+          },
           "name": {
             "type": "string"
           },
           "port": {
             "type": "number"
+          },
+          "removal_reasons": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "removal_requested_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "removed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "status": {
             "type": "string"
@@ -2994,11 +3043,60 @@
             "id": {
               "type": "number"
             },
+            "lifecycle_state": {
+              "anyOf": [
+                {
+                  "const": "available",
+                  "type": "string"
+                },
+                {
+                  "const": "deleting",
+                  "type": "string"
+                },
+                {
+                  "const": "deleted",
+                  "type": "string"
+                }
+              ]
+            },
             "name": {
               "type": "string"
             },
             "port": {
               "type": "number"
+            },
+            "removal_reasons": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "removal_requested_at": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "removed_at": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "status": {
               "type": "string"
@@ -4905,6 +5003,40 @@
         },
         "required": [
           "hosts"
+        ],
+        "type": "object"
+      },
+      "InstanceRemovalResponse": {
+        "$id": "InstanceRemovalResponse",
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "lifecycle_state": {
+            "anyOf": [
+              {
+                "const": "deleting",
+                "type": "string"
+              },
+              {
+                "const": "deleted",
+                "type": "string"
+              }
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "lifecycle_state"
         ],
         "type": "object"
       },
@@ -10527,6 +10659,65 @@
               }
             },
             "description": "Redacted managed database instances"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/database/instances/{id}": {
+      "delete": {
+        "description": "Requires instance:delete and instance admin access. Commits deletion intent before stopping tasks and closing connections. Retains an ID tombstone and historical data; never nulls task targets. Repeat DELETE retries incomplete cleanup. History endpoints retain their response shape and expose X-Instance-Lifecycle-State.",
+        "operationId": "removeDatabaseInstance",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceRemovalResponse"
+                }
+              }
+            },
+            "description": "All cleanup settled; tombstone committed"
+          },
+          "400": {
+            "description": "Invalid instance ID"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission or instance admin access denied"
+          },
+          "404": {
+            "description": "Instance absent"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceRemovalResponse"
+                }
+              }
+            },
+            "description": "Access revoked; cleanup incomplete. Retry DELETE; never reconnect automatically."
+          },
+          "503": {
+            "description": "Cleanup runtime or durable intent store unavailable"
           }
         },
         "security": [

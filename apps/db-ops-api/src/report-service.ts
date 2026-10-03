@@ -1,3 +1,4 @@
+import { instanceAccessLifecycle } from './resources/instance-access-lifecycle.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 报表生成服务
@@ -332,6 +333,7 @@ class ReportService {
     instanceId: number,
     options: ReportOptions = {}
   ): Promise<Report> {
+    await instanceAccessLifecycle.assertAvailable(instanceId);
     const format = options.format || 'html';
     let report: Report | null = null;
 
@@ -412,6 +414,7 @@ class ReportService {
     instanceId: number,
     options: ReportOptions = {}
   ): Promise<Report> {
+    await instanceAccessLifecycle.assertAvailable(instanceId);
     const format = options.format || 'html';
     const topN = options.topN || 20;
     let report: Report | null = null;
@@ -489,6 +492,7 @@ class ReportService {
     instanceId: number,
     options: ReportOptions = {}
   ): Promise<Report> {
+    await instanceAccessLifecycle.assertAvailable(instanceId);
     const format = options.format || 'html';
     const topN = options.topN || 20;
     let report: Report | null = null;
@@ -567,6 +571,7 @@ class ReportService {
     instanceId: number,
     options: ReportOptions = {}
   ): Promise<Report> {
+    await instanceAccessLifecycle.assertAvailable(instanceId);
     const format = options.format || 'html';
     let report: Report | null = null;
 
@@ -644,6 +649,7 @@ class ReportService {
     instanceId: number,
     options: ReportOptions = {}
   ): Promise<Report> {
+    await instanceAccessLifecycle.assertAvailable(instanceId);
     if (type === 'health' || type === 'performance' || type === 'capacity') {
       const source = await operationalSource({ type: 'instance', id: instanceId });
       if (source === 'pending') throw new Error('METRIC_SOURCE_PENDING');

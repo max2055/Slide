@@ -65,6 +65,7 @@ export class CronExecutor {
     outputSchema?: Record<string, unknown> | null,
     authority?: CronToolAuthority,
     completionBinding?: { runId: string; signal?: AbortSignal; save(completion: CronCompletion): Promise<void> },
+    removalSignal?: AbortSignal,
   ): Promise<CronExecutionResult> {
     const registry = typeof this.registry === 'function'
       ? await this.registry(authority!) : this.registry;
@@ -73,9 +74,10 @@ export class CronExecutor {
     const hook = new CronHook();
     const controller = new AbortController();
     const completionContext: CronCompletionContext | undefined = completionBinding ? { ...completionBinding, outputSchema, signal: controller.signal } : undefined;
-    const externalAbort = () => controller.abort(completionBinding?.signal?.reason);
-    completionBinding?.signal?.addEventListener('abort', externalAbort, { once: true });
-    if (completionBinding?.signal?.aborted) externalAbort();
+    const externalSignal = completionBinding?.signal && removalSignal ? AbortSignal.any([completionBinding.signal, removalSignal]) : removalSignal ?? completionBinding?.signal;
+    const externalAbort = () => controller.abort(externalSignal?.reason);
+    externalSignal?.addEventListener('abort', externalAbort, { once: true });
+    if (externalSignal?.aborted) externalAbort();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let timedOut = false;
     let pendingOperations = 0;
@@ -170,7 +172,7 @@ export class CronExecutor {
       };
     } finally {
       clearTimeout(timer);
-      completionBinding?.signal?.removeEventListener('abort', externalAbort);
+      externalSignal?.removeEventListener('abort', externalAbort);
     }
   }
 

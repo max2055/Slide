@@ -1,3 +1,4 @@
+import { instanceAccessLifecycle } from '../../resources/instance-access-lifecycle.js';
 import { validateBindings, type Resource } from '../../contracts/metrics-v2/index.js';
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
@@ -40,6 +41,9 @@ export class MysqlScheduleStore {
     return rows[0] ? decode<Published>(rows[0].payload) : null;
   }
   async enqueue(published: Published, now: number): Promise<boolean> {
+    if (published.binding.resource.type === 'instance') {
+      try { await instanceAccessLifecycle.assertAvailable(published.binding.resource.id); } catch { return false; }
+    }
     // Compile before any write; corrupt configuration never queues a job or advances applied revision.
     const plan = compilePlan(this.registry, published.resolved), ref = published.binding.resource;
     rule(plan.revision === published.binding.revision && refKey(ref) === refKey(plan.resource), 'PLAN_IDENTITY');
@@ -106,6 +110,7 @@ export class MysqlScheduleStore {
   }
   private async valid(c: PoolConnection, ref: Ref, revision: number, job: ClaimedJob, ctx: JobExecutionContext): Promise<Published | null> {
     ctx.signal.throwIfAborted();
+    if (ref.type === 'instance') await instanceAccessLifecycle.assertAvailable(ref.id);
     const current = await this.current(c, ref);
     if (!current || current.binding.revision !== revision) return null;
     const [rows] = await c.execute<RowDataPacket[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND state = 'running'

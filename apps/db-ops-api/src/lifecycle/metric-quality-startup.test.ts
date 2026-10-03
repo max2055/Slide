@@ -34,6 +34,8 @@ async function startWorkers(pool: Pick<Pool, 'execute'>) {
   const context: Record<string, unknown> = {
     console: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
     pool, dbConnection: { getPool: () => pool },
+    instanceRemovalService: { configure: vi.fn(), remove: vi.fn() },
+    instanceRemovalStore: { pendingIds: vi.fn(async () => []) },
     require: (id: string) => {
       if (id !== './src/db-connection') throw new Error(`Unexpected startup import: ${id}`);
       return { dbConnection: { getPool: () => pool } };

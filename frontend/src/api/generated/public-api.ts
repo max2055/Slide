@@ -122,7 +122,18 @@ export interface DatabaseInstance {
   description?: string | null;
   hasCredential: boolean;
   credentialVersion: number;
+  lifecycle_state?: 'available' | 'deleting' | 'deleted';
+  removal_requested_at?: string | null;
+  removed_at?: string | null;
+  removal_reasons?: string[] | null;
   [key: string]: unknown;
+}
+
+export interface InstanceRemovalResponse {
+  message?: string;
+  error?: string;
+  lifecycle_state: 'deleting' | 'deleted';
+  reasons?: string[];
 }
 
 export type DatabaseInstancesResponse = DatabaseInstance[];

@@ -1,3 +1,7 @@
+import { instanceHistoryContext } from './src/resources/instance-history-context.js';
+import { InstanceRemovalResponseSchema } from './src/contracts/public-api.js';
+import { instanceRemovalStore, instanceRemovalService } from './src/resources/instance-removal-service.js';
+import { instanceAccessLifecycle } from './src/resources/instance-access-lifecycle.js';
 import { startMetricRetention } from './src/workflows/metric-retention-handler.js';
 import { registerWorkflowHandlers, registerCronRunHandler } from './src/workflows/register-workflow-handlers.js';
 import { registerHealthRoutes } from './src/health-routes.js';
@@ -233,6 +237,7 @@ async function start() {
   // Fail fast before registering auth routes or starting the WS adapter.
   await new MigrationRunner(pool as any).run();
   console.log('✅ Schema migration ledger is current');
+  instanceAccessLifecycle.configure(id => instanceRemovalStore.available(id));
 
   if (pool) {
     const dbAuditLogStore = new DatabaseAuditLogStore(pool);
@@ -1379,17 +1384,17 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 删除实例
-  fastify.delete('/api/database/instances/:id', { preHandler: [verifyToken, requirePermission('instance:delete'), requireInstanceAccess('admin')] }, async (request, reply) => {
+  fastify.delete('/api/database/instances/:id', { preHandler: [verifyToken, requirePermission('instance:delete'), requireInstanceAccess('admin')], schema: { response: { 200: InstanceRemovalResponseSchema, 400: InstanceRemovalResponseSchema, 404: InstanceRemovalResponseSchema, 409: InstanceRemovalResponseSchema, 503: InstanceRemovalResponseSchema } } }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const result = await instanceDatabaseService.deleteInstance(Number(id));
       if (result.success) {
-        reply.send({ message: '删除成功' });
+        reply.send({ message: '删除成功', lifecycle_state: result.state });
       } else {
-        reply.code(400).send({ error: result.error });
+        reply.code(result.statusCode ?? 409).send({ error: result.error, lifecycle_state: result.state, reasons: result.reasons ?? [] });
       }
     } catch (error: any) {
-      reply.code(500).send({ error: '删除实例失败：' + error.message });
+      reply.code(503).send({ error: 'INSTANCE_REMOVAL_FAILED', lifecycle_state: 'deleting' });
     }
   });
 
@@ -1401,6 +1406,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (!instance) {
         return reply.code(404).send({ error: '实例不存在' });
       }
+      if (instance.lifecycle_state && instance.lifecycle_state !== 'available') return reply.code(410).send({ error: 'INSTANCE_REMOVED', lifecycle_state: instance.lifecycle_state });
       const password = await instanceDatabaseService.getInstancePassword(Number(id));
       if (!password) {
         return reply.code(400).send({ error: '实例未设置密码' });
@@ -2233,7 +2239,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 获取实例历史指标
-  fastify.get('/api/database/instances/:id/metrics/history', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/metrics/history', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only'), instanceHistoryContext] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const { period = '1h', interval = '5m', metrics } = request.query as { period?: string; interval?: string; metrics?: string };
@@ -2363,7 +2369,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 查询历史（SQL 控制台用）— 数据库持久化版本
-  fastify.get('/api/database/instances/:id/query-history', { preHandler: [verifyToken, requirePermission('instance:query'), requireInstanceAccess()] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/query-history', { preHandler: [verifyToken, requirePermission('instance:query'), requireInstanceAccess(), instanceHistoryContext] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const query = request.query as any;
@@ -2431,7 +2437,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // 获取容量历史趋势
-  fastify.get('/api/database/instances/:id/capacity/history', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
+  fastify.get('/api/database/instances/:id/capacity/history', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only'), instanceHistoryContext] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const hours = Number((request.query as any)?.hours) || 168; // 默认 7 天
@@ -2446,7 +2452,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 获取健康评分历史趋势
   fastify.get('/api/database/instances/:id/health-history', {
-    preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')],
+    preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only'), instanceHistoryContext],
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
@@ -2462,7 +2468,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 获取最新一次健康检查的详细 checks
   fastify.get('/api/database/instances/:id/health-checks', {
-    preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')],
+    preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only'), instanceHistoryContext],
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
@@ -5582,6 +5588,17 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     return await workflowRegistry.executeWithResult({ id: runId, type, payload, attempts: 1, maxAttempts: 1, fencingToken: context?.fencingToken ?? 0 }, context) as import('./src/cron/cron-run-store.js').CronCompletion | undefined;
   }, () => startup.assertOwned());
   registerCronRunHandler(workflowRegistry, (runId, context) => cronManager!.executeRun(runId, context));
+  instanceRemovalService.configure({
+    stopTasks: id => cronManager!.stopInstance(id),
+    stopCollection: id => monitorCollector.stopInstance(id),
+    closeConnections: id => databaseService.removeConnection(id),
+  });
+  // D1 lease ownership is already acquired; replay only durable deletion intents.
+  for (const id of await instanceRemovalStore.pendingIds()) {
+    await startup.assertOwned();
+    const result = await instanceRemovalService.remove(id);
+    if (!result.success) console.warn('[InstanceRemoval]', id, result.error, result.reasons);
+  }
   await startup.step(() => cronManager!.start());
   await startup.assertOwned();
   workflowTimer = setInterval(() => {
