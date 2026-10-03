@@ -12,6 +12,11 @@ const binding = { scene: 'sql_analysis' as const, provider_id: 1, model: 'fast' 
 afterEach(() => vi.restoreAllMocks());
 
 describe('scene routing', () => {
+  it('checks selected model capabilities, including explicit tool rejection', () => {
+    const models = [{ ...provider, supports_function_call: false, models_supported: [{ id: 'fast', contextWindow: 64000, supportsFunctionCall: true }, { id: 'reasoning', supportsFunctionCall: false }] }];
+    expect(selectSceneModel(models, [binding], 'sql_analysis', { requiresFunctionCall: true, minContextWindow: 32000 }).provider.context_window).toBe(64000);
+    expect(() => selectSceneModel([{ ...models[0], supports_function_call: true }], [{ ...binding, scene: 'chat', model: 'reasoning' }], 'chat')).toThrow('工具调用');
+  });
   it('uses global default for unbound/unknown purposes and distinct models for one provider', () => {
     expect(selectSceneModel([provider], [], 'chat').model).toBe('base');
     expect(selectSceneModel([provider], [binding], 'other').model).toBe('base');

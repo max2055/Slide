@@ -1,4 +1,5 @@
 import type { LLMProvider } from '../llm-database-service.js';
+import { providerForModel } from './model-parameters.js';
 
 export const LLM_SCENES = ['chat', 'sql_analysis', 'fault_diagnosis', 'health_check'] as const;
 export type LLMScene = typeof LLM_SCENES[number];
@@ -28,7 +29,7 @@ export function selectSceneModel(
   const scene = sceneForPurpose(purpose);
   const binding = scene ? bindings.find(b => b.scene === scene) : undefined;
   // Existing explicit API overrides remain supported only when no scene is bound.
-  const provider = binding ? providers.find(p => p.id === binding.provider_id)
+  let provider = binding ? providers.find(p => p.id === binding.provider_id)
     : override?.provider ? providers.find(p => p.name === override.provider)
     : providers.find(p => p.is_default);
   const fail = (message: string): never => { throw new LLMConfigurationError(`LLM 配置错误（${scene || '全局默认'}）：${message}`); };
@@ -39,6 +40,7 @@ export function selectSceneModel(
   if (binding && model !== provider.default_model && !provider.models_supported?.some(m => m.id === model)) {
     return fail(`模型 ${model} 不在提供商模型列表中`);
   }
+  provider = providerForModel(provider, model);
   if ((scene === 'chat' || requirements.requiresFunctionCall) && !provider.supports_function_call) return fail('提供商不支持工具调用');
   if (requirements.requiresVision && !provider.supports_vision) return fail('提供商不支持视觉输入');
   if (requirements.minContextWindow && provider.context_window < requirements.minContextWindow) return fail('提供商上下文窗口不足');
