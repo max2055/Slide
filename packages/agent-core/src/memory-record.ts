@@ -102,6 +102,20 @@ export function applyCandidates(state: MemoryState, job: MemoryJob, candidates: 
 export class StructuredMemoryStore {
   readonly file: string;
   constructor(directory: string) { this.file = path.resolve(directory, 'memory-v1.json'); }
+  /** One file open reads either inode around an atomic rename, never a partial write.
+   * A concurrent mutation may finish after this snapshot; the next read sees it.
+   * Reads neither recover locks nor initialize/persist a missing store.
+   */
+  private async readSnapshot(): Promise<MemoryState> {
+    let state: MemoryState;
+    try { state = JSON.parse(await fs.readFile(this.file, 'utf8')); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      return { schemaVersion: 1, records: [], jobs: [], tombstones: [], budgets: {} };
+    }
+    if (!state || state.schemaVersion !== 1 || !Array.isArray(state.records) || !Array.isArray(state.jobs) || !Array.isArray(state.tombstones) || !state.budgets) throw new Error('MEMORY_STORE_INVALID');
+    return state;
+  }
   async transaction<T>(action: (state: MemoryState) => T | Promise<T>): Promise<T> {
     return withMemoryLock(this.file, async () => {
       await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
@@ -123,15 +137,9 @@ export class StructuredMemoryStore {
       }
       try {
         await handle.writeFile(JSON.stringify(owner)); await handle.sync();
-        let state: MemoryState;
-        try { state = JSON.parse(await fs.readFile(this.file, 'utf8')); }
-        catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-          state = { schemaVersion: 1, records: [], jobs: [], tombstones: [], budgets: {} };
-        }
-        if (state.schemaVersion !== 1 || !Array.isArray(state.records) || !Array.isArray(state.jobs) || !Array.isArray(state.tombstones) || !state.budgets) throw new Error('MEMORY_STORE_INVALID');
+        const state = await this.readSnapshot();
         const result = await action(state);
-        await writeMemoryFile(this.file, JSON.stringify(state));
+        await writeMemoryFile(this.file, JSON.stringify(state), 0o600);
         await fs.chmod(this.file, 0o600);
         return structuredClone(result);
       } finally { await handle.close(); await fs.unlink(lock); }
@@ -139,8 +147,9 @@ export class StructuredMemoryStore {
   }
   async list(scope: MemoryScope): Promise<MemoryRecord[]> {
     assertMemoryScope(scope);
-    return this.transaction(state => state.records.filter(r => r.scope.workspaceId === scope.workspaceId
-      && ((r.scope.actorId === scope.actorId && r.scope.sessionId === scope.sessionId) || r.sharedWith.includes(scope.actorId))));
+    const state = await this.readSnapshot();
+    return state.records.filter(r => r.scope.workspaceId === scope.workspaceId
+      && ((r.scope.actorId === scope.actorId && r.scope.sessionId === scope.sessionId) || r.sharedWith.includes(scope.actorId)));
   }
   async delete(scope: MemoryScope, id: string): Promise<void> {
     assertMemoryScope(scope);

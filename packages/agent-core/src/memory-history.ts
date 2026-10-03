@@ -39,11 +39,11 @@ export async function withMemoryLock<T>(key: string, action: () => Promise<T>): 
 }
 
 /** Publish only after both file contents and directory rename are synced. */
-export async function writeMemoryFile(file: string, content: string): Promise<void> {
+export async function writeMemoryFile(file: string, content: string, mode?: number): Promise<void> {
   await fsp.mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${crypto.randomUUID()}.tmp`;
   try {
-    await fsp.writeFile(temporary, content, 'utf8');
+    await fsp.writeFile(temporary, content, { encoding: 'utf8', mode });
     const handle = await fsp.open(temporary, 'r+');
     try { await handle.sync(); } finally { await handle.close(); }
     await fsp.rename(temporary, file);
