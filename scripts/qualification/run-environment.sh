@@ -69,6 +69,11 @@ run_init() {
 run_init
 if [[ "$scenario" == "bootstrap-upgrade" ]]; then
   run_init
+  # Repeat startup alone is not an upgrade. Exercise the audit's actual old
+  # SQL baseline, retained business results and pre-upgrade snapshot restore.
+  AUDIT_UPGRADE_CONTAINER="$container" \
+  DB_HOST=127.0.0.1 DB_PORT="$port" DB_USER=root DB_PASSWORD="$password" DB_NAME="$database" \
+    pnpm --filter slide-api exec vitest run src/migrations/audit-upgrade.mysql.test.ts
 fi
 DB_HOST=127.0.0.1 DB_PORT="$port" DB_USER=root DB_PASSWORD="$password" DB_NAME="$database" \
   pnpm --filter slide-api exec tsx ../../tests/qualification/assert-bootstrap.ts

@@ -1,0 +1,254 @@
+{
+  "issue": "MAX-123",
+  "scopeVersion": "v1",
+  "baseMainSha": "07536caf2c46a902d35e39613b6c6c2de631ed05",
+  "gateStartCodeSha": "f4efaa0b3bb8b550112e6f67f5a3f8bfcc0be63b",
+  "finalCodeSha": "03b6be94275b255205171d757cd12802b4e604d2",
+  "observedAt": "2026-10-03T20:50:42.275612+00:00",
+  "environment": {
+    "os": "macOS arm64",
+    "node": "24.18.0",
+    "pnpm": "11.19.0",
+    "docker": "29.7.2",
+    "mysql": "8.4.10",
+    "postgresql": "16.14",
+    "browser": "Chromium",
+    "credentials": "disposable fake only",
+    "paidModelCalls": 0,
+    "productionDataTouched": false
+  },
+  "result": "passed after focused fixture correction",
+  "fullGateRuns": 1,
+  "unchangedChecksReused": true,
+  "checks": [
+    {
+      "name": "lint",
+      "initialExitCode": 0,
+      "initialSeconds": 3,
+      "initialLogSha256": "a922e4c1cac2247e7b809c4e03c0592ebb521749f8d5d1fa667e875b3db54b68",
+      "finalExitCode": 0,
+      "command": "pnpm lint"
+    },
+    {
+      "name": "typecheck",
+      "initialExitCode": 0,
+      "initialSeconds": 5,
+      "initialLogSha256": "f33ebefa3ed216e6611537c984c250546eb59382cee714e192395c2278ea6b76",
+      "finalExitCode": 0,
+      "command": "pnpm -r typecheck"
+    },
+    {
+      "name": "contracts",
+      "initialExitCode": 0,
+      "initialSeconds": 1,
+      "initialLogSha256": "e9fd4ca2bc209cb254184ae6265dc0c830674cb87635e3f9912556d074bb6320",
+      "finalExitCode": 0,
+      "command": "pnpm contracts:check"
+    },
+    {
+      "name": "unit",
+      "initialExitCode": 0,
+      "initialSeconds": 36,
+      "initialLogSha256": "6d8368c33eeb032da8e887fe41b4b6cf22ec2f2ea0ebdeebc72aef2d612e33b2",
+      "finalExitCode": 0,
+      "command": "pnpm -r test"
+    },
+    {
+      "name": "frontend-build",
+      "initialExitCode": 0,
+      "initialSeconds": 3,
+      "initialLogSha256": "028364e2296e5dba52f77c61d3cd64c469e742b83ffdddecf9b22fdc65991c83",
+      "finalExitCode": 0,
+      "command": "pnpm --filter slide-frontend build"
+    },
+    {
+      "name": "matrix",
+      "initialExitCode": 0,
+      "initialSeconds": 1,
+      "initialLogSha256": "95174294946a28e15b86c599fbf3371ef4ac036a67aa786c72d2e668ac1054c5",
+      "finalExitCode": 0,
+      "command": "pnpm qualification:matrix"
+    },
+    {
+      "name": "security-audit",
+      "initialExitCode": 0,
+      "initialSeconds": 1,
+      "initialLogSha256": "8eab6a9301dbce09a6b73b867a29ffac9fafe3ec4410defff050d550991d6980",
+      "finalExitCode": 0,
+      "command": "pnpm security:audit"
+    },
+    {
+      "name": "security-scan",
+      "initialExitCode": 0,
+      "initialSeconds": 1,
+      "initialLogSha256": "1bcd5c37c5674fc5d5ea1829ad1975640008eff715db5c3d4997a1e4a5a1211b",
+      "finalExitCode": 0,
+      "command": "pnpm security:scan"
+    },
+    {
+      "name": "browser",
+      "initialExitCode": 0,
+      "initialSeconds": 41,
+      "initialLogSha256": "d9acf560d9d25e165ef29a114ec497caf8a52b01f77fccf5fbd35ca25066f6ac",
+      "finalExitCode": 0,
+      "command": "pnpm --filter slide-frontend test:browser"
+    },
+    {
+      "name": "runtime-deterministic",
+      "initialExitCode": 0,
+      "initialSeconds": 3,
+      "initialLogSha256": "9ebaaaf8f15dc7820c5fcf2856558be661983adff391e643eeea249a2ee01d85",
+      "finalExitCode": 0,
+      "command": "bash scripts/qualification/run-agent-runtime.sh --mode deterministic"
+    },
+    {
+      "name": "bootstrap-upgrade",
+      "initialExitCode": 0,
+      "initialSeconds": 19,
+      "initialLogSha256": "6649236b4f3e55341e82838434e5920ab918d10ef7b8d8109f6c81e6e63e3aa4",
+      "finalExitCode": 0,
+      "command": "bash scripts/qualification/run-environment.sh bootstrap-upgrade"
+    },
+    {
+      "name": "failover",
+      "initialExitCode": 0,
+      "initialSeconds": 13,
+      "initialLogSha256": "f5dd0b16d9ad45e042568e5927ba1a72168575659bd61af2c6db732492fb2114",
+      "finalExitCode": 0,
+      "command": "bash scripts/qualification/run-environment.sh failover"
+    },
+    {
+      "name": "startup",
+      "initialExitCode": 0,
+      "initialSeconds": 88,
+      "initialLogSha256": "46fe49b85461ea349b5a191db5b27aa537315defe69ace55708f5acdc7158c28",
+      "finalExitCode": 0,
+      "command": "pnpm --filter slide-api exec tsx ../../tests/qualification/startup-readiness.test.ts"
+    },
+    {
+      "name": "reports",
+      "initialExitCode": 0,
+      "initialSeconds": 14,
+      "initialLogSha256": "bd47e71cfaad62389a84a36e255e02973a9939fc16fd51864008983f5cc4cd0e",
+      "finalExitCode": 0,
+      "command": "bash scripts/qualification/run-report-recovery.sh"
+    },
+    {
+      "name": "analysis",
+      "initialExitCode": 0,
+      "initialSeconds": 18,
+      "initialLogSha256": "75e367b483ad2f49b7572b2f38205497e24e394c1382f480d9d7c7d9b9977dc7",
+      "finalExitCode": 0,
+      "command": "bash scripts/qualification/run-analysis-recovery.sh"
+    },
+    {
+      "name": "retention",
+      "initialExitCode": 0,
+      "initialSeconds": 20,
+      "initialLogSha256": "31dd5c2c3913baac34e690f47682754141a718fbe1b01bb74dd284545d03d5d3",
+      "finalExitCode": 0,
+      "command": "bash scripts/qualification/run-metric-retention.sh"
+    },
+    {
+      "name": "events",
+      "initialExitCode": 0,
+      "initialSeconds": 14,
+      "initialLogSha256": "bee9e93c2649cb0bde244400cb6d620435f11b3bfa686a8cc4ee8cff97ca49bf",
+      "finalExitCode": 0,
+      "command": "bash scripts/qualification/run-alert-event-transitions.sh"
+    },
+    {
+      "name": "removal",
+      "initialExitCode": 0,
+      "initialSeconds": 14,
+      "initialLogSha256": "58e401508380336c2f82cf96ccdce7934105c9cbdc301705a6c7abfc38a8ad8b",
+      "finalExitCode": 0,
+      "command": "bash scripts/qualification/run-instance-removal.sh"
+    },
+    {
+      "name": "backup-restore",
+      "initialExitCode": 0,
+      "initialSeconds": 14,
+      "initialLogSha256": "e4a01ff82cbfeed8e4ab1c7fd8aa2251e9e8818f75dc4d98fff95fd304c93e9f",
+      "finalExitCode": 0,
+      "command": "bash scripts/qualification/run-environment.sh backup-restore"
+    },
+    {
+      "name": "stability",
+      "initialExitCode": 0,
+      "initialSeconds": 60,
+      "initialLogSha256": "43f230a1371291fa31422f3c4b360aaaa97d0d41b2a4a60c3caddcc7f08ac115",
+      "finalExitCode": 0,
+      "command": "bash scripts/qualification/run-environment.sh stability"
+    },
+    {
+      "name": "pg",
+      "initialExitCode": 0,
+      "initialSeconds": 11,
+      "initialLogSha256": "b2d4f86eca50229f15c7b2a8b5cb2df8da4d175e97c7b0ffcca046bf927fa5b4",
+      "finalExitCode": 0,
+      "command": "bash scripts/qualification/run-pg-collection.sh"
+    },
+    {
+      "name": "cron-runtime-browser",
+      "initialExitCode": 1,
+      "initialSeconds": 16,
+      "initialLogSha256": "2ff65910795c0d7a72eaec5783c65f62f2f8e273dbf8eaf60692bdf57d45f9aa",
+      "finalExitCode": 0,
+      "correctionCodeSha": "03b6be94275b255205171d757cd12802b4e604d2",
+      "correctionLogSha256": "350644bd0cea0cd07e72f55ff46c70d75c5cf882cbac180236aeb7dd4151aaae",
+      "correction": "Apply migration 111 to legacy Cron fixture and use explicit insert columns; 33 API/upgrade/startup-quality tests, real MySQL/WS runtime, 14 approval execution tests and 1 live Cron browser test passed.",
+      "command": "bash scripts/qualification/run-audit-browser.sh"
+    }
+  ],
+  "unit": {
+    "backend": {
+      "passed": 3015,
+      "skipped": 251
+    },
+    "frontend": {
+      "passed": 574,
+      "skipped": 0
+    },
+    "agentCore": {
+      "passed": 654,
+      "skipped": 0
+    },
+    "sandbox": {
+      "passed": 22,
+      "skipped": 4
+    }
+  },
+  "browserPassed": 56,
+  "sourceSha256": {
+    ".github/workflows/ci.yml": "e59a032383eaacbb29da8fbd4a3758cddb04f351643e938542a66bdfb01a987c",
+    "apps/db-ops-api/src/cron/cron-mysql.integration.test.ts": "8ff205342fffaf9da91b032d005444217a75bf8695df6607455b2e0760983e2b",
+    "apps/db-ops-api/src/migrations/audit-upgrade.mysql.test.ts": "98a28de9bea75278b93e472cff49e4df6e4a7c2f124d989d088383b2894d1905",
+    "frontend/e2e/cron-live.spec.ts": "5c5c5b2a5f7df110f96aa8f9ccf308a987df1144a21f723f90416c6d805382a4",
+    "frontend/playwright.config.ts": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1",
+    "scripts/qualification/configure-cancellable-provider.ts": "7f2045ea6cf1bb1453db36ebccac2ef4a8e506d4ad71d428a1ef75424cf5e7e8",
+    "scripts/qualification/run-audit-browser.sh": "881f71181daa63847acb95a996fc94dee93e5374cbcdd6bb37a7970dd225f86a",
+    "scripts/qualification/run-audit-integration.sh": "711b35b2f81c2301e2123d7f3369c35fc3f7afaaa5d00099b316bb618c3dad53",
+    "scripts/qualification/run-environment.sh": "4c832bfe2bd8062426712589199ebe3d9ba20b4a76c7d654f1b5996c6bd32d13",
+    "scripts/qualification/serve-e2e.sh": "968af4fe46a023f617b7d2773bebe41fd8480acb831e0a03dedb0c69c24d927a"
+  },
+  "limits": [
+    "No Oracle/Dameng real certification",
+    "No paid model diagnosis quality certification",
+    "No production HA/SLA/retention apply/history repair",
+    "No full production image deployment or publication",
+    "No VoiceOver/NVDA certification",
+    "CI current PR head checked separately by parent"
+  ],
+  "resources": {
+    "hardBudget": null,
+    "actualInputTokens": null,
+    "actualCachedInputTokens": null,
+    "actualOutputTokens": null,
+    "actualCost": null,
+    "telemetry": "unavailable",
+    "childAgents": 0,
+    "maxDepth": 0,
+    "agentConcurrencyPeak": 1
+  }
+}
