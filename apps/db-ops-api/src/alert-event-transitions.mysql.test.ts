@@ -126,6 +126,39 @@ describe.skipIf(!port)('event transitions / isolated MySQL', () => {
     expect((await snapshot()).logs).toHaveLength(before.logs.length + 1);
   });
 
+  it('concurrent resolutions with different actors/bases preserve only the accepted result', async () => {
+    const results = await Promise.all([service.resolveEvent(eventId, 'operator A', 41), service.resolveEvent(eventId, 'operator B', 42)]);
+    expect(results.filter(r => r.success)).toHaveLength(1);
+    const winner = results[0].success ? { actor: 41, notes: 'operator A' } : { actor: 42, notes: 'operator B' };
+    const state = await snapshot();
+    expect(state.event).toMatchObject({ resolved_by: winner.actor, resolution_notes: winner.notes });
+    expect(state.logs).toHaveLength(1);
+    expect(state.logs[0]).toMatchObject({ actor_id: winner.actor, details: { resolution_notes: winner.notes } });
+  });
+
+  it('automatic resolution commits atomically, keeps system actor null and still requires manual confirmation', async () => {
+    await pool.execute("UPDATE alerts SET status = 'resolved' WHERE id = ?", [alertId]);
+    const before = await snapshot();
+    await pool.query("CREATE TRIGGER fail_log BEFORE INSERT ON alert_event_logs FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected log failure'");
+    await service.autoResolveByAlert(alertId);
+    expect(await snapshot()).toEqual(before);
+    await pool.query('DROP TRIGGER fail_log');
+    await service.autoResolveByAlert(alertId);
+    const after = await snapshot();
+    expect(after.event.status).toBe('resolved');
+    expect(after.logs).toHaveLength(1);
+    expect(after.logs[0]).toMatchObject({ actor_id: null, details: { action: 'auto_resolved' } });
+    expect(after.event.verification_passed_at).toBeNull();
+    expect((await actions.close()).success).toBe(false);
+  });
+
+  it('legacy confirmation fields remain readable and can satisfy the existing close gate without inventing an actor', async () => {
+    await pool.execute("UPDATE alert_events SET status = 'resolved', verification_passed_at = NOW(), verification_reason = 'legacy' WHERE id = ?", [eventId]);
+    expect(await actions.close()).toMatchObject({ success: true });
+    expect((await snapshot()).event).toMatchObject({ status: 'closed', verification_actor_id: null, verification_reason: 'legacy' });
+    expect((await snapshot()).logs[0].actor_id).toBe(43);
+  });
+
   it('requires resolution then manual confirmation; preserves actor, reason and timestamp after close', async () => {
     expect((await actions.close()).success).toBe(false);
     expect((await actions.verify()).success).toBe(false);
