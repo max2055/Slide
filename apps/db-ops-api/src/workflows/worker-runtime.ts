@@ -90,23 +90,30 @@ export class MysqlWorkflowStore implements WorkflowStore {
   async claim(workerId: string, leaseSeconds: number, filter?: ClaimFilter): Promise<ClaimedJob | null> {
     const pool = this.pool();
     const typeFilter = filter?.types.length ? `AND job_type ${filter.exclude ? 'NOT IN' : 'IN'} (${filter.types.map(() => '?').join(', ')})` : '';
+    // A locking UPDATE over a queue scan acquires cross-lane gap locks and can
+    // deadlock even when job types differ. Read an optimistic candidate, then
+    // fence a primary-key-only update; a raced claimant simply returns idle.
+    const [candidates] = await pool.execute<Array<{ id: string }>>(
+      `SELECT id FROM workflow_jobs WHERE state IN ('queued', 'retry', 'running')
+       AND available_at <= NOW() AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
+       ${process.env.ANALYSIS_DISPATCH_ENABLED === 'false' ? "AND job_type <> 'analysis.dispatch'" : ''}
+       ${typeFilter} ORDER BY available_at, created_at, id LIMIT 1`, [...(filter?.types ?? [])],
+    );
+    if (!candidates[0]) return null;
+    const candidateId = candidates[0].id;
     const [result] = await pool.execute<{ affectedRows: number }>(
       `UPDATE workflow_jobs SET state = 'running', attempts = attempts + 1, lease_owner = ?,
        lease_expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND), fencing_token = fencing_token + 1
-       WHERE id = (SELECT id FROM (SELECT id FROM workflow_jobs
-         WHERE state IN ('queued', 'retry', 'running') AND available_at <= NOW() AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
-         ${process.env.ANALYSIS_DISPATCH_ENABLED === 'false' ? "AND job_type <> 'analysis.dispatch'" : ''}
-         ${typeFilter}
-         ORDER BY available_at, created_at, id LIMIT 1) candidate)
-       AND state IN ('queued', 'retry', 'running') AND (lease_expires_at IS NULL OR lease_expires_at < NOW())`,
-      [workerId, leaseSeconds, ...(filter?.types ?? [])],
+       WHERE id = ? AND state IN ('queued', 'retry', 'running') AND available_at <= NOW()
+       AND (lease_expires_at IS NULL OR lease_expires_at < NOW())`,
+      [workerId, leaseSeconds, candidateId],
     );
     if (Number(result.affectedRows) !== 1) return null;
     const [rows] = await pool.execute<Array<any>>(
       `SELECT id, job_type AS type, payload, attempts, max_attempts AS maxAttempts, fencing_token AS fencingToken,
          GREATEST(0, TIMESTAMPDIFF(MICROSECOND, GREATEST(created_at, available_at), NOW(3)) / 1000) AS queueWaitMs
-       FROM workflow_jobs WHERE lease_owner = ? AND state = 'running' AND lease_expires_at > NOW()
-       ORDER BY updated_at DESC LIMIT 1`, [workerId],
+       FROM workflow_jobs WHERE id = ? AND lease_owner = ? AND state = 'running' AND lease_expires_at > NOW()
+       LIMIT 1`, [candidateId, workerId],
     );
     const row = rows[0];
     return row ? { id: row.id, type: row.type, payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload, attempts: Number(row.attempts), maxAttempts: Number(row.maxAttempts), fencingToken: Number(row.fencingToken),

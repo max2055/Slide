@@ -148,7 +148,7 @@ describe('mysql workflow store', () => {
     const store = new MysqlWorkflowStore(() => ({ execute }));
 
     await expect(store.claim('worker-a', 30)).resolves.toBeNull();
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 });
 
