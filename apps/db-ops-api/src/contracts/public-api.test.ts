@@ -25,6 +25,15 @@ import {
 import { buildClientTypes, buildOpenApiDocument } from './generate-public-api.js';
 
 describe('generated public API contract', () => {
+  it('documents manual event confirmation, conflict retries and the closing prerequisite', () => {
+    const document = buildOpenApiDocument() as any;
+    for (const action of ['investigate', 'resolve', 'verify-recovery', 'close']) {
+      expect(document.paths[`/api/alerts/events/{id}/${action}`]?.post.responses).toHaveProperty('409');
+    }
+    expect(document.paths['/api/alerts/events/{id}/verify-recovery'].post.description).toContain('manual');
+    expect(document.paths['/api/alerts/events/{id}/close'].post.description).toContain('confirmation');
+    expect(document.components.schemas.EventRecoveryConfirmationRequest.properties.reason).toMatchObject({ type: 'string', minLength: 1, maxLength: 1024, pattern: '\\S' });
+  });
   it('accepts actual health and adapter capability responses', () => {
     expect(Value.Check(HealthResponseSchema, { status: 'ok', timestamp: new Date().toISOString() })).toBe(true);
     expect(Value.Check(AdapterCapabilitiesResponseSchema, { adapters: listAdapterCapabilities() })).toBe(true);
@@ -61,6 +70,10 @@ describe('generated public API contract', () => {
     expect(Object.keys(document.paths)).toEqual([
       '/api/adapters/capabilities',
       '/api/ai/analysis/{id}/evidence',
+      '/api/alerts/events/{id}/close',
+      '/api/alerts/events/{id}/investigate',
+      '/api/alerts/events/{id}/resolve',
+      '/api/alerts/events/{id}/verify-recovery',
       '/api/cron/jobs/{id}',
       '/api/cron/jobs/{id}/run',
       '/api/cron/jobs/{id}/runs',

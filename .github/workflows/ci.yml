@@ -168,6 +168,8 @@ jobs:
         run: bash scripts/qualification/run-analysis-recovery.sh
       - name: Metrics retention through production workflow assembly and isolated MySQL
         run: bash scripts/qualification/run-metric-retention.sh
+      - name: Event lifecycle transactions, conflict and manual confirmation in isolated MySQL
+        run: bash scripts/qualification/run-alert-event-transitions.sh
       - name: Backup and restore
         run: bash scripts/qualification/run-environment.sh backup-restore
       - name: Concurrent workflow stability

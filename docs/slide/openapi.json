@@ -3184,6 +3184,52 @@
         ],
         "type": "object"
       },
+      "EventRecoveryConfirmationRequest": {
+        "$id": "EventRecoveryConfirmationRequest",
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "description": "Manual inspection basis/result/reason; trimmed before storage. No automatic metric verification.",
+            "maxLength": 1024,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
+      "EventResolveRequest": {
+        "$id": "EventResolveRequest",
+        "additionalProperties": false,
+        "properties": {
+          "resolution_notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "resolution_notes"
+        ],
+        "type": "object"
+      },
+      "EventTransitionResult": {
+        "$id": "EventTransitionResult",
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "type": "object"
+      },
       "EvidenceQuality": {
         "$id": "EvidenceQuality",
         "anyOf": [
@@ -9983,6 +10029,250 @@
           },
           "404": {
             "description": "Snapshot absent, legacy, or outside the current authorization scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/alerts/events/{id}/close": {
+      "post": {
+        "description": "Requires resolved state and recorded recovery confirmation; legacy verification_* records remain readable. Requires alert:manage and current instance read-write access. Duplicate/late/conflicting requests return 409 and cannot overwrite the first audit. Writes and audit use one locked transaction.",
+        "operationId": "closeEvent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventTransitionResult"
+                }
+              }
+            },
+            "description": "Transition committed with authenticated actor audit"
+          },
+          "400": {
+            "description": "Invalid input or manual basis; reason must be a nonblank string of at most 1024 characters"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission or instance access denied"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventTransitionResult"
+                }
+              }
+            },
+            "description": "Invalid state, repeat, conflict or uncommitted transition; refresh event/logs before retry"
+          },
+          "500": {
+            "description": "Unexpected route failure"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/alerts/events/{id}/investigate": {
+      "post": {
+        "description": "Only open events can enter investigation. Requires alert:manage and current instance read-write access. Duplicate/late/conflicting requests return 409 and cannot overwrite the first audit. Writes and audit use one locked transaction.",
+        "operationId": "startEventInvestigation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventTransitionResult"
+                }
+              }
+            },
+            "description": "Transition committed with authenticated actor audit"
+          },
+          "400": {
+            "description": "Invalid input or manual basis; reason must be a nonblank string of at most 1024 characters"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission or instance access denied"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventTransitionResult"
+                }
+              }
+            },
+            "description": "Invalid state, repeat, conflict or uncommitted transition; refresh event/logs before retry"
+          },
+          "500": {
+            "description": "Unexpected route failure"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/alerts/events/{id}/resolve": {
+      "post": {
+        "description": "Only open/investigating/handled events can resolve. Event, log and currently associated active alerts commit together. Requires alert:manage and current instance read-write access. Duplicate/late/conflicting requests return 409 and cannot overwrite the first audit. Writes and audit use one locked transaction.",
+        "operationId": "resolveEvent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventResolveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventTransitionResult"
+                }
+              }
+            },
+            "description": "Transition committed with authenticated actor audit"
+          },
+          "400": {
+            "description": "Invalid input or manual basis; reason must be a nonblank string of at most 1024 characters"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission or instance access denied"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventTransitionResult"
+                }
+              }
+            },
+            "description": "Invalid state, repeat, conflict or uncommitted transition; refresh event/logs before retry"
+          },
+          "500": {
+            "description": "Unexpected route failure"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/alerts/events/{id}/verify-recovery": {
+      "post": {
+        "description": "First manual recovery confirmation on a resolved event records authenticated actor, time and basis. It is not an automatic metric observation-window verification. Requires alert:manage and current instance read-write access. Duplicate/late/conflicting requests return 409 and cannot overwrite the first audit. Writes and audit use one locked transaction.",
+        "operationId": "confirmEventRecovery",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventRecoveryConfirmationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventTransitionResult"
+                }
+              }
+            },
+            "description": "Transition committed with authenticated actor audit"
+          },
+          "400": {
+            "description": "Invalid input or manual basis; reason must be a nonblank string of at most 1024 characters"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission or instance access denied"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventTransitionResult"
+                }
+              }
+            },
+            "description": "Invalid state, repeat, conflict or uncommitted transition; refresh event/logs before retry"
+          },
+          "500": {
+            "description": "Unexpected route failure"
           }
         },
         "security": [

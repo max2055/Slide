@@ -65,13 +65,13 @@ class AlertEngine {
       this.running = true;
       console.log('✅ 告警评估任务已启动（每 60 秒）');
 
-      // 启动时补录：将历史积累的、所有成员告警已恢复的事件自动 resolve
+      // 启动仅只读检查历史候选，不从当前告警状态倒推过去的事件流转
       alertEventService.retroactiveResolve().then(result => {
-        if (result.resolved > 0) {
-          console.log(`🧹 启动补录完成：${result.resolved} 个历史事件已自动解决`);
+        if (result.candidates.length > 0) {
+          console.log(`[AlertEventService] 历史只读检查候选（最多 200 项）：${result.candidates.join(",")}；未修改数据`);
         }
       }).catch(err => {
-        console.warn('启动补录失败:', err);
+        console.warn('历史只读检查失败:', err);
       });
     } catch (error) {
       console.error('启动告警引擎失败:', error);

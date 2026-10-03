@@ -9,6 +9,10 @@ export type HostEvidenceSection = 'metrics' | 'filesystems' | 'systemLogs' | 'ph
 export type DiagnosticGapScope = 'instance' | 'host' | 'storage';
 export type DiagnosticGapSection = 'instance' | 'realtime' | 'history' | 'alerts' | 'logs' | 'slowQueries' | 'storage' | 'relations' | 'hostEvidence' | 'evidencePack';
 
+export interface EventResolveRequest { resolution_notes: string; }
+export interface EventRecoveryConfirmationRequest { reason: string; }
+export interface EventTransitionResult { success: boolean; error?: string; }
+
 export type NetworkDeviceStatus = 'unknown' | 'online' | 'offline' | 'error' | 'unreachable';
 export type NetworkDeviceVendor = 'huawei' | 'cisco';
 export interface NetworkDevice { id: number; name: string; label: string | null; host: string; site: string | null; vendor: NetworkDeviceVendor; model: string | null; os_version: string | null; serial_number: string | null; snmp_port: number; ssh_port: number; status: NetworkDeviceStatus; last_check_at: string | null; collection_enabled: boolean; created_at: string; updated_at: string; hasSnmpCredential: boolean; hasSshCredential: boolean; }

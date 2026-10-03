@@ -10,9 +10,9 @@ import { dbConnection } from './db-connection';
 import { alertRCAService } from './alert-rca-service';
 
 const VALID_STATUS_TRANSITIONS: Record<string, string[]> = {
-  open: ['investigating', 'resolved', 'closed'],
-  investigating: ['handled', 'resolved', 'closed'],
-  handled: ['resolved', 'closed'],
+  open: ['investigating', 'resolved'],
+  investigating: ['handled', 'resolved'],
+  handled: ['resolved'],
   resolved: ['closed'],
   closed: [],
 };
@@ -302,69 +302,47 @@ class AlertEventService {
    * 解决事件
    */
   async resolveEvent(eventId: number, resolutionNotes: string, userId?: number): Promise<{ success: boolean; error?: string }> {
-    const pool = this.getPool();
-    if (!pool) return { success: false, error: '数据库未连接' };
-
-    try {
-      // 校验状态流转
-      if (!(await this._canTransition(eventId, 'resolved'))) {
-        return { success: false, error: '当前状态不允许直接解决' };
-      }
-
-      await pool.execute(
-        'UPDATE alert_events SET status = ?, resolution_notes = ?, resolved_at = NOW(), resolved_by = ? WHERE id = ?',
-        ['resolved', resolutionNotes, userId || null, eventId]
+    if (!Number.isSafeInteger(userId) || !userId || userId < 1) return { success: false, error: '缺少有效操作者' };
+    return this._withEventLock(eventId, async (connection, event) => {
+      if (!VALID_STATUS_TRANSITIONS[event.status]?.includes('resolved')) throw new Error('当前状态不允许直接解决（重复操作或流转冲突）');
+      await connection.execute(
+        `UPDATE alert_events SET status = 'resolved', resolution_notes = ?, resolved_at = NOW(), resolved_by = ?,
+         verification_passed_at = NULL, verification_actor_id = NULL, verification_reason = NULL WHERE id = ?`,
+        [resolutionNotes, userId, eventId],
       );
-
-      await this._logEvent(eventId, 'resolved', userId, { resolution_notes: resolutionNotes });
-
-      // 将所有未关闭的关联告警标记为 resolved
-      await pool.execute(
+      await this._logEvent(eventId, 'resolved', userId, { from: event.status, to: 'resolved', resolution_notes: resolutionNotes }, connection);
+      await connection.execute(
         `UPDATE alerts SET status = 'resolved' WHERE id IN (
           SELECT alert_id FROM alert_event_members WHERE event_id = ?
         ) AND status IN ('unread', 'read', 'acknowledged')`,
-        [eventId]
-      );
-
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * 关闭事件
-   */
-  async closeEvent(eventId: number, userId?: number): Promise<{ success: boolean; error?: string }> {
-    const pool = this.getPool();
-    if (!pool) return { success: false, error: '数据库未连接' };
-
-    try {
-      const [result] = await pool.execute(
-        `UPDATE alert_events SET status = 'closed'
-         WHERE id = ? AND status = 'resolved' AND verification_passed_at IS NOT NULL`,
         [eventId],
-      ) as any;
-      if (result.affectedRows !== 1) {
-        return { success: false, error: '仅已解决且恢复验证通过的事件可以关闭' };
-      }
-      await this._logEvent(eventId, 'status_changed', userId, { from: 'resolved', to: 'closed', action: 'closed' });
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
+      );
+    });
   }
 
+  /** 仅已解决且已有人工恢复确认的事件可以关闭。 */
+  async closeEvent(eventId: number, userId?: number): Promise<{ success: boolean; error?: string }> {
+    if (!Number.isSafeInteger(userId) || !userId || userId < 1) return { success: false, error: '缺少有效操作者' };
+    return this._withEventLock(eventId, async (connection, event) => {
+      if (event.status !== 'resolved' || !event.verification_passed_at) throw new Error('仅已解决且已记录人工恢复确认的事件可以关闭（重复操作或流转冲突）');
+      await connection.execute("UPDATE alert_events SET status = 'closed' WHERE id = ?", [eventId]);
+      await this._logEvent(eventId, 'status_changed', userId, { from: 'resolved', to: 'closed', action: 'closed' }, connection);
+    });
+  }
+
+  /** 人工确认，不等同于客观指标持续观察窗验证。旧 verification_* 字段保持兼容。 */
   async verifyRecovery(eventId: number, reason: string, userId?: number): Promise<{ success: boolean; error?: string }> {
-    const pool = this.getPool();
-    if (!pool) return { success: false, error: '数据库未连接' };
-    const [result] = await pool.execute(
-      `UPDATE alert_events SET verification_passed_at = NOW(), verification_actor_id = ?, verification_reason = ?
-       WHERE id = ? AND status = 'resolved'`, [userId ?? null, reason.slice(0, 1024), eventId],
-    ) as any;
-    if (result.affectedRows !== 1) return { success: false, error: '仅已解决的事件可以进行恢复验证' };
-    await this._logEvent(eventId, 'status_changed', userId, { action: 'verification_passed', reason });
-    return { success: true };
+    if (!Number.isSafeInteger(userId) || !userId || userId < 1) return { success: false, error: '缺少有效操作者' };
+    if (typeof reason !== 'string' || !reason.trim() || reason.length > 1024) return { success: false, error: '人工恢复确认依据须为 1–1024 字符' };
+    const basis = reason.trim();
+    return this._withEventLock(eventId, async (connection, event) => {
+      if (event.status !== 'resolved' || event.verification_passed_at) throw new Error('仅已解决且尚未人工确认的事件可以确认恢复（重复操作或流转冲突）');
+      await connection.execute(
+        `UPDATE alert_events SET verification_passed_at = NOW(), verification_actor_id = ?, verification_reason = ? WHERE id = ?`,
+        [userId, basis, eventId],
+      );
+      await this._logEvent(eventId, 'status_changed', userId, { action: 'manual_recovery_confirmed', confirmation_type: 'manual', reason: basis }, connection);
+    });
   }
 
   /**
@@ -508,30 +486,25 @@ class AlertEventService {
       if (!Array.isArray(memberships) || memberships.length === 0) return;
 
       for (const m of memberships) {
-        // Check if ALL member alerts of this event are now resolved/closed
-        assertWorkflowActive();
-        const [unresolved] = await pool.execute(
-          `SELECT COUNT(*) AS cnt FROM alert_event_members mem
-           JOIN alerts a ON a.id = mem.alert_id
-           WHERE mem.event_id = ?
-             AND a.status NOT IN ('resolved', 'closed')`,
-          [m.event_id]
-        ) as any;
-
-        if (unresolved[0]?.cnt === 0) {
+        // Re-read state after locking: a delayed worker must never overwrite a manual close.
+        await this._withEventLock(m.event_id, async (connection, event) => {
           assertWorkflowActive();
-          await pool.execute(
-            `UPDATE alert_events SET status = 'resolved', resolved_at = NOW() WHERE id = ?`,
-            [m.event_id]
+          if (!VALID_STATUS_TRANSITIONS[event.status]?.includes('resolved')) throw new Error('事件状态已变化');
+          const [alerts] = await connection.execute(
+            `SELECT a.id, a.status FROM alert_event_members mem
+             JOIN alerts a ON a.id = mem.alert_id WHERE mem.event_id = ? FOR UPDATE`, [m.event_id],
+          ) as any;
+          if (!alerts.length || alerts.some((a: any) => !['resolved', 'closed'].includes(a.status))) throw new Error('关联告警尚未全部解决');
+          assertWorkflowActive();
+          await connection.execute(
+            `UPDATE alert_events SET status = 'resolved', resolved_at = NOW(),
+             verification_passed_at = NULL, verification_actor_id = NULL, verification_reason = NULL WHERE id = ?`, [m.event_id],
           );
-          assertWorkflowActive();
           await this._logEvent(m.event_id, 'resolved', undefined, {
-            action: 'auto_resolved',
-            note: '所有关联告警已恢复，事件自动解决',
-            trigger_alert_id: alertId,
-          });
-          console.log(`[AlertEventService] Auto-resolved event #${m.event_id} (all member alerts recovered)`);
-        }
+            action: 'auto_resolved', from: event.status, to: 'resolved',
+            note: '所有关联告警当前均已解决；尚需人工恢复确认', trigger_alert_id: alertId,
+          }, connection);
+        });
       }
     } catch (error) {
       assertWorkflowActive();
@@ -540,12 +513,12 @@ class AlertEventService {
   }
 
   /**
-   * Retroactively resolve all events whose member alerts are all resolved/closed.
-   * One-time cleanup for events accumulated before auto-resolve was implemented.
+   * Read-only startup inspection. Current alert state cannot prove historical resolution time.
+   * Retain the legacy method/result field; never bulk backfill past transitions.
    */
-  async retroactiveResolve(): Promise<{ resolved: number }> {
+  async retroactiveResolve(): Promise<{ resolved: number; candidates: number[] }> {
     const pool = this.getPool();
-    if (!pool) return { resolved: 0 };
+    if (!pool) return { resolved: 0, candidates: [] };
 
     try {
       // Find active events where no member alert is still active
@@ -558,35 +531,21 @@ class AlertEventService {
            )
            AND NOT EXISTS (
              SELECT 1 FROM alert_event_members mem
-             JOIN alerts a ON a.id = mem.alert_id
+             LEFT JOIN alerts a ON a.id = mem.alert_id
              WHERE mem.event_id = e.id
-               AND a.status NOT IN ('resolved', 'closed')
-           )`
+               AND (a.id IS NULL OR a.status NOT IN ('resolved', 'closed'))
+           ) ORDER BY e.id LIMIT 200`
       ) as any;
 
       if (!Array.isArray(events) || events.length === 0) {
-        console.log('[AlertEventService] retroactiveResolve: no stale events to clean up');
-        return { resolved: 0 };
+        console.log('[AlertEventService] retroactiveResolve: no history inspection candidates');
+        return { resolved: 0, candidates: [] };
       }
 
-      let resolved = 0;
-      for (const e of events) {
-        await pool.execute(
-          `UPDATE alert_events SET status = 'resolved', resolved_at = NOW() WHERE id = ?`,
-          [e.id]
-        );
-        await this._logEvent(e.id, 'resolved', undefined, {
-          action: 'retroactive_resolved',
-          note: '补录：所有关联告警已恢复，事件自动解决',
-        });
-        resolved++;
-      }
-
-      console.log(`[AlertEventService] Retroactive resolve: ${resolved} events resolved`);
-      return { resolved };
+      return { resolved: 0, candidates: events.map((event: any) => Number(event.id)) };
     } catch (error) {
       console.error('[AlertEventService] retroactiveResolve failed:', error);
-      return { resolved: 0 };
+      return { resolved: 0, candidates: [] };
     }
   }
 
@@ -716,56 +675,46 @@ class AlertEventService {
     }
   }
 
-  /**
-   * 检查状态是否允许流转
-   */
-  private async _canTransition(eventId: number, newStatus: string): Promise<boolean> {
+  /** All lifecycle writes and their audit use one locked InnoDB transaction. */
+  private async _withEventLock(
+    eventId: number,
+    operation: (connection: mysql.PoolConnection, event: any) => Promise<void>,
+  ): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
-    if (!pool) return false;
-
+    if (!pool) return { success: false, error: '数据库未连接' };
+    let connection: mysql.PoolConnection | undefined;
     try {
-      const [rows] = await pool.execute('SELECT status FROM alert_events WHERE id = ?', [eventId]) as any;
-      if (!Array.isArray(rows) || rows.length === 0) return false;
-
-      const currentStatus = rows[0].status;
-      const allowed = VALID_STATUS_TRANSITIONS[currentStatus] || [];
-      return allowed.includes(newStatus);
-    } catch (error) {
-      return false;
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
+      const [events] = await connection.execute('SELECT * FROM alert_events WHERE id = ? FOR UPDATE', [eventId]) as any;
+      if (!events.length) throw new Error('事件不存在');
+      await operation(connection, events[0]);
+      assertWorkflowActive();
+      await connection.commit();
+      return { success: true };
+    } catch (error: any) {
+      if (connection) {
+        try { await connection.rollback(); } catch { connection.destroy(); }
+      }
+      return { success: false, error: error.message };
+    } finally {
+      connection?.release();
     }
   }
 
-  /**
-   * 执行状态流转（带校验）
-   */
+  /** 执行状态流转；重复动作返回冲突，不覆盖首次审计。 */
   private async _transitionStatus(
     eventId: number,
     newStatus: string,
     userId: number | undefined,
-    details: any
+    details: any,
   ): Promise<{ success: boolean; error?: string }> {
-    const pool = this.getPool();
-    if (!pool) return { success: false, error: '数据库未连接' };
-
-    try {
-      if (!(await this._canTransition(eventId, newStatus))) {
-        return { success: false, error: `不允许从当前状态转换到 ${newStatus}` };
-      }
-
-      await pool.execute(
-        'UPDATE alert_events SET status = ? WHERE id = ?',
-        [newStatus, eventId]
-      );
-
-      await this._logEvent(eventId, 'status_changed', userId, {
-        action: newStatus,
-        ...details,
-      });
-
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
+    if (!Number.isSafeInteger(userId) || !userId || userId < 1) return { success: false, error: '缺少有效操作者' };
+    return this._withEventLock(eventId, async (connection, event) => {
+      if (!VALID_STATUS_TRANSITIONS[event.status]?.includes(newStatus)) throw new Error(`不允许从当前状态转换到 ${newStatus}（重复操作或流转冲突）`);
+      await connection.execute('UPDATE alert_events SET status = ? WHERE id = ?', [newStatus, eventId]);
+      await this._logEvent(eventId, 'status_changed', userId, { from: event.status, to: newStatus, ...details }, connection);
+    });
   }
 
   /**
@@ -799,9 +748,10 @@ class AlertEventService {
     eventId: number,
     action: string,
     userId: number | undefined,
-    details: any
+    details: any,
+    connection?: mysql.PoolConnection,
   ): Promise<void> {
-    const pool = this.getPool();
+    const pool = connection ?? this.getPool();
     if (!pool) return;
 
     await pool.execute(

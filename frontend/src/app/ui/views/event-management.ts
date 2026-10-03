@@ -24,6 +24,7 @@ interface AlertEvent {
   closed_at?: string;
   verification_passed_at?: string | null;
   verification_reason?: string | null;
+  verification_actor_id?: number | null;
 }
 
 interface EventStats {
@@ -627,7 +628,7 @@ export class EventManagementPage extends LitElement {
         throw new Error(body?.error || `HTTP ${res.status}`);
       }
       this.recoveryVerificationReason = "";
-      showToast("恢复验证已记录，可以关闭事件", "success");
+      showToast("人工恢复确认已记录，可以关闭事件", "success");
     });
   }
 
@@ -868,8 +869,12 @@ export class EventManagementPage extends LitElement {
           <div class="detail-row"><span class="label">实例</span><span class="value">${e.instance_name || "N/A"}</span></div>
           <div class="detail-row"><span class="label">负责人</span><span class="value">${e.assignee || "未分配"}</span></div>
           <div class="detail-row"><span class="label">创建时间</span><span class="value">${this._formatTime(e.created_at)}</span></div>
-          ${e.verification_passed_at ? html`<div class="detail-row"><span class="label">恢复验证</span><span class="value">${this._formatTime(e.verification_passed_at)}</span></div>` : nothing}
-          ${e.verification_reason ? html`<div class="detail-row"><span class="label">验证说明</span><span class="value">${e.verification_reason}</span></div>` : nothing}
+          ${e.verification_passed_at ? html`
+            <div class="detail-row"><span class="label">人工恢复确认</span><span class="value">${this._formatTime(e.verification_passed_at)}</span></div>
+            <div class="detail-row"><span class="label">确认人 ID</span><span class="value">${e.verification_actor_id ?? "历史记录未提供"}</span></div>
+            <div class="detail-row"><span class="label">确认依据</span><span class="value">${e.verification_reason || "历史记录未提供"}</span></div>
+          ` : nothing}
+          ${e.status === "resolved" || e.verification_passed_at ? html`<div class="detail-row"><span class="label">确认含义</span><span class="value">人工确认不代表客观指标观察窗验证通过。</span></div>` : nothing}
           ${e.root_cause ? html`<div class="detail-row"><span class="label">根因</span><span class="value">${e.root_cause}</span></div>` : nothing}
         </div>
 
@@ -920,12 +925,13 @@ export class EventManagementPage extends LitElement {
             ${e.status === "resolved" && !e.verification_passed_at ? html`
               <textarea
                 class="note-input"
-                aria-label="恢复验证说明"
-                placeholder="填写恢复验证说明后关闭事件"
+                aria-label="人工恢复确认依据"
+                maxlength="1024"
+                placeholder="填写人工检查的依据、结果与原因后确认恢复"
                 .value=${this.recoveryVerificationReason}
                 @input=${(event: Event) => { this.recoveryVerificationReason = (event.target as HTMLTextAreaElement).value; }}
               ></textarea>
-              <button class="btn btn-primary" @click=${this._verifyRecovery} .disabled=${this.actionLoading || !this.recoveryVerificationReason.trim()}>验证恢复</button>
+              <button class="btn-primary" @click=${this._verifyRecovery} .disabled=${this.actionLoading || !this.recoveryVerificationReason.trim()}>人工确认恢复</button>
             ` : nothing}
             ${e.status === "resolved" && e.verification_passed_at ? html`<button class="btn-primary btn-danger" @click=${this._closeEvent} ?disabled=${this.actionLoading}>关闭事件</button>` : nothing}
           </div>
