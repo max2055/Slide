@@ -53,3 +53,11 @@
 - 无新增数据库迁移、批量凭证重加密或历史数据清理。未发现/调查历史实际异常调用，不宣称已有凭证泄露。
 - 回滚无数据恢复步骤；若需回退发布，必须保留等效授权、地址绑定与重定向保护，禁止以撤销校验兼容旧行为。
 - 硬预算未设定；raw input、cached input、output、实际费用遥测不可用。子代理 0，最大子代理深度 0，线程并发峰值 1。
+
+## CI 跟进：文档归档位置
+
+交付 head `2d56aee69742f6b795adaa474d752ffa6412236e` 的 CI run `37101592743` 中，backend 唯一失败为 `tests/phase-94-docs-structure.test.ts`：新增 `docs/reviews` 不符合现有目录规则（2869 通过、1 失败、129 跳过）。依赖 backend 的三个 job 因此跳过，其余四个 job 成功。
+
+在该 head 的干净隔离工作树中执行 `pnpm --filter slide-api exec vitest run tests/phase-94-docs-structure.test.ts`，复现 10 通过、1 失败。按仓库已有归档惯例，将本文件迁至 `docs/slide/reviews/`，移除空目录后同一命令 11/11 通过；未放宽或跳过门禁。
+
+本次仅改变证据文档位置与此跟进记录，业务代码、配置、依赖及测试规则未变，复用上述未受影响的 W01 验收证据。更新后的精确 head 和八个 CI job 结果以任务最终评论为准。
