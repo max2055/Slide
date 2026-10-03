@@ -4,10 +4,33 @@ vi.mock('./analysis-identity.js', () => ({ authorizeAnalysisRequest: authorize, 
 vi.mock('../database-service.js', () => ({ databaseService: { getConnection: () => ({ db_type: 'mysql' }), getExplainPlan: explain } }));
 vi.mock('../sql-executor.js', () => ({ sqlExecutor: { executeSql: execute } }));
 import { collectTopSqlEvidence } from './topsql-evidence.js';
+import { freezeEvidence } from './analysis-evidence.js';
 const actor = { userId: 7, username: 'op', roles: [], permissions: ['ai:manage'], sessionVersion: 1, instanceScopes: { 42: 'read-only' as const }, requestId: 'test' };
 const query = (sql_text = "SELECT * FROM orders WHERE id=1") => ({ sql_text, schema_name: 'shop', avg_time_ms: 7 }) as any;
 beforeEach(() => { vi.clearAllMocks(); authorize.mockResolvedValue(undefined); explain.mockResolvedValue('safe plan'); execute.mockResolvedValue({ success: true, rows: [{ TABLE_NAME: 'orders' }] }); });
 describe('TopSQL server collection boundary', () => {
+  it.each([
+    ['double', 'SELECT `email2` FROM `orders2` WHERE email="FAKE_DOUBLE_VALUE"', 'Filter: email="FAKE_DOUBLE_VALUE"'],
+    ['escaped double', String.raw`SELECT * FROM orders WHERE email="FAKE_DOUBLE\"VALUE"`, String.raw`Filter: email="FAKE_DOUBLE\"VALUE"`],
+    ['doubled single', "SELECT * FROM orders WHERE email='FAKE_SINGLE''VALUE'", "Filter: email='FAKE_SINGLE''VALUE'"],
+  ])('redacts %s business literals before returning and freezing SQL/plan evidence', async (_name, sql, predicate) => {
+    explain.mockResolvedValue(`MySQL 执行计划:\n${predicate}`);
+    const result = await collectTopSqlEvidence(42, query(sql), actor);
+    for (const safe of [result, freezeEvidence({ type: 'instance', id: 42 }, 'auth', result)]) {
+      expect(JSON.stringify(safe)).not.toContain('FAKE_');
+      expect(JSON.stringify(safe)).toContain('[REDACTED]');
+    }
+    expect(explain).toHaveBeenCalledWith(42, sql);
+  });
+  it('records gaps instead of retaining unknown SQL or malformed plans', async () => {
+    const unknown = await collectTopSqlEvidence(42, query('unknown FAKE_BUSINESS_VALUE'), actor);
+    expect(unknown.sql).toBeNull();
+    expect(unknown.gaps).toContainEqual(expect.objectContaining({ code: 'SQL_REDACTION_UNAVAILABLE' }));
+    explain.mockResolvedValue('MySQL 执行计划:\nFilter: email="FAKE_UNCLOSED');
+    const malformed = await collectTopSqlEvidence(42, query(), actor);
+    expect(malformed.explain).toBeNull();
+    expect(malformed.gaps).toContainEqual(expect.objectContaining({ code: 'EXPLAIN_REDACTION_UNAVAILABLE' }));
+  });
   it('collects SQL, statistics, schema, indexes and safe EXPLAIN after authorization with bounded metadata reads', async () => {
     const result = await collectTopSqlEvidence(42, query(), actor);
     expect(result).toMatchObject({ explain: 'safe plan', schema: [{ TABLE_NAME: 'orders' }], indexes: [{ TABLE_NAME: 'orders' }], gaps: [] });

@@ -4,6 +4,11 @@ import { join } from 'node:path';
 import { ToolRegistry, type LLMProvider as AgentProvider } from '@slide/agent-core';
 import { DirectAdapter } from '../adapter/direct-adapter.js';
 import { freezeEvidence } from './analysis-evidence.js';
+import { databaseService } from '../database-service.js';
+import { sqlExecutor } from '../sql-executor.js';
+import { metricsDatabaseService } from '../metrics-database-service.js';
+import { topsqlAnalysisService } from '../topsql-analysis-service.js';
+import * as identity from './analysis-identity.js';
 import { setAnalysisProviderIdentity } from './analysis-execution.js';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -206,6 +211,47 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
       frozen.data = { metrics: { qps: 999 } };
       expect((await rows(`SELECT request_snapshot FROM analysis_dispatches WHERE analysis_id = ${owned.analysisId}`))[0].request_snapshot.evidence.data.metrics.qps).toBe(7);
     } finally { await adapter.dispose(); rmSync(workspace, { recursive: true, force: true }); }
+  });
+  it('redacts collection through real admission, MySQL persistence and the actual provider request', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'max116-redaction-'));
+    let adapter: DirectAdapter | undefined;
+    const spies = [vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool)];
+    try {
+      const actor = await actorContextService.loadActiveActor(7, 1);
+      const sql = 'SELECT `email2` FROM `orders2` WHERE email=' + String.raw`"FAKE_DOUBLE\"VALUE" AND note='FAKE_SINGLE''VALUE' AND id=987654321`;
+      spies.push(vi.spyOn(databaseService, 'getConnection').mockReturnValue({ db_type: 'mysql' } as any),
+        vi.spyOn(databaseService, 'getExplainPlan').mockResolvedValue(`MySQL 执行计划:\nFilter: ${sql}`),
+        vi.spyOn(sqlExecutor, 'executeSql').mockResolvedValue({ success: true, rows: [{ TABLE_NAME: 'orders2', COLUMN_NAME: 'email2' }] } as any),
+        vi.spyOn(metricsDatabaseService, 'getSlowQueries').mockResolvedValue([{ id: 88, sql_text: sql, schema_name: 'shop', avg_time_ms: 7 }] as any),
+        vi.spyOn(identity, 'analysisConfigurationVersion').mockResolvedValue('fake-route-version'));
+      const id = await topsqlAnalysisService.analyzeSlowQuery(88, 42, 'manual', actor);
+      const saved = (await rows(`SELECT request_snapshot FROM analysis_dispatches WHERE analysis_id = ${id}`))[0].request_snapshot;
+      expect(JSON.stringify(saved)).not.toMatch(/FAKE_DOUBLE|FAKE_SINGLE|987654321/);
+      expect(saved.evidence.data.sql).toContain('orders2');
+      expect(saved.evidence.data.schema[0].COLUMN_NAME).toBe('email2');
+      const owned = await claim(id);
+      let calls = 0;
+      const model: AgentProvider = {
+        getDefaultModel: () => 'fake-redaction-model',
+        chat: async (messages, tools) => {
+          expect(JSON.stringify(messages)).not.toMatch(/FAKE_DOUBLE|FAKE_SINGLE|987654321/);
+          expect(JSON.stringify(messages)).toContain('orders2');
+          expect(tools.map(t => t.name)).toEqual(['slide_complete_analysis']);
+          if (calls++ === 0) return { content: null, finishReason: 'tool_calls', toolCalls: [{ id: 'save', name: 'slide_complete_analysis', arguments: { analysisId: id, envelope: { ...envelope, analysisType: 'topsql_analysis', evidenceRefs: [{ ref: '/sql', summary: 'redacted SQL structure' }] } } }], shouldExecuteTools: true, hasToolCalls: true };
+          return { content: 'done', finishReason: 'stop', toolCalls: [], shouldExecuteTools: false, hasToolCalls: false };
+        },
+        chatStream: async () => { throw new Error('UNEXPECTED_STREAM'); },
+      };
+      setAnalysisProviderIdentity(model, { provider: 'fake', routeVersion: 'fake-route-version' });
+      adapter = new DirectAdapter({ workspace, tools: new ToolRegistry(), llmProvider: model });
+      const result = await adapter.invoke('redaction-' + id, owned.request.message, owned.request.systemPrompt, {
+        analysisId: id, runtimeRunId: owned.runtimeRunId, beforeProviderRequest: () => store.beforeSend(owned),
+        completeAnalysis: output => store.completeEnvelope(owned, output), recordAnalysisExecution: event => store.recordExecution(owned, event),
+      });
+      expect(result.stopReason).toBe('completed'); expect(calls).toBe(2);
+      expect((await rows(`SELECT * FROM ai_analysis WHERE id = ${id}`))[0].analysis_envelope.evidenceSnapshot.hash).toBe(saved.evidence.hash);
+      expect(JSON.stringify((await rows(`SELECT request_snapshot FROM analysis_dispatches WHERE analysis_id = ${id}`))[0])).not.toMatch(/FAKE_DOUBLE|FAKE_SINGLE|987654321/);
+    } finally { await adapter?.dispose(); spies.forEach(spy => spy.mockRestore()); rmSync(workspace, { recursive: true, force: true }); }
   });
   it('never upgrades partial supplier usage when completion precedes finalization', async () => {
     const accepted = await enqueue(); const owned = await claim(accepted.analysisId); await store.beforeSend(owned);

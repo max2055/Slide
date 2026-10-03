@@ -25,6 +25,29 @@ import { afterEach, vi } from 'vitest';
 const hash = 'c'.repeat(64);
 afterEach(() => vi.restoreAllMocks());
 describe('frozen references and access', () => {
+  it.each([
+    ['mysql', 'SELECT `email2` FROM `orders2` WHERE email="FAKE_DOUBLE_VALUE"', '`orders2`'],
+    ['mysql', String.raw`SELECT * FROM orders WHERE email="FAKE_DOUBLE\"VALUE"`, 'orders'],
+    ['mysql', 'SELECT * FROM orders WHERE email="FAKE_DOUBLE""VALUE"', 'orders'],
+    ['mysql', "SELECT * FROM orders WHERE email='FAKE_SINGLE''VALUE' /* FAKE_COMMENT */", 'orders'],
+    ['mysql', "SELECT * FROM orders WHERE id=0xABC123 AND email=_utf8mb4'FAKE_CHARSET'", 'orders'],
+    ['postgresql', 'SELECT "email2" FROM "orders2" WHERE email=$tag$FAKE_DOLLAR$tag$', '"orders2"'],
+    ['postgresql', String.raw`SELECT "email2" FROM "orders2" WHERE email=E'FAKE_ESCAPE\'VALUE'`, '"orders2"'],
+    ['oracle', 'SELECT "email2" FROM "orders2" WHERE email=\'FAKE_SINGLE\'', '"orders2"'],
+    ['dameng', 'SELECT "email2" FROM "orders2" WHERE email=\'FAKE_SINGLE\'', '"orders2"'],
+  ])('keeps identifiers and removes dialect %s literals', (dialect, sql, identifier) => {
+    const frozen = freezeEvidence(envelope.subject as any, 'a1', { dialect, sql });
+    expect(JSON.stringify(frozen)).not.toMatch(/FAKE_|ABC123/);
+    expect((frozen.data as any).sql).toContain(identifier);
+    expect(freezeEvidence(envelope.subject as any, 'a1', frozen.data).data).toEqual(frozen.data);
+  });
+  it('fails closed for unsupported syntax and dialect, even in nested diagnostic SQL', () => {
+    for (const data of [{ dialect: 'unknown', sql: 'SELECT "FAKE_VALUE"' }, { sql: 'SELECT \'FAKE_UNCLOSED' }, { database: { instance: { db_type: 'postgresql' }, slowQueries: [{ sql_text: 'INVALID FAKE_VALUE' }] } }]) {
+      const frozen = freezeEvidence(envelope.subject as any, 'a1', data);
+      expect(JSON.stringify(frozen)).not.toContain('FAKE_');
+      expect(frozen.gaps.some(g => g.code === 'SQL_REDACTION_UNAVAILABLE')).toBe(true);
+    }
+  });
   const data = { database: { qps: 7, 'a/b': { '~': 9 } }, observations: [{ resource: envelope.subject, metricId: 'cpu', value: 90 }], semantic: { evidenceRef: hash, value: 12 }, absent: null, gaps: [] };
   const snapshot = freezeEvidence(envelope.subject as any, 'a1', data);
   const request = { purpose: 'fault_diagnosis', subject: envelope.subject as any, authorizationVersion: 'a1', evidence: snapshot };
