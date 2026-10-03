@@ -198,14 +198,28 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
       expect((await rows(`SELECT request_snapshot FROM analysis_dispatches WHERE analysis_id = ${owned.analysisId}`))[0].request_snapshot.evidence.data.metrics.qps).toBe(7);
     } finally { await adapter.dispose(); rmSync(workspace, { recursive: true, force: true }); }
   });
+  it('never upgrades partial supplier usage when completion precedes finalization', async () => {
+    const accepted = await enqueue(); const owned = await claim(accepted.analysisId); await store.beforeSend(owned);
+    const metadata = { provider: 'fake', routeVersion: 'r1', model: 'm1', promptHash: 'p1', inputHash: 'i1', toolVersions: {}, startedAt: new Date().toISOString() };
+    await store.recordExecution(owned, { kind: 'request', request: { ...metadata, requestNumber: 1 } });
+    await store.recordExecution(owned, { kind: 'response', requestNumber: 1, usage: null });
+    await store.recordExecution(owned, { kind: 'request', request: { ...metadata, requestNumber: 2 } });
+    await store.recordExecution(owned, { kind: 'response', requestNumber: 2, usage: { prompt_tokens: 7 } });
+    await store.completeEnvelope(owned, envelope);
+    expect((await rows('SELECT * FROM ai_analysis'))[0].analysis_envelope.provenance.usageStatus).toBe('partial');
+    await store.recordExecution(owned, { kind: 'finalized' });
+    expect((await rows('SELECT * FROM ai_analysis'))[0].usage).toEqual({ prompt_tokens: 7 });
+  });
   it('rejects wrong type, imaginary references and foreign authorized snapshots; accepts genuine references', async () => {
     const evidence = freezeEvidence(request.subject, 'a1', { qps: 7, observations: [{ resource: request.subject, metricId: 'cpu', value: 90 }], gaps: [] });
     const accepted = await enqueue({ request: { ...request, evidence, evidenceVersion: evidence.hash } });
     const owned = await claim(accepted.analysisId); await store.beforeSend(owned);
+    const otherEvidence = freezeEvidence({ type: 'instance', id: 99 }, 'other-scope', { qps: 99 });
+    await enqueue({ relatedId: 99, request: { ...request, subject: { type: 'instance', id: 99 }, evidence: otherEvidence, evidenceVersion: otherEvidence.hash, authorizationVersion: 'other-scope' } });
     for (const output of [
       { ...envelope, analysisType: 'topsql_analysis' }, { ...envelope, subject: { type: 'server', id: 42 } },
       { ...envelope, evidenceRefs: [{ ref: '/imaginary', summary: 'fabricated' }] },
-      { ...envelope, evidenceRefs: [{ ref: 'snapshot:another-real-task#/qps', summary: 'foreign' }] },
+      { ...envelope, evidenceRefs: [{ ref: `snapshot:${otherEvidence.id}#/qps`, summary: 'foreign' }] },
       { ...envelope, evidenceRefs: [{ ref: 'observation:cpu:99', summary: 'outside scope' }] },
     ]) expect((await store.completeEnvelope(owned, output)).success).toBe(false);
     expect((await rows('SELECT * FROM ai_analysis'))[0].result).toBeNull();
