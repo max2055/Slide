@@ -4,6 +4,7 @@ import { cpus, platform, release, totalmem } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import mysql from '../../apps/db-ops-api/node_modules/mysql2/promise.js';
 import { MysqlWorkflowStore, WorkerRuntime } from '../../apps/db-ops-api/src/workflows/worker-runtime.js';
+import { qualifyBoundedQueue } from './assert-bounded-queue.js';
 import { platformLogs } from '../../apps/db-ops-api/src/platform/structured-log-evidence-adapter.js';
 
 const pool = mysql.createPool({
@@ -12,7 +13,7 @@ const pool = mysql.createPool({
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
-  connectionLimit: 24,
+  connectionLimit: 10,
   timezone: 'Z',
 });
 
@@ -106,14 +107,15 @@ try {
     hardware: { platform: platform(), release: release(), cpu: cpus()[0]?.model,
       logicalCpus: cpus().length, memoryBytes: totalmem(), node: process.version },
     load: { reportMs: 10000, notificationJobs: 1, collectionJobs: 1, workerConcurrency: 1, pollMs: 1000,
-      controlPoolLimit: 24, sharedInstanceId: 1, realModelCalls: 0 },
+      controlPoolLimit: 10, sharedInstanceId: 1, realModelCalls: 0 },
     waitMs: Object.fromEntries(jobs.map(j => [j.type, startedAt[j.type] - enqueuedAt[j.type]])),
     elapsedMs: Math.round(performance.now() - start), peakActive, completed,
     cpuMicroseconds: process.cpuUsage(startCpu), memoryBefore: startMemory, memoryAfter: process.memoryUsage(),
-    before, after, candidateTarget: { fastStartMs: 2000, status: 'unconfirmed-not-production-SLA' },
+    before, after, candidateTarget: { fastStartMs: 2000, status: 'confirmed-isolated-experiment-not-production-SLA' },
   }));
 
   if (!baseline) {
+    await qualifyBoundedQueue(pool);
     // Durable gauges distinguish ready work, scheduled retry, dead letter and expired running lease.
     const fixtureType = 'qualification.queue-gauges';
     const fixture = async (state: string, dueSeconds: number, leaseSeconds: number | null) => {

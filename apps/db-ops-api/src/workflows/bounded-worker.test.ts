@@ -79,3 +79,47 @@ it('filters atomic SQL claims by lane and resolves report/notification resources
   expect(await store.resourcesFor({ ...job('notification.deliver', 'forged'), payload: { alertId: 1, channelId: 2 } })).toEqual(['instance:9']);
   expect(await store.resourcesFor(job('cron.execute', 'forged'))).toEqual(['*']);
 });
+
+it('gives a global waiter FIFO admission and releases aborted waiters without starving subsequent work', async () => {
+  vi.useFakeTimers();
+  const jobs = [job('report.occurrence', 'a'), job('notification.deliver', '*'), job('metrics.collect', 'c')];
+  const { store } = fixture(jobs);
+  const runtime = new BoundedWorkflowRuntime(store, 'test', 3, async j => [String(j.payload.resource)]);
+  const starts: string[] = [];
+  let release!: () => void; const gate = new Promise<void>(r => { release = r; });
+  const run = runtime.runOnce(async j => { starts.push(j.type); if (j.type === 'report.occurrence') await gate; });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(starts).toEqual(['report.occurrence']);
+  release(); await run;
+  expect(starts).toEqual(['report.occurrence', 'notification.deliver', 'metrics.collect']);
+  expect(await runtime.shutdown()).toBe(true);
+});
+
+it('reserves the general/model slot while an uncancellable renewal is outstanding', async () => {
+  vi.useFakeTimers(); vi.spyOn(console, 'error').mockImplementation(() => {});
+  let resolveRenewal!: (value: boolean) => void;
+  const renewal = new Promise<boolean>(r => { resolveRenewal = r; });
+  const jobs = [job('report.occurrence', 'a'), job('analysis.dispatch', 'b')];
+  const { store } = fixture(jobs, 3, () => renewal);
+  const runtime = new BoundedWorkflowRuntime(store, 'test', 3, async j => [String(j.payload.resource)], 3);
+  const starts: string[] = [];
+  const run = runtime.runOnce(async j => { starts.push(j.type); await new Promise(r => setTimeout(r, 1100)); });
+  await vi.advanceTimersByTimeAsync(1500); await run;
+  await runtime.runOnce(async j => { starts.push(j.type); });
+  expect(starts).toEqual(['report.occurrence']);
+  const close = runtime.shutdown(10); await vi.advanceTimersByTimeAsync(10);
+  expect(await close).toBe(false);
+  resolveRenewal(true); await vi.advanceTimersByTimeAsync(0);
+  expect(await runtime.shutdown()).toBe(true);
+});
+
+it('selects without locking the queue scan and claims only the primary-key candidate to avoid cross-lane deadlocks', async () => {
+  const execute = vi.fn(async (sql: string, _values?: unknown[]) => [sql.startsWith('SELECT') ? [{
+    id: 'candidate', type: 'metrics.collect', payload: {}, attempts: 1, maxAttempts: 5, fencingToken: 1,
+  }] : { affectedRows: 1 }] as any);
+  const store = new MysqlWorkflowStore(() => ({ execute }));
+  await store.claim('owner', 30, { types: ['metrics.collect'], exclude: false });
+  const update = execute.mock.calls.find(c => c[0].startsWith('UPDATE'))![0];
+  expect(update).not.toContain('SELECT id FROM');
+  expect(update).toContain('WHERE id = ?');
+});
