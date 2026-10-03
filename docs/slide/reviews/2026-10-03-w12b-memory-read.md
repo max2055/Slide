@@ -77,3 +77,18 @@ pnpm --filter @slide/agent-core exec vitest run src/memory-store-read.test.ts -t
 ## 回滚
 
 无迁移、无新格式。可关闭 Memory 功能并保留原状态卷，再撤回此包代码，旧 transaction 读取仍可读同一个 memory-v1.json，不丢 record/job/budget/tombstone。恢复旧代码会重新引入读取写盘和原权限窗口；不清空状态、不删除 tombstone、不回退其他任务提交。
+
+
+## PR #114 CI 修复：RED 证据（续跑）
+
+本轮仅处理父任务记录的 backend gate 失败，沿用原分支和 PR。最新 main 仍为 `aa270fb013ced5ad511482a7ffea3f22501dffea`，目标 head `244e6ab99e4463aed7de831ac9c0432383b9c949`。GitHub run `37105730313` / job `111153741938`：API 2,913 通过、136 跳过、1 失败；失败为 `discards provisional output before delivering WS terminal completed`，`complete` 期望 1 次、实际 0 次（原文件行 843）。该测试耗时 288 ms。
+
+分类为无关既有测试时序缺陷，但直接阻塞本 PR CI，按父任务授权作最小必要修复。该测试与最新 main SHA-256 均为 `48aa86b83db1df6bc65b33325b211a2046713f0e2ec8c9880110113b44219e8b`，DirectAdapter 生产代码也没有本 PR 差异。原测试给三个预期终态都设置 100 ms 的运行期限；外层 WS timer 从 session/claim/history 准备前启动，成功场景可能被准备耗时转成 timeout。
+
+原 focused 三场景在本机 3/3 通过，不能将一次通过当作无缺陷。可逆复现：仅在该表驱动测试的 completed 场景，将已有 `canonicalStore.getPage` mock 改为等待 `setTimeout(resolve, 150)` 后返回 `{ messages: [], nextBefore: null }`。执行以下命令，稳定产生同一断言失败，测试耗时 292 ms、1 失败；已撤回探针，未改生产超时：
+
+```bash
+pnpm --filter slide-api exec vitest run src/adapter/__tests__/direct-adapter.test.ts -t 'discards provisional output before delivering WS terminal completed'
+```
+
+环境沿用上述 macOS arm64 / Node v24.18.0 / pnpm 11.19.0 / Vitest 4.1.8。下一步在同一分支最小修正测试时序，保留所有终态、持久化和输出断言；不改 API/状态/格式/迁移，不扩大运行期限或跳过门禁。硬预算未设定，实际 token/费用遥测不可用，子代理 0。
