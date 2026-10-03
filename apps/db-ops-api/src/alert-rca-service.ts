@@ -1,3 +1,4 @@
+import type { ActorContext } from './auth/actor-context.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 告警根因分析服务 (Alert Root Cause Analysis)
@@ -9,9 +10,6 @@ import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
 import { alertDatabaseService } from './alert-database-service.js';
 
 const RCA_LEVELS = new Set(['warning', 'error', 'critical']);
-
-// In-memory lock to prevent concurrent duplicate analyses
-const pendingAnalyses = new Set<string>();
 
 interface AlertDetails {
   id: number;
@@ -37,7 +35,8 @@ class AlertRCAService {
    */
   async analyzeAlert(
     alertId: number,
-    trigger: 'manual' | 'auto' = 'auto'
+    trigger: 'manual' | 'auto' = 'auto',
+    actor?: ActorContext, retryOf?: number,
   ): Promise<{ success: boolean; analysisId?: number; sessionKey?: string; error?: string; status?: string }> {
     // a. 获取告警详情
     assertWorkflowActive();
@@ -60,90 +59,11 @@ class AlertRCAService {
     const subjectType = serverId ? 'server' : 'instance';
     const subjectId = serverId ?? instanceId!;
 
-    // d. Build cache key and in-memory lock: prevent concurrent duplicate analyses
-    const cacheKey = `alert:${alertId}:${subjectType}:${subjectId}`;
-    if (pendingAnalyses.has(cacheKey)) {
-      return { success: false, error: '分析正在创建中，请稍后重试' };
-    }
-    // Acquire lock atomically before any await to prevent race condition
-    pendingAnalyses.add(cacheKey);
-    let lockReleased = false;
-    const releaseLock = () => {
-      if (!lockReleased) {
-        pendingAnalyses.delete(cacheKey);
-        lockReleased = true;
-      }
-    };
-
-    try {
-      // e. 去重检查：15 分钟内相同 alert+instance 的分析
-      assertWorkflowActive();
-      const existing = await aiAnalysisDatabaseService.getAnalysisList({
-        analysis_type: 'alert_rca',
-        status: 'running',
-        cache_key: cacheKey,
-        limit: 1,
-      });
-      const recentRunning = existing.length > 0
-        && existing[0].created_at
-        && (Date.now() - existing[0].created_at.getTime()) < 15 * 60 * 1000
-        ? existing[0] : null;
-      if (recentRunning) {
-        releaseLock();
-        return { success: true, analysisId: recentRunning.id, sessionKey: (recentRunning as any).session_key };
-      }
-
-      assertWorkflowActive();
-      const completedCache = await aiAnalysisDatabaseService.getAnalysisList({
-        analysis_type: 'alert_rca',
-        status: 'completed',
-        cache_key: cacheKey,
-        limit: 1,
-      });
-      const recentCompleted = completedCache.length > 0
-        && completedCache[0].created_at
-        && (Date.now() - completedCache[0].created_at.getTime()) < 15 * 60 * 1000
-        ? completedCache[0] : null;
-      if (recentCompleted) {
-        releaseLock();
-        return { success: true, analysisId: recentCompleted.id, sessionKey: (recentCompleted as any).session_key };
-      }
-
-      // f. 创建分析记录 (lock held)
-      assertWorkflowActive();
-      const createResult = await aiAnalysisDatabaseService.createAnalysis({
-        analysis_type: 'alert_rca',
-        instance_id: instanceId,
-        server_id: serverId,
-        related_id: alertId,
-        trigger_type: trigger,
-        cache_key: cacheKey,
-      });
-      if (!createResult.success) {
-        releaseLock();
-        return { success: false, error: createResult.error };
-      }
-      const analysisId = createResult.analysisId!;
-      const sessionKey = `rca-${subjectType}-${alertId}-${analysisId}`;
-
-      // f2. 回填 session_key
-      assertWorkflowActive();
-      await aiAnalysisDatabaseService.setSessionKey(analysisId, sessionKey);
-
-      // g. 更新状态为 running
-      assertWorkflowActive();
-      await aiAnalysisDatabaseService.updateStatus(analysisId, 'running');
-
-      // h. 通过 Agent 执行分析（await 确保 session 先创建）
-      assertWorkflowActive();
-      await dispatchOrReuse({
-        type: 'alert_rca',
-        cacheKey: `rca:${alertId}:${subjectType}:${subjectId}`,
-        instanceId,
-        serverId,
-        sessionKey,
-        triggerType: trigger,
-        existingAnalysisId: analysisId,
+    assertWorkflowActive();
+    const result = await dispatchOrReuse({
+        type: 'alert_rca', cacheKey: `alert:${alertId}:${subjectType}:${subjectId}`,
+        instanceId, serverId, sessionKey: `rca-${subjectType}-${alertId}`,
+        triggerType: trigger, actor, retryOf, relatedId: alertId,
         userMessage: `对告警 ${alertId} 进行根因分析。
 
 告警详情：
@@ -156,21 +76,11 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
 - 发生时间：${alert.created_at instanceof Date ? alert.created_at.toISOString() : String(alert.created_at)}
 
 请基于以上已持久化的告警事实分析根因、明确证据边界并给出修复建议。当前后台分析仅提供 slide_complete_analysis 工具；不要调用其他工具。完成后必须调用该工具保存结果。`,
-      }).catch((err) => {
-        assertWorkflowActive();
-        console.error(`[RCA] Agent 分析 ${analysisId} 失败:`, err);
-        aiAnalysisDatabaseService.failAnalysis(analysisId, err.message).catch(() => {});
-      });
-
-      // Release lock immediately after starting background analysis
-      releaseLock();
-
-      return { success: true, analysisId, sessionKey, status: 'queued' };
-    } catch (err) {
-      releaseLock();
-      assertWorkflowActive();
-      throw err;
-    }
+    });
+    return { success: result.success !== false, analysisId: result.analysisId,
+      sessionKey: `rca-${subjectType}-${alertId}-${result.analysisId}`, status: result.status,
+      ...(result.status === 'unknown' ? { error: 'ANALYSIS_PROVIDER_RESULT_UNKNOWN：重试可能再次计费，需要明确确认' } : {}),
+    };
   }
 
   /**

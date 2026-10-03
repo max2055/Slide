@@ -101,7 +101,13 @@ export async function registerResourceRoutes(
       return reply.code(403).send({ error: 'AI_DIAGNOSIS_FORBIDDEN' });
     }
     try {
-      const result = await agentDiagnosis.diagnose(currentActor, ref);
+      const body = (request.body ?? {}) as { retryOf?: unknown; confirmUnknownRetry?: unknown };
+      if (body.retryOf !== undefined && (!Number.isSafeInteger(body.retryOf) || Number(body.retryOf) <= 0 || body.confirmUnknownRetry !== true)) {
+        return reply.code(400).send({ error: 'ANALYSIS_RETRY_CONFIRMATION_REQUIRED：供应商可能已经执行，重试可能再次计费' });
+      }
+      const result = body.retryOf === undefined ? await agentDiagnosis.diagnose(currentActor, ref)
+        : await agentDiagnosis.diagnose(currentActor, ref, Number(body.retryOf));
+      if (result.status === 'unknown') return reply.code(409).send(result);
       if (!result.success) return reply.code(503).send(result);
       return reply.code(result.status === 'cached' ? 200 : 202).send(result);
     } catch (error) {

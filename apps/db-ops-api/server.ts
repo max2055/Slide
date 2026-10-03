@@ -80,6 +80,10 @@ import { indexDatabaseService } from './src/index-database-service.js';
 import { topsqlAnalysisService } from './src/topsql-analysis-service.js';
 import { alertRCAService } from './src/alert-rca-service.js';
 import { faultDiagnosisService } from './src/fault-diagnosis-service.js';
+import { analysisDispatchStore } from './src/analysis/analysis-runtime.js';
+import { registerAnalysisDispatchHandler } from './src/analysis/analysis-dispatch-handler.js';
+import { authorizeAnalysisRequest, analysisConfigurationVersion } from './src/analysis/analysis-identity.js';
+import { createAnalysisRecoveryJob, registerAnalysisRecoveryHandler } from './src/analysis/analysis-recovery-schedule.js';
 import { parseFaultDiagnosisInstanceId } from './src/fault-diagnosis-route-input.js';
 import { metricRegistry } from './src/metric-registry.js';
 import { metricDatabaseService, type MetricTargetType } from './src/metric-database-service.js';
@@ -3782,7 +3786,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('ai:manage')],
     handler: async (request, reply) => {
       try {
-        const { analysis_type, instance_id, related_id, trigger_type = 'manual' } = request.body as {
+        const { analysis_type, instance_id, related_id } = request.body as {
           analysis_type: 'topsql_analysis' | 'alert_rca' | 'fault_diagnosis' | 'capacity_prediction';
           instance_id?: number;
           related_id?: number;
@@ -3821,14 +3825,14 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             if (!related_id) {
               return reply.code(400).send({ error: 'TopSQL 分析需要 related_id (slow_query_id)' });
             }
-            analysisId = await topsqlAnalysisService.analyzeSlowQuery(related_id, instance_id, trigger_type);
+            analysisId = await topsqlAnalysisService.analyzeSlowQuery(related_id, instance_id, 'manual', (request as any).user);
             break;
 
           case 'alert_rca':
             if (!related_id) {
               return reply.code(400).send({ error: '告警 RCA 需要 related_id (alert_id)' });
             }
-            const rcaResult = await alertRCAService.analyzeAlert(related_id, trigger_type);
+            const rcaResult = await alertRCAService.analyzeAlert(related_id, 'manual', (request as any).user);
             if (!rcaResult.success) {
               return reply.code(500).send({ error: rcaResult.error });
             }
@@ -3839,7 +3843,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           case 'fault_diagnosis':
             const diagnosisResult = await faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId);
             if (!diagnosisResult.success) {
-              return reply.code(500).send({ error: diagnosisResult.error });
+              return reply.code(diagnosisResult.status === 'unknown' ? 409 : 500).send(diagnosisResult);
             }
             analysisId = diagnosisResult.analysisId!;
             break;
@@ -3864,7 +3868,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         };
         const session_key = rcaSessionKey
           || (analysis_type in sessionKeyPrefix ? `${sessionKeyPrefix[analysis_type]}-${analysisId}` : undefined);
-        reply.send({ id: analysisId, status: "running", session_key });
+        reply.send({ id: analysisId, status: "pending", session_key });
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -4062,17 +4066,22 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(404).send({ error: '分析记录不存在' });
         }
 
+        const confirmUnknownRetry = (request.body as { confirmUnknownRetry?: unknown } | undefined)?.confirmUnknownRetry === true;
+        if (existing.status === 'unknown' && !confirmUnknownRetry) {
+          return reply.code(409).send({ error: 'ANALYSIS_RETRY_CONFIRMATION_REQUIRED', message: '供应商可能已经执行，重试可能再次计费，需要明确确认', analysisId: existing.id, status: 'unknown' });
+        }
+
         if (existing.analysis_type === 'topsql_analysis' && existing.related_id) {
-          const reanalyzeId = await topsqlAnalysisService.reanalyzeSlowQuery(existing.related_id, existing.instance_id);
+          const reanalyzeId = await topsqlAnalysisService.reanalyzeSlowQuery(existing.related_id, existing.instance_id!, 'manual', (request as any).user, existing.status === 'unknown' ? existing.id : undefined);
           reply.send({ id: reanalyzeId, status: 'pending', message: '重新分析任务已提交' });
         } else if (existing.analysis_type === 'alert_rca' && existing.related_id) {
-          const rcaResult = await alertRCAService.analyzeAlert(existing.related_id, 'manual');
+          const rcaResult = await alertRCAService.analyzeAlert(existing.related_id, 'manual', (request as any).user, existing.status === 'unknown' ? existing.id : undefined);
           if (!rcaResult.success) {
             return reply.code(500).send({ error: rcaResult.error });
           }
           reply.send({ id: rcaResult.analysisId, status: 'pending', message: '重新分析任务已提交' });
         } else if (existing.analysis_type === 'fault_diagnosis') {
-          const diagnosisResult = await faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId);
+          const diagnosisResult = await faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId, existing.status === 'unknown' ? existing.id : undefined);
           if (!diagnosisResult.success) {
             return reply.code(500).send({ error: diagnosisResult.error });
           }
@@ -5346,7 +5355,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
-      const result = await alertEventService.triggerRCAForEvent(Number(id));
+      const result = await alertEventService.triggerRCAForEvent(Number(id), (request as any).user.userId, (request as any).user);
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -5476,6 +5485,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const workflowStore = new MysqlWorkflowStore(() => dbConnection.getPool() as any);
   notificationWorkflowStore = workflowStore;
   const workflowRegistry = new JobRegistry();
+  await startup.step(() => analysisDispatchStore.assertSchema());
+  await startup.step(() => analysisDispatchStore.recoverLegacy());
+  await startup.step(() => analysisDispatchStore.recover());
+  registerAnalysisDispatchHandler(workflowRegistry, { store: analysisDispatchStore, engine: getAgentEngine,
+    authorize: authorizeAnalysisRequest, configurationVersion: analysisConfigurationVersion });
+  registerAnalysisRecoveryHandler(workflowRegistry, analysisDispatchStore, job => workflowStore.enqueue(job));
   metricLifecycle = createMetricSchedulerLifecycle(pool);
   await startup.assertOwned();
   await startup.step(() => metricLifecycle!.start(workflowRegistry, async () => {
@@ -5512,6 +5527,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   await startup.step(() => enqueueReportSchedule());
   await startup.assertOwned();
   await startup.step(() => workflowStore.enqueue(createCapacityConsistencyJob()));
+  await startup.assertOwned();
+  await startup.step(() => workflowStore.enqueue(createAnalysisRecoveryJob()));
 
   // 启动监控采集
   await startup.assertOwned();

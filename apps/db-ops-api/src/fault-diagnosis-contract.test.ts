@@ -62,7 +62,7 @@ describe('manual fault diagnosis route contract', () => {
     const submit = routeBlock("fastify.post('/api/ai/analysis'", '// 轮询分析状态');
     const invalidGuard = "if (analysis_type === 'fault_diagnosis' && faultInstanceId === null)";
     const accessCheck = 'hasInstanceAccess((request as any).user';
-    const serviceCall = 'faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId)';
+    const serviceCall = 'faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId';
 
     expect(submit).toContain('parseFaultDiagnosisInstanceId(instance_id)');
     expect(submit).toContain(invalidGuard);
@@ -73,15 +73,15 @@ describe('manual fault diagnosis route contract', () => {
     expect(submit.indexOf(invalidGuard)).toBeLessThan(submit.indexOf(serviceCall));
     expect(submit.slice(submit.indexOf(invalidGuard), submit.indexOf(serviceCall))).toContain('reply.code(400)');
     expect(submit).not.toMatch(/faultDiagnosisService\.diagnoseInstance\(\s*instance_id\s*,\s*trigger_type/);
-    expect(submit).toContain('topsqlAnalysisService.analyzeSlowQuery(related_id, instance_id, trigger_type)');
-    expect(submit).toContain('alertRCAService.analyzeAlert(related_id, trigger_type)');
+    expect(submit).toContain("topsqlAnalysisService.analyzeSlowQuery(related_id, instance_id, 'manual', (request as any).user)");
+    expect(submit).toContain("alertRCAService.analyzeAlert(related_id, 'manual', (request as any).user)");
   });
 
   it('validates persisted instance_id before fault reanalysis', () => {
     const reanalyze = routeBlock("fastify.post('/api/ai/analysis/:id/reanalyze'", '// 获取自动分析配置');
     const invalidGuard = "if (existing.analysis_type === 'fault_diagnosis' && faultInstanceId === null)";
     const accessCheck = 'hasInstanceAccess((request as any).user';
-    const serviceCall = 'faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId)';
+    const serviceCall = 'faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId';
 
     expect(reanalyze).toContain('parseFaultDiagnosisInstanceId(existing.instance_id)');
     expect(reanalyze).toContain(invalidGuard);

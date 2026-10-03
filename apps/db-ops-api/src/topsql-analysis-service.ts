@@ -1,3 +1,4 @@
+import type { ActorContext } from './auth/actor-context.js';
 /**
  * TopSQL AI 分析服务
  * 慢查询数据收集 → LLM 分析 → 结果存储
@@ -18,7 +19,8 @@ class TopSQLAnalysisService {
   async analyzeSlowQuery(
     slowQueryId: number,
     instanceId: number,
-    trigger: 'manual' | 'auto' = 'manual'
+    trigger: 'manual' | 'auto' = 'manual',
+    actor?: ActorContext,
   ): Promise<number> {
     // 获取慢查询详情
     const slowQueries = await metricsDatabaseService.getSlowQueries(instanceId, 100);
@@ -28,73 +30,14 @@ class TopSQLAnalysisService {
       throw new Error(`慢查询 #${slowQueryId} 不存在`);
     }
 
-    // 缓存去重检查
-    const cacheKey = `${slowQuery.sql_hash}:${instanceId}`;
-    const existing = await aiAnalysisDatabaseService.findByCacheKey(cacheKey);
-    if (existing) {
-      return existing.id;
-    }
-
-    // 创建分析记录
-    const createResult = await aiAnalysisDatabaseService.createAnalysis({
-      analysis_type: 'topsql_analysis',
-      instance_id: instanceId,
-      related_id: slowQueryId,
-      trigger_type: trigger,
-      cache_key: cacheKey,
-    });
-
-    if (!createResult.success || !createResult.analysisId) {
-      throw new Error('创建分析记录失败');
-    }
-
-    const analysisId = createResult.analysisId;
-
-    // 后台执行分析（非阻塞）
-    this._runAnalysis(analysisId, slowQuery, instanceId).catch(async (err) => {
-      console.error(`[TopSQL] 后台分析 #${analysisId} 失败:`, err);
-      await aiAnalysisDatabaseService.failAnalysis(analysisId, err instanceof Error ? err.message : String(err)).catch(() => {});
-    });
-
-    return analysisId;
+    return this._runAnalysis(slowQuery, instanceId, trigger, actor);
   }
 
-  /**
-   * 强制重新分析（跳过缓存）
-   */
-  async reanalyzeSlowQuery(
-    slowQueryId: number,
-    instanceId: number,
-    trigger: 'manual' | 'auto' = 'manual'
-  ): Promise<number> {
+  async reanalyzeSlowQuery(slowQueryId: number, instanceId: number, trigger: 'manual' | 'auto' = 'manual', actor?: ActorContext, retryOf?: number): Promise<number> {
     const slowQueries = await metricsDatabaseService.getSlowQueries(instanceId, 100);
-    const slowQuery = slowQueries.find((q) => q.id === slowQueryId);
-
-    if (!slowQuery) {
-      throw new Error(`慢查询 #${slowQueryId} 不存在`);
-    }
-
-    const cacheKey = `${slowQuery.sql_hash}:${instanceId}`;
-    const createResult = await aiAnalysisDatabaseService.createAnalysis({
-      analysis_type: 'topsql_analysis',
-      instance_id: instanceId,
-      related_id: slowQueryId,
-      trigger_type: trigger,
-      cache_key: cacheKey,
-    });
-
-    if (!createResult.success || !createResult.analysisId) {
-      throw new Error('创建分析记录失败');
-    }
-
-    const analysisId = createResult.analysisId;
-
-    this._runAnalysis(analysisId, slowQuery, instanceId).catch(async (err) => {
-      console.error(`[TopSQL] 后台重新分析 #${analysisId} 失败:`, err);
-      await aiAnalysisDatabaseService.failAnalysis(analysisId, err instanceof Error ? err.message : String(err)).catch(() => {});
-    });
-
-    return analysisId;
+    const slowQuery = slowQueries.find(q => q.id === slowQueryId);
+    if (!slowQuery) throw new Error(`慢查询 #${slowQueryId} 不存在`);
+    return this._runAnalysis(slowQuery, instanceId, trigger, actor, retryOf, false);
   }
 
   /**
@@ -137,18 +80,20 @@ class TopSQLAnalysisService {
    * 后台执行分析流程
    */
   private async _runAnalysis(
-    analysisId: number,
     slowQuery: SlowQueryRecord,
-    instanceId: number
-  ): Promise<void> {
-    await dispatchOrReuse({
+    instanceId: number,
+    trigger: 'manual' | 'auto',
+    actor?: ActorContext, retryOf?: number, reuseCompleted = true,
+  ): Promise<number> {
+    const accepted = await dispatchOrReuse({
       type: 'topsql_analysis',
       cacheKey: `topsql:${slowQuery.sql_hash || 'no-hash'}:${instanceId}`,
       instanceId,
-      sessionKey: `topsql-${analysisId}`,
-      existingAnalysisId: analysisId,
+      sessionKey: 'topsql', triggerType: trigger, actor, retryOf, reuseCompleted, relatedId: slowQuery.id,
       userMessage: `分析以下慢查询并给出优化建议:\n\nSQL:\n\`\`\`sql\n${slowQuery.sql_text}\n\`\`\`\n\n性能: 平均${slowQuery.avg_time_ms}ms 最大${slowQuery.max_time_ms}ms 执行${slowQuery.execution_count}次\n\n请使用 slide_* 工具获取 EXPLAIN 执行计划、表索引信息和表结构。分析瓶颈并给出 SQL 重写和索引优化建议。完成后调用 slide_complete_analysis 保存结果。`,
     });
+    if (accepted.success === false) throw new Error('ANALYSIS_PROVIDER_RESULT_UNKNOWN：重试可能再次计费，需要明确确认');
+    return accepted.analysisId;
   }
 
   /**

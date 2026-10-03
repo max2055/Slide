@@ -145,10 +145,11 @@ export class InstanceDiagnosisModal extends LitElement {
           .result=${typeof this.diagnosis === 'string' ? this.diagnosis : (this.diagnosis?.result || null)}
           analysisType="fault_diagnosis"
           triggerType="manual"
-          status="completed"
+          .status=${this.diagnosis?.status ?? "completed"}
           .errorMessage=${null}
           title="AI 诊断结果"
         ></ai-analysis-result>
+        ${this.diagnosis?.status === 'unknown' ? html`<a class="btn" href=${`/resource-diagnosis?resourceType=instance&resourceId=${this.instanceId}&analysisId=${this.diagnosis.id}`}>查看任务并确认重试后果</a>` : nothing}
         ${hasResult ? html`
           <div class="continue-section">
             <p>对诊断结果有疑问？可以到 Chat 中进一步分析</p>

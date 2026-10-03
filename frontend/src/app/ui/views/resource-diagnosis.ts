@@ -9,6 +9,7 @@ import { permissionMatches } from '../settings-navigation.js';
 import '../components/app-form-field.js';
 import '../components/app-empty-state.js';
 import '../components/app-badge.js';
+import '../components/app-dialog.js';
 import './resource-evaluation.js';
 import './source-manifest.js';
 
@@ -38,6 +39,7 @@ export class ResourceDiagnosisPage extends LitElement {
   @state() private error = '';
   @state() private agentResult: { analysisId: number; status: string; result?: unknown; resource?: ResourceRef; createdAt?: string; completedAt?: string; error?: string } | null = null;
   @state() private taskMessage = '';
+  @state() private retryDialogOpen = false;
   private statusTimer: ReturnType<typeof setTimeout> | null = null;
   private statusController: AbortController | null = null;
   private statusDeadline = 0;
@@ -101,7 +103,7 @@ export class ResourceDiagnosisPage extends LitElement {
   }
   private async loadEvidence() {
     const version = ++this.requestVersion;
-    this.stopStatus(); this.taskMessage = '';
+    this.stopStatus(); this.taskMessage = ''; this.retryDialogOpen = false;
     this.evidence = null; this.pack = null; this.agentResult = null; this.error = ''; this.busy = false;
     if (!this.selected) { this.loading = false; return; }
     this.loading = true;
@@ -112,7 +114,7 @@ export class ResourceDiagnosisPage extends LitElement {
       if (version === this.requestVersion) {
         this.evidence = evidence;
         const id = Number(new URL(location.href).searchParams.get('analysisId'));
-        if (Number.isSafeInteger(id) && id > 0) { this.agentResult = { analysisId: id, status: 'unknown' }; this.startStatus(); }
+        if (Number.isSafeInteger(id) && id > 0) { this.agentResult = { analysisId: id, status: 'unconfirmed' }; this.startStatus(); }
       }
     } catch (error) { if (version === this.requestVersion) this.error = String(error); }
     finally { if (version === this.requestVersion) this.loading = false; }
@@ -123,16 +125,16 @@ export class ResourceDiagnosisPage extends LitElement {
     url.searchParams.set('resourceType', type); url.searchParams.set('resourceId', id); url.searchParams.delete('analysisId');
     history.pushState({}, '', url); this.readSelection(); void this.loadEvidence();
   }
-  private async diagnose(agent = false) {
-    if (!this.selected || this.busy || (agent && this.taskActive())) return;
+  private async diagnose(agent = false, retryOf?: number) {
+    if (!this.selected || this.busy || (agent && this.taskActive() && retryOf === undefined)) return;
     const version = this.requestVersion;
     this.busy = true; this.error = '';
     try {
-      const response = await authFetch(`/api/resources/${this.selected.type}/${this.selected.id}/${agent ? 'diagnose-agent' : 'diagnose'}`, { method: 'POST' });
+      const response = await authFetch(`/api/resources/${this.selected.type}/${this.selected.id}/${agent ? 'diagnose-agent' : 'diagnose'}`, { method: 'POST', ...(retryOf !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ retryOf, confirmUnknownRetry: true }) } : {}) });
       const result = await response.json();
       if (!response.ok) {
-        if (agent && Number.isSafeInteger(result.analysisId) && result.analysisId > 0 && version === this.requestVersion) { this.agentResult = { analysisId: result.analysisId, status: 'unknown' }; this.persistAnalysisId(result.analysisId); this.startStatus(); }
-        throw new Error(response.status === 403 ? '无诊断权限，资源与证据浏览仍可用' : response.status === 503 ? 'Agent 或模型暂不可用，请检查配置；已创建的任务可查询状态' : `诊断请求失败 (${response.status})`);
+        if (agent && Number.isSafeInteger(result.analysisId) && result.analysisId > 0 && version === this.requestVersion) { this.agentResult = { analysisId: result.analysisId, status: result.status === 'unknown' ? 'unknown' : 'unconfirmed' }; this.persistAnalysisId(result.analysisId); this.startStatus(); }
+        throw new Error(response.status === 409 ? '供应商可能已经执行，结果未知；重试可能再次计费，需要明确确认' : response.status === 403 ? '无诊断权限，资源与证据浏览仍可用' : response.status === 503 ? 'Agent 或模型暂不可用，请检查配置；已创建的任务可查询状态' : `诊断请求失败 (${response.status})`);
       }
       if (version !== this.requestVersion) return;
       if (agent) {
@@ -145,7 +147,7 @@ export class ResourceDiagnosisPage extends LitElement {
     } catch (error) { if (version === this.requestVersion) this.error = String(error); }
     finally { if (version === this.requestVersion) this.busy = false; }
   }
-  private taskActive() { return this.agentResult !== null && !['completed', 'failed'].includes(this.agentResult.status); }
+  private taskActive() { return this.agentResult !== null && !['completed', 'failed', 'unknown'].includes(this.agentResult.status); }
   private persistAnalysisId(id: number) { const url = new URL(location.href); url.searchParams.set('analysisId', String(id)); history.replaceState(history.state, '', url); }
   private stopStatus() {
     if (this.statusTimer !== null) clearTimeout(this.statusTimer);
@@ -161,12 +163,12 @@ export class ResourceDiagnosisPage extends LitElement {
     const timeout = setTimeout(() => controller.abort(), 15_000);
     try {
       const response = await authFetch(`/api/resources/${this.selected.type}/${this.selected.id}/analyses/${analysisId}`, { signal: controller.signal });
-      if (!response.ok) throw new Error(response.status === 403 ? '无分析结果查看权限，需要 ai:view' : response.status === 404 ? '任务不存在或不属于当前账号与资源权限范围' : '任务状态暂不可用，可重试查询');
+      if (!response.ok) throw new Error(response.status === 409 ? '供应商可能已经执行，结果未知；重试可能再次计费，需要明确确认' : response.status === 403 ? '无分析结果查看权限，需要 ai:view' : response.status === 404 ? '任务不存在或不属于当前账号与资源权限范围' : '任务状态暂不可用，可重试查询');
       const result = await response.json();
       if (version !== this.requestVersion || !this.isConnected || controller.signal.aborted) return;
-      if (result.analysisId !== analysisId || !['pending', 'running', 'completed', 'failed'].includes(result.status)) throw new Error('任务状态暂不可用，可重试查询');
+      if (result.analysisId !== analysisId || !['pending', 'running', 'completed', 'failed', 'unknown'].includes(result.status)) throw new Error('任务状态暂不可用，可重试查询');
       this.agentResult = result;
-      this.taskMessage = ({ pending: '已受理', running: '运行中', completed: '完成', failed: '失败' } as Record<string, string>)[result.status];
+      this.taskMessage = ({ pending: '已受理', running: '运行中', completed: '完成', failed: '失败', unknown: '结果未知，已停止自动重试' } as Record<string, string>)[result.status];
       if (['pending', 'running'].includes(result.status)) this.statusTimer = setTimeout(() => { this.statusTimer = null; void this.checkStatus(); }, 3000);
     } catch (error) {
       if (version === this.requestVersion && this.isConnected) this.taskMessage = controller.signal.aborted ? '等待超时，任务状态待确认' : error instanceof Error ? error.message : '任务状态暂不可用';
@@ -178,6 +180,12 @@ export class ResourceDiagnosisPage extends LitElement {
     const data = task.result as Record<string, unknown> | string | null;
     const summary = typeof data === 'string' ? data : data && (typeof data.displayMarkdown === 'string' ? data.displayMarkdown : typeof data.summary === 'string' ? data.summary : null);
     return html`<section data-analysis-id=${task.analysisId} aria-live="polite"><h2>只读 Agent 诊断 · #${task.analysisId}</h2><p>${this.taskMessage || '状态暂不可用'}</p><p class="metadata">分析对象 ${this.selected ? key(this.selected) : ''} · 生成时间 ${task.completedAt ?? '尚未完成'}</p>
+      ${task.status === 'unknown' ? html`<p class="error">供应商可能已执行并计费，但结果无法确认。系统不会自动再次调用。</p>
+        <button class="btn" .disabled=${this.busy || !permissionMatches(this.permissions, 'ai:manage')} @click=${() => { this.retryDialogOpen = true; }}>确认后重新分析</button>
+        <app-dialog .open=${this.retryDialogOpen} title="确认重新分析" @app-dialog-close=${() => { this.retryDialogOpen = false; }}>
+          <p>原分析 #${task.analysisId} 的执行结果未知。重新分析将创建新任务，可能再次计费；原记录会保留。</p>
+          <div slot="footer"><button class="btn" @click=${() => { this.retryDialogOpen = false; }}>取消</button><button class="btn-primary" .disabled=${this.busy} @click=${() => { this.retryDialogOpen = false; void this.diagnose(true, task.analysisId); }}>接受可能再次计费并重试</button></div>
+        </app-dialog>` : nothing}
       ${task.status === 'failed' ? html`<p class="error">诊断执行失败，请查看任务记录或重试</p>` : nothing}
       ${task.status === 'completed' ? html`<p>历史诊断上下文：未验证 Evidence ID 关联的结果不作为已验证证据。关联关系不代表因果。</p>${summary ? html`<pre>${summary}</pre>` : html`<p>结果可查看；未提供摘要</p>`}<details><summary>查看原始结果与证据引用</summary><pre>${JSON.stringify(task.result, null, 2)}</pre></details><a href="#evidence-facts">查看当前资源证据</a>` : nothing}
       <button class="btn" .disabled=${this.statusController !== null || this.statusTimer !== null} @click=${this.startStatus}>查询任务状态</button></section>`;

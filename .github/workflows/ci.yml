@@ -164,6 +164,8 @@ jobs:
         run: pnpm --filter slide-api exec tsx ../../tests/qualification/startup-readiness.test.ts
       - name: Report occurrence crashes and atomic notification outbox
         run: bash scripts/qualification/run-report-recovery.sh
+      - name: Analysis dispatch crashes, unknown billing windows and revoked authority
+        run: bash scripts/qualification/run-analysis-recovery.sh
       - name: Backup and restore
         run: bash scripts/qualification/run-environment.sh backup-restore
       - name: Concurrent workflow stability

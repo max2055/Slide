@@ -67,6 +67,11 @@ describe('92-02-01: ai-analysis-result component', () => {
       expect(shadow.textContent).not.toContain('AI 分析中，请稍候');
     });
 
+    it('shows unknown billing consequences without presenting a completed result', async () => {
+      el.status = 'unknown';
+      await el.updateComplete;
+      expect(el.shadowRoot?.textContent).toContain('重新分析可能再次计费');
+    });
     it('renders error card when status=failed', async () => {
       el.status = 'failed';
       el.errorMessage = 'Something went wrong';

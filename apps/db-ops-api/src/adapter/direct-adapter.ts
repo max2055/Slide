@@ -44,6 +44,7 @@ import {
 } from '@slide/agent-core';
 import type { AgentHook, AgentHookContext, Message, ToolSchema, RuntimeCheckpoint } from '@slide/agent-core';
 import type { IAgentEngine, ChatEvent, ChatEventConsumer, AgentCapabilities, ChatResult, InvokeResult, InvokeOptions } from './types.js';
+import { guardedAnalysisProvider } from '../analysis/analysis-provider.js';
 import { chatDatabaseService } from '../chat-database-service.js';
 import { SubagentManager } from '../agents/subagent-manager.js';
 import { setSubagentManager } from '../agents/subagent-spawn-tool.js';
@@ -65,7 +66,7 @@ import {
 
 let _subagentManagerInitialized = false;
 
-function analysisCompletionTools(analysisId?: number): ToolRegistry {
+function analysisCompletionTools(analysisId?: number, completion?: InvokeOptions['completeAnalysis']): ToolRegistry {
   const tools = new ToolRegistry();
   if (!Number.isSafeInteger(analysisId) || Number(analysisId) <= 0) return tools;
   tools.register({
@@ -80,7 +81,7 @@ function analysisCompletionTools(analysisId?: number): ToolRegistry {
       if (Number(args.analysisId) !== analysisId) {
         return normalizeToolResult({ success: false, errorCode: 'ANALYSIS_BINDING_MISMATCH', error: 'Analysis target denied' }, completeAnalysisTool.name);
       }
-      const result = await completeAnalysisTool.handler({ ...args, analysisId });
+      const result = completion ? await completion(args.envelope) : await completeAnalysisTool.handler({ ...args, analysisId });
       return normalizeToolResult(result, completeAnalysisTool.name);
     },
   });
@@ -1181,7 +1182,7 @@ export class DirectAdapter implements IAgentEngine {
     // invoke() is intentionally detached from a browser ActorContext. It may retain
     // ephemeral agent state, but must never use a maintenance path to mutate a
     // user-owned chat session.
-    const invokeRunId = randomUUID();
+    const invokeRunId = options?.runtimeRunId ?? randomUUID();
     session.addMessage('user', message, { runId: invokeRunId, turnId: invokeRunId });
 
     const thinkingHolder: { text: string } = { text: '' };
@@ -1222,13 +1223,15 @@ export class DirectAdapter implements IAgentEngine {
     const policy = this.policies.invoke;
     const timeout = setTimeout(() => controller.abort(new Error('ANALYSIS_TIMED_OUT')), policy.runTimeoutMs);
     try {
-      const provider = this.providerForPurpose ? await this.providerForPurpose(options?.purpose || 'default') : this.provider;
-      const runner = this.providerForPurpose ? new AgentRunner(provider) : this.runner;
+      const selectedProvider = this.providerForPurpose ? await this.providerForPurpose(options?.purpose || 'default') : this.provider;
+      const provider = options?.beforeProviderRequest
+        ? guardedAnalysisProvider(selectedProvider, options.beforeProviderRequest, controller.signal) : selectedProvider;
+      const runner = this.providerForPurpose || options?.beforeProviderRequest ? new AgentRunner(provider) : this.runner;
       const result = await runner.run({
         initialMessages: messages,
         // A generic background invoke receives no tools. Analysis runs receive
         // one completion tool bound to the operator-created analysis record.
-        tools: analysisCompletionTools(options?.analysisId),
+        tools: analysisCompletionTools(options?.analysisId, options?.completeAnalysis),
         model: provider.getDefaultModel(),
         ...runtimeSpec(policy),
         onRuntimeEvent: recordRuntimeEvent,

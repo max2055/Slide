@@ -188,7 +188,7 @@ export class AIAnalysisResult extends LitElement {
       `;
     }
 
-    if (this.status === "running") {
+    if (this.status === "running" || this.status === "pending") {
       return html`
         <app-card>
           <div class="loading-state">
@@ -197,6 +197,10 @@ export class AIAnalysisResult extends LitElement {
           </div>
         </app-card>
       `;
+    }
+
+    if (this.status === "unknown") {
+      return html`<app-card><span slot="header">AI 分析结果未知</span><p>供应商可能已执行并计费，但结果无法确认。系统已停止自动重试；重新分析可能再次计费，需要明确确认。原记录会保留。</p></app-card>`;
     }
 
     if (this.status === "failed") {

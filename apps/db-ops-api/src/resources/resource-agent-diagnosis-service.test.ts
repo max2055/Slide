@@ -17,42 +17,24 @@ const evidence: ResourceDiagnosticPack = {
 };
 
 describe('ResourceAgentDiagnosisService', () => {
-  it('collects permission-filtered evidence before dispatching a network-device Agent diagnosis', async () => {
-    const dispatch = vi.fn(async () => ({ analysisId: 91, cached: false }));
-    const store = {
-      findByCacheKey: vi.fn(async () => null),
-      createAnalysis: vi.fn(async () => ({ success: true, analysisId: 91 })),
-      updateStatus: vi.fn(async () => ({ success: true })),
-      markDispatched: vi.fn(async () => true),
-    };
-    const service = new ResourceAgentDiagnosisService({
-      evidence: { diagnose: vi.fn(async () => evidence) },
-      analysisStore: store,
-      dispatch: dispatch as any,
-      now: () => new Date('2026-08-26T00:01:00.000Z'),
-    });
-    await expect(service.diagnose(actor, { type: 'network_device', id: 17 })).resolves.toEqual({ success: true, analysisId: 91, status: 'queued' });
-    expect(store.createAnalysis).toHaveBeenCalledWith(expect.objectContaining({ analysis_type: 'fault_diagnosis', network_device_id: 17 }));
-    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'resource_diagnosis', resourceType: 'network_device', networkDeviceId: 17, diagnosticContext: evidence }));
-    expect(store.markDispatched).toHaveBeenCalledWith(91, 'resource-diagnosis-network_device-17-91');
+  it('collects permission-filtered evidence before durable admission without precreating a row', async () => {
+    const dispatch = vi.fn(async (_params: unknown) => ({ analysisId: 91, cached: false }));
+    const collect = vi.fn(async () => evidence);
+    const service = new ResourceAgentDiagnosisService({ evidence: { diagnose: collect }, dispatch, now: () => new Date('2026-08-26T00:01:00.000Z') });
+    expect(await service.diagnose(actor, { type: 'network_device', id: 17 })).toEqual({ success: true, analysisId: 91, status: 'queued' });
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ actor, type: 'resource_diagnosis', resourceType: 'network_device', networkDeviceId: 17, diagnosticContext: evidence }));
+    expect(dispatch.mock.calls[0][0]).not.toHaveProperty('existingAnalysisId');
+    expect(collect.mock.invocationCallOrder[0]).toBeLessThan(dispatch.mock.invocationCallOrder[0]);
   });
-});
-
-describe('resource analysis result authorization', () => {
   it.each(['instance', 'server', 'network_device'] as const)('reads true status for %s and rejects mismatched subjects and permission snapshots', async type => {
-    let created: any;
-    const service = new ResourceAgentDiagnosisService({
-      evidence: { diagnose: vi.fn(async () => evidence) },
-      analysisStore: {
-        findByCacheKey: vi.fn(async () => null), createAnalysis: vi.fn(async data => { created = data; return { success: true, analysisId: 91 }; }),
-        updateStatus: vi.fn(async () => ({ success: true })), markDispatched: vi.fn(async () => true),
-      }, dispatch: vi.fn(async () => ({ analysisId: 91, cached: false })) as any, now: () => new Date(),
-      readAnalysis: vi.fn(async () => ({ ...created, id: 91, status: 'running', result: null })),
-    });
-    await service.diagnose(actor, { type, id: 17 });
-    await expect(service.result(actor, { type, id: 17 }, 91)).resolves.toMatchObject({ analysisId: 91, status: 'running', result: null });
+    let record: any;
+    const dispatch = vi.fn(async (params: any) => { record = { id: 91, cache_key: params.cacheKey, instance_id: params.instanceId, server_id: params.serverId, network_device_id: params.networkDeviceId, status: 'unknown', result: null }; return { analysisId: 91, cached: false, success: false, status: 'unknown' }; });
+    const service = new ResourceAgentDiagnosisService({ evidence: { diagnose: vi.fn(async () => evidence) }, dispatch, now: () => new Date(), readAnalysis: async () => record });
+    expect(await service.diagnose(actor, { type, id: 17 })).toMatchObject({ success: false, status: 'unknown' });
+    expect(await service.result(actor, { type, id: 17 }, 91)).toMatchObject({ analysisId: 91, status: 'unknown', error: expect.stringContaining('再次计费') });
     await expect(service.result(actor, { type, id: 18 }, 91)).rejects.toThrow('RESOURCE_NOT_FOUND');
     await expect(service.result({ ...actor, userId: 2 }, { type, id: 17 }, 91)).rejects.toThrow('RESOURCE_NOT_FOUND');
     await expect(service.result({ ...actor, permissions: [], instanceScopes: {} }, { type, id: 17 }, 91)).rejects.toThrow('RESOURCE_FORBIDDEN');
+    await service.diagnose(actor, { type, id: 17 }, 91); expect(dispatch).toHaveBeenLastCalledWith(expect.objectContaining({ retryOf: 91 }));
   });
 });

@@ -1254,6 +1254,16 @@ describe('DirectAdapter', () => {
         handler.mockRestore();
       }
     });
+    it('uses the trusted durable completion callback and checks authority at the actual provider boundary', async () => {
+      const generic = vi.spyOn(completeAnalysisTool, 'handler');
+      const completed = vi.fn(async () => ({ success: true }));
+      const before = vi.fn(async () => {});
+      const adapter = isolatedAdapter({ tools: new ToolRegistry(), llmProvider: new AnalysisCompletionProvider(42) });
+      try {
+        await adapter.invoke('test-durable-analysis', 'Analyze', undefined, { analysisId: 42, beforeProviderRequest: before, completeAnalysis: completed, runtimeRunId: '22222222-2222-4222-8222-222222222222' });
+        expect(before).toHaveBeenCalled(); expect(completed).toHaveBeenCalledOnce(); expect(generic).not.toHaveBeenCalled();
+      } finally { generic.mockRestore(); }
+    });
   });
 
   describe('background tool registries', () => {
