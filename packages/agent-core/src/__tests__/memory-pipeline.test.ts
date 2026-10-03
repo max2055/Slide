@@ -240,3 +240,16 @@ it('restore schema rejects secret metadata and unknown fields', async () => {
   delete exported.records[0].unknown; exported.records[0].jobIds = ['secret_api_key'];
   await expect(store.importVersioned(scope, exported)).rejects.toThrow('EXPORT_INVALID');
 });
+
+it('pipeline list with unchanged sources, including shared owners, performs no write transaction', async () => {
+  const input = source('I prefer blue.');
+  const p = make(fake(inputs => inputs.map(i => candidate(i)))); await p.run(snapshot(input));
+  const id = (await store.list(scope))[0].id; await store.share(scope, id, ['B']);
+  const transaction = vi.spyOn(store, 'transaction');
+  await fs.utimes(store.file, 1, 1);
+  const before = await fs.stat(store.file);
+  expect(await p.list(scope)).toHaveLength(1);
+  expect(await p.list({ ...scope, actorId: 'B' })).toHaveLength(1);
+  expect(transaction).not.toHaveBeenCalled();
+  expect((await fs.stat(store.file)).mtimeMs).toBe(before.mtimeMs);
+});
