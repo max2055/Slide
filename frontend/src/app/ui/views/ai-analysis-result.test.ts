@@ -134,6 +134,13 @@ describe('92-02-01: ai-analysis-result component', () => {
     });
   });
 
+  it('labels historical Markdown and envelopes without recovered provenance', async () => {
+    el.status = 'completed'; el.result = '# Previous analysis'; await el.updateComplete;
+    expect(el.shadowRoot!.textContent).toContain('历史结果：验证信息不可用');
+    el.result = { schemaVersion: 1, displayMarkdown: '# Legacy envelope' }; await el.updateComplete;
+    expect(el.shadowRoot!.textContent).toContain('历史结果：验证信息不可用');
+  });
+
   describe('source tag', () => {
     it('shows "自动分析" pill when triggerType=auto', async () => {
       el.triggerType = 'auto';
