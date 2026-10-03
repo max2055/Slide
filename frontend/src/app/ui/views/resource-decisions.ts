@@ -5,6 +5,7 @@ import { authFetch } from '../../../api/index.js';
 import { icons } from '../../../icons.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import { resourceEvidenceFormStyles } from './resource-evidence-form-styles.js';
+import { displayTime, gapExplanation } from './diagnosis-presentation.js';
 import '../components/app-form-field.js';
 import '../components/app-empty-state.js';
 interface Evidence { id: string; observedAt: string; status: string; payload: { metricId?: string; statement?: string } }
@@ -85,9 +86,10 @@ export class ResourceDecisions extends LitElement {
   }
   override render() {
     return html`<section><header><h2>推论与假设记录</h2><button class="btn" title="刷新决策记录" aria-label="刷新决策记录" .disabled=${this.busy} @click=${this.load}>${icons['refresh-cw']}</button></header>
-      ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}${this.busy ? html`<div class="skeleton" aria-label="加载或保存决策"></div>` : nothing}
-      ${this.items.length ? this.items.map(item => html`<article><header><code>${item.id}</code><span>${item.status === 'inference' ? '推论' : '假设'}</span></header><p>${item.statement}</p><p class="meta">${item.from} ~ ${item.to} · ${item.createdAt}</p><details><summary>引用证据 (${item.evidenceRefs.length})</summary>${item.evidenceRefs.map(id => html`<p><code>${id}</code></p>`)}</details></article>`) : !this.busy && !this.error ? html`<app-empty-state title="暂无决策记录"></app-empty-state>` : nothing}
-      ${this.truncated ? html`<p role="status">仅显示最近 20 条记录</p>` : nothing}${this.gaps.map(gap => html`<p class="meta">${gap}</p>`)}
+      <p>人工记录的推论与假设，均待确认；记录判断不等于确认事实，也不代表已执行处理或确认恢复。自动观测另见上方事实。</p>
+      ${this.error ? html`<p class="error" role="alert">判断记录或引用证据不可用。请检查访问权限、采集状态及输入后重试。</p><details><summary>查看判断错误详情</summary><p>${this.error}</p></details>` : nothing}${this.busy ? html`<div class="skeleton" aria-label="加载或保存决策"></div>` : nothing}
+      ${this.items.length ? this.items.map(item => html`<article><header><span>${item.status === 'inference' ? '人工推论（待确认）' : '人工假设（待确认）'}</span></header><p>${item.statement}</p><p class="meta">依据时间 ${displayTime(item.from)} ~ ${displayTime(item.to)} · 记录时间 ${displayTime(item.createdAt)}</p><details><summary>引用证据 (${item.evidenceRefs.length})</summary><p>记录 ID ${item.id}</p>${item.evidenceRefs.map(id => html`<p><code>${id}</code></p>`)}</details></article>`) : !this.busy && !this.error ? html`<app-empty-state title="暂无决策记录"></app-empty-state>` : nothing}
+      ${this.truncated ? html`<p role="status">仅显示最近 20 条记录</p>` : nothing}${this.gaps.map(gap => html`<p class="meta">${gapExplanation(gap)[0]}。下一步：${gapExplanation(gap)[1]}。</p>`)}${this.gaps.length ? html`<details><summary>查看判断缺口技术详情</summary><pre>${JSON.stringify(this.gaps, null, 2)}</pre></details>` : nothing}
       ${this.editable && this.evidence.length ? html`<form @submit=${this.save}><app-form-field label="记录类型"><select aria-label="记录类型" .value=${this.status} .disabled=${this.busy} @change=${(event: Event) => { this.status = (event.target as HTMLSelectElement).value as 'inference' | 'hypothesis'; }}><option value="inference">推论</option><option value="hypothesis">假设</option></select></app-form-field>
         <app-form-field label="判断内容"><textarea aria-label="判断内容" maxlength="2000" .required=${true} .disabled=${this.busy} .value=${this.statement} @input=${(event: Event) => { this.statement = (event.target as HTMLTextAreaElement).value; }}></textarea></app-form-field>
         <details open><summary>引用证据 (${this.selected.size})</summary>${this.evidence.map(item => html`<label class="evidence-option"><input type="checkbox" aria-label=${`引用 ${item.id}`} .disabled=${this.busy} .checked=${this.selected.has(item.id)} @change=${(event: Event) => this.toggle(item.id, (event.target as HTMLInputElement).checked)}><span>${item.payload.metricId ?? item.payload.statement ?? item.status}<code>${item.id}</code><span class="meta">${item.observedAt}</span></span></label>`)}</details>

@@ -58,7 +58,7 @@ export class ResourceAgentDiagnosisService {
     return {
       analysisId: record.id, resource: ref, status: record.status,
       createdAt: record.created_at, completedAt: record.completed_at,
-      result: legacyUnknown && !sameSnapshot ? null : redactSensitiveData(record.result),
+      result: legacyUnknown && !sameSnapshot ? null : redactSensitiveData(record.analysis_envelope ?? record.result),
       error: record.status === 'unknown' ? '供应商可能已经执行，结果未知；重试可能再次计费，需要明确确认' : record.status === 'failed' ? '诊断执行失败，请查看任务日志或重试' : null,
       contextLabel: '历史诊断上下文',
     };

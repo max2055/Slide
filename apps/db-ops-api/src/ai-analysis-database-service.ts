@@ -21,6 +21,7 @@ export interface AiAnalysisRecord {
   trigger_type: 'manual' | 'auto';
   cache_key: string | null;
   result: any;
+  analysis_envelope?: unknown;
   error_message: string | null;
   usage: any;
   duration_ms: number | null;
