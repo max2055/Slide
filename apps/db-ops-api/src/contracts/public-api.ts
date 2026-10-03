@@ -1,5 +1,7 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 
+export const InfrastructureReadinessSchema = Type.Object({ ready: Type.Boolean() }, { $id: 'InfrastructureReadiness', additionalProperties: false });
+
 export const HealthResponseSchema = Type.Object({
   status: Type.Literal('ok'),
   timestamp: Type.String({ pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$' }),
@@ -648,6 +650,7 @@ export const PublicApiSchemas = {
     timeout_seconds: Type.Optional(Type.Integer({ minimum: 1 })), retry_count: Type.Optional(Type.Integer({ minimum: 0 })),
   }, { $id: 'CronJobUpdateRequest', additionalProperties: false }),
   HealthResponse: HealthResponseSchema,
+  InfrastructureReadiness: InfrastructureReadinessSchema,
   ErrorResponse: ErrorResponseSchema,
   LLMConnectionTestRequest: LLMConnectionTestRequestSchema,
   LLMModelDiscoveryRequest: LLMModelDiscoveryRequestSchema,

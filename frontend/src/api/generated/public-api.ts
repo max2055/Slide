@@ -79,6 +79,8 @@ export interface CronJobUpdateRequest {
 export interface LLMConnectionTestRequest { providerName: string; apiKey?: string; baseURL?: string; model?: string; apiFormat?: string; deploymentType?: string; }
 export interface LLMModelDiscoveryRequest extends Omit<LLMConnectionTestRequest, 'model' | 'baseURL'> { baseURL: string; providerType?: 'deepseek' | 'stepfun' | 'mimo'; }
 
+export interface InfrastructureReadiness { ready: boolean; }
+
 export interface HealthResponse {
   status: 'ok';
   timestamp: string;

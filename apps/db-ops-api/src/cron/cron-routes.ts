@@ -14,6 +14,7 @@ import { assertCronActorAccess } from './cron-authority.js';
 import { expensiveOperationRateLimitConfig } from '../security/http-security.js';
 
 function cronErrorStatus(error: Error): number {
+  if (error.message?.startsWith('WORKER_LEASE') || error.message === 'WORKER_STOPPED') return 503;
   if (error.message === 'CRON_IDEMPOTENCY_CONFLICT') return 409;
   if (['CRON_RUN_STORE_UNAVAILABLE', 'CRON_AUDIT_UNAVAILABLE', 'CRON_AUTHORITY_UNAVAILABLE', 'WORKFLOW_RUNTIME_UNAVAILABLE'].includes(error.message)) return 503;
   if (['CRON_SCRIPT_ACCESS_DENIED', 'CRON_TRIGGER_SCOPE_DENIED', 'CRON_TARGET_ACCESS_REVOKED',
@@ -21,7 +22,7 @@ function cronErrorStatus(error: Error): number {
   return error.message?.startsWith('CRON_') ? 400 : 500;
 }
 
-export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHandlerHookHandler, getCronManager: () => CronManager) {
+export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHandlerHookHandler, getCronManager: () => CronManager | undefined) {
   async function bindJobScript(request: any, body: any, existing?: any) {
     const target = body.target_instance_id === undefined ? existing?.target_instance_id ?? null : body.target_instance_id;
     if (target !== null && (!Number.isSafeInteger(target) || target <= 0)) throw new Error('CRON_INVALID_TARGET');
@@ -155,7 +156,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
           retry_count: body.retry_count,
         });
 
-        await getCronManager().reload();
+        await getCronManager()?.reload();
         reply.code(201).send({ id, message: '创建成功' });
       } catch (error: any) {
         reply.code(cronErrorStatus(error)).send({ error: error.message });
@@ -214,7 +215,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         }
 
         // Reload CronManager to apply changes
-        await getCronManager().reload();
+        await getCronManager()?.reload();
 
         reply.send({ message: '更新成功' });
       } catch (error: any) {
@@ -242,7 +243,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         await cronJobService.toggleJob(Number(id), body.enabled);
 
         // Reload CronManager to apply changes
-        await getCronManager().reload();
+        await getCronManager()?.reload();
 
         reply.send({ message: body.enabled ? '已启用' : '已停用' });
       } catch (error: any) {
@@ -266,7 +267,9 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         if (!body || typeof body !== 'object' || Object.keys(body).length) return reply.code(400).send({ error: 'CRON_RUN_PARAMS_UNSUPPORTED' });
         const key = request.headers['idempotency-key'];
         if (key !== undefined && (typeof key !== 'string' || !key || key.length > 200)) return reply.code(400).send({ error: 'CRON_IDEMPOTENCY_KEY_INVALID' });
-        const run = await getCronManager().triggerJob(config, (request as any).user, key as string | undefined, body);
+        const manager = getCronManager();
+        if (!manager) return reply.code(503).send({ error: 'WORKFLOW_RUNTIME_UNAVAILABLE' });
+        const run = await manager.triggerJob(config, (request as any).user, key as string | undefined, body);
         reply.code(202).send({ runId: run.runId, jobId: run.jobId, status: run.status, message: '已接受执行，结果请按 runId 查询' });
       } catch (error: any) {
         reply.code(cronErrorStatus(error)).send({ error: error.message });
@@ -316,7 +319,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         if (!deleted) {
           return reply.code(500).send({ error: '删除失败，数据库操作未生效' });
         }
-        await getCronManager().reload();
+        await getCronManager()?.reload();
         reply.send({ message: '删除成功' });
       } catch (error: any) {
         reply.code(cronErrorStatus(error)).send({ error: error.message });
