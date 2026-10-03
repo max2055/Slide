@@ -97,7 +97,7 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
     await pool.query("INSERT INTO role_permissions VALUES (1,1),(2,2),(2,3),(2,4),(2,5),(2,6),(3,3)");
     for (const sql of migration) await pool.query(sql);
     for (const sql of authorityMigration) await pool.query(sql);
-    for (const name of ['032_workflow_outbox_jobs.sql', '106_cron_runs.sql', '107_cron_run_id_collation.sql']) {
+    for (const name of ['032_workflow_outbox_jobs.sql', '106_cron_runs.sql', '107_cron_run_id_collation.sql', '111_instance_removal_lifecycle.sql']) {
       for (const sql of splitSqlStatements(readFileSync(new URL(`../../sql/migrations/${name}`, import.meta.url), 'utf8'))) await pool.query(sql);
     }
     vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
