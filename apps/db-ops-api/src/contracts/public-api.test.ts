@@ -25,6 +25,15 @@ import {
 import { buildClientTypes, buildOpenApiDocument } from './generate-public-api.js';
 
 describe('generated public API contract', () => {
+  it('documents protected observations with durable gauges and process-local timings', () => {
+    const document = buildOpenApiDocument() as any;
+    const operation = document.paths['/api/platform/observations']?.get;
+    expect(operation?.security).toEqual([{ bearerAuth: [] }]);
+    expect(operation?.responses['403']).toBeDefined();
+    expect(operation?.description).toContain('process-local');
+    expect(document.components.schemas.QueueObservation.properties.quality).toBeDefined();
+    expect(buildClientTypes()).toContain('export interface QueueObservation');
+  });
   it('documents manual event confirmation, conflict retries and the closing prerequisite', () => {
     const document = buildOpenApiDocument() as any;
     for (const action of ['investigate', 'resolve', 'verify-recovery', 'close']) {
@@ -99,6 +108,7 @@ describe('generated public API contract', () => {
       '/api/network-devices/{id}/probe',
       '/api/network-devices/{id}/relations',
       '/api/network-devices/test-connection',
+      '/api/platform/observations',
       '/api/resources',
       '/api/resources/{type}/{id}/diagnose',
       '/api/resources/{type}/{id}/diagnose-agent',

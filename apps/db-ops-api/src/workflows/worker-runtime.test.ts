@@ -93,6 +93,25 @@ describe('mysql workflow store', () => {
     });
     expect(execute.mock.calls[0][0]).toContain('GROUP BY job_type');
   });
+  it('marks an omitted job type as degraded instead of complete gauges', async () => {
+    const row = { jobType: 'test.job', queued: 1, retry: 0, ready: 1, scheduled: 0,
+      running: 0, deadLetter: 0, expiredLeases: 0, oldestReadyWaitMs: null };
+    const store = new MysqlWorkflowStore(() => ({
+      execute: async () => [Array.from({ length: 101 }, () => row)] as any,
+    }));
+    const result = await store.observeQueue();
+    expect(result.types).toHaveLength(100);
+    expect(result).toMatchObject({ quality: 'degraded', gaps: ['QUEUE_TYPES_TRUNCATED'] });
+    expect(result.types[0].oldestReadyWaitMs).toBeNull();
+  });
+  it('excludes disabled analysis dispatch from ready gauges but retains its backlog', async () => {
+    vi.stubEnv('ANALYSIS_DISPATCH_ENABLED', 'false');
+    try {
+      const execute = vi.fn(async () => [[]] as any);
+      await new MysqlWorkflowStore(() => ({ execute })).observeQueue();
+      expect(execute.mock.calls[0][0]).toContain("job_type <> 'analysis.dispatch'");
+    } finally { vi.unstubAllEnvs(); }
+  });
 
   it('does not claim an expired lease as a zero wait measurement', async () => {
     const execute = vi.fn(async (sql: string) => [sql.startsWith('SELECT') ? [{

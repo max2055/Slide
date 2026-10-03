@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { StructuredLogEvidenceAdapter } from './structured-log-evidence-adapter.js';
 
 describe('platform log evidence', () => {
+  it('separates job types, retains worst observed wait, and counts only duration samples', () => {
+    const adapter = new StructuredLogEvidenceAdapter();
+    for (const durationMs of [5, 50]) adapter.record({ component: 'queue', eventType: 'job.wait', jobType: 'capacity.collect', status: 'ok', durationMs });
+    adapter.record({ component: 'queue', eventType: 'job.wait', jobType: 'notification.deliver', status: 'ok', durationMs: 10000 });
+    expect(adapter.query({}).groups).toHaveLength(2);
+    expect(adapter.query({}).groups[0]).toMatchObject({ jobType: 'capacity.collect', count: 2, durationMs: 55, durationSamples: 2, maxDurationMs: 50 });
+  });
   it('reports omitted aggregation groups and does not conflate colon-delimited labels', () => {
     const adapter = new StructuredLogEvidenceAdapter();
     adapter.record({ component: 'a:b', eventType: 'c', status: 'ok' });
