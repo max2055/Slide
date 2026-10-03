@@ -40,7 +40,7 @@
 | `pnpm qualification:matrix` | 37/37 finding 映射通过；映射不代表外部环境已验收 |
 | `pnpm security:scan` | 通过 |
 | `pnpm security:audit` | 无已知依赖漏洞 |
-| `pnpm lint`、`git diff --check` | 0 lint error，265 条警告；新增六个路由/策略/receiver/浏览器测试文件 focused lint 为 0 警告 |
+| `pnpm lint`、`git diff --check` | 最终 0 lint error，264 条警告；新增六个路由/策略/receiver/浏览器测试文件 focused lint 为 0 警告 |
 
 全量单测最初仅契约测试的预期路径清单缺少新文档路由，修正并补权限/409/429 契约断言后重跑后端门禁；未重复运行已通过且未受后续改动影响的其他模块。
 
