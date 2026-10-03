@@ -6,7 +6,7 @@ import { registerWorkflowHandlers } from './register-workflow-handlers.js';
 
 const keys = [
   'fault.diagnose-unhealthy', 'capacity.collect', 'baseline.cleanup', 'alert.evaluate',
-  'capacity.consistency', 'report.schedule', 'notification.dispatch', 'notification.deliver', 'report.notify',
+  'capacity.consistency', 'report.schedule', 'report.occurrence', 'notification.dispatch', 'notification.deliver', 'report.notify',
 ];
 function setup() {
   const events: string[] = [];
@@ -21,7 +21,7 @@ function setup() {
     capacityEnqueue: step('capacityEnqueue'), consistency: step('consistency'),
     pending: step('pending'), dispatchEnqueue: step('dispatchEnqueue'), reportEnqueue: step('reportEnqueue'),
   };
-  const occurrences = { lastOccurrence: vi.fn(async () => null), claim: vi.fn(async () => true), complete: vi.fn(), fail: vi.fn() };
+  const occurrences = { lastOccurrence: vi.fn(async () => null), schedule: vi.fn(async () => true), savedReport: vi.fn(), createReport: vi.fn(), updateReport: vi.fn(), claim: vi.fn(), complete: vi.fn(), fail: vi.fn() };
   const deps = {
     faultDiagnosisService: { diagnoseUnhealthyInstances: actions.fault },
     monitorCollector: { collectCapacityNow: actions.collect },
@@ -32,9 +32,9 @@ function setup() {
     notificationScheduler: { enqueuePending: actions.pending },
     enqueueNotificationDispatch: actions.dispatchEnqueue,
     reportSchedule: {
-      reportConfigService: { getEnabledConfigs: vi.fn(async () => []), getConfigById: vi.fn() },
+      reportConfigService: { getEnabledConfigs: vi.fn(async () => []) },
       serverReportService: { generateAndPersist: vi.fn() }, reportService: { generateReport: vi.fn() },
-      enqueueReportSchedule: actions.reportEnqueue, enqueueReportNotifications: vi.fn(),
+      enqueueReportSchedule: actions.reportEnqueue,
       createOccurrenceStore: vi.fn(() => occurrences),
     },
     notificationDatabaseService: { getAlertById: vi.fn(async () => null), getChannelById: vi.fn(async () => null) },

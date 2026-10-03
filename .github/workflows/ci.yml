@@ -162,6 +162,8 @@ jobs:
         run: bash scripts/qualification/run-environment.sh failover
       - name: Startup lease, D1 readiness and Compose feature passthrough
         run: pnpm --filter slide-api exec tsx ../../tests/qualification/startup-readiness.test.ts
+      - name: Report occurrence crashes and atomic notification outbox
+        run: bash scripts/qualification/run-report-recovery.sh
       - name: Backup and restore
         run: bash scripts/qualification/run-environment.sh backup-restore
       - name: Concurrent workflow stability

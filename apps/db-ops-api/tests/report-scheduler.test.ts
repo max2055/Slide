@@ -1,25 +1,26 @@
-import { describe, expect, it } from 'vitest';
-import { createReportScheduleJob, MysqlReportOccurrenceStore, ReportScheduler, nextReportOccurrence } from '../src/report-scheduler.js';
+import { describe, expect, it, vi } from 'vitest';
+import { createReportScheduleJob, createReportOccurrenceJob, ReportScheduler, nextReportOccurrence } from '../src/report-scheduler.js';
+import type { ReportOccurrenceStore } from '../src/workflows/report-occurrence-store.js';
 
 describe('report schedule occurrence', () => {
   const config = { id: 3, cron: '0 * * * * *', created_at: '2026-07-18T00:00:00.000Z' };
-  it('creates exactly one due occurrence and never reclaims the same occurrence', async () => {
-    const claimed = new Set<string>();
-    const store = { lastOccurrence: async () => null, claim: async (item: any) => { const key = `${item.configId}:${item.occurrenceAt.toISOString()}`; if (claimed.has(key)) return false; claimed.add(key); return true; }, complete: async () => {}, fail: async () => {} };
-    const scheduler = new ReportScheduler({ getEnabledConfigs: async () => [config as any] }, store);
-    await expect(scheduler.claimDue(new Date('2026-07-18T00:01:01.000Z'))).resolves.toHaveLength(1);
-    await expect(scheduler.claimDue(new Date('2026-07-18T00:01:01.000Z'))).resolves.toEqual([]);
+  it('schedules all due configurations without pre-claiming them', async () => {
+    const schedule = vi.fn(async () => true);
+    const store = { lastOccurrence: async () => null, schedule } as unknown as ReportOccurrenceStore;
+    const scheduler = new ReportScheduler({ getEnabledConfigs: async () => [config, { ...config, id: 4 }] as any }, store);
+    await expect(scheduler.scheduleDue(new Date('2026-07-18T00:01:01.000Z'))).resolves.toHaveLength(2);
+    expect(schedule).toHaveBeenCalledTimes(2);
   });
   it('does not run before the first configured schedule time', () => {
     expect(nextReportOccurrence(config as any, null, new Date('2026-07-18T00:00:30.000Z'))).toBeNull();
   });
-  it('claims persisted occurrences with insert-ignore uniqueness', async () => {
-    const calls: string[] = [];
-    const store = new MysqlReportOccurrenceStore(() => ({ execute: async (sql: string) => { calls.push(sql); return [{ affectedRows: 1 } as any]; } }));
-    await expect(store.claim({ configId: 3, occurrenceAt: new Date('2026-07-18T00:01:00Z') })).resolves.toBe(true);
-    expect(calls[0]).toContain('INSERT IGNORE');
+  it('has a stable, bounded job identity for each business occurrence', () => {
+    const occurrence = { configId: 3, occurrenceAt: new Date('2026-07-18T00:01:00Z') };
+    const job = createReportOccurrenceJob(occurrence);
+    expect(job.id).toHaveLength(36);
+    expect(createReportOccurrenceJob(occurrence)).toEqual(job);
+    expect(createReportOccurrenceJob({ ...occurrence, configId: 4 }).id).not.toBe(job.id);
   });
-
   it('uses one durable idempotency key per minute schedule slot', () => {
     const first = createReportScheduleJob(new Date('2026-07-19T00:00:01.000Z'));
     const restart = createReportScheduleJob(new Date('2026-07-19T00:00:59.999Z'));

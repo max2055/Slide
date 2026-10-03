@@ -3,6 +3,7 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection';
+import { scheduledReportPersistence } from './workflows/scheduled-report-context.js';
 
 export type ReportType = 'health' | 'performance' | 'slow_query' | 'capacity' | 'server_health';
 export type ReportFormat = 'pdf' | 'html' | 'json' | 'csv';
@@ -67,6 +68,8 @@ class ReportDatabaseService {
    * 创建报表记录
    */
   async createReport(data: CreateReportData): Promise<Report> {
+    const scheduled = scheduledReportPersistence.getStore();
+    if (scheduled) return scheduled.create(data);
     const pool = this.getPool();
     if (!pool) {
       throw new Error('数据库未连接');
@@ -220,6 +223,8 @@ class ReportDatabaseService {
     content?: string,
     data?: any
   ): Promise<void> {
+    const scheduled = scheduledReportPersistence.getStore();
+    if (scheduled) return scheduled.update(id, status, content, data);
     const pool = this.getPool();
     if (!pool) {
       throw new Error('数据库未连接');
