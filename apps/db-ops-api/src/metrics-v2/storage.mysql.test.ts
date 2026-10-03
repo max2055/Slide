@@ -110,7 +110,8 @@ describe.skipIf(!port)('Metrics V2 isolated MySQL', () => {
         // Compare every column and index to the fresh-install schema, including types and defaults.
         for (const table of ['metric_v2_observations', 'metric_v2_attempts', 'metric_v2_inventory']) {
           const [columns] = await connection.query(`SHOW FULL COLUMNS FROM ${table}`);
-          expect(columns).toEqual((await pool.query(`SHOW FULL COLUMNS FROM ${table}`))[0]);
+          // Verify migration 098 against its own schema; tombstone is added later by 110.
+          expect(columns).toEqual((await pool.query<RowDataPacket[]>(`SHOW FULL COLUMNS FROM ${table}`))[0].filter(c => c.Field !== 'tombstone'));
           const [indexes] = await connection.query<RowDataPacket[]>(`SHOW INDEX FROM ${table}`);
           const shape = (rows: RowDataPacket[]) => rows.map(({ Cardinality: _cardinality, ...row }) => row);
           expect(shape(indexes)).toEqual(shape((await pool.query<RowDataPacket[]>(`SHOW INDEX FROM ${table}`))[0]));
@@ -201,17 +202,29 @@ describe.skipIf(!port)('Metrics V2 isolated MySQL', () => {
     await storage.write(observations[0], definitions[0]);
     await storage.writeAttempt(timeoutAttempt);
     now = new Date(now.getTime() + 1000);
-    expect(await storage.evidence(rawObservation.id)).toEqual({ status: 'expired' });
+    expect(await storage.evidence(rawObservation.id)).toMatchObject({ status: 'expired' });
     await storage.prune();
     expect((await pool.query<RowDataPacket[]>('SELECT payload FROM metric_v2_observations WHERE id = ?', [rawObservation.id]))[0][0].payload).toBeNull();
     await storage.write(rawObservation, definitions[0]);
-    expect(await storage.evidence(rawObservation.id)).toEqual({ status: 'expired' });
+    expect(await storage.evidence(rawObservation.id)).toMatchObject({ status: 'expired' });
     expect((await storage.latest(observations[0]))?.lineage[0].id).toBe(rawObservation.id);
     now = new Date(now.getTime() + 10000);
-    await storage.prune();
+    await storage.prune(); await storage.prune();
     expect(await storage.evidence(rawObservation.id)).toEqual({ status: 'not_retained' });
     expect(await storage.latest(observations[0])).toBeNull();
     expect(await storage.attempt(timeoutAttempt.id)).toBeNull();
+  });
+
+  it('shorter explicit raw policy expires existing evidence without refreshing stored expiry; tombstone records effective cutoff', async () => {
+    await storage.write(rawObservation, definitions[0]);
+    const cutoff = new Date(now.getTime() + 1000);
+    now = new Date(now.getTime() + 1001);
+    const shorter = new MysqlMetricStorage(pool, () => now, { rawMs: 1000, historyMs: 10000, attemptMs: 5000 });
+    expect(await shorter.evidence(rawObservation.id)).toMatchObject({ status: 'expired' });
+    await shorter.prune();
+    const result = await shorter.evidence(rawObservation.id);
+    expect(result).toMatchObject({ status: 'expired', tombstone: { id: rawObservation.id, source: rawObservation.source } });
+    if (result.status !== 'available') expect(Date.parse(String(result.tombstone?.expired_at).replace(' ', 'T') + 'Z')).toBe(cutoff.getTime());
   });
 
   it('inventory is separate and late attributes cannot overwrite newer facts', async () => {

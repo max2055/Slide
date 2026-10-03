@@ -1,3 +1,5 @@
+import { configuredRetention, validateRetention, observationSelections, retentionPreview, retentionIds, deleteRetentionIds, type RetentionGuard, type RetentionCounts } from './retention.js';
+export { DEFAULT_RETENTION } from './retention.js';
 import { createHash } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { ResourceSchema, type Resource, type MetricDefinition } from '../contracts/metrics-v2/definitions.js';
@@ -7,7 +9,7 @@ import { seriesIdentity, validateObservation, validateAttempt, validateAttemptTr
 export type StoredObservation = RawObservation | NormalizedObservation;
 export type Series = Pick<NormalizedObservation, 'resource_type' | 'resource_id' | 'metric' | 'dimensions'>;
 const DAY = 86_400_000;
-export const DEFAULT_RETENTION = { rawMs: 7 * DAY, historyMs: 30 * DAY, attemptMs: 7 * DAY };
+
 
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
@@ -27,10 +29,9 @@ function boundedLimit(limit: number): number {
 
 /** Internal persistence adapter. Resource authorization remains at the calling service boundary. */
 export class MysqlMetricStorage {
-  private readonly retention: typeof DEFAULT_RETENTION;
-  constructor(private readonly pool: Pool, private readonly clock = () => new Date(), retention = DEFAULT_RETENTION) {
-    this.retention = { ...retention };
-    if (Object.values(retention).some(v => !Number.isSafeInteger(v) || v <= 0) || retention.rawMs > retention.historyMs) throw new Error('RETENTION_INVALID');
+  private readonly retention: import('./retention.js').RetentionPolicy;
+  constructor(private readonly pool: Pool, private readonly clock = () => new Date(), retention = configuredRetention()) {
+    this.retention = validateRetention(retention);
   }
 
   async write(input: StoredObservation, definition: MetricDefinition): Promise<void> {
@@ -42,18 +43,22 @@ export class MysqlMetricStorage {
     const digest = hash(stable({ ...observation, stored_at: null }));
     const payload = JSON.stringify(observation);
     if (Buffer.byteLength(payload) > 65536) throw new Error('OBSERVATION_TOO_LARGE');
-    try {
-      await this.pool.execute(`INSERT INTO metric_v2_observations
-        (id, series_hash, stage, observed_at, stored_at, valid_value, payload, payload_hash, evidence_expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [observation.id, seriesHash(observation), observation.stage,
-        sqlTime(observation.observed_at), sqlTime(now), observation.value !== null && ['good', 'partial'].includes(observation.quality.status),
-        payload, digest, observation.stage === 'raw' ? sqlTime(new Date(now.getTime() + this.retention.rawMs)) : null]);
-    } catch (error) {
-      if (!duplicate(error)) throw error;
-      const [rows] = await this.pool.execute<RowDataPacket[]>('SELECT payload_hash FROM metric_v2_observations WHERE id = ?', [observation.id]);
-      if (rows[0]?.payload_hash !== digest) throw new Error('IDEMPOTENCY_PAYLOAD_CONFLICT');
-      // Retried writes never refresh time or revive expired evidence.
-    }
+    const insert = async (connection: Pool | PoolConnection) => {
+      try {
+        await connection.execute(`INSERT INTO metric_v2_observations
+          (id, series_hash, stage, observed_at, stored_at, valid_value, payload, payload_hash, evidence_expires_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [observation.id, seriesHash(observation), observation.stage,
+          sqlTime(observation.observed_at), sqlTime(now), observation.value !== null && ['good', 'partial'].includes(observation.quality.status),
+          payload, digest, observation.stage === 'raw' ? sqlTime(new Date(now.getTime() + this.retention.rawMs)) : null]);
+      } catch (error) {
+        if (!duplicate(error)) throw error;
+        const [rows] = await connection.execute<RowDataPacket[]>('SELECT payload_hash FROM metric_v2_observations WHERE id = ?', [observation.id]);
+        if (rows[0]?.payload_hash !== digest) throw new Error('IDEMPOTENCY_PAYLOAD_CONFLICT');
+        // Retried writes never refresh time or revive expired evidence.
+      }
+    };
+    if (typeof this.pool.getConnection === 'function') await this.transaction(insert);
+    else await insert(this.pool);
   }
 
   async latest(series: Series): Promise<NormalizedObservation | null> {
@@ -93,12 +98,12 @@ export class MysqlMetricStorage {
     return [...prior, ...rows, ...next].map(row => decode<NormalizedObservation>(row.payload));
   }
 
-  async evidence(id: string): Promise<{ status: 'available'; observation: StoredObservation } | { status: 'expired' | 'not_retained' }> {
-    const [rows] = await this.pool.execute<RowDataPacket[]>(`SELECT payload,
-      (evidence_expires_at IS NOT NULL AND evidence_expires_at <= ?) AS expired
-      FROM metric_v2_observations WHERE id = ?`, [sqlTime(this.clock()), id]);
+  async evidence(id: string): Promise<{ status: 'available'; observation: StoredObservation } | { status: 'expired' | 'not_retained'; tombstone?: Record<string, unknown> }> {
+    const [rows] = await this.pool.execute<RowDataPacket[]>(`SELECT payload, tombstone,
+      (stage = 'raw' AND (evidence_expires_at <= ? OR stored_at <= ?)) AS expired
+      FROM metric_v2_observations WHERE id = ?`, [sqlTime(this.clock()), sqlTime(new Date(this.clock().getTime() - this.retention.rawMs)), id]);
     if (!rows[0]) return { status: 'not_retained' };
-    if (!rows[0].payload || rows[0].expired) return { status: 'expired' };
+    if (!rows[0].payload || rows[0].expired) return { status: 'expired', ...(rows[0].tombstone ? { tombstone: decode<Record<string, unknown>>(rows[0].tombstone) } : {}) };
     return { status: 'available', observation: decode<StoredObservation>(rows[0].payload) };
   }
 
@@ -142,21 +147,46 @@ export class MysqlMetricStorage {
     return rows[0] ? decode<Resource>(rows[0].payload) : null;
   }
 
-  /** One bounded maintenance batch. Invoke repeatedly from an authorized maintenance owner. */
-  async prune(limit = 1000): Promise<void> {
+  /** Preview uses the same reference-aware predicates as execution; never reads raw values. */
+  async preview(): Promise<RetentionCounts> {
+    return this.transaction(c => retentionPreview(c, observationSelections(this.clock(), this.retention), this.clock()));
+  }
+
+  /** Every statement is bounded. Expiry drains before history; live references retain identity only. */
+  async prune(limit = 1000, guard?: RetentionGuard): Promise<Record<string, number>> {
     boundedLimit(limit);
-    const now = this.clock();
-    await this.pool.execute(`UPDATE metric_v2_observations SET payload = NULL, valid_value = 0
-      WHERE stage = 'raw' AND evidence_expires_at <= ? AND payload IS NOT NULL LIMIT ${limit}`, [sqlTime(now)]);
-    await this.pool.execute(`DELETE FROM metric_v2_observations WHERE stage = 'raw' AND stored_at < ? LIMIT ${limit}`, [sqlTime(new Date(now.getTime() - this.retention.historyMs))]);
-    await this.pool.execute(`DELETE FROM metric_v2_observations WHERE stage = 'normalized' AND stored_at < ? LIMIT ${limit}`, [sqlTime(new Date(now.getTime() - this.retention.historyMs))]);
-    await this.pool.execute(`DELETE FROM metric_v2_attempts WHERE stored_at < ? LIMIT ${limit}`, [sqlTime(new Date(now.getTime() - this.retention.attemptMs))]);
+    return this.transaction(async c => {
+      await guard?.(c);
+      const selections = observationSelections(this.clock(), this.retention);
+      const result: Record<string, number> = {};
+      for (const [name, selection] of Object.entries(selections)) {
+        await guard?.(c);
+        const ids = await retentionIds(c, selection, limit);
+        if (name === 'rawPayload' && ids.length) {
+          const [updated] = await c.execute<any>(`UPDATE metric_v2_observations SET tombstone = JSON_OBJECT(
+            'id', id, 'stage', stage, 'resource_type', JSON_EXTRACT(payload, '$.resource_type'),
+            'resource_id', JSON_EXTRACT(payload, '$.resource_id'), 'metric', JSON_EXTRACT(payload, '$.metric'),
+            'source', JSON_EXTRACT(payload, '$.source'), 'versions', JSON_EXTRACT(payload, '$.versions'),
+            'observed_at', JSON_EXTRACT(payload, '$.observed_at'),
+            'expired_at', LEAST(evidence_expires_at, TIMESTAMPADD(MICROSECOND, ?, stored_at)),
+            'reason', 'raw_retention_expired'), payload = NULL, valid_value = 0
+            WHERE id IN (${ids.map(() => '?').join(',')})`, [this.retention.rawMs * 1000, ...ids]);
+          result[name] = Number(updated.affectedRows);
+        } else result[name] = await deleteRetentionIds(c, selection, ids);
+        // Do not delete identity/history while any full batch of raw payload expiry remains.
+        if (name === 'rawPayload' && ids.length === limit) break;
+      }
+      await guard?.(c);
+      return result;
+    });
   }
 
   private async transaction<T>(action: (connection: PoolConnection) => Promise<T>): Promise<T> {
     const connection = await this.pool.getConnection();
     try {
       await connection.beginTransaction();
+      const [lock] = await connection.query<RowDataPacket[]>('SELECT id FROM metric_v2_policy_lock WHERE id = 1 FOR UPDATE');
+      if (lock.length !== 1) throw new Error('ROLLOUT_LOCK_UNAVAILABLE');
       const result = await action(connection);
       await connection.commit();
       return result;

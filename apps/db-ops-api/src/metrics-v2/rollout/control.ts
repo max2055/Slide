@@ -1,3 +1,4 @@
+import { DEFAULT_RETENTION, rolloutSelections, retentionPreview, retentionIds, deleteRetentionIds, type RetentionGuard, type RetentionCounts } from '../retention.js';
 import { createHash } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { z } from 'zod';
@@ -72,16 +73,25 @@ export class RolloutControl {
       [seriesHash(series), t.source, t.read, JSON.stringify(t.package), t.revision, series.resource_type, series.resource_id]); });
   }
   current(series: Series): Promise<Control> { return this.row(this.pool, series); }
-  /** Run after observation retention. Keeps one latest value and monotonic alert state per identity. */
-  async prune(limit = 1000): Promise<void> {
+  /** Current publication, alert watermark and its transition remain traceable across retention. */
+  async previewRetention(historyMs = DEFAULT_RETENTION.historyMs): Promise<RetentionCounts> {
+    check(Number.isSafeInteger(historyMs) && historyMs > 0, 'RETENTION_INVALID');
+    return this.transaction(c => retentionPreview(c, rolloutSelections(this.clock(), historyMs), this.clock()));
+  }
+  async prune(limit = 1000, historyMs = DEFAULT_RETENTION.historyMs, guard?: RetentionGuard): Promise<Record<string, number>> {
     check(Number.isInteger(limit) && limit > 0 && limit <= 1000, 'ROLLOUT_PRUNE_LIMIT');
-    await this.transaction(async c => {
-      const [rows] = await c.query<RowDataPacket[]>(`SELECT p.observation_id FROM metric_v2_publications p
-        LEFT JOIN metric_v2_observations o ON o.id = p.observation_id WHERE o.id IS NULL LIMIT ${limit}`);
-      if (rows.length) await c.execute(`DELETE FROM metric_v2_publications WHERE observation_id IN (${rows.map(() => '?').join(',')})`, rows.map(r => r.observation_id));
-      await c.execute(`DELETE FROM metric_v2_alert_transitions WHERE window_ms < ? LIMIT ${limit}`, [this.clock().getTime() - 30 * 86400000]);
+    check(Number.isSafeInteger(historyMs) && historyMs > 0, 'RETENTION_INVALID');
+    return this.transaction(async c => {
+      const result: Record<string, number> = {};
+      for (const [name, selection] of Object.entries(rolloutSelections(this.clock(), historyMs))) {
+        await guard?.(c);
+        result[name] = await deleteRetentionIds(c, selection, await retentionIds(c, selection, limit));
+      }
+      await guard?.(c);
+      return result;
     });
   }
+
   async switch(series: Series, expected: number, input: Target): Promise<number> {
     const t = targetSchema.parse(input);
     return this.transaction(async c => {

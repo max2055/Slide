@@ -43,7 +43,7 @@ async function startWorkers(pool: Pick<Pool, 'execute'>) {
     process: { env: { PROMPT_HOT_RELOAD: 'false' } }, promptManager: { startWatch: vi.fn() },
     getAgentEngine: vi.fn(async () => service),
     createMetricSchedulerLifecycle: () => service, assertMetricSchedulerSchema: vi.fn(),
-    registerWorkflowHandlers: vi.fn(), registerCronRunHandler: vi.fn(), createCronToolRegistry: vi.fn(),
+    startMetricRetention: vi.fn(), registerWorkflowHandlers: vi.fn(), registerCronRunHandler: vi.fn(), createCronToolRegistry: vi.fn(),
     createLLMProvider: vi.fn(), createNotificationDispatchJob: vi.fn(),
     createReportScheduleJob: vi.fn(), createReportNotificationJob: vi.fn(),
     createCapacityConsistencyJob: vi.fn(), workflowWorkerId: 'metric-quality-test',

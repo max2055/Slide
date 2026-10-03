@@ -1,3 +1,4 @@
+import { startMetricRetention } from './src/workflows/metric-retention-handler.js';
 import { registerWorkflowHandlers, registerCronRunHandler } from './src/workflows/register-workflow-handlers.js';
 import { registerHealthRoutes } from './src/health-routes.js';
 import { registerLLMSceneRoutes } from './src/llm/scene-routes.js';
@@ -5529,6 +5530,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     },
     notificationDatabaseService, notificationService, reportDatabaseService,
   });
+  await startup.assertOwned();
+  await startup.step(() => startMetricRetention(pool, workflowRegistry, job => workflowStore.enqueue(job)));
   const workflowRuntime = new WorkerRuntime(workflowStore, workflowWorkerId);
   stopWorkflow = async () => await workflowRuntime.shutdown();
   await startup.assertOwned();
