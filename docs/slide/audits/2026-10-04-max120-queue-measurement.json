@@ -1,0 +1,192 @@
+{
+  "scopeVersion": "W12a-v1",
+  "baseSha": "4caeaecf32cd1f0d08c2b7ac7b68deaa0a4b3504",
+  "implementationCommit": "a067b4f3",
+  "measurementSourceNote": "Observed run HEAD b14eb0e2 had uncommitted implementation; the unchanged tested source and harness were committed as a067b4f3 after measurement.",
+  "databaseEnvironment": {
+    "engine": "MySQL 8.4",
+    "dockerServer": "29.7.2",
+    "dockerCpus": 4,
+    "dockerMemoryBytes": 5155713024,
+    "isolated": true,
+    "migrationCount": 115
+  },
+  "measurements": [
+    {
+      "scenario": "MAX-120 slow-report serial mixed load",
+      "mode": "base-main",
+      "commit": "4caeaecf32cd1f0d08c2b7ac7b68deaa0a4b3504",
+      "hardware": {
+        "platform": "darwin",
+        "release": "27.0.0",
+        "cpu": "Apple M5",
+        "logicalCpus": 10,
+        "memoryBytes": 25769803776,
+        "node": "v24.18.0"
+      },
+      "load": {
+        "reportMs": 10000,
+        "notificationJobs": 1,
+        "collectionJobs": 1,
+        "workerConcurrency": 1,
+        "pollMs": 1000,
+        "controlPoolLimit": 24,
+        "sharedInstanceId": 1,
+        "realModelCalls": 0
+      },
+      "waitMs": {
+        "report.schedule": 3,
+        "notification.deliver": 10019,
+        "capacity.collect": 11024
+      },
+      "elapsedMs": 11049,
+      "peakActive": 1,
+      "completed": [
+        "report.schedule",
+        "notification.deliver",
+        "capacity.collect"
+      ],
+      "cpuMicroseconds": {
+        "user": 15804,
+        "system": 2902
+      },
+      "memoryBefore": {
+        "rss": 101695488,
+        "heapTotal": 57409536,
+        "heapUsed": 23648016,
+        "external": 5037088,
+        "arrayBuffers": 2324019
+      },
+      "memoryAfter": {
+        "rss": 103022592,
+        "heapTotal": 57671680,
+        "heapUsed": 24285184,
+        "external": 5078855,
+        "arrayBuffers": 2326792
+      },
+      "candidateTarget": {
+        "fastStartMs": 2000,
+        "status": "unconfirmed-not-production-SLA"
+      }
+    },
+    {
+      "scenario": "MAX-120 slow-report serial mixed load",
+      "mode": "observed",
+      "commit": "b14eb0e29c615d6623274d7f09c1505efb3a015b",
+      "hardware": {
+        "platform": "darwin",
+        "release": "27.0.0",
+        "cpu": "Apple M5",
+        "logicalCpus": 10,
+        "memoryBytes": 25769803776,
+        "node": "v24.18.0"
+      },
+      "load": {
+        "reportMs": 10000,
+        "notificationJobs": 1,
+        "collectionJobs": 1,
+        "workerConcurrency": 1,
+        "pollMs": 1000,
+        "controlPoolLimit": 24,
+        "sharedInstanceId": 1,
+        "realModelCalls": 0
+      },
+      "waitMs": {
+        "report.schedule": 6,
+        "notification.deliver": 10029,
+        "capacity.collect": 11038
+      },
+      "elapsedMs": 11072,
+      "peakActive": 1,
+      "completed": [
+        "report.schedule",
+        "notification.deliver",
+        "capacity.collect"
+      ],
+      "cpuMicroseconds": {
+        "user": 25698,
+        "system": 3965
+      },
+      "memoryBefore": {
+        "rss": 98320384,
+        "heapTotal": 51904512,
+        "heapUsed": 23110944,
+        "external": 5160765,
+        "arrayBuffers": 2447720
+      },
+      "memoryAfter": {
+        "rss": 100139008,
+        "heapTotal": 51904512,
+        "heapUsed": 23950408,
+        "external": 5204026,
+        "arrayBuffers": 2451987
+      },
+      "before": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-03T18:48:53.103Z",
+        "persistence": "mysql",
+        "quality": "good",
+        "types": [
+          {
+            "jobType": "capacity.collect",
+            "queued": 1,
+            "retry": 0,
+            "scheduled": 0,
+            "ready": 1,
+            "running": 0,
+            "deadLetter": 0,
+            "expiredLeases": 0,
+            "oldestReadyWaitMs": 99
+          },
+          {
+            "jobType": "notification.deliver",
+            "queued": 1,
+            "retry": 0,
+            "scheduled": 0,
+            "ready": 1,
+            "running": 0,
+            "deadLetter": 0,
+            "expiredLeases": 0,
+            "oldestReadyWaitMs": 99
+          },
+          {
+            "jobType": "report.schedule",
+            "queued": 0,
+            "retry": 0,
+            "scheduled": 0,
+            "ready": 0,
+            "running": 1,
+            "deadLetter": 0,
+            "expiredLeases": 0,
+            "oldestReadyWaitMs": null
+          }
+        ],
+        "gaps": []
+      },
+      "after": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-03T18:49:04.137Z",
+        "persistence": "mysql",
+        "quality": "good",
+        "types": [],
+        "gaps": []
+      },
+      "candidateTarget": {
+        "fastStartMs": 2000,
+        "status": "unconfirmed-not-production-SLA"
+      }
+    }
+  ],
+  "conclusion": "Serial head-of-line blocking reproduced. Observability-only delivery; production concurrency remains 1. No production pressure test or capacity claim.",
+  "candidateTarget": {
+    "fastStartMs": 2000,
+    "status": "unconfirmed",
+    "productionSla": false
+  },
+  "limitations": [
+    "Single sample per mode",
+    "Synthetic handlers and one shared resource",
+    "No real model, send or collection",
+    "No production throughput or continuous-load fairness test"
+  ]
+}
