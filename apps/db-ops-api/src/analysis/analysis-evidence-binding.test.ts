@@ -1,0 +1,128 @@
+import { describe, expect, it } from 'vitest';
+import { freezeEvidence } from './analysis-evidence.js';
+import { AnalysisDispatchStore, type OwnedAnalysis } from './analysis-dispatch-store.js';
+
+const envelope = { schemaVersion: 1, analysisType: 'fault_diagnosis', subject: { type: 'instance', id: 42 }, conclusions: ['finding'], hypotheses: [], evidenceRefs: [], confidence: .5, recommendations: [], displayMarkdown: 'finding', provenance: { modelVersion: 'forged', promptVersion: 'forged', toolVersions: {} }, createdAt: '2026-10-03T00:00:00Z' };
+const owned = { analysisId: 1, request: { purpose: 'fault_diagnosis', subject: envelope.subject, authorizationVersion: 'a1', evidence: freezeEvidence(envelope.subject as any, 'a1', { database: { qps: 7 } }) } } as unknown as OwnedAnalysis;
+// Database work is deliberately forbidden: invalid completion must fail before it.
+const store = new AnalysisDispatchStore(() => { throw new Error('UNVALIDATED_DATABASE_WRITE'); });
+describe('task-bound analysis completion', () => {
+  it('rejects the wrong analysis type before writing', async () => {
+    await expect(store.completeEnvelope(owned, { ...envelope, analysisType: 'topsql_analysis' })).resolves.toMatchObject({ success: false, error: 'ANALYSIS_TYPE_MISMATCH' });
+  });
+  it.each(['/database/madeUp', 'observation:cpu:99', 'a'.repeat(64), 'snapshot:other#/database/qps'])('rejects fabricated or foreign evidence %s before writing', async ref => {
+    await expect(store.completeEnvelope(owned, { ...envelope, evidenceRefs: [{ ref, summary: 'claimed' }] })).resolves.toMatchObject({ success: false, error: 'ANALYSIS_EVIDENCE_REF_INVALID' });
+  });
+  it('rejects a wrong subject', async () => {
+    await expect(store.completeEnvelope(owned, { ...envelope, subject: { type: 'instance', id: 43 } })).resolves.toMatchObject({ success: false, error: 'ANALYSIS_SUBJECT_MISMATCH' });
+  });
+});
+
+import { bindEnvelope, evidenceHash, resolveEvidenceRef } from './analysis-evidence.js';
+import { aiAnalysisDatabaseService } from '../ai-analysis-database-service.js';
+import { dbConnection } from '../db-connection.js';
+import { afterEach, vi } from 'vitest';
+const hash = 'c'.repeat(64);
+afterEach(() => vi.restoreAllMocks());
+describe('frozen references and access', () => {
+  it.each([
+    ['mysql', 'SELECT `email2` FROM `orders2` WHERE email="FAKE_DOUBLE_VALUE"', '`orders2`'],
+    ['mysql', String.raw`SELECT * FROM orders WHERE email="FAKE_DOUBLE\"VALUE"`, 'orders'],
+    ['mysql', 'SELECT * FROM orders WHERE email="FAKE_DOUBLE""VALUE"', 'orders'],
+    ['mysql', "SELECT * FROM orders WHERE email='FAKE_SINGLE''VALUE' /* FAKE_COMMENT */", 'orders'],
+    ['mysql', "SELECT * FROM orders WHERE id=0xABC123", 'orders'],
+    ['postgresql', 'SELECT "email2" FROM "orders2" WHERE email=$tag$FAKE_DOLLAR$tag$', '"orders2"'],
+    ['postgresql', String.raw`SELECT "email2" FROM "orders2" WHERE email=E'FAKE_ESCAPE\'VALUE'`, '"orders2"'],
+    ['oracle', 'SELECT "email2" FROM "orders2" WHERE email=\'FAKE_SINGLE\'', '"orders2"'],
+    ['oracle', "SELECT q'[FAKE_ORACLE]' FROM dual", 'dual'],
+    ['dameng', 'SELECT "email2" FROM "orders2" WHERE email=\'FAKE_SINGLE\'', '"orders2"'],
+  ])('keeps identifiers and removes dialect %s literals', (dialect, sql, identifier) => {
+    const frozen = freezeEvidence(envelope.subject as any, 'a1', { dialect, sql });
+    expect(JSON.stringify(frozen)).not.toMatch(/FAKE_|ABC123/);
+    expect((frozen.data as any).sql).toContain(identifier);
+    expect(freezeEvidence(envelope.subject as any, 'a1', frozen.data).data).toEqual(frozen.data);
+  });
+  it('fails closed for unsupported syntax and dialect, even in nested diagnostic SQL', () => {
+    for (const data of [{ dialect: 'unknown', sql: 'SELECT "FAKE_VALUE"' }, { sql: 'SELECT \'FAKE_UNCLOSED' }, { sql: "SELECT * FROM orders WHERE email=_utf8mb4'FAKE_CHARSET'" }, { database: { instance: { db_type: 'postgresql' }, slowQueries: [{ sql_text: 'INVALID FAKE_VALUE' }] } }]) {
+      const frozen = freezeEvidence(envelope.subject as any, 'a1', data);
+      expect(JSON.stringify(frozen)).not.toContain('FAKE_');
+      expect(frozen.gaps.some(g => g.code === 'SQL_REDACTION_UNAVAILABLE')).toBe(true);
+    }
+  });
+  it.each([
+    ['mysql', 'MySQL', 'Filter: `orders2`.email=' + String.raw`"FAKE_DOUBLE\"VALUE" AND id=1.23e5`],
+    ['postgresql', 'PostgreSQL', String.raw`Filter: "orders2".email=E'FAKE_ESCAPE\'VALUE' AND note=$$FAKE_DOLLAR$$`],
+    ['oracle', 'Oracle', `Filter: "orders2".email=q'[FAKE'ORACLE]'`],
+    ['dameng', '达梦数据库', `Filter: "orders2".email=q'{FAKE'DAMENG}'`],
+  ])('redacts %s plan predicates and retains schema identifiers', (dialect, header, predicate) => {
+    const frozen = freezeEvidence(envelope.subject as any, 'a1', { dialect, explain: `${header} 执行计划:\n${predicate}` });
+    expect(JSON.stringify(frozen)).not.toContain('FAKE_');
+    expect((frozen.data as any).explain).toContain('orders2');
+    expect(frozen.gaps).toEqual([]);
+  });
+  it.each(['arbitrary FAKE_VALUE', '获取执行计划失败：FAKE_VALUE', 'MySQL 执行计划:\nFilter: email="FAKE_UNCLOSED'])('omits unsafe or unrecognized plan text', explain => {
+    const frozen = freezeEvidence(envelope.subject as any, 'a1', { explain });
+    expect((frozen.data as any).explain).toBeNull();
+    expect(frozen.gaps).toContainEqual(expect.objectContaining({ code: 'EXPLAIN_REDACTION_UNAVAILABLE' }));
+  });
+  it('keeps numeric MySQL plan estimates, but never predicate constants', () => {
+    const frozen = freezeEvidence(envelope.subject as any, 'a1', { explain: 'MySQL 执行计划:\nID: 1\n  行数：12345\n  键长度：8\nFilter: id=987654321' });
+    expect((frozen.data as any).explain).toContain('行数：12345');
+    expect((frozen.data as any).explain).toContain('键长度：8');
+    expect((frozen.data as any).explain).not.toContain('987654321');
+  });
+  const data = { database: { qps: 7, 'a/b': { '~': 9 } }, observations: [{ resource: envelope.subject, metricId: 'cpu', value: 90 }], semantic: { evidenceRef: hash, value: 12 }, absent: null, gaps: [] };
+  const snapshot = freezeEvidence(envelope.subject as any, 'a1', data);
+  const request = { purpose: 'fault_diagnosis', subject: envelope.subject as any, authorizationVersion: 'a1', evidence: snapshot };
+  it.each(['/database/qps', '/database/a~1b/~0', 'observation:cpu:42', hash])('resolves existing historical ref %s only inside this snapshot', ref => {
+    expect(resolveEvidenceRef(snapshot, ref).found).toBe(true);
+    expect(bindEnvelope({ ...envelope, evidenceRefs: [{ ref, summary: 'observed' }] } as any, request)).toEqual({ ok: true, verification: 'bound' });
+  });
+  it('supports qualified refs and rejects another task containing an actual existing ref', () => {
+    expect(resolveEvidenceRef(snapshot, `snapshot:${snapshot.id}#/database/qps`)).toEqual({ found: true, value: 7 });
+    const other = freezeEvidence(envelope.subject as any, 'a1', { database: { qps: 99 } });
+    expect(resolveEvidenceRef(other, `snapshot:${snapshot.id}#/database/qps`).found).toBe(false);
+    expect(resolveEvidenceRef(other, hash).found).toBe(false);
+    data.database.qps = 123;
+    expect(resolveEvidenceRef(snapshot, '/database/qps').value).toBe(7);
+  });
+  it('detects altered content or an altered permission scope', () => {
+    expect(bindEnvelope(envelope as any, { ...request, authorizationVersion: 'other' })).toMatchObject({ ok: false, error: 'ANALYSIS_EVIDENCE_SCOPE_MISMATCH' });
+    expect(bindEnvelope(envelope as any, { ...request, evidence: { ...snapshot, data: { qps: 999 } } })).toMatchObject({ ok: false, error: 'ANALYSIS_EVIDENCE_SCOPE_MISMATCH' });
+  });
+  it.each(['/__proto__', '/database/~2', 'observation:cpu:0', 'unknown-format'])('does not resolve malformed refs %s', ref => expect(resolveEvidenceRef(snapshot, ref).found).toBe(false));
+  it('missing evidence saves only unknown, and gaps never count as proof', () => {
+    expect(bindEnvelope(envelope as any, request)).toMatchObject({ ok: true, verification: 'unknown' });
+    expect(bindEnvelope({ ...envelope, evidenceRefs: [{ ref: '/absent', summary: 'null' }] } as any, request)).toMatchObject({ verification: 'unknown' });
+    const partial = freezeEvidence(envelope.subject as any, 'a1', { qps: 7, gaps: [{ code: 'HOST_UNAVAILABLE' }] });
+    expect(bindEnvelope({ ...envelope, evidenceRefs: [{ ref: '/qps', summary: 'qps' }] } as any, { ...request, evidence: partial })).toMatchObject({ verification: 'partial' });
+    expect(bindEnvelope({ ...envelope, evidenceRefs: [{ ref: '/gaps/0', summary: 'gap' }] } as any, { ...request, evidence: partial })).toMatchObject({ verification: 'unknown' });
+  });
+  it('redacts SQL literals, secrets and preserves acquisition times', () => {
+    const frozen = freezeEvidence(envelope.subject as any, 'a1', { sql: "SELECT * FROM t WHERE email='alice@example.invalid' AND id=123", password: 'fake-secret', observedAt: new Date('2026-10-03T00:00:00Z') });
+    expect(JSON.stringify(frozen)).not.toContain('alice@example.invalid');
+    expect(JSON.stringify(frozen)).not.toContain('fake-secret');
+    expect((frozen.data as any).observedAt).toBe('2026-10-03T00:00:00.000Z');
+  });
+  it('serves the original snapshot only to the originating current authorization scope', async () => {
+    const actor = { userId: 7, username: 'op', roles: [], permissions: ['ai:view'], sessionVersion: 1, instanceScopes: { 42: 'read-only' as const }, requestId: 'test' };
+    const { analysisAuthorizationVersion } = await import('./analysis-identity.js');
+    const permitted = freezeEvidence(envelope.subject as any, analysisAuthorizationVersion(actor), data);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute: async () => [[{ request_snapshot: JSON.stringify({ actor, authorizationVersion: permitted.authorizationVersion, subject: envelope.subject, evidence: permitted }) }]] } as any);
+    expect(await aiAnalysisDatabaseService.getEvidenceSnapshot(1, actor)).toEqual(permitted);
+    expect(await aiAnalysisDatabaseService.getEvidenceSnapshot(1, { ...actor, userId: 8 })).toBeNull();
+    expect(await aiAnalysisDatabaseService.getEvidenceSnapshot(1, { ...actor, instanceScopes: {} })).toBeNull();
+    expect(await aiAnalysisDatabaseService.getEvidenceSnapshot(1, { ...actor, sessionVersion: 2 })).toBeNull();
+  });
+});
+
+describe('uncertain evidence quality', () => {
+  it('stale and missing observations remain unknown even when their pointer or hash exists', () => {
+    const evidence = freezeEvidence(envelope.subject as any, 'a1', { stale: { value: 90, freshness: 'stale', sources: [{ id: hash }] }, missing: { value: null, quality: { status: 'unknown' } } });
+    for (const ref of ['/stale/value', hash, '/missing']) expect(bindEnvelope({ ...envelope, evidenceRefs: [{ ref, summary: 'observation' }] } as any, { purpose: 'fault_diagnosis', subject: envelope.subject as any, authorizationVersion: 'a1', evidence })).toMatchObject({ verification: 'unknown' });
+  });
+});
+
+it('distinguishes route revision timestamps when hashing actual provider configuration', () => {
+  expect(evidenceHash([new Date('2026-10-03T00:00:00Z')])).not.toBe(evidenceHash([new Date('2026-10-03T01:00:00Z')]));
+});

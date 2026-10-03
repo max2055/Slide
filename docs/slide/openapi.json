@@ -580,6 +580,86 @@
         ],
         "type": "object"
       },
+      "AnalysisEvidenceSnapshot": {
+        "$id": "AnalysisEvidenceSnapshot",
+        "additionalProperties": false,
+        "properties": {
+          "authorizationVersion": {
+            "type": "string"
+          },
+          "collectedAt": {
+            "type": "string"
+          },
+          "data": {},
+          "gaps": {
+            "items": {
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "subject": {
+            "properties": {
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "type": {
+                "anyOf": [
+                  {
+                    "const": "instance",
+                    "type": "string"
+                  },
+                  {
+                    "const": "server",
+                    "type": "string"
+                  },
+                  {
+                    "const": "network_device",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "id",
+          "hash",
+          "collectedAt",
+          "subject",
+          "authorizationVersion",
+          "data",
+          "gaps"
+        ],
+        "type": "object"
+      },
       "CapabilityState": {
         "anyOf": [
           {
@@ -9866,6 +9946,43 @@
               }
             },
             "description": "Database adapter capabilities"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/ai/analysis/{id}/evidence": {
+      "get": {
+        "description": "Returns the frozen, redacted snapshot used by this analysis, never live metrics. Requires ai:view, the original actor, unchanged current permission scope and current subject access. Snapshot retention follows the analysis record; no automatic TTL purge or historical backfill.",
+        "operationId": "getAnalysisEvidenceSnapshot",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisEvidenceSnapshot"
+                }
+              }
+            },
+            "description": "Frozen evidence snapshot"
+          },
+          "404": {
+            "description": "Snapshot absent, legacy, or outside the current authorization scope"
           }
         },
         "security": [

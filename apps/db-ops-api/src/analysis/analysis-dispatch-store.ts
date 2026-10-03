@@ -3,6 +3,8 @@ import type { Pool, PoolConnection } from 'mysql2/promise';
 import type { ActorContext } from '../auth/actor-context.js';
 import type { ResourceRef } from '../resources/types.js';
 import type { ClaimedJob, JobExecutionContext } from '../workflows/worker-runtime.js';
+import { bindEnvelope, redactEvidence, type EvidenceSnapshot } from './analysis-evidence.js';
+import type { AnalysisExecutionEvent, AnalysisExecutionTrace } from './analysis-execution.js';
 import { validateAnalysisEnvelope } from './analysis-envelope.js';
 
 /** Immutable, secret-free input; callbacks and authorization are never supplied by the model. */
@@ -12,6 +14,7 @@ export interface AnalysisRequest {
   actor?: ActorContext;
   message: string;
   systemPrompt: string;
+  evidence?: EvidenceSnapshot;
   evidenceVersion: string;
   configVersion: string;
   authorizationVersion: string;
@@ -137,7 +140,7 @@ export class AnalysisDispatchStore {
   }
 
   private async lock(connection: PoolConnection, id: number) {
-    const [rows] = await connection.execute<any[]>(`SELECT d.*, a.status, a.completed_at, j.state AS job_state,
+    const [rows] = await connection.execute<any[]>(`SELECT d.*, a.status, a.completed_at, a.execution_trace, a.analysis_envelope, j.state AS job_state,
       j.lease_owner, j.fencing_token AS job_fence, j.attempts AS job_attempts, j.lease_expires_at > NOW() AS live_lease
       FROM analysis_dispatches d JOIN ai_analysis a ON a.id = d.analysis_id JOIN workflow_jobs j ON j.id = d.job_id
       WHERE d.analysis_id = ? FOR UPDATE`, [id]);
@@ -195,6 +198,7 @@ export class AnalysisDispatchStore {
   }
   async beforeSend(owned: OwnedAnalysis): Promise<void> {
     await this.owned(owned, async (connection, row) => {
+      if (row.status === 'completed') return; // Same live attempt may finish the provider loop and report usage.
       if (!['pending', 'running'].includes(row.status) || !['unsent', 'sending'].includes(row.request_state)) throw new Error('ANALYSIS_ALREADY_TERMINAL');
       await this.state(connection, owned, 'sending');
     });
@@ -214,15 +218,65 @@ export class AnalysisDispatchStore {
   async completeEnvelope(owned: OwnedAnalysis, envelope: unknown): Promise<{ success: boolean; error?: string }> {
     const parsed = validateAnalysisEnvelope(envelope);
     if (!parsed.ok) return { success: false, error: 'ANALYSIS_ENVELOPE_INVALID' };
-    if (parsed.value.subject.type !== owned.request.subject.type || parsed.value.subject.id !== owned.request.subject.id) return { success: false, error: 'ANALYSIS_SUBJECT_MISMATCH' };
+    const binding = bindEnvelope(parsed.value, owned.request);
+    if ('error' in binding) return { success: false, error: binding.error };
     return this.owned(owned, async (connection, row) => {
-      if (row.status === 'completed') return { success: true };
+      if (row.status === 'completed') return { success: false, error: 'ANALYSIS_ALREADY_TERMINAL' };
+      const trace = row.execution_trace ? parse<AnalysisExecutionTrace>(row.execution_trace) : null;
+      const first = trace?.requests[0];
+      const measured = trace?.requests.filter(r => r.usage && Object.keys(r.usage).length).length ?? 0;
+      const safe = redactEvidence(parsed.value) as typeof parsed.value;
+      safe.createdAt = new Date().toISOString();
+      safe.verification = binding.verification;
+      safe.displayMarkdown = `> 验证等级：${(!first ? 'unknown' : binding.verification) === 'bound' ? '引用已绑定冻结证据（不代表根因已证实）' : first && binding.verification === 'partial' ? '证据部分缺失，结论需验证' : 'unknown：缺少可验证证据'}\n\n${safe.displayMarkdown}`;
+      if (owned.request.evidence) {
+        const { id, hash, collectedAt, schemaVersion } = owned.request.evidence;
+        safe.evidenceSnapshot = { id, hash, collectedAt, schemaVersion };
+      } else delete safe.evidenceSnapshot;
+      safe.provenance = { provider: first?.provider ?? 'unavailable', modelVersion: first?.model ?? 'unavailable',
+        promptVersion: first?.promptHash ?? 'unavailable', routeVersion: first?.routeVersion ?? 'unavailable',
+        inputHash: first?.inputHash ?? 'unavailable', toolVersions: first?.toolVersions ?? {},
+        runtimeRunId: owned.runtimeRunId, attemptNumber: owned.job.attempts, usageStatus: !measured ? 'unavailable' : measured === trace.requests.length ? 'available' : 'partial',
+        ...(first?.providerId !== undefined ? { providerId: first.providerId } : {}) };
+      if (!first) safe.verification = 'unknown';
+      if (safe.verification === 'unknown') {
+        safe.hypotheses = safe.hypotheses.map(h => ({ ...h, status: 'unknown' }));
+        safe.confidence = 0;
+      }
       if (row.status !== 'running' || !['sending', 'responded'].includes(row.request_state)) throw new Error('ANALYSIS_ALREADY_TERMINAL');
       await connection.execute(`UPDATE ai_analysis SET status = 'completed', result = ?, analysis_envelope = ?,
         envelope_backfill_status = 'parsed', completed_at = NOW(), error_message = NULL WHERE id = ?`,
-      [JSON.stringify(parsed.value.displayMarkdown), JSON.stringify(parsed.value), owned.analysisId]);
+      [JSON.stringify(safe.displayMarkdown), JSON.stringify(safe), owned.analysisId]);
       await this.state(connection, owned, 'completed');
       return { success: true };
+    });
+  }
+  /** Metadata only: a live owner cannot revise a conclusion or another attempt. */
+  async recordExecution(owned: OwnedAnalysis, event: AnalysisExecutionEvent): Promise<void> {
+    await this.owned(owned, async (connection, row) => {
+      if (!['running', 'completed'].includes(row.status)) throw new Error('ANALYSIS_ALREADY_TERMINAL');
+      const trace: AnalysisExecutionTrace = row.execution_trace ? parse(row.execution_trace) : {
+        schemaVersion: 1, analysisId: owned.analysisId, attemptNumber: owned.job.attempts,
+        runtimeRunId: owned.runtimeRunId, requests: [], finalized: false,
+      };
+      if (trace.runtimeRunId !== owned.runtimeRunId || trace.attemptNumber !== owned.job.attempts || trace.finalized) throw new Error('ANALYSIS_EXECUTION_BINDING_MISMATCH');
+      if (event.kind === 'request') {
+        if (event.request.requestNumber !== trace.requests.length + 1) throw new Error('ANALYSIS_EXECUTION_ORDER_INVALID');
+        trace.requests.push(event.request);
+      } else if (event.kind === 'response') {
+        const request = trace.requests[event.requestNumber - 1];
+        if (!request || request.usage !== undefined) throw new Error('ANALYSIS_EXECUTION_ORDER_INVALID');
+        request.usage = event.usage;
+      } else trace.finalized = true;
+      const usage: Record<string, number> = {};
+      let available = 0;
+      for (const request of trace.requests) if (request.usage && Object.keys(request.usage).length) {
+        available++; for (const [key, value] of Object.entries(request.usage)) if (Number.isFinite(value) && value >= 0) usage[key] = (usage[key] ?? 0) + value;
+      }
+      const storedEnvelope = row.analysis_envelope ? parse<any>(row.analysis_envelope) : null;
+      if (storedEnvelope) storedEnvelope.provenance.usageStatus = !available ? 'unavailable' : available === trace.requests.length ? 'available' : 'partial';
+      await connection.execute('UPDATE ai_analysis SET execution_trace = ?, `usage` = ?, analysis_envelope = COALESCE(?, analysis_envelope) WHERE id = ?',
+        [JSON.stringify(trace), available ? JSON.stringify(usage) : null, storedEnvelope ? JSON.stringify(storedEnvelope) : null, owned.analysisId]);
     });
   }
   async fail(owned: OwnedAnalysis, reason: string, knownResponse = false, rejectUnsent = false): Promise<boolean> {

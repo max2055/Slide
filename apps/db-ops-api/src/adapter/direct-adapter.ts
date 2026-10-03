@@ -82,7 +82,7 @@ function analysisCompletionTools(analysisId?: number, completion?: InvokeOptions
         return normalizeToolResult({ success: false, errorCode: 'ANALYSIS_BINDING_MISMATCH', error: 'Analysis target denied' }, completeAnalysisTool.name);
       }
       const result = completion ? await completion(args.envelope) : await completeAnalysisTool.handler({ ...args, analysisId });
-      return normalizeToolResult(result, completeAnalysisTool.name);
+      return normalizeToolResult({ ...result, ...(!result.success ? { errorCode: result.error } : {}) }, completeAnalysisTool.name);
     },
   });
   return tools;
@@ -1225,7 +1225,7 @@ export class DirectAdapter implements IAgentEngine {
     try {
       const selectedProvider = this.providerForPurpose ? await this.providerForPurpose(options?.purpose || 'default') : this.provider;
       const provider = options?.beforeProviderRequest
-        ? guardedAnalysisProvider(selectedProvider, options.beforeProviderRequest, controller.signal) : selectedProvider;
+        ? guardedAnalysisProvider(selectedProvider, options.beforeProviderRequest, controller.signal, options.recordAnalysisExecution) : selectedProvider;
       const runner = this.providerForPurpose || options?.beforeProviderRequest ? new AgentRunner(provider) : this.runner;
       const result = await runner.run({
         initialMessages: messages,
@@ -1249,6 +1249,8 @@ export class DirectAdapter implements IAgentEngine {
         onProviderRequest: request => this.observeSessionOperation(sessionKey, request),
         onToolExecution: request => this.observeSessionOperation(sessionKey, request),
       });
+
+      await options?.recordAnalysisExecution?.({ kind: 'finalized' });
 
       // Embed thinking as <think> tags so chat UI renders collapsible thinking section
       const thinkingContent = thinkingHolder.text || '';

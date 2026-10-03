@@ -4,7 +4,7 @@ import type { ActorContext } from './auth/actor-context.js';
  * 慢查询数据收集 → LLM 分析 → 结果存储
  * 事件触发模式（无 cron 循环）
  */
-import { llmService } from './llm-service.js';
+import { collectTopSqlEvidence } from './analysis/topsql-evidence.js';
 import { dispatchOrReuse } from './ai-agent-bridge.js';
 import { databaseService } from './database-service.js';
 import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
@@ -90,7 +90,8 @@ class TopSQLAnalysisService {
       cacheKey: `topsql:${slowQuery.sql_hash || 'no-hash'}:${instanceId}`,
       instanceId,
       sessionKey: 'topsql', triggerType: trigger, actor, retryOf, reuseCompleted, relatedId: slowQuery.id,
-      userMessage: `分析以下慢查询并给出优化建议:\n\nSQL:\n\`\`\`sql\n${slowQuery.sql_text}\n\`\`\`\n\n性能: 平均${slowQuery.avg_time_ms}ms 最大${slowQuery.max_time_ms}ms 执行${slowQuery.execution_count}次\n\n请使用 slide_* 工具获取 EXPLAIN 执行计划、表索引信息和表结构。分析瓶颈并给出 SQL 重写和索引优化建议。完成后调用 slide_complete_analysis 保存结果。`,
+      evidenceData: await collectTopSqlEvidence(instanceId, slowQuery, actor, trigger),
+      userMessage: '分析 supplied frozenEvidence 中的慢查询、Schema、索引和只读 EXPLAIN。缺口必须说明未知，不得虚构执行计划或承诺优化收益。唯一可用工具是 slide_complete_analysis。',
     });
     if (accepted.success === false) throw new Error('ANALYSIS_PROVIDER_RESULT_UNKNOWN：重试可能再次计费，需要明确确认');
     return accepted.analysisId;

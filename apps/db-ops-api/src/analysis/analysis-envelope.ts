@@ -34,10 +34,19 @@ export const AnalysisEnvelopeSchema = Type.Object({
   recommendations: Type.Array(Recommendation, { maxItems: 50 }),
   displayMarkdown: Type.String({ maxLength: 100_000 }),
   provenance: Type.Object({
+    provider: Type.Optional(Type.String()),
+    providerId: Type.Optional(Type.Integer()),
+    routeVersion: Type.Optional(Type.String()),
+    inputHash: Type.Optional(Type.String()),
+    runtimeRunId: Type.Optional(Type.String()),
+    attemptNumber: Type.Optional(Type.Integer()),
+    usageStatus: Type.Optional(Type.Union([Type.Literal('available'), Type.Literal('unavailable'), Type.Literal('partial')])),
     modelVersion: Type.String({ minLength: 1, maxLength: 256 }),
     promptVersion: Type.String({ minLength: 1, maxLength: 256 }),
     toolVersions: Type.Record(Type.String({ maxLength: 128 }), Type.String({ maxLength: 128 }), { maxProperties: 100 }),
   }),
+  verification: Type.Optional(Type.Union([Type.Literal('bound'), Type.Literal('partial'), Type.Literal('unknown')])),
+  evidenceSnapshot: Type.Optional(Type.Object({ id: Type.String(), hash: Type.String(), collectedAt: Type.String(), schemaVersion: Type.Literal(1) })),
   createdAt: Type.String({ minLength: 20, maxLength: 64 }),
 }, { additionalProperties: false });
 

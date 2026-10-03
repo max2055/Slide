@@ -3,7 +3,11 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection.js';
-import { type AnalysisEnvelope, validateAnalysisEnvelope } from './analysis/analysis-envelope.js';
+import type { ActorContext } from './auth/actor-context.js';
+import type { EvidenceSnapshot } from './analysis/analysis-evidence.js';
+import { analysisAuthorizationVersion } from './analysis/analysis-identity.js';
+import { canReadResource } from './resources/resource-service.js';
+import { hasPermission } from './auth/require-permission.js';
 
 export interface AiAnalysisRecord {
   id: number;
@@ -274,45 +278,7 @@ class AiAnalysisDatabaseService {
     envelope: unknown,
     data: { usage?: any; duration_ms?: number; executionTrace?: any } = {},
   ): Promise<{ success: boolean; error?: string }> {
-    const parsed = validateAnalysisEnvelope(envelope);
-    if (!parsed.ok) return { success: false, error: 'error' in parsed ? parsed.error : 'ANALYSIS_ENVELOPE_INVALID' };
-    const pool = this.getPool();
-    if (!pool) return { success: false, error: '数据库未连接' };
-
-    try {
-      const safeEnvelope: AnalysisEnvelope = {
-        ...parsed.value,
-        provenance: {
-          ...parsed.value.provenance,
-          modelVersion: process.env.ANALYSIS_MODEL_VERSION || 'configured-provider',
-          promptVersion: process.env.PROMPT_VERSION || 'managed',
-        },
-      };
-      const [result] = await pool.execute(
-        `UPDATE ai_analysis SET
-           status = 'completed', result = ?, analysis_envelope = ?, envelope_backfill_status = 'parsed',
-           execution_trace = ?, \`usage\` = ?, duration_ms = ?, completed_at = NOW()
-         WHERE id = ? AND status IN ('pending', 'running')
-         AND NOT EXISTS (SELECT 1 FROM analysis_dispatches d WHERE d.analysis_id = ai_analysis.id)`,
-        [
-          JSON.stringify(safeEnvelope.displayMarkdown), JSON.stringify(safeEnvelope),
-          data.executionTrace ? JSON.stringify(data.executionTrace) : null,
-          data.usage ? JSON.stringify(data.usage) : null, data.duration_ms || null, analysisId,
-        ],
-      ) as any;
-      if (result.affectedRows === 0) {
-        const [rows] = await pool.execute('SELECT status, analysis_envelope FROM ai_analysis WHERE id = ?', [analysisId]) as any;
-        const existing = rows?.[0]?.analysis_envelope;
-        if (rows?.[0]?.status === 'completed' && existing && JSON.stringify(typeof existing === 'string' ? JSON.parse(existing) : existing) === JSON.stringify(safeEnvelope)) {
-          return { success: true };
-        }
-        return { success: false, error: '分析已完成或不存在' };
-      }
-      return { success: true };
-    } catch (error: any) {
-      console.error('保存 AnalysisEnvelope 失败:', error);
-      return { success: false, error: error.message };
-    }
+    return { success: false, error: 'ANALYSIS_EXECUTION_CONTEXT_REQUIRED' };
   }
 
   /**
@@ -386,6 +352,21 @@ class AiAnalysisDatabaseService {
       console.error('获取分析记录失败:', error);
       return null;
     }
+  }
+
+  /** Snapshot data is never attached to generic result/list reads. */
+  async getEvidenceSnapshot(analysisId: number, actor: ActorContext): Promise<EvidenceSnapshot | null> {
+    if (!Number.isSafeInteger(analysisId) || analysisId <= 0 || !hasPermission(new Set(actor.permissions), 'ai:view')) return null;
+    const pool = this.getPool();
+    if (!pool) return null;
+    const [rows] = await pool.execute<any[]>(`SELECT d.request_snapshot FROM analysis_dispatches d
+      JOIN ai_analysis a ON a.id = d.analysis_id WHERE d.analysis_id = ?`, [analysisId]);
+    if (!rows[0]?.request_snapshot) return null;
+    const request = typeof rows[0].request_snapshot === 'string' ? JSON.parse(rows[0].request_snapshot) : rows[0].request_snapshot;
+    if (!request.evidence || Number(request.actor?.userId) !== actor.userId
+      || request.authorizationVersion !== analysisAuthorizationVersion(actor)
+      || !canReadResource(actor, request.subject)) return null;
+    return request.evidence;
   }
 
   /**

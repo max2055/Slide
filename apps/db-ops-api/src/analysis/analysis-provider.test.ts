@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LLMProvider, LLMResponse } from '@slide/agent-core';
+import { setAnalysisProviderIdentity } from './analysis-execution.js';
 import { guardedAnalysisProvider } from './analysis-provider.js';
 
 const response: LLMResponse = { content: 'ok', finishReason: 'stop', toolCalls: [], usage: {}, shouldExecuteTools: false, hasToolCalls: false };
@@ -23,5 +24,18 @@ describe('analysis actual provider boundary', () => {
     const guarded = guardedAnalysisProvider({ chat, chatStream: chat, getDefaultModel: () => 'test' } as LLMProvider, check);
     await expect(guarded.chat([], [])).rejects.toThrow('ANALYSIS_AUTHORITY_REVOKED'); expect(chat).not.toHaveBeenCalled();
     await guarded.chat([], []); expect(chat).toHaveBeenCalledOnce();
+  });  it('distinguishes actual model, system prompt and input; records unavailable usage truthfully', async () => {
+    const events: any[] = [];
+    const raw = { chat: async () => response, chatStream: async () => response, getDefaultModel: () => 'model-A' };
+    setAnalysisProviderIdentity(raw, { provider: 'actual', routeVersion: 'route-v1' });
+    const guarded = guardedAnalysisProvider(raw, async () => {}, undefined, async event => { events.push(event); });
+    await guarded.chat([{ role: 'system', content: 'prompt-A' }, { role: 'user', content: 'input-A' }], [], { model: 'model-A' });
+    await guarded.chat([{ role: 'system', content: 'prompt-B' }, { role: 'user', content: 'input-A' }], [], { model: 'model-B' });
+    expect(events[0].request).toMatchObject({ provider: 'actual', model: 'model-A', routeVersion: 'route-v1', requestNumber: 1 });
+    expect(events[2].request.model).toBe('model-B');
+    expect(events[0].request.promptHash).not.toBe(events[2].request.promptHash);
+    expect(events[0].request.inputHash).not.toBe(events[2].request.inputHash);
+    expect(events[1]).toEqual({ kind: 'response', requestNumber: 1, usage: null });
   });
+
 });

@@ -31,6 +31,7 @@ export function registerAnalysisDispatchHandler(registry: JobRegistry, deps: Ana
       const result = await engine.invoke(owned.request.sessionKey!, owned.request.message, owned.request.systemPrompt, {
         purpose: owned.request.purpose, analysisId: owned.analysisId, signal: context.signal,
         runtimeRunId: owned.runtimeRunId,
+        recordAnalysisExecution: async event => { await deps.store.recordExecution(owned, event); },
         beforeProviderRequest: async () => { await check(); await deps.store.beforeSend(owned); },
         completeAnalysis: async envelope => {
           await check();

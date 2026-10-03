@@ -165,6 +165,7 @@ export interface InvokeOptions {
   /** Trusted durable execution callbacks; never accepted from model/HTTP arguments. */
   runtimeRunId?: string;
   beforeProviderRequest?: () => Promise<void>;
+  recordAnalysisExecution?: (event: import('../analysis/analysis-execution.js').AnalysisExecutionEvent) => Promise<void>;
   completeAnalysis?: (envelope: unknown) => Promise<{ success: boolean; error?: string }>;
 }
 
