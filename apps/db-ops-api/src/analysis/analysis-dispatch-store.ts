@@ -227,7 +227,7 @@ export class AnalysisDispatchStore {
       const safe = redactEvidence(parsed.value) as typeof parsed.value;
       safe.createdAt = new Date().toISOString();
       safe.verification = binding.verification;
-      safe.displayMarkdown = `> 验证等级：${binding.verification === 'bound' ? '引用已绑定冻结证据（不代表根因已证实）' : binding.verification === 'partial' ? '证据部分缺失，结论需验证' : 'unknown：缺少可验证证据'}\n\n${safe.displayMarkdown}`;
+      safe.displayMarkdown = `> 验证等级：${(!first ? 'unknown' : binding.verification) === 'bound' ? '引用已绑定冻结证据（不代表根因已证实）' : first && binding.verification === 'partial' ? '证据部分缺失，结论需验证' : 'unknown：缺少可验证证据'}\n\n${safe.displayMarkdown}`;
       if (owned.request.evidence) {
         const { id, hash, collectedAt, schemaVersion } = owned.request.evidence;
         safe.evidenceSnapshot = { id, hash, collectedAt, schemaVersion };
@@ -238,6 +238,10 @@ export class AnalysisDispatchStore {
         runtimeRunId: owned.runtimeRunId, attemptNumber: owned.job.attempts, usageStatus: trace?.requests.some(r => r.usage && Object.keys(r.usage).length) ? 'available' : 'unavailable',
         ...(first?.providerId !== undefined ? { providerId: first.providerId } : {}) };
       if (!first) safe.verification = 'unknown';
+      if (safe.verification === 'unknown') {
+        safe.hypotheses = safe.hypotheses.map(h => ({ ...h, status: 'unknown' }));
+        safe.confidence = 0;
+      }
       if (row.status !== 'running' || !['sending', 'responded'].includes(row.request_state)) throw new Error('ANALYSIS_ALREADY_TERMINAL');
       await connection.execute(`UPDATE ai_analysis SET status = 'completed', result = ?, analysis_envelope = ?,
         envelope_backfill_status = 'parsed', completed_at = NOW(), error_message = NULL WHERE id = ?`,

@@ -50,14 +50,24 @@ export function parseEvidenceRef(ref: string): ParsedEvidenceRef | null {
   if (legacy && Number.isSafeInteger(Number(legacy[2]))) return { format: 'observation', metricId: legacy[1], resourceId: Number(legacy[2]) };
   return null;
 }
+function unavailable(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, any>;
+  const quality = typeof item.quality === 'string' ? item.quality : item.quality?.status;
+  return ['unknown', 'invalid', 'missing', 'unavailable', 'stale'].includes(quality)
+    || ['unknown', 'stale', 'missing'].includes(item.freshness)
+    || (Object.prototype.hasOwnProperty.call(item, 'value') && item.value === null);
+}
 function pointerValue(root: unknown, pointer: string): { found: boolean; value?: unknown } {
   let value = root;
+  let missing = unavailable(root);
   for (const part of pointer.slice(1).split('/').map(p => p.replace(/~1/g, '/').replace(/~0/g, '~'))) {
     if (!value || typeof value !== 'object' || ['__proto__', 'prototype', 'constructor'].includes(part)
       || !Object.prototype.hasOwnProperty.call(value, part)) return { found: false };
     value = (value as Record<string, unknown>)[part];
+    missing ||= unavailable(value);
   }
-  return { found: true, value };
+  return { found: true, value: missing ? null : value };
 }
 export function resolveEvidenceRef(snapshot: EvidenceSnapshot, ref: string): { found: boolean; value?: unknown } {
   const parsed = parseEvidenceRef(ref);
@@ -67,12 +77,13 @@ export function resolveEvidenceRef(snapshot: EvidenceSnapshot, ref: string): { f
     return pointerValue(snapshot.data, parsed.pointer);
   }
   let result: { found: boolean; value?: unknown } = { found: false };
-  const scan = (value: unknown) => {
+  const scan = (value: unknown, missing = false) => {
     if (!value || typeof value !== 'object') return;
     const item = value as Record<string, any>;
-    if (parsed.format === 'hash' && ['evidenceRef', 'evidence_ref', 'contentHash', 'id'].some(key => item[key]?.toLowerCase?.() === parsed.hash)) result = { found: true, value };
-    if (parsed.format === 'observation' && item.metricId === parsed.metricId && item.resource?.id === parsed.resourceId) result = { found: true, value: item.value };
-    for (const entry of Object.values(item)) scan(entry);
+    missing ||= unavailable(value);
+    if (parsed.format === 'hash' && ['evidenceRef', 'evidence_ref', 'contentHash', 'id'].some(key => item[key]?.toLowerCase?.() === parsed.hash)) result = { found: true, value: missing ? null : value };
+    if (parsed.format === 'observation' && item.metricId === parsed.metricId && item.resource?.id === parsed.resourceId) result = { found: true, value: missing ? null : item.value };
+    for (const entry of Object.values(item)) scan(entry, missing);
   };
   scan(snapshot.data); return result;
 }

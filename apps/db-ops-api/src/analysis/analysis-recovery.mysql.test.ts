@@ -1,4 +1,10 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ToolRegistry, type LLMProvider as AgentProvider } from '@slide/agent-core';
+import { DirectAdapter } from '../adapter/direct-adapter.js';
+import { freezeEvidence } from './analysis-evidence.js';
+import { setAnalysisProviderIdentity } from './analysis-execution.js';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
@@ -110,7 +116,7 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
   it('completion survives crash before workflow acknowledgement and cannot be overwritten without identity', async () => {
     const queued = await enqueue(); const owned = await claim(queued.analysisId); await store.beforeSend(owned); await store.completeEnvelope(owned, envelope); await expire();
     expect(await store.claim(queued.analysisId, owned.job, owned.context)).toBeNull();
-    expect((await rows('SELECT * FROM ai_analysis'))[0].result).toBe('finding');
+    expect((await rows('SELECT * FROM ai_analysis'))[0].result).toContain('finding');
   });
   it.each(['committed', 'claimed', 'before-send', 'sending', 'responded', 'before-completion', 'completed'])('recovers a real SIGKILL at %s without duplicating a possibly paid call', async window => {
     const queued = await enqueue(); let calls = 0; let stderr = ''; let reached = false;
@@ -149,6 +155,63 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
     }
     expect(await rows('SELECT * FROM ai_analysis')).toHaveLength(1);
   }, 15_000);
+  it('binds actual fake-model execution, persists final usage after completion and retains the input snapshot', async () => {
+    const frozen = freezeEvidence(request.subject, request.authorizationVersion, { metrics: { qps: 7 }, gaps: [] });
+    const accepted = await enqueue({ request: { ...request, evidence: frozen, evidenceVersion: frozen.hash } });
+    const owned = await claim(accepted.analysisId);
+    const workspace = mkdtempSync(join(tmpdir(), 'max116-model-'));
+    let calls = 0;
+    const model: AgentProvider = {
+      getDefaultModel: () => 'actual-fake-model',
+      getModelCapabilities: () => ({ model: 'actual-fake-model', contextWindowTokens: 32000, preferredOutputTokens: 2048, source: 'configuration', version: 'test' }),
+      chat: async (_messages, tools) => {
+        expect(tools.map(t => t.name)).toEqual(['slide_complete_analysis']);
+        if (calls++ === 0) return { content: null, finishReason: 'tool_calls', toolCalls: [{ id: 'completion', name: 'slide_complete_analysis', arguments: { analysisId: owned.analysisId, envelope: { ...envelope, evidenceRefs: [{ ref: '/metrics/qps', summary: 'qps 7' }], provenance: { modelVersion: 'FORGED', promptVersion: 'FORGED', toolVersions: { database: 'FORGED' } } } } }], usage: { prompt_tokens: 10, completion_tokens: 2, cached_tokens: 4 }, shouldExecuteTools: true, hasToolCalls: true };
+        const stored = (await rows(`SELECT * FROM ai_analysis WHERE id = ${owned.analysisId}`))[0];
+        expect(stored.status).toBe('completed'); // Completion precedes final usage.
+        return { content: 'done', finishReason: 'stop', toolCalls: [], usage: { prompt_tokens: 5, completion_tokens: 1 }, shouldExecuteTools: false, hasToolCalls: false };
+      },
+      chatStream: async () => { throw new Error('UNEXPECTED_STREAM'); },
+    };
+    setAnalysisProviderIdentity(model, { provider: 'fake-supplier', providerId: 99, routeVersion: 'actual-route-version' });
+    const adapter = new DirectAdapter({ workspace, tools: new ToolRegistry(), llmProvider: model });
+    try {
+      const result = await adapter.invoke('w08-fake-' + owned.analysisId, owned.request.message, owned.request.systemPrompt, {
+        analysisId: owned.analysisId, runtimeRunId: owned.runtimeRunId,
+        beforeProviderRequest: () => store.beforeSend(owned), completeAnalysis: output => store.completeEnvelope(owned, output),
+        recordAnalysisExecution: event => store.recordExecution(owned, event),
+      });
+      expect(result.stopReason).toBe('completed'); expect(calls).toBe(2);
+      const record = (await rows(`SELECT * FROM ai_analysis WHERE id = ${owned.analysisId}`))[0];
+      expect(record.analysis_envelope).toMatchObject({ verification: 'bound', evidenceSnapshot: { id: frozen.id, hash: frozen.hash }, provenance: { provider: 'fake-supplier', modelVersion: 'actual-fake-model', routeVersion: 'actual-route-version', runtimeRunId: owned.runtimeRunId, attemptNumber: owned.job.attempts, usageStatus: 'available' } });
+      expect(record.analysis_envelope.provenance.promptVersion).toMatch(/^[a-f0-9]{64}$/);
+      expect(JSON.stringify(record.analysis_envelope.provenance)).not.toContain('FORGED');
+      expect(record.usage).toEqual({ prompt_tokens: 15, completion_tokens: 3, cached_tokens: 4 });
+      expect(record.execution_trace).toMatchObject({ runtimeRunId: owned.runtimeRunId, finalized: true, requests: [{ requestNumber: 1 }, { requestNumber: 2 }] });
+      const savedConclusion = record.analysis_envelope.conclusions;
+      expect(await store.completeEnvelope(owned, { ...envelope, conclusions: ['overwrite'] })).toMatchObject({ success: false, error: 'ANALYSIS_ALREADY_TERMINAL' });
+      await expect(store.recordExecution({ ...owned, runtimeRunId: 'other-run' }, { kind: 'finalized' })).rejects.toThrow('ANALYSIS_LEASE_LOST');
+      expect((await rows(`SELECT * FROM ai_analysis WHERE id = ${owned.analysisId}`))[0].analysis_envelope.conclusions).toEqual(savedConclusion);
+      const savedRequest = (await rows(`SELECT request_snapshot FROM analysis_dispatches WHERE analysis_id = ${owned.analysisId}`))[0].request_snapshot;
+      expect(savedRequest.evidence.data.metrics.qps).toBe(7);
+      frozen.data = { metrics: { qps: 999 } };
+      expect((await rows(`SELECT request_snapshot FROM analysis_dispatches WHERE analysis_id = ${owned.analysisId}`))[0].request_snapshot.evidence.data.metrics.qps).toBe(7);
+    } finally { await adapter.dispose(); rmSync(workspace, { recursive: true, force: true }); }
+  });
+  it('rejects wrong type, imaginary references and foreign authorized snapshots; accepts genuine references', async () => {
+    const evidence = freezeEvidence(request.subject, 'a1', { qps: 7, observations: [{ resource: request.subject, metricId: 'cpu', value: 90 }], gaps: [] });
+    const accepted = await enqueue({ request: { ...request, evidence, evidenceVersion: evidence.hash } });
+    const owned = await claim(accepted.analysisId); await store.beforeSend(owned);
+    for (const output of [
+      { ...envelope, analysisType: 'topsql_analysis' }, { ...envelope, subject: { type: 'server', id: 42 } },
+      { ...envelope, evidenceRefs: [{ ref: '/imaginary', summary: 'fabricated' }] },
+      { ...envelope, evidenceRefs: [{ ref: 'snapshot:another-real-task#/qps', summary: 'foreign' }] },
+      { ...envelope, evidenceRefs: [{ ref: 'observation:cpu:99', summary: 'outside scope' }] },
+    ]) expect((await store.completeEnvelope(owned, output)).success).toBe(false);
+    expect((await rows('SELECT * FROM ai_analysis'))[0].result).toBeNull();
+    expect(await store.completeEnvelope(owned, { ...envelope, evidenceRefs: [{ ref: '/qps', summary: 'qps' }] })).toEqual({ success: true });
+    expect((await rows('SELECT * FROM ai_analysis'))[0].analysis_envelope.verification).toBe('unknown'); // No actual execution telemetry, never claim verification.
+  });
   it('permission revocation before recovery and before a late completion prevents execution or result writes', async () => {
     const queued = await enqueue();
     const job = (await jobs.claim('revoked', 30))!;

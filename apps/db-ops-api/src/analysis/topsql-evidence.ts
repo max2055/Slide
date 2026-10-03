@@ -13,7 +13,7 @@ export async function collectTopSqlEvidence(instanceId: number, query: SlowQuery
   const gaps: Array<{ scope: string; code: string }> = [];
   const data: { sql: string; metrics: Record<string, unknown>; schema: unknown; indexes: unknown; explain: unknown; gaps: typeof gaps } = {
     sql: query.sql_text, metrics: { avg_time_ms: query.avg_time_ms, max_time_ms: query.max_time_ms, execution_count: query.execution_count,
-      rows_examined: query.rows_examined, rows_sent: query.rows_sent, schema_name: query.schema_name },
+      rows_examined: query.rows_examined, rows_sent: query.rows_sent, schema_name: query.schema_name, first_seen: query.first_seen ?? null, last_seen: query.last_seen ?? null },
     schema: null, indexes: null, explain: null, gaps,
   };
   const dialect = databaseService.getConnection(instanceId)?.db_type ?? 'mysql';

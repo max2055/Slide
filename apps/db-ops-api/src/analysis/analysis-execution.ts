@@ -24,5 +24,5 @@ export interface AnalysisExecutionTrace {
 export function executionRequest(provider: LLMProvider, messages: Message[], tools: ToolSchema[], model: string, requestNumber: number): AnalysisExecutionRequest {
   return { ...analysisProviderIdentity(provider), model, requestNumber, startedAt: new Date().toISOString(),
     promptHash: evidenceHash({ system: messages.filter(m => m.role === 'system'), tools }),
-    inputHash: evidenceHash(messages), toolVersions: tools.length ? { slide_complete_analysis: ANALYSIS_TOOL_VERSION } : {} };
+    inputHash: evidenceHash(messages), toolVersions: tools.length ? { slide_complete_analysis: `${ANALYSIS_TOOL_VERSION}:${evidenceHash(tools)}` } : {} };
 }

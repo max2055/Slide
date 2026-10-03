@@ -10,7 +10,7 @@ import { toSanitizedMarkdownHtml } from "../markdown.ts";
  */
 function renderStructuredResult(result: Record<string, unknown>) {
   if (result.schemaVersion === 1 && typeof result.displayMarkdown === 'string') {
-    return html`<div>${unsafeHTML(toSanitizedMarkdownHtml(result.displayMarkdown))}</div>`;
+    return html`<p>${result.verification === 'bound' ? '验证等级：引用已绑定冻结证据（不代表根因已证实）' : result.verification === 'partial' ? '验证等级：证据部分缺失' : result.verification === 'unknown' ? '验证等级：unknown，缺少可验证证据' : '历史结果：验证信息不可用'}</p><div>${unsafeHTML(toSanitizedMarkdownHtml(result.displayMarkdown))}</div>`;
   }
   const summary = result.summary;
   return html`${summary !== undefined ? html`<section><strong>摘要</strong><p>${String(summary)}</p></section>` : null}${Object.entries(result).map(([key, value]) => {
@@ -240,7 +240,7 @@ export class AIAnalysisResult extends LitElement {
         <div class="result-content">
           ${this.result
             ? typeof this.result === "string"
-              ? html`<div>${unsafeHTML(toSanitizedMarkdownHtml(this.result))}</div>`
+              ? html`${this.result.startsWith("> 验证等级：") ? null : html`<p>历史结果：验证信息不可用</p>`}<div>${unsafeHTML(toSanitizedMarkdownHtml(this.result))}</div>`
               : html`<div>${renderStructuredResult(this.result as unknown as Record<string, unknown>)}</div>`
             : html`<p style="color:var(--muted);">分析完成，但暂无结果数据</p>`}
         </div>

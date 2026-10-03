@@ -16,7 +16,6 @@
 import type { ActorContext } from './auth/actor-context.js';
 import { analysisDispatchStore } from './analysis/analysis-runtime.js';
 import { freezeEvidence, redactEvidence } from './analysis/analysis-evidence.js';
-import { analysisHash } from './analysis/analysis-dispatch-store.js';
 import { analysisAuthorizationVersion, analysisConfigurationVersion } from './analysis/analysis-identity.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 import type { InstanceDiagnosticContext } from './instance-diagnostic-context-service.js';
