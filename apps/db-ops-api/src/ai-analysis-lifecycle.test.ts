@@ -30,5 +30,10 @@ describe('analysis terminal writes', () => {
     const pending = service.waitForCompletion(42, 1000);
     status = 'completed'; await vi.advanceTimersByTimeAsync(2001);
     expect((await pending)?.status).toBe('completed'); expect(fail).not.toHaveBeenCalled();
+  });  it('requires trusted execution context even for a valid pending envelope and writes no forged provenance', async () => {
+    const execute = vi.fn(); vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+    expect(await service.completeAnalysisEnvelope(42, envelope, { usage: { prompt_tokens: 999 } })).toEqual({ success: false, error: 'ANALYSIS_EXECUTION_CONTEXT_REQUIRED' });
+    expect(execute).not.toHaveBeenCalled();
   });
+
 });

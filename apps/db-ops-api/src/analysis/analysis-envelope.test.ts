@@ -33,5 +33,13 @@ describe('AnalysisEnvelope', () => {
     expect(asAnalysisView(null, '# Previous analysis')).toEqual({
       kind: 'legacy', displayMarkdown: '# Previous analysis', envelope: null,
     });
+  });  it('keeps server binding/provenance metadata displayable without upgrading legacy results', () => {
+    const bound = { ...validEnvelope, verification: 'bound', evidenceSnapshot: { id: 'frozen', hash: 'a'.repeat(64), collectedAt: validEnvelope.createdAt, schemaVersion: 1 },
+      provenance: { ...validEnvelope.provenance, provider: 'actual-provider', routeVersion: 'route-hash', inputHash: 'input-hash', runtimeRunId: 'run', attemptNumber: 1, usageStatus: 'available' } };
+    expect(validateAnalysisEnvelope(bound).ok).toBe(true);
+    expect(asAnalysisView(bound, '').envelope).toEqual(bound);
+    expect(asAnalysisView(validEnvelope, '').envelope).not.toHaveProperty('verification');
+    expect(validateAnalysisEnvelope({ ...bound, verification: 'verified' }).ok).toBe(false);
   });
+
 });

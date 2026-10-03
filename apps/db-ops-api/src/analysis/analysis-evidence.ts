@@ -8,7 +8,7 @@ export interface EvidenceSnapshot {
   subject: ResourceRef; authorizationVersion: string; data: unknown;
   gaps: Array<{ code: string; scope?: string }>;
 }
-export const evidenceHash = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex');
+export const evidenceHash = (value: unknown) => createHash('sha256').update(stableJson(JSON.parse(JSON.stringify(value) ?? 'null'))).digest('hex');
 
 /** SQL literals are business data. Keep structure but never persist their contents. */
 export function redactEvidence(value: unknown): unknown {

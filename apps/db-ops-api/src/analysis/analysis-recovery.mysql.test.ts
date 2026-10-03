@@ -68,9 +68,18 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
   const rows = async (sql: string) => (await pool.query<any[]>(sql))[0];
   async function claim(id: number, owner = 'a') {
     await pool.query('UPDATE workflow_jobs SET available_at = DATE_SUB(NOW(), INTERVAL 1 SECOND)');
-    const job = (await jobs.claim(owner, 30))!; expect(job).not.toBeNull();
-    const context = { workerId: owner, fencingToken: job.fencingToken, signal: new AbortController().signal };
-    return (await store.claim(id, job, context))!;
+    // The real worker acknowledges terminal/unknown intents before taking the
+    // next job. Do not assume a nondeterministic tied SQL ordering selects id.
+    for (let remaining = 10; remaining > 0; remaining--) {
+      const job = (await jobs.claim(owner, 30))!; expect(job).not.toBeNull();
+      const context = { workerId: owner, fencingToken: job.fencingToken, signal: new AbortController().signal };
+      const actualId = Number((job.payload as { analysisId: number }).analysisId);
+      const owned = await store.claim(actualId, job, context);
+      if (actualId === id) { expect(owned).not.toBeNull(); return owned!; }
+      expect(owned).toBeNull();
+      expect(await jobs.complete(job.id, owner, job.fencingToken)).toBe(true);
+    }
+    throw new Error('EXPECTED_ANALYSIS_JOB_NOT_CLAIMED');
   }
   const expire = () => pool.query('UPDATE workflow_jobs SET lease_expires_at = DATE_SUB(NOW(), INTERVAL 1 SECOND)');
   it('commits analysis, request, outbox and runnable job together; concurrent acceptance reuses it', async () => {

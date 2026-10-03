@@ -224,6 +224,7 @@ export class AnalysisDispatchStore {
       if (row.status === 'completed') return { success: false, error: 'ANALYSIS_ALREADY_TERMINAL' };
       const trace = row.execution_trace ? parse<AnalysisExecutionTrace>(row.execution_trace) : null;
       const first = trace?.requests[0];
+      const measured = trace?.requests.filter(r => r.usage && Object.keys(r.usage).length).length ?? 0;
       const safe = redactEvidence(parsed.value) as typeof parsed.value;
       safe.createdAt = new Date().toISOString();
       safe.verification = binding.verification;
@@ -235,7 +236,7 @@ export class AnalysisDispatchStore {
       safe.provenance = { provider: first?.provider ?? 'unavailable', modelVersion: first?.model ?? 'unavailable',
         promptVersion: first?.promptHash ?? 'unavailable', routeVersion: first?.routeVersion ?? 'unavailable',
         inputHash: first?.inputHash ?? 'unavailable', toolVersions: first?.toolVersions ?? {},
-        runtimeRunId: owned.runtimeRunId, attemptNumber: owned.job.attempts, usageStatus: trace?.requests.some(r => r.usage && Object.keys(r.usage).length) ? 'available' : 'unavailable',
+        runtimeRunId: owned.runtimeRunId, attemptNumber: owned.job.attempts, usageStatus: !measured ? 'unavailable' : measured === trace.requests.length ? 'available' : 'partial',
         ...(first?.providerId !== undefined ? { providerId: first.providerId } : {}) };
       if (!first) safe.verification = 'unknown';
       if (safe.verification === 'unknown') {

@@ -60,6 +60,7 @@ describe('generated public API contract', () => {
     const document = buildOpenApiDocument() as any;
     expect(Object.keys(document.paths)).toEqual([
       '/api/adapters/capabilities',
+      '/api/ai/analysis/{id}/evidence',
       '/api/cron/jobs/{id}',
       '/api/cron/jobs/{id}/run',
       '/api/cron/jobs/{id}/runs',
