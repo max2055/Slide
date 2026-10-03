@@ -42,7 +42,7 @@ describe('list_active_alerts boundary scenarios', () => {
     });
     rbacService.getUserInstanceAccess.mockResolvedValue([{ instance_id: 10 }]);
 
-    const result = await listActiveAlertsTool.handler({ since: '2026-09-08T00:00:00Z' }, { actor, userId: 7 });
+    const result = await listActiveAlertsTool.handler({ since: '2026-09-08T00:00:00Z' }, { actor: { ...actor, roles: ['operator'], permissions: ['alert:view'], instanceScopes: { 10: 'read-only' } }, userId: 7 });
 
     expect(result).toMatchObject({ success: true, data: { total: 1, alerts: [{ id: 1, level: 'warning' }] } });
   });

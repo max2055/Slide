@@ -17,7 +17,7 @@ import type { IAgentEngine } from './types.js';
 import { DirectAdapter } from './direct-adapter.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { normalizeToolResult, type AnyAgentTool } from '../tools/types.js';
-import { canActorDiscoverTool, executeToolWithPolicy } from '../tools/policy.js';
+import { canActorDiscoverTool, decideToolPolicy, executeToolWithPolicy } from '../tools/policy.js';
 import {
   assertToolSecurityCatalogCoverage,
   getToolSecurityDefinition,
@@ -144,51 +144,75 @@ export async function loadPlatformTools(): Promise<ToolRegistry> {
   return registry;
 }
 
-const cronActor: ActorContext = Object.freeze({
-  userId: 0,
-  username: 'slide-cron',
-  roles: Object.freeze(['system']),
-  permissions: Object.freeze(['instance:*', 'instance:view', 'servers:view', 'alert:view', 'metric:view']),
-  sessionVersion: 0,
-  instanceScopes: Object.freeze({}),
-  requestId: 'cron-runtime',
-});
+export interface CronToolAuthority {
+  readonly actor: ActorContext;
+  refreshActor(): Promise<ActorContext>;
+}
 
-const noPersistentSystemAudit = { record: async () => undefined };
-
-/** Build the non-interactive Cron Agent registry from an explicit read-only posture. */
-export async function createCronToolRegistry(): Promise<ToolRegistry> {
+/** A fresh registry per run, carrying an owner and a live authorization loader. */
+export async function createCronToolRegistry(authority: CronToolAuthority): Promise<ToolRegistry> {
+  if (!authority?.actor || authority.actor.userId <= 0) throw new Error('CRON_OWNER_REQUIRED');
   await loadPlatformTools();
   const registry = new ToolRegistry();
+  let auditFailed = false;
+  const { agentToolAuditService } = await import('../security/agent-tool-audit-service.js');
+  const audit = { record: async (...args: Parameters<typeof agentToolAuditService.record>) => {
+    try { await agentToolAuditService.record(...args); } catch (error) { auditFailed = true; throw error; }
+  } };
   for (const anyTool of platformTools) {
     const security = getToolSecurityDefinition(anyTool.name);
     const isCompletion = anyTool.name === 'slide_complete_cron';
-    if (!isCompletion && !(security?.audience === 'actor' && security.effect === 'read')) continue;
+    // User Cron currently delegates database reads only. Server/network and
+    // platform-wide evidence/source tools require a separate explicit capability.
+    if (!isCompletion && !(security?.audience === 'actor' && security.effect === 'read'
+      && security.resource === 'instance' && canActorDiscoverTool(authority.actor, anyTool))) continue;
     registry.register({
-      name: anyTool.name,
-      description: anyTool.description,
-      parameters: anyTool.parameters as Tool['parameters'],
-      readOnly: !isCompletion,
-      concurrencySafe: !anyTool.ownerOnly,
-      exclusive: false,
-      scope: anyTool.scope,
-      ownerOnly: anyTool.ownerOnly,
-      group: anyTool.group,
-      pluginId: anyTool.pluginId,
-      requiresApproval: anyTool.requiresApproval,
-      dangerLevel: anyTool.dangerLevel,
+      name: anyTool.name, description: anyTool.description,
+      parameters: anyTool.parameters as Tool['parameters'], readOnly: !isCompletion,
+      concurrencySafe: !anyTool.ownerOnly, exclusive: false, scope: anyTool.scope,
+      ownerOnly: anyTool.ownerOnly, group: anyTool.group, pluginId: anyTool.pluginId,
+      requiresApproval: anyTool.requiresApproval, dangerLevel: anyTool.dangerLevel,
       execute: async (params: Record<string, unknown>, context?: CoreToolExecutionContext) => {
-        if (isCompletion) return normalizeToolResult(await anyTool.handler(params, { actor: cronActor, userId: cronActor.userId }), anyTool.name);
-        const { decision, result } = await executeToolWithPolicy(
-          cronActor,
-          anyTool,
-          params,
-          undefined,
-          undefined,
-          noPersistentSystemAudit,
-          undefined,
-          { sessionKey: context?.sessionKey, signal: context?.signal, idempotencyKey: context?.idempotencyKey, progressCallback: context?.progressCallback },
-        );
+        if (auditFailed) throw new Error('AUDIT_UNAVAILABLE');
+        const actor = await authority.refreshActor();
+        if (context?.signal?.aborted) throw new Error('TOOL_EXECUTION_CANCELLED');
+        if (isCompletion) {
+          const decision = { allow: true, reasonCode: 'ALLOW' as const, actor: { userId: actor.userId, username: actor.username, roles: actor.roles },
+            tool: anyTool.name, resource: { type: 'cron' as const }, requestId: actor.requestId };
+          await audit.record({ phase: 'decision', actor, decision, args: params });
+          const result = normalizeToolResult(await anyTool.handler(params, { actor, userId: actor.userId }), anyTool.name);
+          await audit.record({ phase: 'result', actor, decision, args: params, result });
+          return result;
+        }
+        const { resolveToolResource } = await import('../tools/resource-resolver.js');
+        const resolveResource = async (name: string, args: Record<string, unknown>) => {
+          const resource = await resolveToolResource(name, args);
+          // query_metrics can name non-database resources despite its catalog type.
+          return resource.serverId !== undefined || resource.networkDeviceId !== undefined
+            ? { ...resource, error: 'RESOURCE_INVALID' as const } : resource;
+        };
+        let authorityError: Error | undefined;
+        const guardedTool: AnyAgentTool = { ...anyTool, handler: async (args, toolContext) => {
+          // Audit I/O may take time. Recheck current authority after that I/O,
+          // immediately before the sensitive handler, as well as at call entry.
+          const current = await authority.refreshActor().catch(error => {
+            authorityError = error instanceof Error ? error : new Error(String(error));
+            throw authorityError;
+          });
+          const decision = decideToolPolicy(current, anyTool, args, await resolveResource(anyTool.name, args), true, false);
+          if (!decision.allow) {
+            authorityError = new Error(decision.reasonCode);
+            await audit.record({ phase: 'decision', actor: current, decision, args });
+            return { success: false, errorCode: decision.reasonCode, error: 'Tool access denied' };
+          }
+          if (context?.signal?.aborted) throw new Error('TOOL_EXECUTION_CANCELLED');
+          return anyTool.handler(args, { ...toolContext, actor: current, userId: current.userId, policyDecision: decision });
+        } };
+        const { decision, result } = await executeToolWithPolicy(actor, guardedTool, params,
+          resolveResource, undefined, audit, undefined,
+          { sessionKey: context?.sessionKey, signal: context?.signal, idempotencyKey: context?.idempotencyKey, progressCallback: context?.progressCallback });
+        if (auditFailed) throw new Error('AUDIT_UNAVAILABLE');
+        if (authorityError) throw authorityError;
         return { ...result, policyDecision: decision };
       },
     });

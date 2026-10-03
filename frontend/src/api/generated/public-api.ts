@@ -53,6 +53,21 @@ export interface ResourceMetricAggregate { value: number | null; resourceCount: 
 export interface ResourceMetricsSummaryResponse { schemaVersion: 1; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; scopes: Record<ResourceType, { metrics: Record<string, ResourceMetricAggregate> }>; }
 export interface ResourceAgentDiagnosisResponse { success: boolean; analysisId?: number; status?: 'queued' | 'cached'; error?: string; }
 
+export interface CronJobIdentity {
+  owner_user_id: number | null;
+  principal_type: 'user' | 'system-maintenance';
+  identity_status: 'bound' | 'owner-required';
+  identity_audit: Record<string, unknown> | null;
+  resource_scope: { version: 1; targetInstanceId: number | null; instanceIds: number[]; serverIds: number[]; networkDeviceIds: number[] } | null;
+  [key: string]: unknown;
+}
+export interface CronJobUpdateRequest {
+  owner_user_id?: number; task_description?: string; cron_expr?: string; enabled?: boolean;
+  task_type?: 'agent' | 'script'; target_instance_id?: number | null; script_id?: number;
+  control_sql_capability?: 'read-only' | 'baseline-cleanup-v1' | 'silence-cleanup-v1';
+  timezone?: string; description?: string; timeout_seconds?: number; retry_count?: number;
+}
+
 export interface LLMConnectionTestRequest { providerName: string; apiKey?: string; baseURL?: string; model?: string; apiFormat?: string; deploymentType?: string; }
 export interface LLMModelDiscoveryRequest extends Omit<LLMConnectionTestRequest, 'model' | 'baseURL'> { baseURL: string; providerType?: 'deepseek' | 'stepfun' | 'mimo'; }
 

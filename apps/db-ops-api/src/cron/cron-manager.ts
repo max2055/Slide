@@ -16,6 +16,11 @@ import { dbConnection } from '../db-connection';
 import { randomUUID } from 'node:crypto';
 import { validateBinding } from './script-policy.js';
 import { executeControlSql } from './control-sql-executor.js';
+import type { ActorContext } from '../auth/actor-context.js';
+import { actorContextService } from '../auth/actor-context.js';
+import { cronAuthorityService, CRON_MAINTENANCE_HANDLERS } from './cron-authority.js';
+import { hasUnrestrictedInstanceAccess } from '../auth/require-instance-access.js';
+import { hasPermission } from '../auth/require-permission.js';
 
 export interface WorkflowEnqueuer { enqueue(input: { id: string; type: string; schemaVersion: number; payload: Record<string, unknown>; idempotencyKey: string; maxAttempts?: number; availableAt?: Date }): Promise<void>; }
 
@@ -123,7 +128,7 @@ export class CronManager {
   /**
    * 执行任务（含并发守卫和日志记录）
    */
-  public async executeJob(config: CronJobConfig): Promise<void> {
+  public async executeJob(config: CronJobConfig, trigger?: ActorContext): Promise<void> {
     if (this.runningFlags.has(config.id)) {
       console.warn(`CronManager: 任务 #${config.id} "${config.name}" 跳过（正在执行中）`);
       return;
@@ -135,7 +140,26 @@ export class CronManager {
     let executionSettled: Promise<void> | undefined;
 
     try {
+      const current = await this.jobService.getJobById(config.id);
+      if (!current) throw new Error('CRON_JOB_DELETED');
+      config = current;
+      if (!trigger && config.enabled === false) return;
+      logId = await this.jobService.startLog(config.id);
+      // Keep the attempted trigger/subject even when authorization later fails.
+      if (!await this.jobService.recordExecutionAuthority(logId, {
+        phase: 'authorization-pending', principal_type: config.principal_type ?? 'user',
+        owner_user_id: config.owner_user_id ?? null, triggered_by: trigger?.userId ?? null,
+        resource_scope: config.resource_scope ?? null,
+      })) throw new Error('CRON_AUDIT_UNAVAILABLE');
       if (config.handler_key) {
+        if (config.principal_type !== 'system-maintenance' || config.identity_status !== 'bound'
+          || !CRON_MAINTENANCE_HANDLERS.has(config.handler_key)) throw new Error('CRON_MAINTENANCE_DENIED');
+        if (trigger) {
+          const actor = await actorContextService.revalidateActor(trigger);
+          if (!hasUnrestrictedInstanceAccess(actor) || !hasPermission(new Set(actor.permissions), 'cron:manage')) throw new Error('CRON_TRIGGER_SCOPE_DENIED');
+        }
+        if (!await this.jobService.recordExecutionAuthority(logId, { principal_type: 'system-maintenance',
+          capability: config.handler_key, triggered_by: trigger?.userId ?? null })) throw new Error('CRON_AUDIT_UNAVAILABLE');
         if (!this.workflow) throw new Error('WORKFLOW_RUNTIME_UNAVAILABLE');
         const occurrence = new Date().toISOString().slice(0, 16);
         await this.workflow.enqueue({
@@ -143,6 +167,7 @@ export class CronManager {
           payload: { cronJobId: config.id, occurrence }, idempotencyKey: `cron:${config.id}:${occurrence}`,
           maxAttempts: Math.max(1, config.retry_count + 1),
         });
+        await this.jobService.completeLog(logId, 'success', 'Maintenance handler enqueued');
         await this.jobService.updateRunResult(config.id, 'success');
         return;
       }
@@ -157,12 +182,16 @@ export class CronManager {
         }
       }
 
-      logId = await this.jobService.startLog(config.id);
+      // Keep the pinned-script validation ahead of identity checks for legacy
+      // diagnostics, without executing either path until both gates succeed.
+      if (config.task_type === 'script') validateBinding(config.script_binding, config.script_id!, config.target_instance_id);
+      const authority = await cronAuthorityService.authorize(config, trigger);
+      if (!await this.jobService.recordExecutionAuthority(logId, authority.audit)) throw new Error('CRON_AUDIT_UNAVAILABLE');
       console.log(`CronManager: 执行任务 #${config.id} "${config.name}"`);
 
       // 分支：script 类型任务直接执行 SQL，不走 Agent
       if (config.task_type === 'script') {
-        await this.executeScriptJob(config, logId);
+        await this.executeScriptJob(config, logId, () => authority.refreshActor());
         return;
       }
 
@@ -171,6 +200,7 @@ export class CronManager {
         config.task_description,
         config.timeout_seconds || 300,
         config.output_schema,
+        authority,
       );
 
       executionSettled = result.executionSettled;
@@ -206,6 +236,7 @@ export class CronManager {
         });
       }
       await this.jobService.updateRunResult(config.id, 'error');
+      if (trigger) throw error;
     } finally {
       // Reporting a timeout must not release ownership of an in-flight operation.
       // Do not await here: non-cooperative operations must not hang the caller/logging.
@@ -220,7 +251,7 @@ export class CronManager {
   /**
    * 执行 script 类型任务（直接执行 SQL，不走 AI Agent）
    */
-  private async executeScriptJob(config: CronJobConfig, logId: number): Promise<void> {
+  private async executeScriptJob(config: CronJobConfig, logId: number, revalidate: () => Promise<ActorContext>): Promise<void> {
     if (!config.script_id) throw new Error(`任务 #${config.id} 没有绑定脚本`);
     const binding = validateBinding(config.script_binding, config.script_id, config.target_instance_id);
     const audit = { script_id: binding.scriptId, sha256: binding.sha256, capability: binding.capability, authorized_by: binding.authorizedBy };
@@ -228,6 +259,7 @@ export class CronManager {
       throw new Error('CRON_AUDIT_UNAVAILABLE');
     }
 
+    await revalidate();
     let result: { success: boolean; columns?: string[]; rows?: any[]; rowCount?: number; duration_ms?: number; error?: string };
 
     if (config.target_instance_id !== null) {

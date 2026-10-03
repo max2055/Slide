@@ -2237,6 +2237,201 @@
         ],
         "type": "object"
       },
+      "CronJobIdentity": {
+        "$id": "CronJobIdentity",
+        "additionalProperties": true,
+        "properties": {
+          "identity_audit": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^(.*)$": {}
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "identity_status": {
+            "anyOf": [
+              {
+                "const": "bound",
+                "type": "string"
+              },
+              {
+                "const": "owner-required",
+                "type": "string"
+              }
+            ]
+          },
+          "owner_user_id": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "principal_type": {
+            "anyOf": [
+              {
+                "const": "user",
+                "type": "string"
+              },
+              {
+                "const": "system-maintenance",
+                "type": "string"
+              }
+            ]
+          },
+          "resource_scope": {
+            "anyOf": [
+              {
+                "properties": {
+                  "instanceIds": {
+                    "items": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  "networkDeviceIds": {
+                    "items": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  "serverIds": {
+                    "items": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  "targetInstanceId": {
+                    "anyOf": [
+                      {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "version": {
+                    "const": 1,
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "version",
+                  "targetInstanceId",
+                  "instanceIds",
+                  "serverIds",
+                  "networkDeviceIds"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "owner_user_id",
+          "principal_type",
+          "identity_status",
+          "identity_audit",
+          "resource_scope"
+        ],
+        "type": "object"
+      },
+      "CronJobUpdateRequest": {
+        "$id": "CronJobUpdateRequest",
+        "additionalProperties": false,
+        "properties": {
+          "control_sql_capability": {
+            "anyOf": [
+              {
+                "const": "read-only",
+                "type": "string"
+              },
+              {
+                "const": "baseline-cleanup-v1",
+                "type": "string"
+              },
+              {
+                "const": "silence-cleanup-v1",
+                "type": "string"
+              }
+            ]
+          },
+          "cron_expr": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "owner_user_id": {
+            "description": "Admin-only explicit rebinding of user tasks; never changes a user task to system maintenance.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "retry_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "script_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "target_instance_id": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_description": {
+            "type": "string"
+          },
+          "task_type": {
+            "anyOf": [
+              {
+                "const": "agent",
+                "type": "string"
+              },
+              {
+                "const": "script",
+                "type": "string"
+              }
+            ]
+          },
+          "timeout_seconds": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "DatabaseInstance": {
         "$id": "DatabaseInstance",
         "additionalProperties": true,
@@ -9452,6 +9647,128 @@
               }
             },
             "description": "Database adapter capabilities"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/cron/jobs/{id}": {
+      "get": {
+        "operationId": "getCronJob",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CronJobIdentity"
+                }
+              }
+            },
+            "description": "Job configuration including persisted identity and resource ceiling. owner-required tasks stay paused until admin rebinding."
+          },
+          "404": {
+            "description": "Job absent or inaccessible"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "description": "Requires cron:manage and current target access. owner_user_id is admin-only; principal_type, handler_key, resource_scope and identity fields are server-owned. Maintenance handlers cannot be replaced by arbitrary descriptions or Agent tasks. Rebinding retains the paused state; enable explicitly after review.",
+        "operationId": "updateCronJob",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CronJobUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated"
+          },
+          "400": {
+            "description": "Invalid binding or server-owned authority supplied"
+          },
+          "403": {
+            "description": "Current target or owner rebinding permission denied"
+          },
+          "404": {
+            "description": "Job absent or inaccessible"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/cron/jobs/{id}/run": {
+      "post": {
+        "description": "Revalidates trigger and owner. Executes with current owner permissions intersected with persisted resources; manual administrator triggers cannot elevate the task. Durable run/tool audit must succeed before execution.",
+        "operationId": "runCronJob",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run returned; inspect execution log for outcome"
+          },
+          "400": {
+            "description": "Task unbound, target changed/deleted, or invalid capability"
+          },
+          "403": {
+            "description": "Current owner or trigger authorization denied"
+          },
+          "404": {
+            "description": "Job absent or inaccessible"
+          },
+          "500": {
+            "description": "Execution or database failure"
+          },
+          "503": {
+            "description": "Execution authority, durable audit or workflow runtime unavailable"
           }
         },
         "security": [

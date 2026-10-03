@@ -141,6 +141,7 @@ export class AgentToolAuditService {
         JSON.stringify(record.decision.resource),
         JSON.stringify({
           actorSessionVersion: record.actor.sessionVersion,
+          resourceBoundary: record.actor.resourceBoundary ?? null,
           roles: record.actor.roles,
           permissions: record.actor.permissions,
           security,

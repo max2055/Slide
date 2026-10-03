@@ -5526,8 +5526,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // ========== CronManager 初始化 ==========
   const cronProvider = await createLLMProvider();
   const cronRunner = new AgentRunner(cronProvider);
-  const cronTools = await createCronToolRegistry();
-  const cronExecutor = new CronExecutor(cronRunner, cronTools, cronProvider);
+  const cronExecutor = new CronExecutor(cronRunner, createCronToolRegistry, cronProvider);
   cronManager = new CronManager(cronJobService, cronExecutor, workflowStore);
   await cronManager.start();
 

@@ -19,9 +19,11 @@ type InstanceScopedActor = {
   permissions?: readonly string[];
   roles?: readonly string[];
   instanceScopes?: Readonly<Record<number, AccessLevel>>;
+  resourceBoundary?: { readonly instanceIds: readonly number[] };
 };
 
 export function hasUnrestrictedInstanceAccess(actor: InstanceScopedActor | null | undefined): boolean {
+  if (actor?.resourceBoundary) return false;
   const permissions = new Set(Array.isArray(actor?.permissions) ? actor.permissions : []);
   return permissions.has('*') || permissions.has('instance:*') || actor?.roles?.includes('admin') === true;
 }
@@ -42,6 +44,7 @@ export function hasInstanceAccess(
 ): boolean {
   if (!actor || !Number.isSafeInteger(instanceId) || instanceId <= 0) return false;
   if (hasUnrestrictedInstanceAccess(actor)) return true;
+  if (actor.resourceBoundary && !actor.resourceBoundary.instanceIds.includes(instanceId)) return false;
   const accessLevel = actor.instanceScopes?.[instanceId];
   return Boolean(accessLevel) && ACCESS_LEVEL_HIERARCHY[accessLevel!] >= ACCESS_LEVEL_HIERARCHY[minLevel];
 }

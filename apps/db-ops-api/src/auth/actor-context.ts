@@ -14,6 +14,8 @@ export interface ActorContext {
   readonly sessionVersion: number;
   readonly instanceScopes: Readonly<Record<number, InstanceAccessLevel>>;
   readonly requestId: string;
+  /** Server-owned delegation ceiling; never supplied by an LLM or HTTP client. */
+  readonly resourceBoundary?: { readonly instanceIds: readonly number[]; readonly serverIds: readonly number[]; readonly networkDeviceIds: readonly number[] };
 }
 
 export class ActorAuthenticationError extends Error {

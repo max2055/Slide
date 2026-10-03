@@ -1,16 +1,14 @@
 /**
  * get_instance_summary — 获取数据库实例健康摘要（单个或全部）
  *
- * RBAC: 当调用方提供 request context（userId）时，只返回用户有权限访问的实例。
- *       无 context 时（service account 方式）返回所有实例，向后兼容。
+ * RBAC: 必须提供已认证 Actor，仅返回当前授权与任务资源范围交集。
  */
 import type { AnyAgentTool } from '../types.js';
 import { toolCatalog } from '../catalog.js';
 import { instanceDatabaseService } from '../../instance-database-service.js';
-import { RbacService } from '../../auth/rbac-service.js';
+import { hasInstanceAccess, filterByInstanceAccess } from '../../auth/require-instance-access.js';
 import { publicInstanceDto } from '../../security/public-dto.js';
 
-const rbacService = new RbacService();
 
 export const getInstanceSummaryTool: AnyAgentTool = {
   name: 'get_instance_summary',
@@ -28,6 +26,7 @@ export const getInstanceSummaryTool: AnyAgentTool = {
   group: 'db_ops',
   handler: async (args, context) => {
     try {
+      if (!context?.actor) return { success: false, errorCode: 'MISSING_ACTOR', error: 'Actor required' };
       const typedArgs = args as {
         instance_id?: number;
       };
@@ -37,10 +36,8 @@ export const getInstanceSummaryTool: AnyAgentTool = {
           return { success: false, status: 'error', error: 'instance_id 必须为正整数', errorCode: 'INVALID_ARGUMENTS' };
         }
         // 查询单个实例 — 检查用户是否有权限访问
-        if (context?.userId) {
-          const userInstances = await rbacService.getUserInstanceAccess(context.userId);
-          const hasAccess = userInstances.some(ui => ui.instance_id === typedArgs.instance_id);
-          if (!hasAccess) {
+        if (context?.actor) {
+          if (!hasInstanceAccess(context.actor, typedArgs.instance_id)) {
             return { success: false, status: 'error', error: '无权访问该数据库实例', errorCode: 'INSTANCE_SCOPE_DENIED' };
           }
         }
@@ -77,11 +74,7 @@ export const getInstanceSummaryTool: AnyAgentTool = {
       let instances = await instanceDatabaseService.getAllInstances();
 
       // RBAC 过滤：根据用户权限缩小可见实例范围
-      if (context?.userId) {
-        const userInstances = await rbacService.getUserInstanceAccess(context.userId);
-        const allowedIds = new Set(userInstances.map(ui => ui.instance_id));
-        instances = instances.filter((inst: any) => allowedIds.has(inst.id));
-      }
+      if (context?.actor) instances = filterByInstanceAccess(context.actor, instances, inst => inst.id);
 
       const summaries = instances.map((inst: any) => {
         const publicInstance = publicInstanceDto(inst as Record<string, unknown>);

@@ -61,6 +61,7 @@ function hasRequiredInstanceLevel(
   instanceId: number,
   writeRequired: boolean,
 ): boolean {
+  if (actor.resourceBoundary && !actor.resourceBoundary.instanceIds.includes(instanceId)) return false;
   if (hasGlobalInstanceAccess(actor)) return true;
   const level = actor.instanceScopes[instanceId];
   if (!level) return false;

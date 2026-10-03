@@ -15,6 +15,11 @@ export interface CronJobConfig {
   enabled: boolean;
   task_type: 'script' | 'agent';
   handler_key: string | null;
+  owner_user_id?: number | null;
+  principal_type?: 'user' | 'system-maintenance';
+  resource_scope?: { version: 1; targetInstanceId: number | null; instanceIds: number[]; serverIds: number[]; networkDeviceIds: number[] } | null;
+  identity_status?: 'bound' | 'owner-required';
+  identity_audit?: Record<string, unknown> | null;
   script_id: number | null;
   script_binding?: import('./script-policy.js').ScriptBinding | null;
   target_instance_id: number | null;
@@ -39,6 +44,7 @@ export interface CronJobLog {
   result_summary: string | null;
   error_message: string | null;
   result: string | null;
+  execution_authority?: Record<string, unknown> | null;
   structured_result: Record<string, unknown> | null;
   tools_used: string[] | null;
   tool_events: any[] | null;

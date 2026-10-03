@@ -31,6 +31,23 @@ export function buildOpenApiDocument() {
     openapi: '3.1.0',
     info: { title: 'Slide Public API', version: '0.10' },
     paths: {
+      '/api/cron/jobs/{id}': {
+        get: { operationId: 'getCronJob', security: [{ bearerAuth: [] }], parameters: [pathId('id')], responses: {
+          '200': { description: 'Job configuration including persisted identity and resource ceiling. owner-required tasks stay paused until admin rebinding.', content: { 'application/json': { schema: refSchema(PublicApiSchemas.CronJobIdentity) } } },
+          '404': { description: 'Job absent or inaccessible' },
+        } },
+        put: { operationId: 'updateCronJob', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
+          description: 'Requires cron:manage and current target access. owner_user_id is admin-only; principal_type, handler_key, resource_scope and identity fields are server-owned. Maintenance handlers cannot be replaced by arbitrary descriptions or Agent tasks. Rebinding retains the paused state; enable explicitly after review.',
+          requestBody: { required: true, content: { 'application/json': { schema: refSchema(PublicApiSchemas.CronJobUpdateRequest) } } },
+          responses: { '200': { description: 'Updated' }, '400': { description: 'Invalid binding or server-owned authority supplied' }, '403': { description: 'Current target or owner rebinding permission denied' }, '404': { description: 'Job absent or inaccessible' } },
+        },
+      },
+      '/api/cron/jobs/{id}/run': {
+        post: { operationId: 'runCronJob', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
+          description: 'Revalidates trigger and owner. Executes with current owner permissions intersected with persisted resources; manual administrator triggers cannot elevate the task. Durable run/tool audit must succeed before execution.',
+          responses: { '200': { description: 'Run returned; inspect execution log for outcome' }, '400': { description: 'Task unbound, target changed/deleted, or invalid capability' }, '403': { description: 'Current owner or trigger authorization denied' }, '404': { description: 'Job absent or inaccessible' }, '500': { description: 'Execution or database failure' }, '503': { description: 'Execution authority, durable audit or workflow runtime unavailable' } },
+        },
+      },
       '/api/health': { get: { operationId: 'getHealth', responses: { '200': { description: 'Service health', content: { 'application/json': { schema: refSchema(PublicApiSchemas.HealthResponse) } } } } } },
       ...Object.fromEntries([
         ['/api/llm/test', 'testLLMConnection', PublicApiSchemas.LLMConnectionTestRequest],
@@ -332,6 +349,22 @@ export function buildClientTypes(): string {
     )
     .replace('export interface HealthResponse {', `${NETWORK_CLIENT_TYPES}export interface HealthResponse {`)
     .replace('export interface HealthResponse {', `${RESOURCE_CLIENT_TYPES}export interface HealthResponse {`)
+    .replace('export interface HealthResponse {', `export interface CronJobIdentity {
+  owner_user_id: number | null;
+  principal_type: 'user' | 'system-maintenance';
+  identity_status: 'bound' | 'owner-required';
+  identity_audit: Record<string, unknown> | null;
+  resource_scope: { version: 1; targetInstanceId: number | null; instanceIds: number[]; serverIds: number[]; networkDeviceIds: number[] } | null;
+  [key: string]: unknown;
+}
+export interface CronJobUpdateRequest {
+  owner_user_id?: number; task_description?: string; cron_expr?: string; enabled?: boolean;
+  task_type?: 'agent' | 'script'; target_instance_id?: number | null; script_id?: number;
+  control_sql_capability?: 'read-only' | 'baseline-cleanup-v1' | 'silence-cleanup-v1';
+  timezone?: string; description?: string; timeout_seconds?: number; retry_count?: number;
+}
+
+export interface HealthResponse {`)
     .replace('export interface HealthResponse {', `export interface LLMConnectionTestRequest { providerName: string; apiKey?: string; baseURL?: string; model?: string; apiFormat?: string; deploymentType?: string; }\nexport interface LLMModelDiscoveryRequest extends Omit<LLMConnectionTestRequest, 'model' | 'baseURL'> { baseURL: string; providerType?: 'deepseek' | 'stepfun' | 'mimo'; }\n\nexport interface HealthResponse {`)
     .replace('export interface EvidenceSection {', `${SERVER_CLIENT_TYPES}export interface EvidenceSection {`)
     // Extend only the legacy diagnostic gap reference. Network relation types
