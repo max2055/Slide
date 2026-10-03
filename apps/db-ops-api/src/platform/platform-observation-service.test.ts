@@ -1,9 +1,27 @@
 import Fastify from 'fastify';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { installPlatformObservation } from './platform-observation-service.js';
 import { StructuredLogEvidenceAdapter } from './structured-log-evidence-adapter.js';
 
 describe('platform observation runtime hooks', () => {
+  it('exposes queue gauges only after authorization and marks store failures unknown', async () => {
+    const app = Fastify();
+    const queue = vi.fn(async () => ({ schemaVersion: 1, generatedAt: new Date().toISOString(),
+      persistence: 'mysql', quality: 'good', types: [{ jobType: 'report.schedule', ready: 2 }], gaps: [] }));
+    await installPlatformObservation(app, async request => {
+      (request as any).user = { permissions: request.headers.authorization === 'admin' ? ['config:view'] : [] };
+    }, new StructuredLogEvidenceAdapter(), queue as any);
+    expect((await app.inject('/api/platform/observations')).statusCode).toBe(403);
+    expect(queue).not.toHaveBeenCalled();
+    const response = await app.inject({ url: '/api/platform/observations', headers: { authorization: 'admin' } });
+    expect(response.json().queue.types[0]).toMatchObject({ jobType: 'report.schedule', ready: 2 });
+    queue.mockRejectedValueOnce(new Error('private-db-password'));
+    const failed = await app.inject({ url: '/api/platform/observations', headers: { authorization: 'admin' } });
+    expect(failed.statusCode).toBe(200);
+    expect(failed.json().queue).toMatchObject({ quality: 'unknown', gaps: ['QUEUE_STORE_UNAVAILABLE'], types: [] });
+    expect(failed.body).not.toContain('private-db-password');
+    await app.close();
+  });
   it('accepts only bounded authenticated client event types and marks them unverified', async () => {
     const app = Fastify(); const logs = new StructuredLogEvidenceAdapter();
     await installPlatformObservation(app, async request => { (request as any).user = request.headers.authorization ? { userId: 1, permissions: ['config:view'] } : undefined; }, logs);

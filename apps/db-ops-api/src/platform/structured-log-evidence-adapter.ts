@@ -10,6 +10,7 @@ export interface PlatformLogInput {
   component: string; eventType: string; status: 'ok' | 'failed' | 'unknown';
   durationMs?: number; errorCode?: string; correlationId?: string; traceId?: string;
   releaseId?: string; runtimeCounters?: RuntimeLogCounters;
+  jobType?: string;
   streamBoundary?: { anchorId?: string; sourceRequestId?: string; discardedBytes?: number };
 }
 interface PlatformLogEntry extends PlatformLogInput { timestamp: string; level: 'info' | 'error' | 'warn'; }
@@ -31,6 +32,7 @@ export class StructuredLogEvidenceAdapter {
       component: input.component, eventType: input.eventType, status: input.status,
       durationMs: input.durationMs, errorCode: safe(input.errorCode), correlationId: safe(input.correlationId) ?? randomUUID(),
       traceId: safe(input.traceId), releaseId: safe(input.releaseId),
+      ...(safe(input.jobType) ? { jobType: safe(input.jobType) } : {}),
       ...(input.streamBoundary ? { streamBoundary: {
         anchorId: /^[a-f0-9-]{36}$/i.test(input.streamBoundary.anchorId ?? '') ? input.streamBoundary.anchorId : undefined,
         sourceRequestId: /^[a-f0-9-]{36}$/i.test(input.streamBoundary.sourceRequestId ?? '') ? input.streamBoundary.sourceRequestId : undefined,
@@ -49,13 +51,17 @@ export class StructuredLogEvidenceAdapter {
     if (!Number.isFinite(from) || !Number.isFinite(to) || (options.component !== undefined && !label(options.component))) throw new Error('PLATFORM_LOG_QUERY_INVALID');
     if (from > to || to > now || from < now - HOUR || to - from > HOUR) throw new Error('PLATFORM_LOG_WINDOW_INVALID');
     const rows = this.entries.filter(entry => Date.parse(entry.timestamp) >= from && Date.parse(entry.timestamp) <= to && (!options.component || entry.component === options.component));
-    const groups = new Map<string, { component: string; eventType: string; errorCode?: string; count: number; failures: number; durationMs: number; lastObservedAt: string; correlationIds: string[]; traceIds?: string[]; latestRuntimeCounters?: RuntimeLogCounters; latestStreamBoundary?: PlatformLogInput['streamBoundary'] }>();
+    const groups = new Map<string, { component: string; eventType: string; jobType?: string; errorCode?: string; count: number; failures: number; durationMs: number; durationSamples: number; maxDurationMs: number | null; lastObservedAt: string; correlationIds: string[]; traceIds?: string[]; latestRuntimeCounters?: RuntimeLogCounters; latestStreamBoundary?: PlatformLogInput['streamBoundary'] }>();
     let omittedGroups = false;
     for (const row of rows) {
-      const key = JSON.stringify([row.component, row.eventType, row.errorCode ?? null]);
+      const key = JSON.stringify([row.component, row.eventType, row.errorCode ?? null, row.jobType ?? null]);
       if (!groups.has(key) && groups.size >= 100) { omittedGroups = true; continue; }
-      const group = groups.get(key) ?? { component: row.component, eventType: row.eventType, errorCode: row.errorCode, count: 0, failures: 0, durationMs: 0, lastObservedAt: row.timestamp, correlationIds: [] };
+      const group = groups.get(key) ?? { component: row.component, eventType: row.eventType, ...(row.jobType ? { jobType: row.jobType } : {}), errorCode: row.errorCode, count: 0, failures: 0, durationMs: 0, durationSamples: 0, maxDurationMs: null, lastObservedAt: row.timestamp, correlationIds: [] };
       group.count++; group.failures += Number(row.status === 'failed'); group.durationMs += row.durationMs ?? 0; group.lastObservedAt = row.timestamp;
+      if (row.durationMs !== undefined) {
+        group.durationSamples++;
+        group.maxDurationMs = Math.max(group.maxDurationMs ?? 0, row.durationMs);
+      }
       if (group.correlationIds.length < 10 && row.correlationId && !group.correlationIds.includes(row.correlationId)) group.correlationIds.push(row.correlationId);
       if (row.traceId) {
         group.traceIds ??= [];

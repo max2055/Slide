@@ -19,7 +19,7 @@ it('retains server lifecycle ownership and orders assembly before runtime creati
     'new NotificationDispatchScheduler(',
     'new CapacityConsistencyMonitor(',
     'registerWorkflowHandlers(workflowRegistry, {',
-    'new WorkerRuntime(',
+    'new BoundedWorkflowRuntime(',
     'stopWorkflow = async () => await workflowRuntime.shutdown()',
     'await startup.step(() => enqueueNotificationDispatch())',
     'await startup.step(() => enqueueReportSchedule())',

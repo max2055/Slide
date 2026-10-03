@@ -9,6 +9,19 @@ export type HostEvidenceSection = 'metrics' | 'filesystems' | 'systemLogs' | 'ph
 export type DiagnosticGapScope = 'instance' | 'host' | 'storage';
 export type DiagnosticGapSection = 'instance' | 'realtime' | 'history' | 'alerts' | 'logs' | 'slowQueries' | 'storage' | 'relations' | 'hostEvidence' | 'evidencePack';
 
+export interface QueueTypeObservation {
+  jobType: string; queued: number; retry: number; scheduled: number; ready: number;
+  running: number; deadLetter: number; expiredLeases: number; oldestReadyWaitMs: number | null;
+}
+export interface QueueObservation {
+  schemaVersion: 1; generatedAt: string; persistence: 'mysql';
+  quality: 'good' | 'degraded' | 'unknown'; types: QueueTypeObservation[]; gaps: string[];
+}
+export interface PlatformObservations {
+  schemaVersion: 1; generatedAt: string; releaseId: string | null; commitSha: string | null;
+  uptimeSeconds: number; components: unknown[]; logs: unknown; queue: QueueObservation;
+}
+
 export interface EventResolveRequest { resolution_notes: string; }
 export interface EventRecoveryConfirmationRequest { reason: string; }
 export interface EventTransitionResult { success: boolean; error?: string; }

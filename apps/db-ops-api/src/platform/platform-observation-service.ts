@@ -2,8 +2,10 @@ import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { platformLogs, type StructuredLogEvidenceAdapter } from './structured-log-evidence-adapter.js';
 import { expensiveOperationRateLimitConfig } from '../security/http-security.js';
 import { FixedWindowRateLimiter } from '../security/agent-runtime-limits.js';
+import type { QueueObservation } from '../workflows/worker-runtime.js';
 
-export async function installPlatformObservation(app: FastifyInstance, verifyToken: preHandlerHookHandler, logs: StructuredLogEvidenceAdapter = platformLogs): Promise<void> {
+export async function installPlatformObservation(app: FastifyInstance, verifyToken: preHandlerHookHandler, logs: StructuredLogEvidenceAdapter = platformLogs,
+  observeQueue?: () => Promise<QueueObservation>): Promise<void> {
   const starts = new WeakMap<object, number>();
   const clientEvents = new FixedWindowRateLimiter(120, 60_000);
   app.addHook('onRequest', async request => { starts.set(request, performance.now()); });
@@ -29,13 +31,16 @@ export async function installPlatformObservation(app: FastifyInstance, verifyTok
     const { from, to, component } = request.query as Record<string, string>;
     try {
       const summary = logs.query({ from, to, component });
+      let queue: QueueObservation = { schemaVersion: 1, generatedAt: new Date().toISOString(), persistence: 'mysql',
+        quality: 'unknown', types: [], gaps: ['QUEUE_STORE_UNAVAILABLE'] };
+      try { if (observeQueue) queue = await observeQueue(); } catch { /* A missing gauge is not zero backlog. */ }
       const components = ['api', 'agent', 'ws', 'collector', 'queue', 'frontend'].map(component => {
         const evidence = logs.query({ component });
         return { component, quality: evidence.quality, gaps: evidence.gaps, groups: evidence.groups };
       });
       return { schemaVersion: 1, generatedAt: new Date().toISOString(), releaseId: process.env.SLIDE_RELEASE_ID ?? null,
         commitSha: /^[a-f0-9]{40}$/.test(process.env.SLIDE_COMMIT_SHA ?? '') ? process.env.SLIDE_COMMIT_SHA : null,
-        uptimeSeconds: Math.floor(process.uptime()), components, logs: summary };
+        uptimeSeconds: Math.floor(process.uptime()), components, logs: summary, queue };
     } catch { return reply.code(400).send({ error: 'PLATFORM_LOG_QUERY_INVALID' }); }
   });
 }
