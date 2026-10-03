@@ -7,7 +7,7 @@
 - 先绑定 HTTP listener，获得全局 lease 后立即开始续租，再初始化 API 依赖和 leader-only 服务。默认 TTL 30 秒、周期 10 秒；每个后台启动前及共享 worker tick / Cron 触发前重新确认所有权，续租串行且最多等待 5 秒。
 - 启动过程收到 AbortSignal 后不再执行下一阶段。晚到的 Agent/连接资源会释放；统一关闭已有 timer、workflow、metrics scheduler、Cron、WS、会话清理、prompt watcher、维护缓存和恢复的数据库连接。无法合作退出的驱动/初始化通过 10 秒关闭 deadline 终止进程，不释放租约后继续工作。正常路径完成资源关闭后释放 lease、关闭控制库连接。
 - API 必需的安全策略、skills、prompts、LLM 配置和 metric registry 在 API-only 实例也初始化；CronManager 只在 leader 启动。CRUD 无本地 scheduler 时不解引用空值；备用不能执行本地 Cron 触发或启动 collector，返回 `503 WORKFLOW_RUNTIME_UNAVAILABLE`。备用的 Cron 配置写入只持久化，不向 leader 做跨进程热刷新；调度变更应通过 leader API 完成。
-- `/api/health` 继续作为公开 liveness，语义不变。新 `/api/health/ready` 只返回 `200 {ready:true}` / `503 {ready:false}`；要求本实例后台角色完成初始化、Cron 及 worker 装配完成、控制库可访问、workflow 派发表结构可访问、全局 owner 仍有效。依赖检查有 3 秒边界并复用未完成检查，不堆积堵塞查询。全局 HTTP 安全钩子保留这一个有限布尔响应，其他内部错误继续脱敏。
+- `/api/health` 继续作为公开 liveness，语义不变。新 `/api/health/ready` 只返回 `200 {ready:true}` / `503 {ready:false}`；要求本实例后台角色完成初始化、Cron 及 worker 装配完成、控制库可访问、workflow 派发表结构可访问、实际 worker tick 已成功且无派发错误、全局 owner 仍有效。依赖检查有 3 秒边界并复用未完成检查，不堆积堵塞查询。全局 HTTP 安全钩子保留这一个有限布尔响应，其他内部错误继续脱敏。
 - `/api/health/readiness` 仍为原有详细接口，保留 JWT + `config:view`，未拿来作 Compose 探针。生成 OpenAPI 与前端类型已更新。
 - D1 备用继续提供 API，但正式 worker readiness 一直为 false；leader 退出后不自动选主。它不能作为已就绪后台实例接流量。恢复后台执行需人工重启/启动指定 worker。未来 HA 必须另行增加退避选主和共享状态验收。
 - Compose 透传 `METRICS_V2_COLLECTION_ENABLED`、`SLIDE_MEMORY_PIPELINE_ENABLED`、`SLIDE_MEMORY_WORKSPACE_ID`、`SLIDE_MEMORY_RETRIEVAL_MAX_COUNT`、`SLIDE_MEMORY_RETRIEVAL_MAX_TOKENS`。两项功能默认 false；检索默认 5 / 4096；Memory 启用缺 workspace ID 时以 `MEMORY_WORKSPACE_ID_REQUIRED` 明确失败。日志只记录允许的布尔/数字摘要与 workspace 是否配置，不打印 ID、密钥或完整环境。
@@ -42,10 +42,11 @@
 | 已过期 owner | 在隔离库将 owner expiry 设为过去，真实 `WorkerLease.renew()` 返回 false，不复活 lease |
 | Cron reaper | 真实有效 workflow owner 的 started run 保持 running；过期 owner 的 run 恢复 unknown；重复 recover 保持同样状态；无 owner 的 legacy log 保留 running |
 | 初始化失败 | Memory 缺 ID 明确 exit 1；非法 WS 端口导致资源装配中途失败，进程退出且 lease 释放 |
+| 派发权限故障 | 在独立测试账户上撤销 workflow_jobs UPDATE 权限；控制库和全局 lease 仍有效，readiness 返回 503；恢复 UPDATE 后实际 worker tick 恢复，readiness 返回 200 |
 | 控制库失联/续租阻塞 | 对自己的测试 MySQL 容器 pause；readiness 在边界内返回 503；日志记录 `WORKER_LEASE_TIMEOUT`，取消任务，关闭 deadline 保证进程退出；unit fake timers 同时覆盖初始化阶段的同类失败 |
 | Compose 透传 | 用 `.env.production.example` 的假值在临时目录渲染 JSON（不输出包含假 secrets 的完整结果）；Compose 自己启动 `node:22-alpine` probe 容器，确认五个变量实际为 true / true / 假 workspace / 3 / 512 |
 
-最终真实验收 API PID 为 18263、18269、18271、18272、18273；均由前台 qualification 直接启动和等待退出，cwd 为本分支的 `apps/db-ops-api`，启动命令 `node --import tsx server.ts`。测试使用基线上的当前变更候选，源代码、配置和回归测试在验证后提交；最终 head SHA 随 PR 回写任务。
+最终真实验收 API PID 为 20499、20504、20506、20507、20508；均由前台 qualification 直接启动和等待退出，cwd 为本分支的 `apps/db-ops-api`，启动命令 `node --import tsx server.ts`。真实 qualification 对应代码提交 `8273da874f04dc4f9fa32864038625456a4d566e`；随后只补充本证据文档。最终 PR head 随交付回写任务，代码及配置与验收一致。
 
 ## 回滚、限制与资源
 
