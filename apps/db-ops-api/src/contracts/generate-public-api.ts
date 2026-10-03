@@ -31,6 +31,10 @@ export function buildOpenApiDocument() {
     openapi: '3.1.0',
     info: { title: 'Slide Public API', version: '0.10' },
     paths: {
+      '/api/ai/analysis/{id}/evidence': { get: { operationId: 'getAnalysisEvidenceSnapshot', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
+        description: 'Returns the frozen, redacted snapshot used by this analysis, never live metrics. Requires ai:view, the original actor, unchanged current permission scope and current subject access. Snapshot retention follows the analysis record; no automatic TTL purge or historical backfill.',
+        responses: { '200': { description: 'Frozen evidence snapshot', content: { 'application/json': { schema: refSchema(PublicApiSchemas.AnalysisEvidenceSnapshot) } } }, '404': { description: 'Snapshot absent, legacy, or outside the current authorization scope' } },
+      } },
       '/api/health/ready': { get: { operationId: 'getInfrastructureReadiness', security: [],
         description: 'D1 infrastructure probe. Ready only after this instance owns the worker lease, completes initialization, and can access the control database and dispatch schema. A standby never auto-promotes. Detailed /api/health/readiness still requires JWT and config:view.',
         responses: {
@@ -328,6 +332,7 @@ export interface ResourceOverviewItem { resource: ResourceRef; label: string; st
 export interface ResourceOverviewResponse { schemaVersion: 1; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; summary: { total: number; byType: Record<ResourceType, number>; byStatus: Record<string, number>; fresh: number; stale: number; missing: number; unresolvedAlerts: number; impactedResources: number; }; items: ResourceOverviewItem[]; }
 export interface ResourceMetricAggregate { value: number | null; resourceCount: number; observedAt: string | null; }
 export interface ResourceMetricsSummaryResponse { schemaVersion: 1; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; scopes: Record<ResourceType, { metrics: Record<string, ResourceMetricAggregate> }>; }
+export interface AnalysisEvidenceSnapshot { schemaVersion: 1; id: string; hash: string; collectedAt: string; subject: { type: 'instance' | 'server' | 'network_device'; id: number }; authorizationVersion: string; data: unknown; gaps: Array<{ code: string; scope?: string }> }
 export interface ResourceAgentDiagnosisResponse { success: boolean; analysisId?: number; status?: 'queued' | 'cached' | 'unknown'; error?: string; }
 
 `;

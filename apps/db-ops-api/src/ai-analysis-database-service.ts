@@ -3,7 +3,11 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection.js';
-import { type AnalysisEnvelope, validateAnalysisEnvelope } from './analysis/analysis-envelope.js';
+import type { ActorContext } from './auth/actor-context.js';
+import type { EvidenceSnapshot } from './analysis/analysis-evidence.js';
+import { analysisAuthorizationVersion } from './analysis/analysis-identity.js';
+import { canReadResource } from './resources/resource-service.js';
+import { hasPermission } from './auth/require-permission.js';
 
 export interface AiAnalysisRecord {
   id: number;
@@ -333,7 +337,7 @@ class AiAnalysisDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT a.*, d.job_id, d.request_state, d.attempt_number, d.current_run_id, d.authorization_version, JSON_EXTRACT(d.request_snapshot, '$.evidence') AS evidence_snapshot,
+        `SELECT a.*, d.job_id, d.request_state, d.attempt_number, d.current_run_id, d.authorization_version,
          JSON_UNQUOTE(JSON_EXTRACT(d.request_snapshot, '$.actor.userId')) AS request_actor_id
          FROM ai_analysis a LEFT JOIN analysis_dispatches d ON d.analysis_id = a.id WHERE a.id = ?`,
         [analysisId]
@@ -348,6 +352,21 @@ class AiAnalysisDatabaseService {
       console.error('获取分析记录失败:', error);
       return null;
     }
+  }
+
+  /** Snapshot data is never attached to generic result/list reads. */
+  async getEvidenceSnapshot(analysisId: number, actor: ActorContext): Promise<EvidenceSnapshot | null> {
+    if (!Number.isSafeInteger(analysisId) || analysisId <= 0 || !hasPermission(new Set(actor.permissions), 'ai:view')) return null;
+    const pool = this.getPool();
+    if (!pool) return null;
+    const [rows] = await pool.execute<any[]>(`SELECT d.request_snapshot FROM analysis_dispatches d
+      JOIN ai_analysis a ON a.id = d.analysis_id WHERE d.analysis_id = ?`, [analysisId]);
+    if (!rows[0]?.request_snapshot) return null;
+    const request = typeof rows[0].request_snapshot === 'string' ? JSON.parse(rows[0].request_snapshot) : rows[0].request_snapshot;
+    if (!request.evidence || Number(request.actor?.userId) !== actor.userId
+      || request.authorizationVersion !== analysisAuthorizationVersion(actor)
+      || !canReadResource(actor, request.subject)) return null;
+    return request.evidence;
   }
 
   /**
@@ -523,9 +542,6 @@ class AiAnalysisDatabaseService {
       row.usage = null;
     }
 
-    if (typeof row.evidence_snapshot === 'string') {
-      try { row.evidence_snapshot = JSON.parse(row.evidence_snapshot); } catch { row.evidence_snapshot = null; }
-    }
     if (typeof row.analysis_envelope === 'string') {
       try { row.analysis_envelope = JSON.parse(row.analysis_envelope); } catch { row.analysis_envelope = null; }
     }

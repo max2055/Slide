@@ -19,7 +19,7 @@ export function redactEvidence(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key,
     /^(sql|sql_text|query|query_text)$/i.test(key) && typeof entry === 'string'
       ? entry.replace(/'(?:''|\\.|[^'\\])*'/g, "'[REDACTED]'").replace(/\b\d+(?:\.\d+)?\b/g, '?')
-      : redactEvidence((redactSensitiveData({ [key]: entry }) as Record<string, unknown>)[key]),
+      : /(?:password|passwd|pwd|secret|token|api[_-]?key|authorization|cookie|credential|connection[_-]?string|private[_-]?key)/i.test(key) ? '[REDACTED]' : redactEvidence(entry),
   ]));
 }
 export function freezeEvidence(subject: ResourceRef, authorizationVersion: string, data: unknown): EvidenceSnapshot {

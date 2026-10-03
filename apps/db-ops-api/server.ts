@@ -3983,6 +3983,16 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
+  // Frozen evidence requires the exact current actor/authorization scope.
+  fastify.get('/api/ai/analysis/:id/evidence', {
+    preHandler: [verifyToken, requirePermission('ai:view')],
+    handler: async (request, reply) => {
+      const snapshot = await aiAnalysisDatabaseService.getEvidenceSnapshot(Number((request.params as any).id), (request as any).user);
+      if (!snapshot) return reply.code(404).send({ error: 'ANALYSIS_EVIDENCE_NOT_FOUND' });
+      return reply.send(snapshot);
+    },
+  });
+
   // 获取完整分析结果
   fastify.get('/api/ai/analysis/:id', {
     preHandler: [verifyToken, requirePermission('ai:view')],

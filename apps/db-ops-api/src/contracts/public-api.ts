@@ -272,6 +272,12 @@ export const ResourceMetricsSummaryResponseSchema = Type.Object({
     network_device: Type.Object({ metrics: Type.Record(Type.String(), ResourceMetricAggregateSchema) }, { additionalProperties: false }),
   }, { additionalProperties: false }),
 }, { $id: 'ResourceMetricsSummaryResponse', additionalProperties: false });
+export const AnalysisEvidenceSnapshotSchema = Type.Object({
+  schemaVersion: Type.Literal(1), id: Type.String(), hash: Type.String(), collectedAt: Type.String(),
+  subject: Type.Object({ type: Type.Union([Type.Literal('instance'), Type.Literal('server'), Type.Literal('network_device')]), id: Type.Integer({ minimum: 1 }) }),
+  authorizationVersion: Type.String(), data: Type.Unknown(),
+  gaps: Type.Array(Type.Object({ code: Type.String(), scope: Type.Optional(Type.String()) })),
+}, { $id: 'AnalysisEvidenceSnapshot', additionalProperties: false });
 export const ResourceAgentDiagnosisResponseSchema = Type.Object({
   success: Type.Boolean(), analysisId: Type.Optional(Type.Integer({ minimum: 1 })),
   status: Type.Optional(Type.Union([Type.Literal('queued'), Type.Literal('cached'), Type.Literal('unknown')])),
@@ -617,6 +623,7 @@ export const OkResponseSchema = Type.Object({
 }, { $id: 'OkResponse', additionalProperties: false });
 
 export const PublicApiSchemas = {
+  AnalysisEvidenceSnapshot: AnalysisEvidenceSnapshotSchema,
   CronRunAccepted: Type.Object({
     runId: Type.String(), jobId: Type.Integer(), status: Type.Union(['queued','running','success','partial','failed','unknown','cancelled'].map(value => Type.Literal(value))), message: Type.String(),
   }, { $id: 'CronRunAccepted', additionalProperties: false }),
