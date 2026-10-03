@@ -119,6 +119,7 @@ jobs:
       DB_PASSWORD: qualification-test-password
       QUALIFICATION_ADMIN_PASSWORD: Tpam1234
       QUALIFICATION_CANCELLATION_E2E: '1'
+      QUALIFICATION_CRON_E2E: '1'
       PLAYWRIGHT_MANAGED_ENV: '1'
     steps:
       - uses: actions/checkout@v4
@@ -140,6 +141,8 @@ jobs:
 
       - name: Runtime MySQL transaction and WebSocket qualification
         run: bash scripts/qualification/run-agent-runtime.sh --mode mysql
+      - name: Cron browser, real authenticated routes and durable completion
+        run: pnpm --filter slide-frontend exec playwright test cron-live.spec.ts --workers=1
       - name: Runtime candidate isolation and history
         run: pnpm --filter slide-frontend exec playwright test agent-runtime.spec.ts --workers=1
 
@@ -158,6 +161,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Empty database and repeat startup
         run: bash scripts/qualification/run-environment.sh bootstrap-upgrade
+      - name: PostgreSQL credential collection and client release
+        run: bash scripts/qualification/run-pg-collection.sh
       - name: Worker failover and fencing
         run: bash scripts/qualification/run-environment.sh failover
       - name: Startup lease, D1 readiness and Compose feature passthrough

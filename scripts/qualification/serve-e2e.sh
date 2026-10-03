@@ -4,6 +4,10 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 
+api_port="${QUALIFICATION_API_PORT:-3003}"
+ws_port="${QUALIFICATION_WS_PORT:-28890}"
+frontend_port="${QUALIFICATION_FRONTEND_PORT:-5175}"
+
 qualification_encryption_key='qualification-e2e-key-32-bytes!!'
 # REST and WebSocket auth must share an explicit key, including on clean CI hosts.
 qualification_jwt_secret="$(node --input-type=module -e 'import { randomBytes } from "node:crypto"; process.stdout.write(randomBytes(32).toString("hex"))')"
@@ -41,23 +45,23 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-PORT=3003 AGENT_WS_PORT=28890 DB_NAME=db_ops_ai_qualification \
+PORT="$api_port" AGENT_WS_PORT="$ws_port" DB_NAME=db_ops_ai_qualification \
 JWT_SECRET_KEY="$qualification_jwt_secret" \
 ENCRYPTION_KEY="$qualification_encryption_key" \
-  pnpm --filter slide-api exec tsx server.ts &
+  bash -c 'cd apps/db-ops-api && exec node --import tsx server.ts' &
 api_pid=$!
 
 for _ in $(seq 1 45); do
-  if curl --fail --silent --max-time 1 http://127.0.0.1:3003/api/health/ready >/dev/null; then
+  if curl --fail --silent --max-time 1 "http://127.0.0.1:$api_port/api/health/ready" >/dev/null; then
     break
   fi
   sleep 1
 done
-curl --fail --silent --max-time 3 http://127.0.0.1:3003/api/health/ready >/dev/null
+curl --fail --silent --max-time 3 "http://127.0.0.1:$api_port/api/health/ready" >/dev/null
 
-VITE_API_PROXY_TARGET=http://127.0.0.1:3003 \
-VITE_AGENT_WS_PROXY_TARGET=http://127.0.0.1:28890 \
-VITE_AGENT_WS_URL=ws://127.0.0.1:28890 \
-  pnpm --filter slide-frontend exec vite --host 127.0.0.1 --port 5175 &
+VITE_API_PROXY_TARGET="http://127.0.0.1:$api_port" \
+VITE_AGENT_WS_PROXY_TARGET="http://127.0.0.1:$ws_port" \
+VITE_AGENT_WS_URL="ws://127.0.0.1:$ws_port" \
+  node frontend/node_modules/vite/bin/vite.js --host 127.0.0.1 --port "$frontend_port" --strictPort frontend &
 vite_pid=$!
 wait "$vite_pid"
