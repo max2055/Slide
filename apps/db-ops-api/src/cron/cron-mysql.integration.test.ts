@@ -111,6 +111,17 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
     if (admin) { await admin.query(`DROP DATABASE ${database}`); await admin.end(); }
   });
 
+  it('migration documents every persisted execution identity column in MySQL', async () => {
+    const [columns] = await pool.query<mysql.RowDataPacket[]>(`SELECT TABLE_NAME, COLUMN_NAME, COLUMN_COMMENT
+      FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND
+      ((TABLE_NAME = 'cron_jobs' AND COLUMN_NAME IN ('owner_user_id', 'principal_type', 'resource_scope', 'identity_status', 'identity_audit'))
+      OR (TABLE_NAME = 'cron_job_logs' AND COLUMN_NAME = 'execution_authority'))`);
+    expect(columns).toHaveLength(6);
+    for (const column of columns) {
+      expect(column.COLUMN_COMMENT.trim(), `${column.TABLE_NAME}.${column.COLUMN_NAME}`).not.toBe('');
+    }
+  });
+
   it('covers permission denial on create, update, toggle, manual run and shared script mutation', async () => {
     const scriptId = await createScript();
     const jobId = await createJob(scriptId);

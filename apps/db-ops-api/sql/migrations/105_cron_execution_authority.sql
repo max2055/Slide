@@ -1,12 +1,12 @@
 -- Additive migration. Preview the owner-required inventory before rollout;
 -- no legacy Agent task is assigned to an administrator or system identity.
 ALTER TABLE cron_jobs
-  ADD COLUMN owner_user_id INT UNSIGNED NULL,
-  ADD COLUMN principal_type ENUM('user','system-maintenance') NOT NULL DEFAULT 'user',
-  ADD COLUMN resource_scope JSON NULL,
-  ADD COLUMN identity_status ENUM('bound','owner-required') NOT NULL DEFAULT 'owner-required',
-  ADD COLUMN identity_audit JSON NULL;
-ALTER TABLE cron_job_logs ADD COLUMN execution_authority JSON NULL;
+  ADD COLUMN owner_user_id INT UNSIGNED NULL COMMENT 'Authenticated job owner; NULL requires explicit administrator binding',
+  ADD COLUMN principal_type ENUM('user','system-maintenance') NOT NULL DEFAULT 'user' COMMENT 'Execution principal: user owner or fixed maintenance capability',
+  ADD COLUMN resource_scope JSON NULL COMMENT 'Persisted resource ceiling intersected with current owner grants at execution',
+  ADD COLUMN identity_status ENUM('bound','owner-required') NOT NULL DEFAULT 'owner-required' COMMENT 'Owner binding status; owner-required jobs remain paused',
+  ADD COLUMN identity_audit JSON NULL COMMENT 'Trusted identity binding provenance and administrator rebind audit';
+ALTER TABLE cron_job_logs ADD COLUMN execution_authority JSON NULL COMMENT 'Per-run execution owner, trigger actor and effective resource authority';
 
 -- W01 pinned bindings contain a server-authenticated numeric authorizer.
 -- migration:092 and arbitrary usernames are intentionally not owner evidence.

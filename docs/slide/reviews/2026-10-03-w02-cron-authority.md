@@ -65,6 +65,24 @@ CRON_TEST_MYSQL_PORT=33319 pnpm --filter slide-api exec vitest run src/cron/cron
 
 环境门控 skipped 共 127 项不算通过；未测代码覆盖率百分比，未为本任务安装 coverage 依赖。未在生产数据、真实付费模型、跨主机或生产网络做实验。本地证据不替代 PR 当前 head 八项 CI，主任务须继续审查/合并。
 
+## PR #115 初始化 CI 修复
+
+原 head `11263509ff771a355a0625d8d5f598cbf89b4a45` 的 CI run `37109489797`：browser-qualification、recovery-qualification 在初始化阶段失败，release-artifact 跳过；其余五项成功。隔离 MySQL 8.4 实际复现 `Schema invariant failed: missing comment`，涉及 `cron_jobs` 的五个身份列及 `cron_job_logs.execution_authority`。
+
+仅为迁移 105 的六列补充 COMMENT，类型、默认值、owner 回填和暂停逻辑不变；新增真实 MySQL information_schema 回归检查。`init-db.ts` 使用 MigrationRunner 初始化 Schema，该迁移同时覆盖空库与从旧 Schema 升级；历史 `schema.sql` 没有 Cron 表，不新增重复定义，不改已部署历史迁移或降低不变量。105 尚未合并/部署，本次不兼容实验库中修复前的 105 checksum，不改生产迁移账本。
+
+本轮验证：Node 24.18.0、pnpm 11.19.0、macOS arm64，临时 MySQL 8.4 容器，独立端口/数据库，未使用应用 .env。
+
+| 命令 | 结果 |
+| --- | --- |
+| 修复前 `bash scripts/qualification/run-environment.sh bootstrap-upgrade` | exit 1，复现上述六列缺少 COMMENT |
+| 修复后同一命令 | exit 0；空库初始化、第二次启动及 109 项迁移账本/Schema 不变量通过 |
+| `CRON_TEST_MYSQL_PORT=63506 pnpm --filter slide-api exec vitest run src/cron/cron-mysql.integration.test.ts` | 21/21 通过，包含六列注释、owner/scope 持久化及原 script_binding 回归 |
+| `pnpm --filter slide-api exec vitest run src/cron/cron-actor-scope.test.ts src/cron/cron-security.test.ts src/__tests__/cron-cancellation.test.ts src/migrations/invariants.test.ts tests/migration-runner.test.ts` | 62/62 通过 |
+| `pnpm --filter slide-api typecheck`、`git diff --check` | 通过 |
+
+相关容器已清理；复用上轮未受影响的完整本地 gate 证据。browser-qualification 浏览器流程本轮未在本地重跑，新 head CI 由父任务检查，不把先前失败或跳过记为通过。回滚仍遵循下节保留新增列/审计并暂停受影响任务的约束。
+
 ## 上线前 owner 清单预览与回滚
 
 迁移执行前，在既定部署窗口只读预览下列清单并保留管理员绑定计划。此任务只验证隔离数据库，不自行在生产库执行：
