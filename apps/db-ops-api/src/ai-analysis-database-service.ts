@@ -274,45 +274,7 @@ class AiAnalysisDatabaseService {
     envelope: unknown,
     data: { usage?: any; duration_ms?: number; executionTrace?: any } = {},
   ): Promise<{ success: boolean; error?: string }> {
-    const parsed = validateAnalysisEnvelope(envelope);
-    if (!parsed.ok) return { success: false, error: 'error' in parsed ? parsed.error : 'ANALYSIS_ENVELOPE_INVALID' };
-    const pool = this.getPool();
-    if (!pool) return { success: false, error: '数据库未连接' };
-
-    try {
-      const safeEnvelope: AnalysisEnvelope = {
-        ...parsed.value,
-        provenance: {
-          ...parsed.value.provenance,
-          modelVersion: process.env.ANALYSIS_MODEL_VERSION || 'configured-provider',
-          promptVersion: process.env.PROMPT_VERSION || 'managed',
-        },
-      };
-      const [result] = await pool.execute(
-        `UPDATE ai_analysis SET
-           status = 'completed', result = ?, analysis_envelope = ?, envelope_backfill_status = 'parsed',
-           execution_trace = ?, \`usage\` = ?, duration_ms = ?, completed_at = NOW()
-         WHERE id = ? AND status IN ('pending', 'running')
-         AND NOT EXISTS (SELECT 1 FROM analysis_dispatches d WHERE d.analysis_id = ai_analysis.id)`,
-        [
-          JSON.stringify(safeEnvelope.displayMarkdown), JSON.stringify(safeEnvelope),
-          data.executionTrace ? JSON.stringify(data.executionTrace) : null,
-          data.usage ? JSON.stringify(data.usage) : null, data.duration_ms || null, analysisId,
-        ],
-      ) as any;
-      if (result.affectedRows === 0) {
-        const [rows] = await pool.execute('SELECT status, analysis_envelope FROM ai_analysis WHERE id = ?', [analysisId]) as any;
-        const existing = rows?.[0]?.analysis_envelope;
-        if (rows?.[0]?.status === 'completed' && existing && JSON.stringify(typeof existing === 'string' ? JSON.parse(existing) : existing) === JSON.stringify(safeEnvelope)) {
-          return { success: true };
-        }
-        return { success: false, error: '分析已完成或不存在' };
-      }
-      return { success: true };
-    } catch (error: any) {
-      console.error('保存 AnalysisEnvelope 失败:', error);
-      return { success: false, error: error.message };
-    }
+    return { success: false, error: 'ANALYSIS_EXECUTION_CONTEXT_REQUIRED' };
   }
 
   /**
@@ -371,7 +333,7 @@ class AiAnalysisDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT a.*, d.job_id, d.request_state, d.attempt_number, d.current_run_id, d.authorization_version,
+        `SELECT a.*, d.job_id, d.request_state, d.attempt_number, d.current_run_id, d.authorization_version, JSON_EXTRACT(d.request_snapshot, '$.evidence') AS evidence_snapshot,
          JSON_UNQUOTE(JSON_EXTRACT(d.request_snapshot, '$.actor.userId')) AS request_actor_id
          FROM ai_analysis a LEFT JOIN analysis_dispatches d ON d.analysis_id = a.id WHERE a.id = ?`,
         [analysisId]
@@ -561,6 +523,9 @@ class AiAnalysisDatabaseService {
       row.usage = null;
     }
 
+    if (typeof row.evidence_snapshot === 'string') {
+      try { row.evidence_snapshot = JSON.parse(row.evidence_snapshot); } catch { row.evidence_snapshot = null; }
+    }
     if (typeof row.analysis_envelope === 'string') {
       try { row.analysis_envelope = JSON.parse(row.analysis_envelope); } catch { row.analysis_envelope = null; }
     }

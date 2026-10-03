@@ -5,6 +5,8 @@ import { resolveProviderConnection } from '../llm/provider-connection.js';
 import { AnthropicProvider } from './llm-provider.js';
 import { getAllProviders } from '../llm/provider-catalog.js';
 import type { LLMProvider } from '../llm-database-service.js';
+import { setAnalysisProviderIdentity } from '../analysis/analysis-execution.js';
+import { evidenceHash } from '../analysis/analysis-evidence.js';
 import { providerForModel } from '../llm/model-parameters.js';
 
 type ProviderStore = Pick<typeof llmDatabaseService, 'getAllProviders' | 'getSceneBindings' | 'getProviderApiKey'>;
@@ -51,9 +53,14 @@ export async function createConfiguredAgentProvider(store: ProviderStore, purpos
   const apiKey = await store.getProviderApiKey(provider.name);
   const connection = resolveProviderConnection({ ...provider, default_model: model }, apiKey);
   const capabilities = configuredModelCapabilities(provider, model);
-  if (connection.format === 'anthropic-messages') return new AnthropicProvider({ ...connection, capabilities });
+  const identity = { provider: provider.name, providerId: provider.id, routeVersion: evidenceHash([provider.id, provider.updated_at, model, purpose, connection.format]) };
+  if (connection.format === 'anthropic-messages') {
+    const selected = new AnthropicProvider({ ...connection, capabilities });
+    setAnalysisProviderIdentity(selected, identity); return selected;
+  }
   const baseURL = connection.format === 'ollama'
     ? `${connection.baseURL!.replace(/\/+$/, '').replace(/\/v1$/, '')}/v1`
     : connection.baseURL;
-  return new OpenAIProvider({ ...connection, baseURL, capabilities });
+  const selected = new OpenAIProvider({ ...connection, baseURL, capabilities });
+  setAnalysisProviderIdentity(selected, identity); return selected;
 }

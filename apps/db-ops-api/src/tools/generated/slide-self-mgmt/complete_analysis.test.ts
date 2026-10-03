@@ -63,30 +63,10 @@ describe('slide_complete_analysis tool', () => {
   });
 
   describe('handler behavior', () => {
-    it('calls the validated envelope writer and returns success', async () => {
-      mockCompleteEnvelope.mockResolvedValueOnce({ success: true });
-
-      const result = await completeAnalysisTool.handler({
-        analysisId: 42,
-        envelope,
-      });
-
-      expect(mockCompleteEnvelope).toHaveBeenCalledWith(42, envelope);
-      expect(result).toEqual({
-        success: true,
-        data: { saved: true, analysisId: 42 },
-        summary: '分析结果已保存',
-      });
-    });
-
-    it('returns { success: false, error } when service throws', async () => {
-      mockCompleteEnvelope.mockRejectedValueOnce(new Error('Database write failed'));
-
-      const result = await completeAnalysisTool.handler({ analysisId: 7, envelope });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('保存分析结果失败');
-      expect(result.error).toContain('Database write failed');
+    it('rejects context-free completion and does not call the database writer', async () => {
+      const result = await completeAnalysisTool.handler({ analysisId: 42, envelope });
+      expect(result).toMatchObject({ success: false, errorCode: 'ANALYSIS_EXECUTION_CONTEXT_REQUIRED' });
+      expect(mockCompleteEnvelope).not.toHaveBeenCalled();
     });
   });
 

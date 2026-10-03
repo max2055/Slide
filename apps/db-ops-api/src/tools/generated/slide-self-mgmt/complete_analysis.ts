@@ -3,45 +3,14 @@
  */
 import type { AnyAgentTool } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
-import { aiAnalysisDatabaseService } from '../../../ai-analysis-database-service.js';
-import { AnalysisEnvelopeSchema } from '../../../analysis/analysis-envelope.js';
+import { completeAnalysisParameters } from '../../../analysis/analysis-completion-contract.js';
 
 export const completeAnalysisTool: AnyAgentTool = {
   name: 'slide_complete_analysis',
   description: '完成 AI 分析并将结构化 AnalysisEnvelope 保存到数据库。必须在分析完成后调用。',
-  parameters: {
-    type: 'object',
-    properties: {
-      analysisId: { type: 'number', description: '分析记录 ID' },
-      envelope: {
-        ...AnalysisEnvelopeSchema,
-        description: 'Versioned structured AnalysisEnvelope; every required field must be present.',
-      },
-    },
-    required: ['analysisId', 'envelope'],
-  },
+  parameters: completeAnalysisParameters,
   group: 'db_ops',
-  handler: async (args) => {
-    const typedArgs = args as unknown as {
-      analysisId: number;
-      envelope: unknown;
-    };
-
-    try {
-      const saved = await aiAnalysisDatabaseService.completeAnalysisEnvelope(typedArgs.analysisId, typedArgs.envelope);
-      if (!saved.success) return { success: false, error: `保存分析结果失败: ${saved.error || 'unknown error'}` };
-      return {
-        success: true,
-        data: { saved: true, analysisId: typedArgs.analysisId },
-        summary: '分析结果已保存',
-      };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: `保存分析结果失败: ${error.message}`,
-      };
-    }
-  },
+  handler: async () => ({ success: false, errorCode: 'ANALYSIS_EXECUTION_CONTEXT_REQUIRED', error: 'ANALYSIS_EXECUTION_CONTEXT_REQUIRED' }),
 };
 
 toolCatalog.register(completeAnalysisTool);

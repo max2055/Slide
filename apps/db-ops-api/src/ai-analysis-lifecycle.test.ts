@@ -16,7 +16,7 @@ describe('analysis terminal writes', () => {
     vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
     await service.failAnalysis(42, 'late failure'); expect(status).toBe(initial);
     const completion = await service.completeAnalysisEnvelope(42, envelope); expect(status).toBe(initial);
-    expect(completion.success).toBe(initial === 'completed');
+    expect(completion).toEqual({ success: false, error: 'ANALYSIS_EXECUTION_CONTEXT_REQUIRED' });
   });
   it('does not retry a completion without its required execution trace column', async () => {
     const execute = vi.fn().mockRejectedValue(new Error("Unknown column 'execution_trace'"));
