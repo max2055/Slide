@@ -124,6 +124,7 @@ CLI 的 issue.metadata 对象值在本版本中可能作为 JSON 字符串返回
 stage 屏障是粗粒度依赖，audit_execution.dependsOn 是直接前置的 UUID 数组；两者必须同时满足。子任务的完成交付须同时满足 PR 合并、验收证据和 owner 记录，不依赖正文中的编号推算 UUID。
 
 ## 已授权串行启动条件（优先于旧附件的并发调度规则）
+持久调度字段为 `schedulingMode=strict_serial`、`maxActiveChildren=1`、`maxFamilyRuns=2`；以 `serialOrder` 和前序合并验收证据推进，禁止恢复旧并行配置。
 用户于 2026-10-03 明确要求设置启动条件并依次串行调度；本次配置和启动已获授权。顺序：
 
 MAX-108 → MAX-110 → MAX-121 → MAX-109 → MAX-111 → MAX-112 → MAX-115 → MAX-113 → MAX-114 → MAX-116 → MAX-117 → MAX-118 → MAX-119 → MAX-120 → MAX-122 → MAX-123。
