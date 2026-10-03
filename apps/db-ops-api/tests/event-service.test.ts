@@ -8,7 +8,8 @@ vi.mock('../src/alert-rca-service', () => ({
   alertRCAService: { analyzeAlert: vi.fn().mockResolvedValue({ success: true }) },
 }));
 
-const mockPool = { execute: vi.fn(), query: vi.fn() };
+const mockConnection = { execute: vi.fn(), beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() };
+const mockPool = { execute: vi.fn(), query: vi.fn(), getConnection: vi.fn() };
 
 describe('alert-event-service.ts', () => {
   beforeEach(() => {
@@ -17,6 +18,9 @@ describe('alert-event-service.ts', () => {
     mockPool.query.mockReset();
     mockPool.execute.mockResolvedValue([[], []]); // default: empty rows
     mockPool.query.mockResolvedValue([[], []]);
+    mockPool.getConnection.mockResolvedValue(mockConnection);
+    for (const fn of Object.values(mockConnection)) fn.mockReset();
+    mockConnection.execute.mockResolvedValue([{ affectedRows: 1 }, []]);
   });
 
   it('getEvents returns empty when no events', async () => {
@@ -79,21 +83,27 @@ describe('alert-event-service.ts', () => {
   });
 
   it('closeEvent requires a persisted recovery verification', async () => {
-    mockPool.execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]);
+    mockConnection.execute.mockResolvedValueOnce([[{ status: 'resolved', verification_passed_at: null }], []]);
     const { alertEventService } = await import('../src/alert-event-service');
     await expect(alertEventService.closeEvent(1, 7)).resolves.toMatchObject({ success: false });
-    expect(mockPool.execute.mock.calls[0][0]).toContain('verification_passed_at IS NOT NULL');
+    expect(mockConnection.rollback).toHaveBeenCalledOnce();
+    expect(mockConnection.commit).not.toHaveBeenCalled();
+    expect(mockPool.execute).not.toHaveBeenCalled();
   });
 
   it('records recovery verification before closing a resolved event', async () => {
-    mockPool.execute
+    mockConnection.execute
+      .mockResolvedValueOnce([[{ status: 'resolved', verification_passed_at: null }], []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+      .mockResolvedValueOnce([[{ status: 'resolved', verification_passed_at: new Date() }], []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     const { alertEventService } = await import('../src/alert-event-service');
     await expect(alertEventService.verifyRecovery(1, 'metric returned to normal', 7)).resolves.toMatchObject({ success: true });
     await expect(alertEventService.closeEvent(1, 7)).resolves.toMatchObject({ success: true });
+    expect(mockConnection.commit).toHaveBeenCalledTimes(2);
+    expect(mockPool.execute).not.toHaveBeenCalled();
   });
 
   it('getEventStats returns counters', async () => {

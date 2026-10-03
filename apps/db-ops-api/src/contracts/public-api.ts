@@ -623,6 +623,9 @@ export const OkResponseSchema = Type.Object({
 }, { $id: 'OkResponse', additionalProperties: false });
 
 export const PublicApiSchemas = {
+  EventResolveRequest: Type.Object({ resolution_notes: Type.String() }, { $id: 'EventResolveRequest', additionalProperties: false }),
+  EventRecoveryConfirmationRequest: Type.Object({ reason: Type.String({ minLength: 1, maxLength: 1024, pattern: '\\S', description: 'Manual inspection basis/result/reason; trimmed before storage. No automatic metric verification.' }) }, { $id: 'EventRecoveryConfirmationRequest', additionalProperties: false }),
+  EventTransitionResult: Type.Object({ success: Type.Boolean(), error: Type.Optional(Type.String()) }, { $id: 'EventTransitionResult', additionalProperties: false }),
   AnalysisEvidenceSnapshot: AnalysisEvidenceSnapshotSchema,
   CronRunAccepted: Type.Object({
     runId: Type.String(), jobId: Type.Integer(), status: Type.Union(['queued','running','success','partial','failed','unknown','cancelled'].map(value => Type.Literal(value))), message: Type.String(),

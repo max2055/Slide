@@ -73,6 +73,23 @@ export function buildOpenApiDocument() {
       },
       '/api/health': { get: { operationId: 'getHealth', responses: { '200': { description: 'Service health', content: { 'application/json': { schema: refSchema(PublicApiSchemas.HealthResponse) } } } } } },
       ...Object.fromEntries([
+        ['investigate', 'startEventInvestigation', undefined, 'Only open events can enter investigation.'],
+        ['resolve', 'resolveEvent', PublicApiSchemas.EventResolveRequest, 'Only open/investigating/handled events can resolve. Event, log and currently associated active alerts commit together.'],
+        ['verify-recovery', 'confirmEventRecovery', PublicApiSchemas.EventRecoveryConfirmationRequest, 'First manual recovery confirmation on a resolved event records authenticated actor, time and basis. It is not an automatic metric observation-window verification.'],
+        ['close', 'closeEvent', undefined, 'Requires resolved state and recorded recovery confirmation; legacy verification_* records remain readable.'],
+      ].map(([action, operationId, schema, description]) => [`/api/alerts/events/{id}/${action}`, { post: {
+        operationId, security: [{ bearerAuth: [] }], parameters: [pathId('id')],
+        description: `${description} Requires alert:manage and current instance read-write access. Duplicate/late/conflicting requests return 409 and cannot overwrite the first audit. Writes and audit use one locked transaction.`,
+        ...(schema ? { requestBody: { required: true, content: { 'application/json': { schema: refSchema(schema as TSchema) } } } } : {}),
+        responses: {
+          '200': { description: 'Transition committed with authenticated actor audit', content: { 'application/json': { schema: refSchema(PublicApiSchemas.EventTransitionResult) } } },
+          '400': { description: 'Invalid input or manual basis; reason must be a nonblank string of at most 1024 characters' },
+          '401': { description: 'Authentication required' }, '403': { description: 'Permission or instance access denied' },
+          '409': { description: 'Invalid state, repeat, conflict or uncommitted transition; refresh event/logs before retry', content: { 'application/json': { schema: refSchema(PublicApiSchemas.EventTransitionResult) } } },
+          '500': { description: 'Unexpected route failure' },
+        },
+      } }])),
+      ...Object.fromEntries([
         ['/api/llm/test', 'testLLMConnection', PublicApiSchemas.LLMConnectionTestRequest],
         ['/api/llm/models', 'discoverLLMModels', PublicApiSchemas.LLMModelDiscoveryRequest],
       ].map(([path, operationId, schema]) => [path, { post: {
@@ -367,6 +384,7 @@ export interface CollectServerDiagnosticsResponse { success: true; diagnostics: 
 
 export function buildClientTypes(): string {
   return buildLegacyClientTypes()
+    .replace('export interface HealthResponse {', 'export interface EventResolveRequest { resolution_notes: string; }\nexport interface EventRecoveryConfirmationRequest { reason: string; }\nexport interface EventTransitionResult { success: boolean; error?: string; }\n\nexport interface HealthResponse {')
     .replace(
       "health_status: 'healthy' | 'warning' | 'critical' | 'unknown';",
       "health_status: 'healthy' | 'warning' | 'critical' | 'unknown' | 'error';",

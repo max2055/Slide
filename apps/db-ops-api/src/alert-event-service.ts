@@ -333,7 +333,7 @@ class AlertEventService {
   /** 人工确认，不等同于客观指标持续观察窗验证。旧 verification_* 字段保持兼容。 */
   async verifyRecovery(eventId: number, reason: string, userId?: number): Promise<{ success: boolean; error?: string }> {
     if (!Number.isSafeInteger(userId) || !userId || userId < 1) return { success: false, error: '缺少有效操作者' };
-    if (typeof reason !== 'string' || !reason.trim() || reason.trim().length > 1024) return { success: false, error: '人工恢复确认依据须为 1–1024 字符' };
+    if (typeof reason !== 'string' || !reason.trim() || reason.length > 1024) return { success: false, error: '人工恢复确认依据须为 1–1024 字符' };
     const basis = reason.trim();
     return this._withEventLock(eventId, async (connection, event) => {
       if (event.status !== 'resolved' || event.verification_passed_at) throw new Error('仅已解决且尚未人工确认的事件可以确认恢复（重复操作或流转冲突）');
@@ -531,14 +531,14 @@ class AlertEventService {
            )
            AND NOT EXISTS (
              SELECT 1 FROM alert_event_members mem
-             JOIN alerts a ON a.id = mem.alert_id
+             LEFT JOIN alerts a ON a.id = mem.alert_id
              WHERE mem.event_id = e.id
-               AND a.status NOT IN ('resolved', 'closed')
+               AND (a.id IS NULL OR a.status NOT IN ('resolved', 'closed'))
            ) ORDER BY e.id LIMIT 200`
       ) as any;
 
       if (!Array.isArray(events) || events.length === 0) {
-        console.log('[AlertEventService] retroactiveResolve: no stale events to clean up');
+        console.log('[AlertEventService] retroactiveResolve: no history inspection candidates');
         return { resolved: 0, candidates: [] };
       }
 

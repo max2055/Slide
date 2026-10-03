@@ -226,4 +226,17 @@ describe.skipIf(!port)('event transitions / isolated MySQL', () => {
     expect(await service.retroactiveResolve()).toMatchObject({ resolved: 0, candidates: [eventId] });
     expect(await snapshot()).toEqual(before);
   });
+
+  it('the delivered read-only audit lists current candidates and unproven legacy records without repairing them', async () => {
+    const sql = readFileSync(new URL('../sql/audits/max118-alert-events-dry-run.sql', import.meta.url), 'utf8');
+    await pool.execute("UPDATE alerts SET status = 'resolved' WHERE id = ?", [alertId]);
+    const before = await snapshot();
+    expect((await pool.query<any[]>(sql))[0]).toMatchObject([{ event_id: eventId, finding: 'current_members_resolved_history_unknown' }]);
+    expect(await snapshot()).toEqual(before);
+    await pool.execute("UPDATE alert_events SET status = 'closed', verification_passed_at = NOW() WHERE id = ?", [eventId]);
+    const legacy = await snapshot();
+    const [findings] = await pool.query<any[]>(sql);
+    expect(findings.map(f => f.finding)).toEqual(['closed_without_close_log', 'confirmation_basis_or_actor_missing', 'confirmation_log_missing_or_mismatched', 'resolved_without_resolution_log']);
+    expect(await snapshot()).toEqual(legacy);
+  });
 });

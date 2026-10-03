@@ -5406,7 +5406,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const check = strictBody(request.body as Record<string, unknown>, ['reason'], 'POST /api/alerts/events/:id/verify-recovery');
       if (check.error) return reply.code(400).send(check.error);
       const rawReason = (check.body as { reason?: unknown }).reason;
-      if (typeof rawReason !== 'string' || !rawReason.trim() || rawReason.trim().length > 1024) {
+      if (typeof rawReason !== 'string' || !rawReason.trim() || rawReason.length > 1024) {
         return reply.code(400).send({ error: '人工恢复确认依据须为 1–1024 字符' });
       }
       const reason = rawReason.trim();
