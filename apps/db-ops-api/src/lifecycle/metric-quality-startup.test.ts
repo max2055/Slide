@@ -3,6 +3,7 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import mysql, { type Pool } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { splitSqlStatements } from '../migrations/runner.js';
 
 // Execute the actual worker-start function without binding ports, launching agents,
 // scheduling collectors or loading application .env. Keep direct startup SQL real.
@@ -78,8 +79,10 @@ describe.skipIf(!port)('metric quality startup with isolated MySQL', () => {
     admin = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '' });
     await admin.query(`CREATE DATABASE ${database}`);
     pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database });
-    await pool.query(`CREATE TABLE metrics_history (
-      id INT PRIMARY KEY, is_estimated BOOLEAN, recorded_at DATETIME, qps DECIMAL(10,2))`);
+    const baseline = readFileSync(new URL('../../sql/migrations/000_schema_baseline.sql', import.meta.url), 'utf8');
+    const metricsTable = splitSqlStatements(baseline).find(sql => /CREATE TABLE IF NOT EXISTS `metrics_history`/.test(sql));
+    if (!metricsTable) throw new Error('metrics_history baseline not found');
+    await pool.query(metricsTable);
     await pool.query(`CREATE TABLE cron_job_logs (
       status VARCHAR(20), error_message TEXT, finished_at DATETIME)`);
   });
@@ -91,16 +94,39 @@ describe.skipIf(!port)('metric quality startup with isolated MySQL', () => {
     }
   });
   it('preserves accurate writes and existing estimated/unknown history across both starts', async () => {
-    await pool.query(`INSERT INTO metrics_history VALUES
-      (1, FALSE, NOW(), 11.25), (2, TRUE, NOW(), 22.50),
-      (3, NULL, NOW(), 33.75), (4, FALSE, NOW() - INTERVAL 60 DAY, 44.50)`);
+    await pool.query(`INSERT INTO metrics_history (id, instance_id, is_estimated, recorded_at, qps) VALUES
+      (1, 9, FALSE, NOW(), 11.25), (2, 9, TRUE, NOW(), 22.50),
+      (3, 9, NULL, NOW(), 33.75), (4, 9, FALSE, NOW() - INTERVAL 60 DAY, 44.50)`);
     const snapshot = async () => (await pool.query('SELECT * FROM metrics_history ORDER BY id'))[0];
     const before = await snapshot();
     await startWorkers(pool);
     expect(await snapshot()).toEqual(before);
-    await pool.query('INSERT INTO metrics_history VALUES (5, FALSE, NOW(), 55.25)');
+    await pool.query('INSERT INTO metrics_history (id, instance_id, is_estimated, recorded_at, qps) VALUES (5, 9, FALSE, NOW(), 55.25)');
     const second = await snapshot();
     await startWorkers(pool);
     expect(await snapshot()).toEqual(second);
+  });
+  it('exports candidates of any age with source and counts, without restoring flags', async () => {
+    await pool.query('DELETE FROM metrics_history');
+    await pool.query(`INSERT INTO metrics_history (id, instance_id, is_estimated, recorded_at, qps) VALUES
+      (1, 9, FALSE, NOW(), 11.25), (2, 9, TRUE, NOW(), 22.50),
+      (3, 9, NULL, NOW(), 33.75), (4, 9, TRUE, NOW() - INTERVAL 60 DAY, 44.50)`);
+    const before = (await pool.query('SELECT * FROM metrics_history ORDER BY id'))[0];
+    const sql = readFileSync(new URL('../../sql/diagnostics/metric-quality-candidates.sql', import.meta.url), 'utf8');
+    const connection = await pool.getConnection();
+    const results: any[] = [];
+    try {
+      for (const statement of splitSqlStatements(sql)) results.push((await connection.query(statement))[0]);
+    } finally {
+      await connection.rollback();
+      connection.release();
+    }
+    const rows = results.filter(Array.isArray);
+    expect(rows[0]).toEqual([expect.objectContaining({
+      source_table: 'metrics_history', candidate_count: 2, review_status: 'source-quality-unverified',
+    })]);
+    expect(rows[1].map(row => row.id)).toEqual([2, 4]);
+    expect(rows[1].every(row => row.provenance === 'legacy-formula-version-unavailable')).toBe(true);
+    expect((await pool.query('SELECT * FROM metrics_history ORDER BY id'))[0]).toEqual(before);
   });
 });
