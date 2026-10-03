@@ -4,6 +4,7 @@
 import { databaseService } from './database-service.js';
 import { instanceDatabaseService } from './instance-database-service.js';
 import { schemaDatabaseService, type SchemaChange } from './schema-database-service.js';
+import { decryptData } from './db-connection.js';
 
 class SchemaService {
   /**
@@ -129,43 +130,63 @@ class SchemaService {
     const PgClient = (await import('pg')).Client;
     const allTables: any[] = [];
     const errors: string[] = [];
+    let password: string;
+    try {
+      password = instance.password_encrypted ? decryptData(instance.password_encrypted) : '';
+    } catch {
+      throw new Error('实例密码解密失败，请检查密文和 ENCRYPTION_KEY');
+    }
 
     // 1. 先连接任意一个可用库发现所有用户数据库
     const discoverClient = new PgClient({
       host: instance.host,
       port: instance.port,
       user: instance.username,
-      password: await this.decryptPassword(instance.password_encrypted),
+      password,
       database: instance.database_name || 'postgres',
       connectionTimeoutMillis: 5000,
     });
-    await discoverClient.connect();
-    const dbResult = await discoverClient.query(`
+    let databases: Set<string>;
+    try {
+      await discoverClient.connect();
+      const dbResult = await discoverClient.query(`
       SELECT datname FROM pg_database
       WHERE datistemplate = false
         AND datname NOT IN ('postgres')
       ORDER BY datname
-    `);
-    await discoverClient.end();
+      `);
+      databases = new Set([instance.database_name || 'postgres', ...dbResult.rows.map((r: any) => r.datname)]);
+    } finally {
+      try {
+        await discoverClient.end();
+      } catch {
+        console.warn('[PG] 表结构发现连接关闭失败');
+      }
+    }
 
     // 2. 逐个库采集（包含配置的默认库）
-    const databases = new Set([instance.database_name || 'postgres', ...dbResult.rows.map((r: any) => r.datname)]);
-
     for (const dbName of databases) {
       try {
         const client = new PgClient({
           host: instance.host,
           port: instance.port,
           user: instance.username,
-          password: await this.decryptPassword(instance.password_encrypted),
+          password,
           database: dbName,
           connectionTimeoutMillis: 5000,
         });
-        await client.connect();
-
-        const tables = await this.collectPGDatabaseSchema(client, dbName);
+        let tables: any[];
+        try {
+          await client.connect();
+          tables = await this.collectPGDatabaseSchema(client, dbName);
+        } finally {
+          try {
+            await client.end();
+          } catch {
+            console.warn('[PG] 表结构采集连接关闭失败');
+          }
+        }
         allTables.push(...tables);
-        await client.end();
 
         if (tables.length > 0) {
           const tableCount = new Set(tables.map(t => t.table_name)).size;
@@ -436,33 +457,6 @@ class SchemaService {
     }
 
     return allColumns;
-  }
-
-  /**
-   * 解密密码（AES 加密）
-   */
-  private async decryptPassword(encrypted: string): Promise<string> {
-    if (!encrypted) return '';
-    try {
-      const { createCipheriv, createDecipheriv } = await import('crypto');
-      const crypto = await import('crypto');
-      // 使用 ENCRYPTION_KEY
-      const rawKey = process.env.ENCRYPTION_KEY;
-      const keyStr = (rawKey && rawKey.length >= 32) ? rawKey : 'change-this-to-a-random-32-char-key';
-      const key = Buffer.from(keyStr.padEnd(32, '0').substring(0, 32));
-      const parts = encrypted.split(':');
-      if (parts.length === 2) {
-        const iv = Buffer.from(parts[0], 'hex');
-        const encryptedText = Buffer.from(parts[1], 'hex');
-        const decipher = createDecipheriv('aes-256-cbc', key, iv);
-        let decrypted = decipher.update(encryptedText);
-        decrypted = Buffer.concat([decrypted, decipher.final()]);
-        return decrypted.toString();
-      }
-    } catch (e) {
-      console.error('密码解密失败:', e);
-    }
-    return '';
   }
 
   /**

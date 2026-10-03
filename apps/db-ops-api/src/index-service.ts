@@ -3,7 +3,7 @@
  */
 import { databaseService } from './database-service.js';
 import { instanceDatabaseService } from './instance-database-service.js';
-import { dbConnection } from './db-connection.js';
+import { dbConnection, decryptData } from './db-connection.js';
 import {
   indexDatabaseService,
   type IndexEntry,
@@ -129,26 +129,40 @@ class IndexService {
   private async collectAllPGIndexes(instance: any): Promise<IndexEntry[]> {
     const PgClient = (await import('pg')).Client;
     const allIndexes: IndexEntry[] = [];
+    const errors: string[] = [];
+    let password: string;
+    try {
+      password = instance.password_encrypted ? decryptData(instance.password_encrypted) : '';
+    } catch {
+      throw new Error('实例密码解密失败，请检查密文和 ENCRYPTION_KEY');
+    }
 
     // 发现所有用户数据库
     const discoverClient = new PgClient({
       host: instance.host,
       port: instance.port,
       user: instance.username,
-      password: await this.decryptPassword(instance.password_encrypted),
+      password,
       database: instance.database_name || 'postgres',
       connectionTimeoutMillis: 5000,
     });
-    await discoverClient.connect();
-    const dbResult = await discoverClient.query(`
+    let databases: Set<string>;
+    try {
+      await discoverClient.connect();
+      const dbResult = await discoverClient.query(`
       SELECT datname FROM pg_database
       WHERE datistemplate = false
         AND datname NOT IN ('postgres')
       ORDER BY datname
-    `);
-    await discoverClient.end();
-
-    const databases = new Set([instance.database_name || 'postgres', ...dbResult.rows.map((r: any) => r.datname)]);
+      `);
+      databases = new Set([instance.database_name || 'postgres', ...dbResult.rows.map((r: any) => r.datname)]);
+    } finally {
+      try {
+        await discoverClient.end();
+      } catch {
+        console.warn('[PG] 索引发现连接关闭失败');
+      }
+    }
 
     for (const dbName of databases) {
       try {
@@ -156,15 +170,22 @@ class IndexService {
           host: instance.host,
           port: instance.port,
           user: instance.username,
-          password: await this.decryptPassword(instance.password_encrypted),
+          password,
           database: dbName,
           connectionTimeoutMillis: 5000,
         });
-        await client.connect();
-
-        const indexes = await this.collectPGDatabaseIndexes(client, dbName);
+        let indexes: IndexEntry[];
+        try {
+          await client.connect();
+          indexes = await this.collectPGDatabaseIndexes(client, dbName);
+        } finally {
+          try {
+            await client.end();
+          } catch {
+            console.warn('[PG] 索引采集连接关闭失败');
+          }
+        }
         allIndexes.push(...indexes);
-        await client.end();
 
         if (indexes.length > 0) {
           const tableCount = new Set(indexes.map(i => i.table_name)).size;
@@ -172,8 +193,13 @@ class IndexService {
           console.log(`📇 [PG/${dbName}] 采集 ${tableCount} 张表，${idxCount} 个索引`);
         }
       } catch (e: any) {
+        errors.push(`${dbName}: ${e.message}`);
         console.error(`[PG/${dbName}] 索引采集失败:`, e.message);
       }
+    }
+
+    if (allIndexes.length === 0 && errors.length > 0) {
+      throw new Error('所有数据库索引采集失败: ' + errors.join('; '));
     }
 
     return allIndexes;
@@ -220,31 +246,6 @@ class IndexService {
       index_type: row.index_type || 'btree',
       comment: row.is_valid ? null : 'invalid',
     }));
-  }
-
-  /**
-   * 解密密码
-   */
-  private async decryptPassword(encrypted: string): Promise<string> {
-    if (!encrypted) return '';
-    try {
-      const crypto = await import('crypto');
-      const rawKey = process.env.ENCRYPTION_KEY;
-      const keyStr = (rawKey && rawKey.length >= 32) ? rawKey : 'change-this-to-a-random-32-char-key';
-      const key = Buffer.from(keyStr.padEnd(32, '0').substring(0, 32));
-      const parts = encrypted.split(':');
-      if (parts.length === 2) {
-        const iv = Buffer.from(parts[0], 'hex');
-        const encryptedText = Buffer.from(parts[1], 'hex');
-        const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-        let decrypted = decipher.update(encryptedText);
-        decrypted = Buffer.concat([decrypted, decipher.final()]);
-        return decrypted.toString();
-      }
-    } catch (e) {
-      console.error('密码解密失败:', e);
-    }
-    return '';
   }
 
   /**
