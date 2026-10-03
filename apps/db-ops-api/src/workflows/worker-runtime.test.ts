@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OutboxService } from './outbox-service.js';
 import { MysqlWorkflowStore, WorkerRuntime, type ClaimedJob, type WorkflowStore } from './worker-runtime.js';
 import { JobRegistry } from './job-registry.js';
+import { StructuredLogEvidenceAdapter, platformLogs } from '../platform/structured-log-evidence-adapter.js';
 
 function deferred() {
   let resolve!: () => void;
@@ -79,6 +80,28 @@ describe('typed handler registry', () => {
 });
 
 describe('mysql workflow store', () => {
+  it('reports bounded durable queue gauges and oldest eligible wait by type', async () => {
+    const execute = vi.fn(async () => [[{
+      jobType: 'report.schedule', queued: '2', retry: '1', scheduled: '1',
+      ready: '3', running: '1', deadLetter: '4', expiredLeases: '1', oldestReadyWaitMs: '10000',
+    }]] as any);
+    const store = new MysqlWorkflowStore(() => ({ execute }));
+    expect(await store.observeQueue()).toMatchObject({
+      persistence: 'mysql', quality: 'good', gaps: [],
+      types: [{ jobType: 'report.schedule', queued: 2, retry: 1, ready: 3, scheduled: 1,
+        running: 1, deadLetter: 4, expiredLeases: 1, oldestReadyWaitMs: 10000 }],
+    });
+    expect(execute.mock.calls[0][0]).toContain('GROUP BY job_type');
+  });
+
+  it('does not claim an expired lease as a zero wait measurement', async () => {
+    const execute = vi.fn(async (sql: string) => [sql.startsWith('SELECT') ? [{
+      id: 'old', type: 'capacity.collect', payload: {}, attempts: 2,
+      maxAttempts: 5, fencingToken: 9, queueWaitMs: '10345.5',
+    }] : { affectedRows: 1 }] as any);
+    const claimed = await new MysqlWorkflowStore(() => ({ execute })).claim('owner', 30);
+    expect(claimed?.queueWaitMs).toBe(10345.5);
+  });
   it('uses unique idempotency keys and fencing predicates in persistent transitions', async () => {
     const statements: Array<{ sql: string; values?: unknown[] }> = [];
     const store = new MysqlWorkflowStore(() => ({ execute: async (sql, values) => { statements.push({ sql, values }); return [{ affectedRows: 0 } as any]; } }));
@@ -111,6 +134,38 @@ describe('mysql workflow store', () => {
 });
 
 describe('lease, fencing and dead letter', () => {
+  it('measures per-type wait and execution time without including payloads', async () => {
+    vi.useFakeTimers();
+    const logs = new StructuredLogEvidenceAdapter();
+    vi.spyOn(platformLogs, 'record').mockImplementation(input => logs.record(input));
+    const job = { id: 'timed', type: 'report.schedule', payload: { secret: 'private-data' },
+      attempts: 1, maxAttempts: 5, fencingToken: 1, queueWaitMs: 2500 };
+    const worker = new WorkerRuntime({ claim: async () => job, heartbeat: async () => true,
+      complete: async () => true, fail: async () => true }, 'timed-worker');
+    const run = worker.runOnce(async () => { await new Promise(resolve => setTimeout(resolve, 10000)); });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(await run).toBe('completed');
+    const groups = logs.query({ component: 'queue' }).groups;
+    expect(groups).toContainEqual(expect.objectContaining({
+      eventType: 'job.wait', jobType: 'report.schedule', durationMs: 2500, count: 1,
+    }));
+    expect(groups).toContainEqual(expect.objectContaining({
+      eventType: 'job.completed', jobType: 'report.schedule', durationMs: 10000, count: 1,
+    }));
+    expect(JSON.stringify(groups)).not.toContain('private-data');
+  });
+
+  it('reports lease loss instead of an unrecorded dead letter when fail is fenced out', async () => {
+    const record = vi.spyOn(platformLogs, 'record');
+    const job = { id: 'fenced-failure', type: 'capacity.collect', payload: {}, attempts: 5,
+      maxAttempts: 5, fencingToken: 1 };
+    const worker = new WorkerRuntime({ claim: async () => job, heartbeat: async () => true,
+      complete: async () => true, fail: async () => false }, 'fenced-worker');
+    expect(await worker.runOnce(async () => { throw new Error('private'); })).toBe('retry');
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'job.lease_lost', jobType: 'capacity.collect', errorCode: 'WORKFLOW_LEASE_LOST',
+    }));
+  });
   it('does not let an old fencing owner commit and dead-letters bounded failures', async () => {
     const job: ClaimedJob = { id: 'j1', type: 'report.generate', payload: {}, attempts: 3, maxAttempts: 3, fencingToken: 2 };
     const store: WorkflowStore = { claim: async () => job, heartbeat: async (_id, _owner, token) => token === 2, complete: async (_id, _owner, token) => token === 2, fail: async (_job, _owner, _error, retryAt) => retryAt === null };
