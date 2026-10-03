@@ -17,6 +17,21 @@ const evidence: ResourceDiagnosticPack = {
 };
 
 describe('ResourceAgentDiagnosisService', () => {
+  it('serves stored verification and snapshot metadata while retaining legacy result fallback', async () => {
+    let record: any;
+    const dispatch = vi.fn(async (params: any) => {
+      record = { id: 91, cache_key: params.cacheKey, instance_id: 17, status: 'completed', result: '> 验证等级：证据部分缺失，结论需验证\n\nCPU 超出范围', analysis_envelope: { schemaVersion: 1, subject: { type: 'instance', id: 17 }, verification: 'partial', evidenceSnapshot: { collectedAt: '2026-10-01T09:00:00.000Z' }, conclusions: ['CPU 超出范围'], displayMarkdown: 'CPU 超出范围' } };
+      return { analysisId: 91, cached: true };
+    });
+    const service = new ResourceAgentDiagnosisService({ evidence: { diagnose: vi.fn(async () => evidence) }, dispatch, now: () => new Date(), readAnalysis: async () => record });
+    await service.diagnose(actor, { type: 'instance', id: 17 });
+    expect((await service.result(actor, { type: 'instance', id: 17 }, 91)).result).toMatchObject({ verification: 'partial', evidenceSnapshot: { collectedAt: '2026-10-01T09:00:00.000Z' }, conclusions: ['CPU 超出范围'] });
+    await expect(service.result({ ...actor, userId: 2 }, { type: 'instance', id: 17 }, 91)).rejects.toThrow('RESOURCE_NOT_FOUND');
+    record.analysis_envelope = null;
+    expect((await service.result(actor, { type: 'instance', id: 17 }, 91)).result).toBe(record.result);
+    record.status = 'unknown'; record.cache_key = 'fault:17:manual:user:1:session:1'; record.analysis_envelope = { conclusions: ['historical context outside this permission snapshot'] };
+    expect((await service.result(actor, { type: 'instance', id: 17 }, 91)).result).toBeNull();
+  });
   it('collects permission-filtered evidence before durable admission without precreating a row', async () => {
     const dispatch = vi.fn(async (_params: unknown) => ({ analysisId: 91, cached: false }));
     const collect = vi.fn(async () => evidence);

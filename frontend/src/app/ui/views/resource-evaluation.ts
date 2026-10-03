@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
+import { diagnosisLabels, displayTime, gapExplanation } from './diagnosis-presentation.js';
 import '../components/app-empty-state.js';
 import '../components/app-badge.js';
 import './resource-invariants.js';
@@ -40,11 +41,12 @@ export class ResourceEvaluation extends LitElement {
   }
   override render() {
     const data = this.data;
-    return html`${this.loading ? html`<div class="skeleton" aria-label="加载评估"></div>` : nothing}${this.error ? html`<p role="status">${this.error}</p>` : nothing}
-      ${data ? html`<p class="meta">规则集 ${data.rulesVersion} · ${data.generatedAt}</p>
-        <section><h2>不变量评估</h2>${data.invariants.length ? data.invariants.map(rule => html`<article><p><code>${rule.ruleId}</code> v${rule.version} <app-badge>${rule.status}</app-badge></p><p>${rule.reason}</p><p class="meta">证据 ${rule.evidenceRefs.join(', ') || '无'}</p></article>`) : html`<app-empty-state title="暂无规则评估"></app-empty-state>`}</section>
-        <section><h2>统计预期</h2>${data.expectations.length ? data.expectations.map(item => html`<article><p>${item.metricId} <app-badge>${item.status}</app-badge></p><p>${item.reason}</p><p>均值 ${item.mean ?? '未知'} · 偏差 ${item.deviation ?? '未知'} · 样本 ${item.sampleCount}</p><p class="meta">证据 ${item.evidenceRefs.join(', ') || '无'}</p></article>`) : html`<app-empty-state title="暂无统计预期"></app-empty-state>`}</section>
-        ${data.gaps.map(gap => html`<p>${gap}</p>`)}` : nothing}
+    return html`${this.loading ? html`<div class="skeleton" aria-label="加载评估"></div>` : nothing}${this.error ? html`<p role="status">自动评估不可用，当前异常无法确认。请检查权限与采集服务，再刷新页面。</p><details><summary>查看评估错误详情</summary><p>${this.error}</p></details>` : nothing}
+      ${data ? html`<p class="meta">规则集 ${data.rulesVersion} · 评估时间 ${displayTime(data.generatedAt)}</p>
+        <section aria-label="异常评估结论"><h2>异常评估结论</h2><p>${data.invariants.some(rule => rule.status === 'fail') ? '发现观测值超出配置范围，需人工核对规则与证据。' : data.invariants.some(rule => rule.status === 'unknown') || !data.invariants.length ? '规则依据不足，无法确认是否异常。' : '已评估的规则符合配置范围；不能据此确认业务正常或恢复。'}</p><p>评估来自自动观测，人工判断和恢复确认需另行记录。</p></section>
+        <section><h2>不变量评估</h2>${data.invariants.length ? data.invariants.map(rule => html`<article><p>${rule.ruleId} <app-badge>${diagnosisLabels[rule.status] ?? '无法判断'}</app-badge></p><p>${gapExplanation(rule.reason)[0]}。下一步：${gapExplanation(rule.reason)[1]}。</p><details><summary>查看规则技术详情</summary><p>${rule.ruleId} v${rule.version} · ${rule.reason}</p><p class="meta">证据 ${rule.evidenceRefs.join(', ') || '无'}</p></details></article>`) : html`<app-empty-state title="暂无规则评估"></app-empty-state>`}</section>
+        <section><h2>统计预期</h2>${data.expectations.length ? data.expectations.map(item => html`<article><p>${diagnosisLabels[item.metricId] ?? item.metricId} <app-badge>${diagnosisLabels[item.status] ?? '无法判断'}</app-badge></p><p>${gapExplanation(item.reason)[0]}。下一步：${gapExplanation(item.reason)[1]}。</p><p>均值 ${item.mean ?? '未知'} · 偏差 ${item.deviation ?? '未知'} · 样本 ${item.sampleCount}</p><details><summary>查看统计技术详情</summary><p>${item.reason}</p><p class="meta">证据 ${item.evidenceRefs.join(', ') || '无'}</p></details></article>`) : html`<app-empty-state title="暂无统计预期"></app-empty-state>`}</section>
+        ${data.gaps.map(gap => html`<p>${gapExplanation(gap)[0]}。下一步：${gapExplanation(gap)[1]}。</p>`)}${data.gaps.length ? html`<details><summary>查看评估缺口技术详情</summary><pre>${JSON.stringify(data.gaps, null, 2)}</pre></details>` : nothing}` : nothing}
       <resource-invariants .resourceType=${this.resourceType} .resourceId=${this.resourceId} @rules-saved=${this.load}></resource-invariants>
       <resource-decisions .resourceType=${this.resourceType} .resourceId=${this.resourceId}></resource-decisions>
       <resource-recovery .resourceType=${this.resourceType} .resourceId=${this.resourceId}></resource-recovery>`;
