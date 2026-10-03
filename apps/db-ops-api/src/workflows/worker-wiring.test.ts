@@ -39,6 +39,8 @@ it('retains server lifecycle ownership and orders assembly before runtime creati
   expect(server).not.toContain('workflowRegistry.register(');
   expect(server).toContain('startup.assertOwned().then(() => workflowRuntime.runOnce');
   expect(server).toContain("}, 1_000);");
+  expect(server).toContain('startup.ready && dispatchAvailable');
+  expect(server).toContain('dispatchAvailable = false;');
   const close = server.slice(server.indexOf('const stopWorkers ='), server.indexOf('const readiness ='));
   for (const marker of [
     'clearInterval(workflowTimer)', 'stopWorkflow?.()',

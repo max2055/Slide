@@ -239,6 +239,7 @@ async function start() {
   let engine: Awaited<ReturnType<typeof getAgentEngine>> | undefined;
   let stopWorkflow: (() => Promise<boolean>) | undefined;
   let workflowTimer: ReturnType<typeof setInterval> | undefined;
+  let dispatchAvailable = false;
   let metricLifecycle: MetricSchedulerLifecycle | undefined;
   const workerLease = new WorkerLease(pool as any);
   const recoveredConnections = new Set<number>();
@@ -246,6 +247,7 @@ async function start() {
   let workersClosed = false;
   let stopWorkersPromise: Promise<void> | undefined;
   const stopWorkers = () => stopWorkersPromise ??= (async () => {
+    dispatchAvailable = false;
     if (workflowTimer) clearInterval(workflowTimer);
     monitorCollector.stop();
     networkDeviceCollector.stop();
@@ -271,7 +273,7 @@ async function start() {
   }, { onStopped: async () => {
     try { await dbConnection.close(); } finally { if (workersClosed && closeDeadline) clearTimeout(closeDeadline); }
   } });
-  const readiness = new InfrastructureReadiness(() => startup.ready && !!cronManager?.getStatus().running, async () => {
+  const readiness = new InfrastructureReadiness(() => startup.ready && dispatchAvailable && !!cronManager?.getStatus().running, async () => {
     const [rows] = await pool.query<import('mysql2').RowDataPacket[]>(
       'SELECT owner_id FROM worker_leases WHERE lease_name = ? AND expires_at > NOW()', ['slide-singleton-workers']);
     await pool.query('SELECT id, state, lease_owner, lease_expires_at FROM workflow_jobs LIMIT 0');
@@ -359,7 +361,7 @@ async function start() {
 
   registerHealthRoutes(fastify, verifyToken, undefined, () => readiness.ready());
   const requireWorker = async (_request: unknown, reply: import('fastify').FastifyReply) => {
-    if (!startup.ready) return reply.code(503).send({ error: 'WORKFLOW_RUNTIME_UNAVAILABLE' });
+    if (!startup.ready || !dispatchAvailable) return reply.code(503).send({ error: 'WORKFLOW_RUNTIME_UNAVAILABLE' });
     try { await startup.assertOwned(); }
     catch { return reply.code(503).send({ error: 'WORKFLOW_RUNTIME_UNAVAILABLE' }); }
   };
@@ -5552,7 +5554,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   registerCronRunHandler(workflowRegistry, (runId, context) => cronManager!.executeRun(runId, context));
   await startup.step(() => cronManager!.start());
   await startup.assertOwned();
-  workflowTimer = setInterval(() => { void startup.assertOwned().then(() => workflowRuntime.runOnce((job, context) => workflowRegistry.execute(job, context))).catch(() => console.error('[WorkerRuntime] WORKFLOW_TICK_FAILED')); }, 1_000);
+  workflowTimer = setInterval(() => {
+    void startup.assertOwned().then(() => workflowRuntime.runOnce((job, context) => workflowRegistry.execute(job, context)))
+      .then(result => { if (result !== 'running' && result !== 'cancelled') dispatchAvailable = true; })
+      .catch(() => { dispatchAvailable = false; console.error('[WorkerRuntime] WORKFLOW_TICK_FAILED'); });
+  }, 1_000);
 
   // Legacy logs have no provable owner/expiry; leave them for manual review.
 
@@ -5564,7 +5570,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   };
 
-  registerCronRoutes(fastify, verifyToken, () => startup.ready ? cronManager : undefined);
+  registerCronRoutes(fastify, verifyToken, () => startup.ready && dispatchAvailable ? cronManager : undefined);
 
   // 启动 HTTP API 服务器
   const port = process.env.PORT || process.env.BACKEND_PORT || process.env.API_PORT || 3000;

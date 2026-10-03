@@ -145,9 +145,21 @@ try {
   const [afterFailure] = await pool.query<any[]>('SELECT owner_id FROM worker_leases'); assert.equal(afterFailure.length, 0);
   events.push('missing Memory workspace and partial engine initialization fail explicitly; lease released');
 
+  // Prove dispatch health separately from the control database's SELECT health.
+  await pool.query("CREATE USER 'w07_worker'@'%' IDENTIFIED BY 'qualification-worker-password'");
+  const [tables] = await pool.query<any[]>('SHOW TABLES');
+  for (const row of tables) await pool.query(`GRANT ALL ON db_ops_ai_qualification_w07.\`${Object.values(row)[0]}\` TO 'w07_worker'@'%'`);
   const dbLossPort = await freePort();
-  const dbLoss = start({ ...env, PORT: String(dbLossPort), AGENT_WS_PORT: String(await freePort()) });
+  const dbLoss = start({ ...env, DB_USER: 'w07_worker', DB_PASSWORD: 'qualification-worker-password', PORT: String(dbLossPort), AGENT_WS_PORT: String(await freePort()) });
   await waitFor(async () => (await probe(dbLossPort)).code === 200, 'database-loss candidate ready');
+  await pool.query("REVOKE UPDATE ON db_ops_ai_qualification_w07.workflow_jobs FROM 'w07_worker'@'%'");
+  await waitFor(async () => dbLoss.output().includes('WORKFLOW_TICK_FAILED'), 'dispatch denied while control database is healthy');
+  const [controlAlive] = await pool.query<any[]>('SELECT owner_id FROM worker_leases WHERE expires_at > NOW()');
+  assert.equal(controlAlive.length, 1);
+  assert.deepEqual(await probe(dbLossPort), { code: 503, body: { ready: false } });
+  await pool.query("GRANT UPDATE ON db_ops_ai_qualification_w07.workflow_jobs TO 'w07_worker'@'%'");
+  await waitFor(async () => (await probe(dbLossPort)).code === 200, 'dispatch recovered');
+  events.push('workflow UPDATE denied with healthy control DB: readiness 503; restored dispatch: readiness 200');
   await exec('docker', ['pause', container]);
   assert.deepEqual(await probe(dbLossPort), { code: 503, body: { ready: false } });
   await Promise.race([dbLoss.exit, delay(18_000).then(() => { throw new Error('blocked lease did not fail closed'); })]);
