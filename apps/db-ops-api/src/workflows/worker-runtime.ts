@@ -1,7 +1,15 @@
 import { platformLogs } from '../platform/structured-log-evidence-adapter.js';
 
 export type WorkflowState = 'queued' | 'running' | 'retry' | 'completed' | 'dead_letter' | 'cancelled';
-export interface ClaimedJob { id: string; type: string; payload: Record<string, unknown>; attempts: number; maxAttempts: number; fencingToken: number; }
+export interface ClaimedJob { id: string; type: string; payload: Record<string, unknown>; attempts: number; maxAttempts: number; fencingToken: number; queueWaitMs?: number; }
+export interface QueueTypeObservation {
+  jobType: string; queued: number; retry: number; scheduled: number; ready: number;
+  running: number; deadLetter: number; expiredLeases: number; oldestReadyWaitMs: number | null;
+}
+export interface QueueObservation {
+  schemaVersion: 1; generatedAt: string; persistence: 'mysql';
+  quality: 'good' | 'degraded' | 'unknown'; types: QueueTypeObservation[]; gaps: string[];
+}
 export interface WorkflowStore {
   claim(workerId: string, leaseSeconds: number): Promise<ClaimedJob | null>;
   heartbeat(jobId: string, workerId: string, fencingToken: number, leaseSeconds: number): Promise<boolean>;
@@ -13,6 +21,32 @@ export type WorkflowJobInput = { id: string; type: string; schemaVersion: number
 
 export class MysqlWorkflowStore implements WorkflowStore {
   constructor(private readonly poolProvider: () => SqlPool | null) {}
+  /** Durable gauges, not throughput. Eligibility matches claim, including expired leases. */
+  async observeQueue(): Promise<QueueObservation> {
+    const eligible = "state IN ('queued', 'retry', 'running') AND available_at <= NOW() AND (lease_expires_at IS NULL OR lease_expires_at < NOW())";
+    const [rows] = await this.pool().execute<Array<QueueTypeObservation>>(
+      `SELECT job_type AS jobType,
+        SUM(state = 'queued') AS queued, SUM(state = 'retry') AS retry,
+        SUM(state IN ('queued', 'retry') AND available_at > NOW()) AS scheduled,
+        SUM(${eligible}) AS ready, SUM(state = 'running') AS running,
+        SUM(state = 'dead_letter') AS deadLetter,
+        SUM(state = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < NOW())) AS expiredLeases,
+        MAX(CASE WHEN ${eligible} THEN GREATEST(0,
+          TIMESTAMPDIFF(MICROSECOND, GREATEST(created_at, available_at), NOW(3)) / 1000) END) AS oldestReadyWaitMs
+       FROM workflow_jobs WHERE state IN ('queued', 'retry', 'running', 'dead_letter')
+       GROUP BY job_type ORDER BY job_type LIMIT 101`,
+    );
+    const count = (value: unknown) => Math.max(0, Number(value));
+    const types = rows.slice(0, 100).map(row => ({
+      jobType: row.jobType, queued: count(row.queued), retry: count(row.retry),
+      scheduled: count(row.scheduled), ready: count(row.ready), running: count(row.running),
+      deadLetter: count(row.deadLetter), expiredLeases: count(row.expiredLeases),
+      oldestReadyWaitMs: row.oldestReadyWaitMs === null ? null : count(row.oldestReadyWaitMs),
+    }));
+    return { schemaVersion: 1, generatedAt: new Date().toISOString(), persistence: 'mysql',
+      quality: rows.length > 100 ? 'degraded' : 'good', types,
+      gaps: rows.length > 100 ? ['QUEUE_TYPES_TRUNCATED'] : [] };
+  }
   async enqueue(input: WorkflowJobInput): Promise<void> {
     if (!/^[a-z][a-z0-9_.-]{0,127}$/.test(input.type) || !input.idempotencyKey || JSON.stringify(input.payload).length > 64_000) throw new Error('WORKFLOW_JOB_INVALID');
     await this.pool().execute(
@@ -65,12 +99,14 @@ export class MysqlWorkflowStore implements WorkflowStore {
     );
     if (Number(result.affectedRows) !== 1) return null;
     const [rows] = await pool.execute<Array<any>>(
-      `SELECT id, job_type AS type, payload, attempts, max_attempts AS maxAttempts, fencing_token AS fencingToken
+      `SELECT id, job_type AS type, payload, attempts, max_attempts AS maxAttempts, fencing_token AS fencingToken,
+         GREATEST(0, TIMESTAMPDIFF(MICROSECOND, GREATEST(created_at, available_at), NOW(3)) / 1000) AS queueWaitMs
        FROM workflow_jobs WHERE lease_owner = ? AND state = 'running' AND lease_expires_at > NOW()
        ORDER BY updated_at DESC LIMIT 1`, [workerId],
     );
     const row = rows[0];
-    return row ? { id: row.id, type: row.type, payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload, attempts: Number(row.attempts), maxAttempts: Number(row.maxAttempts), fencingToken: Number(row.fencingToken) } : null;
+    return row ? { id: row.id, type: row.type, payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload, attempts: Number(row.attempts), maxAttempts: Number(row.maxAttempts), fencingToken: Number(row.fencingToken),
+      ...(row.queueWaitMs !== undefined ? { queueWaitMs: Number(row.queueWaitMs) } : {}) } : null;
   }
   async heartbeat(jobId: string, workerId: string, fencingToken: number, leaseSeconds: number): Promise<boolean> {
     const [result] = await this.pool().execute<{ affectedRows: number }>(
@@ -137,7 +173,12 @@ export class WorkerRuntime {
       const job = await this.claim();
       if (controller.signal.aborted) return 'cancelled';
       if (!job) return 'idle';
-      platformLogs.record({ component: 'queue', eventType: 'job.claimed', status: 'ok', correlationId: job.id });
+      const startedAt = performance.now();
+      const durationMs = () => Math.max(0, performance.now() - startedAt);
+      platformLogs.record({ component: 'queue', eventType: 'job.claimed', status: 'ok', correlationId: job.id, jobType: job.type });
+      if (Number.isFinite(job.queueWaitMs) && job.queueWaitMs! >= 0) {
+        platformLogs.record({ component: 'queue', eventType: 'job.wait', status: 'ok', correlationId: job.id, jobType: job.type, durationMs: job.queueWaitMs });
+      }
 
       let heartbeatStopped = false;
       let heartbeatInFlight: Promise<void> | null = null;
@@ -149,7 +190,7 @@ export class WorkerRuntime {
         if (leaseLost) return;
         leaseLost = true;
         controller.abort(new Error('WORKFLOW_LEASE_LOST'));
-        platformLogs.record({ component: 'queue', eventType: 'job.lease_lost', status: 'unknown', correlationId: job.id, errorCode: 'WORKFLOW_LEASE_LOST' });
+        platformLogs.record({ component: 'queue', eventType: 'job.lease_lost', status: 'unknown', correlationId: job.id, jobType: job.type, errorCode: 'WORKFLOW_LEASE_LOST' });
         heartbeatStopped = true;
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         console.error(`[WorkerRuntime] WORKFLOW_LEASE_LOST:${job.id}`);
@@ -197,22 +238,29 @@ export class WorkerRuntime {
           handlerFailed = true;
           handlerError = error;
         }
+        platformLogs.record({ component: 'queue', eventType: 'job.executed', status: controller.signal.aborted ? 'unknown' : handlerFailed ? 'failed' : 'ok',
+          correlationId: job.id, jobType: job.type, durationMs: durationMs() });
 
         heartbeatStopped = true;
         clearInterval(heartbeatTimer);
         const pendingHeartbeat = heartbeatInFlight;
         if (pendingHeartbeat) await pendingHeartbeat;
-        if (controller.signal.aborted) return leaseLost ? 'retry' : 'cancelled';
+        if (controller.signal.aborted) {
+          if (!leaseLost) platformLogs.record({ component: 'queue', eventType: 'job.cancelled', status: 'unknown', correlationId: job.id, jobType: job.type });
+          return leaseLost ? 'retry' : 'cancelled';
+        }
 
         if (!handlerFailed) {
           const complete = await this.store.complete(job.id, this.workerId, job.fencingToken);
-          platformLogs.record({ component: 'queue', eventType: complete ? 'job.completed' : 'job.lease_lost', status: complete ? 'ok' : 'unknown', correlationId: job.id });
+          platformLogs.record({ component: 'queue', eventType: complete ? 'job.completed' : 'job.lease_lost', status: complete ? 'ok' : 'unknown',
+            correlationId: job.id, jobType: job.type, durationMs: durationMs(), errorCode: complete ? undefined : 'WORKFLOW_LEASE_LOST' });
           return complete ? 'completed' : 'retry';
         }
         const retryAt = job.attempts >= job.maxAttempts ? null : new Date(now + Math.min(60_000, 1_000 * 2 ** Math.max(0, job.attempts - 1)));
         const recorded = await this.store.fail(job, this.workerId, handlerError instanceof Error ? handlerError : new Error(String(handlerError)), retryAt);
-        platformLogs.record({ component: 'queue', eventType: recorded ? retryAt ? 'job.retry' : 'job.dead_letter' : 'job.lease_lost', status: recorded ? 'failed' : 'unknown', correlationId: job.id, errorCode: 'WORKFLOW_HANDLER_FAILED' });
-        return retryAt ? 'retry' : 'dead_letter';
+        platformLogs.record({ component: 'queue', eventType: recorded ? retryAt ? 'job.retry' : 'job.dead_letter' : 'job.lease_lost', status: recorded ? 'failed' : 'unknown',
+          correlationId: job.id, jobType: job.type, durationMs: durationMs(), errorCode: recorded ? 'WORKFLOW_HANDLER_FAILED' : 'WORKFLOW_LEASE_LOST' });
+        return !recorded || retryAt ? 'retry' : 'dead_letter';
       } finally {
         stopHeartbeat();
         controller.signal.removeEventListener('abort', stopHeartbeat);

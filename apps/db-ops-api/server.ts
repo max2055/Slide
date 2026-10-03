@@ -405,7 +405,8 @@ async function start() {
   await registerMetricRolloutRoutes(fastify, verifyToken);
   await registerMetricConfigurationRoutes(fastify, verifyToken);
   await registerMetricConsumerRoutes(fastify, verifyToken);
-  await installPlatformObservation(fastify, verifyToken);
+  await installPlatformObservation(fastify, verifyToken, undefined,
+    () => new MysqlWorkflowStore(() => dbConnection.getPool() as any).observeQueue());
   await registerSourceRoutes(fastify, verifyToken);
   await registerEvidenceRoutes(fastify, verifyToken);
   await registerEvidenceEvaluationRoutes(fastify, verifyToken);
