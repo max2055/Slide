@@ -615,6 +615,17 @@ export const OkResponseSchema = Type.Object({
 }, { $id: 'OkResponse', additionalProperties: false });
 
 export const PublicApiSchemas = {
+  CronRunAccepted: Type.Object({
+    runId: Type.String(), jobId: Type.Integer(), status: Type.Union(['queued','running','success','partial','failed','unknown','cancelled'].map(value => Type.Literal(value))), message: Type.String(),
+  }, { $id: 'CronRunAccepted', additionalProperties: false }),
+  CronRun: Type.Object({
+    runId: Type.String(), jobId: Type.Integer(), triggeredBy: Type.Union([Type.Integer(), Type.Null()]),
+    status: Type.Union(['queued','running','success','partial','failed','unknown','cancelled'].map(value => Type.Literal(value))),
+    queuedAt: Type.String(), startedAt: Type.Union([Type.String(), Type.Null()]),
+    runnerFinishedAt: Type.Union([Type.String(), Type.Null()]), completedAt: Type.Union([Type.String(), Type.Null()]),
+    completion: Type.Union([UnknownRecordSchema, Type.Null()]), outputSchema: Type.Union([UnknownRecordSchema, Type.Null()]),
+    logId: Type.Union([Type.Integer(), Type.Null()]), errorCode: Type.Union([Type.String(), Type.Null()]),
+  }, { $id: 'CronRun', additionalProperties: false }),
   CronJobIdentity: Type.Object({
     owner_user_id: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
     principal_type: Type.Union([Type.Literal('user'), Type.Literal('system-maintenance')]),

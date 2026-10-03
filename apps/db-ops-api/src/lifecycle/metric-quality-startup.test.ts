@@ -40,7 +40,7 @@ async function startWorkers(pool: Pick<Pool, 'execute'>) {
     },
     initializeControlPlane: vi.fn(), getAgentEngine: vi.fn(async () => service),
     createMetricSchedulerLifecycle: () => service, assertMetricSchedulerSchema: vi.fn(),
-    registerWorkflowHandlers: vi.fn(), createCronToolRegistry: vi.fn(),
+    registerWorkflowHandlers: vi.fn(), registerCronRunHandler: vi.fn(), createCronToolRegistry: vi.fn(),
     createLLMProvider: vi.fn(), createNotificationDispatchJob: vi.fn(),
     createReportScheduleJob: vi.fn(), createReportNotificationJob: vi.fn(),
     createCapacityConsistencyJob: vi.fn(), workflowWorkerId: 'metric-quality-test',
@@ -84,7 +84,7 @@ describe.skipIf(!port)('metric quality startup with isolated MySQL', () => {
     if (!metricsTable) throw new Error('metrics_history baseline not found');
     await pool.query(metricsTable);
     await pool.query(`CREATE TABLE cron_job_logs (
-      status VARCHAR(20), error_message TEXT, finished_at DATETIME)`);
+      run_id CHAR(36), status VARCHAR(20), error_message TEXT, finished_at DATETIME)`);
   });
   afterAll(async () => {
     await pool?.end();

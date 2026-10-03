@@ -22,6 +22,7 @@ const TOOL_SRC = resolve(__dirname, '../cron/cron-completion-tool.ts');
 
 import { CronHook, CronExecutor } from '../cron/cron-executor.js';
 import { completeCronTool } from '../cron/cron-completion-tool.js';
+import { cronCompletionContext } from '../cron/cron-completion-context.js';
 import { toolCatalog } from '../tools/catalog.js';
 
 describe('CronHook', () => {
@@ -85,9 +86,12 @@ describe('CronExecutor', () => {
     expect(run).toHaveBeenCalledWith(expect.objectContaining({ llmTimeoutS: 77, runTimeoutMs: 77000, maxIterations: 40 }));
   });
 
-  it('generates sessionKey with cron:{jobId}:{timestamp} format', () => {
-    const source = readFileSync(EXECUTOR_SRC, 'utf-8');
-    expect(source).toMatch(/sessionKey.*=.*`cron:\$\{jobId\}:\$\{Date\.now\(\)\}`/);
+  it('uses the bound run ID in sessionKey', async () => {
+    const run = vi.fn(async () => ({ stopReason: 'completed', messages: [], toolEvents: [], toolsUsed: [], usage: {}, finalContent: 'ok' }));
+    const { ToolRegistry } = await import('@slide/agent-core');
+    await new CronExecutor({ run } as any, new ToolRegistry(), { getDefaultModel: () => 'fixture' } as any)
+      .execute(1, 'inspect', 77, null, undefined, { runId: 'run-1', save: async () => {} });
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ sessionKey: 'cron:1:run-1' }));
   });
 
   it('has buildSystemPrompt returning TASK + constraints', () => {
@@ -122,65 +126,65 @@ describe('slide_complete_cron tool', () => {
 
   describe('handler behavior', () => {
     it('accepts valid parameters and returns success', async () => {
-      const result = await completeCronTool.handler({
+      const result = await cronCompletionContext.run({ runId: 'fixture', signal: new AbortController().signal, save: async () => {} }, () => completeCronTool.handler({
         status: 'success',
         summary: '任务执行完成，分析了 5 条慢查询记录',
         details: { queriesExamined: 5, anomaliesFound: 2 },
-      });
+      }));
 
       expect(result.success).toBe(true);
-      expect(result.data).toEqual({ saved: true, status: 'success' });
+      expect(result.data).toEqual({ saved: true, runId: 'fixture', result: undefined, status: 'success' });
       expect(result.summary).toBe('定时任务结果已记录');
     });
 
     it('rejects invalid status value', async () => {
-      const result = await completeCronTool.handler({
+      const result = await cronCompletionContext.run({ runId: 'fixture', signal: new AbortController().signal, save: async () => {} }, () => completeCronTool.handler({
         status: 'invalid',
         summary: 'some summary',
-      });
+      }));
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('状态值无效');
     });
 
     it('rejects empty summary', async () => {
-      const result = await completeCronTool.handler({
+      const result = await cronCompletionContext.run({ runId: 'fixture', signal: new AbortController().signal, save: async () => {} }, () => completeCronTool.handler({
         status: 'success',
         summary: '',
-      });
+      }));
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('摘要不能为空');
     });
 
     it('rejects whitespace-only summary', async () => {
-      const result = await completeCronTool.handler({
+      const result = await cronCompletionContext.run({ runId: 'fixture', signal: new AbortController().signal, save: async () => {} }, () => completeCronTool.handler({
         status: 'failure',
         summary: '   ',
-      });
+      }));
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('摘要不能为空');
     });
 
     it('accepts partial status', async () => {
-      const result = await completeCronTool.handler({
+      const result = await cronCompletionContext.run({ runId: 'fixture', signal: new AbortController().signal, save: async () => {} }, () => completeCronTool.handler({
         status: 'partial',
         summary: '任务部分完成，超时前保存了中间结果',
-      });
+      }));
 
       expect(result.success).toBe(true);
-      expect(result.data).toEqual({ saved: true, status: 'partial' });
+      expect(result.data).toEqual({ saved: true, runId: 'fixture', result: undefined, status: 'partial' });
     });
 
     it('works without optional details parameter', async () => {
-      const result = await completeCronTool.handler({
+      const result = await cronCompletionContext.run({ runId: 'fixture', signal: new AbortController().signal, save: async () => {} }, () => completeCronTool.handler({
         status: 'failure',
         summary: '数据库连接失败',
-      });
+      }));
 
       expect(result.success).toBe(true);
-      expect(result.data).toEqual({ saved: true, status: 'failure' });
+      expect(result.data).toEqual({ saved: true, runId: 'fixture', result: undefined, status: 'failure' });
     });
   });
 

@@ -43,9 +43,21 @@ export function buildOpenApiDocument() {
         },
       },
       '/api/cron/jobs/{id}/run': {
-        post: { operationId: 'runCronJob', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
-          description: 'Revalidates trigger and owner. Executes with current owner permissions intersected with persisted resources; manual administrator triggers cannot elevate the task. Durable run/tool audit must succeed before execution.',
-          responses: { '200': { description: 'Run returned; inspect execution log for outcome' }, '400': { description: 'Task unbound, target changed/deleted, or invalid capability' }, '403': { description: 'Current owner or trigger authorization denied' }, '404': { description: 'Job absent or inaccessible' }, '500': { description: 'Execution or database failure' }, '503': { description: 'Execution authority, durable audit or workflow runtime unavailable' } },
+        post: { operationId: 'runCronJob', security: [{ bearerAuth: [] }], parameters: [pathId('id'), { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string', maxLength: 200 } }],
+          description: 'Accepts a durable asynchronous run, not business completion. Idempotency-Key binds actor, job and parameters; reuse after dropped response. Old clients must upgrade with this release. Execution revalidates trigger and owner. Executes with current owner permissions intersected with persisted resources; manual administrator triggers cannot elevate the task. Durable run/tool audit must succeed before execution.',
+          responses: { '202': { description: 'Run accepted; poll its runId for business outcome', content: { 'application/json': { schema: refSchema(PublicApiSchemas.CronRunAccepted) } } }, '409': { description: 'Idempotency key reused with different parameters' }, '400': { description: 'Task unbound, target changed/deleted, or invalid capability' }, '403': { description: 'Current owner or trigger authorization denied' }, '404': { description: 'Job absent or inaccessible' }, '500': { description: 'Execution or database failure' }, '503': { description: 'Execution authority, durable audit or workflow runtime unavailable' } },
+        },
+      },
+      '/api/cron/jobs/{id}/runs/{runId}': {
+        get: { operationId: 'getCronRun', security: [{ bearerAuth: [] }], parameters: [pathId('id'), { name: 'runId', in: 'path', required: true, schema: { type: 'string' } }],
+          description: 'Requires current job and target access. runnerFinishedAt and completedAt are separate. unknown means no verified completion; never automatically retry.',
+          responses: { '200': { description: 'Exact run business state', content: { 'application/json': { schema: refSchema(PublicApiSchemas.CronRun) } } }, '404': { description: 'Run/job absent or inaccessible' } },
+        },
+      },
+      '/api/cron/jobs/{id}/runs': {
+        get: { operationId: 'findCronRequest', security: [{ bearerAuth: [] }], parameters: [pathId('id'), { name: 'requestKey', in: 'query', required: true, schema: { type: 'string', maxLength: 200 } }],
+          description: 'Recovers the authenticated actor own request after a dropped POST response; no execution is triggered.',
+          responses: { '200': { description: 'Original run', content: { 'application/json': { schema: refSchema(PublicApiSchemas.CronRun) } } }, '404': { description: 'Request absent or job inaccessible' } },
         },
       },
       '/api/health': { get: { operationId: 'getHealth', responses: { '200': { description: 'Service health', content: { 'application/json': { schema: refSchema(PublicApiSchemas.HealthResponse) } } } } } },
@@ -349,7 +361,15 @@ export function buildClientTypes(): string {
     )
     .replace('export interface HealthResponse {', `${NETWORK_CLIENT_TYPES}export interface HealthResponse {`)
     .replace('export interface HealthResponse {', `${RESOURCE_CLIENT_TYPES}export interface HealthResponse {`)
-    .replace('export interface HealthResponse {', `export interface CronJobIdentity {
+    .replace('export interface HealthResponse {', `export type CronRunStatus = 'queued' | 'running' | 'success' | 'partial' | 'failed' | 'unknown' | 'cancelled';
+export interface CronRunAccepted { runId: string; jobId: number; status: CronRunStatus; message: string; }
+export interface CronRun {
+  runId: string; jobId: number; triggeredBy: number | null; status: CronRunStatus;
+  queuedAt: string; startedAt: string | null; runnerFinishedAt: string | null; completedAt: string | null;
+  completion: Record<string, unknown> | null; outputSchema: Record<string, unknown> | null;
+  logId: number | null; errorCode: string | null;
+}
+export interface CronJobIdentity {
   owner_user_id: number | null;
   principal_type: 'user' | 'system-maintenance';
   identity_status: 'bound' | 'owner-required';

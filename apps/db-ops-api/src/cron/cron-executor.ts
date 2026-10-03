@@ -18,6 +18,8 @@ import type {
   AgentRunResult,
 } from '@slide/agent-core';
 import type { CronToolAuthority } from '../adapter/get-agent-engine.js';
+import { cronCompletionContext, type CronCompletionContext } from './cron-completion-context.js';
+import type { CronCompletion, CronRunStatus } from './cron-run-store.js';
 import { loadAgentRuntimeLimits } from '../security/agent-runtime-limits.js';
 
 // ── CronHook — 收集 ToolEvent 的自定义 Hook ──
@@ -33,6 +35,7 @@ export class CronHook extends NoopHook {
 // ── CronExecutor — Agent 驱动的 cron 执行器 ──
 
 export type CronExecutionResult = AgentRunResult & {
+  businessStatus: CronRunStatus;
   structuredResult?: Record<string, unknown> | null;
   /** Always resolves, only after the runner AND actual provider requests settle. */
   executionSettled: Promise<void>;
@@ -61,13 +64,18 @@ export class CronExecutor {
     timeoutSeconds: number = 300,
     outputSchema?: Record<string, unknown> | null,
     authority?: CronToolAuthority,
+    completionBinding?: { runId: string; signal?: AbortSignal; save(completion: CronCompletion): Promise<void> },
   ): Promise<CronExecutionResult> {
     const registry = typeof this.registry === 'function'
       ? await this.registry(authority!) : this.registry;
     const policy = resolveRuntimePolicy('cron', { cronTimeoutSeconds: timeoutSeconds });
-    const sessionKey = `cron:${jobId}:${Date.now()}`;
+    const sessionKey = `cron:${jobId}:${completionBinding?.runId ?? Date.now()}`;
     const hook = new CronHook();
     const controller = new AbortController();
+    const completionContext: CronCompletionContext | undefined = completionBinding ? { ...completionBinding, outputSchema, signal: controller.signal } : undefined;
+    const externalAbort = () => controller.abort(completionBinding?.signal?.reason);
+    completionBinding?.signal?.addEventListener('abort', externalAbort, { once: true });
+    if (completionBinding?.signal?.aborted) externalAbort();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let timedOut = false;
     let pendingOperations = 0;
@@ -93,7 +101,7 @@ export class CronExecutor {
           controller.abort(timeoutError);
         }, timeoutSeconds * 1000);
       });
-      const runPromise = Promise.resolve().then(() => this.runner.run({
+      const run = () => this.runner.run({
         initialMessages: [
           { role: 'system', content: this.buildSystemPrompt(taskDescription, outputSchema) },
           { role: 'user', content: taskDescription },
@@ -113,7 +121,8 @@ export class CronExecutor {
         signal: controller.signal,
         onProviderRequest: observeOperation,
         onToolExecution: observeOperation,
-      }));
+      });
+      const runPromise = Promise.resolve().then(() => completionContext ? cronCompletionContext.run(completionContext, run) : run());
       const finishRun = () => { runSettled = true; maybeSettled(); };
       runPromise.then(finishRun, finishRun);
 
@@ -121,9 +130,12 @@ export class CronExecutor {
       if (timedOut) throw timeoutError;
 
       // Extract structured result from agent output
-      const structuredResult = result.stopReason === 'completed' ? this.extractStructuredResult(result.finalContent, hook.events) : null;
+      const completion = completionContext?.completion;
+      const structuredResult = completion ? { ...completion } : null;
+      const businessStatus = completion ? (completion.status === 'failure' ? 'failed' : completion.status) : 'unknown';
 
       return {
+        businessStatus,
         resolution: result.resolution,
         runtimeError: result.runtimeError,
         runtimeState: result.runtimeState,
@@ -142,6 +154,7 @@ export class CronExecutor {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       return {
+        businessStatus: completionContext?.completion ? (completionContext.completion.status === 'failure' ? 'failed' : completionContext.completion.status) : timedOut || controller.signal.aborted ? 'unknown' : 'failed',
         finalContent: null,
         messages: [],
         toolsUsed: [],
@@ -151,30 +164,13 @@ export class CronExecutor {
         error: errorMessage,
         toolEvents: [...hook.events],
         hadInjections: false,
-        structuredResult: null,
+        structuredResult: completionContext?.completion ? { ...completionContext.completion } : null,
         executionSettled,
         cancellationPending: !runSettled || pendingOperations > 0,
       };
     } finally {
       clearTimeout(timer);
-    }
-  }
-
-  /**
-   * Extract structured result from agent output.
-   * First tries to parse the entire finalContent as JSON,
-   * then tries to find a JSON block in the slide_complete_cron tool event data.
-   */
-  private extractStructuredResult(
-    finalContent: string | null,
-    toolEvents: ToolEvent[],
-  ): Record<string, unknown> | null {
-    if (!finalContent) return null;
-    try {
-      const parsed = JSON.parse(finalContent);
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
-    } catch {
-      return null;
+      completionBinding?.signal?.removeEventListener('abort', externalAbort);
     }
   }
 

@@ -3,6 +3,10 @@
  */
 import type { AnyAgentTool } from '../tools/types.js';
 import { toolCatalog } from '../tools/catalog.js';
+import Ajv from 'ajv';
+import { normalizeCronOutputSchema } from './cron-output-schema.js';
+import { cronCompletionContext } from './cron-completion-context.js';
+import type { CronCompletion } from './cron-run-store.js';
 
 export const completeCronTool: AnyAgentTool = {
   name: 'slide_complete_cron',
@@ -44,13 +48,25 @@ export const completeCronTool: AnyAgentTool = {
       return { success: false, error: '状态值无效，必须为 success/failure/partial' };
     }
 
-    if (!typedArgs.summary || typedArgs.summary.trim().length === 0) {
+    if (typeof typedArgs.summary !== 'string' || typedArgs.summary.trim().length === 0) {
       return { success: false, error: '摘要不能为空' };
     }
 
+    const context = cronCompletionContext.getStore();
+    if (!context) return { success: false, error: 'CRON_RUN_CONTEXT_REQUIRED' };
+    context.signal.throwIfAborted();
+    const completion = typedArgs as CronCompletion;
+    if (context.outputSchema) {
+      try {
+        const validate = new Ajv({ strict: false, allErrors: true }).compile(normalizeCronOutputSchema(context.outputSchema));
+        if (!validate(completion.result)) return { success: false, error: 'CRON_OUTPUT_SCHEMA_INVALID' };
+      } catch { return { success: false, error: 'CRON_OUTPUT_SCHEMA_INVALID' }; }
+    }
+    await context.save(completion);
+    context.completion = completion;
     return {
       success: true,
-      data: { saved: true, status: typedArgs.status, result: typedArgs.result },
+      data: { saved: true, runId: context.runId, status: completion.status, result: completion.result },
       summary: '定时任务结果已记录',
     };
   },

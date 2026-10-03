@@ -440,6 +440,7 @@ class MonitorCollector {
   }
 
   private async collectCapacity() {
+    const outcome = { succeeded: 0, failed: 0 };
     try {
       assertWorkflowActive();
       const instances = await instanceDatabaseService.getAllInstances();
@@ -453,7 +454,7 @@ class MonitorCollector {
               ? capacity.databases.reduce((sum: number, db: any) => sum + (db.table_count || 0), 0)
               : 0;
             assertWorkflowActive();
-            await metricsDatabaseService.recordCapacity({
+            const saved = await metricsDatabaseService.recordCapacity({
               instance_id: inst.id,
               total_size_gb: capacity.total_size_gb,
               db_count: capacity.databases?.length || 0,
@@ -463,19 +464,23 @@ class MonitorCollector {
               top_tables: capacity.top_tables || [],
               recorded_at: new Date(),
             } as any);
-          }
+            if (saved.success) outcome.succeeded++; else outcome.failed++;
+          } else { outcome.failed++; }
         } catch (error) {
           assertWorkflowActive();
+          outcome.failed++;
           console.error(`采集实例 ${inst.name} 容量失败:`, error);
         }
       }
     } catch (error) {
       assertWorkflowActive();
       console.error('容量采集失败:', error);
+      outcome.failed++;
     }
+    return outcome;
   }
 
-  async collectCapacityNow(): Promise<void> { await this.collectCapacity(); }
+  async collectCapacityNow(): Promise<{ succeeded: number; failed: number }> { return this.collectCapacity(); }
 }
 
 // 单例

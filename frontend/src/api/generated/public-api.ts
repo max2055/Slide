@@ -53,6 +53,14 @@ export interface ResourceMetricAggregate { value: number | null; resourceCount: 
 export interface ResourceMetricsSummaryResponse { schemaVersion: 1; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; scopes: Record<ResourceType, { metrics: Record<string, ResourceMetricAggregate> }>; }
 export interface ResourceAgentDiagnosisResponse { success: boolean; analysisId?: number; status?: 'queued' | 'cached'; error?: string; }
 
+export type CronRunStatus = 'queued' | 'running' | 'success' | 'partial' | 'failed' | 'unknown' | 'cancelled';
+export interface CronRunAccepted { runId: string; jobId: number; status: CronRunStatus; message: string; }
+export interface CronRun {
+  runId: string; jobId: number; triggeredBy: number | null; status: CronRunStatus;
+  queuedAt: string; startedAt: string | null; runnerFinishedAt: string | null; completedAt: string | null;
+  completion: Record<string, unknown> | null; outputSchema: Record<string, unknown> | null;
+  logId: number | null; errorCode: string | null;
+}
 export interface CronJobIdentity {
   owner_user_id: number | null;
   principal_type: 'user' | 'system-maintenance';

@@ -2432,6 +2432,208 @@
         },
         "type": "object"
       },
+      "CronRun": {
+        "$id": "CronRun",
+        "additionalProperties": false,
+        "properties": {
+          "completedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completion": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^(.*)$": {}
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "errorCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "jobId": {
+            "type": "integer"
+          },
+          "logId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outputSchema": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^(.*)$": {}
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "queuedAt": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "runnerFinishedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "queued",
+                "type": "string"
+              },
+              {
+                "const": "running",
+                "type": "string"
+              },
+              {
+                "const": "success",
+                "type": "string"
+              },
+              {
+                "const": "partial",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              },
+              {
+                "const": "cancelled",
+                "type": "string"
+              }
+            ]
+          },
+          "triggeredBy": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "runId",
+          "jobId",
+          "triggeredBy",
+          "status",
+          "queuedAt",
+          "startedAt",
+          "runnerFinishedAt",
+          "completedAt",
+          "completion",
+          "outputSchema",
+          "logId",
+          "errorCode"
+        ],
+        "type": "object"
+      },
+      "CronRunAccepted": {
+        "$id": "CronRunAccepted",
+        "additionalProperties": false,
+        "properties": {
+          "jobId": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "queued",
+                "type": "string"
+              },
+              {
+                "const": "running",
+                "type": "string"
+              },
+              {
+                "const": "success",
+                "type": "string"
+              },
+              {
+                "const": "partial",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              },
+              {
+                "const": "cancelled",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [
+          "runId",
+          "jobId",
+          "status",
+          "message"
+        ],
+        "type": "object"
+      },
       "DatabaseInstance": {
         "$id": "DatabaseInstance",
         "additionalProperties": true,
@@ -9738,7 +9940,7 @@
     },
     "/api/cron/jobs/{id}/run": {
       "post": {
-        "description": "Revalidates trigger and owner. Executes with current owner permissions intersected with persisted resources; manual administrator triggers cannot elevate the task. Durable run/tool audit must succeed before execution.",
+        "description": "Accepts a durable asynchronous run, not business completion. Idempotency-Key binds actor, job and parameters; reuse after dropped response. Old clients must upgrade with this release. Execution revalidates trigger and owner. Executes with current owner permissions intersected with persisted resources; manual administrator triggers cannot elevate the task. Durable run/tool audit must succeed before execution.",
         "operationId": "runCronJob",
         "parameters": [
           {
@@ -9749,11 +9951,27 @@
               "minimum": 1,
               "type": "integer"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 200,
+              "type": "string"
+            }
           }
         ],
         "responses": {
-          "200": {
-            "description": "Run returned; inspect execution log for outcome"
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CronRunAccepted"
+                }
+              }
+            },
+            "description": "Run accepted; poll its runId for business outcome"
           },
           "400": {
             "description": "Task unbound, target changed/deleted, or invalid capability"
@@ -9764,11 +9982,105 @@
           "404": {
             "description": "Job absent or inaccessible"
           },
+          "409": {
+            "description": "Idempotency key reused with different parameters"
+          },
           "500": {
             "description": "Execution or database failure"
           },
           "503": {
             "description": "Execution authority, durable audit or workflow runtime unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/cron/jobs/{id}/runs": {
+      "get": {
+        "description": "Recovers the authenticated actor own request after a dropped POST response; no execution is triggered.",
+        "operationId": "findCronRequest",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "requestKey",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CronRun"
+                }
+              }
+            },
+            "description": "Original run"
+          },
+          "404": {
+            "description": "Request absent or job inaccessible"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/cron/jobs/{id}/runs/{runId}": {
+      "get": {
+        "description": "Requires current job and target access. runnerFinishedAt and completedAt are separate. unknown means no verified completion; never automatically retry.",
+        "operationId": "getCronRun",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CronRun"
+                }
+              }
+            },
+            "description": "Exact run business state"
+          },
+          "404": {
+            "description": "Run/job absent or inaccessible"
           }
         },
         "security": [

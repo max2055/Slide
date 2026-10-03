@@ -3,7 +3,7 @@
  */
 
 /** 任务状态 */
-export type CronJobStatus = 'success' | 'error' | 'running' | 'skipped' | 'timeout' | 'partial';
+export type CronJobStatus = 'success' | 'error' | 'running' | 'skipped' | 'timeout' | 'partial' | 'queued' | 'failed' | 'unknown' | 'cancelled';
 
 /** cron_jobs 表映射 */
 export interface CronJobConfig {
@@ -38,6 +38,7 @@ export interface CronJobConfig {
 export interface CronJobLog {
   id: number;
   job_id: number;
+  run_id?: string | null;
   started_at: string;
   finished_at: string | null;
   status: CronJobStatus;

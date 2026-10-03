@@ -242,21 +242,23 @@ class BaselineCalculator {
    *
    * @param retentionDays 保留天数，默认 30
    */
-  async cleanupOldBaselines(retentionDays: number = 30): Promise<void> {
+  async cleanupOldBaselines(retentionDays: number = 30): Promise<{ success: boolean; deleted?: number; error?: string }> {
     const pool = this.getPool();
     if (!pool) {
-      return;
+      return { success: false, error: 'DATABASE_UNAVAILABLE' };
     }
 
     try {
       assertWorkflowActive();
-      await pool.execute(
+      const [result] = await pool.execute(
         `DELETE FROM metric_baselines WHERE computed_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
         [retentionDays]
       );
+      return { success: true, deleted: Number((result as { affectedRows: number }).affectedRows) };
     } catch (error) {
       assertWorkflowActive();
       console.error('清理过期基线失败:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 

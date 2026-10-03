@@ -1,4 +1,4 @@
-import { registerWorkflowHandlers } from './src/workflows/register-workflow-handlers.js';
+import { registerWorkflowHandlers, registerCronRunHandler } from './src/workflows/register-workflow-handlers.js';
 import { registerHealthRoutes } from './src/health-routes.js';
 import { registerLLMSceneRoutes } from './src/llm/scene-routes.js';
 import { registerModelDiscoveryRoutes } from './src/llm/model-discovery.js';
@@ -5458,7 +5458,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   await enqueueNotificationDispatch();
   await enqueueReportSchedule();
   await workflowStore.enqueue(createCapacityConsistencyJob());
-  workflowTimer = setInterval(() => { void workflowRuntime.runOnce((job, context) => workflowRegistry.execute(job, context)).catch((error) => console.error('Workflow worker failed:', error)); }, 1_000);
 
   // 启动监控采集
   monitorCollector.start();
@@ -5527,15 +5526,19 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const cronProvider = await createLLMProvider();
   const cronRunner = new AgentRunner(cronProvider);
   const cronExecutor = new CronExecutor(cronRunner, createCronToolRegistry, cronProvider);
-  cronManager = new CronManager(cronJobService, cronExecutor, workflowStore);
+  cronManager = new CronManager(cronJobService, cronExecutor, workflowStore, async (type, payload, runId, context) => {
+    return await workflowRegistry.executeWithResult({ id: runId, type, payload, attempts: 1, maxAttempts: 1, fencingToken: context?.fencingToken ?? 0 }, context) as import('./src/cron/cron-run-store.js').CronCompletion | undefined;
+  });
+  registerCronRunHandler(workflowRegistry, (runId, context) => cronManager!.executeRun(runId, context));
   await cronManager.start();
+  workflowTimer = setInterval(() => { void workflowRuntime.runOnce((job, context) => workflowRegistry.execute(job, context)).catch((error) => console.error('Workflow worker failed:', error)); }, 1_000);
 
   // 清理崩溃残留的 running 日志
   try {
     const reaperPool = (await import('./src/db-connection')).dbConnection.getPool();
     if (reaperPool) {
       const [reaperResult] = await reaperPool.execute(
-        "UPDATE cron_job_logs SET status = 'error', error_message = 'Server 重启，任务被中断', finished_at = NOW() WHERE status = 'running'"
+        "UPDATE cron_job_logs SET status = 'error', error_message = 'Server 重启，任务被中断', finished_at = NOW() WHERE status = 'running' AND run_id IS NULL"
       ) as any;
       if (reaperResult.affectedRows > 0) {
         console.log(`[CronManager] 清理了 ${reaperResult.affectedRows} 条残留 running 日志`);
