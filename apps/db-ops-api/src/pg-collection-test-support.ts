@@ -103,6 +103,13 @@ export function describePGCollection(options: {
       expect(CollectionPgClient.clients.every(c => c.config.password === '')).toBe(true);
     });
 
+    it('discovers via postgres when no default database is configured', async () => {
+      instance.database_name = null;
+      expect(await options.collect()).toMatchObject({ tables: 3, collected: 3 });
+      expect(CollectionPgClient.clients.map(c => c.config.database)).toEqual(['postgres', 'postgres', 'analytics', 'app']);
+      for (const client of CollectionPgClient.clients) expect(client.end).toHaveBeenCalledOnce();
+    });
+
     for (const failure of ['malformed', 'tampered v2', 'wrong key', 'missing key', 'legacy default key']) {
       it(`fails before any connection for ${failure} without logging credentials`, async () => {
         if (failure === 'malformed') instance.password_encrypted = 'bad-ciphertext';
