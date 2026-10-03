@@ -92,3 +92,21 @@ pnpm --filter slide-api exec vitest run src/adapter/__tests__/direct-adapter.tes
 ```
 
 环境沿用上述 macOS arm64 / Node v24.18.0 / pnpm 11.19.0 / Vitest 4.1.8。下一步在同一分支最小修正测试时序，保留所有终态、持久化和输出断言；不改 API/状态/格式/迁移，不扩大运行期限或跳过门禁。硬预算未设定，实际 token/费用遥测不可用，子代理 0。
+
+
+### 最小修复与 GREEN
+
+`27e37a4` 保留上述 RED 检查点。测试只给 `timed_out` 场景设置原有 100 ms 期限；`error` / `completed` 恢复已有 chat policy 默认值，避免模拟准备延迟改变预期终态。生产超时、业务实现和失败分类均未改动。
+
+`finish` mock 的固定 100 ms 睡眠改为 `finishStarted` / `finishAllowed` 屏障：等持久化开始后，先检查 socket writer 尚未发送 error/complete、客户端尚未收到终态，再释放持久化。继续核验收到终态时持久化已完成、成功只 commit 一次且有 messageSequence、失败保留具体 reasonCode 且不保存 partial answer。没有删除或放宽原断言，没有跳过该测试。
+
+同一 150 ms history 延迟探针下 focused 三场景 3/3 GREEN（296 ms），已撤回探针；最终 focused 三场景 3/3 GREEN（138 ms）。最终受影响模块验证一次：
+
+| 命令 | 结果 |
+| --- | --- |
+| `pnpm --filter slide-api exec vitest run src/adapter/__tests__/direct-adapter.test.ts -t 'discards provisional output before delivering WS terminal'` | 3 通过；50 项未选中，不作为完整覆盖 |
+| `pnpm --filter slide-api test` | 304 文件通过 / 22 文件环境门控跳过；2,914 项通过 / 136 项跳过；12.46 s，含完整 DirectAdapter 53 项 |
+| `pnpm --filter slide-api typecheck` | 通过 |
+| `git diff --check` | 通过 |
+
+其余生产代码、配置未变化，复用原完整本地 gate 证据，不重复全仓测试。新 head 的八项 GitHub CI 交由父任务核验，不能沿用旧 head 或把 skipped 当 success；本次只更新 PR #114，不合并、不标 done、不启动后项。无新增回滚步骤：本轮只改测试与本证据文档。
