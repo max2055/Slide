@@ -34,6 +34,7 @@ export QUALIFICATION_ADMIN_PASSWORD=Tpam1234 QUALIFICATION_CANCELLATION_E2E=1 QU
 export AGENT_WORKSPACE="$directory/workspace" PROMPT_VERSIONS_DIR="$directory/prompts" PROMPT_HOT_RELOAD=false
 unset QUALIFICATION_DEEPSEEK_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY
 echo "W14 browser: isolated MySQL=$DB_PORT API=$QUALIFICATION_API_PORT WS=$QUALIFICATION_WS_PORT frontend=$QUALIFICATION_FRONTEND_PORT fake-provider=$QUALIFICATION_CANCELLABLE_LLM_PORT"
-CRON_TEST_MYSQL_PORT="$DB_PORT" pnpm --filter slide-api exec vitest run src/cron/cron-mysql.integration.test.ts src/cron/cron-run-upgrade.mysql.test.ts
+CRON_TEST_MYSQL_PORT="$DB_PORT" METRIC_QUALITY_TEST_MYSQL_PORT="$DB_PORT" \
+  pnpm --filter slide-api exec vitest run src/cron/cron-mysql.integration.test.ts src/cron/cron-run-upgrade.mysql.test.ts src/lifecycle/metric-quality-startup.test.ts
 bash scripts/qualification/run-agent-runtime.sh --mode mysql
 pnpm --filter slide-frontend exec playwright test cron-live.spec.ts --workers=1
