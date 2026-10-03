@@ -122,7 +122,7 @@ import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtim
 import { createMetricSchedulerLifecycle, assertMetricSchedulerSchema } from './src/metrics-v2/scheduler/runtime.js';
 import type { MetricSchedulerLifecycle } from './src/metrics-v2/scheduler/lifecycle.js';
 import { createNotificationDispatchJob, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
-import { createReportNotificationJob, createReportScheduleJob, MysqlReportOccurrenceStore } from './src/report-scheduler.js';
+import { createReportScheduleJob, MysqlReportOccurrenceStore } from './src/report-scheduler.js';
 import { assertCreatableDatabaseType, listAdapterCapabilities } from './src/adapters/capability-matrix.js';
 import { approvalService } from './src/approval-service.js';
 import { databaseLogService } from './src/database-log-service.js';
@@ -5489,9 +5489,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const enqueueReportSchedule = async (availableAt = new Date()) => {
     await workflowStore.enqueue(createReportScheduleJob(availableAt));
   };
-  const enqueueReportNotifications = async (reportId: number, channelIds: readonly number[]) => {
-    await Promise.all(channelIds.map((channelId) => workflowStore.enqueue(createReportNotificationJob(reportId, channelId))));
-  };
   const capacityConsistencyMonitor = new CapacityConsistencyMonitor(
     () => dbConnection.getPool() as any,
     consistencyChecker,
@@ -5502,7 +5499,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     workflowStore, capacityConsistencyMonitor, notificationScheduler, enqueueNotificationDispatch,
     reportSchedule: {
       reportConfigService, serverReportService, reportService,
-      enqueueReportSchedule, enqueueReportNotifications,
+      enqueueReportSchedule,
       createOccurrenceStore: () => new MysqlReportOccurrenceStore(() => dbConnection.getPool() as any),
     },
     notificationDatabaseService, notificationService, reportDatabaseService,
