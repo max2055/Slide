@@ -59,7 +59,8 @@ describe.skipIf(!port)('Cron run migration + startup recovery on MySQL 8', () =>
       await restarted.recover();
       await restarted.recover();
       expect(await restarted.get(queued.runId)).toMatchObject({ status: 'queued', runnerFinishedAt: null });
-      expect(await restarted.findRequest(jobId, null as any, 'queued')).toMatchObject({ runId: queued.runId });
+      const [intents] = await pool.query<mysql.RowDataPacket[]>('SELECT id FROM workflow_jobs WHERE id = ?', [queued.runId]);
+      expect(intents).toEqual([expect.objectContaining({ id: queued.runId })]);
       for (const run of expected) {
         expect(await restarted.get(run.runId)).toMatchObject({ ...run, runnerFinishedAt: expect.anything() });
         const [logs] = await pool.query<mysql.RowDataPacket[]>('SELECT status, structured_result FROM cron_job_logs WHERE run_id = ?', [run.runId]);
