@@ -117,7 +117,7 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
     await pool.query('DELETE FROM instance_permissions');
     await pool.query("INSERT INTO instance_permissions VALUES (8,9,'read-write',NULL)");
     await pool.query('DELETE FROM database_instances');
-    await pool.query("INSERT INTO database_instances VALUES (9,'A'),(10,'B')");
+    await pool.query("INSERT INTO database_instances (id,name) VALUES (9,'A'),(10,'B')");
     await pool.query('DELETE FROM agent_tool_audit');
     for (const table of ['cron_runs', 'workflow_jobs', 'cron_job_logs', 'cron_jobs', 'cron_scripts', 'metric_baselines', 'silence_periods']) await pool.query(`DELETE FROM ${table}`);
   });
