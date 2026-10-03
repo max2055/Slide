@@ -69,3 +69,10 @@ describe('frozen references and access', () => {
     expect(await aiAnalysisDatabaseService.getEvidenceSnapshot(1, { ...actor, sessionVersion: 2 })).toBeNull();
   });
 });
+
+describe('uncertain evidence quality', () => {
+  it('stale and missing observations remain unknown even when their pointer or hash exists', () => {
+    const evidence = freezeEvidence(envelope.subject as any, 'a1', { stale: { value: 90, freshness: 'stale', sources: [{ id: hash }] }, missing: { value: null, quality: { status: 'unknown' } } });
+    for (const ref of ['/stale/value', hash, '/missing']) expect(bindEnvelope({ ...envelope, evidenceRefs: [{ ref, summary: 'observation' }] } as any, { purpose: 'fault_diagnosis', subject: envelope.subject as any, authorizationVersion: 'a1', evidence })).toMatchObject({ verification: 'unknown' });
+  });
+});
