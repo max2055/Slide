@@ -58,6 +58,7 @@ export class MysqlWorkflowStore implements WorkflowStore {
        lease_expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND), fencing_token = fencing_token + 1
        WHERE id = (SELECT id FROM (SELECT id FROM workflow_jobs
          WHERE state IN ('queued', 'retry', 'running') AND available_at <= NOW() AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
+         ${process.env.ANALYSIS_DISPATCH_ENABLED === 'false' ? "AND job_type <> 'analysis.dispatch'" : ''}
          ORDER BY available_at, created_at LIMIT 1) candidate)
        AND state IN ('queued', 'retry', 'running') AND (lease_expires_at IS NULL OR lease_expires_at < NOW())`,
       [workerId, leaseSeconds],

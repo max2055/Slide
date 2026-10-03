@@ -47,6 +47,9 @@ async function startWorkers(pool: Pick<Pool, 'execute'>) {
     createLLMProvider: vi.fn(), createNotificationDispatchJob: vi.fn(),
     createReportScheduleJob: vi.fn(), createReportNotificationJob: vi.fn(),
     createCapacityConsistencyJob: vi.fn(), workflowWorkerId: 'metric-quality-test',
+    analysisDispatchStore: { assertSchema: vi.fn(), recoverLegacy: vi.fn(), recover: vi.fn() },
+    registerAnalysisDispatchHandler: vi.fn(), registerAnalysisRecoveryHandler: vi.fn(),
+    authorizeAnalysisRequest: vi.fn(), analysisConfigurationVersion: vi.fn(), createAnalysisRecoveryJob: vi.fn(),
     setInterval: vi.fn(), clearInterval: vi.fn(),
   };
   for (const name of ['metricRegistry', 'notificationDatabaseService', 'notificationService',

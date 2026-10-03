@@ -1,3 +1,4 @@
+import type { ActorContext } from './auth/actor-context.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 告警事件生命周期管理服务
@@ -369,7 +370,7 @@ class AlertEventService {
   /**
    * 为事件关联的所有告警触发 RCA 分析
    */
-  async triggerRCAForEvent(eventId: number, userId?: number): Promise<{ success: boolean; analysisIds?: number[]; sessionKeys?: string[] }> {
+  async triggerRCAForEvent(eventId: number, userId?: number, actor?: ActorContext): Promise<{ success: boolean; analysisIds?: number[]; sessionKeys?: string[] }> {
     const pool = this.getPool();
     if (!pool) return { success: false };
 
@@ -386,7 +387,7 @@ class AlertEventService {
       const analysisIds: number[] = [];
       const sessionKeys: string[] = [];
       for (const member of members) {
-        const result = await alertRCAService.analyzeAlert(member.alert_id, 'manual');
+        const result = await alertRCAService.analyzeAlert(member.alert_id, 'manual', actor);
         if (result.success && result.analysisId) {
           analysisIds.push(result.analysisId);
           if (result.sessionKey) sessionKeys.push(result.sessionKey);

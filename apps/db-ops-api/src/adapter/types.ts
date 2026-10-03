@@ -162,6 +162,10 @@ export interface InvokeOptions {
   signal?: AbortSignal;
   /** Bind the internal completion tool to exactly one analysis record. */
   analysisId?: number;
+  /** Trusted durable execution callbacks; never accepted from model/HTTP arguments. */
+  runtimeRunId?: string;
+  beforeProviderRequest?: () => Promise<void>;
+  completeAnalysis?: (envelope: unknown) => Promise<{ success: boolean; error?: string }>;
 }
 
 // ── IAgentEngine interface ──

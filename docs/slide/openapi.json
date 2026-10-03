@@ -7916,6 +7916,10 @@
               {
                 "const": "cached",
                 "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
               }
             ]
           },
@@ -11644,6 +11648,31 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "dependentRequired": {
+                  "retryOf": [
+                    "confirmUnknownRetry"
+                  ]
+                },
+                "properties": {
+                  "confirmUnknownRetry": {
+                    "type": "boolean"
+                  },
+                  "retryOf": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
         "responses": {
           "200": {
             "content": {
@@ -11674,6 +11703,16 @@
               }
             },
             "description": "AI diagnosis permission required"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceAgentDiagnosisResponse"
+                }
+              }
+            },
+            "description": "Provider result unknown; explicit confirmation required before a potentially billable retry"
           }
         },
         "security": [

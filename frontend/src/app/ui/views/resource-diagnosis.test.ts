@@ -39,6 +39,28 @@ describe('cross-resource diagnosis', () => {
 });
 
 describe('tracked read-only diagnosis', () => {
+  it('stops polling unknown and sends a billable retry only after the confirmation button', async () => {
+    await import('./resource-diagnosis.js'); localStorage.setItem('permissions', '["*"]');
+    history.replaceState({}, '', '/resource-diagnosis?resourceType=server&resourceId=3&analysisId=42');
+    authFetch.mockImplementation(async (url: string) => ({ ok: !url.endsWith('/evaluation'), json: async () => {
+      if (url === '/api/resources') return { items: [] };
+      if (url.endsWith('/evidence')) return { facts: [], inferences: [], hypotheses: [], gaps: [], truncated: false };
+      if (url.endsWith('/analyses/42')) return { analysisId: 42, status: 'unknown' };
+      if (url.endsWith('/diagnose-agent')) return { analysisId: 43, status: 'queued' };
+      if (url.endsWith('/analyses/43')) return { analysisId: 43, status: 'pending' };
+      return {};
+    } }));
+    const element = document.createElement('resource-diagnosis-page') as any;
+    document.body.append(element); await vi.waitFor(() => expect(element.agentResult?.status).toBe('unknown')); await element.updateComplete;
+    expect(element.statusTimer).toBeNull(); expect(element.shadowRoot.textContent).toContain('不会自动再次调用');
+    const retry = [...element.shadowRoot.querySelectorAll('button')].find((button: any) => button.textContent.includes('确认后重新分析')) as HTMLButtonElement;
+    retry.click(); await element.updateComplete;
+    expect(authFetch.mock.calls.filter(([url]) => url.endsWith('/diagnose-agent'))).toHaveLength(0);
+    const confirm = [...element.shadowRoot.querySelectorAll('button')].find((button: any) => button.textContent.includes('接受可能再次计费并重试')) as HTMLButtonElement;
+    confirm.click(); await vi.waitFor(() => expect(authFetch.mock.calls.filter(([url]) => url.endsWith('/diagnose-agent'))).toHaveLength(1));
+    const call = authFetch.mock.calls.find(([url]) => url.endsWith('/diagnose-agent'));
+    expect(JSON.parse(call![1].body)).toEqual({ retryOf: 42, confirmUnknownRetry: true });
+  });
   it.each(['instance', 'server', 'network_device'])('follows %s cached receipt to a real result without auto submitting', async type => {
     await import('./resource-diagnosis.js');
     localStorage.setItem('permissions', '["*"]');

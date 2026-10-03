@@ -111,7 +111,7 @@ export class InstanceDetailPage extends LitElement {
   @state() private autoRefresh = true;
   @state() private isRefreshing = false;
   @state() private topsqlLoading = false;
-  @state() private diagnosisStatus: "idle"|"running"|"completed"|"failed" = "idle";
+  @state() private diagnosisStatus: "idle"|"running"|"completed"|"failed"|"unknown" = "idle";
   @state() private diagnosisResult: any = null;
   @state() private diagnosisError: string | null = null;
   @state() private showDiagnosisResult = false;
@@ -231,8 +231,12 @@ export class InstanceDetailPage extends LitElement {
     if (!this.instanceId || this.diagnosisStatus === "running") return;
     try {
       const res = await authFetch("/api/ai/analysis", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ analysis_type: "fault_diagnosis", instance_id: this.instanceId, trigger_type: "manual" }) });
-      if (!res.ok) throw new Error("提交诊断失败");
       const data = await res.json();
+      if (!res.ok && data.status === 'unknown') {
+        this.diagnosisStatus = 'unknown'; this.diagnosisResult = { id: data.analysisId, status: 'unknown' };
+        this.diagnosisError = null; this.showDiagnosisModal = true; return;
+      }
+      if (!res.ok) throw new Error("提交诊断失败");
       this.diagnosisStatus = "running"; this.diagnosisError = null; this.showDiagnosisResult = true; this.showDiagnosisModal = true;
       this._startDiagnosisPolling(data.id);
     } catch (err: any) { this.diagnosisStatus = "failed"; this.diagnosisError = err.message || "提交诊断失败"; this.showDiagnosisResult = true; this.showDiagnosisModal = true; }
@@ -256,6 +260,9 @@ export class InstanceDetailPage extends LitElement {
           // Update execution trace during running for live progress display
           this.diagnosisExecutionTrace = record.execution_trace || null;
           this.requestUpdate();
+        } else if (record.status === "unknown") {
+          this.diagnosisStatus = 'unknown'; this.diagnosisResult = record; this.diagnosisError = null;
+          this._stopDiagnosisPolling(); this.loadDiagnosisHistory();
         } else if (record.status === "failed") { this.diagnosisStatus = "failed"; this.diagnosisError = record.error_message || "诊断失败"; this._stopDiagnosisPolling(); }
         this.requestUpdate();
       } catch { /* ignore */ }
@@ -371,10 +378,10 @@ export class InstanceDetailPage extends LitElement {
         <span slot="header">AI 诊断历史 <span style="font-size:var(--text-xs);color:var(--muted);">最近 ${this.diagnosisHistory.length} 条</span></span>
         <div class="diagnosis-history-list">
           ${this.diagnosisHistory.map((r: any) => {
-            const statusStyle = r.status === "completed" ? { cls: "ok", label: "已完成" } : r.status === "failed" ? { cls: "danger", label: "分析失败" } : { cls: "info", label: "进行中" };
+            const statusStyle = r.status === "completed" ? { cls: "ok", label: "已完成" } : r.status === "failed" ? { cls: "danger", label: "分析失败" } : r.status === "unknown" ? { cls: "danger", label: "结果未知" } : { cls: "info", label: "进行中" };
             const raw = typeof r.result === 'string' ? r.result : "";
             const summary = raw.replace(/^#+\s*/gm, "").trim().substring(0, 80);
-            return html`<div class="diagnosis-history-item" @click=${() => { this.activeDiagnosisRecord = r; this.diagnosisResult = r; this.diagnosisStatus = r.status; this.diagnosisError = r.error_message || null; this.diagnosisExecutionTrace = r.execution_trace || null; this.showDiagnosisModal = true; }}>
+            return html`<div class="diagnosis-history-item" @click=${() => { this.activeDiagnosisRecord = r; this.diagnosisResult = r; this.diagnosisStatus = r.status; this.diagnosisError = r.status === "unknown" ? null : r.error_message || null; this.diagnosisExecutionTrace = r.execution_trace || null; this.showDiagnosisModal = true; }}>
               <app-badge variant=${statusStyle.cls} style="font-size:var(--text-xs);padding:2px 8px;flex-shrink:0;">${statusStyle.label}</app-badge>
               <span class="diagnosis-time">${this._formatDiagnosisTime(r.updated_at || r.created_at)}</span>
               <span class="diagnosis-summary-text" title="${summary}">${summary}${raw.length > 80 ? "..." : ""}</span>

@@ -13,7 +13,7 @@ export interface AiAnalysisRecord {
   server_id: number | null;
   network_device_id: number | null;
   related_id: number | null;
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'unknown';
   trigger_type: 'manual' | 'auto';
   cache_key: string | null;
   result: any;
@@ -25,6 +25,14 @@ export interface AiAnalysisRecord {
   completed_at: Date | null;
   created_at: Date;
   updated_at: Date;
+  recovery_reason?: string | null;
+  legacy_status?: string | null;
+  request_state?: string | null;
+  job_id?: string | null;
+  attempt_number?: number;
+  current_run_id?: string | null;
+  request_actor_id?: number | null;
+  authorization_version?: string | null;
 }
 
 export interface ActiveAiAnalysis {
@@ -123,7 +131,8 @@ class AiAnalysisDatabaseService {
         `UPDATE ai_analysis SET
          status = ?,
          started_at = CASE WHEN ? = 'running' THEN NOW() ELSE started_at END
-         WHERE id = ? AND status IN ('pending', 'running')`,
+         WHERE id = ? AND status IN ('pending', 'running')
+         AND NOT EXISTS (SELECT 1 FROM analysis_dispatches d WHERE d.analysis_id = ai_analysis.id)`,
         [status, status, analysisId]
       );
       return (result as any).affectedRows > 0
@@ -139,7 +148,7 @@ class AiAnalysisDatabaseService {
     const pool = this.getPool();
     if (!pool) return;
     try {
-      await pool.execute(`UPDATE ai_analysis SET session_key = ? WHERE id = ?`, [sessionKey, analysisId]);
+      await pool.execute(`UPDATE ai_analysis SET session_key = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM analysis_dispatches d WHERE d.analysis_id = ai_analysis.id)`, [sessionKey, analysisId]);
     } catch (error) {
       console.error('更新 session_key 失败:', error);
     }
@@ -152,14 +161,18 @@ class AiAnalysisDatabaseService {
       + `:user:${lookup.userId}:session:${lookup.sessionVersion}`;
     try {
       const [rows] = await pool.execute(
-        `SELECT id, status, session_key AS sessionKey
+        `SELECT ai_analysis.id, ai_analysis.status, session_key AS sessionKey
          FROM ai_analysis
-         WHERE analysis_type = 'fault_diagnosis'
+         JOIN analysis_dispatches d ON d.analysis_id = ai_analysis.id
+         JOIN workflow_jobs j ON j.id = d.job_id
+         WHERE j.state = 'running' AND j.lease_expires_at > NOW()
+           AND j.lease_owner = d.owner_id AND j.fencing_token = d.fencing_token
+           AND analysis_type = 'fault_diagnosis'
            AND instance_id = ?
            AND trigger_type = ?
            AND cache_key LIKE ?
            AND status IN ('pending', 'running')
-         ORDER BY created_at DESC, id DESC LIMIT 1`,
+         ORDER BY ai_analysis.created_at DESC, ai_analysis.id DESC LIMIT 1`,
         [lookup.instanceId, lookup.triggerType, cacheKeyPattern],
       ) as any;
       if (!Array.isArray(rows) || rows.length === 0) return null;
@@ -180,7 +193,8 @@ class AiAnalysisDatabaseService {
     if (!pool) throw new Error('ANALYSIS_STORE_UNAVAILABLE');
     const [result] = await pool.execute(
       `UPDATE ai_analysis SET session_key = ?
-       WHERE id = ? AND status IN ('pending', 'running') AND session_key IS NULL`,
+       WHERE id = ? AND status IN ('pending', 'running')
+         AND NOT EXISTS (SELECT 1 FROM analysis_dispatches d WHERE d.analysis_id = ai_analysis.id) AND session_key IS NULL`,
       [sessionKey, analysisId],
     ) as any;
     return Number(result.affectedRows) === 1;
@@ -189,16 +203,18 @@ class AiAnalysisDatabaseService {
   /**
    * 查找最近的已完成分析（用于缓存去重）
    */
-  async findRecentCompleted(cacheKey: string, ttlMs: number): Promise<{ analysisId?: number; result?: any } | null> {
+  async findRecentCompleted(cacheKey: string, ttlMs: number, versions?: { evidence: string; config: string; authorization: string }): Promise<{ analysisId?: number; result?: any } | null> {
     const pool = this.getPool();
-    if (!pool) return null;
+    if (!pool || !versions || !Number.isFinite(ttlMs)) return null;
     try {
       const [rows] = await pool.query(
-        `SELECT id as analysisId, result FROM ai_analysis
+        `SELECT ai_analysis.id as analysisId, result FROM ai_analysis
+         JOIN analysis_dispatches d ON d.analysis_id = ai_analysis.id
          WHERE cache_key = ? AND status = 'completed'
+           AND d.request_state = 'completed' AND d.evidence_version = ? AND d.config_version = ? AND d.authorization_version = ?
            AND completed_at > DATE_SUB(NOW(), INTERVAL ? MICROSECOND)
          ORDER BY completed_at DESC LIMIT 1`,
-        [cacheKey, ttlMs * 1000]
+        [cacheKey, versions.evidence, versions.config, versions.authorization, ttlMs * 1000]
       ) as any;
       if (!rows.length) return null;
       const r = rows[0];
@@ -234,7 +250,8 @@ class AiAnalysisDatabaseService {
            \`usage\` = ?,
            duration_ms = ?,
            completed_at = NOW()
-           WHERE id = ? AND status IN ('pending', 'running')`,
+           WHERE id = ? AND status IN ('pending', 'running')
+         AND NOT EXISTS (SELECT 1 FROM analysis_dispatches d WHERE d.analysis_id = ai_analysis.id)`,
           [
             resultValue,
             data.executionTrace ? JSON.stringify(data.executionTrace) : null,
@@ -275,7 +292,8 @@ class AiAnalysisDatabaseService {
         `UPDATE ai_analysis SET
            status = 'completed', result = ?, analysis_envelope = ?, envelope_backfill_status = 'parsed',
            execution_trace = ?, \`usage\` = ?, duration_ms = ?, completed_at = NOW()
-         WHERE id = ? AND status IN ('pending', 'running')`,
+         WHERE id = ? AND status IN ('pending', 'running')
+         AND NOT EXISTS (SELECT 1 FROM analysis_dispatches d WHERE d.analysis_id = ai_analysis.id)`,
         [
           JSON.stringify(safeEnvelope.displayMarkdown), JSON.stringify(safeEnvelope),
           data.executionTrace ? JSON.stringify(data.executionTrace) : null,
@@ -315,7 +333,8 @@ class AiAnalysisDatabaseService {
          status = 'failed',
          error_message = ?,
          completed_at = NOW()
-         WHERE id = ? AND status IN ('pending', 'running')`,
+         WHERE id = ? AND status IN ('pending', 'running')
+         AND NOT EXISTS (SELECT 1 FROM analysis_dispatches d WHERE d.analysis_id = ai_analysis.id)`,
         [errorMessage, analysisId]
       ) as any;
       if (update.affectedRows === 0) return { success: false, error: 'ANALYSIS_ALREADY_TERMINAL' };
@@ -327,35 +346,18 @@ class AiAnalysisDatabaseService {
   }
 
   /**
-   * 自动检测并标记超时的分析记录
-   * 检查超过 10 分钟仍处于 running 状态的分析，将其标记为 failed
+   * 兼容旧调用：仅把无法确认派发状态的历史超时记录标记为 unknown。
+   * durable 分析由独立恢复扫描按租约与执行身份处理。
    */
   async checkAndFailStuckAnalyses(): Promise<{ failed_count: number }> {
+    // Compatibility entry point; durable recovery belongs to the wired dispatcher.
+    // A legacy timeout cannot prove the request was never billed.
     const pool = this.getPool();
-    if (!pool) {
-      return { failed_count: 0 };
-    }
-
-    try {
-      const [rows] = await pool.query(
-        `SELECT id FROM ai_analysis WHERE status = 'running' AND started_at IS NOT NULL AND started_at < NOW() - INTERVAL 10 MINUTE`
-      ) as any;
-
-      if (!Array.isArray(rows) || rows.length === 0) {
-        return { failed_count: 0 };
-      }
-
-      let failedCount = 0;
-      for (const row of rows) {
-        const result = await this.failAnalysis(row.id, '诊断超时：Agent 在 10 分钟内未完成');
-        if (result.success) failedCount++;
-      }
-
-      return { failed_count: failedCount };
-    } catch (error: any) {
-      console.error('检测超时分析记录失败:', error);
-      return { failed_count: 0 };
-    }
+    if (!pool) return { failed_count: 0 };
+    await pool.execute(`UPDATE ai_analysis a LEFT JOIN analysis_dispatches d ON d.analysis_id = a.id
+      SET a.legacy_status = a.status, a.status = 'unknown', a.recovery_reason = 'LEGACY_DISPATCH_UNCONFIRMED'
+      WHERE d.analysis_id IS NULL AND a.status IN ('pending','running') AND a.created_at < NOW() - INTERVAL 10 MINUTE`);
+    return { failed_count: 0 };
   }
 
   /**
@@ -369,7 +371,9 @@ class AiAnalysisDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        'SELECT * FROM ai_analysis WHERE id = ?',
+        `SELECT a.*, d.job_id, d.request_state, d.attempt_number, d.current_run_id, d.authorization_version,
+         JSON_UNQUOTE(JSON_EXTRACT(d.request_snapshot, '$.actor.userId')) AS request_actor_id
+         FROM ai_analysis a LEFT JOIN analysis_dispatches d ON d.analysis_id = a.id WHERE a.id = ?`,
         [analysisId]
       ) as any;
 
@@ -448,31 +452,12 @@ class AiAnalysisDatabaseService {
   /**
    * 根据缓存键查找已完成的分析记录（TTL 内）
    */
-  async findByCacheKey(cacheKey: string): Promise<AiAnalysisRecord | null> {
-    const pool = this.getPool();
-    if (!pool) {
-      return null;
-    }
-
-    try {
-      const [rows] = await pool.execute(
-        `SELECT * FROM ai_analysis
-         WHERE cache_key = ?
-         AND status = 'completed'
-         AND created_at > DATE_SUB(NOW(), INTERVAL ttl_minutes MINUTE)
-         ORDER BY created_at DESC
-         LIMIT 1`,
-        [cacheKey]
-      ) as any;
-
-      if (Array.isArray(rows) && rows.length > 0) {
-        return this._parseRow(rows[0]);
-      }
-      return null;
-    } catch (error) {
-      console.error('查找缓存分析记录失败:', error);
-      return null;
-    }
+  async findByCacheKey(cacheKey: string, versions?: { evidence: string; config: string; authorization: string }): Promise<AiAnalysisRecord | null> {
+    // Historical results have no verified evidence/configuration identity. Keep
+    // them readable in history but never present them as a fresh result cache.
+    if (!versions) return null;
+    const found = await this.findRecentCompleted(cacheKey, 1_800_000, versions);
+    return found?.analysisId ? this.getAnalysisById(found.analysisId) : null;
   }
 
   /**
@@ -485,7 +470,8 @@ class AiAnalysisDatabaseService {
     }
 
     try {
-      const [result] = await pool.execute('DELETE FROM ai_analysis WHERE id = ?', [analysisId]) as any;
+      const [result] = await pool.execute(`DELETE FROM ai_analysis WHERE id = ? AND NOT (status IN ('pending','running','unknown')
+        AND EXISTS (SELECT 1 FROM analysis_dispatches d WHERE d.analysis_id = ai_analysis.id))`, [analysisId]) as any;
       if (result.affectedRows === 0) {
         return { success: false, error: '分析记录不存在' };
       }
@@ -512,7 +498,8 @@ class AiAnalysisDatabaseService {
           SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
           SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running,
           SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-          SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+          SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+          SUM(CASE WHEN status = 'unknown' THEN 1 ELSE 0 END) as unknown
         FROM ai_analysis
       `;
       const params: any[] = [];
@@ -545,7 +532,7 @@ class AiAnalysisDatabaseService {
       const record = await this.getAnalysisById(analysisId);
       if (!record) return null;
       if (record.status === 'completed') return record;
-      if (record.status === 'failed') return record;
+      if (record.status === 'failed' || record.status === 'unknown') return record;
       await new Promise(resolve => setTimeout(resolve, pollInterval));
     }
 

@@ -274,7 +274,7 @@ export const ResourceMetricsSummaryResponseSchema = Type.Object({
 }, { $id: 'ResourceMetricsSummaryResponse', additionalProperties: false });
 export const ResourceAgentDiagnosisResponseSchema = Type.Object({
   success: Type.Boolean(), analysisId: Type.Optional(Type.Integer({ minimum: 1 })),
-  status: Type.Optional(Type.Union([Type.Literal('queued'), Type.Literal('cached')])),
+  status: Type.Optional(Type.Union([Type.Literal('queued'), Type.Literal('cached'), Type.Literal('unknown')])),
   error: Type.Optional(Type.String()),
 }, { $id: 'ResourceAgentDiagnosisResponse', additionalProperties: false });
 

@@ -1,4 +1,4 @@
-import { assertWorkflowActive, workflowExecution } from './workflows/execution-context.js';
+import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * Fault diagnosis orchestration.
  * Evidence is collected under the requesting actor before any analysis row is created.
@@ -16,14 +16,10 @@ import {
 } from './instance-diagnostic-context-service.js';
 
 type FaultDiagnosisTrigger = 'manual' | 'auto';
-type PendingDiagnosisState = 'creating' | 'dispatched' | 'failure_unconfirmed';
-type FaultDiagnosisStatus = 'queued' | 'in_progress' | 'failure_pending';
+type FaultDiagnosisStatus = 'queued' | 'in_progress' | 'unknown';
 type FaultDiagnosisResult = { success: boolean; analysisId?: number; error?: string; status?: FaultDiagnosisStatus };
 
-type FaultAnalysisStore = Pick<typeof aiAnalysisDatabaseService,
-  'findActiveFaultDiagnosis' | 'findByCacheKey' | 'createAnalysis' | 'updateStatus' | 'markDispatched'
-  | 'failAnalysis' | 'waitForCompletion'
-  | 'getAnalysisList' | 'getAnalysisStats'>;
+type FaultAnalysisStore = Pick<typeof aiAnalysisDatabaseService, 'getAnalysisList' | 'getAnalysisStats'>;
 
 export interface FaultDiagnosisDependencies {
   listActiveInstances: () => Promise<readonly { id: number }[]>;
@@ -44,15 +40,14 @@ const defaultDependencies: FaultDiagnosisDependencies = {
 };
 
 export class FaultDiagnosisService {
-  private readonly pendingDiagnoses = new Map<string, PendingDiagnosisState>();
-
   constructor(private readonly dependencies: FaultDiagnosisDependencies = defaultDependencies) {}
 
   async diagnoseInstance(
     actor: ActorContext,
     instanceId: number,
+    retryOf?: number,
   ): Promise<FaultDiagnosisResult> {
-    return this.diagnose(actor, instanceId, 'manual');
+    return this.diagnose(actor, instanceId, 'manual', retryOf);
   }
 
   async diagnoseUnhealthyInstances(): Promise<number[]> {
@@ -103,118 +98,25 @@ export class FaultDiagnosisService {
     actor: ActorContext,
     instanceId: number,
     trigger: FaultDiagnosisTrigger,
+    retryOf?: number,
   ): Promise<FaultDiagnosisResult> {
     if (!Number.isSafeInteger(instanceId) || instanceId <= 0) throw new Error('RESOURCE_REF_INVALID');
-    const pendingKey = this.buildPendingKey(actor, instanceId, trigger);
-    const cacheKey = this.buildCacheKey(actor, instanceId, trigger);
-    const pendingState = this.pendingDiagnoses.get(pendingKey);
-    if (pendingState) return pendingDiagnosisResult(pendingState);
-    this.pendingDiagnoses.set(pendingKey, 'creating');
-    let releasePendingOnReturn = true;
-
-    try {
-      assertWorkflowActive();
-      const diagnosticContext = await this.dependencies.contextCollector.collect(actor, instanceId);
-      if (diagnosticContext.subject?.type !== 'instance' || diagnosticContext.subject.id !== instanceId) {
-        throw new Error('DIAGNOSTIC_CONTEXT_SUBJECT_MISMATCH');
-      }
-
-      assertWorkflowActive();
-      const cached = await this.dependencies.analysisStore.findByCacheKey(cacheKey);
-      if (cached?.result) return { success: true, analysisId: cached.id };
-
-      assertWorkflowActive();
-      const active = await this.dependencies.analysisStore.findActiveFaultDiagnosis({
-        instanceId,
-        triggerType: trigger,
-        userId: actor.userId,
-        sessionVersion: actor.sessionVersion,
-      });
-      if (active) {
-        const state: PendingDiagnosisState = active.sessionKey ? 'dispatched' : 'failure_unconfirmed';
-        this.pendingDiagnoses.set(pendingKey, state);
-        releasePendingOnReturn = false;
-        assertWorkflowActive();
-        this.monitorCompletion(active.id, pendingKey);
-        return pendingDiagnosisResult(state);
-      }
-
-      assertWorkflowActive();
-      const createResult = await this.dependencies.analysisStore.createAnalysis({
-        analysis_type: 'fault_diagnosis',
-        instance_id: instanceId,
-        trigger_type: trigger,
-        cache_key: cacheKey,
-      });
-      if (!createResult.success || !createResult.analysisId) {
-        return { success: false, error: createResult.error || 'CREATE_ANALYSIS_FAILED' };
-      }
-      const analysisId = createResult.analysisId;
-
-      assertWorkflowActive();
-      const running = await this.dependencies.analysisStore.updateStatus(analysisId, 'running');
-      if (!running.success) {
-        const error = running.error || 'UPDATE_ANALYSIS_STATUS_FAILED';
-        releasePendingOnReturn = false;
-        assertWorkflowActive();
-        await this.persistFailureOrMonitor(analysisId, pendingKey, error);
-        return { success: false, error };
-      }
-
-      const instance = diagnosticContext.database.instance;
-      const name = stringMetadata(instance, 'name') || `instance-${instanceId}`;
-      const databaseType = stringMetadata(instance, 'db_type') || 'unknown';
-      const environment = stringMetadata(instance, 'environment') || 'unknown';
-      const sessionKey = `diagnosis-${analysisId}`;
-      try {
-        assertWorkflowActive();
-        await this.dependencies.dispatch({
-          type: 'fault_diagnosis',
-          cacheKey,
-          instanceId,
-          sessionKey,
-          triggerType: trigger,
-          existingAnalysisId: analysisId,
-          diagnosticContext,
-          userMessage: `请仅依据随请求提供的 diagnosticContext 分析实例 "${name}" `
-            + `(${databaseType}, ${environment}) 的故障证据。缺失证据必须保持未知；完成后保存结构化诊断结果。`,
-        });
-      } catch (error) {
-        assertWorkflowActive();
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`[FaultDiagnosis] Agent 诊断 ${analysisId} 失败:`, message);
-        releasePendingOnReturn = false;
-        assertWorkflowActive();
-        await this.persistFailureOrMonitor(analysisId, pendingKey, message);
-        return { success: false, error: message };
-      }
-
-      let markerConfirmed = false;
-      try {
-        assertWorkflowActive();
-        markerConfirmed = await this.dependencies.analysisStore.markDispatched(analysisId, sessionKey);
-      } catch {}
-      if (!markerConfirmed) {
-        this.pendingDiagnoses.set(pendingKey, 'failure_unconfirmed');
-        releasePendingOnReturn = false;
-        assertWorkflowActive();
-        this.monitorCompletion(analysisId, pendingKey);
-        return {
-          success: false,
-          error: 'FAULT_DIAGNOSIS_DISPATCH_MARKER_UNCONFIRMED',
-          status: 'failure_pending',
-        };
-      }
-
-      this.pendingDiagnoses.set(pendingKey, 'dispatched');
-      releasePendingOnReturn = false;
-      assertWorkflowActive();
-      this.monitorCompletion(analysisId, pendingKey);
-
-      return { success: true, analysisId, status: 'queued' };
-    } finally {
-      if (releasePendingOnReturn || workflowExecution.getStore()?.signal.aborted) this.pendingDiagnoses.delete(pendingKey);
-    }
+    assertWorkflowActive();
+    const diagnosticContext = await this.dependencies.contextCollector.collect(actor, instanceId);
+    if (diagnosticContext.subject?.type !== 'instance' || diagnosticContext.subject.id !== instanceId) throw new Error('DIAGNOSTIC_CONTEXT_SUBJECT_MISMATCH');
+    const instance = diagnosticContext.database.instance;
+    const name = stringMetadata(instance, 'name') || `instance-${instanceId}`;
+    const databaseType = stringMetadata(instance, 'db_type') || 'unknown';
+    const environment = stringMetadata(instance, 'environment') || 'unknown';
+    assertWorkflowActive();
+    const result = await this.dependencies.dispatch({
+      type: 'fault_diagnosis', cacheKey: this.buildCacheKey(actor, instanceId, trigger), instanceId,
+      sessionKey: 'diagnosis', triggerType: trigger, diagnosticContext, actor, retryOf,
+      userMessage: `请仅依据随请求提供的 diagnosticContext 分析实例 "${name}" `
+        + `(${databaseType}, ${environment}) 的故障证据。缺失证据必须保持未知；完成后保存结构化诊断结果。`,
+    });
+    if (result.status === 'unknown') return { success: false, analysisId: result.analysisId, status: 'unknown', error: 'ANALYSIS_PROVIDER_RESULT_UNKNOWN：重试可能再次计费，需要明确确认' };
+    return { success: true, analysisId: result.analysisId, status: result.status === 'running' ? 'in_progress' : 'queued' };
   }
 
   async getDiagnosisHistory(instanceId: number, limit: number = 10): Promise<any[]> {
@@ -239,48 +141,6 @@ export class FaultDiagnosisService {
     return `fault:${instanceId}:${currentHour}:${trigger}:user:${actor.userId}:session:${actor.sessionVersion}`;
   }
 
-  private buildPendingKey(actor: ActorContext, instanceId: number, trigger: FaultDiagnosisTrigger): string {
-    return `fault:${instanceId}:pending:${trigger}:user:${actor.userId}:session:${actor.sessionVersion}`;
-  }
-
-  private async persistFailureOrMonitor(analysisId: number, pendingKey: string, error: string): Promise<void> {
-    this.pendingDiagnoses.set(pendingKey, 'failure_unconfirmed');
-    try {
-      const result = await this.dependencies.analysisStore.failAnalysis(analysisId, error);
-      if (result.success) {
-        this.pendingDiagnoses.delete(pendingKey);
-        return;
-      }
-    } catch {}
-    this.monitorCompletion(analysisId, pendingKey);
-  }
-
-  private monitorCompletion(analysisId: number, pendingKey: string): void {
-    if (workflowExecution.getStore()?.signal.aborted) {
-      this.pendingDiagnoses.delete(pendingKey);
-      return;
-    }
-    void Promise.resolve()
-      .then(() => this.dependencies.analysisStore.waitForCompletion(analysisId, 120_000))
-      .then((record) => record?.status === 'completed' || record?.status === 'failed')
-      .catch(() => false)
-      .then((terminal) => {
-        if (terminal || workflowExecution.getStore()?.signal.aborted) {
-          this.pendingDiagnoses.delete(pendingKey);
-          return;
-        }
-        const retry = setTimeout(() => this.monitorCompletion(analysisId, pendingKey), 2_000);
-        retry.unref();
-      });
-  }
-}
-
-function pendingDiagnosisResult(state: PendingDiagnosisState): FaultDiagnosisResult {
-  return {
-    success: false,
-    error: '诊断正在创建中，请稍后重试',
-    status: state === 'failure_unconfirmed' ? 'failure_pending' : 'in_progress',
-  };
 }
 
 function stringMetadata(instance: InstanceDiagnosticContext['database']['instance'], key: string): string | null {

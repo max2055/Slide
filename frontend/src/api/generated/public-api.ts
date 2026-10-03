@@ -51,7 +51,7 @@ export interface ResourceOverviewItem { resource: ResourceRef; label: string; st
 export interface ResourceOverviewResponse { schemaVersion: 1; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; summary: { total: number; byType: Record<ResourceType, number>; byStatus: Record<string, number>; fresh: number; stale: number; missing: number; unresolvedAlerts: number; impactedResources: number; }; items: ResourceOverviewItem[]; }
 export interface ResourceMetricAggregate { value: number | null; resourceCount: number; observedAt: string | null; }
 export interface ResourceMetricsSummaryResponse { schemaVersion: 1; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; scopes: Record<ResourceType, { metrics: Record<string, ResourceMetricAggregate> }>; }
-export interface ResourceAgentDiagnosisResponse { success: boolean; analysisId?: number; status?: 'queued' | 'cached'; error?: string; }
+export interface ResourceAgentDiagnosisResponse { success: boolean; analysisId?: number; status?: 'queued' | 'cached' | 'unknown'; error?: string; }
 
 export type CronRunStatus = 'queued' | 'running' | 'success' | 'partial' | 'failed' | 'unknown' | 'cancelled';
 export interface CronRunAccepted { runId: string; jobId: number; status: CronRunStatus; message: string; }
