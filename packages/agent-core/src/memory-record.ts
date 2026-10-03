@@ -172,6 +172,14 @@ export class StructuredMemoryStore {
     });
   }
   async invalidate(scope: MemoryScope, live: Map<string, string>, ids: string[]): Promise<void> {
+    assertMemoryScope(scope);
+    // Reconciliation with unchanged evidence is a read. Keep the transactional
+    // recheck below when either records or jobs need persistent invalidation.
+    const snapshot = await this.readSnapshot();
+    const own = scopeKey(scope);
+    const sourceChanged = (s: { id: string; hash: string }) => ids.includes(s.id) && live.get(s.id) !== s.hash;
+    if (!snapshot.records.some(r => scopeKey(r.scope) === own && r.sources.some(sourceChanged))
+      && !snapshot.jobs.some(j => scopeKey(j.scope) === own && j.inputs.some(sourceChanged))) return;
     await this.transaction(state => {
       for (const r of state.records.filter(r => scopeKey(r.scope) === scopeKey(scope))) {
         const changed = r.sources.filter(s => ids.includes(s.id) && live.get(s.id) !== s.hash).map(s => s.id);
