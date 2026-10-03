@@ -164,7 +164,7 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
     const connection = await this.pool().getConnection();
     try {
       await connection.beginTransaction();
-      const [instances] = await connection.execute<any[]>('SELECT id FROM database_instances WHERE id = ? FOR UPDATE', [instanceId]);
+      const [instances] = await connection.execute<any[]>("SELECT id FROM database_instances WHERE id = ? AND lifecycle_state = 'available' FOR UPDATE", [instanceId]);
       if (instances.length === 0) throw new Error('INSTANCE_NOT_FOUND');
       if (mappings.length > 0) {
         const serverIds = mappings.map((mapping) => mapping.serverId).sort((left, right) => left - right);
@@ -234,7 +234,7 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
     const connection = await this.pool().getConnection();
     try {
       await connection.beginTransaction();
-      const [instances] = await connection.execute<any[]>('SELECT id FROM database_instances WHERE id = ? FOR UPDATE', [instanceId]);
+      const [instances] = await connection.execute<any[]>("SELECT id FROM database_instances WHERE id = ? AND lifecycle_state = 'available' FOR UPDATE", [instanceId]);
       if (instances.length === 0) throw new Error('INSTANCE_NOT_FOUND');
       const [rows] = await connection.execute<any[]>(
         `SELECT id, valid_from FROM resource_relations

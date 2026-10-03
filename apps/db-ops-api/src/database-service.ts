@@ -1,3 +1,4 @@
+import { instanceAccessLifecycle, cleanupDeadline } from './resources/instance-access-lifecycle.js';
 import { migrateOperationalChecks } from './metrics-v2/consumers/operational.js';
 /**
  * 数据库服务模块 - 真实的数据库连接和数据采集
@@ -167,6 +168,9 @@ export interface HealthCheckResult {
 
 class DatabaseService {
   private connections: Map<number, DatabaseConnection> = new Map();
+  private closing = new Map<number, Promise<void>>();
+  private driverCloses = new WeakMap<object, Promise<void>>();
+  private opening = new Map<number, Promise<boolean>>();
   private readonly explainQueues = new Map<number, Promise<void>>();
 
   private validateExplainSql(sql: string, dbType: string): string | null {
@@ -193,33 +197,50 @@ class DatabaseService {
   /**
    * 添加数据库连接
    */
-  async addConnection(
+  async addConnection(id: number, name: string, config: DatabaseConfig): Promise<boolean> {
+    const previous = this.opening.get(id) ?? Promise.resolve(false);
+    const pending = instanceAccessLifecycle.track(id, async () => {
+      await previous.catch(() => false);
+      try {
+        await instanceAccessLifecycle.assertAvailable(id);
+        await this.removeConnection(id);
+      } catch { return false; }
+      return this.openConnection(id, name, config);
+    });
+    this.opening.set(id, pending);
+    try { return await pending; } finally { if (this.opening.get(id) === pending) this.opening.delete(id); }
+  }
+
+  private async openConnection(
     id: number,
     name: string,
     config: DatabaseConfig
   ): Promise<boolean> {
     const dbType = config.db_type || 'mysql';
-
+    let candidate: Partial<DatabaseConnection> | undefined;
     try {
       const target = await authorizeDatabaseTarget(
         { host: config.host, port: config.port, dbType },
         { allowManagedLoopback: true, allowManagedPort: true },
       );
+      await instanceAccessLifecycle.assertAvailable(id);
       const connectionConfig = { ...config, host: target.address };
       if (dbType === 'postgresql') {
         // PostgreSQL 连接
-        const pgClient = new PgClient({
+        const pgClient = instanceAccessLifecycle.guardDriver(id, new PgClient({
           host: connectionConfig.host,
           port: config.port,
           user: config.user,
           password: config.password,
           database: config.database || 'postgres',
           connectionTimeoutMillis: 5000,
-        });
+        }));
+        candidate = { pgClient };
 
         await pgClient.connect();
         await pgClient.query('SELECT 1');
 
+        await instanceAccessLifecycle.assertAvailable(id);
         this.connections.set(id, {
           id,
           name,
@@ -247,7 +268,7 @@ class DatabaseService {
         }
         // D-18: NLS_LANG 默认 AMERICAN_AMERICA.AL32UTF8 (oracledb 默认值)
 
-        const pool = await (oracledb.createPool({
+        const pool = instanceAccessLifecycle.guardDriver(id, await (oracledb.createPool({
           user: config.user,
           password: config.password,
           connectString: `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${connectionConfig.host})(PORT=${config.port}))(CONNECT_DATA=(SERVICE_NAME=${config.database || 'ORCL'})))`,
@@ -259,12 +280,15 @@ class DatabaseService {
           queueRequests: 1,
           queueMax: 500,
           queueTimeout: 60000,
-        } as any) as unknown as Promise<oracledb.Pool>);
+        } as any) as unknown as Promise<oracledb.Pool>));
+        candidate = { oraclePool: pool };
 
         // 获取持久连接（保持向后兼容）
         const connection = await pool.getConnection();
+        candidate.oracleConnection = connection;
         await connection.execute('SELECT 1 FROM DUAL');
 
+        await instanceAccessLifecycle.assertAvailable(id);
         this.connections.set(id, {
           id,
           name,
@@ -284,7 +308,7 @@ class DatabaseService {
         // 达梦数据库连接 - 使用官方 dmdb 驱动
         // 强制 IPv4：Docker 容器通常只绑定 0.0.0.0，localhost 解析到 ::1 会导致 ETIMEDOUT
         const host = connectionConfig.host;
-        const dmConnection = await withTimeout(dmdb.getConnection({
+        const dmConnection = instanceAccessLifecycle.guardDriver(id, await withTimeout(instanceAccessLifecycle.track(id, () => dmdb.getConnection({
           user: config.user,
           password: config.password,
           connectString: `${host}:${config.port}`,
@@ -293,9 +317,11 @@ class DatabaseService {
           sessionTimeout: 15,
           socketTimeout: 30_000,
           loginEncrypt: false,
-        }), 10_000, `Dameng connection timed out after 10000ms`, (lateConnection) => {
-          void lateConnection.close().catch(() => undefined);
-        });
+        })), 10_000, `Dameng connection timed out after 10000ms`, (lateConnection) => {
+          const close = instanceAccessLifecycle.ownTemporary(id, () => lateConnection.close());
+          void instanceAccessLifecycle.track(id, close).catch(() => undefined);
+        }));
+        candidate = { dmConnection };
 
         try {
           await withTimeout(dmConnection.execute('SELECT 1 FROM DUAL'), 5_000, 'Dameng health probe timed out after 5000ms');
@@ -304,6 +330,7 @@ class DatabaseService {
           throw error;
         }
 
+        await instanceAccessLifecycle.assertAvailable(id);
         this.connections.set(id, {
           id,
           name,
@@ -321,7 +348,7 @@ class DatabaseService {
         return true;
       } else if (dbType === 'mysql') {
         // MySQL 连接
-        const pool = mysql.createPool({
+        const pool = instanceAccessLifecycle.guardDriver(id, mysql.createPool({
           host: connectionConfig.host,
           port: config.port,
           user: config.user,
@@ -332,13 +359,15 @@ class DatabaseService {
           timezone: '+08:00',
           enableKeepAlive: true,
           keepAliveInitialDelay: 10000,
-        });
+        }));
+        candidate = { pool };
 
         // 测试连接
         const connection = await pool.getConnection();
         await connection.ping();
         connection.release();
 
+        await instanceAccessLifecycle.assertAvailable(id);
         this.connections.set(id, {
           id,
           name,
@@ -359,6 +388,11 @@ class DatabaseService {
         return false;
       }
     } catch (error: any) {
+      if (candidate) {
+        // Retain unsuccessful closes so a later removal can retry them.
+        this.connections.set(id, { ...candidate, id, name, config, connected: false, db_type: dbType } as DatabaseConnection);
+        await this.removeConnection(id).catch(() => undefined);
+      }
       const connectionError = dbType === 'oracle' ? formatOracleConnectionError(error) : error;
       console.error(`❌ ${dbType === 'postgresql' ? 'PostgreSQL' : dbType === 'oracle' ? 'Oracle' : dbType === 'dameng' ? '达梦' : 'MySQL'} 连接失败：${name}`, connectionError);
       return false;
@@ -369,27 +403,46 @@ class DatabaseService {
    * 获取连接
    */
   getConnection(id: number): DatabaseConnection | null {
-    return this.connections.get(id) || null;
+    return instanceAccessLifecycle.isRevoked(id) ? null : this.connections.get(id) || null;
   }
 
   /**
    * 删除连接
    */
   async removeConnection(id: number): Promise<void> {
+    const current = this.closing.get(id);
+    if (current) return current;
+    const pending = this.closeConnection(id).finally(() => this.closing.delete(id));
+    this.closing.set(id, pending);
+    return pending;
+  }
+
+  private async closeConnection(id: number): Promise<void> {
     const conn = this.connections.get(id);
-    if (conn?.pool) {
-      await conn.pool.end();
+    if (!conn) return;
+    conn.connected = false;
+    const errors: string[] = [];
+    // Close the persistent Oracle session before its pool. Independent failures
+    // never prevent the remaining drivers from being attempted.
+    for (const key of ['pool', 'pgClient', 'oracleConnection', 'oraclePool', 'dmConnection'] as const) {
+      const handle = conn[key];
+      if (!handle) continue;
+      try {
+        let closing = this.driverCloses.get(handle);
+        if (!closing) {
+          closing = Promise.resolve().then(() => {
+            if (key === 'pool' || key === 'pgClient') return (handle as any).end();
+            return key === 'oraclePool' ? (handle as any).close(0) : (handle as any).close();
+          }).then(() => { if (conn[key] === handle) conn[key] = null; });
+          this.driverCloses.set(handle, closing);
+          const finish = () => this.driverCloses.delete(handle);
+          closing.then(finish, finish);
+        }
+        await cleanupDeadline(closing);
+      } catch { errors.push(key); }
     }
-    if (conn?.pgClient) {
-      await conn.pgClient.end();
-    }
-    if (conn?.oraclePool) {
-      await conn.oraclePool.close(0);
-    }
-    if (conn?.dmConnection) {
-      await conn.dmConnection.close();
-    }
-    this.connections.delete(id);
+    if (errors.length) throw new Error('DRIVER_CLOSE_PENDING:' + errors.join(','));
+    if (this.connections.get(id) === conn) this.connections.delete(id);
   }
 
   /**
@@ -3100,7 +3153,7 @@ class DatabaseService {
    * 获取所有连接
    */
   getAllConnections(): DatabaseConnection[] {
-    return Array.from(this.connections.values());
+    return Array.from(this.connections.values()).filter(conn => !instanceAccessLifecycle.isRevoked(conn.id));
   }
 
   /**
@@ -3108,6 +3161,7 @@ class DatabaseService {
    * 对 connected=true 的连接执行一次存活探测，不可达时触发重连
    */
   async ensureConnectionAlive(id: number): Promise<boolean> {
+    try { await instanceAccessLifecycle.assertAvailable(id); } catch { return false; }
     const conn = this.connections.get(id);
     if (!conn) return false;
     if (!conn.connected) {
@@ -3124,6 +3178,7 @@ class DatabaseService {
    * 检查数据库连接是否存活 — 对每种 DB 类型实际执行一次探测查询
    */
   async checkConnectionAlive(id: number): Promise<boolean> {
+    try { await instanceAccessLifecycle.assertAvailable(id); } catch { return false; }
     const conn = this.connections.get(id);
     if (!conn) return false;
 
@@ -3159,6 +3214,7 @@ class DatabaseService {
    * 当不存在旧连接 entry 时，可通过 fallbackName + fallbackConfig 从头建连
    */
   async reconnect(id: number, fallbackName?: string, fallbackConfig?: DatabaseConfig): Promise<boolean> {
+    try { await instanceAccessLifecycle.assertAvailable(id); } catch { return false; }
     const oldConn = this.connections.get(id);
 
     if (!oldConn) {
@@ -3191,6 +3247,7 @@ class DatabaseService {
     fn: (conn: DatabaseConnection) => Promise<T | null>,
     methodName: string
   ): Promise<T | null> {
+    try { await instanceAccessLifecycle.assertAvailable(id); } catch { return null; }
     let conn = this.connections.get(id);
     if (!conn) return null;
 

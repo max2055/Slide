@@ -1,3 +1,4 @@
+import { instanceAccessLifecycle } from '../../resources/instance-access-lifecycle.js';
 import { createHash } from 'node:crypto';
 import { databaseService } from '../../database-service.js';
 import { instanceDatabaseService } from '../../instance-database-service.js';
@@ -25,6 +26,7 @@ export function createAssetCollectorAccess(preserveDiscovery = false): Collector
  return {
   async resolve(ref) {
     ref = RefSchema.parse(ref);
+    if (ref.type === 'instance') await instanceAccessLifecycle.assertAvailable(ref.id);
     const pool = dbConnection.getPool(); rule(pool, 'POLICY_STORE_UNAVAILABLE', 503);
     if (!await assets.exists(ref)) {
       discovery.forget(ref.id); hostBlocks.forget(ref.id);
@@ -52,6 +54,7 @@ export function createAssetCollectorAccess(preserveDiscovery = false): Collector
     };
     const initialIdentity = await identity();
     const assertCurrent = async () => {
+      if (ref.type === 'instance') await instanceAccessLifecycle.assertAvailable(ref.id);
       if (!await assets.exists(ref) || await identity() !== initialIdentity) throw new AdapterError('permission_denied');
     };
     const resource = await configurationInventory(ref);

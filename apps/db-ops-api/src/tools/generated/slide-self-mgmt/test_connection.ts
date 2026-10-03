@@ -295,7 +295,7 @@ async function executeConnectionTest(
     username: params.username,
     password: params.password || '',
     database: params.database,
-  });
+  }, params.instance_id);
 
   if (result.success) {
     return { success: true };

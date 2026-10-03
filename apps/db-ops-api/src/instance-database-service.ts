@@ -1,3 +1,5 @@
+import { instanceRemovalService } from './resources/instance-removal-service.js';
+import { instanceAccessLifecycle } from './resources/instance-access-lifecycle.js';
 /**
  * 数据库实例配置服务
  */
@@ -23,6 +25,10 @@ export interface DatabaseInstance {
   max_connections: number;
   connection_timeout_ms: number;
   status: 'active' | 'inactive' | 'error';
+  lifecycle_state?: 'available' | 'deleting' | 'deleted';
+  removal_requested_at?: Date | null;
+  removed_at?: Date | null;
+  removal_reasons?: string[] | null;
   health_score: number;
   health_status: 'healthy' | 'warning' | 'critical' | 'unknown' | 'error';
   last_health_check_at: Date | null;
@@ -139,12 +145,12 @@ class InstanceDatabaseService {
       const [rows] = await pool.execute(
         `SELECT id, name, environment, db_type, host, port, username,
                 password_encrypted, database_name, connection_string,
-                max_connections, connection_timeout_ms, status,
+                max_connections, connection_timeout_ms, status, lifecycle_state, removal_requested_at, removed_at, removal_reasons,
                 health_score, health_status, last_health_check_at,
                 db_version, data_size_gb,
                 tags, description, created_by, created_at, updated_at
          FROM database_instances
-         WHERE status = 'active'
+         WHERE status = 'active' AND lifecycle_state = 'available'
          ORDER BY name`
       ) as any;
 
@@ -161,7 +167,7 @@ class InstanceDatabaseService {
       const [rows] = await pool.execute(
         `SELECT id
          FROM database_instances
-         WHERE status = 'active'
+         WHERE status = 'active' AND lifecycle_state = 'available'
          ORDER BY id`,
       ) as any;
       return (Array.isArray(rows) ? rows : [])
@@ -185,11 +191,12 @@ class InstanceDatabaseService {
       const [rows] = await pool.execute(
         `SELECT id, name, environment, db_type, host, port, username,
                 password_encrypted, database_name, connection_string,
-                max_connections, connection_timeout_ms, status,
+                max_connections, connection_timeout_ms, status, lifecycle_state, removal_requested_at, removed_at, removal_reasons,
                 health_score, health_status, last_health_check_at,
                 db_version, data_size_gb,
                 tags, description, created_by, created_at, updated_at
          FROM database_instances
+         WHERE lifecycle_state <> 'deleted'
          ORDER BY name`
       ) as any;
 
@@ -212,7 +219,7 @@ class InstanceDatabaseService {
       const [rows] = await pool.execute(
         `SELECT id, name, environment, db_type, host, port, username,
                 password_encrypted, database_name, connection_string,
-                max_connections, connection_timeout_ms, status,
+                max_connections, connection_timeout_ms, status, lifecycle_state, removal_requested_at, removed_at, removal_reasons,
                 health_score, health_status, last_health_check_at,
                 db_version, data_size_gb,
                 tags, description, created_by, created_at, updated_at
@@ -269,6 +276,7 @@ class InstanceDatabaseService {
    * 获取实例密码（解密后）
    */
   async getInstancePassword(id: number): Promise<string | null> {
+    await instanceAccessLifecycle.assertAvailable(id);
     const instance = await this.getInstanceById(id);
     if (!instance) {
       return null;
@@ -295,6 +303,7 @@ class InstanceDatabaseService {
    * 获取实例（带解密密码）
    */
   async getInstanceWithDecryptedPassword(id: number): Promise<DecryptedInstance | null> {
+    await instanceAccessLifecycle.assertAvailable(id);
     const instance = await this.getInstanceById(id);
     if (!instance) {
       return null;
@@ -439,6 +448,7 @@ class InstanceDatabaseService {
     }
 
     try {
+      await instanceAccessLifecycle.assertAvailable(id);
       const current = await this.getInstanceById(id);
       if (!current) return { success: false, error: '实例不存在' };
       await authorizeDatabaseTarget({
@@ -507,7 +517,7 @@ class InstanceDatabaseService {
       values.push(id);
 
       const [result] = await pool.execute(
-        `UPDATE database_instances SET ${updates.join(', ')} WHERE id = ?`,
+        `UPDATE database_instances SET ${updates.join(', ')} WHERE id = ? AND lifecycle_state = 'available'`,
         values
       ) as any;
 
@@ -523,13 +533,14 @@ class InstanceDatabaseService {
   }
 
   async markInstanceActive(id: number): Promise<void> {
+    await instanceAccessLifecycle.assertAvailable(id);
     const pool = this.getPool();
     if (!pool) return;
 
     await pool.execute(
       `UPDATE database_instances
        SET status = 'active', health_status = 'unknown', updated_at = NOW()
-       WHERE id = ?`,
+       WHERE id = ? AND lifecycle_state = 'available'`,
       [id]
     );
   }
@@ -537,7 +548,17 @@ class InstanceDatabaseService {
   /**
    * 测试数据库连接
    */
-  async testConnection(config: DatabaseConnectionTestConfig): Promise<{ success: boolean; message: string }> {
+  async testConnection(config: DatabaseConnectionTestConfig, instanceId?: number): Promise<{ success: boolean; message: string }> {
+    const perform = () => this.performConnectionTest(config, instanceId);
+    return instanceId === undefined ? perform() : instanceAccessLifecycle.track(instanceId, async () => {
+      await instanceAccessLifecycle.assertAvailable(instanceId);
+      const result = await perform();
+      await instanceAccessLifecycle.assertAvailable(instanceId);
+      return result;
+    });
+  }
+
+  private async performConnectionTest(config: DatabaseConnectionTestConfig, instanceId?: number): Promise<{ success: boolean; message: string }> {
     assertCreatableDatabaseType(config.db_type);
 
     if (typeof config.username !== 'string' || config.username.trim().length === 0) {
@@ -547,11 +568,20 @@ class InstanceDatabaseService {
       return { success: false, message: '请输入密码' };
     }
 
+    const cleanups: Array<() => Promise<void>> = [];
+    const own = (close: () => Promise<void>) => {
+      const cleanup = instanceId === undefined ? close : instanceAccessLifecycle.ownTemporary(instanceId, close);
+      cleanups.unshift(cleanup);
+      return cleanup;
+    };
+    const guard = <T extends object>(driver: T): T => instanceId === undefined ? driver : instanceAccessLifecycle.guardDriver(instanceId, driver);
     try {
+      if (instanceId !== undefined) await instanceAccessLifecycle.assertAvailable(instanceId);
       const target = await authorizeDatabaseTarget({ host: config.host, port: config.port, dbType: config.db_type });
+      if (instanceId !== undefined) await instanceAccessLifecycle.assertAvailable(instanceId);
       const pinnedHost = target.address;
       if (config.db_type === 'mysql') {
-        const pool = mysql.createPool({
+        const pool = guard(mysql.createPool({
           host: pinnedHost,
           port: config.port,
           user: config.username,
@@ -560,13 +590,12 @@ class InstanceDatabaseService {
           connectionLimit: 1,
           waitForConnections: true,
           connectTimeout: 5000,
-        });
+        }));
+        own(() => pool.end());
 
         // 测试连接
         const connection = await pool.getConnection();
-        await connection.ping();
-        connection.release();
-        await pool.end();
+        try { await connection.ping(); } finally { connection.release(); }
 
         return { success: true, message: `连接成功：${config.host}:${config.port}` };
       }
@@ -574,19 +603,20 @@ class InstanceDatabaseService {
       if (config.db_type === 'postgresql') {
         // 动态导入 pg 以避免未使用时的依赖
         const { Client } = await import('pg');
-        const client = new Client({
+        const client = guard(new Client({
           host: pinnedHost,
           port: config.port,
           user: config.username,
           password: config.password,
           database: config.database || 'postgres',
           connectionTimeoutMillis: 5000,
-        });
+        }));
+        own(() => client.end());
 
         // 测试连接
         await client.connect();
         await client.query('SELECT 1');
-        await client.end();
+
 
         return { success: true, message: `连接成功：${config.host}:${config.port}` };
       }
@@ -600,19 +630,19 @@ class InstanceDatabaseService {
         // D-13: TCPS 加密连接
         const connectString = `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${pinnedHost})(PORT=${config.port}))(CONNECT_DATA=(SERVICE_NAME=${config.database || 'ORCL'})))`;
 
-        const testPool = await oracledb.createPool({
+        const testPool = guard(await oracledb.createPool({
           user: config.username,
           password: config.password,
           connectString,
           poolMin: 0,
           poolMax: 1,
           poolTimeout: 10,
-        });
+        }));
+        own(() => testPool.close(0));
 
         const connection = await testPool.getConnection();
+        own(() => connection.close());
         await connection.execute('SELECT 1 FROM DUAL');
-        await connection.close();
-        await testPool.close(0);
 
         return { success: true, message: `连接成功：${config.host}:${config.port}` };
       }
@@ -622,17 +652,18 @@ class InstanceDatabaseService {
         const dmdb = (await import('dmdb')).default;
 
         const host = pinnedHost;
-        const connection = await dmdb.getConnection({
+        const connection = guard(await dmdb.getConnection({
           user: config.username,
           password: config.password,
           connectString: `${host}:${config.port}`,
           schema: config.database || undefined,
           connectTimeout: 5000,
           loginEncrypt: false,
-        });
+        }));
+        own(() => connection.close());
 
         await connection.execute('SELECT 1 FROM DUAL');
-        await connection.close();
+
 
         return { success: true, message: `连接成功：${config.host}:${config.port}` };
       }
@@ -646,28 +677,18 @@ class InstanceDatabaseService {
         typeof config.username === 'string' && config.username.trim().length > 0,
       );
       return { success: false, message: `连接失败：${message}` };
+    } finally {
+      let failed = false;
+      for (const close of cleanups) { try { await close(); } catch { failed = true; } }
+      if (failed) throw new Error('TEMPORARY_CONNECTION_CLEANUP_PENDING');
     }
   }
 
   /**
    * 删除实例
    */
-  async deleteInstance(id: number): Promise<{ success: boolean; error?: string }> {
-    const pool = this.getPool();
-    if (!pool) {
-      return { success: false, error: '数据库未连接' };
-    }
-
-    try {
-      const [result] = await pool.execute('DELETE FROM database_instances WHERE id = ?', [id]) as any;
-      if (result.affectedRows === 0) {
-        return { success: false, error: '实例不存在' };
-      }
-      return { success: true };
-    } catch (error: any) {
-      console.error('删除实例失败:', error);
-      return { success: false, error: error.message };
-    }
+  async deleteInstance(id: number) {
+    return instanceRemovalService.remove(id);
   }
 
   /**
@@ -692,7 +713,7 @@ class InstanceDatabaseService {
       if (dataSizeGB !== undefined) { fields.push('data_size_gb = ?'); values.push(dataSizeGB); }
       values.push(id);
       await pool.execute(
-        `UPDATE database_instances SET ${fields.join(', ')} WHERE id = ?`,
+        `UPDATE database_instances SET ${fields.join(', ')} WHERE id = ? AND lifecycle_state = 'available'`,
         values
       );
     } catch (error) {

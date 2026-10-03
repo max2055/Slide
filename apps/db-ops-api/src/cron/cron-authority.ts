@@ -49,9 +49,9 @@ export class CronAuthorityService {
       const pool = dbConnection.getPool();
       if (!pool) throw new Error('CRON_AUTHORITY_UNAVAILABLE');
       const [rows] = await pool.execute('SELECT id FROM database_instances WHERE id IN (' +
-        (boundary.instanceIds.length ? boundary.instanceIds.map(() => '?').join(',') : 'NULL') + ')', [...boundary.instanceIds]);
+        (boundary.instanceIds.length ? boundary.instanceIds.map(() => '?').join(',') : 'NULL') + " ) AND lifecycle_state = 'available'", [...boundary.instanceIds]);
       const existingIds = new Set((rows as Array<{ id: number }>).map(row => Number(row.id)));
-      if (job.target_instance_id !== null && !existingIds.has(job.target_instance_id)) throw new Error('CRON_TARGET_DELETED');
+      if (boundary.instanceIds.some(id => !existingIds.has(id)) || (job.target_instance_id !== null && !existingIds.has(job.target_instance_id))) throw new Error('CRON_TARGET_DELETED');
       const instanceScopes: Record<number, 'read-only'> = {};
       for (const id of boundary.instanceIds) if (existingIds.has(id) && hasInstanceAccess(owner, id)) instanceScopes[id] = 'read-only';
       // The original identity/permissions are retained for audit; resourceBoundary

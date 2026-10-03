@@ -1,3 +1,4 @@
+import { instanceAccessLifecycle } from '../../resources/instance-access-lifecycle.js';
 import { z } from 'zod';
 import type { Resource } from '../../contracts/metrics-v2/index.js';
 import type { JobRegistry } from '../../workflows/job-registry.js';
@@ -33,7 +34,8 @@ export class MetricScheduler {
       const started = this.clock();
       let reads = 0, inFlight = false, cancelled = false, uncertain = false;
       const controller = new AbortController();
-      const executionContext = { ...context, signal: controller.signal };
+      const signal = ref.type === 'instance' ? AbortSignal.any([controller.signal, instanceAccessLifecycle.signal(ref.id)]) : controller.signal;
+      const executionContext = { ...context, signal };
       let cancellationRecord: Promise<void> | undefined;
       const cancel = (reason: unknown) => {
         if (cancelled) return;
@@ -57,17 +59,17 @@ export class MetricScheduler {
           resolve: async () => { throw new Error('SCHEDULE_DISABLED'); },
         };
         rule(access.resource.type === ref.type && access.resource.id === String(ref.id), 'SCHEDULE_ACCESS_IDENTITY');
-        controller.signal.throwIfAborted();
+        signal.throwIfAborted();
         const snapshot = await this.store.begin(ref, revision, job, executionContext, this.clock(), access.resource);
         if (!snapshot) return;
         const { plan, published } = snapshot;
         const settings = published.resolved.settings;
         const check = async () => {
-          controller.signal.throwIfAborted();
+          signal.throwIfAborted();
           await reservation.connection.ping();
           await this.store.assertCurrent(ref, revision, job, executionContext);
           await access.assertCurrent?.();
-          controller.signal.throwIfAborted();
+          signal.throwIfAborted();
         };
         await check();
         const result = await runPackage(this.packages, { package: published.binding.package, credential_ref: access.credential_ref,
@@ -75,7 +77,7 @@ export class MetricScheduler {
             stale_after_ms: settings.stale_after_ms, max_counter_gap_ms: settings.max_counter_gap_ms, max_rows: settings.max_rows } }, {
           ...access, resource: access.resource, binding_id: refKey(ref), attempt_id: `${job.id}:${job.fencingToken}`,
           config_revision: revision, observed_at: new Date(started).toISOString(), clock: () => new Date(this.clock()).toISOString(),
-          signal: controller.signal, collector_ids: plan.collectorIds, metric_keys: plan.metricKeys, states: snapshot.states,
+          signal, collector_ids: plan.collectorIds, metric_keys: plan.metricKeys, states: snapshot.states,
           previous_capabilities: published.resolved.metric_templates.map(t => t.capability), before_request: check,
           collect: async (...args) => {
             await check(); inFlight = true;
@@ -86,7 +88,7 @@ export class MetricScheduler {
             } finally { inFlight = false; }
           },
         });
-        controller.signal.throwIfAborted();
+        signal.throwIfAborted();
         await check();
         // Failed batches are retried by the existing Worker. Partial success is committed without re-querying healthy outputs.
         if (result.attempts.length && result.attempts.every(a => a.status === 'failed')) {

@@ -135,7 +135,7 @@ export class MysqlResourceRelationStore implements ResourceRelationStore {
         const table = resourceTable(type);
         const placeholders = ids.map(() => '?').join(', ');
         const [rows] = await connection.execute<Array<{ id: number }>>(
-          `SELECT id FROM ${table} WHERE id IN (${placeholders}) ORDER BY id FOR UPDATE`, ids,
+          `SELECT id FROM ${table} WHERE id IN (${placeholders}) ${type === 'instance' ? "AND lifecycle_state = 'available'" : ''} ORDER BY id FOR UPDATE`, ids,
         );
         if (rows.length !== new Set(ids).size) throw new Error('RESOURCE_NOT_FOUND');
       }

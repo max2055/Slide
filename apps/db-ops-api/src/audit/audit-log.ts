@@ -321,7 +321,7 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
     const offset = filter.offset ?? 0;
 
     const [rows] = await this.pool.query(
-      `SELECT h.* FROM sql_execution_history h ${where} ORDER BY h.id DESC LIMIT ? OFFSET ?`,
+      `SELECT h.*, i.lifecycle_state AS instance_lifecycle_state FROM sql_execution_history h LEFT JOIN database_instances i ON i.id = h.instance_id ${where} ORDER BY h.id DESC LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     ) as any;
 
@@ -352,6 +352,7 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
         errorMessage: row.error_message || undefined,
         details: {
           instanceName: row.instance_name,
+          instanceLifecycleState: row.instance_lifecycle_state ?? null,
           dbType: row.db_type,
           database: row.database_name,
           sql: row.sql_text,
@@ -400,7 +401,10 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
       params,
     );
     const [rows] = await (this.pool as any).query(
-      `SELECT * FROM audit_log_entries ${where} ORDER BY timestamp_ms DESC, id DESC LIMIT ? OFFSET ?`,
+      `SELECT audit_log_entries.*, (SELECT lifecycle_state FROM database_instances
+        WHERE id = CAST(audit_log_entries.resource_id AS UNSIGNED) AND audit_log_entries.resource_type
+          IN ('database','database-instance','database_instance','instance')) AS instance_lifecycle_state
+        FROM audit_log_entries ${where} ORDER BY timestamp_ms DESC, id DESC LIMIT ? OFFSET ?`,
       [...params, limit, offset],
     );
     const entries = (rows as any[]).map((row): AuditLogEntry => ({
@@ -413,7 +417,7 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
       action: row.action,
       resourceType: row.resource_type ?? undefined,
       resourceId: row.resource_id ?? undefined,
-      details: typeof row.details_json === 'string' ? JSON.parse(row.details_json) : row.details_json ?? undefined,
+      details: row.instance_lifecycle_state ? { ...(typeof row.details_json === 'string' ? JSON.parse(row.details_json) : row.details_json ?? {}), instanceLifecycleState: row.instance_lifecycle_state } : typeof row.details_json === 'string' ? JSON.parse(row.details_json) : row.details_json ?? undefined,
       approvalRequestId: row.approval_request_id ?? undefined,
       clientIp: row.client_ip ?? undefined,
       userAgent: row.user_agent ?? undefined,

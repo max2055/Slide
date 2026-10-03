@@ -1,3 +1,4 @@
+import { instanceAccessLifecycle } from '../resources/instance-access-lifecycle.js';
 /**
  * CronManager — AI Agent 驱动的定时任务调度器
  *
@@ -42,6 +43,26 @@ export class CronManager {
   /** 正在执行的任务 ID 集合（并发守卫） */
   private runningFlags: Set<number> = new Set();
   private pendingSettlements = new Map<number, Promise<void>>();
+  private scheduledConfigs = new Map<number, CronJobConfig>();
+  private activeScopes = new Map<number, number[]>();
+  private executions = new Map<number, Promise<void>>();
+
+  private instanceIds(config: CronJobConfig): number[] {
+    return [...new Set([...(config.resource_scope?.instanceIds ?? []), ...(config.target_instance_id === null ? [] : [config.target_instance_id])])];
+  }
+  private async assertTargets(config: CronJobConfig): Promise<void> {
+    for (const id of this.instanceIds(config)) await instanceAccessLifecycle.assertAvailable(id);
+  }
+  async stopInstance(id: number): Promise<void> {
+    for (const [jobId, config] of this.scheduledConfigs) if (this.instanceIds(config).includes(id)) {
+      this.jobs.get(jobId)?.stop(); this.jobs.delete(jobId); this.scheduledConfigs.delete(jobId);
+    }
+    const affected = [...this.activeScopes].filter(([, ids]) => ids.includes(id)).map(([jobId]) => jobId);
+    await Promise.all(affected.map(async jobId => {
+      await this.executions.get(jobId);
+      await this.pendingSettlements.get(jobId);
+    }));
+  }
 
   constructor(
     jobService: CronJobDatabaseService,
@@ -83,6 +104,7 @@ export class CronManager {
       if (!this.running) return;
 
       for (const config of enabledJobs) {
+        try { await this.assertTargets(config); } catch { continue; }
         this.scheduleJob(config);
       }
 
@@ -112,6 +134,7 @@ export class CronManager {
       job.stop();
     }
     this.jobs.clear();
+    this.scheduledConfigs.clear();
   }
 
   /**
@@ -126,6 +149,7 @@ export class CronManager {
       config.timezone || 'Asia/Shanghai'
     );
     this.jobs.set(config.id, cronJob);
+    this.scheduledConfigs.set(config.id, config);
 
     // 记录初始 next_run_at
     const firstNext = cronJob.nextDate();
@@ -138,6 +162,7 @@ export class CronManager {
 
   async triggerJob(config: CronJobConfig, trigger?: ActorContext, key: string = randomUUID(), params: unknown = {}): Promise<CronRun> {
     await this.assertOwned();
+    await this.assertTargets(config);
     return cronRunStore.enqueue(config.id, trigger?.userId ?? null, key, params, config.output_schema);
   }
 
@@ -176,6 +201,14 @@ export class CronManager {
    * 执行任务（含并发守卫和日志记录）
    */
   public async executeJob(config: CronJobConfig, trigger?: ActorContext, runId?: string, context?: JobExecutionContext): Promise<void> {
+    // A duplicate trigger is skipped without replacing the real execution's ownership.
+    if (this.runningFlags.has(config.id)) return this.performJob(config, trigger, runId, context);
+    const pending = this.performJob(config, trigger, runId, context);
+    this.executions.set(config.id, pending);
+    try { await pending; } finally { if (this.executions.get(config.id) === pending) this.executions.delete(config.id); }
+  }
+
+  private async performJob(config: CronJobConfig, trigger?: ActorContext, runId?: string, context?: JobExecutionContext): Promise<void> {
     if (this.runningFlags.has(config.id)) {
       console.warn(`CronManager: 任务 #${config.id} "${config.name}" 跳过（正在执行中）`);
       return;
@@ -190,6 +223,8 @@ export class CronManager {
       const current = await this.jobService.getJobById(config.id);
       if (!current) throw new Error('CRON_JOB_DELETED');
       config = runId ? { ...current, output_schema: config.output_schema } : current;
+      this.activeScopes.set(config.id, this.instanceIds(config));
+      await this.assertTargets(config);
       if (!trigger && config.enabled === false) {
         if (runId) await cronRunStore.finish(runId, 'cancelled', 'CRON_JOB_DISABLED');
         return;
@@ -261,6 +296,10 @@ export class CronManager {
         return;
       }
 
+      await this.assertTargets(config);
+      const signals = this.instanceIds(config).map(id => instanceAccessLifecycle.signal(id));
+      if (context?.signal) signals.push(context.signal);
+      const signal = signals.length ? AbortSignal.any(signals) : undefined;
       const result = await this.cronExecutor.execute(
         config.id,
         config.task_description,
@@ -268,6 +307,7 @@ export class CronManager {
         config.output_schema,
         authority,
         runId ? { runId, signal: context?.signal, save: completion => cronRunStore.saveCompletion(runId, completion) } : undefined,
+        signal,
       );
 
       executionSettled = result.executionSettled;
@@ -313,9 +353,10 @@ export class CronManager {
       // Reporting a timeout must not release ownership of an in-flight operation.
       // Do not await here: non-cooperative operations must not hang the caller/logging.
       if (executionSettled) {
-        void executionSettled.then(() => { this.runningFlags.delete(config.id); this.pendingSettlements.delete(config.id); });
+        void executionSettled.then(() => { this.runningFlags.delete(config.id); this.pendingSettlements.delete(config.id); this.activeScopes.delete(config.id); });
       } else {
         this.runningFlags.delete(config.id);
+        this.activeScopes.delete(config.id);
       }
     }
   }
@@ -332,6 +373,7 @@ export class CronManager {
     }
 
     await revalidate();
+    await this.assertTargets(config);
     let result: { success: boolean; columns?: string[]; rows?: any[]; rowCount?: number; duration_ms?: number; error?: string };
 
     if (config.target_instance_id !== null) {

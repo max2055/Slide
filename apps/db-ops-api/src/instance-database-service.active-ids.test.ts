@@ -26,7 +26,7 @@ describe('active instance id selector', () => {
 
     expect(execute).toHaveBeenCalledTimes(1);
     const sql = execute.mock.calls[0]![0].replace(/\s+/g, ' ').trim();
-    expect(sql).toBe("SELECT id FROM database_instances WHERE status = 'active' ORDER BY id");
+    expect(sql).toBe("SELECT id FROM database_instances WHERE status = 'active' AND lifecycle_state = 'available' ORDER BY id");
     expect(sql).not.toMatch(/\*|username|password|password_encrypted|connection_string|host/i);
   });
 
