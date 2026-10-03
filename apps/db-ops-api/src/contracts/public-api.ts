@@ -2,6 +2,27 @@ import { Type, type Static, type TSchema } from '@sinclair/typebox';
 
 export const InfrastructureReadinessSchema = Type.Object({ ready: Type.Boolean() }, { $id: 'InfrastructureReadiness', additionalProperties: false });
 
+export const QueueObservationSchema = Type.Object({
+  schemaVersion: Type.Literal(1), generatedAt: Type.String(), persistence: Type.Literal('mysql'),
+  quality: Type.Union([Type.Literal('good'), Type.Literal('degraded'), Type.Literal('unknown')]),
+  gaps: Type.Array(Type.String()),
+  types: Type.Array(Type.Object({
+    jobType: Type.String({ maxLength: 128 }),
+    queued: Type.Integer({ minimum: 0 }), retry: Type.Integer({ minimum: 0 }),
+    scheduled: Type.Integer({ minimum: 0 }), ready: Type.Integer({ minimum: 0 }),
+    running: Type.Integer({ minimum: 0 }), deadLetter: Type.Integer({ minimum: 0 }),
+    expiredLeases: Type.Integer({ minimum: 0 }),
+    oldestReadyWaitMs: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
+  }, { additionalProperties: false }), { maxItems: 100 }),
+}, { $id: 'QueueObservation', additionalProperties: false });
+
+export const PlatformObservationsSchema = Type.Object({
+  schemaVersion: Type.Literal(1), generatedAt: Type.String(),
+  releaseId: Type.Union([Type.String(), Type.Null()]), commitSha: Type.Union([Type.String(), Type.Null()]),
+  uptimeSeconds: Type.Integer({ minimum: 0 }), components: Type.Array(Type.Unknown()),
+  logs: Type.Unknown(), queue: QueueObservationSchema,
+}, { $id: 'PlatformObservations', additionalProperties: false });
+
 export const HealthResponseSchema = Type.Object({
   status: Type.Literal('ok'),
   timestamp: Type.String({ pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$' }),
@@ -634,6 +655,8 @@ export const OkResponseSchema = Type.Object({
 }, { $id: 'OkResponse', additionalProperties: false });
 
 export const PublicApiSchemas = {
+  QueueObservation: QueueObservationSchema,
+  PlatformObservations: PlatformObservationsSchema,
   EventResolveRequest: Type.Object({ resolution_notes: Type.String() }, { $id: 'EventResolveRequest', additionalProperties: false }),
   EventRecoveryConfirmationRequest: Type.Object({ reason: Type.String({ minLength: 1, maxLength: 1024, pattern: '\\S', description: 'Manual inspection basis/result/reason; trimmed before storage. No automatic metric verification.' }) }, { $id: 'EventRecoveryConfirmationRequest', additionalProperties: false }),
   EventTransitionResult: Type.Object({ success: Type.Boolean(), error: Type.Optional(Type.String()) }, { $id: 'EventTransitionResult', additionalProperties: false }),

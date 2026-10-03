@@ -31,6 +31,20 @@ export function buildOpenApiDocument() {
     openapi: '3.1.0',
     info: { title: 'Slide Public API', version: '0.10' },
     paths: {
+      '/api/platform/observations': { get: {
+        operationId: 'getPlatformObservations', security: [{ bearerAuth: [] }],
+        description: 'Requires config:view, config:* or *. Queue gauges are a current MySQL snapshot (not restricted by the log time window), capped at 100 job types. Logs are process-local, retained for one hour with at most 10000 events and 100 groups: queue lifecycle groups include jobType, count, durationMs (sum), durationSamples and maxDurationMs. job.wait is overdue time from max(created_at, available_at) at claim, including reclaimed jobs; job.executed is handler elapsed time and terminal events include settlement time. Retry scheduling delays are excluded. Missing logs, omitted groups and unavailable queue stores are explicit gaps, never zero backlog or a throughput SLA. Ready follows claim eligibility including ANALYSIS_DISPATCH_ENABLED; queued/retry include scheduled and disabled jobs. No payloads, handler error text or credentials.',
+        parameters: [
+          { name: 'from', in: 'query', schema: { type: 'string', format: 'date-time' } },
+          { name: 'to', in: 'query', schema: { type: 'string', format: 'date-time' } },
+          { name: 'component', in: 'query', schema: { type: 'string', maxLength: 128 } },
+        ],
+        responses: {
+          '200': { description: 'Observation evidence; inspect quality and gaps', content: { 'application/json': { schema: refSchema(PublicApiSchemas.PlatformObservations) } } },
+          '400': { description: 'Invalid log time window or component filter' },
+          '401': { description: 'Authentication required' }, '403': { description: 'Observation permission denied' },
+        },
+      } },
       '/api/database/instances/{id}': { delete: {
         operationId: 'removeDatabaseInstance', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
         description: 'Requires instance:delete and instance admin access. Commits deletion intent before stopping tasks and closing connections. Retains an ID tombstone and historical data; never nulls task targets. Repeat DELETE retries incomplete cleanup. History endpoints retain their response shape and expose X-Instance-Lifecycle-State.',
@@ -395,6 +409,20 @@ export interface CollectServerDiagnosticsResponse { success: true; diagnostics: 
 
 export function buildClientTypes(): string {
   return buildLegacyClientTypes()
+    .replace('export interface HealthResponse {', `export interface QueueTypeObservation {
+  jobType: string; queued: number; retry: number; scheduled: number; ready: number;
+  running: number; deadLetter: number; expiredLeases: number; oldestReadyWaitMs: number | null;
+}
+export interface QueueObservation {
+  schemaVersion: 1; generatedAt: string; persistence: 'mysql';
+  quality: 'good' | 'degraded' | 'unknown'; types: QueueTypeObservation[]; gaps: string[];
+}
+export interface PlatformObservations {
+  schemaVersion: 1; generatedAt: string; releaseId: string | null; commitSha: string | null;
+  uptimeSeconds: number; components: unknown[]; logs: unknown; queue: QueueObservation;
+}
+
+export interface HealthResponse {`)
     .replace('export interface HealthResponse {', 'export interface EventResolveRequest { resolution_notes: string; }\nexport interface EventRecoveryConfirmationRequest { reason: string; }\nexport interface EventTransitionResult { success: boolean; error?: string; }\n\nexport interface HealthResponse {')
     .replace(
       "health_status: 'healthy' | 'warning' | 'critical' | 'unknown';",

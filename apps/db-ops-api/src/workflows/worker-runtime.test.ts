@@ -81,7 +81,7 @@ describe('typed handler registry', () => {
 
 describe('mysql workflow store', () => {
   it('reports bounded durable queue gauges and oldest eligible wait by type', async () => {
-    const execute = vi.fn(async () => [[{
+    const execute = vi.fn(async (_sql: string) => [[{
       jobType: 'report.schedule', queued: '2', retry: '1', scheduled: '1',
       ready: '3', running: '1', deadLetter: '4', expiredLeases: '1', oldestReadyWaitMs: '10000',
     }]] as any);
@@ -107,7 +107,7 @@ describe('mysql workflow store', () => {
   it('excludes disabled analysis dispatch from ready gauges but retains its backlog', async () => {
     vi.stubEnv('ANALYSIS_DISPATCH_ENABLED', 'false');
     try {
-      const execute = vi.fn(async () => [[]] as any);
+      const execute = vi.fn(async (_sql: string) => [[]] as any);
       await new MysqlWorkflowStore(() => ({ execute })).observeQueue();
       expect(execute.mock.calls[0][0]).toContain("job_type <> 'analysis.dispatch'");
     } finally { vi.unstubAllEnvs(); }

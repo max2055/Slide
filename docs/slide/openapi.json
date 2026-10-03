@@ -7975,6 +7975,283 @@
         ],
         "type": "object"
       },
+      "PlatformObservations": {
+        "$id": "PlatformObservations",
+        "additionalProperties": false,
+        "properties": {
+          "commitSha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "components": {
+            "items": {},
+            "type": "array"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "logs": {},
+          "queue": {
+            "$id": "QueueObservation",
+            "additionalProperties": false,
+            "properties": {
+              "gaps": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "generatedAt": {
+                "type": "string"
+              },
+              "persistence": {
+                "const": "mysql",
+                "type": "string"
+              },
+              "quality": {
+                "anyOf": [
+                  {
+                    "const": "good",
+                    "type": "string"
+                  },
+                  {
+                    "const": "degraded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  }
+                ]
+              },
+              "schemaVersion": {
+                "const": 1,
+                "type": "number"
+              },
+              "types": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "deadLetter": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "expiredLeases": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "jobType": {
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "oldestReadyWaitMs": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "queued": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "ready": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "retry": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "running": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "scheduled": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "jobType",
+                    "queued",
+                    "retry",
+                    "scheduled",
+                    "ready",
+                    "running",
+                    "deadLetter",
+                    "expiredLeases",
+                    "oldestReadyWaitMs"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 100,
+                "type": "array"
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "generatedAt",
+              "persistence",
+              "quality",
+              "gaps",
+              "types"
+            ],
+            "type": "object"
+          },
+          "releaseId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "uptimeSeconds": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "generatedAt",
+          "releaseId",
+          "commitSha",
+          "uptimeSeconds",
+          "components",
+          "logs",
+          "queue"
+        ],
+        "type": "object"
+      },
+      "QueueObservation": {
+        "$id": "QueueObservation",
+        "additionalProperties": false,
+        "properties": {
+          "gaps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "persistence": {
+            "const": "mysql",
+            "type": "string"
+          },
+          "quality": {
+            "anyOf": [
+              {
+                "const": "good",
+                "type": "string"
+              },
+              {
+                "const": "degraded",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              }
+            ]
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "types": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "deadLetter": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "expiredLeases": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "jobType": {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                "oldestReadyWaitMs": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "queued": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "ready": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "retry": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "running": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "scheduled": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "jobType",
+                "queued",
+                "retry",
+                "scheduled",
+                "ready",
+                "running",
+                "deadLetter",
+                "expiredLeases",
+                "oldestReadyWaitMs"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "generatedAt",
+          "persistence",
+          "quality",
+          "gaps",
+          "types"
+        ],
+        "type": "object"
+      },
       "ReplaceInstanceHostsBody": {
         "$id": "ReplaceInstanceHostsBody",
         "additionalProperties": false,
@@ -12142,6 +12419,64 @@
               }
             },
             "description": "Probe failed or target was denied"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/platform/observations": {
+      "get": {
+        "description": "Requires config:view, config:* or *. Queue gauges are a current MySQL snapshot (not restricted by the log time window), capped at 100 job types. Logs are process-local, retained for one hour with at most 10000 events and 100 groups: queue lifecycle groups include jobType, count, durationMs (sum), durationSamples and maxDurationMs. job.wait is overdue time from max(created_at, available_at) at claim, including reclaimed jobs; job.executed is handler elapsed time and terminal events include settlement time. Retry scheduling delays are excluded. Missing logs, omitted groups and unavailable queue stores are explicit gaps, never zero backlog or a throughput SLA. Ready follows claim eligibility including ANALYSIS_DISPATCH_ENABLED; queued/retry include scheduled and disabled jobs. No payloads, handler error text or credentials.",
+        "operationId": "getPlatformObservations",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "component",
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformObservations"
+                }
+              }
+            },
+            "description": "Observation evidence; inspect quality and gaps"
+          },
+          "400": {
+            "description": "Invalid log time window or component filter"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Observation permission denied"
           }
         },
         "security": [

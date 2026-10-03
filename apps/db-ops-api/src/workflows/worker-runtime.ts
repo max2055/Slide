@@ -23,7 +23,8 @@ export class MysqlWorkflowStore implements WorkflowStore {
   constructor(private readonly poolProvider: () => SqlPool | null) {}
   /** Durable gauges, not throughput. Eligibility matches claim, including expired leases. */
   async observeQueue(): Promise<QueueObservation> {
-    const eligible = "state IN ('queued', 'retry', 'running') AND available_at <= NOW() AND (lease_expires_at IS NULL OR lease_expires_at < NOW())";
+    const eligible = "state IN ('queued', 'retry', 'running') AND available_at <= NOW() AND (lease_expires_at IS NULL OR lease_expires_at < NOW())"
+      + (process.env.ANALYSIS_DISPATCH_ENABLED === 'false' ? " AND job_type <> 'analysis.dispatch'" : '');
     const [rows] = await this.pool().execute<Array<QueueTypeObservation>>(
       `SELECT job_type AS jobType,
         SUM(state = 'queued') AS queued, SUM(state = 'retry') AS retry,
