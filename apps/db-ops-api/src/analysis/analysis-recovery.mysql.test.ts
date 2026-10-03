@@ -215,7 +215,7 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
   it('redacts collection through real admission, MySQL persistence and the actual provider request', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'max116-redaction-'));
     let adapter: DirectAdapter | undefined;
-    const spies = [vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool)];
+    const spies: Array<{ mockRestore(): void }> = [vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool)];
     try {
       const actor = await actorContextService.loadActiveActor(7, 1);
       const sql = 'SELECT `email2` FROM `orders2` WHERE email=' + String.raw`"FAKE_DOUBLE\"VALUE" AND note='FAKE_SINGLE''VALUE' AND id=987654321`;
@@ -233,12 +233,13 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
       let calls = 0;
       const model: AgentProvider = {
         getDefaultModel: () => 'fake-redaction-model',
+        getModelCapabilities: () => ({ model: 'fake-redaction-model', contextWindowTokens: 32000, preferredOutputTokens: 2048, source: 'configuration', version: 'test' }),
         chat: async (messages, tools) => {
           expect(JSON.stringify(messages)).not.toMatch(/FAKE_DOUBLE|FAKE_SINGLE|987654321/);
           expect(JSON.stringify(messages)).toContain('orders2');
           expect(tools.map(t => t.name)).toEqual(['slide_complete_analysis']);
-          if (calls++ === 0) return { content: null, finishReason: 'tool_calls', toolCalls: [{ id: 'save', name: 'slide_complete_analysis', arguments: { analysisId: id, envelope: { ...envelope, analysisType: 'topsql_analysis', evidenceRefs: [{ ref: '/sql', summary: 'redacted SQL structure' }] } } }], shouldExecuteTools: true, hasToolCalls: true };
-          return { content: 'done', finishReason: 'stop', toolCalls: [], shouldExecuteTools: false, hasToolCalls: false };
+          if (calls++ === 0) return { content: null, finishReason: 'tool_calls', toolCalls: [{ id: 'save', name: 'slide_complete_analysis', arguments: { analysisId: id, envelope: { ...envelope, analysisType: 'topsql_analysis', evidenceRefs: [{ ref: '/sql', summary: 'redacted SQL structure' }] } } }], usage: {}, shouldExecuteTools: true, hasToolCalls: true };
+          return { content: 'done', finishReason: 'stop', toolCalls: [], usage: {}, shouldExecuteTools: false, hasToolCalls: false };
         },
         chatStream: async () => { throw new Error('UNEXPECTED_STREAM'); },
       };
@@ -248,7 +249,7 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
         analysisId: id, runtimeRunId: owned.runtimeRunId, beforeProviderRequest: () => store.beforeSend(owned),
         completeAnalysis: output => store.completeEnvelope(owned, output), recordAnalysisExecution: event => store.recordExecution(owned, event),
       });
-      expect(result.stopReason).toBe('completed'); expect(calls).toBe(2);
+      expect(result.stopReason, JSON.stringify(result)).toBe('completed'); expect(calls).toBe(2);
       expect((await rows(`SELECT * FROM ai_analysis WHERE id = ${id}`))[0].analysis_envelope.evidenceSnapshot.hash).toBe(saved.evidence.hash);
       expect(JSON.stringify((await rows(`SELECT request_snapshot FROM analysis_dispatches WHERE analysis_id = ${id}`))[0])).not.toMatch(/FAKE_DOUBLE|FAKE_SINGLE|987654321/);
     } finally { await adapter?.dispose(); spies.forEach(spy => spy.mockRestore()); rmSync(workspace, { recursive: true, force: true }); }

@@ -7,7 +7,7 @@ import { collectTopSqlEvidence } from './topsql-evidence.js';
 import { freezeEvidence } from './analysis-evidence.js';
 const actor = { userId: 7, username: 'op', roles: [], permissions: ['ai:manage'], sessionVersion: 1, instanceScopes: { 42: 'read-only' as const }, requestId: 'test' };
 const query = (sql_text = "SELECT * FROM orders WHERE id=1") => ({ sql_text, schema_name: 'shop', avg_time_ms: 7 }) as any;
-beforeEach(() => { vi.clearAllMocks(); authorize.mockResolvedValue(undefined); explain.mockResolvedValue('safe plan'); execute.mockResolvedValue({ success: true, rows: [{ TABLE_NAME: 'orders' }] }); });
+beforeEach(() => { vi.clearAllMocks(); authorize.mockResolvedValue(undefined); explain.mockResolvedValue('MySQL 执行计划:\n  表：orders'); execute.mockResolvedValue({ success: true, rows: [{ TABLE_NAME: 'orders' }] }); });
 describe('TopSQL server collection boundary', () => {
   it.each([
     ['double', 'SELECT `email2` FROM `orders2` WHERE email="FAKE_DOUBLE_VALUE"', 'Filter: email="FAKE_DOUBLE_VALUE"'],
@@ -33,7 +33,7 @@ describe('TopSQL server collection boundary', () => {
   });
   it('collects SQL, statistics, schema, indexes and safe EXPLAIN after authorization with bounded metadata reads', async () => {
     const result = await collectTopSqlEvidence(42, query(), actor);
-    expect(result).toMatchObject({ explain: 'safe plan', schema: [{ TABLE_NAME: 'orders' }], indexes: [{ TABLE_NAME: 'orders' }], gaps: [] });
+    expect(result).toMatchObject({ explain: 'MySQL 执行计划:\n  表：orders', schema: [{ TABLE_NAME: 'orders' }], indexes: [{ TABLE_NAME: 'orders' }], gaps: [] });
     expect(authorize.mock.invocationCallOrder[0]).toBeLessThan(explain.mock.invocationCallOrder[0]);
     for (const args of execute.mock.calls) { expect(args[1]).toMatch(/^SELECT .* LIMIT 1000$/); expect(args[2].timeoutMs).toBe(5000); }
   });

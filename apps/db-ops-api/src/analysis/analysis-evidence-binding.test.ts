@@ -30,10 +30,11 @@ describe('frozen references and access', () => {
     ['mysql', String.raw`SELECT * FROM orders WHERE email="FAKE_DOUBLE\"VALUE"`, 'orders'],
     ['mysql', 'SELECT * FROM orders WHERE email="FAKE_DOUBLE""VALUE"', 'orders'],
     ['mysql', "SELECT * FROM orders WHERE email='FAKE_SINGLE''VALUE' /* FAKE_COMMENT */", 'orders'],
-    ['mysql', "SELECT * FROM orders WHERE id=0xABC123 AND email=_utf8mb4'FAKE_CHARSET'", 'orders'],
+    ['mysql', "SELECT * FROM orders WHERE id=0xABC123", 'orders'],
     ['postgresql', 'SELECT "email2" FROM "orders2" WHERE email=$tag$FAKE_DOLLAR$tag$', '"orders2"'],
     ['postgresql', String.raw`SELECT "email2" FROM "orders2" WHERE email=E'FAKE_ESCAPE\'VALUE'`, '"orders2"'],
     ['oracle', 'SELECT "email2" FROM "orders2" WHERE email=\'FAKE_SINGLE\'', '"orders2"'],
+    ['oracle', "SELECT q'[FAKE_ORACLE]' FROM dual", 'dual'],
     ['dameng', 'SELECT "email2" FROM "orders2" WHERE email=\'FAKE_SINGLE\'', '"orders2"'],
   ])('keeps identifiers and removes dialect %s literals', (dialect, sql, identifier) => {
     const frozen = freezeEvidence(envelope.subject as any, 'a1', { dialect, sql });
@@ -42,11 +43,33 @@ describe('frozen references and access', () => {
     expect(freezeEvidence(envelope.subject as any, 'a1', frozen.data).data).toEqual(frozen.data);
   });
   it('fails closed for unsupported syntax and dialect, even in nested diagnostic SQL', () => {
-    for (const data of [{ dialect: 'unknown', sql: 'SELECT "FAKE_VALUE"' }, { sql: 'SELECT \'FAKE_UNCLOSED' }, { database: { instance: { db_type: 'postgresql' }, slowQueries: [{ sql_text: 'INVALID FAKE_VALUE' }] } }]) {
+    for (const data of [{ dialect: 'unknown', sql: 'SELECT "FAKE_VALUE"' }, { sql: 'SELECT \'FAKE_UNCLOSED' }, { sql: "SELECT * FROM orders WHERE email=_utf8mb4'FAKE_CHARSET'" }, { database: { instance: { db_type: 'postgresql' }, slowQueries: [{ sql_text: 'INVALID FAKE_VALUE' }] } }]) {
       const frozen = freezeEvidence(envelope.subject as any, 'a1', data);
       expect(JSON.stringify(frozen)).not.toContain('FAKE_');
       expect(frozen.gaps.some(g => g.code === 'SQL_REDACTION_UNAVAILABLE')).toBe(true);
     }
+  });
+  it.each([
+    ['mysql', 'MySQL', 'Filter: `orders2`.email=' + String.raw`"FAKE_DOUBLE\"VALUE" AND id=1.23e5`],
+    ['postgresql', 'PostgreSQL', String.raw`Filter: "orders2".email=E'FAKE_ESCAPE\'VALUE' AND note=$$FAKE_DOLLAR$$`],
+    ['oracle', 'Oracle', `Filter: "orders2".email=q'[FAKE'ORACLE]'`],
+    ['dameng', '达梦数据库', `Filter: "orders2".email=q'{FAKE'DAMENG}'`],
+  ])('redacts %s plan predicates and retains schema identifiers', (dialect, header, predicate) => {
+    const frozen = freezeEvidence(envelope.subject as any, 'a1', { dialect, explain: `${header} 执行计划:\n${predicate}` });
+    expect(JSON.stringify(frozen)).not.toContain('FAKE_');
+    expect((frozen.data as any).explain).toContain('orders2');
+    expect(frozen.gaps).toEqual([]);
+  });
+  it.each(['arbitrary FAKE_VALUE', '获取执行计划失败：FAKE_VALUE', 'MySQL 执行计划:\nFilter: email="FAKE_UNCLOSED'])('omits unsafe or unrecognized plan text', explain => {
+    const frozen = freezeEvidence(envelope.subject as any, 'a1', { explain });
+    expect((frozen.data as any).explain).toBeNull();
+    expect(frozen.gaps).toContainEqual(expect.objectContaining({ code: 'EXPLAIN_REDACTION_UNAVAILABLE' }));
+  });
+  it('keeps numeric MySQL plan estimates, but never predicate constants', () => {
+    const frozen = freezeEvidence(envelope.subject as any, 'a1', { explain: 'MySQL 执行计划:\nID: 1\n  行数：12345\n  键长度：8\nFilter: id=987654321' });
+    expect((frozen.data as any).explain).toContain('行数：12345');
+    expect((frozen.data as any).explain).toContain('键长度：8');
+    expect((frozen.data as any).explain).not.toContain('987654321');
   });
   const data = { database: { qps: 7, 'a/b': { '~': 9 } }, observations: [{ resource: envelope.subject, metricId: 'cpu', value: 90 }], semantic: { evidenceRef: hash, value: 12 }, absent: null, gaps: [] };
   const snapshot = freezeEvidence(envelope.subject as any, 'a1', data);

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { redactSensitiveData, stableJson } from '../security/sensitive-data.js';
 import type { ResourceRef } from '../resources/types.js';
 import type { AnalysisEnvelope } from './analysis-envelope.js';
+import { redactSqlEvidence } from './evidence-sql-redaction.js';
 
 export interface EvidenceSnapshot {
   schemaVersion: 1; id: string; hash: string; collectedAt: string;
@@ -11,16 +12,26 @@ export interface EvidenceSnapshot {
 export const evidenceHash = (value: unknown) => createHash('sha256').update(stableJson(JSON.parse(JSON.stringify(value) ?? 'null'))).digest('hex');
 
 /** SQL literals are business data. Keep structure but never persist their contents. */
-export function redactEvidence(value: unknown): unknown {
+export function redactEvidence(value: unknown, dialect = 'mysql'): unknown {
   if (typeof value === 'string') return redactSensitiveData(value);
   if (value instanceof Date) return value.toISOString();
-  if (Array.isArray(value)) return value.map(redactEvidence);
+  if (Array.isArray(value)) return value.map(entry => redactEvidence(entry, dialect));
   if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key,
-    /^(sql|sql_text|query|query_text)$/i.test(key) && typeof entry === 'string'
-      ? entry.replace(/'(?:''|\\.|[^'\\])*'/g, "'[REDACTED]'").replace(/\b\d+(?:\.\d+)?\b/g, '?')
-      : /(?:password|passwd|pwd|secret|token|api[_-]?key|authorization|cookie|credential|connection[_-]?string|private[_-]?key)/i.test(key) ? '[REDACTED]' : redactEvidence(entry),
-  ]));
+  const item = value as Record<string, any>;
+  const currentDialect = item.dialect ?? item.db_type ?? item.instance?.db_type ?? item.database?.instance?.db_type ?? dialect;
+  const gaps: Array<{ scope: string; code: string }> = [];
+  const safe = Object.fromEntries(Object.entries(item).map(([key, entry]) => {
+    const sql = /^(sql|sql_text|query|query_text)$/i.test(key);
+    const plan = /^(explain|execution_plan)$/i.test(key);
+    if ((sql || plan) && typeof entry === 'string') {
+      const redacted = redactSqlEvidence(entry, currentDialect, plan);
+      if (redacted === null) gaps.push({ scope: key, code: plan ? 'EXPLAIN_REDACTION_UNAVAILABLE' : 'SQL_REDACTION_UNAVAILABLE' });
+      return [key, redacted === null ? null : redactSensitiveData(redacted)];
+    }
+    return [key, /(?:password|passwd|pwd|secret|token|api[_-]?key|authorization|cookie|credential|connection[_-]?string|private[_-]?key)/i.test(key) ? '[REDACTED]' : redactEvidence(entry, currentDialect)];
+  }));
+  if (gaps.length) safe.gaps = [...(Array.isArray(safe.gaps) ? safe.gaps : []), ...gaps];
+  return safe;
 }
 export function freezeEvidence(subject: ResourceRef, authorizationVersion: string, data: unknown): EvidenceSnapshot {
   const safe = JSON.parse(JSON.stringify(redactEvidence(data)));

@@ -46,3 +46,25 @@
 新增字段位于现有 JSON 契约内，schemaVersion=1 的历史 Envelope 仍可读。回滚先停止新 admission/dispatch（`ANALYSIS_DISPATCH_ENABLED=false`），保留现有 request_snapshot、execution_trace、分析结果和未知任务，不自动重跑或再次计费。旧执行器不能充分理解新引用/验证级别时保持只读。没有历史数据批量填充、删除或新 schema 迁移。
 
 真实模型的少量已知根因案例评估：预算未设定，付费调用未授权，供应商环境/凭证未使用；本次只证明确定性证据绑定和执行来源，不宣称模型业务诊断质量通过。Oracle/PostgreSQL/Dameng 的真实环境质量和本次人工浏览器全链路未验证；安全 EXPLAIN 复用现有已测试边界，其 Schema/索引缺口如实保留。外部 CI 由 PR 触发，父任务需核验当前精确 head 的八个 job 后再串行审查合并。
+
+## W08-v2：W08-REDACTION-01 审查修复（2026-10-03）
+
+保留上述 v1 范围与验证历史。审查基准 head 为 `9b824dc5b172effdc07fa305008256b3aad56033`；base 仍为 `8fe05fc0676e80eb4c01ff6589eecba0f9b13f36`。本次只修复 SQL/计划字面量泄露及必要回归，续用原分支和 PR #121；不新增代理、迁移、付费调用、生产操作或后继任务。硬预算仍未设定，当前 run 的实际 token/费用增量不可用。CLI 的 issue usage 仅返回之前终态 run，且 cache_read 大于 input，不能作为当前实测吞吐或把缓存计数再次相加。
+
+修复行为：
+
+- TopSQL 采集结果带实际连接 dialect，返回前即统一脱敏；冻结时再次应用同一入口。诊断包从 instance.db_type 继承方言。
+- SQL 先使用现有 AST 解析边界，再按完整 token 脱敏，避免单引号正则漏掉 MySQL 双引号、反斜杠/重复引号、PostgreSQL E/dollar 字符串、Oracle/Dameng 替代引号、十六进制/科学计数和注释。MySQL 反引号及其他方言双引号标识符、带数字的表列名保留。
+- 字符串显示为 `'[REDACTED]'`，SQL 数字/布尔值显示为 `NULL` 占位，不能据此判断原始值为 NULL，也不能把脱敏 SQL 用于执行。计划谓词常量显示为 `[REDACTED]`；仅应用自身 MySQL 格式器的 ID/键长度/行数纯数字元数据保留，其他数字保守脱敏。
+- 计划只接受现有数据库格式器的匹配方言头，错误文本、未闭合引号、不支持的转义或 SQL 解析失败保存 null，并记录 `SQL_REDACTION_UNAVAILABLE` / `EXPLAIN_REDACTION_UNAVAILABLE`。不通过保存原文降级；没有伪造计划或空洞的已验证结论。此处兼容策略为证据缺口，非扩大数据库工具权限。
+
+RED 证据：在旧实现上实际运行新增单元回归，11 failed / 32 passed，覆盖双引号和未知 SQL；隔离 MySQL 新增链路测试在实际 request_snapshot/message 中检出假双引号业务值及计划数字常量，1 failed / 40 passed。RED 测试 checkpoint 为 `b6f1b23`。测试 fixture 的导出名称、raw 模板转义与假模型 usage/上下文能力修正均属于测试设置；这些设置失败未计为业务 RED。
+
+当前候选 GREEN：
+
+- `pnpm --filter slide-api exec vitest run src/analysis/topsql-evidence.test.ts src/analysis/analysis-evidence-binding.test.ts src/ai-agent-bridge.test.ts src/ai-analysis-lifecycle.test.ts src/analysis/analysis-envelope.test.ts`：69 passed。
+- `bash scripts/qualification/run-analysis-recovery.sh`：41 passed，无跳过。新增链路通过真实 TopSQL 服务、授权、采集、bridge 冻结、实际 MySQL admission 和 DirectAdapter 两轮假模型，逐一断言 SQL/计划业务值未进入持久化/供应商消息、Schema 名仍可用、完成结果反查同一 hash。SQL 与计划数据来源使用 fake fixture，未宣称真实四方言数据库计划质量。
+- `pnpm --filter slide-api test`：2979 passed / 206 条件跳过（含新增必须有隔离 MySQL 环境的测试；该测试已在上一条明确通过）。后端最终门禁通过。未改变的前端、agent-core、sandbox 等复用 v1 证据，外部 CI 仍须按新 head 核验。
+- 后端 typecheck、受影响六个文件 oxlint（0 errors / 0 warnings）、`git diff --check` 通过。未采集行覆盖率；本次确定性回归覆盖上述业务路径。
+
+历史快照只读保留，不批量重写或声称恢复历史脱敏。若发现历史快照敏感值，后续清理需要单列 dry-run 与授权；本次没有读取真实历史内容。回滚与 v1 相同：停新派发，保留快照/结果/unknown，不自动重放。父任务必须重新审查新精确 head；旧 head 的审查和八项 CI 结果不适用于本次候选。
