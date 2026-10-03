@@ -1,66 +1,80 @@
-# MAX-120 / W12a v1：队列观测与串行阻塞测量
+# MAX-120 / W12a：工作队列观测与有界调度验收 v2
 
-基线为最新 main `4caeaecf32cd1f0d08c2b7ac7b68deaa0a4b3504`，MAX-119 / PR #124 已合并且父任务已验收。本任务在隔离 worktree 的 `codex/max-120-queue-observation` 分支实施；原 runtime worktree 的 AGENTS.md 未触碰，不派生代理。
+## 当前结论与历史范围
 
-## 执行契约与交付选择
+基线 main `4caeaecf32cd1f0d08c2b7ac7b68deaa0a4b3504`（MAX-119 / PR #124 已合并）。续修现有 PR #125 / `codex/max-120-queue-observation`，没有创建第二个 PR 或启动后继任务。
 
-范围：按 job 类型观测队列，复现十秒慢报表对通知/采集的阻塞，验证现有互斥、fencing、lease renewal 和停止隔离，记录前后相同负载及资源用量。排除生产数据/服务操作、真实发送/模型调用、HA、容量扩张和无关重构。分层验证为 RED → focused / 模块 typecheck → 隔离 MySQL → 最终本地 gate；出现真实外部权限/环境缺失仅停止受影响步骤。硬预算未设定。
+v1（head f1ebf3fe）只交付观测，通知/采集仍等待 10029/11038 ms，并将两秒目标写成待确认。父任务于 2026-10-03 19:02 UTC 的 W12A-ACCEPTANCE-01 审查确认：MAX-107 v2 已确定两秒隔离实验目标，串行超阈值后须实施有界调度。因此本次 v2 撤销“仅观测已完成验收”和“需再次确认目标”的结论，保留 v1 代码及历史原始测量 `2026-10-04-max120-queue-measurement.json`。
 
-本包采用 Issue 明确允许的“未做压测时仅交付观测与结论”路径。生产并发仍为 **1**，保留每个 WorkerRuntime 的 runInFlight、不可取消 handler / renewal quarantine、D1 所有权与业务资源 guard。没有增加 worker，没有删除互斥，也没有声称消除容量瓶颈。
+范围为按类型观测、固定有界 worker 装配、跨类型资源 guard、真实隔离 MySQL 测量及相关回归。不扩展 HA、真实模型或生产容量认证，不改用户 .env、不连接用户业务数据库、不调用付费模型。硬预算未设定；实际 raw input / cached input / output / 费用遥测不可用，子代理 0、最大深度 0、代理并发峰值 1。
 
-“通知/采集两秒内开始”是**待确认的确定性场景候选验收目标，非现网 SLA**。本次单样本证明 head-of-line 等待；没有真实限额或生产代表性压测证据，不能据此开启类型并发。当前控制数据库连接池上限 10；测试池上限 24 并非建议生产配置。报表、Cron、分析、指标及跨类型的同实例访问还需共享资源互斥和模型额度共同约束；未知/不可取消慢操作必须占用原有 worker/资源槽到真实 promise 收敛，不能靠超时释放槽扩张。
+## 调度与配置契约
 
-## 观测契约（父任务与后继使用）
+`WORKFLOW_CONCURRENCY` 只接受 `1` / `3`，默认 `3`；其他值启动报 `WORKFLOW_CONCURRENCY_INVALID`。Compose 显式透传相同默认值。不是任意数量线程池，也不会自动扩容或替换卡住的 worker。
 
-`GET /api/platform/observations` 保留 schemaVersion=1 和既有字段，新增 `queue`。仍需 JWT 与 config:view/config:*/*；权限检查发生在读取队列前。OpenAPI 与生成客户端类型同步更新，无迁移、无新配置。
+三槽类型划分：
 
-- queue 为请求时的 MySQL 快照，包含 generatedAt / persistence=mysql / quality / gaps / types。它不受 from/to/component 的日志过滤影响，也不代表窗口内累计吞吐。
-- 每类型 queued/retry 是当前状态数量，包含尚未到期和禁用 dispatch 的任务；scheduled 是未来 queued/retry 子集。running 包含过期 owner，expiredLeases 是 running 的过期/无 lease 子集。deadLetter 是当前死信数量，不包含已回放任务。
-- ready 与 claim 条件一致：queued/retry/running、available_at 到期、lease 为空或过期，且尊重 ANALYSIS_DISPATCH_ENABLED=false。oldestReadyWaitMs 取可领取任务的最大逾期时间；无样本为 null，不是 0。禁用 dispatch 仍显示 backlog，但不计 ready。
-- 等待口径为 MySQL NOW(3) - max(created_at, available_at)，排除正常调度/retry 退避；reclaim 时是原到期点以来的逾期年龄，**不是准确的纯排队时间或历史执行时长**。既有 DATETIME 列精度为秒，亚秒测量受舍入影响。
-- 最多返回 100 类型，溢出 quality=degraded + QUEUE_TYPES_TRUNCATED；数据库缺失/失败为 quality=unknown + QUEUE_STORE_UNAVAILABLE，types=[] 不应被当作零积压。全队列聚合需要扫描活跃/死信行，未做大表压测。
-- 现有结构化日志新增 jobType 分组。job.wait 记录领取逾期；job.executed 使用单调时钟记录 handler 时间；completed/retry/dead_letter 记录到状态提交的总时间；job.lease_lost 覆盖 heartbeat false/error/timeout 与 complete/fail 的 fencing 拒绝，job.cancelled 记录停止取消。
-- group 的 durationMs 为和，durationSamples 为真实样本数，maxDurationMs 为最大值（无样本 null）；均值应除以 durationSamples。count 可统计事件数，但不同事件不能直接相加当“任务吞吐”。执行抛错、取消和未知状态保留对应质量标记，不记录 payload、SQL、handler 错误正文或凭证。
-- 日志仍为进程内，一小时/10000 事件/100 聚合组上限，默认查询五分钟；重启、缺失、过期或截断通过既有 gaps 标识。它不是持久 lease-loss 总数。持久 expiredLeases 与进程日志 job.lease_lost 含义不同。
+| 槽 | 任务类型 | 上限 |
+|---|---|---:|
+| notification | notification.deliver、report.notify | 1 |
+| collection | metrics.collect | 1 |
+| general | 其余类型，包括报表、analysis、cron 和全局维护 | 1 |
 
-顺带修复本次指标直接暴露的错误：fail() 被 fencing 拒绝时，原 runOnce 会返回 dead_letter，即使数据库没有提交死信；现在返回 retry（等待当前 lease 状态处理），并记录 WORKFLOW_LEASE_LOST。不把未提交的失败作为真实死信。
+整个 D1-owned 装配最多三个正在领取/解析资源/等待资源/执行的槽；潜在模型任务只进入 general，最多一个工作队列模型槽。每个槽仍为独立 WorkerRuntime，保留 runInFlight、heartbeat、fencing、pendingRenewal 和 shutdown quarantine。pool 仍为 10，未额外持有数据库连接做资源锁。API 会话等其他模型入口的已有上限不由本工作队列替代，未认证真实 provider 配额。
 
-## 真实前后测量
+D1 ownership 仍在后台装配、每次 tick 前检查；资源 guard 仅在该单后台实例的三个槽间共享，不作为跨主机 HA 锁。server shutdown 同时 abort 三个槽，并且只有全部 drain 才返回 true；既有 shutdown timeout 不释放 D1 ownership/数据库去启动替代 worker。不可取消 handler、claim/资源查询和未完成 renewal 都保留自身槽，重复 tick 不增加请求；非协作 handler 的资源锁直到 handler 真正 settle 才释放。
 
-命令：`bash scripts/qualification/run-environment.sh stability`。稳定性场景已接入现有 recovery-qualification CI，无新增 CI job。
+资源范围：报表 occurrence 从与 job ID / configId / occurrenceAt 绑定的 **冻结 config_snapshot** 读取 instance_id，忽略额外 payload.instanceId；通知从 alerts/reports 的源记录读取 instance_id；metrics.collect 使用既有严格校验的 resource，真实 collector 在 I/O 前仍校验 durable schedule。只将确定的 instance 任务视为局部资源。server/network/global/未知/缺少快照的任务使用 `*`，与全部资源互斥。相同 job ID 也互斥，guard FIFO 入场保证全局等待者不会被后续到达者绕过。未知资源默认全局锁意味着某些真实全局扫描仍可能阻塞快任务，不能把隔离实验结果外推为所有生产任务的保证。
 
-本地比较在相同临时 MySQL / 同一完整迁移链上顺序运行两次完全相同 harness：从精确基线建立 detached worktree，复制当前 assert-stability.ts 到其 tests/qualification/max120-stability.ts，用 `--baseline` 跳过仅新代码拥有的观测断言；然后运行当前 assert-stability.ts。该标志仅供旧代码基线测量，CI 默认仍执行全部新断言。自动清理临时容器/数据库；未读写 .env 或用户数据库。
+真实三槽并发暴露了原 UPDATE 内队列子查询扫描的 MySQL gap-lock deadlock；已改为普通 SELECT 候选 + 按主键 UPDATE CAS 领取，CAS 继续检查 state / available_at / lease expiry 并递增 fencing token。竞争者 CAS 失败返回 idle，不重复执行；领取成功后只回读该 job ID 与 owner。候选排序 available_at、created_at、id；没有取消 lease fencing 或删除 runInFlight。
 
-源代码证据：实现提交 `a067b4f3`。测量时当前 HEAD 为 RED 检查点 b14eb0e2，生产代码及 harness 为随后原样提交 a067b4f3 的工作区版本；没有在提交后假称重新测量。原始脱敏数据见 `2026-10-04-max120-queue-measurement.json`。
+## 观测契约
 
-环境：macOS Darwin 27.0.0，Apple M5 / 10 logical CPUs / 24 GiB RAM，Node 24.18.0，pnpm 11.19.0；Docker 29.7.2，VM 4 CPUs / 5155713024 bytes RAM；MySQL 8.4，动态 localhost 端口和临时数据库，115 个迁移。负载为一个十秒 timer 报表，在其开始后立即入队一条通知和一条采集，同实例 ID=1；单 worker、一秒 poll，假 handler、零真实发送/采集/付费模型调用。另保留二十次同 idempotency key 并发 enqueue 的唯一任务验证。
+`GET /api/platform/observations` 保留 schemaVersion=1，新增的 queue 快照仍要求 JWT 与 config:view/config:*/*，权限检查在查询前；OpenAPI 与生成客户端类型已在 v1 同步，本次不新增 HTTP 字段/迁移。
 
-| 指标 | 原 main 串行基线 | 新观测版本（仍串行） |
-|---|---:|---:|
-| 通知入队至开始 | 10019 ms | 10029 ms |
-| 采集入队至开始 | 11024 ms | 11038 ms |
-| 场景总时间 | 11049 ms | 11072 ms |
-| 最大同时执行 handler | 1 | 1 |
-| 进程 CPU user + system | 18706 μs | 29663 μs |
-| RSS 前 → 后 | 101695488 → 103022592 bytes | 98320384 → 100139008 bytes |
+- queue 是请求时的 MySQL gauges，与日志查询窗口不同，不代表累计吞吐。按类型提供 queued/retry/scheduled/ready/running/deadLetter/expiredLeases/oldestReadyWaitMs；ready 尊重禁用 analysis.dispatch，scheduled 不计 ready，过期 running 可领取，无等待样本为 null。
+- 快照最多 100 类型，截断标 degraded；数据库缺失证据标 unknown。日志仍为一小时、10000 条进程内证据，丢失/截断不会伪装为完整持久历史。
+- job.wait 测量入队可用时间至领取，job.resource_wait 测量资源解析/guard 等待，job.executed 含 guard 与 handler 的总耗时。评估入队至实际 handler 开始必须结合 guard 等待，不能只看领取时间。本次实验独立记录实际开始时间。
+- 按 jobType 统计 retry/dead-letter/lease loss；fencing 拒绝 fail 时返回 retry / lease-loss，不误报已提交 dead_letter。只记录标签与耗时，不记录任务 payload/凭证。
 
-每模式仅一个样本，CPU/RSS 包含 driver/runtime/GC 噪声，不能用这组差值推断稳定开销或生产容量。两者通知/采集均超过两秒候选目标，原因仍是串行等待慢报表。新增观测没有提速，有限三个任务最终都执行，同资源 handler 未重叠；这不是持续到达负载下的无饥饿证明。
+## 真实 MySQL 测量
 
-快照实测：report running=1，notification 与 capacity 各 queued=ready=1；全部完成后对应类型不再有活跃/死信行。额外真实 SQL 夹具得到 queued=1/retry=1/scheduled=1/ready=2/running=1/deadLetter=1/expiredLeases=1，最老可领取逾期约十秒；未来 retry 不计 ready、旧 owner complete 被 fencing 拒绝。
+命令：`bash scripts/qualification/run-environment.sh stability`。临时 MySQL 8.4 Docker 容器、动态 localhost 端口、独立数据库、115 个迁移，退出自动清理。环境 macOS Darwin 27.0.0，Apple M5 / 10 logical CPUs / 24 GiB，Node 24.18.0，pnpm 11.19.0；Docker 29.7.2 / VM 4 CPUs / 5155713024 bytes RAM。控制 pool=10。
 
-## 验证证据与限制
+最终测量源 commit `bf8912cda24514c5bf6fc10e6aa8cf8cfa42c64f`；之后只有验收文档/脱敏 JSON 更新。新增原始测量 `2026-10-04-max120-bounded-measurement.json` 与 v1 文件分开保留。
 
-- 两轮 RED 分别复现缺失快照/等待/执行/jobType、未提交死信错误（5 失败），以及最大耗时、禁用 dispatch ready、API 契约缺失（4 失败），再最小修复为 GREEN。checkpoint 均在当前分支可达。
-- 相关模块：`pnpm --filter slide-api exec vitest run src/workflows src/platform src/contracts/public-api.test.ts`，171 通过 / 40 环境用例跳过；API typecheck 通过。既有回归覆盖同 runtime 重入、heartbeat 丢失/超时、晚到 renewal、非协作 handler 停止隔离与 claim 中途 shutdown。
-- 隔离 MySQL stability 比较两次通过；新的 gauges/fencing 断言全部真实执行，没有把 skipped 当通过。没有启动完整后台或真实 JWT/业务 provider；API 认证边界由 Fastify inject 的权限 fixture 验证，数据库与运行器由独立真实 MySQL 验证。
-- 最终本地 `pnpm -r test`：API 3007 通过 / 250 环境用例跳过；frontend 568、agent-core 654、sandbox 22 通过 / 4 跳过，无失败。`pnpm -r typecheck`、`pnpm build`（CSP 通过）、`pnpm contracts:check`、`pnpm qualification:matrix`（37/37）、security:scan、security:audit、git diff --check 通过。lint 为 0 errors / 262 既有 warnings；build 保留既有大 chunk 警告。
-- `pnpm --filter slide-frontend test:browser`：48/48 通过，使用 worktree Vite 测试端口 5186，未重启/占用用户服务。
-- 没有生产压测、DB 大队列查询计划/锁竞争评估、代表性多类型持续负载、真实模型额度或跨 worker 共享资源/quarantine 资格证据。仅凭本包测量不能把两秒目标当生产已通过，不能声称生产瓶颈已消除。
+先保留旧十秒 report.schedule + notification.deliver + capacity.collect 的串行复现。真实业务 report.schedule/capacity.collect 为全局扫描，旧夹具 payload.instanceId **不能**证明范围局部，也不能作为独立资源实验。新增匹配生产任务类型的假 handler：十秒 report.occurrence（冻结 instance=1）、notification.deliver（源 instance=2）、metrics.collect（resource instance=3），报表开始后入队两条快任务，poll=1000 ms，零真实生成/发送/采集/模型调用。相同负载分别配置 1 和 3；同资源实验另将全部范围设为 instance=1。
 
-## 回滚与后续决策条件
+| 指标 | 独立资源并发1 | 独立资源并发3 | 同资源并发3 |
+|---|---:|---:|---:|
+| 通知入队至开始 ms | 11031 | 1010 | 9996 |
+| 采集入队至开始 ms | 10024 | 1008 | 9992 |
+| 场景总时间 ms | 12050 | 10046 | 10044 |
+| 最大活跃handler | 1 | 2 | 1 |
+| 资源重叠次数 | 0 | 0 | 0 |
+| CPU user+system μs | 26406 | 32529 | 15558 |
+| RSS 前→后 bytes | 91258880→91422720 | 91439104→91684864 | 91701248→92422144 |
 
-本次无迁移、无并发配置变化，回滚到基线二进制即可撤回观测 API 增量和日志，不影响 workflow_jobs 数据；当前即为并发 1。回滚也会重新带回原 fail fencing 返回值缺陷。
+每模式一个样本，CPU/RSS包含driver/runtime/GC噪声，不能根据差值推断稳定开销或吞吐容量。
 
-若父任务选择进入有界调度阶段，先确认确定性候选目标，再以生产同样 pool=10 及明确模型限额做隔离负载与资源互斥/重复领取/不可取消任务测试。类型隔离或公平调度都必须保留每 worker 的 runInFlight、跨类型同资源互斥、fencing、D1 和共享 shutdown quarantine；所有未知慢操作仍占槽。仅在同负载前后等待及资源证据达标后启用，保留并发回退 1。此为结论中的进入条件，本包没有新增后台任务或抢跑后继。
+以下结果由最终脱敏 JSON 对应的单次完整实验生成；两秒为已确定的隔离实验目标，不是生产 SLA。全部三任务最终完成，同资源副作用无重叠；并发1仍复现阻塞，证明回退开关有效。持续有限到达实验每100 ms各入队三类型一次、共12轮36个任务，假 handler 60 ms，全部完成、最大活跃3、每任务 attempts=1；不能用有限样本证明无限到达下稳定容量。
 
-实际 raw input / cached input / output / 费用遥测不可用；没有以内部计数冒充模型吞吐。子代理 0、最大深度 0、代理并发峰值 1。完整本地 gate 对最终生产候选只运行一次；有效证据在代码/配置/环境不变时复用。
+首次隔离实验的 occurrence 时间夹具包含毫秒，但表为 DATETIME 秒精度；查询未命中而进入全局保守锁。修正夹具并在 enqueue 前断言冻结快照命中；生产 scheduler 本就使用秒精度 occurrence。随后真实并发复现 claim deadlock，真实失败日志与 SQL 回归共同构成 RED；主键 CAS 修复后完整 stability 为 GREEN。
+
+## 验收与验证
+
+- 独立资源混合负载：通知/采集在2秒内开始（见测量表/JSON），报表保持10秒；同资源负载：最大活跃1、overlaps=0，不能以提速绕过 guard。
+- 无饥饿/有界性：36个持续有限到达任务全部完成、最大活跃3；固定三槽，不产生替代 worker。
+- 真实 SQL：20次同 idempotency key 并发 enqueue 得到一行；8个 owner 竞争同一任务只有一个成功；expired lease 接管后旧 owner 的 complete/heartbeat/fail 均被 fencing 拒绝；未来 retry 不领取，耗尽 attempts 到 dead_letter。
+- 真实失租约/停止：在十秒槽中强制改变 token，handler 收到 lease-loss abort 仍保留资源/槽；同资源通知未开始；30 ms shutdown 返回 false、后续五次 tick cancelled；gate settle 后 shutdown true，未知 job 仍 running，未伪造 completed。
+- focused：workflows/platform/contracts/fault/startup，212 passed / 42 环境 skipped；有界 runtime 与装配边界单独32 passed，之后确定性装配回归41 passed / 2 skipped。单元覆盖全局 waiter FIFO、不可取消 renewal 占 general/model 槽，以及每 worker 重入。
+- 本地最终 gate：API 3014 passed / 250 环境 skipped，frontend 568，agent-core 654，sandbox 22 passed / 4 skipped；workspace typecheck、build/CSP、contracts:check、qualification:matrix（37/37）、security:scan、security:audit、diff check 通过。lint 0 errors / 262既有 warnings。装配更名首次使两个既有源码/VM fixture 失效，已更新 fixture、focused 和 API 全量重跑通过；其他未变模块复用同轮有效结果。
+- PR 的新 head 重新触发八个 CI job，旧 head 的八项成功不作为新 head 门禁。父任务负责审查与合并，不 self-approve，不标 done，不启动后继。
+
+未验证：生产压测、大积压的候选 SELECT 查询计划/竞争、真实模型/provider配额、完整后台JWT+真实业务端到端、HA/跨进程资源guard。D1与真实 collector/通知/报表业务层的已有 fencing/恢复回归继续由CI执行，不以假handler宣称它们的业务I/O已认证。
+
+## 回退与停止条件
+
+设置 `WORKFLOW_CONCURRENCY=1` 后按正常受控部署重启后台，保留本次观测与 CAS/fencing，恢复单槽串行；不在活动进程内替换或扩容 worker。无schema迁移/历史数据改写，二进制回退也可撤回新增调度与观测。遇未知慢操作shutdown=false，保持既有quarantine处理，不释放资源/启动替代槽。
+
+本任务交付同一PR并进入in_review；合并与后继阶段只由MAX-107在最新head门禁/审查通过后推进。累计历史范围与v1原始测量保留；不把修订或上下文计数当作重置预算。

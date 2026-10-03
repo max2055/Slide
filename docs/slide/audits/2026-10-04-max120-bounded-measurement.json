@@ -1,0 +1,271 @@
+{
+  "scopeVersion": "v2",
+  "sourceCommit": "bf8912cda24514c5bf6fc10e6aa8cf8cfa42c64f",
+  "baseCommit": "4caeaecf32cd1f0d08c2b7ac7b68deaa0a4b3504",
+  "command": "bash scripts/qualification/run-environment.sh stability",
+  "mysql": "8.4 isolated container; 115 migrations",
+  "hardware": {
+    "platform": "darwin",
+    "release": "27.0.0",
+    "cpu": "Apple M5",
+    "logicalCpus": 10,
+    "memoryBytes": 25769803776,
+    "node": "v24.18.0"
+  },
+  "docker": {
+    "version": "29.7.2",
+    "vmCpuCount": 4,
+    "vmMemoryBytes": 5155713024
+  },
+  "samples": [
+    {
+      "scenario": "MAX-120 slow-report serial mixed load",
+      "mode": "observed",
+      "commit": "bf8912cda24514c5bf6fc10e6aa8cf8cfa42c64f",
+      "hardware": {
+        "platform": "darwin",
+        "release": "27.0.0",
+        "cpu": "Apple M5",
+        "logicalCpus": 10,
+        "memoryBytes": 25769803776,
+        "node": "v24.18.0"
+      },
+      "load": {
+        "reportMs": 10000,
+        "notificationJobs": 1,
+        "collectionJobs": 1,
+        "workerConcurrency": 1,
+        "pollMs": 1000,
+        "controlPoolLimit": 10,
+        "sharedInstanceId": 1,
+        "realModelCalls": 0
+      },
+      "waitMs": {
+        "report.schedule": 8,
+        "notification.deliver": 10029,
+        "capacity.collect": 11039
+      },
+      "elapsedMs": 11073,
+      "peakActive": 1,
+      "completed": [
+        "report.schedule",
+        "notification.deliver",
+        "capacity.collect"
+      ],
+      "cpuMicroseconds": {
+        "user": 27815,
+        "system": 4963
+      },
+      "memoryBefore": {
+        "rss": 89849856,
+        "heapTotal": 35651584,
+        "heapUsed": 18355000,
+        "external": 5095772,
+        "arrayBuffers": 2382703
+      },
+      "memoryAfter": {
+        "rss": 91242496,
+        "heapTotal": 35651584,
+        "heapUsed": 19257608,
+        "external": 5139483,
+        "arrayBuffers": 2387420
+      },
+      "before": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-03T19:18:43.355Z",
+        "persistence": "mysql",
+        "quality": "good",
+        "types": [
+          {
+            "jobType": "capacity.collect",
+            "queued": 1,
+            "retry": 0,
+            "scheduled": 0,
+            "ready": 1,
+            "running": 0,
+            "deadLetter": 0,
+            "expiredLeases": 0,
+            "oldestReadyWaitMs": 353
+          },
+          {
+            "jobType": "notification.deliver",
+            "queued": 1,
+            "retry": 0,
+            "scheduled": 0,
+            "ready": 1,
+            "running": 0,
+            "deadLetter": 0,
+            "expiredLeases": 0,
+            "oldestReadyWaitMs": 353
+          },
+          {
+            "jobType": "report.schedule",
+            "queued": 0,
+            "retry": 0,
+            "scheduled": 0,
+            "ready": 0,
+            "running": 1,
+            "deadLetter": 0,
+            "expiredLeases": 0,
+            "oldestReadyWaitMs": null
+          }
+        ],
+        "gaps": []
+      },
+      "after": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-03T19:18:54.393Z",
+        "persistence": "mysql",
+        "quality": "good",
+        "types": [],
+        "gaps": []
+      },
+      "candidateTarget": {
+        "fastStartMs": 2000,
+        "status": "confirmed-isolated-experiment-not-production-SLA"
+      }
+    },
+    {
+      "scenario": "MAX-120 bounded mixed load",
+      "concurrency": 1,
+      "sameResource": false,
+      "reportMs": 10000,
+      "poolLimit": 10,
+      "modelSlots": 1,
+      "pollMs": 1000,
+      "waitMs": {
+        "report.occurrence": 4,
+        "metrics.collect": 10024,
+        "notification.deliver": 11031
+      },
+      "peakActive": 1,
+      "overlaps": 0,
+      "completed": 3,
+      "cpuMicroseconds": {
+        "user": 24195,
+        "system": 2211
+      },
+      "memoryBefore": {
+        "rss": 91258880,
+        "heapTotal": 35651584,
+        "heapUsed": 19309792,
+        "external": 5139510,
+        "arrayBuffers": 2387447
+      },
+      "memoryAfter": {
+        "rss": 91422720,
+        "heapTotal": 35651584,
+        "heapUsed": 20098048,
+        "external": 5174307,
+        "arrayBuffers": 2392037
+      },
+      "elapsedMs": 12050,
+      "target": "confirmed-isolated-experiment-not-production-SLA"
+    },
+    {
+      "scenario": "MAX-120 bounded mixed load",
+      "concurrency": 3,
+      "sameResource": false,
+      "reportMs": 10000,
+      "poolLimit": 10,
+      "modelSlots": 1,
+      "pollMs": 1000,
+      "waitMs": {
+        "report.occurrence": 4,
+        "notification.deliver": 1010,
+        "metrics.collect": 1008
+      },
+      "peakActive": 2,
+      "overlaps": 0,
+      "completed": 3,
+      "cpuMicroseconds": {
+        "user": 29414,
+        "system": 3115
+      },
+      "memoryBefore": {
+        "rss": 91439104,
+        "heapTotal": 35651584,
+        "heapUsed": 20122496,
+        "external": 5174307,
+        "arrayBuffers": 2392037
+      },
+      "memoryAfter": {
+        "rss": 91684864,
+        "heapTotal": 35651584,
+        "heapUsed": 21291576,
+        "external": 5182569,
+        "arrayBuffers": 2400299
+      },
+      "elapsedMs": 10046,
+      "target": "confirmed-isolated-experiment-not-production-SLA"
+    },
+    {
+      "scenario": "MAX-120 bounded mixed load",
+      "concurrency": 3,
+      "sameResource": true,
+      "reportMs": 10000,
+      "poolLimit": 10,
+      "modelSlots": 1,
+      "pollMs": 1000,
+      "waitMs": {
+        "report.occurrence": 5,
+        "metrics.collect": 9992,
+        "notification.deliver": 9996
+      },
+      "peakActive": 1,
+      "overlaps": 0,
+      "completed": 3,
+      "cpuMicroseconds": {
+        "user": 12731,
+        "system": 2827
+      },
+      "memoryBefore": {
+        "rss": 91701248,
+        "heapTotal": 35651584,
+        "heapUsed": 21309776,
+        "external": 5182569,
+        "arrayBuffers": 2400299
+      },
+      "memoryAfter": {
+        "rss": 92422144,
+        "heapTotal": 35651584,
+        "heapUsed": 22065560,
+        "external": 5189072,
+        "arrayBuffers": 2406802
+      },
+      "elapsedMs": 10044,
+      "target": "confirmed-isolated-experiment-not-production-SLA"
+    },
+    {
+      "scenario": "MAX-120 continued finite arrivals",
+      "arrivalsPerType": 12,
+      "intervalMs": 100,
+      "handlerMs": 60,
+      "completed": 36,
+      "peakActive": 3,
+      "attempts": 1
+    }
+  ],
+  "safety": {
+    "idempotentEnqueues": 20,
+    "uniqueJobs": 1,
+    "claimContenders": 8,
+    "successfulClaims": 1,
+    "staleCompleteHeartbeatFailRejected": true,
+    "futureRetryExcluded": true,
+    "deadLetterVerified": true,
+    "leaseLossAbortVerified": true,
+    "noncooperativeHandlerKeepsResourceAndSlot": true,
+    "shutdownTimeoutMs": 30,
+    "shutdownInitiallyDrained": false,
+    "subsequentCancelledTicks": 5,
+    "shutdownDrainedAfterSettle": true,
+    "unknownJobState": "running"
+  },
+  "limits": [
+    "Single sample per mode; CPU/RSS include driver and GC noise",
+    "Fake handlers; no real model/provider/business I/O",
+    "Finite arrivals do not prove production throughput or unlimited-load starvation freedom",
+    "In-process resource guard scoped to D1 single backend"
+  ]
+}
