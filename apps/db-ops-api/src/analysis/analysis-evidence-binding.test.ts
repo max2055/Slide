@@ -18,7 +18,7 @@ describe('task-bound analysis completion', () => {
   });
 });
 
-import { bindEnvelope, parseEvidenceRef, resolveEvidenceRef } from './analysis-evidence.js';
+import { bindEnvelope, evidenceHash, resolveEvidenceRef } from './analysis-evidence.js';
 import { aiAnalysisDatabaseService } from '../ai-analysis-database-service.js';
 import { dbConnection } from '../db-connection.js';
 import { afterEach, vi } from 'vitest';
@@ -75,4 +75,8 @@ describe('uncertain evidence quality', () => {
     const evidence = freezeEvidence(envelope.subject as any, 'a1', { stale: { value: 90, freshness: 'stale', sources: [{ id: hash }] }, missing: { value: null, quality: { status: 'unknown' } } });
     for (const ref of ['/stale/value', hash, '/missing']) expect(bindEnvelope({ ...envelope, evidenceRefs: [{ ref, summary: 'observation' }] } as any, { purpose: 'fault_diagnosis', subject: envelope.subject as any, authorizationVersion: 'a1', evidence })).toMatchObject({ verification: 'unknown' });
   });
+});
+
+it('distinguishes route revision timestamps when hashing actual provider configuration', () => {
+  expect(evidenceHash([new Date('2026-10-03T00:00:00Z')])).not.toBe(evidenceHash([new Date('2026-10-03T01:00:00Z')]));
 });
