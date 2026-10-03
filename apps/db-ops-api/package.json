@@ -26,6 +26,7 @@
     "@sinclair/typebox": "^0.34.49",
     "@slide/agent-core": "workspace:*",
     "@types/bcrypt": "^6.0.0",
+    "ajv": "^8.20.0",
     "bcrypt": "^6.0.0",
     "cron": "^4.4.0",
     "dmdb": "^1.0.48286",

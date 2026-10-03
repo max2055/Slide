@@ -14,6 +14,8 @@ import { CronExecutor } from './cron-executor';
 import { sqlExecutor } from '../sql-executor';
 import { dbConnection } from '../db-connection';
 import { randomUUID } from 'node:crypto';
+import type { JobExecutionContext } from '../workflows/worker-runtime.js';
+import { cronRunStore, type CronRun, type CronCompletion } from './cron-run-store.js';
 import { validateBinding } from './script-policy.js';
 import { executeControlSql } from './control-sql-executor.js';
 import type { ActorContext } from '../auth/actor-context.js';
@@ -39,11 +41,13 @@ export class CronManager {
 
   /** 正在执行的任务 ID 集合（并发守卫） */
   private runningFlags: Set<number> = new Set();
+  private pendingSettlements = new Map<number, Promise<void>>();
 
   constructor(
     jobService: CronJobDatabaseService,
     cronExecutor: CronExecutor,
     private readonly workflow?: WorkflowEnqueuer,
+    private readonly typedHandler?: (type: string, payload: Record<string, unknown>, runId: string, context?: JobExecutionContext) => Promise<CronCompletion | undefined>,
   ) {
     this.jobService = jobService;
     this.cronExecutor = cronExecutor;
@@ -55,6 +59,7 @@ export class CronManager {
    */
   async start(): Promise<void> {
     console.log('CronManager: 正在启动...');
+    await cronRunStore.recover();
     await this.jobService.ensureSeedData();
     this.running = true;
     await this.reload();
@@ -109,7 +114,7 @@ export class CronManager {
   private scheduleJob(config: CronJobConfig): void {
     const cronJob = new CronJob(
       config.cron_expr,
-      () => this.executeJob(config),
+      () => this.triggerJob(config, undefined, `scheduled:${Math.floor(Date.now() / 1000)}`).then(() => {}).catch(error => console.error('Cron enqueue failed:', error.message)),
       null,
       true, // autoStart
       config.timezone || 'Asia/Shanghai'
@@ -125,10 +130,45 @@ export class CronManager {
     }
   }
 
+  async triggerJob(config: CronJobConfig, trigger?: ActorContext, key: string = randomUUID(), params: unknown = {}): Promise<CronRun> {
+    return cronRunStore.enqueue(config.id, trigger?.userId ?? null, key, params, config.output_schema);
+  }
+
+  async executeRun(runId: string, context?: JobExecutionContext): Promise<void> {
+    context?.signal.throwIfAborted();
+    const run = await cronRunStore.get(runId);
+    if (!run || run.status !== 'queued') return;
+    const pool = dbConnection.getPool();
+    if (!pool) throw new Error('CRON_RUN_STORE_UNAVAILABLE');
+    const lock = await pool.getConnection();
+    const lockName = `slide:cron:${run.jobId}`;
+    try {
+      const [rows] = await lock.query<any[]>('SELECT GET_LOCK(?, 0) AS acquired', [lockName]);
+      if (!rows[0].acquired || this.runningFlags.has(run.jobId)) {
+        if (await cronRunStore.start(runId)) await cronRunStore.finish(runId, 'cancelled', 'CRON_JOB_BUSY');
+        return;
+      }
+      if (!await cronRunStore.start(runId)) return;
+      const config = await this.jobService.getJobById(run.jobId);
+      if (!config) { await cronRunStore.finish(runId, 'failed', 'CRON_JOB_DELETED'); return; }
+      config.output_schema = run.outputSchema;
+      const trigger = run.triggeredBy === null ? undefined : await actorContextService.loadActiveActor(run.triggeredBy, undefined, `cron:${runId}`);
+      await this.executeJob(config, trigger, runId, context);
+    } catch (error: any) {
+      await cronRunStore.finish(runId, 'failed', error.message);
+      throw error;
+    } finally {
+      const release = async () => { try { await lock.query('SELECT RELEASE_LOCK(?)', [lockName]); } finally { lock.release(); } };
+      const pending = this.pendingSettlements.get(run.jobId);
+      if (pending) await pending;
+      await release();
+    }
+  }
+
   /**
    * 执行任务（含并发守卫和日志记录）
    */
-  public async executeJob(config: CronJobConfig, trigger?: ActorContext): Promise<void> {
+  public async executeJob(config: CronJobConfig, trigger?: ActorContext, runId?: string, context?: JobExecutionContext): Promise<void> {
     if (this.runningFlags.has(config.id)) {
       console.warn(`CronManager: 任务 #${config.id} "${config.name}" 跳过（正在执行中）`);
       return;
@@ -142,9 +182,13 @@ export class CronManager {
     try {
       const current = await this.jobService.getJobById(config.id);
       if (!current) throw new Error('CRON_JOB_DELETED');
-      config = current;
-      if (!trigger && config.enabled === false) return;
+      config = runId ? { ...current, output_schema: config.output_schema } : current;
+      if (!trigger && config.enabled === false) {
+        if (runId) await cronRunStore.finish(runId, 'cancelled', 'CRON_JOB_DISABLED');
+        return;
+      }
       logId = await this.jobService.startLog(config.id);
+      if (runId) await cronRunStore.bindLog(runId, logId);
       // Keep the attempted trigger/subject even when authorization later fails.
       if (!await this.jobService.recordExecutionAuthority(logId, {
         phase: 'authorization-pending', principal_type: config.principal_type ?? 'user',
@@ -160,15 +204,30 @@ export class CronManager {
         }
         if (!await this.jobService.recordExecutionAuthority(logId, { principal_type: 'system-maintenance',
           capability: config.handler_key, triggered_by: trigger?.userId ?? null })) throw new Error('CRON_AUDIT_UNAVAILABLE');
-        if (!this.workflow) throw new Error('WORKFLOW_RUNTIME_UNAVAILABLE');
-        const occurrence = new Date().toISOString().slice(0, 16);
-        await this.workflow.enqueue({
-          id: randomUUID(), type: config.handler_key, schemaVersion: 1,
-          payload: { cronJobId: config.id, occurrence }, idempotencyKey: `cron:${config.id}:${occurrence}`,
-          maxAttempts: Math.max(1, config.retry_count + 1),
-        });
-        await this.jobService.completeLog(logId, 'success', 'Maintenance handler enqueued');
-        await this.jobService.updateRunResult(config.id, 'success');
+        if (runId) {
+          if (!this.typedHandler) throw new Error('WORKFLOW_RUNTIME_UNAVAILABLE');
+          const completion = await this.typedHandler(config.handler_key, { cronJobId: config.id, runId }, runId, context);
+          context?.signal.throwIfAborted();
+          if (!completion) {
+            await cronRunStore.finish(runId, 'unknown', 'CRON_COMPLETION_MISSING');
+            await this.jobService.completeLog(logId, 'unknown', 'Maintenance handler returned without business evidence');
+            await this.jobService.updateRunResult(config.id, 'unknown');
+            return;
+          }
+          const status = completion.status === 'failure' ? 'failed' : completion.status;
+          await cronRunStore.saveCompletion(runId, completion);
+          await this.jobService.completeLog(logId, status === 'failed' ? 'error' : status, completion.summary, undefined, { ...completion });
+          await cronRunStore.finish(runId, status);
+          await this.jobService.updateRunResult(config.id, status === 'failed' ? 'error' : status);
+        } else {
+          if (!this.workflow) throw new Error('WORKFLOW_RUNTIME_UNAVAILABLE');
+          const occurrence = new Date().toISOString().slice(0, 16);
+          await this.workflow.enqueue({ id: randomUUID(), type: config.handler_key, schemaVersion: 1,
+            payload: { cronJobId: config.id, occurrence }, idempotencyKey: `cron:${config.id}:${occurrence}`,
+            maxAttempts: Math.max(1, config.retry_count + 1) });
+          await this.jobService.completeLog(logId, 'partial', 'Maintenance handler enqueued; business outcome unknown');
+          await this.jobService.updateRunResult(config.id, 'partial');
+        }
         return;
       }
       // 记录下次执行时间
@@ -191,7 +250,7 @@ export class CronManager {
 
       // 分支：script 类型任务直接执行 SQL，不走 Agent
       if (config.task_type === 'script') {
-        await this.executeScriptJob(config, logId, () => authority.refreshActor());
+        await this.executeScriptJob(config, logId, () => authority.refreshActor(), runId);
         return;
       }
 
@@ -201,14 +260,18 @@ export class CronManager {
         config.timeout_seconds || 300,
         config.output_schema,
         authority,
+        runId ? { runId, signal: context?.signal, save: completion => cronRunStore.saveCompletion(runId, completion) } : undefined,
       );
 
       executionSettled = result.executionSettled;
+      if (executionSettled) this.pendingSettlements.set(config.id, executionSettled);
       const durationMs = Date.now() - startTime;
-      const status = result.resolution?.kind === 'timed_out' || ['timeout', 'timed_out'].includes(result.stopReason) ? 'timeout'
+      const legacyStatus = result.resolution?.kind === 'timed_out' || ['timeout', 'timed_out'].includes(result.stopReason) ? 'timeout'
         : result.resolution?.kind === 'partial' || result.stopReason === 'max_iterations' ? 'partial'
         : result.error || result.stopReason !== 'completed' ? 'error'
         : 'success';
+      const businessStatus = result.businessStatus ?? (legacyStatus === 'success' ? 'unknown' : legacyStatus === 'partial' ? 'partial' : 'failed');
+      const status = businessStatus === 'failed' ? 'error' : businessStatus === 'unknown' ? (legacyStatus === 'timeout' ? 'timeout' : 'unknown') : businessStatus;
 
       await this.jobService.completeLog(logId, status,
         result.finalContent || '执行完成',
@@ -225,6 +288,7 @@ export class CronManager {
           duration_ms: durationMs,
         },
       );
+      if (runId) await cronRunStore.finish(runId, businessStatus, !result.structuredResult ? result.error || 'CRON_COMPLETION_MISSING' : undefined);
       await this.jobService.updateRunResult(config.id, status);
       console.log(`CronManager: 任务 #${config.id} "${config.name}" ${status}（${durationMs}ms）`);
     } catch (error: any) {
@@ -235,13 +299,14 @@ export class CronManager {
           error_trace: error.stack,
         });
       }
+      if (runId) await cronRunStore.finish(runId, 'failed', error.message);
       await this.jobService.updateRunResult(config.id, 'error');
       if (trigger) throw error;
     } finally {
       // Reporting a timeout must not release ownership of an in-flight operation.
       // Do not await here: non-cooperative operations must not hang the caller/logging.
       if (executionSettled) {
-        void executionSettled.then(() => this.runningFlags.delete(config.id));
+        void executionSettled.then(() => { this.runningFlags.delete(config.id); this.pendingSettlements.delete(config.id); });
       } else {
         this.runningFlags.delete(config.id);
       }
@@ -251,7 +316,7 @@ export class CronManager {
   /**
    * 执行 script 类型任务（直接执行 SQL，不走 AI Agent）
    */
-  private async executeScriptJob(config: CronJobConfig, logId: number, revalidate: () => Promise<ActorContext>): Promise<void> {
+  private async executeScriptJob(config: CronJobConfig, logId: number, revalidate: () => Promise<ActorContext>, runId?: string): Promise<void> {
     if (!config.script_id) throw new Error(`任务 #${config.id} 没有绑定脚本`);
     const binding = validateBinding(config.script_binding, config.script_id, config.target_instance_id);
     const audit = { script_id: binding.scriptId, sha256: binding.sha256, capability: binding.capability, authorized_by: binding.authorizedBy };
@@ -284,6 +349,10 @@ export class CronManager {
       error: result.error ?? null,
     };
 
+    if (runId) {
+      await cronRunStore.saveCompletion(runId, { status: result.success ? 'success' : 'failure', summary: result.success ? 'Script completed' : 'Script failed', result: structuredResult });
+      await cronRunStore.finish(runId, result.success ? 'success' : 'failed');
+    }
     const status = result.success ? 'success' : 'error';
 
     await this.jobService.completeLog(

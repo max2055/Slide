@@ -23,6 +23,7 @@ export function registerReportScheduleHandler(registry: JobRegistry, deps: Repor
     const occurrences = createOccurrenceStore();
     const scheduler = new ReportScheduler(reportConfigService, occurrences);
     signal.throwIfAborted();
+    const reportIds: number[] = [];
     for (const occurrence of await scheduler.claimDue()) {
       try {
         signal.throwIfAborted();
@@ -37,11 +38,13 @@ export function registerReportScheduleHandler(registry: JobRegistry, deps: Repor
         await occurrences.complete(occurrence, reportId);
         signal.throwIfAborted();
         await enqueueReportNotifications(reportId, config.notification_channel_ids);
+        reportIds.push(reportId);
       } catch (error) {
         signal.throwIfAborted();
         await occurrences.fail(occurrence, error instanceof Error ? error : new Error(String(error)));
         throw error;
       }
     }
+    return { status: 'success', summary: `report.schedule: ${reportIds.length} reports persisted`, result: { handler: 'report.schedule', data: { reportIds } } };
   });
 }

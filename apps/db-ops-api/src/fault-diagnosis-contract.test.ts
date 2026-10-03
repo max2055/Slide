@@ -97,7 +97,7 @@ describe('manual fault diagnosis route contract', () => {
   it('keeps automatic diagnosis exclusively behind a typed workflow registered before the worker starts', () => {
     const registration = 'registerWorkflowHandlers(workflowRegistry, {';
     const registrationSource = readFileSync(resolve(sourceRoot, 'workflows/register-workflow-handlers.ts'), 'utf8');
-    expect(registrationSource).toContain("registry.register('fault.diagnose-unhealthy', async () => { await faultDiagnosisService.diagnoseUnhealthyInstances(); });");
+    expect(registrationSource).toContain("registry.register('fault.diagnose-unhealthy', async () => completion('fault.diagnose-unhealthy', await faultDiagnosisService.diagnoseUnhealthyInstances()));");
     const registryConstruction = 'const workflowRegistry = new JobRegistry();';
     const workerConstruction = 'const workflowRuntime = new WorkerRuntime';
     const workerStart = 'workflowTimer = setInterval';

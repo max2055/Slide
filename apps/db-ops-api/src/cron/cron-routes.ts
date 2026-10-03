@@ -1,3 +1,4 @@
+import { cronRunStore } from './cron-run-store.js';
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { CronJob } from 'cron';
 import { cronJobService } from './cron-job-service.js';
@@ -13,7 +14,8 @@ import { assertCronActorAccess } from './cron-authority.js';
 import { expensiveOperationRateLimitConfig } from '../security/http-security.js';
 
 function cronErrorStatus(error: Error): number {
-  if (['CRON_AUDIT_UNAVAILABLE', 'CRON_AUTHORITY_UNAVAILABLE', 'WORKFLOW_RUNTIME_UNAVAILABLE'].includes(error.message)) return 503;
+  if (error.message === 'CRON_IDEMPOTENCY_CONFLICT') return 409;
+  if (['CRON_RUN_STORE_UNAVAILABLE', 'CRON_AUDIT_UNAVAILABLE', 'CRON_AUTHORITY_UNAVAILABLE', 'WORKFLOW_RUNTIME_UNAVAILABLE'].includes(error.message)) return 503;
   if (['CRON_SCRIPT_ACCESS_DENIED', 'CRON_TRIGGER_SCOPE_DENIED', 'CRON_TARGET_ACCESS_REVOKED',
     'CRON_OWNER_PERMISSION_REVOKED', 'CRON_OWNER_REBIND_DENIED', 'CRON_OWNER_UNAVAILABLE'].includes(error.message)) return 403;
   return error.message?.startsWith('CRON_') ? 400 : 500;
@@ -253,7 +255,6 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
   fastify.post('/api/cron/jobs/:id/run', {
     preHandler: [verifyToken, requirePermission('cron:manage')],
     handler: async (request, reply) => {
-      const startTime = Date.now();
       try {
         const { id } = request.params as any;
         const config = await requireCronJobAccess(request, reply, Number(id), 'read-write');
@@ -261,13 +262,44 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
 
         // Route through CronManager.executeJob() which handles task_type branching:
         // script jobs → executeScriptJob() (SqlExecutor), agent jobs → cronExecutor.execute()
-        await getCronManager().executeJob(config, (request as any).user);
-
-        reply.send({ message: '执行完成' });
+        const body = request.body ?? {};
+        if (!body || typeof body !== 'object' || Object.keys(body).length) return reply.code(400).send({ error: 'CRON_RUN_PARAMS_UNSUPPORTED' });
+        const key = request.headers['idempotency-key'];
+        if (key !== undefined && (typeof key !== 'string' || !key || key.length > 200)) return reply.code(400).send({ error: 'CRON_IDEMPOTENCY_KEY_INVALID' });
+        const run = await getCronManager().triggerJob(config, (request as any).user, key as string | undefined, body);
+        reply.code(202).send({ runId: run.runId, jobId: run.jobId, status: run.status, message: '已接受执行，结果请按 runId 查询' });
       } catch (error: any) {
         reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
+  });
+
+  fastify.get('/api/cron/jobs/:id/runs', {
+    preHandler: [verifyToken, requirePermission('cron:view')],
+    handler: async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        if (!await requireCronJobAccess(request, reply, Number(id))) return;
+        const { requestKey } = request.query as { requestKey?: string };
+        if (!requestKey || requestKey.length > 200) return reply.code(400).send({ error: 'CRON_IDEMPOTENCY_KEY_INVALID' });
+        const run = await cronRunStore.findRequest(Number(id), (request as any).user.userId, requestKey);
+        if (!run) return reply.code(404).send({ error: 'CRON_RUN_NOT_FOUND' });
+        reply.send(run);
+      } catch (error: any) { reply.code(cronErrorStatus(error)).send({ error: error.message }); }
+    },
+  });
+
+  fastify.get('/api/cron/jobs/:id/runs/:runId', {
+    preHandler: [verifyToken, requirePermission('cron:view')],
+    handler: async (request, reply) => {
+      try {
+        const { id, runId } = request.params as { id: string; runId: string };
+        if (!await requireCronJobAccess(request, reply, Number(id))) return;
+        const run = await cronRunStore.get(runId);
+        if (!run || run.jobId !== Number(id)) return reply.code(404).send({ error: 'CRON_RUN_NOT_FOUND' });
+        reply.send(run);
+      } catch (error: any) { reply.code(cronErrorStatus(error)).send({ error: error.message }); }
+    },
   });
 
   // 删除定时任务

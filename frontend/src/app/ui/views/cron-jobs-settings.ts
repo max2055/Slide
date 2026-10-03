@@ -1,3 +1,4 @@
+import { CronRunTracker } from "../controllers/cron-run-tracker.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * Cron 任务管理页面
@@ -32,6 +33,7 @@ interface CronJobConfig {
 
 interface CronJobLog {
   id: number;
+  run_id?: string | null;
   job_id: number;
   started_at: string;
   finished_at: string | null;
@@ -114,6 +116,7 @@ function formatDateTime(isoStr: string): string {
 
 type BadgeVariant = "ok" | "danger" | "warn" | "muted";
 const STATUS_VARIANT: Record<string, BadgeVariant> = {
+  queued: "muted", unknown: "warn", unconfirmed: "warn", cancelled: "warn", failed: "danger",
   success: "ok",
   error: "danger",
   skipped: "warn",
@@ -122,6 +125,7 @@ const STATUS_VARIANT: Record<string, BadgeVariant> = {
   timeout: "danger",
 };
 const STATUS_LABEL: Record<string, string> = {
+  queued: "排队中", unknown: "结果未知", unconfirmed: "状态待确认", cancelled: "已取消", failed: "失败",
   success: "成功",
   error: "失败",
   skipped: "跳过",
@@ -162,8 +166,7 @@ export class CronJobsSettings extends LitElement {
   @state() private triggerError: string | null = null;
   @state() private triggerRunning = false;
 
-  @state() private pollingJobIds = new Set<number>();
-  private _pollInterval: ReturnType<typeof setInterval> | null = null;
+  private runTracker = new CronRunTracker(() => this.requestUpdate());
   private _refreshInterval: ReturnType<typeof setInterval> | null = null;
 
   @state() private formTaskType: "agent" | "script" = "agent";
@@ -283,16 +286,14 @@ export class CronJobsSettings extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
+    this.runTracker.start();
     this.loadCronJobs();
     this._refreshInterval = setInterval(() => this.refreshCronJobs(), 15000);
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    if (this._pollInterval) {
-      clearInterval(this._pollInterval);
-      this._pollInterval = null;
-    }
+    this.runTracker.stop();
     if (this._refreshInterval) {
       clearInterval(this._refreshInterval);
       this._refreshInterval = null;
@@ -618,40 +619,16 @@ export class CronJobsSettings extends LitElement {
     const jobId = this.triggerJobId;
     this.triggerRunning = true; this.triggerError = null;
     try {
-      const res = await authFetch(`/api/cron/jobs/${jobId}/run`, { method: "POST" });
-      if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || "触发失败"); }
+      await this.runTracker.trigger(jobId);
+      if (!this.isConnected) return;
       this.closeTriggerDialog();
       showToast("已触发执行");
-      this.pollJobStatus(jobId);
     } catch (e: any) {
+      if (!this.isConnected) return;
       this.triggerError = e.message || "触发失败";
     } finally {
       this.triggerRunning = false;
     }
-  }
-
-  private pollJobStatus(jobId: number) {
-    if (this.pollingJobIds.has(jobId)) return;
-    this.pollingJobIds = new Set(this.pollingJobIds).add(jobId);
-    let attempts = 0;
-    const maxAttempts = 10;
-    this._pollInterval = setInterval(async () => {
-      attempts++;
-      try {
-        const res = await authFetch(`/api/cron/jobs/${jobId}/logs?limit=1`);
-        if (res.ok) {
-          const { logs } = await res.json() as { logs: CronJobLog[] };
-          if (logs.length > 0 && logs[0].status !== "running") {
-            clearInterval(this._pollInterval!);
-            this._pollInterval = null;
-            const next = new Set(this.pollingJobIds); next.delete(jobId); this.pollingJobIds = next;
-            this.loadCronJobs();
-            return;
-          }
-        }
-      } catch { /* continue polling */ }
-      if (attempts >= maxAttempts) { clearInterval(this._pollInterval!); this._pollInterval = null; const next = new Set(this.pollingJobIds); next.delete(jobId); this.pollingJobIds = next; }
-    }, 3000);
   }
 
   private async openLogViewer(job: CronJobConfig) {
@@ -864,7 +841,9 @@ export class CronJobsSettings extends LitElement {
               <span class="relative-time">${formatRelativeTime(job.last_run_at)}</span>
             </div>
             <div class="table-cell cell-result">
-              ${this.renderBadge(job.last_result)}
+              ${this.renderBadge(this.runTracker.runs.get(job.id)?.status ?? job.last_result)}
+              ${this.runTracker.runs.get(job.id) ? html`<span title=${this.runTracker.runs.get(job.id)?.runId ?? ''}>本次运行</span>
+                <span>${this.runTracker.runs.get(job.id)?.summary ?? ''}</span>` : nothing}
             </div>
             <div class="table-cell cell-actions">
               <app-toggle compact .checked=${job.enabled} @change=${() => this.toggleJob(job)} title=${job.enabled ? "已启用" : "已停用"}></app-toggle>
@@ -889,7 +868,7 @@ export class CronJobsSettings extends LitElement {
           ${this.viewerLogs.map(log => html`
             <div class="log-entry">
               <div class="log-entry__header">
-                ${this.renderBadge(log.status)}
+                ${!log.run_id && log.status === "success" ? html`<app-badge variant="warn">旧成功（仅 runner 结束）</app-badge>` : this.renderBadge(log.status)}
                 <span class="log-entry__time">${formatDateTime(log.started_at)}</span>
                 <span class="log-entry__duration">耗时 ${formatDuration(log.started_at, log.finished_at)}${log.duration_ms ? ' (' + log.duration_ms + 'ms)' : ''}</span>
               </div>

@@ -56,7 +56,7 @@ it('retains ownership of an uncooperative tool after timeout and resumes only af
   expect(contexts).toHaveLength(1); // The second tool must never start.
   await manager.executeJob(config);
   expect(run).toHaveBeenCalledTimes(2);
-  expect(service.updateRunResult).toHaveBeenLastCalledWith(1, 'success');
+  expect(service.updateRunResult).toHaveBeenLastCalledWith(1, 'unknown');
   expect(vi.getTimerCount()).toBe(0);
 });
 it('aborts cooperative tools without starting the next tool', async () => {
@@ -102,7 +102,7 @@ it.each(['success', 'failure', 'sync-failure'])('clears timers and ownership aft
   await manager.executeJob(config);
   await manager.executeJob(config);
   expect(run).toHaveBeenCalledTimes(2);
-  expect(service.updateRunResult).toHaveBeenLastCalledWith(1, mode === 'success' ? 'success' : 'error');
+  expect(service.updateRunResult).toHaveBeenLastCalledWith(1, mode === 'success' ? 'unknown' : 'error');
   expect(vi.getTimerCount()).toBe(0);
 });
 it('retains ownership even when timeout log persistence fails', async () => {

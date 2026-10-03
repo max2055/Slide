@@ -164,3 +164,18 @@ it.each(['notification.deliver', 'report.notify'])('connects %s to the existing 
   expect(acquire).toHaveBeenCalledWith(expect.objectContaining({ type: key }), h.context, null);
   expect(h.deps.notificationService.send).not.toHaveBeenCalled();
 });
+
+it.each([
+  [{ success: false, error: 'SQL_ERROR' }, 'failure'],
+  [{ succeeded: 1, failed: 1 }, 'partial'],
+  [{ succeeded: 0, failed: 2 }, 'failure'],
+  [{ succeeded: 2, failed: 0 }, 'success'],
+] as const)('returns native business evidence %j without using handler exit as success', async (data, status) => {
+  const h = setup(); h.actions.collect.mockResolvedValueOnce(data as never);
+  expect(await h.registry.executeWithResult({ id: 'run', type: 'capacity.collect', payload: {}, attempts: 1, maxAttempts: 1, fencingToken: 7 }, h.context))
+    .toEqual({ status, summary: `capacity.collect: ${status}`, result: { handler: 'capacity.collect', data } });
+});
+it('does not invent native completion when a handler returns no evidence', async () => {
+  const h = setup();
+  expect(await h.registry.executeWithResult({ id: 'run', type: 'capacity.collect', payload: {}, attempts: 1, maxAttempts: 1, fencingToken: 7 }, h.context)).toBeUndefined();
+});

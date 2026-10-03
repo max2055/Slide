@@ -37,7 +37,7 @@ export class CronJobDatabaseService {
           ? `WHERE target_instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')})`
           : 'WHERE 1 = 0';
       const [rows] = await pool.execute(
-        `SELECT id, name, task_description, cron_expr, enabled, task_type, handler_key, owner_user_id, principal_type, resource_scope, identity_status, identity_audit, script_id, script_binding, target_instance_id, timezone, description,
+        `SELECT id, name, task_description, output_schema, cron_expr, enabled, task_type, handler_key, owner_user_id, principal_type, resource_scope, identity_status, identity_audit, script_id, script_binding, target_instance_id, timezone, description,
                 last_run_at, next_run_at, last_result, timeout_seconds, retry_count,
                 created_at, updated_at
          FROM cron_jobs
@@ -61,7 +61,7 @@ export class CronJobDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, name, task_description, cron_expr, enabled, task_type, handler_key, owner_user_id, principal_type, resource_scope, identity_status, identity_audit, script_id, script_binding, target_instance_id, timezone, description,
+        `SELECT id, name, task_description, output_schema, cron_expr, enabled, task_type, handler_key, owner_user_id, principal_type, resource_scope, identity_status, identity_audit, script_id, script_binding, target_instance_id, timezone, description,
                 last_run_at, next_run_at, last_result, timeout_seconds, retry_count,
                 created_at, updated_at
          FROM cron_jobs
@@ -475,7 +475,7 @@ export class CronJobDatabaseService {
 
       const [rows] = await pool.execute(
         `SELECT id, job_id, started_at, finished_at, status, result_summary, error_message,
-                result, structured_result, execution_authority, tools_used, tool_events, \`usage\`, stop_reason, duration_ms, error_trace, partial_trace
+                result, run_id, structured_result, execution_authority, tools_used, tool_events, \`usage\`, stop_reason, duration_ms, error_trace, partial_trace
          FROM cron_job_logs
          WHERE job_id = ?
          ORDER BY started_at DESC, id DESC
