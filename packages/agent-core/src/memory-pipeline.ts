@@ -106,7 +106,8 @@ export class MemoryPipeline {
   }
 
   async reconcile(scope: MemoryScope): Promise<void> {
-    const ids = await this.store.transaction(s => [...new Set(s.records.filter(r => scopeKey(r.scope) === scopeKey(scope)).flatMap(r => r.sources.map(src => src.id)))]);
+    const records = await this.store.list(scope);
+    const ids = [...new Set(records.filter(r => scopeKey(r.scope) === scopeKey(scope)).flatMap(r => r.sources.map(src => src.id)))];
     if (!ids.length) return;
     const live = await this.reader(scope, ids);
     await this.store.invalidate(scope, new Map(live.map(s => [s.id, s.hash])), ids);

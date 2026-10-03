@@ -781,8 +781,13 @@ describe('DirectAdapter', () => {
         run: { id: 'provider-failure-run', actorId: actor.userId, sessionId: 'ws-provider-failure-session', messageId: 'failure-message', idempotencyKey: 'failure-key', state: 'running' },
       });
       let terminalPersisted = false;
+      let markFinishStarted!: () => void;
+      const finishStarted = new Promise<void>(resolve => { markFinishStarted = resolve; });
+      let releaseFinish!: () => void;
+      const finishAllowed = new Promise<void>(resolve => { releaseFinish = resolve; });
       const finish = vi.spyOn(agentRunService, 'finish').mockImplementation(async () => {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        markFinishStarted();
+        await finishAllowed;
         terminalPersisted = true;
         return true;
       });
@@ -807,13 +812,18 @@ describe('DirectAdapter', () => {
           revalidateActor: vi.fn().mockResolvedValue(actor),
         },
       });
-      (adapter as any).policies.chat = { ...(adapter as any).policies.chat, runTimeoutMs: 100 };
+      const send = vi.spyOn((adapter as any).socketWriter, 'send');
+      // Only the timeout scenario gets a short deadline. Preparation latency
+      // must not turn the provider-error or successful scenario into a timeout.
+      if (stopReason === 'timed_out') {
+        (adapter as any).policies.chat = { ...(adapter as any).policies.chat, runTimeoutMs: 100 };
+      }
       adaptersToCleanup.push(adapter);
 
       try {
         await adapter.start();
-        const events = await new Promise<Array<Record<string, unknown>>>((resolve, reject) => {
-          const received: Array<Record<string, unknown>> = [];
+        const received: Array<Record<string, unknown>> = [];
+        const eventsPromise = new Promise<Array<Record<string, unknown>>>((resolve, reject) => {
           const ws = new WebSocket(`ws://127.0.0.1:${port}`);
           const timeout = setTimeout(() => {
             ws.close();
@@ -838,6 +848,15 @@ describe('DirectAdapter', () => {
             reject(error);
           });
         });
+        if (stopReason !== 'completed') {
+          await Promise.race([finishStarted, eventsPromise]);
+          expect(finish).toHaveBeenCalledTimes(1);
+          expect(send.mock.calls.map(call => JSON.parse(String(call[1])).type))
+            .not.toEqual(expect.arrayContaining([expect.stringMatching(/^(error|complete)$/)]));
+          expect(received.some(event => event.type === 'error' || event.type === 'complete')).toBe(false);
+          releaseFinish();
+        }
+        const events = await eventsPromise;
         if (stopReason === 'completed') {
           expect(addMessage).toHaveBeenCalledTimes(1);
           expect(complete).toHaveBeenCalledTimes(1);
@@ -854,6 +873,7 @@ describe('DirectAdapter', () => {
         expect(events.at(-1)).toMatchObject({ type: stopReason === 'completed' ? 'complete' : 'error', stopReason });
         if (stopReason === 'completed') expect(events.at(-1)?.messageSequence).toBe(1);
       } finally {
+        releaseFinish();
         metadata.mockRestore();
         createSession.mockRestore();
         addMessage.mockRestore();
