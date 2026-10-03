@@ -1,6 +1,8 @@
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import type { llmDatabaseService, ModelInfo } from '../llm-database-service.js';
 import { modelParameterCatalog, modelProviderId } from './model-parameters.js';
+import { CredentialDestinationError, resolveTestCredential } from './credential-destination-policy.js';
+import { expensiveOperationRateLimitConfig } from '../security/http-security.js';
 
 interface DiscoveryInput { providerName: string; baseURL: string; apiKey?: string; apiFormat?: string; deploymentType?: string; providerType?: string }
 type Fetcher = typeof fetch;
@@ -57,21 +59,21 @@ export async function discoverModels(input: DiscoveryInput, fetcher: Fetcher = f
 
 export async function registerModelDiscoveryRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler, manage: preHandlerHookHandler,
   store: Pick<typeof llmDatabaseService, 'getProviderApiKey' | 'getProviderByName'>, fetcher: Fetcher = fetch) {
-  app.post('/api/llm/models', { preHandler: [verifyToken, manage] }, async (request, reply) => {
+  app.post('/api/llm/models', { bodyLimit: 16_384, config: { rateLimit: expensiveOperationRateLimitConfig }, preHandler: [verifyToken, manage] }, async (request, reply) => {
     const body = request.body as DiscoveryInput;
     if (!body || typeof body !== 'object' || Array.isArray(body)
       || Object.keys(body).some(key => !['providerName', 'baseURL', 'apiKey', 'apiFormat', 'deploymentType', 'providerType'].includes(key))
       || typeof body.providerName !== 'string' || !body.providerName.trim()
       || typeof body.baseURL !== 'string' || !body.baseURL.trim()
       || ['apiKey', 'apiFormat', 'deploymentType', 'providerType'].some(key => (body as any)[key] !== undefined && typeof (body as any)[key] !== 'string')
+      || Object.entries(body).some(([key, value]) => typeof value === 'string' && value.length > (key === 'apiKey' ? 4096 : key === 'baseURL' ? 2048 : 255))
       || (body.providerType && !['deepseek', 'stepfun', 'mimo'].includes(body.providerType))) return reply.code(400).send({ error: 'MODEL_DISCOVERY_INVALID_INPUT' });
     try {
-      const saved = !body.apiKey?.trim() ? await store.getProviderByName(body.providerName) : null;
-      const apiKey = body.apiKey?.trim() || (saved ? await store.getProviderApiKey(saved.name) : '') || '';
-      return await discoverModels({ ...body, apiKey, apiFormat: body.apiFormat || saved?.api_format || undefined,
-        deploymentType: body.deploymentType || saved?.deployment_type }, fetcher);
+      const saved = await store.getProviderByName(body.providerName);
+      const credential = await resolveTestCredential(saved, body, name => store.getProviderApiKey(name, saved || undefined));
+      return await discoverModels({ ...body, ...credential }, fetcher);
     } catch (error) {
-      return reply.code(error instanceof DiscoveryError ? error.status : 503).send({ error: error instanceof DiscoveryError ? error.message : 'MODEL_DISCOVERY_CONFIGURATION_UNAVAILABLE' });
+      return reply.code(error instanceof DiscoveryError || error instanceof CredentialDestinationError ? error.status : 503).send({ error: error instanceof DiscoveryError || error instanceof CredentialDestinationError ? error.message : 'MODEL_DISCOVERY_CONFIGURATION_UNAVAILABLE' });
     }
   });
 }

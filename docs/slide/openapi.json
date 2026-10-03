@@ -5031,6 +5031,92 @@
         ],
         "type": "object"
       },
+      "LLMConnectionTestRequest": {
+        "$id": "LLMConnectionTestRequest",
+        "additionalProperties": false,
+        "properties": {
+          "apiFormat": {
+            "maxLength": 255,
+            "type": "string"
+          },
+          "apiKey": {
+            "description": "Explicit draft key. Empty/redacted values reuse the saved credential only at its approved origin and base path.",
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "baseURL": {
+            "maxLength": 2048,
+            "type": "string"
+          },
+          "deploymentType": {
+            "maxLength": 255,
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 255,
+            "type": "string"
+          },
+          "providerName": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerName"
+        ],
+        "type": "object"
+      },
+      "LLMModelDiscoveryRequest": {
+        "$id": "LLMModelDiscoveryRequest",
+        "additionalProperties": false,
+        "properties": {
+          "apiFormat": {
+            "maxLength": 255,
+            "type": "string"
+          },
+          "apiKey": {
+            "description": "Explicit draft key. Empty/redacted values reuse the saved credential only at its approved origin and base path.",
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "baseURL": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "deploymentType": {
+            "maxLength": 255,
+            "type": "string"
+          },
+          "providerName": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          },
+          "providerType": {
+            "anyOf": [
+              {
+                "const": "deepseek",
+                "type": "string"
+              },
+              {
+                "const": "stepfun",
+                "type": "string"
+              },
+              {
+                "const": "mimo",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [
+          "providerName",
+          "baseURL"
+        ],
+        "type": "object"
+      },
       "NetworkDevice": {
         "$id": "NetworkDevice",
         "additionalProperties": false,
@@ -9731,6 +9817,112 @@
             "description": "Service health"
           }
         }
+      }
+    },
+    "/api/llm/models": {
+      "post": {
+        "description": "Requires llm:manage. Saved credentials are bound to the configured origin and exact proxy base path. Update the saved provider configuration or supply an explicit draft key to change destinations. Redirects are rejected. Limit: 10 requests/minute; connection probes use at most 50 output tokens and no SDK retries.",
+        "operationId": "discoverLLMModels",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LLMModelDiscoveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Connection result or discovered model list"
+          },
+          "400": {
+            "description": "Invalid input, URL, or missing credential"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "llm:manage required or saved credential destination mismatch"
+          },
+          "404": {
+            "description": "Saved provider not found (connection test)"
+          },
+          "409": {
+            "description": "Saved configuration changed during credential resolution; retry with current configuration"
+          },
+          "413": {
+            "description": "Request body exceeds 16384 bytes"
+          },
+          "429": {
+            "description": "Expensive operation rate limit exceeded"
+          },
+          "502": {
+            "description": "Model discovery upstream failure; no upstream body returned"
+          },
+          "503": {
+            "description": "Configuration unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/llm/test": {
+      "post": {
+        "description": "Requires llm:manage. Saved credentials are bound to the configured origin and exact proxy base path. Update the saved provider configuration or supply an explicit draft key to change destinations. Redirects are rejected. Limit: 10 requests/minute; connection probes use at most 50 output tokens and no SDK retries.",
+        "operationId": "testLLMConnection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LLMConnectionTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Connection result or discovered model list"
+          },
+          "400": {
+            "description": "Invalid input, URL, or missing credential"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "llm:manage required or saved credential destination mismatch"
+          },
+          "404": {
+            "description": "Saved provider not found (connection test)"
+          },
+          "409": {
+            "description": "Saved configuration changed during credential resolution; retry with current configuration"
+          },
+          "413": {
+            "description": "Request body exceeds 16384 bytes"
+          },
+          "429": {
+            "description": "Expensive operation rate limit exceeded"
+          },
+          "502": {
+            "description": "Model discovery upstream failure; no upstream body returned"
+          },
+          "503": {
+            "description": "Configuration unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/api/network-devices": {

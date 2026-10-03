@@ -5,6 +5,7 @@
 import mysql from 'mysql2/promise';
 import type { LLMScene, SceneBinding } from './llm/scene-routing.js';
 import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
+import { CredentialDestinationError } from './llm/credential-destination-policy.js';
 
 // 部署方式
 export type DeploymentType = 'local' | 'cloud' | 'api';
@@ -324,8 +325,13 @@ class LLMDatabaseService {
   /**
    * 获取提供商的 API Key（解密后）
    */
-  async getProviderApiKey(name: string): Promise<string | null> {
+  async getProviderApiKey(name: string, expectedConfig?: LLMProvider): Promise<string | null> {
     const provider = await this.getProviderByName(name);
+    // A concurrent config/key update must not combine a new key with an old destination.
+    if (expectedConfig && (!provider || ['id', 'api_base_url', 'api_format', 'deployment_type', 'api_key_encrypted']
+      .some(field => provider[field as keyof LLMProvider] !== expectedConfig[field as keyof LLMProvider]))) {
+      throw new CredentialDestinationError('LLM_TEST_CONFIGURATION_CHANGED：配置已变更，请重新测试', 409);
+    }
     if (!provider || !provider.api_key_encrypted) {
       return null;
     }

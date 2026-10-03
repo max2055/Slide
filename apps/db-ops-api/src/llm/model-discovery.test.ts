@@ -61,7 +61,7 @@ describe('authenticated model discovery', () => {
       const saved = await app.inject({ method: 'POST', url: '/api/llm/models', headers: { authorization: 'manager' }, payload });
       expect(saved.statusCode).toBe(200);
       expect(saved.body).not.toContain('stored-secret');
-      expect(store.getProviderApiKey).toHaveBeenCalledWith('step');
+      expect(store.getProviderApiKey).toHaveBeenCalledWith('step', expect.objectContaining({ api_base_url: payload.baseURL }));
       store.getProviderApiKey.mockClear();
       expect((await app.inject({ method: 'POST', url: '/api/llm/models', headers: { authorization: 'manager' }, payload: { ...payload, apiKey: 'draft-secret' } })).statusCode).toBe(200);
       expect(store.getProviderApiKey).not.toHaveBeenCalled();
