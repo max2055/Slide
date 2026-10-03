@@ -2,6 +2,7 @@ import { registerWorkflowHandlers } from './src/workflows/register-workflow-hand
 import { registerHealthRoutes } from './src/health-routes.js';
 import { registerLLMSceneRoutes } from './src/llm/scene-routes.js';
 import { registerModelDiscoveryRoutes } from './src/llm/model-discovery.js';
+import { registerConnectionTestRoutes } from './src/llm/connection-test-routes.js';
 import { capacityInstanceIds } from './src/capacity-scope.js';
 /**
  * Slide - Database Operations API Server
@@ -775,48 +776,7 @@ async function start() {
     }
   });
 
-  // 测试连接
-  fastify.post('/api/llm/test', { preHandler: [verifyToken] }, async (request, reply) => {
-    try {
-      const check = strictBody(request.body as Record<string, unknown>,
-        ['providerName', 'apiKey', 'baseURL', 'model', 'apiFormat', 'deploymentType'], 'POST /api/llm/test');
-        if (check.error) return reply.code(400).send(check.error);
-      const { providerName, apiKey: draftApiKey, baseURL, model, apiFormat, deploymentType } = check.body as {
-        providerName: string; apiKey?: string; baseURL?: string; model?: string; apiFormat?: string; deploymentType?: string;
-      };
-      if (!providerName || typeof providerName !== 'string') return reply.code(400).send({ error: '缺少必填字段：providerName' });
-      const provider = await llmDatabaseService.getProviderByName(providerName);
-      if (!provider) return reply.code(404).send({ error: '提供商不存在' });
-      const effectiveDeploymentType = typeof deploymentType === 'string' && deploymentType.trim()
-        ? deploymentType.trim() : provider.deployment_type;
-      const draftKey = typeof draftApiKey === 'string' ? draftApiKey.trim() : '';
-      const apiKey = draftKey || (provider.api_key_encrypted
-        ? await llmDatabaseService.getProviderApiKey(provider.name)
-        : '');
-      if (!apiKey && effectiveDeploymentType !== 'local') return reply.code(400).send({ success: false, error: '未配置 API Key' });
-
-      const result = await llmService.testConnectionWithConfig(
-        providerName,
-        apiKey,
-        typeof baseURL === 'string' && baseURL.trim() ? baseURL.trim() : undefined,
-        typeof model === 'string' && model.trim() ? model.trim() : undefined,
-        {
-          apiFormat: typeof apiFormat === 'string' && apiFormat.trim() ? apiFormat.trim() : undefined,
-          deploymentType: effectiveDeploymentType,
-        },
-      );
-      reply.send({
-        ...result,
-        message: result.success ? `连接成功，模型: ${result.model || model || provider.default_model || 'unknown'}` : undefined,
-      });
-    } catch (error: any) {
-      reply.send({
-        success: false,
-        error: error.status ? `${error.status} ${error.message}` : error.message,
-        provider: request.body && (request.body as any).providerName,
-      });
-    }
-  });
+  await registerConnectionTestRoutes(fastify, verifyToken, requirePermission('llm:manage'), llmDatabaseService, llmService);
 
   // 根据 Base URL 查询已知模型列表
   // 供聊天界面模型下拉框使用 — 只展示每个 provider 实际配置的 default_model

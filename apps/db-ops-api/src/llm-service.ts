@@ -487,6 +487,7 @@ class LLMService {
       temperature?: number;
       maxTokens?: number;
       system?: string;
+      timeoutMs?: number;
     }
   ): Promise<{
     success: boolean;
@@ -530,6 +531,7 @@ class LLMService {
               temperature: options.temperature ?? 0.7,
               maxTokens: options.maxTokens,
               system: options.system,
+              timeoutMs: options.timeoutMs,
             }
           );
         default:
@@ -692,7 +694,7 @@ class LLMService {
   private async callOllama(
     provider: LLMProvider,
     messages: ChatMessage[],
-    options: { model: string; temperature: number; maxTokens?: number; system?: string }
+    options: { model: string; temperature: number; maxTokens?: number; system?: string; timeoutMs?: number }
   ): Promise<{
     success: boolean;
     content?: string;
@@ -710,6 +712,8 @@ class LLMService {
 
     const response = await fetch(url, {
       method: 'POST',
+      redirect: 'error',
+      ...(options.timeoutMs ? { signal: AbortSignal.timeout(options.timeoutMs) } : {}),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: options.model,
@@ -803,11 +807,11 @@ class LLMService {
     apiKey: string,
     baseURL?: string,
     model?: string,
-    overrides?: { apiFormat?: string; deploymentType?: string },
+    overrides?: { apiFormat?: string; deploymentType?: string; providerConfig?: LLMProvider },
   ): Promise<LLMResponse> {
     try {
       // 创建临时客户端
-      const providerInfo = await llmDatabaseService.getProviderByName(provider);
+      const providerInfo = overrides?.providerConfig || await llmDatabaseService.getProviderByName(provider);
       if (!providerInfo) return { success: false, error: `LLM 提供商 '${provider}' 未配置`, provider };
       // 测试只使用内存中的草稿覆盖项，不修改数据库配置。
       const config: LLMProvider = {
@@ -817,7 +821,7 @@ class LLMService {
         api_base_url: baseURL || providerInfo.api_base_url,
         default_model: model || providerInfo.default_model,
       };
-      const client = createServiceProviderClient(config, apiKey);
+      const client = createServiceProviderClient(config, apiKey, true);
       const testModel = client.config.default_model;
 
       // 调用测试
@@ -828,6 +832,7 @@ class LLMService {
           model: testModel,
           temperature: 0.7,
           maxTokens: 50,
+          timeoutMs: 15000,
         }
       );
 
@@ -842,14 +847,14 @@ class LLMService {
       } else {
         return {
           success: false,
-          error: result.error,
+          error: 'LLM_TEST_CONNECTION_FAILED',
           provider: provider,
         } as LLMResponse;
       }
-    } catch (error: any) {
+    } catch {
       return {
         success: false,
-        error: `连接测试异常：${error.message}`,
+        error: 'LLM_TEST_CONNECTION_FAILED',
         provider: provider,
       } as LLMResponse;
     }

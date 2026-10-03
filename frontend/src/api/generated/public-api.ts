@@ -53,6 +53,9 @@ export interface ResourceMetricAggregate { value: number | null; resourceCount: 
 export interface ResourceMetricsSummaryResponse { schemaVersion: 1; collectedAt: string; dataQuality: 'complete' | 'partial' | 'empty'; scopes: Record<ResourceType, { metrics: Record<string, ResourceMetricAggregate> }>; }
 export interface ResourceAgentDiagnosisResponse { success: boolean; analysisId?: number; status?: 'queued' | 'cached'; error?: string; }
 
+export interface LLMConnectionTestRequest { providerName: string; apiKey?: string; baseURL?: string; model?: string; apiFormat?: string; deploymentType?: string; }
+export interface LLMModelDiscoveryRequest extends Omit<LLMConnectionTestRequest, 'model' | 'baseURL'> { baseURL: string; providerType?: 'deepseek' | 'stepfun' | 'mimo'; }
+
 export interface HealthResponse {
   status: 'ok';
   timestamp: string;

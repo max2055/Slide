@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import type { LLMProvider } from '../llm-database-service.js';
 import { modelProviderId } from './model-parameters.js';
+import { credentialSafeFetch, normalizeCredentialDestination, providerBaseURL } from './credential-destination-policy.js';
 
 export function resolveProviderConnection(provider: LLMProvider, apiKey: string | null) {
   const local = provider.deployment_type === 'local';
@@ -16,22 +17,22 @@ export function resolveProviderConnection(provider: LLMProvider, apiKey: string 
   return {
     format,
     apiKey: key,
-    baseURL: provider.api_base_url || (local ? 'http://localhost:11434' : undefined),
+    baseURL: normalizeCredentialDestination(providerBaseURL(provider)),
     model: provider.default_model || (format === 'anthropic-messages' ? 'claude-sonnet-4-20250929' : 'gpt-4.1'),
     ...(mimo && format === 'openai-completions' ? { defaultHeaders: { 'api-key': key } } : {}),
   };
 }
 
 /** Connection tests and regular calls must construct the same SDK client. */
-export function createServiceProviderClient(provider: LLMProvider, apiKey: string | null) {
+export function createServiceProviderClient(provider: LLMProvider, apiKey: string | null, testOnly = false) {
   const connection = resolveProviderConnection(provider, apiKey);
   const type = connection.format === 'anthropic-messages' ? 'anthropic'
     : connection.format === 'ollama' ? 'ollama' : 'openai';
   return {
     name: provider.name,
     type,
-    client: type === 'anthropic' ? new Anthropic(connection)
-      : type === 'ollama' ? null : new OpenAI(connection),
+    client: type === 'anthropic' ? new Anthropic({ ...connection, fetch: credentialSafeFetch, ...(testOnly ? { maxRetries: 0, timeout: 15000 } : {}) })
+      : type === 'ollama' ? null : new OpenAI({ ...connection, fetch: credentialSafeFetch, ...(testOnly ? { maxRetries: 0, timeout: 15000 } : {}) }),
     config: { ...provider, api_base_url: connection.baseURL, default_model: connection.model },
   } as const;
 }

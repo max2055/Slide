@@ -9,6 +9,20 @@ export const ErrorResponseSchema = Type.Object({
   error: Type.String(),
 }, { $id: 'ErrorResponse', additionalProperties: false });
 
+const LLMTestFields = {
+  providerName: Type.String({ minLength: 1, maxLength: 255 }),
+  apiKey: Type.Optional(Type.String({ maxLength: 4096, description: 'Explicit draft key. Empty/redacted values reuse the saved credential only at its approved origin and base path.' })),
+  apiFormat: Type.Optional(Type.String({ maxLength: 255 })),
+  deploymentType: Type.Optional(Type.String({ maxLength: 255 })),
+};
+export const LLMConnectionTestRequestSchema = Type.Object({ ...LLMTestFields,
+  baseURL: Type.Optional(Type.String({ maxLength: 2048 })), model: Type.Optional(Type.String({ maxLength: 255 })),
+}, { $id: 'LLMConnectionTestRequest', additionalProperties: false });
+export const LLMModelDiscoveryRequestSchema = Type.Object({ ...LLMTestFields,
+  baseURL: Type.String({ minLength: 1, maxLength: 2048 }),
+  providerType: Type.Optional(Type.Union([Type.Literal('deepseek'), Type.Literal('stepfun'), Type.Literal('mimo')])),
+}, { $id: 'LLMModelDiscoveryRequest', additionalProperties: false });
+
 export const DatabaseTypeSchema = Type.Union([
   Type.Literal('mysql'),
   Type.Literal('postgresql'),
@@ -603,6 +617,8 @@ export const OkResponseSchema = Type.Object({
 export const PublicApiSchemas = {
   HealthResponse: HealthResponseSchema,
   ErrorResponse: ErrorResponseSchema,
+  LLMConnectionTestRequest: LLMConnectionTestRequestSchema,
+  LLMModelDiscoveryRequest: LLMModelDiscoveryRequestSchema,
   DatabaseType: DatabaseTypeSchema,
   CapabilityState: CapabilityStateSchema,
   AdapterCapability: AdapterCapabilitySchema,

@@ -1,4 +1,54 @@
 import { expect, test } from '@playwright/test';
+import { createCredentialProbeFixture } from '../../apps/db-ops-api/tests/fixtures/llm-credential-probe.js';
+
+for (const [name, modelId] of [['deepseek', 'deepseek-flash'], ['stepfun', 'step-3.5-flash-2603'], ['mimo', 'mimo-v2-flash']]) {
+  test(`${name} credential binding: rejected URL change, draft key, saved test`, async ({ page }, testInfo) => {
+    const fixture = await createCredentialProbeFixture(name, modelId);
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route('**/api/llm/**', async route => {
+      const response = await fixture.app.inject({ method: route.request().method() as any,
+        url: new URL(route.request().url()).pathname, headers: { authorization: 'fake-manager', 'content-type': 'application/json' },
+        payload: route.request().postData() || undefined });
+      await route.fulfill({ status: response.statusCode, contentType: 'application/json', body: response.body });
+    });
+    await page.route('**/settings/ai/models?**', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body>
+      <settings-shell></settings-shell>
+      <script type="module">import '/src/app/styles.css'; import '/src/app/ui/views/settings-shell.ts'; import '/src/app/ui/views/llm-config.ts';</script>
+      </body></html>` }));
+    try {
+      await page.goto('/settings/ai/models?view=providers');
+      const key = page.locator('input[autocomplete="new-password"]');
+      await expect(key).toHaveValue('');
+      await page.getByRole('button', { name: '加载模型', exact: true }).click();
+      await expect(page.getByLabel('选择模型', { exact: true })).toContainText(modelId);
+      await page.getByRole('button', { name: '测试连接', exact: true }).click();
+      await expect(page.locator('.msg').filter({ hasText: /连接成功|LLM_CREDENTIAL_DESTINATION_MISMATCH/ })).toContainText('连接成功');
+      expect(fixture.keyReads()).toBe(2);
+      await page.getByLabel('Base URL', { exact: true }).fill(fixture.origin + '/draft/v1');
+      await page.getByRole('button', { name: '测试连接', exact: true }).click();
+      await expect(page.locator('.msg').filter({ hasText: /连接成功|LLM_CREDENTIAL_DESTINATION_MISMATCH/ })).toContainText('LLM_CREDENTIAL_DESTINATION_MISMATCH');
+      await page.getByRole('button', { name: '加载模型', exact: true }).click();
+      await expect(page.getByRole('status')).toContainText('LLM_CREDENTIAL_DESTINATION_MISMATCH');
+      expect(fixture.keyReads()).toBe(2); expect(fixture.calls).toHaveLength(2);
+      await key.fill('fake-draft-key');
+      await page.getByRole('button', { name: '加载模型', exact: true }).click();
+      await expect(page.getByRole('status')).toContainText('已加载 1 个模型');
+      await page.getByRole('button', { name: '测试连接', exact: true }).click();
+      await expect(page.locator('.msg').filter({ hasText: /连接成功|LLM_CREDENTIAL_DESTINATION_MISMATCH/ })).toContainText('连接成功');
+      expect(fixture.keyReads()).toBe(2);
+      await page.getByRole('button', { name: '保存', exact: true }).click();
+      await expect(page.getByRole('button', { name: '✓ 已保存' })).toBeVisible();
+      await expect(key).toHaveValue('');
+      await page.getByRole('button', { name: '测试连接', exact: true }).click();
+      await expect(page.locator('.msg').filter({ hasText: /连接成功|LLM_CREDENTIAL_DESTINATION_MISMATCH/ })).toContainText('连接成功');
+      expect(fixture.keyReads()).toBe(3);
+      expect(fixture.calls.slice(2).every(call => call.path.startsWith('/draft/v1/') && call.credential?.includes('fake-draft-key'))).toBe(true);
+      expect(errors).toEqual([]);
+      await page.screenshot({ path: testInfo.outputPath('credential-binding.png'), fullPage: true });
+    } finally { await fixture.close(); }
+  });
+}
 
 for (const width of [390, 1280]) test(`loads models, applies parameters and saves the selected model at ${width}px`, async ({ page }, testInfo) => {
   await page.setViewportSize({ width, height: 900 });

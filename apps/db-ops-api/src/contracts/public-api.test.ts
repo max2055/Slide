@@ -19,6 +19,8 @@ import {
   NetworkDeviceRelationInputSchema,
   NetworkDeviceTestConnectionRequestSchema,
   NetworkDeviceTestConnectionResponseSchema,
+  LLMConnectionTestRequestSchema,
+  LLMModelDiscoveryRequestSchema,
 } from './public-api.js';
 import { buildClientTypes, buildOpenApiDocument } from './generate-public-api.js';
 
@@ -63,6 +65,8 @@ describe('generated public API contract', () => {
       '/api/database/instances/{id}/hosts',
       '/api/database/instances/{id}/hosts/{serverId}',
       '/api/health',
+      '/api/llm/models',
+      '/api/llm/test',
       '/api/network-devices',
       '/api/network-devices/{id}',
       '/api/network-devices/{id}/backup-schedule',
@@ -94,7 +98,23 @@ describe('generated public API contract', () => {
     expect(buildClientTypes()).toContain('export interface DiagnosticGap');
     expect(buildClientTypes()).toContain('export interface ServerDiagnostics');
     expect(buildClientTypes()).toContain('export interface CollectServerDiagnosticsResponse');
+    expect(buildClientTypes()).toContain('export interface LLMConnectionTestRequest');
+    expect(buildClientTypes()).toContain('export interface LLMModelDiscoveryRequest');
     expect(buildClientTypes()).toBe(buildClientTypes());
+  });
+
+  it('documents LLM management permission, saved destination binding and probe limits', () => {
+    const document = buildOpenApiDocument() as any;
+    for (const path of ['/api/llm/test', '/api/llm/models']) {
+      expect(document.paths[path].post.description).toContain('llm:manage');
+      expect(document.paths[path].post.responses).toHaveProperty('403');
+      expect(document.paths[path].post.responses).toHaveProperty('409');
+      expect(document.paths[path].post.responses).toHaveProperty('429');
+    }
+    expect(Value.Check(LLMConnectionTestRequestSchema, { providerName: 'private' })).toBe(true);
+    expect(Value.Check(LLMModelDiscoveryRequestSchema, { providerName: 'private', baseURL: 'http://localhost:11434/v1' })).toBe(true);
+    expect(Value.Check(LLMConnectionTestRequestSchema, { providerName: 'private', apiKey: 'x'.repeat(4097) })).toBe(false);
+    expect(Value.Check(LLMModelDiscoveryRequestSchema, { providerName: 'private' })).toBe(false);
   });
 
   it('documents optional SSH host-key probing and the server-only relation boundary', () => {

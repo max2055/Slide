@@ -32,6 +32,26 @@ export function buildOpenApiDocument() {
     info: { title: 'Slide Public API', version: '0.10' },
     paths: {
       '/api/health': { get: { operationId: 'getHealth', responses: { '200': { description: 'Service health', content: { 'application/json': { schema: refSchema(PublicApiSchemas.HealthResponse) } } } } } },
+      ...Object.fromEntries([
+        ['/api/llm/test', 'testLLMConnection', PublicApiSchemas.LLMConnectionTestRequest],
+        ['/api/llm/models', 'discoverLLMModels', PublicApiSchemas.LLMModelDiscoveryRequest],
+      ].map(([path, operationId, schema]) => [path, { post: {
+        operationId, security: [{ bearerAuth: [] }],
+        description: 'Requires llm:manage. Saved credentials are bound to the configured origin and exact proxy base path. Update the saved provider configuration or supply an explicit draft key to change destinations. Redirects are rejected. Limit: 10 requests/minute; connection probes use at most 50 output tokens and no SDK retries.',
+        requestBody: { required: true, content: { 'application/json': { schema: refSchema(schema as TSchema) } } },
+        responses: {
+          '200': { description: 'Connection result or discovered model list' },
+          '400': { description: 'Invalid input, URL, or missing credential' },
+          '401': { description: 'Authentication required' },
+          '403': { description: 'llm:manage required or saved credential destination mismatch' },
+          '404': { description: 'Saved provider not found (connection test)' },
+          '409': { description: 'Saved configuration changed during credential resolution; retry with current configuration' },
+          '413': { description: 'Request body exceeds 16384 bytes' },
+          '429': { description: 'Expensive operation rate limit exceeded' },
+          '502': { description: 'Model discovery upstream failure; no upstream body returned' },
+          '503': { description: 'Configuration unavailable' },
+        },
+      } } ])),
       '/api/resources': {
         get: { operationId: 'listResources', security: [{ bearerAuth: [] }], responses: { '200': { description: 'Permission-filtered infrastructure resources', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ResourceListResponse) } } } } },
       },
@@ -312,6 +332,7 @@ export function buildClientTypes(): string {
     )
     .replace('export interface HealthResponse {', `${NETWORK_CLIENT_TYPES}export interface HealthResponse {`)
     .replace('export interface HealthResponse {', `${RESOURCE_CLIENT_TYPES}export interface HealthResponse {`)
+    .replace('export interface HealthResponse {', `export interface LLMConnectionTestRequest { providerName: string; apiKey?: string; baseURL?: string; model?: string; apiFormat?: string; deploymentType?: string; }\nexport interface LLMModelDiscoveryRequest extends Omit<LLMConnectionTestRequest, 'model' | 'baseURL'> { baseURL: string; providerType?: 'deepseek' | 'stepfun' | 'mimo'; }\n\nexport interface HealthResponse {`)
     .replace('export interface EvidenceSection {', `${SERVER_CLIENT_TYPES}export interface EvidenceSection {`)
     // Extend only the legacy diagnostic gap reference. Network relation types
     // are already emitted by NETWORK_CLIENT_TYPES and must not be rewritten.
