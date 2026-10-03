@@ -39,6 +39,11 @@ function hasPermission(actor: ActorContext, permission: string): boolean {
 }
 
 export function canReadResource(actor: ActorContext, ref: ResourceRef): boolean {
+  if (actor.resourceBoundary) {
+    const ids = ref.type === 'instance' ? actor.resourceBoundary.instanceIds
+      : ref.type === 'server' ? actor.resourceBoundary.serverIds : actor.resourceBoundary.networkDeviceIds;
+    if (!ids.includes(ref.id)) return false;
+  }
   return ref.type === 'instance'
     ? actor.permissions.includes('*') || actor.permissions.includes('instance:*') || Boolean(actor.instanceScopes[ref.id])
     : ref.type === 'server'

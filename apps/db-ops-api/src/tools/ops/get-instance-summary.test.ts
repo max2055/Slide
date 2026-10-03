@@ -30,7 +30,7 @@ describe('get_instance_summary health readiness', () => {
       password_encrypted: '',
     });
 
-    const result = await getInstanceSummaryTool.handler({ instance_id: 29 });
+    const result = await getInstanceSummaryTool.handler({ instance_id: 29 }, { actor: { permissions: ['*'], instanceScopes: {}, roles: [] } as any });
 
     expect(result).toMatchObject({
       success: true,
@@ -52,7 +52,7 @@ describe('get_instance_summary health readiness', () => {
       password_encrypted: 'opaque-ciphertext',
     });
 
-    const result = await getInstanceSummaryTool.handler({ instance_id: 30 });
+    const result = await getInstanceSummaryTool.handler({ instance_id: 30 }, { actor: { permissions: ['*'], instanceScopes: {}, roles: [] } as any });
 
     expect(result).toMatchObject({
       success: true,

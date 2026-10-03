@@ -1267,7 +1267,9 @@ describe('DirectAdapter', () => {
     });
 
     it('gives Cron only read tools and its internal completion tool', async () => {
-      const registry = await createCronToolRegistry();
+      const actor = { userId: 7, username: 'cron-owner', roles: ['operator'], permissions: ['instance:view', 'metric:view', 'alert:view'],
+        instanceScopes: { 1: 'read-only' }, sessionVersion: 1, requestId: 'cron-fixture' } as ActorContext;
+      const registry = await createCronToolRegistry({ actor, refreshActor: async () => actor });
       expect(registry.toolNames).toContain('slide_complete_cron');
       expect(registry.toolNames).toContain('list_database_instances');
       expect(registry.toolNames).not.toContain('slide_add_database');

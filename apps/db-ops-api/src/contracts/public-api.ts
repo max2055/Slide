@@ -615,6 +615,27 @@ export const OkResponseSchema = Type.Object({
 }, { $id: 'OkResponse', additionalProperties: false });
 
 export const PublicApiSchemas = {
+  CronJobIdentity: Type.Object({
+    owner_user_id: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+    principal_type: Type.Union([Type.Literal('user'), Type.Literal('system-maintenance')]),
+    identity_status: Type.Union([Type.Literal('bound'), Type.Literal('owner-required')]),
+    identity_audit: Type.Union([UnknownRecordSchema, Type.Null()]),
+    resource_scope: Type.Union([Type.Object({
+      version: Type.Literal(1), targetInstanceId: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+      instanceIds: Type.Array(Type.Integer({ minimum: 1 })),
+      serverIds: Type.Array(Type.Integer({ minimum: 1 })), networkDeviceIds: Type.Array(Type.Integer({ minimum: 1 })),
+    }), Type.Null()]),
+  }, { $id: 'CronJobIdentity', additionalProperties: true }),
+  CronJobUpdateRequest: Type.Object({
+    owner_user_id: Type.Optional(Type.Integer({ minimum: 1, description: 'Admin-only explicit rebinding of user tasks; never changes a user task to system maintenance.' })),
+    task_description: Type.Optional(Type.String()), cron_expr: Type.Optional(Type.String()), enabled: Type.Optional(Type.Boolean()),
+    task_type: Type.Optional(Type.Union([Type.Literal('agent'), Type.Literal('script')])),
+    target_instance_id: Type.Optional(Type.Union([Type.Integer({ minimum: 1 }), Type.Null()])),
+    script_id: Type.Optional(Type.Integer({ minimum: 1 })),
+    control_sql_capability: Type.Optional(Type.Union([Type.Literal('read-only'), Type.Literal('baseline-cleanup-v1'), Type.Literal('silence-cleanup-v1')])),
+    timezone: Type.Optional(Type.String()), description: Type.Optional(Type.String()),
+    timeout_seconds: Type.Optional(Type.Integer({ minimum: 1 })), retry_count: Type.Optional(Type.Integer({ minimum: 0 })),
+  }, { $id: 'CronJobUpdateRequest', additionalProperties: false }),
   HealthResponse: HealthResponseSchema,
   ErrorResponse: ErrorResponseSchema,
   LLMConnectionTestRequest: LLMConnectionTestRequestSchema,

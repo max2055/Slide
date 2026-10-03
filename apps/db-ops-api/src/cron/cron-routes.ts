@@ -7,7 +7,17 @@ import { bindScript } from './script-policy.js';
 import { sqlExecutor } from '../sql-executor.js';
 import { requirePermission } from '../auth/require-permission.js';
 import { getAccessibleInstanceIds, hasInstanceAccess, hasUnrestrictedInstanceAccess } from '../auth/require-instance-access.js';
+import { actorContextService } from '../auth/actor-context.js';
+import { dbConnection } from '../db-connection.js';
+import { assertCronActorAccess } from './cron-authority.js';
 import { expensiveOperationRateLimitConfig } from '../security/http-security.js';
+
+function cronErrorStatus(error: Error): number {
+  if (['CRON_AUDIT_UNAVAILABLE', 'CRON_AUTHORITY_UNAVAILABLE', 'WORKFLOW_RUNTIME_UNAVAILABLE'].includes(error.message)) return 503;
+  if (['CRON_SCRIPT_ACCESS_DENIED', 'CRON_TRIGGER_SCOPE_DENIED', 'CRON_TARGET_ACCESS_REVOKED',
+    'CRON_OWNER_PERMISSION_REVOKED', 'CRON_OWNER_REBIND_DENIED', 'CRON_OWNER_UNAVAILABLE'].includes(error.message)) return 403;
+  return error.message?.startsWith('CRON_') ? 400 : 500;
+}
 
 export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHandlerHookHandler, getCronManager: () => CronManager) {
   async function bindJobScript(request: any, body: any, existing?: any) {
@@ -24,6 +34,38 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
     if (!script) throw new Error('CRON_SCRIPT_NOT_FOUND');
     // Only server-authorized actor identity is persisted; request bindings are ignored.
     return bindScript(script, target, body.control_sql_capability, String(request.user.userId ?? request.user.id ?? request.user.username));
+  }
+
+  async function bindJobIdentity(request: any, body: any, existing?: any) {
+    if (body.principal_type !== undefined || body.handler_key !== undefined || body.resource_scope !== undefined
+      || body.identity_status !== undefined || body.identity_audit !== undefined) throw new Error('CRON_IDENTITY_SERVER_OWNED');
+    const rebinding = body.owner_user_id !== undefined;
+    if (rebinding && !(request.user.permissions?.includes('*') || request.user.roles?.includes('admin'))) throw new Error('CRON_OWNER_REBIND_DENIED');
+    if (existing?.principal_type === 'system-maintenance') {
+      if (rebinding || ['task_type', 'task_description', 'target_instance_id', 'script_id'].some(key => body[key] !== undefined)) throw new Error('CRON_MAINTENANCE_IMMUTABLE');
+      return {};
+    }
+    const ownerId = rebinding ? body.owner_user_id : existing?.owner_user_id ?? request.user.userId;
+    if (existing && !existing.owner_user_id && !rebinding) throw new Error('CRON_OWNER_REQUIRED');
+    if (!Number.isSafeInteger(ownerId) || ownerId <= 0) throw new Error('CRON_OWNER_REQUIRED');
+    const owner = await actorContextService.loadActiveActor(ownerId);
+    const target = body.target_instance_id === undefined ? existing?.target_instance_id ?? null : body.target_instance_id;
+    const job = { ...existing, target_instance_id: target, task_type: body.task_type ?? existing?.task_type ?? 'agent' };
+    await assertCronActorAccess(owner, job);
+    let scope = existing?.resource_scope;
+    if (!scope || rebinding || body.target_instance_id !== undefined) {
+      const pool = dbConnection.getPool();
+      if (!pool) throw new Error('CRON_AUTHORITY_UNAVAILABLE');
+      const [rows] = target === null
+        ? await pool.execute('SELECT id FROM database_instances')
+        : await pool.execute('SELECT id FROM database_instances WHERE id = ?', [target]);
+      const ids = (rows as Array<{ id: number }>).map(row => Number(row.id));
+      if (target !== null && !ids.includes(target)) throw new Error('CRON_TARGET_DELETED');
+      scope = { version: 1, targetInstanceId: target, instanceIds: ids.filter(id => hasInstanceAccess(owner, id)), serverIds: [], networkDeviceIds: [] };
+    }
+    return { owner_user_id: ownerId, principal_type: 'user' as const, identity_status: 'bound' as const,
+      resource_scope: scope, identity_audit: { bound_by: request.user.userId, owner_user_id: ownerId,
+        bound_at: new Date().toISOString(), source: rebinding ? 'admin-rebind' : 'authenticated-route' } };
   }
 
   // ========== Cron 任务管理 API ==========
@@ -48,7 +90,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const jobs = await cronJobService.getJobs(getAccessibleInstanceIds((request as any).user));
         reply.send(jobs);
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -63,7 +105,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         if (!job) return;
         reply.send(job);
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -94,8 +136,10 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
           return reply.code(400).send({ error: '无效的 cron 表达式' });
         }
 
+        const identity = await bindJobIdentity(request, body);
         const scriptBinding = await bindJobScript(request, body);
         const id = await cronJobService.createJob({
+          ...identity,
           name: body.name,
           task_description: body.task_description,
           cron_expr: body.cron_expr,
@@ -112,7 +156,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         await getCronManager().reload();
         reply.code(201).send({ id, message: '创建成功' });
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -146,8 +190,10 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
           }
         }
 
+        const identity = await bindJobIdentity(request, body, existing);
         const scriptBinding = await bindJobScript(request, body, existing);
         const updated = await cronJobService.updateJob(Number(id), {
+          ...identity,
           task_description: body.task_description,
           cron_expr: body.cron_expr,
           enabled: body.enabled,
@@ -170,7 +216,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
 
         reply.send({ message: '更新成功' });
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -190,6 +236,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const existing = await requireCronJobAccess(request, reply, Number(id), 'read-write');
         if (!existing) return;
 
+        if (body.enabled && existing.identity_status !== 'bound') throw new Error('CRON_OWNER_REQUIRED');
         await cronJobService.toggleJob(Number(id), body.enabled);
 
         // Reload CronManager to apply changes
@@ -197,7 +244,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
 
         reply.send({ message: body.enabled ? '已启用' : '已停用' });
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -214,11 +261,11 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
 
         // Route through CronManager.executeJob() which handles task_type branching:
         // script jobs → executeScriptJob() (SqlExecutor), agent jobs → cronExecutor.execute()
-        await getCronManager().executeJob(config);
+        await getCronManager().executeJob(config, (request as any).user);
 
         reply.send({ message: '执行完成' });
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -240,7 +287,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         await getCronManager().reload();
         reply.send({ message: '删除成功' });
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -277,7 +324,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const result = await cronJobService.getLogs(Number(id), limit, offset);
         reply.send(result);
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });

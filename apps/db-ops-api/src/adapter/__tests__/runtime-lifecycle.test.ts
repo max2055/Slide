@@ -1,3 +1,4 @@
+vi.mock('../../cron/cron-authority.js', () => ({ cronAuthorityService: { authorize: async () => ({ audit: {}, refreshActor: async () => ({ userId: 7 }) }) }, CRON_MAINTENANCE_HANDLERS: new Set() }));
 import { canonicalStore } from '../canonical-store.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -81,6 +82,7 @@ it('Cron tool deadline retains same-job exclusion through actual settlement', as
   const executor = new CronExecutor(new AgentRunner(provider), tools, provider);
   const service = { startLog: vi.fn(async () => 1), completeLog: vi.fn(async () => true), updateRunResult: vi.fn() };
   const manager = new CronManager(service as any, executor); const job = { id: 43, name: 'bounded', task_description: 'inspect', timeout_seconds: 300 } as any;
+  Object.assign(service, { getJobById: async () => job, recordExecutionAuthority: async () => true });
   const run = manager.executeJob(job); await vi.waitFor(() => expect(started).toBe(true)); await vi.advanceTimersByTimeAsync(60001); await run;
   await manager.executeJob(job); expect(chat).toHaveBeenCalledTimes(1);
   finish('settled'); await vi.advanceTimersByTimeAsync(0);

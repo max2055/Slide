@@ -6,6 +6,7 @@ import { CronExecutor } from '../cron/cron-executor.js';
 import { CronManager } from '../cron/cron-manager.js';
 vi.mock('../db-connection', () => ({ dbConnection: { getPool: () => null } }));
 vi.mock('../sql-executor', () => ({ sqlExecutor: {} }));
+vi.mock('../cron/cron-authority.js', () => ({ cronAuthorityService: { authorize: async () => ({ audit: {}, refreshActor: async () => ({ userId: 7 }) }) }, CRON_MAINTENANCE_HANDLERS: new Set() }));
 type ToolExecutionContext = NonNullable<Parameters<Tool['execute']>[1]>;
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); });
 const done = { content: 'done', finishReason: 'stop', usage: {}, shouldExecuteTools: false, hasToolCalls: false, toolCalls: [] };
@@ -26,8 +27,9 @@ function setup(execute?: (_args: Record<string, unknown>, context?: ToolExecutio
   const run = vi.spyOn(runner, 'run');
   const executor = new CronExecutor(runner, tools, provider);
   const service = { startLog: vi.fn(async () => 1), completeLog: vi.fn(async () => {}), updateRunResult: vi.fn(async () => {}) };
-  const manager = new CronManager(service as any, executor);
   const config = { id: 1, name: 'probe', task_type: 'agent', task_description: 'probe', timeout_seconds: 1 } as any;
+  Object.assign(service, { getJobById: async () => config, recordExecutionAuthority: async () => true });
+  const manager = new CronManager(service as any, executor);
   return { executor, service, manager, config, run, provider };
 }
 it('retains ownership of an uncooperative tool after timeout and resumes only after settlement', async () => {

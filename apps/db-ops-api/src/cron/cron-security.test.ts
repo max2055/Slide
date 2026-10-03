@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CronManager } from './cron-manager.js';
 import { dbConnection } from '../db-connection.js';
 import { bindScript, CONTROL_MAINTENANCE, hashScript, validateBinding } from './script-policy.js';
+import { cronAuthorityService } from './cron-authority.js';
 import type { CronScript } from './types.js';
 
 const script = (content: string) => ({ id: 3, content, script_type: 'sql', target_db_type: 'mysql' }) as CronScript;
@@ -12,9 +13,11 @@ describe('Cron control-plane SQL regression (audit R3)', () => {
     const execute = vi.fn();
     vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
     const service = { startLog: vi.fn(async () => 1), completeLog: vi.fn(async () => true), recordScriptAuthorization: vi.fn(async () => true), updateRunResult: vi.fn() };
-    await new CronManager(service as any, {} as any).executeJob({
+    const job = {
       id: 2, task_type: 'script', script_id: 3, target_instance_id: null,
-    } as any);
+    } as any;
+    Object.assign(service, { getJobById: async () => job, recordExecutionAuthority: async () => true });
+    await new CronManager(service as any, {} as any).executeJob(job);
     expect(execute).not.toHaveBeenCalled();
     expect(service.updateRunResult).toHaveBeenCalledWith(2, 'error');
     expect(service.completeLog).toHaveBeenCalledWith(1, 'error', '执行失败', 'CRON_SCRIPT_BINDING_REQUIRED', expect.anything());
@@ -46,12 +49,15 @@ describe('Cron control-plane SQL regression (audit R3)', () => {
   });
 
   it('fails closed if durable authorization audit cannot be written', async () => {
+    vi.spyOn(cronAuthorityService, 'authorize').mockResolvedValue({ actor: { userId: 7 }, audit: {}, refreshActor: async () => ({}) } as any);
     const getPool = vi.spyOn(dbConnection, 'getPool');
     const service = { startLog: vi.fn(async () => 1), completeLog: vi.fn(async () => true), recordScriptAuthorization: vi.fn(async () => false), updateRunResult: vi.fn() };
-    await new CronManager(service as any, {} as any).executeJob({
+    const job = {
       id: 2, task_type: 'script', script_id: 3, target_instance_id: null,
       script_binding: bindScript(script(CONTROL_MAINTENANCE['silence-cleanup-v1']), null, 'silence-cleanup-v1', '7'),
-    } as any);
+    } as any;
+    Object.assign(service, { getJobById: async () => job, recordExecutionAuthority: async () => true });
+    await new CronManager(service as any, {} as any).executeJob(job);
     expect(getPool).not.toHaveBeenCalled();
     expect(service.updateRunResult).toHaveBeenCalledWith(2, 'error');
   });
@@ -65,6 +71,8 @@ it('records runtime output exhaustion as partial and never releases same-job own
   const service = { startLog: vi.fn(async () => 1), completeLog: vi.fn(async () => true), updateRunResult: vi.fn() };
   const manager = new CronManager(service as any, { execute } as any);
   const job = { id: 89, name: 'recovery', task_description: 'test', timeout_seconds: 1 } as any;
+  vi.spyOn(cronAuthorityService, 'authorize').mockResolvedValue({ audit: {} } as any);
+  Object.assign(service, { getJobById: async () => job, recordExecutionAuthority: async () => true });
   await manager.executeJob(job); await manager.executeJob(job);
   expect(execute).toHaveBeenCalledTimes(1);
   expect(service.updateRunResult).toHaveBeenCalledWith(89, 'partial');

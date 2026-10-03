@@ -17,6 +17,7 @@ import type {
   LLMProvider,
   AgentRunResult,
 } from '@slide/agent-core';
+import type { CronToolAuthority } from '../adapter/get-agent-engine.js';
 import { loadAgentRuntimeLimits } from '../security/agent-runtime-limits.js';
 
 // ── CronHook — 收集 ToolEvent 的自定义 Hook ──
@@ -42,7 +43,7 @@ export class CronExecutor {
   private readonly runtimeLimits = loadAgentRuntimeLimits();
   constructor(
     private runner: AgentRunner,
-    private registry: ToolRegistry,
+    private registry: ToolRegistry | ((authority: CronToolAuthority) => Promise<ToolRegistry>),
     private provider: LLMProvider,
   ) {}
 
@@ -59,7 +60,10 @@ export class CronExecutor {
     taskDescription: string,
     timeoutSeconds: number = 300,
     outputSchema?: Record<string, unknown> | null,
+    authority?: CronToolAuthority,
   ): Promise<CronExecutionResult> {
+    const registry = typeof this.registry === 'function'
+      ? await this.registry(authority!) : this.registry;
     const policy = resolveRuntimePolicy('cron', { cronTimeoutSeconds: timeoutSeconds });
     const sessionKey = `cron:${jobId}:${Date.now()}`;
     const hook = new CronHook();
@@ -94,7 +98,7 @@ export class CronExecutor {
           { role: 'system', content: this.buildSystemPrompt(taskDescription, outputSchema) },
           { role: 'user', content: taskDescription },
         ] as Message[],
-        tools: this.registry,
+        tools: registry,
         model: this.provider.getDefaultModel(),
         ...runtimeSpec(policy),
         onRuntimeEvent: recordRuntimeEvent,
@@ -104,7 +108,7 @@ export class CronExecutor {
         hook,
         contextWindowTokens: 200_000,
         maxTokens: 4096,
-        failOnToolError: false,
+        failOnToolError: true,
         sessionKey,
         signal: controller.signal,
         onProviderRequest: observeOperation,
