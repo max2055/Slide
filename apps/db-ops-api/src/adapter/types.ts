@@ -167,6 +167,8 @@ export interface InvokeOptions {
 // ── IAgentEngine interface ──
 
 export interface IAgentEngine {
+  /** Close partially initialized transport and owned resources on startup failure. */
+  dispose?(): Promise<void>;
   /**
    * Start the WebSocket transport layer service.
    * - DirectAdapter starts a minimal WS server on AGENT_WS_PORT (default 28888)

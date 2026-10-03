@@ -31,6 +31,13 @@ export function buildOpenApiDocument() {
     openapi: '3.1.0',
     info: { title: 'Slide Public API', version: '0.10' },
     paths: {
+      '/api/health/ready': { get: { operationId: 'getInfrastructureReadiness', security: [],
+        description: 'D1 infrastructure probe. Ready only after this instance owns the worker lease, completes initialization, and can access the control database and dispatch schema. A standby never auto-promotes. Detailed /api/health/readiness still requires JWT and config:view.',
+        responses: {
+          '200': { description: 'Declared worker role ready', content: { 'application/json': { schema: refSchema(PublicApiSchemas.InfrastructureReadiness) } } },
+          '503': { description: 'Starting, standby, dependency unavailable or lease lost', content: { 'application/json': { schema: refSchema(PublicApiSchemas.InfrastructureReadiness) } } },
+        },
+      } },
       '/api/cron/jobs/{id}': {
         get: { operationId: 'getCronJob', security: [{ bearerAuth: [] }], parameters: [pathId('id')], responses: {
           '200': { description: 'Job configuration including persisted identity and resource ceiling. owner-required tasks stay paused until admin rebinding.', content: { 'application/json': { schema: refSchema(PublicApiSchemas.CronJobIdentity) } } },
@@ -386,6 +393,7 @@ export interface CronJobUpdateRequest {
 
 export interface HealthResponse {`)
     .replace('export interface HealthResponse {', `export interface LLMConnectionTestRequest { providerName: string; apiKey?: string; baseURL?: string; model?: string; apiFormat?: string; deploymentType?: string; }\nexport interface LLMModelDiscoveryRequest extends Omit<LLMConnectionTestRequest, 'model' | 'baseURL'> { baseURL: string; providerType?: 'deepseek' | 'stepfun' | 'mimo'; }\n\nexport interface HealthResponse {`)
+    .replace('export interface HealthResponse {', 'export interface InfrastructureReadiness { ready: boolean; }\n\nexport interface HealthResponse {')
     .replace('export interface EvidenceSection {', `${SERVER_CLIENT_TYPES}export interface EvidenceSection {`)
     // Extend only the legacy diagnostic gap reference. Network relation types
     // are already emitted by NETWORK_CLIENT_TYPES and must not be rewritten.

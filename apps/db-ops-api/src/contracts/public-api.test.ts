@@ -69,6 +69,7 @@ describe('generated public API contract', () => {
       '/api/database/instances/{id}/hosts',
       '/api/database/instances/{id}/hosts/{serverId}',
       '/api/health',
+      '/api/health/ready',
       '/api/llm/models',
       '/api/llm/test',
       '/api/network-devices',
@@ -93,6 +94,9 @@ describe('generated public API contract', () => {
       '/api/servers/{id}/diagnostics',
       '/api/servers/{id}/instances',
     ]);
+    expect(document.paths['/api/health/ready'].get.security).toEqual([]);
+    expect(document.paths['/api/health/ready'].get.responses['503']).toBeDefined();
+    expect(buildClientTypes()).toContain('export interface InfrastructureReadiness { ready: boolean; }');
     expect(buildClientTypes()).toContain('export interface DatabaseInstance');
     expect(buildClientTypes()).toContain("health_status: 'healthy' | 'warning' | 'critical' | 'unknown' | 'error';");
     expect(buildClientTypes()).toContain('export interface InstanceHostEvidenceResponse');

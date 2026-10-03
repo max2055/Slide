@@ -89,9 +89,13 @@ export class CronRunStore {
       status = IF(completion_hash IS NULL, ?, status), error_code = ? WHERE run_id = ? AND started_at IS NOT NULL`, [status, errorCode ?? null, runId]);
   }
   async recover(): Promise<void> {
-    // Single backend worker startup: queued intents survive; started runs are never replayed.
-    await this.pool().execute(`UPDATE cron_runs SET status = IF(completion_hash IS NULL, 'unknown', status),
-      runner_finished_at = NOW(3), error_code = 'CRON_RESTART_INTERRUPTED' WHERE started_at IS NOT NULL AND runner_finished_at IS NULL`);
+    // Preserve a live workflow owner's run. Only expired/unowned started runs
+    // become unknown; queued intents survive and legacy logs need manual review.
+    await this.pool().execute(`UPDATE cron_runs r LEFT JOIN workflow_jobs w ON BINARY w.id = BINARY r.run_id
+      SET r.status = IF(r.completion_hash IS NULL, 'unknown', r.status),
+      r.runner_finished_at = NOW(3), r.error_code = 'CRON_RESTART_INTERRUPTED'
+      WHERE r.started_at IS NOT NULL AND r.runner_finished_at IS NULL
+      AND (w.id IS NULL OR w.state <> 'running' OR w.lease_owner IS NULL OR w.lease_expires_at IS NULL OR w.lease_expires_at <= NOW())`);
     await this.pool().execute(`UPDATE cron_job_logs l JOIN cron_runs r ON r.run_id = l.run_id
       SET l.status = IF(r.status = 'failed', 'error', r.status), l.finished_at = r.runner_finished_at,
       l.structured_result = COALESCE(r.completion, l.structured_result), l.error_message = r.error_code

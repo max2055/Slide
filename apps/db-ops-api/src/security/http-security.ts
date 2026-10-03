@@ -52,6 +52,7 @@ const PUBLIC_5XX_REASON_CODES = new Set([
 // Backup routes already translate transport failures to fixed public codes.
 // Preserve those codes, but never forward the accompanying exception details.
 const PUBLIC_5XX_ERROR_CODES = new Set([
+  'WORKFLOW_RUNTIME_UNAVAILABLE',
   'SSH_TARGET_DENIED',
   'SSH_CONNECT_FAILED',
   'SSH_CREDENTIAL_READ_FAILED',
@@ -81,8 +82,11 @@ export async function registerHttpSecurity(fastify: FastifyInstance, env: NodeJS
   });
   await fastify.register(rateLimit, { global: false });
 
-  fastify.addHook('preSerialization', async (_request, reply, payload) => {
+  fastify.addHook('preSerialization', async (request, reply, payload) => {
     if (reply.statusCode >= 500 && payload && typeof payload === 'object') {
+      if (request.routeOptions.url === '/api/health/ready' && reply.statusCode === 503) {
+        return { ready: false };
+      }
       const reasonCode = (payload as { reasonCode?: unknown }).reasonCode;
       if (typeof reasonCode === 'string' && PUBLIC_5XX_REASON_CODES.has(reasonCode)) {
         return { reasonCode };

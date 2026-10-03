@@ -18,7 +18,7 @@ export class WorkerLease {
          expires_at = IF(expires_at < NOW(), VALUES(expires_at), expires_at)`,
       [this.name, this.ownerId, this.ttlSeconds],
     );
-    const [rows] = await this.pool.query<Array<{ owner_id: string }>>('SELECT owner_id FROM worker_leases WHERE lease_name = ?', [this.name]);
+    const [rows] = await this.pool.query<Array<{ owner_id: string }>>('SELECT owner_id FROM worker_leases WHERE lease_name = ? AND expires_at > NOW()', [this.name]);
     return rows[0]?.owner_id === this.ownerId;
   }
 
@@ -28,7 +28,7 @@ export class WorkerLease {
 
   async renew(): Promise<boolean> {
     const [result] = await this.pool.query<{ affectedRows: number }>(
-      'UPDATE worker_leases SET expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE lease_name = ? AND owner_id = ?',
+      'UPDATE worker_leases SET expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE lease_name = ? AND owner_id = ? AND expires_at > NOW()',
       [this.ttlSeconds, this.name, this.ownerId],
     );
     return Number(result.affectedRows) === 1;

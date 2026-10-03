@@ -113,6 +113,9 @@ import { classifySql } from './src/sql-validator.js';
 import { PersistentOperationService } from './src/operations/operation-service.js';
 import { MigrationRunner } from './src/migrations/runner.js';
 import { WorkerLease } from './src/lifecycle/worker-lease.js';
+import { WorkerStartup } from './src/lifecycle/worker-startup.js';
+import { InfrastructureReadiness } from './src/lifecycle/infrastructure-readiness.js';
+import { startupConfig } from './src/lifecycle/startup-config.js';
 import { registerDeliveryRoutes } from './src/workflows/delivery-routes.js';
 import { JobRegistry } from './src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.js';
@@ -208,6 +211,7 @@ function approvalOperationLifecycle(actorId: number) {
 const verifyToken = createVerifyToken(JWT_SECRET, actorContextService);
 
 async function start() {
+  console.info('[StartupConfig]', JSON.stringify(startupConfig()));
   // 初始化数据库连接
   console.log('🔄 正在初始化数据库连接...');
   const dbInitialized = await dbConnection.initialize();
@@ -231,14 +235,61 @@ async function start() {
     console.log('✅ SQL 执行历史持久化存储已就绪');
   }
 
-  // No timers, connection recovery, or provider work may run before the
-  // listener is acquired. A second process must fail without worker effects.
-  const initializeControlPlane = async () => {
-  await agentSecurityPolicyService.initialize();
+  let cronManager: CronManager | undefined;
+  let engine: Awaited<ReturnType<typeof getAgentEngine>> | undefined;
+  let stopWorkflow: (() => Promise<boolean>) | undefined;
+  let workflowTimer: ReturnType<typeof setInterval> | undefined;
+  let metricLifecycle: MetricSchedulerLifecycle | undefined;
+  const workerLease = new WorkerLease(pool as any);
+  const recoveredConnections = new Set<number>();
+  let closeDeadline: ReturnType<typeof setTimeout> | undefined;
+  let workersClosed = false;
+  let stopWorkersPromise: Promise<void> | undefined;
+  const stopWorkers = () => stopWorkersPromise ??= (async () => {
+    if (workflowTimer) clearInterval(workflowTimer);
+    monitorCollector.stop();
+    networkDeviceCollector.stop();
+    alertEngine.stopEvaluationLoop();
+    alertEscalationService.stop();
+    maintenanceWindowService.stopCacheRefresh();
+    stopSessionCleanup();
+    promptManager.stopWatch();
+    await Promise.all([
+      configBackupScheduler.stop(), cronManager?.stop(), engine?.dispose?.(),
+      metricLifecycle?.stop().then(stopped => { if (!stopped) throw new Error('METRIC_SHUTDOWN_TIMEOUT'); }),
+      stopWorkflow?.().then(stopped => { if (!stopped) throw new Error('WORKFLOW_SHUTDOWN_TIMEOUT'); }),
+      ...Array.from(recoveredConnections, id => databaseService.removeConnection(id)),
+    ]);
+  })();
+  const startup = new WorkerStartup(workerLease, async () => {
+    console.info('[WorkerStartup]', startup.signal.reason?.message ?? 'WORKER_STOPPED');
+    // Enforce a process boundary if a third-party initializer/driver cannot drain.
+    closeDeadline = setTimeout(() => { console.error('[WorkerStartup] WORKER_CLOSE_TIMEOUT'); process.exit(1); }, 10_000);
+    await stopWorkers();
+    await fastify.close();
+    workersClosed = true;
+  }, { onStopped: async () => {
+    try { await dbConnection.close(); } finally { if (workersClosed && closeDeadline) clearTimeout(closeDeadline); }
+  } });
+  const readiness = new InfrastructureReadiness(() => startup.ready && !!cronManager?.getStatus().running, async () => {
+    const [rows] = await pool.query<import('mysql2').RowDataPacket[]>(
+      'SELECT owner_id FROM worker_leases WHERE lease_name = ? AND expires_at > NOW()', ['slide-singleton-workers']);
+    await pool.query('SELECT id, state, lease_owner, lease_expires_at FROM workflow_jobs LIMIT 0');
+    return rows[0]?.owner_id === workerLease.ownerId;
+  });
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = () => shutdownPromise ??= startup.stop();
+  process.once('SIGTERM', () => { void shutdown().catch(() => process.exit(1)); });
+  process.once('SIGINT', () => { void shutdown().catch(() => process.exit(1)); });
+  fastify.addHook('onClose', stopWorkers);
+
+  // Required on every API process; timers and connection recovery are leader-only.
+  const initializeApi = async () => {
+  await startup.step(() => agentSecurityPolicyService.initialize());
 
   // 加载预定义技能到 skillRegistry
   try {
-    const skills = await loadPredefinedSkills();
+    const skills = await startup.step(() => loadPredefinedSkills());
     for (const entry of skills) {
       skillRegistry.register(entry);
     }
@@ -250,55 +301,55 @@ async function start() {
   }
 
   // 加载 AI 分析提示词（支持 PROMPT_VERSION 切换）
-  await promptManager.initialize();
-
-  // 启动文件监听，支持热重载
-  if (process.env.PROMPT_HOT_RELOAD !== 'false') {
-    promptManager.startWatch();
-  }
-
-  // 启动会话清理服务（自动清理过期会话 + 消息数量限制）
-  startSessionCleanup();
+  await startup.step(() => promptManager.initialize());
 
   // 初始化 LLM 服务（加载已启用的提供商）
-  await llmService.initialize();
+  await startup.step(() => llmService.initialize());
 
+  await startup.step(() => metricRegistry.initialize());
+  };
+
+  const initializeLeaderConnections = async () => {
   // 自动重连所有 active 实例（服务重启后恢复连接池）
   console.log('🔄 正在恢复数据库连接...');
   try {
-    const activeInstances = await instanceDatabaseService.getAllInstances();
+    const activeInstances = await startup.step(() => instanceDatabaseService.getAllInstances());
     const activeList = (activeInstances || []).filter((inst: any) => inst.status === 'active');
     let reconnected = 0;
     for (const inst of activeList) {
       try {
-        const password = await instanceDatabaseService.getInstancePassword(inst.id);
+        const password = await startup.step(() => instanceDatabaseService.getInstancePassword(inst.id));
         if (!password) {
           console.warn(`  ⚠️  实例 ${inst.name} (id=${inst.id}) 未配置密码，跳过`);
           continue;
         }
-        const ok = await databaseService.addConnection(inst.id, inst.name, {
+        await startup.assertOwned();
+        const ok = await startup.step(() => databaseService.addConnection(inst.id, inst.name, {
           host: inst.host,
           port: inst.port,
           user: inst.username,
           password,
           database: inst.database_name || (inst.db_type === 'postgresql' ? 'postgres' : inst.db_type === 'mysql' ? 'mysql' : undefined),
           db_type: inst.db_type,
-        });
-        if (ok) reconnected++;
+        }), () => databaseService.removeConnection(inst.id));
+        if (ok) { recoveredConnections.add(inst.id); reconnected++; }
       } catch (e: any) {
+        startup.signal.throwIfAborted();
         console.warn(`  ⚠️  实例 ${inst.name} (id=${inst.id}) 重连失败: ${e.message}`);
       }
     }
     console.log(`✅ 已恢复 ${reconnected}/${activeList.length} 个连接`);
   } catch (e: any) {
+    startup.signal.throwIfAborted();
     console.warn('⚠️  自动重连失败（不影响启动）:', e.message);
   }
 
   // 清理过期 refresh tokens（超过30天过期）
   try {
-    const deleted = await rbacService.cleanupExpiredRefreshTokens();
+    const deleted = await startup.step(() => rbacService.cleanupExpiredRefreshTokens());
     if (deleted > 0) console.log(`🧹 清理了 ${deleted} 个过期的 refresh token`);
   } catch (e: any) {
+    startup.signal.throwIfAborted();
     console.warn('⚠️ 清理过期 refresh token 失败:', e.message);
   }
   };
@@ -306,12 +357,17 @@ async function start() {
   await registerHttpSecurity(fastify);
   await registerSystemAuditRoutes(fastify, verifyToken);
 
-  registerHealthRoutes(fastify, verifyToken);
+  registerHealthRoutes(fastify, verifyToken, undefined, () => readiness.ready());
+  const requireWorker = async (_request: unknown, reply: import('fastify').FastifyReply) => {
+    if (!startup.ready) return reply.code(503).send({ error: 'WORKFLOW_RUNTIME_UNAVAILABLE' });
+    try { await startup.assertOwned(); }
+    catch { return reply.code(503).send({ error: 'WORKFLOW_RUNTIME_UNAVAILABLE' }); }
+  };
 
   // 手动触发容量采集（认证保护）
   fastify.post('/api/monitor/collect-capacity', {
     config: { rateLimit: expensiveOperationRateLimitConfig },
-    preHandler: [verifyToken, requirePermission('collector:manage'), requireUnrestrictedInstanceAccess()],
+    preHandler: [verifyToken, requirePermission('collector:manage'), requireUnrestrictedInstanceAccess(), requireWorker],
   }, async (_request, reply) => {
     try {
       await (monitorCollector as any).collectCapacity();
@@ -2709,7 +2765,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 启动采集任务
   fastify.post('/api/collector/start', {
-    preHandler: [verifyToken, requirePermission('collector:manage'), requireUnrestrictedInstanceAccess()],
+    preHandler: [verifyToken, requirePermission('collector:manage'), requireUnrestrictedInstanceAccess(), requireWorker],
     handler: async (request, reply) => {
       const { type } = request.body as { type?: 'metrics' | 'slowQueries' | 'capacity' | 'all' };
       try {
@@ -2728,7 +2784,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // 停止采集任务
   fastify.post('/api/collector/stop', {
-    preHandler: [verifyToken, requirePermission('collector:manage'), requireUnrestrictedInstanceAccess()],
+    preHandler: [verifyToken, requirePermission('collector:manage'), requireUnrestrictedInstanceAccess(), requireWorker],
     handler: async (request, reply) => {
       const { type } = request.body as { type?: 'metrics' | 'slowQueries' | 'capacity' | 'all' };
       try {
@@ -5402,32 +5458,28 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  let cronManager: CronManager | undefined;
-  let engine: any;
-  let stopWorkflow: (() => Promise<boolean>) | undefined;
-  let workflowTimer: ReturnType<typeof setInterval> | undefined;
-  let metricLifecycle: MetricSchedulerLifecycle | undefined;
-  fastify.addHook('onClose', async () => {
-    if (workflowTimer) clearInterval(workflowTimer);
-    if (metricLifecycle && !await metricLifecycle.stop()) console.error('[MetricsV2] METRIC_SHUTDOWN_TIMEOUT');
-    if (stopWorkflow && !await stopWorkflow()) console.error('[WorkerRuntime] WORKFLOW_SHUTDOWN_TIMEOUT');
-  });
   const startWorkers = async () => {
-  await initializeControlPlane();
+  await initializeLeaderConnections();
+  await startup.assertOwned();
+  if (process.env.PROMPT_HOT_RELOAD !== 'false') promptManager.startWatch();
+  await startup.assertOwned();
+  startSessionCleanup();
   // 初始化 Agent Engine 并启动 WS 传输层
   console.log('🚀 正在启动 Agent Engine...');
-  engine = await getAgentEngine();
-  await engine.start();
+  engine = await startup.step(() => getAgentEngine(), resource => resource.dispose?.() ?? Promise.resolve());
+  await startup.assertOwned();
+  await startup.step(() => engine!.start(), () => engine!.dispose?.() ?? Promise.resolve());
   console.log('🔌 Agent Engine 已启动: DirectAdapter');
-
-  // 从数据库加载指标定义（含 collection_sqls 和 compute_expr）
-  await metricRegistry.initialize();
 
   const workflowStore = new MysqlWorkflowStore(() => dbConnection.getPool() as any);
   notificationWorkflowStore = workflowStore;
   const workflowRegistry = new JobRegistry();
   metricLifecycle = createMetricSchedulerLifecycle(pool);
-  await metricLifecycle.start(workflowRegistry, () => assertMetricSchedulerSchema(pool));
+  await startup.assertOwned();
+  await startup.step(() => metricLifecycle!.start(workflowRegistry, async () => {
+    await startup.step(() => assertMetricSchedulerSchema(pool));
+    await startup.assertOwned();
+  }));
   const notificationScheduler = new NotificationDispatchScheduler(notificationDatabaseService, notificationService, workflowStore);
   const enqueueNotificationDispatch = async (availableAt = new Date()) => {
     await workflowStore.enqueue(createNotificationDispatchJob(availableAt));
@@ -5455,148 +5507,70 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
   const workflowRuntime = new WorkerRuntime(workflowStore, workflowWorkerId);
   stopWorkflow = async () => await workflowRuntime.shutdown();
-  await enqueueNotificationDispatch();
-  await enqueueReportSchedule();
-  await workflowStore.enqueue(createCapacityConsistencyJob());
+  await startup.assertOwned();
+  await startup.step(() => enqueueNotificationDispatch());
+  await startup.assertOwned();
+  await startup.step(() => enqueueReportSchedule());
+  await startup.assertOwned();
+  await startup.step(() => workflowStore.enqueue(createCapacityConsistencyJob()));
 
   // 启动监控采集
+  await startup.assertOwned();
   monitorCollector.start();
   // 网络设备采集器只执行 SNMPv3 只读轮询；未纳管或未启用采集的设备不会
   // 建立连接。采集器内部按设备互斥，停止时释放定时器。
+  await startup.assertOwned();
   networkDeviceCollector.start();
+  await startup.assertOwned();
   configBackupScheduler.start();
 
   // 从 metric-registry 同步告警规则
-  await alertEngine.syncRulesFromRegistry();
+  await startup.step(() => alertEngine.syncRulesFromRegistry());
 
   // 启动告警评估
+  await startup.assertOwned();
   alertEngine.startEvaluationLoop();
   console.log('✅ 告警引擎已启动：每 60 秒评估规则');
 
   // 创建默认升级规则并启动升级 CronJob
-  await alertEscalationService.createDefaultRules();
+  await startup.assertOwned();
+  await startup.step(() => alertEscalationService.createDefaultRules());
+  await startup.assertOwned();
   alertEscalationService.start();
 
   // 通知推送服务暂不自动启动（待完善通知渠道配置 UI）
   // notificationService.start();
   console.log('⏸ 通知推送服务：未启动（待配置通知渠道）');
 
-  console.log('🔄 正在加载数据库实例连接...');
-  const instances = await instanceDatabaseService.getAllInstances();
-  for (const instance of instances) {
-    try {
-      const password = await instanceDatabaseService.getInstancePassword(instance.id);
-      if (password) {
-        const added = await databaseService.addConnection(
-          instance.id,
-          instance.name,
-          {
-            host: instance.host,
-            port: instance.port,
-            user: instance.username,
-            password: password,
-            database: instance.database_name || (instance.db_type === 'postgresql' ? 'postgres' : instance.db_type === 'mysql' ? 'mysql' : undefined),
-            db_type: instance.db_type,
-          }
-        );
-        if (added) {
-          console.log(`✅ 已加载实例：${instance.name}`);
-          // 执行初始健康检查
-          const health = await databaseService.checkHealth(instance.id);
-          console.log(`   ❤️ 健康状态：${health?.status ?? 'unknown'} (${health?.health_score ?? 0})`);
-        } else {
-          // 连接失败，更新健康状态为 critical
-          console.log(`❌ 实例连接失败：${instance.name}，标记为 critical`);
-          await instanceDatabaseService.updateHealthStatus(instance.id, 0, 'critical');
-        }
-      } else {
-        // 无法获取密码，标记为 unknown
-        console.log(`⚠️ 无法获取实例密码：${instance.name}，标记为 unknown`);
-        await instanceDatabaseService.updateHealthStatus(instance.id, 0, 'unknown');
-      }
-    } catch (error: any) {
-      console.error(`❌ 实例连接失败：${instance.name}`, error.message);
-      // 发生异常，更新健康状态为 critical
-      await instanceDatabaseService.updateHealthStatus(instance.id, 0, 'critical');
-    }
-  }
-  console.log(`✅ 已加载 ${instances.length} 个数据库实例`);
-
   // ========== CronManager 初始化 ==========
-  const cronProvider = await createLLMProvider();
+  const cronProvider = await startup.step(() => createLLMProvider());
   const cronRunner = new AgentRunner(cronProvider);
   const cronExecutor = new CronExecutor(cronRunner, createCronToolRegistry, cronProvider);
   cronManager = new CronManager(cronJobService, cronExecutor, workflowStore, async (type, payload, runId, context) => {
     return await workflowRegistry.executeWithResult({ id: runId, type, payload, attempts: 1, maxAttempts: 1, fencingToken: context?.fencingToken ?? 0 }, context) as import('./src/cron/cron-run-store.js').CronCompletion | undefined;
-  });
+  }, () => startup.assertOwned());
   registerCronRunHandler(workflowRegistry, (runId, context) => cronManager!.executeRun(runId, context));
-  await cronManager.start();
-  workflowTimer = setInterval(() => { void workflowRuntime.runOnce((job, context) => workflowRegistry.execute(job, context)).catch((error) => console.error('Workflow worker failed:', error)); }, 1_000);
+  await startup.step(() => cronManager!.start());
+  await startup.assertOwned();
+  workflowTimer = setInterval(() => { void startup.assertOwned().then(() => workflowRuntime.runOnce((job, context) => workflowRegistry.execute(job, context))).catch(() => console.error('[WorkerRuntime] WORKFLOW_TICK_FAILED')); }, 1_000);
 
-  // 清理崩溃残留的 running 日志
-  try {
-    const reaperPool = (await import('./src/db-connection')).dbConnection.getPool();
-    if (reaperPool) {
-      const [reaperResult] = await reaperPool.execute(
-        "UPDATE cron_job_logs SET status = 'error', error_message = 'Server 重启，任务被中断', finished_at = NOW() WHERE status = 'running' AND run_id IS NULL"
-      ) as any;
-      if (reaperResult.affectedRows > 0) {
-        console.log(`[CronManager] 清理了 ${reaperResult.affectedRows} 条残留 running 日志`);
-      }
-    }
-  } catch (err: any) {
-    console.warn('[CronManager] 清理残留 running 日志失败 (非致命):', err.message);
-  }
+  // Legacy logs have no provable owner/expiry; leave them for manual review.
 
   // 维护窗口缓存刷新 - 每 5 分钟
+  await startup.assertOwned();
   maintenanceWindowService.startCacheRefresh(5);
 
   // 保留采集时的质量标记；历史修正须先证明公式/批次范围，再由独立迁移处理。
 
   };
 
-  registerCronRoutes(fastify, verifyToken, () => cronManager!);
+  registerCronRoutes(fastify, verifyToken, () => startup.ready ? cronManager : undefined);
 
   // 启动 HTTP API 服务器
   const port = process.env.PORT || process.env.BACKEND_PORT || process.env.API_PORT || 3000;
   await fastify.listen({ port: Number(port), host: '0.0.0.0' });
-  const workerLease = new WorkerLease(pool as any);
-  if (await workerLease.acquire()) {
-    await startWorkers();
-    const heartbeat = setInterval(() => {
-      void workerLease.renew().then((renewed) => {
-        if (!renewed) {
-          console.error('Worker lease lost; stopping workers');
-          void shutdown();
-        }
-      }).catch(() => { console.error('Worker lease heartbeat failed; stopping workers'); void shutdown(); });
-    }, 10_000);
-    let shuttingDown = false;
-    const shutdown = async () => {
-      if (shuttingDown) return;
-      shuttingDown = true;
-      clearInterval(heartbeat);
-      if (workflowTimer) clearInterval(workflowTimer);
-      if (metricLifecycle && !await metricLifecycle.stop()) console.error('[MetricsV2] METRIC_SHUTDOWN_TIMEOUT');
-      if (stopWorkflow && !await stopWorkflow()) console.error('[WorkerRuntime] WORKFLOW_SHUTDOWN_TIMEOUT');
-      monitorCollector.stop();
-      networkDeviceCollector.stop();
-      await configBackupScheduler.stop();
-      alertEngine.stopEvaluationLoop();
-      alertEscalationService.stop();
-      stopSessionCleanup();
-      promptManager.stopWatch();
-      await cronManager?.stop();
-      await engine?.dispose?.();
-      await workerLease.release();
-      await fastify.close();
-      await dbConnection.close();
-    };
-    process.once('SIGTERM', () => void shutdown());
-    process.once('SIGINT', () => void shutdown());
-  } else {
-    console.warn('Worker lease is held by another process; this replica will serve API requests only');
-  }
+  await startup.start(initializeApi, startWorkers);
+  if (!startup.ready) console.warn('[WorkerStartup] WORKER_LEASE_UNAVAILABLE: API-only standby; D1 does not auto-promote');
   console.log(`🚀 服务器已启动：http://localhost:${port}`);
 }
 

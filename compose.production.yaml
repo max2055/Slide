@@ -84,6 +84,11 @@ services:
       AGENT_WORKSPACE: /var/lib/slide-agent
       PROMPT_VERSIONS_DIR: /var/lib/slide-agent/prompts
       PROMPT_HOT_RELOAD: "false"
+      METRICS_V2_COLLECTION_ENABLED: ${METRICS_V2_COLLECTION_ENABLED:-false}
+      SLIDE_MEMORY_PIPELINE_ENABLED: ${SLIDE_MEMORY_PIPELINE_ENABLED:-false}
+      SLIDE_MEMORY_WORKSPACE_ID: ${SLIDE_MEMORY_WORKSPACE_ID:-}
+      SLIDE_MEMORY_RETRIEVAL_MAX_COUNT: ${SLIDE_MEMORY_RETRIEVAL_MAX_COUNT:-5}
+      SLIDE_MEMORY_RETRIEVAL_MAX_TOKENS: ${SLIDE_MEMORY_RETRIEVAL_MAX_TOKENS:-4096}
       SLIDE_GITLAB_ORIGINS: ${SLIDE_GITLAB_ORIGINS:-}
       SLIDE_GITHUB_ORIGINS: ${SLIDE_GITHUB_ORIGINS:-https://github.com}
       SLIDE_SOURCE_SIGNING_KEY: ${SLIDE_SOURCE_SIGNING_KEY:-}
@@ -120,7 +125,7 @@ services:
       - agent-state:/var/lib/slide-agent
     networks: [edge, control, data]
     healthcheck:
-      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/health/ready').then(async r=>{if(!r.ok||(await r.json()).ready!==true)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 12

@@ -1,12 +1,13 @@
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { requirePermission } from './auth/require-permission.js';
-import { HealthResponseSchema } from './contracts/public-api.js';
+import { HealthResponseSchema, InfrastructureReadinessSchema } from './contracts/public-api.js';
 import { consistencyChecker } from './consistency-checker.js';
 
 export function registerHealthRoutes(
   fastify: FastifyInstance,
   verifyToken: preHandlerHookHandler,
   checker: Pick<typeof consistencyChecker, 'healthOverview'> = consistencyChecker,
+  readiness: () => Promise<boolean> = async () => false,
 ): void {
   // 健康检查
   fastify.get('/api/health', { schema: { response: { 200: HealthResponseSchema } } }, async (request, reply) => {
@@ -14,6 +15,12 @@ export function registerHealthRoutes(
       status: 'ok',
       timestamp: new Date().toISOString(),
     });
+  });
+
+  fastify.get('/api/health/ready', { schema: { response: { 200: InfrastructureReadinessSchema, 503: InfrastructureReadinessSchema } } }, async (_request, reply) => {
+    let ready = false;
+    try { ready = await readiness(); } catch { /* Public probe never exposes dependency errors. */ }
+    return reply.code(ready ? 200 : 503).send({ ready });
   });
 
   // 详细健康检查共享一个短时快照，避免页面重复查询纳管资源与一致性数据。

@@ -48,12 +48,12 @@ ENCRYPTION_KEY="$qualification_encryption_key" \
 api_pid=$!
 
 for _ in $(seq 1 45); do
-  if curl --fail --silent --max-time 1 http://127.0.0.1:3003/api/health >/dev/null; then
+  if curl --fail --silent --max-time 1 http://127.0.0.1:3003/api/health/ready >/dev/null; then
     break
   fi
   sleep 1
 done
-curl --fail --silent --max-time 3 http://127.0.0.1:3003/api/health >/dev/null
+curl --fail --silent --max-time 3 http://127.0.0.1:3003/api/health/ready >/dev/null
 
 VITE_API_PROXY_TARGET=http://127.0.0.1:3003 \
 VITE_AGENT_WS_PROXY_TARGET=http://127.0.0.1:28890 \

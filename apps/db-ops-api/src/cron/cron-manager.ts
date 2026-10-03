@@ -48,6 +48,7 @@ export class CronManager {
     cronExecutor: CronExecutor,
     private readonly workflow?: WorkflowEnqueuer,
     private readonly typedHandler?: (type: string, payload: Record<string, unknown>, runId: string, context?: JobExecutionContext) => Promise<CronCompletion | undefined>,
+    private readonly assertOwned: () => Promise<void> = async () => {},
   ) {
     this.jobService = jobService;
     this.cronExecutor = cronExecutor;
@@ -59,8 +60,10 @@ export class CronManager {
    */
   async start(): Promise<void> {
     console.log('CronManager: 正在启动...');
+    await this.assertOwned();
     await cronRunStore.recover();
     await this.jobService.ensureSeedData();
+    await this.assertOwned();
     this.running = true;
     await this.reload();
   }
@@ -76,6 +79,8 @@ export class CronManager {
 
     try {
       const enabledJobs = await this.jobService.getEnabledJobs();
+      await this.assertOwned();
+      if (!this.running) return;
 
       for (const config of enabledJobs) {
         this.scheduleJob(config);
@@ -84,6 +89,7 @@ export class CronManager {
       console.log(`CronManager: ${enabledJobs.length} 个任务已调度`);
     } catch (error) {
       console.error('CronManager 重载失败:', error);
+      throw error;
     }
   }
 
@@ -131,6 +137,7 @@ export class CronManager {
   }
 
   async triggerJob(config: CronJobConfig, trigger?: ActorContext, key: string = randomUUID(), params: unknown = {}): Promise<CronRun> {
+    await this.assertOwned();
     return cronRunStore.enqueue(config.id, trigger?.userId ?? null, key, params, config.output_schema);
   }
 

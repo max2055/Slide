@@ -38,7 +38,10 @@ async function startWorkers(pool: Pick<Pool, 'execute'>) {
       if (id !== './src/db-connection') throw new Error(`Unexpected startup import: ${id}`);
       return { dbConnection: { getPool: () => pool } };
     },
-    initializeControlPlane: vi.fn(), getAgentEngine: vi.fn(async () => service),
+    initializeLeaderConnections: vi.fn(), startSessionCleanup: vi.fn(),
+    startup: { assertOwned: vi.fn(async () => {}), step: async (operation: () => Promise<unknown>) => operation() },
+    process: { env: { PROMPT_HOT_RELOAD: 'false' } }, promptManager: { startWatch: vi.fn() },
+    getAgentEngine: vi.fn(async () => service),
     createMetricSchedulerLifecycle: () => service, assertMetricSchedulerSchema: vi.fn(),
     registerWorkflowHandlers: vi.fn(), registerCronRunHandler: vi.fn(), createCronToolRegistry: vi.fn(),
     createLLMProvider: vi.fn(), createNotificationDispatchJob: vi.fn(),
@@ -56,6 +59,7 @@ async function startWorkers(pool: Pick<Pool, 'execute'>) {
     'CapacityConsistencyMonitor', 'MysqlReportOccurrenceStore', 'WorkerRuntime',
     'AgentRunner', 'CronExecutor', 'CronManager']) context[name] = InertWorker;
   await runInNewContext(startup, context);
+  expect(service.start).toHaveBeenCalled();
 }
 
 describe('metric quality at worker startup', () => {
@@ -63,8 +67,8 @@ describe('metric quality at worker startup', () => {
     const execute = vi.fn(async () => [{ affectedRows: 0 }, []]) as any;
     await startWorkers({ execute });
     await startWorkers({ execute });
-    // This also verifies the real startup SQL path ran, rather than a no-op test.
-    expect(execute).toHaveBeenCalledWith(expect.stringContaining('UPDATE cron_job_logs'));
+    // W07 removes the legacy reaper; unowned logs require manual review.
+    expect(execute.mock.calls.filter(([sql]) => /UPDATE cron_job_logs/i.test(sql))).toEqual([]);
     expect(execute.mock.calls.filter(([sql]) => /metrics_history/i.test(sql))).toEqual([]);
   });
 });
