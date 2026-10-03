@@ -193,8 +193,9 @@ describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
     const future = () => new Date('2030-01-01T00:00:00Z');
     await new MysqlMetricStorage(pool, future).prune();
     const later = new RolloutControl(pool, undefined, future); await later.prune(); await later.prune();
-    expect((await pool.query<RowDataPacket[]>('SELECT * FROM metric_v2_publications'))[0]).toHaveLength(0);
-    expect((await pool.query<RowDataPacket[]>('SELECT * FROM metric_v2_alert_transitions'))[0]).toHaveLength(0);
+    expect((await pool.query<RowDataPacket[]>('SELECT * FROM metric_v2_publications'))[0]).toHaveLength(1);
+    expect((await pool.query<RowDataPacket[]>('SELECT * FROM metric_v2_alert_transitions'))[0]).toHaveLength(1);
+    expect(await new MysqlMetricStorage(pool, future).evidence(series.id)).toMatchObject({ status: 'available' });
     expect(await later.transition(series, ticket, input)).toBe(false);
   });
   it('alert write failure rolls back transition and state, permitting safe retry', async () => {
