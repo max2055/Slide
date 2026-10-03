@@ -5340,8 +5340,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
-      const result = await alertEventService.startInvestigation(Number(id));
-      reply.send(result);
+      const result = await alertEventService.startInvestigation(Number(id), (request as any).user.userId);
+      reply.code(result.success ? 200 : 409).send(result);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
     }
@@ -5355,7 +5355,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           ['note'], 'POST /api/alerts/events/:id/note');
         if (check.error) return reply.code(400).send(check.error);
         const { note } = check.body as { note: string };
-      const result = await alertEventService.addHandlerNote(Number(id), note);
+      const result = await alertEventService.addHandlerNote(Number(id), note, (request as any).user.userId);
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -5381,7 +5381,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           ['resolution_notes'], 'POST /api/alerts/events/:id/resolve');
         if (check.error) return reply.code(400).send(check.error);
         const { resolution_notes } = check.body as { resolution_notes: string };
-      const result = await alertEventService.resolveEvent(Number(id), resolution_notes);
+      const result = await alertEventService.resolveEvent(Number(id), resolution_notes, (request as any).user.userId);
       reply.code(result.success ? 200 : 409).send(result);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -5392,7 +5392,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
-      const result = await alertEventService.closeEvent(Number(id));
+      const result = await alertEventService.closeEvent(Number(id), (request as any).user.userId);
       reply.code(result.success ? 200 : 409).send(result);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
@@ -5405,8 +5405,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
       const check = strictBody(request.body as Record<string, unknown>, ['reason'], 'POST /api/alerts/events/:id/verify-recovery');
       if (check.error) return reply.code(400).send(check.error);
-      const reason = String((check.body as { reason?: unknown }).reason ?? '').trim();
-      if (!reason) return reply.code(400).send({ error: '缺少恢复验证说明' });
+      const rawReason = (check.body as { reason?: unknown }).reason;
+      if (typeof rawReason !== 'string' || !rawReason.trim() || rawReason.trim().length > 1024) {
+        return reply.code(400).send({ error: '人工恢复确认依据须为 1–1024 字符' });
+      }
+      const reason = rawReason.trim();
       const result = await alertEventService.verifyRecovery(Number(id), reason, (request as any).user.userId);
       reply.code(result.success ? 200 : 409).send(result);
     } catch (error: any) {
@@ -5422,7 +5425,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           ['postmortem'], 'POST /api/alerts/events/:id/postmortem');
         if (check.error) return reply.code(400).send(check.error);
         const { postmortem } = check.body;
-      const result = await alertEventService.addPostmortem(Number(id), postmortem);
+      const result = await alertEventService.addPostmortem(Number(id), postmortem, (request as any).user.userId);
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: error.message });
