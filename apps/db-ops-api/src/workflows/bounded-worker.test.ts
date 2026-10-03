@@ -80,7 +80,7 @@ it('filters atomic SQL claims by lane and resolves report/notification resources
   expect(await store.resourcesFor(job('cron.execute', 'forged'))).toEqual(['*']);
 });
 
-it('gives a global waiter FIFO admission and releases aborted waiters without starving subsequent work', async () => {
+it('gives a global waiter FIFO admission without starving subsequent work', async () => {
   vi.useFakeTimers();
   const jobs = [job('report.occurrence', 'a'), job('notification.deliver', '*'), job('metrics.collect', 'c')];
   const { store } = fixture(jobs);

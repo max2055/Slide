@@ -52,6 +52,7 @@ async function startWorkers(pool: Pick<Pool, 'execute'>) {
     analysisDispatchStore: { assertSchema: vi.fn(), recoverLegacy: vi.fn(), recover: vi.fn() },
     registerAnalysisDispatchHandler: vi.fn(), registerAnalysisRecoveryHandler: vi.fn(),
     authorizeAnalysisRequest: vi.fn(), analysisConfigurationVersion: vi.fn(), createAnalysisRecoveryJob: vi.fn(),
+    workflowConcurrency: () => 3,
     setInterval: vi.fn(), clearInterval: vi.fn(),
   };
   for (const name of ['metricRegistry', 'notificationDatabaseService', 'notificationService',
@@ -61,7 +62,7 @@ async function startWorkers(pool: Pick<Pool, 'execute'>) {
     'alertEscalationService', 'instanceDatabaseService', 'databaseService', 'cronJobService',
     'maintenanceWindowService']) context[name] = service;
   for (const name of ['MysqlWorkflowStore', 'JobRegistry', 'NotificationDispatchScheduler',
-    'CapacityConsistencyMonitor', 'MysqlReportOccurrenceStore', 'WorkerRuntime',
+    'CapacityConsistencyMonitor', 'MysqlReportOccurrenceStore', 'BoundedWorkflowRuntime',
     'AgentRunner', 'CronExecutor', 'CronManager']) context[name] = InertWorker;
   await runInNewContext(startup, context);
   expect(service.start).toHaveBeenCalled();

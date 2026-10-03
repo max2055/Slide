@@ -99,7 +99,7 @@ describe('manual fault diagnosis route contract', () => {
     const registrationSource = readFileSync(resolve(sourceRoot, 'workflows/register-workflow-handlers.ts'), 'utf8');
     expect(registrationSource).toContain("registry.register('fault.diagnose-unhealthy', async () => completion('fault.diagnose-unhealthy', await faultDiagnosisService.diagnoseUnhealthyInstances()));");
     const registryConstruction = 'const workflowRegistry = new JobRegistry();';
-    const workerConstruction = 'const workflowRuntime = new WorkerRuntime';
+    const workerConstruction = 'const workflowRuntime = new BoundedWorkflowRuntime';
     const workerStart = 'workflowTimer = setInterval';
 
     expect(serverSource).toContain(registration);

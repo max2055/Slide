@@ -125,19 +125,25 @@ export async function qualifyBoundedQueue(pool: Pool) {
 
   // Force a lease loss while the handler ignores AbortSignal. Same-resource work
   // waits behind it; shutdown aborts waiters but cannot release the unknown operation.
-  const slow = runtime(3, 3); const slowId = await enqueue('report.occurrence', 1); await enqueue('notification.deliver', 1);
+  const slow = runtime(3, 3); const slowId = await enqueue('report.occurrence', 1);
   let release!: () => void; const gate = new Promise<void>(r => { release = r; });
   const starts: string[] = []; let context: JobExecutionContext | undefined;
   const run = slow.runOnce(async (j, c) => { starts.push(j.type); context = c; await gate; });
+  const safetyTicks: Array<Promise<unknown>> = [run];
   try {
     await deadlineWait(() => starts.length === 1);
+    await enqueue('notification.deliver', 1);
+    const waiting = slow.runOnce(async () => { throw new Error('same-resource overlap'); });
+    // Collect the additional tick even when the forced loss fails.
+    safetyTicks.push(waiting);
     await pool.execute('UPDATE workflow_jobs SET fencing_token = fencing_token + 1 WHERE id = ?', [slowId]);
     await deadlineWait(() => !!context?.signal.aborted, 2500);
     assert.deepEqual(starts, ['report.occurrence']);
     assert.equal(await slow.shutdown(30), false);
     for (let i = 0; i < 5; i++) assert.equal(await slow.runOnce(async () => { throw new Error('late execution'); }), 'cancelled');
     assert.equal(starts.length, 1);
-  } finally { release(); await run; assert.equal(await slow.shutdown(), true); }
+    await waiting;
+  } finally { release(); await Promise.allSettled(safetyTicks); assert.equal(await slow.shutdown(), true); }
   const [unknown] = await pool.query<any[]>('SELECT state FROM workflow_jobs WHERE id = ?', [slowId]); assert.equal(unknown[0].state, 'running');
   console.log('bounded safety valid: duplicate claim fenced; delayed retry/dead-letter; lease-loss handler retains resource/slot; shutdown waiters cancelled and unknown left for recovery');
 }
