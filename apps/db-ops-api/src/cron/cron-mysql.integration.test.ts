@@ -86,7 +86,7 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
         timeout_seconds INT DEFAULT 300, retry_count INT DEFAULT 0, created_at DATETIME DEFAULT NOW(), updated_at DATETIME DEFAULT NOW(), FOREIGN KEY (target_instance_id) REFERENCES database_instances(id) ON DELETE SET NULL)`,
       `CREATE TABLE cron_job_logs (id INT AUTO_INCREMENT PRIMARY KEY, job_id INT, started_at DATETIME, finished_at DATETIME,
         status VARCHAR(20), result_summary TEXT, error_message TEXT, result JSON, structured_result JSON, tools_used JSON, tool_events JSON,
-        \`usage\` JSON, stop_reason VARCHAR(50), duration_ms INT, partial_trace TEXT, error_trace TEXT)`,
+        \`usage\` JSON, stop_reason VARCHAR(50), duration_ms INT, partial_trace TEXT, error_trace TEXT) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
       'CREATE TABLE metric_baselines (id INT PRIMARY KEY, computed_at DATETIME) ENGINE=InnoDB',
       'CREATE TABLE silence_periods (id INT PRIMARY KEY, silenced_until DATETIME) ENGINE=InnoDB',
     ]) await pool.query(sql);
