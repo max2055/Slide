@@ -26,6 +26,6 @@ ALTER TABLE cron_job_logs MODIFY COLUMN status ENUM('running','success','error',
 -- Native handlers return business evidence, not the old Agent statistics template.
 UPDATE cron_jobs SET output_schema = JSON_OBJECT('type', 'object',
   'properties', JSON_OBJECT('handler', JSON_OBJECT('type', 'string'), 'data', JSON_OBJECT()),
-  'required', JSON_ARRAY('handler', 'data'), 'additionalProperties', FALSE)
+  'required', JSON_ARRAY('handler', 'data'), 'additionalProperties', JSON_EXTRACT('false', '$'))
 WHERE principal_type = 'system-maintenance' AND handler_key IN
   ('capacity.collect','baseline.cleanup','report.schedule','alert.evaluate','notification.dispatch','fault.diagnose-unhealthy');

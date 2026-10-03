@@ -9,6 +9,8 @@ import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
 import "../components/app-card.js";
+import "../components/app-badge.js";
+import "../components/app-toggle.js";
 import "../components/app-empty-state.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
@@ -212,7 +214,9 @@ export class CronJobsSettings extends LitElement {
     .cell-expr { width: 140px; min-width: 140px; }
     .cell-next { width: 110px; min-width: 110px; }
     .cell-last { width: 110px; min-width: 110px; }
-    .cell-result { width: 80px; min-width: 80px; }
+    .cell-result { width: calc(var(--space-xl) * 6); min-width: calc(var(--space-xl) * 6); }
+    .table-cell.cell-result { flex-direction: column; gap: var(--space-xs); }
+    .run-summary { width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
     .cell-actions { width: 150px; min-width: 150px; justify-content: flex-end; gap: 4px; flex-shrink: 0; overflow: visible; }
     .job-name { font-weight: 600; color: var(--text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
     .job-name:hover { color: var(--accent-text); }
@@ -842,8 +846,7 @@ export class CronJobsSettings extends LitElement {
             </div>
             <div class="table-cell cell-result">
               ${this.renderBadge(this.runTracker.runs.get(job.id)?.status ?? job.last_result)}
-              ${this.runTracker.runs.get(job.id) ? html`<span title=${this.runTracker.runs.get(job.id)?.runId ?? ''}>本次运行</span>
-                <span>${this.runTracker.runs.get(job.id)?.summary ?? ''}</span>` : nothing}
+              ${this.runTracker.runs.get(job.id) ? html`<span class="run-summary" title=${this.runTracker.runs.get(job.id)?.summary ?? this.runTracker.runs.get(job.id)?.runId ?? ''}>本次运行${this.runTracker.runs.get(job.id)?.summary ? ` · ${this.runTracker.runs.get(job.id)?.summary}` : ''}</span>` : nothing}
             </div>
             <div class="table-cell cell-actions">
               <app-toggle compact .checked=${job.enabled} @change=${() => this.toggleJob(job)} title=${job.enabled ? "已启用" : "已停用"}></app-toggle>

@@ -219,6 +219,9 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
   it('uses the same correlation ID for a typed workflow and only completes after handler settlement', async () => {
     const id = await createJob(await createScript());
     await pool.query("UPDATE cron_jobs SET principal_type='system-maintenance', handler_key='baseline.cleanup' WHERE id=?", [id]);
+    const runMigration = splitSqlStatements(readFileSync(new URL('../../sql/migrations/106_cron_runs.sql', import.meta.url), 'utf8'));
+    await pool.query(runMigration[runMigration.length - 1]);
+    expect((await cronJobService.getJobById(id))!.output_schema).toMatchObject({ additionalProperties: false, required: ['handler', 'data'] });
     const registry = new JobRegistry();
     let release!: () => void;
     const pending = new Promise<void>(resolve => { release = resolve; });
