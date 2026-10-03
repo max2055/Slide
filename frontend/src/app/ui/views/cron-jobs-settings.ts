@@ -615,13 +615,14 @@ export class CronJobsSettings extends LitElement {
 
   private async confirmTrigger() {
     if (this.triggerJobId === null) return;
+    const jobId = this.triggerJobId;
     this.triggerRunning = true; this.triggerError = null;
     try {
-      const res = await authFetch(`/api/cron/jobs/${this.triggerJobId}/run`, { method: "POST" });
+      const res = await authFetch(`/api/cron/jobs/${jobId}/run`, { method: "POST" });
       if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || "触发失败"); }
       this.closeTriggerDialog();
       showToast("已触发执行");
-      this.pollJobStatus(this.triggerJobId);
+      this.pollJobStatus(jobId);
     } catch (e: any) {
       this.triggerError = e.message || "触发失败";
     } finally {

@@ -5548,16 +5548,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // 维护窗口缓存刷新 - 每 5 分钟
   maintenanceWindowService.startCacheRefresh(5);
 
-  // 标记历史数据为估算值（新公式无法回推）
-  try {
-    const pool = (await import('./src/db-connection')).dbConnection.getPool();
-    if (pool) {
-      const [result] = await pool.execute(
-        "UPDATE metrics_history SET is_estimated = TRUE WHERE recorded_at >= NOW() - INTERVAL 30 DAY AND is_estimated = 0"
-      ) as any;
-      if (result.affectedRows > 0) console.log(`📊 已标记 ${result.affectedRows} 条历史指标为估算值`);
-    }
-  } catch (e) { /* 非阻塞 */ }
+  // 保留采集时的质量标记；历史修正须先证明公式/批次范围，再由独立迁移处理。
 
   };
 
