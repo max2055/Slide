@@ -80,6 +80,7 @@ services:
       NODE_ENV: production
       FRONTEND_URL: ${FRONTEND_URL:-http://frontend:8080}
       PORT: "3000"
+      WORKFLOW_CONCURRENCY: ${WORKFLOW_CONCURRENCY:-3}
       ANALYSIS_DISPATCH_ENABLED: ${ANALYSIS_DISPATCH_ENABLED:-true}
       AGENT_WS_PORT: "28888"
       AGENT_WORKSPACE: /var/lib/slide-agent

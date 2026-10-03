@@ -10,8 +10,9 @@ export interface QueueObservation {
   schemaVersion: 1; generatedAt: string; persistence: 'mysql';
   quality: 'good' | 'degraded' | 'unknown'; types: QueueTypeObservation[]; gaps: string[];
 }
+export interface ClaimFilter { types: readonly string[]; exclude: boolean; }
 export interface WorkflowStore {
-  claim(workerId: string, leaseSeconds: number): Promise<ClaimedJob | null>;
+  claim(workerId: string, leaseSeconds: number, filter?: ClaimFilter): Promise<ClaimedJob | null>;
   heartbeat(jobId: string, workerId: string, fencingToken: number, leaseSeconds: number): Promise<boolean>;
   complete(jobId: string, workerId: string, fencingToken: number): Promise<boolean>;
   fail(job: ClaimedJob, workerId: string, error: Error, retryAt: Date | null): Promise<boolean>;
@@ -86,17 +87,19 @@ export class MysqlWorkflowStore implements WorkflowStore {
     );
     return rows.map((row) => ({ ...row, payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload }));
   }
-  async claim(workerId: string, leaseSeconds: number): Promise<ClaimedJob | null> {
+  async claim(workerId: string, leaseSeconds: number, filter?: ClaimFilter): Promise<ClaimedJob | null> {
     const pool = this.pool();
+    const typeFilter = filter?.types.length ? `AND job_type ${filter.exclude ? 'NOT IN' : 'IN'} (${filter.types.map(() => '?').join(', ')})` : '';
     const [result] = await pool.execute<{ affectedRows: number }>(
       `UPDATE workflow_jobs SET state = 'running', attempts = attempts + 1, lease_owner = ?,
        lease_expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND), fencing_token = fencing_token + 1
        WHERE id = (SELECT id FROM (SELECT id FROM workflow_jobs
          WHERE state IN ('queued', 'retry', 'running') AND available_at <= NOW() AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
          ${process.env.ANALYSIS_DISPATCH_ENABLED === 'false' ? "AND job_type <> 'analysis.dispatch'" : ''}
-         ORDER BY available_at, created_at LIMIT 1) candidate)
+         ${typeFilter}
+         ORDER BY available_at, created_at, id LIMIT 1) candidate)
        AND state IN ('queued', 'retry', 'running') AND (lease_expires_at IS NULL OR lease_expires_at < NOW())`,
-      [workerId, leaseSeconds],
+      [workerId, leaseSeconds, ...(filter?.types ?? [])],
     );
     if (Number(result.affectedRows) !== 1) return null;
     const [rows] = await pool.execute<Array<any>>(
@@ -108,6 +111,27 @@ export class MysqlWorkflowStore implements WorkflowStore {
     const row = rows[0];
     return row ? { id: row.id, type: row.type, payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload, attempts: Number(row.attempts), maxAttempts: Number(row.maxAttempts), fencingToken: Number(row.fencingToken),
       ...(row.queueWaitMs !== undefined ? { queueWaitMs: Number(row.queueWaitMs) } : {}) } : null;
+  }
+  /** Unknown/global handlers deliberately exclude every other resource. Never trust an added instanceId. */
+  async resourcesFor(job: ClaimedJob): Promise<string[]> {
+    let rows: Array<{ instanceId: number | null; type?: string }> = [];
+    if (job.type === 'report.occurrence') {
+      [rows] = await this.pool().execute<typeof rows>(`SELECT JSON_UNQUOTE(JSON_EXTRACT(config_snapshot, '$.instance_id')) AS instanceId,
+        JSON_UNQUOTE(JSON_EXTRACT(config_snapshot, '$.type')) AS type FROM report_schedule_occurrences
+        WHERE config_id = ? AND occurrence_at = ? AND workflow_job_id = ?`,
+        [job.payload.configId, new Date(String(job.payload.occurrenceAt)), job.id]);
+      if (rows[0]?.type === 'server_health') return ['*'];
+    } else if (job.type === 'notification.deliver' || job.type === 'report.notify') {
+      const alert = job.type === 'notification.deliver';
+      [rows] = await this.pool().execute<typeof rows>(`SELECT instance_id AS instanceId FROM ${alert ? 'alerts' : 'reports'} WHERE id = ?`,
+        [alert ? job.payload.alertId : job.payload.reportId]);
+    } else if (job.type === 'metrics.collect') {
+      // The collector validates this exact resource against its durable schedule before any I/O.
+      const resource = job.payload.resource as { type?: string; id?: number } | undefined;
+      if (resource?.type === 'instance' && Number.isSafeInteger(resource.id) && resource.id! > 0) return [`instance:${resource.id}`];
+    }
+    const id = Number(rows[0]?.instanceId);
+    return Number.isSafeInteger(id) && id > 0 ? [`instance:${id}`] : ['*'];
   }
   async heartbeat(jobId: string, workerId: string, fencingToken: number, leaseSeconds: number): Promise<boolean> {
     const [result] = await this.pool().execute<{ affectedRows: number }>(

@@ -127,7 +127,8 @@ import { InfrastructureReadiness } from './src/lifecycle/infrastructure-readines
 import { startupConfig } from './src/lifecycle/startup-config.js';
 import { registerDeliveryRoutes } from './src/workflows/delivery-routes.js';
 import { JobRegistry } from './src/workflows/job-registry.js';
-import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.js';
+import { MysqlWorkflowStore } from './src/workflows/worker-runtime.js';
+import { BoundedWorkflowRuntime, workflowConcurrency } from './src/workflows/bounded-worker.js';
 import { createMetricSchedulerLifecycle, assertMetricSchedulerSchema } from './src/metrics-v2/scheduler/runtime.js';
 import type { MetricSchedulerLifecycle } from './src/metrics-v2/scheduler/lifecycle.js';
 import { createNotificationDispatchJob, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
@@ -5542,7 +5543,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
   await startup.assertOwned();
   await startup.step(() => startMetricRetention(pool, workflowRegistry, job => workflowStore.enqueue(job)));
-  const workflowRuntime = new WorkerRuntime(workflowStore, workflowWorkerId);
+  const workflowRuntime = new BoundedWorkflowRuntime(workflowStore, workflowWorkerId, workflowConcurrency(), job => workflowStore.resourcesFor(job));
   stopWorkflow = async () => await workflowRuntime.shutdown();
   await startup.assertOwned();
   await startup.step(() => enqueueNotificationDispatch());

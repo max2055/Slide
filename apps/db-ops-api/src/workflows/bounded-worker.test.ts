@@ -31,7 +31,7 @@ it('starts independent notification and collection during a ten-second report, w
   const tick = runtime.runOnce(handler);
   await vi.advanceTimersByTimeAsync(1000);
   expect(starts).toEqual(['report.occurrence', 'notification.deliver', 'metrics.collect']);
-  expect(claim.mock.calls.filter(c => c[0].endsWith(':general'))).toHaveLength(1);
+  expect(claim.mock.calls.filter(c => c[2]?.exclude)).toHaveLength(1);
   await vi.advanceTimersByTimeAsync(9000); await Promise.all([first, tick]);
   expect(await runtime.shutdown()).toBe(true);
 });
@@ -69,13 +69,13 @@ it('falls back to one serial worker and rejects unsafe concurrency values', asyn
 });
 
 it('filters atomic SQL claims by lane and resolves report/notification resources from authoritative rows', async () => {
-  const execute = vi.fn(async () => [{ affectedRows: 0 }] as any);
+  const execute = vi.fn(async (_sql: string, _values?: unknown[]) => [{ affectedRows: 0 }] as any);
   const store = new MysqlWorkflowStore(() => ({ execute }));
   await store.claim('lane', 30, { types: ['notification.deliver', 'report.notify'], exclude: false });
   expect(execute.mock.calls[0][0]).toContain('job_type IN (?, ?)');
   expect(execute.mock.calls[0][1]).toContain('notification.deliver');
   execute.mockResolvedValue([[{ instanceId: 9, type: 'health' }]] as any);
-  expect(await store.resourcesFor({ ...job('report.occurrence', 'forged'), payload: { configId: 1, instanceId: 99 } })).toEqual(['instance:9']);
+  expect(await store.resourcesFor({ ...job('report.occurrence', 'forged'), payload: { configId: 1, occurrenceAt: '2026-10-04T00:00:00Z', instanceId: 99 } })).toEqual(['instance:9']);
   expect(await store.resourcesFor({ ...job('notification.deliver', 'forged'), payload: { alertId: 1, channelId: 2 } })).toEqual(['instance:9']);
   expect(await store.resourcesFor(job('cron.execute', 'forged'))).toEqual(['*']);
 });
