@@ -430,10 +430,12 @@ export class DirectGatewayClient {
     ));
   }
 
-  cancelChat(runId: string, sessionKey: string): void {
+  cancelChat(runId: string, sessionKey: string): boolean {
     if (this.ws?.readyState === WebSocket.OPEN && this.authenticated) {
       this.ws.send(JSON.stringify({ type: 'chat.cancel', runId, sessionKey }));
+      return true;
     }
+    return false;
   }
 
   requestHistory(sessionKey: string): void {
@@ -953,11 +955,13 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     if (barrier) { flushDirectStreamUpdates(host); renderChatProjection(host, id); }
     else { pendingStreamUpdateFor(host).projectionRunId = id; scheduleDirectStreamFlush(host); }
     if (state.terminal) {
+      host.chatCancelRequested = false;
       const type = state.terminal === 'completed' ? 'complete' : state.terminal === 'cancelled' ? 'cancelled' : 'error';
       const finalContent = state.parts.map(p => p.part.type === 'text' ? p.part.text : '').join('');
       const payload = mapAdapterChatEventToPayload({ type, runId: id, sessionKey, finalContent, error: state.error ?? state.terminal } as AdapterChatEvent, id, sessionKey);
       if (payload) {
         handleChatGatewayEvent(host, payload);
+        host.chatMessageProjection = state;
         if (type === 'error') {
           // Error handling clears transient controls; acknowledged tool facts
           // remain visible until authorized history replaces this projection.
@@ -977,6 +981,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     if (barrier) { flushDirectStreamUpdates(host); renderChatProjection(host, event.projection.runId); }
     else { pendingStreamUpdateFor(host).projectionRunId = event.projection.runId; scheduleDirectStreamFlush(host); }
     if (['complete', 'cancelled', 'error'].includes(event.type)) {
+      host.chatCancelRequested = false;
       directStreamOrder.set(host, { runId: event.projection.runId, attempt: event.projection.attempt, sequence: event.projection.sequence, terminal: true });
       const payload = mapAdapterChatEventToPayload(event, runId, sessionKey);
       if (payload) {
@@ -1014,6 +1019,8 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     case 'run.started':
       if (!confirmChatSend(host as unknown as ChatState, event.messageId)) break;
       host.chatRunId = event.runId;
+      host.chatRuntimePhase = 'preparing';
+      host.chatCancelRequested = false;
       host.sessionKey = event.sessionKey;
       break;
     case 'run.snapshot':
@@ -1021,6 +1028,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
       applyDirectSessionKey(host, event.run.sessionId);
       host.chatRunId = event.run.state === 'running' ? event.run.id : null;
       if (event.run.state !== 'running') {
+        host.chatCancelRequested = false;
         host.chatStream = null;
         host.chatStreamStartedAt = null;
         void loadChatHistory(host as unknown as ChatState);
@@ -1071,6 +1079,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     case 'protocol.error':
     case 'error': {
       flushDirectStreamUpdates(host);
+      host.chatCancelRequested = false;
       const payload = mapAdapterChatEventToPayload(event, runId, sessionKey);
       if (payload) {
         handleChatGatewayEvent(host, payload);

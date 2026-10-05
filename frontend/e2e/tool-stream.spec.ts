@@ -91,7 +91,7 @@ test('MAX-125 tool lifecycle and explicit text boundaries render in actual chat 
     return entries;
   });
   expect(order).toEqual(['正文甲', 'tool', 'tool', '正文乙', 'tool', 'tool', '正文丙']);
-  await expect(page.getByText('结算未知 · 10 ms', { exact: true })).toBeVisible();
+  await expect(page.getByText('结算未知（待确认） · 10 ms', { exact: true })).toBeVisible();
   await expect(page.getByText('已保存 · 10 ms', { exact: true })).toBeVisible();
   await expect(page.getByText('排队中', { exact: true })).toBeVisible();
   await expect(page.getByText('已取消 · 1 ms', { exact: true })).toBeVisible();

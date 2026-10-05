@@ -101,6 +101,9 @@ export type ChatProps = {
   sideResult?: ChatSideResult | null;
   sideResultTerminalRuns?: Set<string>;
   runId?: string | null;
+  runtimePhase?: import('../../../../../packages/agent-core/src/message-projection.ts').RunPhase | null;
+  cancelRequested?: boolean;
+  messageProjection?: import('../../../../../packages/agent-core/src/message-projection.ts').MessageProjection | null;
   toolMessages: unknown[];
   streamSegments: Array<{ text: string; ts: number }>;
   stream: string | null;
@@ -1395,7 +1398,8 @@ export function renderChat(props: ChatProps) {
     }
     return false;
   });
-  const showReasoning = (props.showThinking && reasoningLevel !== "off") || hasThinkingMessages;
+  const showReasoning = props.showThinking && (reasoningLevel !== "off" || hasThinkingMessages
+    || Boolean(props.messageProjection?.parts.some(p => p.part.type === 'reasoning')));
   const assistantIdentity = {
     name: props.assistantName,
     avatar:
@@ -1555,7 +1559,7 @@ export function renderChat(props: ChatProps) {
               `;
             }
             if (item.kind === "reading-indicator") {
-              if (props.thinkingText?.trim()) {
+              if (props.showThinking && props.thinkingText?.trim()) {
                 return renderStreamingGroup(
                   "",
                   props.streamStartedAt ?? Date.now(),
@@ -1578,7 +1582,7 @@ export function renderChat(props: ChatProps) {
                 props.onOpenSidebar,
                 assistantIdentity,
                 props.basePath,
-                props.thinkingText,
+                props.showThinking ? props.thinkingText : undefined,
                 props.thinkingComplete ?? false,
               );
             }
@@ -1880,6 +1884,13 @@ export function renderChat(props: ChatProps) {
       ${renderSideResult(props.sideResult, props.onDismissSideResult)}
       ${renderFallbackIndicator(props.fallbackStatus)}
       ${renderCompactionIndicator(props.compactionStatus)}
+      ${props.canAbort || props.runId ? html`<div class="chat-runtime-status" role="status" aria-live="polite"
+        style="color:var(--muted);padding:var(--space-sm);font-size:var(--font-size-sm)">
+        ${props.cancelRequested ? '取消请求已发送，等待服务端确认'
+          : !props.connected ? '连接恢复中，服务端任务可能仍在运行'
+          : ({ preparing: '准备诊断上下文', waiting_model: '等待模型响应', generating: '模型正在生成',
+              tools: '正在处理工具调用', approval: '等待审批，操作尚未执行', retrying: '正在重试，已撤回无效输出', saving: '保存诊断结果' })[props.runtimePhase ?? 'preparing']}
+      </div>` : nothing}
       ${renderContextNotice(activeSession, props.sessions?.defaults?.contextTokens ?? null)}
 
       <!-- Input bar -->
@@ -1951,8 +1962,9 @@ export function renderChat(props: ChatProps) {
                   <button
                     class="chat-send-btn chat-send-btn--stop"
                     @click=${props.onAbort}
-                    title="Stop"
-                    aria-label="Stop generating"
+                    .disabled=${Boolean(props.cancelRequested) || !props.connected}
+                    title=${props.cancelRequested ? '取消请求已发送' : 'Stop'}
+                    aria-label=${props.cancelRequested ? '等待取消确认' : 'Stop generating'}
                   >
                     ${icons['stop']}
                   </button>
@@ -2020,10 +2032,11 @@ function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
         senderLabel,
         messages: [{ message: item.message, key: item.key }],
         timestamp,
-        isStreaming: false,
+        isStreaming: Boolean((item.message as Record<string, unknown>).isStreaming),
       };
     } else {
       currentGroup.messages.push({ message: item.message, key: item.key });
+      currentGroup.isStreaming = Boolean((item.message as Record<string, unknown>).isStreaming);
     }
   }
 
@@ -2040,6 +2053,10 @@ function buildChatItems(props: ChatProps, historyStart: number, historyEnd: numb
   const toolOutputs = messagePartsToolOutputs(history.slice(historyStart, historyEnd));
   for (let i = historyStart; i < historyEnd; i++) {
     const msg = history[i];
+    const projection = props.messageProjection;
+    const record = msg as { runId?: string; messageParts?: { runId?: string } };
+    if (historyEnd === history.length && projection && (record.runId ?? record.messageParts?.runId) === projection.runId
+      && (msg as { role?: string }).role !== 'user') continue;
     // Apply search filter if active
     if (vs.searchOpen && vs.searchQuery.trim() && !messageMatchesSearchQuery(msg, vs.searchQuery)) {
       continue;
@@ -2048,11 +2065,41 @@ function buildChatItems(props: ChatProps, historyStart: number, historyEnd: numb
     const rows = messagePartsRenderRows(msg, toolOutputs) ?? [{ partId: null, message: msg }];
     for (const row of rows) {
       if (!props.showToolCalls && normalizeMessage(row.message).role.toLowerCase() === 'toolresult') continue;
-      items.push({ kind: 'message', key: row.partId ? `${messageKey(msg, i)}:part:${row.partId}` : messageKey(msg, i), message: row.message });
+      items.push({ kind: 'message', key: row.partId ? `part:${row.partId}` : messageKey(msg, i), message: row.message });
     }
   }
   // Streaming belongs only to the latest segment, never to a historical turn.
   if (historyEnd < history.length) return groupMessages(items);
+  if (props.messageProjection) {
+    const projection = props.messageProjection;
+    const messages = new Map<string, Record<string, unknown>>();
+    for (const row of projection.parts) {
+      if (row.part.status === 'discarded') continue;
+      let message = messages.get(row.messageId);
+      if (!message) {
+        const saved = history.find(m => (m as { id?: string }).id === (row.factMessageId ?? row.messageId)) as Record<string, unknown> | undefined;
+        message = { ...saved, id: row.messageId, role: 'assistant', runId: projection.runId,
+          timestamp: saved?.timestamp ?? props.streamStartedAt ?? 0,
+          messageParts: { version: 1, id: row.messageId, role: 'assistant', runId: projection.runId, source: 'fact', status: 'partial',
+            projectionMessageId: row.messageId, parts: [], legacy: { id: row.messageId, role: 'assistant', content: '' } } };
+        messages.set(row.messageId, message);
+      }
+      (message.messageParts as { parts: unknown[] }).parts.push(row.part);
+    }
+    for (const message of messages.values()) {
+      for (const row of messagePartsRenderRows(message) ?? []) {
+        if (!props.showToolCalls && (row.message as { toolCallId?: string }).toolCallId) continue;
+        row.message.isStreaming = !projection.terminal;
+        items.push({ kind: 'message', key: `part:${row.partId}`, message: row.message });
+      }
+    }
+    // Incomplete parameters remain process feedback and never a successful tool card.
+    for (const row of projection.parts) if (row.part.type === 'tool_input' && row.part.status !== 'discarded'
+      && !projection.parts.some(p => p.part.type === 'tool_call' && p.part.call.id === (row.part as { toolCallId: string }).toolCallId)) {
+      items.push({ kind: 'message', key: `part:${row.part.id}`, message: { role: 'assistant', content: `${row.part.name ?? '工具'}：正在生成参数（尚未执行）` } });
+    }
+    return groupMessages(items);
+  }
   const liftedCanvasSources = tools
     .map((tool) => extractChatMessagePreview(tool))
     .filter((entry) => Boolean(entry)) as Array<{

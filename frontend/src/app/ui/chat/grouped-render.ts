@@ -1,10 +1,9 @@
 import { html, nothing } from "lit";
-import { unsafeHTML } from "lit/directives/unsafe-html.js";
+import { streamingMarkdown } from './streaming-markdown.ts';
 import { getSafeLocalStorage } from "../local-storage.ts";
 import type { AssistantIdentity } from "../assistant-identity.ts";
 import type { EmbedSandboxMode } from "../embed-sandbox.ts";
 import { icons } from "../../../icons.js";
-import { toSanitizedMarkdownHtml } from "../markdown.ts";
 import { openExternalUrlSafe } from "../open-external-url.ts";
 import type { SidebarContent } from "../sidebar-content.ts";
 import { detectTextDirection } from "../text-direction.ts";
@@ -155,7 +154,7 @@ function renderThinkingDisclosure(markdown: string, complete: boolean) {
         <span class="chat-thinking-disclosure__status">${complete ? "已完成" : "思考中..."}</span>
       </summary>
       <div class="chat-thinking-disclosure__body">
-        ${unsafeHTML(toSanitizedMarkdownHtml(markdown))}
+        ${streamingMarkdown(markdown)}
       </div>
     </details>
   `;
@@ -1065,7 +1064,7 @@ function renderGroupedMessage(
   // Detect pure-JSON messages and render as collapsible block
   const jsonResult = markdown && !opts.isStreaming ? detectJson(markdown) : null;
 
-  const bubbleClasses = ["chat-bubble", opts.isStreaming ? "streaming" : "", "fade-in"]
+  const bubbleClasses = ["chat-bubble", opts.isStreaming ? "streaming" : ""]
     .filter(Boolean)
     .join(" ");
 
@@ -1162,7 +1161,7 @@ function renderGroupedMessage(
                           </details>`
                         : markdown
                           ? html`<div class="chat-text" dir="${detectTextDirection(markdown)}">
-                              ${unsafeHTML(toSanitizedMarkdownHtml(markdown))}
+                              ${streamingMarkdown(markdown)}
                             </div>`
                           : nothing}
                       ${hasToolCards
@@ -1222,7 +1221,7 @@ function renderGroupedMessage(
                 </details>`
               : markdown
                 ? html`<div class="chat-text" dir="${detectTextDirection(markdown)}">
-                    ${unsafeHTML(toSanitizedMarkdownHtml(markdown))}
+                    ${streamingMarkdown(markdown)}
                   </div>`
                 : nothing}
             ${hasToolCards

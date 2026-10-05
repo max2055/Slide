@@ -10,6 +10,14 @@ const host = () => ({ chatRunId: 'run', sessionKey: 'session', chatStream: '', c
   chatToolMessages: [], chatStreamSegments: [], toolStreamById: new Map(), toolStreamOrder: [], toolStreamSyncTimer: null });
 afterEach(() => { vi.useRealTimers(); });
 
+it('approval denial stays visible as unexecuted even after its result is saved', () => {
+  const card = { kind: 'result' as const, name: 'mysql_query', phase: 'persisted' as const, outcome: 'error' as const,
+    outputText: JSON.stringify({ success: false, errorCode: 'APPROVAL_REQUIRED', data: { approvalId: 'actual-request' } }) };
+  expect(toolLifecycleLabel(card)).toBe('等待审批 · 尚未执行');
+  expect(toolLifecycleLabel({ ...card, outputText: 'ordinary failure' })).toBe('执行失败');
+  expect(toolLifecycleLabel({ ...card, outcome: 'unknown', outputText: 'uncertain' })).toContain('待确认');
+});
+
 it('raw events create separate same-name cards and preserve text → tools → text segments', async () => {
   vi.useFakeTimers();
   const state = host();

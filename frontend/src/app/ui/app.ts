@@ -155,6 +155,9 @@ export class SlideApp extends LitElement {
   @state() chatStream: string | null = null;
   @state() chatStreamStartedAt: number | null = null;
   @state() chatRunId: string | null = null;
+  @state() chatRuntimePhase: import('../../../../packages/agent-core/src/message-projection.ts').RunPhase | null = null;
+  @state() chatCancelRequested = false;
+  @state() chatMessageProjection: import('../../../../packages/agent-core/src/message-projection.ts').MessageProjection | null = null;
   @state() chatThinkingText: string = "";
   @state() chatThinkingComplete: boolean = false;
   @state() refreshSessionsAfterChat: Set<string> = new Set();

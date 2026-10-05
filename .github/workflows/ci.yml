@@ -99,6 +99,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter slide-frontend exec playwright install --with-deps chromium
       - run: pnpm --filter slide-frontend test:browser
+      - name: Streaming reading and phase regression
+        run: pnpm --filter slide-frontend exec playwright test streaming-render.spec.ts --config playwright.streaming.config.ts --grep 'real phases'
 
   browser-qualification:
     runs-on: ubuntu-latest

@@ -217,8 +217,12 @@ export function extractToolCards(message: unknown, prefix = "tool"): ToolCard[] 
 
 export function toolLifecycleLabel(card: ToolCard): string | null {
   if (!card.phase) return null;
+  try {
+    const result = JSON.parse(card.outputText ?? card.text ?? '') as { errorCode?: string; data?: { approvalId?: unknown } };
+    if (['APPROVAL_REQUIRED', 'APPROVAL_PENDING'].includes(result.errorCode ?? '') && result.data?.approvalId) return '等待审批 · 尚未执行';
+  } catch { /* Non-JSON output retains its actual lifecycle label. */ }
   const labels = { planned: '已计划', queued: '排队中', running: '执行中', settled: '已结算', persisted: '已保存' };
-  const outcome = card.outcome === 'unknown' ? '结算未知' : card.outcome === 'cancelled' ? '已取消'
+  const outcome = card.outcome === 'unknown' ? '结算未知（待确认）' : card.outcome === 'cancelled' ? '已取消'
     : card.outcome === 'error' ? '执行失败' : labels[card.phase];
   const elapsed = card.startedAt !== undefined && card.settledAt !== undefined
     ? ` · ${Math.max(0, card.settledAt - card.startedAt)} ms` : '';

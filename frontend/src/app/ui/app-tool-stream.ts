@@ -257,6 +257,7 @@ export function scheduleToolStreamSync(host: ToolStreamHost, force = false) {
 }
 
 export function resetToolStream(host: ToolStreamHost) {
+  (host as unknown as Record<string, unknown>).chatMessageProjection = null;
   if (host.toolStreamSyncTimer != null) {
     clearTimeout(host.toolStreamSyncTimer);
     host.toolStreamSyncTimer = null;
