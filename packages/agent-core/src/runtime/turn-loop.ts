@@ -101,6 +101,11 @@ export class TurnLoop {
       if ('context_summary_v1' in payload && spec.signal?.aborted) throw cancellationError(spec.signal);
       boundary.state.sequence = Math.max(boundary.state.sequence, (next.stream_state_v1 as import('./stream-boundary.js').StreamSnapshot).sequence);
       checkpoint = next;
+      if (saveCheckpoint && payload.phase === 'tools_completed') {
+        for (const message of next.completedToolResults as Message[] ?? []) {
+          if (message.tool_call_id && message.name) await spec.onToolEvent?.({ toolCallId: message.tool_call_id, toolName: message.name, phase: 'persisted', occurredAt: Date.now() });
+        }
+      }
       if ('context_summary_v1' in payload) emit('compact.saved');
     } };
     const persistCounters = () => emitCheckpoint(spec, {});

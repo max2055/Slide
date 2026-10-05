@@ -672,7 +672,7 @@ describe('DirectAdapter', () => {
         expect(events).toEqual(expect.arrayContaining([
           expect.objectContaining({ type: 'auth_ok' }),
           expect.objectContaining({ type: 'tool_start', toolName: 'get_instance_connection' }),
-          expect.objectContaining({ type: 'tool_result', toolName: 'get_instance_connection' }),
+          expect.objectContaining({ type: 'tool_error', toolName: 'get_instance_connection' }),
           expect.objectContaining({ type: 'complete' }),
         ]));
         expect(decryptedInstanceLookup).not.toHaveBeenCalled();
@@ -1067,7 +1067,7 @@ describe('DirectAdapter', () => {
         vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
         await adapter.chat('adapter-policy-session', 'run the dangerous tool', (event) => events.push(event), viewer);
         expect(handler).not.toHaveBeenCalled();
-        expect(events.some((event) => event.type === 'tool_result')).toBe(true);
+        expect(events.some((event) => event.type === 'tool_error')).toBe(true);
       } finally {
         metadata.mockRestore();
       }
@@ -1101,10 +1101,10 @@ describe('DirectAdapter', () => {
       try {
         vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
         await adapter.chat('catalog-policy-session', 'show the connection', (event) => events.push(event), viewer);
-        const result = events.find((event) => event.type === 'tool_result');
+        const result = events.find((event) => event.type === 'tool_error');
         expect(result).toMatchObject({
           toolName: 'get_instance_connection',
-          result: expect.any(String),
+          error: expect.any(String),
         });
       } finally {
         metadata.mockRestore();

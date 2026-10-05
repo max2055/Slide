@@ -1,3 +1,4 @@
+import type { NormalizedToolEvent, ToolPhase, ToolOutcome, ToolPreview } from '../../../../packages/agent-core/src/tool-stream.js';
 import { formatUnknownText, truncateText } from "./format.ts";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.ts";
 
@@ -21,7 +22,14 @@ export type ToolStreamEntry = {
   name: string;
   args?: unknown;
   output?: string;
-  startedAt: number;
+  phase?: ToolPhase;
+  outcome?: ToolOutcome;
+  preview?: ToolPreview;
+  progress?: Record<string, unknown>;
+  settledAt?: number;
+  persistedAt?: number;
+  startedAt?: number;
+  createdAt?: number;
   updatedAt: number;
   message: Record<string, unknown>;
 };
@@ -31,7 +39,8 @@ type ToolStreamHost = {
   chatRunId: string | null;
   chatStream: string | null;
   chatStreamStartedAt: number | null;
-  chatStreamSegments: Array<{ text: string; ts: number }>;
+  chatStreamSegments: Array<{ text: string; ts: number; partId?: string; beforeToolCallId?: string }>;
+  chatStreamPartId?: string;
   toolStreamById: Map<string, ToolStreamEntry>;
   toolStreamOrder: string[];
   chatToolMessages: Record<string, unknown>[];
@@ -179,12 +188,15 @@ function buildToolStreamMessage(entry: ToolStreamEntry): Record<string, unknown>
   const content: Array<Record<string, unknown>> = [];
   content.push({
     type: "toolcall",
+    id: entry.toolCallId,
     name: entry.name,
     arguments: entry.args ?? {},
   });
   if (entry.output) {
     content.push({
       type: "toolresult",
+      toolCallId: entry.toolCallId,
+      isError: entry.outcome !== "ok",
       name: entry.name,
       text: entry.output,
     });
@@ -194,7 +206,14 @@ function buildToolStreamMessage(entry: ToolStreamEntry): Record<string, unknown>
     toolCallId: entry.toolCallId,
     runId: entry.runId,
     content,
-    timestamp: entry.startedAt,
+    timestamp: entry.createdAt,
+    toolPhase: entry.phase,
+    toolOutcome: entry.outcome,
+    toolStartedAt: entry.startedAt,
+    toolSettledAt: entry.settledAt,
+    toolPersistedAt: entry.persistedAt,
+    toolProgress: entry.progress,
+    toolPreview: entry.preview,
   };
 }
 
@@ -482,55 +501,51 @@ export function handleAgentEvent(host: ToolStreamHost, payload?: AgentEventPaylo
   }
 
   const data = payload.data ?? {};
-  const toolCallId = typeof data.toolCallId === "string" ? data.toolCallId : "";
-  if (!toolCallId) {
-    return;
-  }
-  const name = typeof data.name === "string" ? data.name : "tool";
-  const phase = typeof data.phase === "string" ? data.phase : "";
-  const args = phase === "start" ? data.args : undefined;
-  const output =
-    phase === "update"
-      ? formatToolOutput(data.partialResult)
-      : phase === "result"
-        ? formatToolOutput(data.result)
-        : undefined;
+  if (typeof data.toolCallId !== 'string' || !data.toolCallId || typeof data.name !== 'string') return;
+  const legacyPhase = data.phase;
+  if (!['start', 'update', 'result'].includes(String(legacyPhase))) return;
+  handleToolStreamEvent(host, {
+    toolCallId: data.toolCallId, name: data.name,
+    startedAt: legacyPhase === 'start' ? payload.ts : undefined,
+    phase: legacyPhase === 'result' ? 'settled' : 'running', occurredAt: payload.ts,
+    outcome: legacyPhase === 'result' ? data.isError ? 'error' : 'ok' : undefined,
+    args: legacyPhase === 'start' ? data.args as Record<string, unknown> : undefined,
+    preview: legacyPhase !== 'start' ? { kind: 'text', text: (formatToolOutput(legacyPhase === 'update' ? data.partialResult : data.result) ?? '').slice(0, 4096), truncated: false } : undefined,
+  }, payload.runId, sessionKey);
+}
 
-  const now = Date.now();
+/** Native events arrive typed and validated by the sole wire normalization entry. */
+export function handleToolStreamEvent(host: ToolStreamHost, event: NormalizedToolEvent, runId: string, sessionKey?: string) {
+  if (sessionKey && sessionKey !== host.sessionKey) return;
+  const { toolCallId, name, phase, occurredAt } = event;
   let entry = host.toolStreamById.get(toolCallId);
+  if (entry && entry.runId !== runId) return;
+  // Terminal tool facts cannot be regressed by duplicate or late progress/start.
+  if (entry && (entry.phase === 'persisted' || entry.phase === 'settled') && phase !== 'persisted') return;
+  const rank: ToolPhase[] = ['planned', 'queued', 'running', 'settled', 'persisted'];
+  if (entry?.phase && rank.indexOf(phase) < rank.indexOf(entry.phase)) return;
   if (!entry) {
-    // Commit any in-progress streaming text as a segment so it renders
-    // above the tool card instead of below it.
-    if (host.chatStream && host.chatStream.trim().length > 0) {
-      host.chatStreamSegments = [...host.chatStreamSegments, { text: host.chatStream, ts: now }];
+    if (host.chatStream?.trim()) {
+      host.chatStreamSegments = [...host.chatStreamSegments, { text: host.chatStream, ts: occurredAt,
+        partId: host.chatStreamPartId, beforeToolCallId: toolCallId }];
       host.chatStream = null;
       host.chatStreamStartedAt = null;
     }
-    entry = {
-      toolCallId,
-      runId: payload.runId,
-      sessionKey,
-      name,
-      args,
-      output: output || undefined,
-      startedAt: typeof payload.ts === "number" ? payload.ts : now,
-      updatedAt: now,
-      message: {},
-    };
+    entry = { toolCallId, runId, sessionKey, name, createdAt: occurredAt, updatedAt: occurredAt, message: {} };
     host.toolStreamById.set(toolCallId, entry);
     host.toolStreamOrder.push(toolCallId);
-  } else {
-    entry.name = name;
-    if (args !== undefined) {
-      entry.args = args;
-    }
-    if (output !== undefined) {
-      entry.output = output || undefined;
-    }
-    entry.updatedAt = now;
   }
-
+  entry.name = name;
+  entry.phase = phase;
+  entry.updatedAt = occurredAt;
+  if (event.args !== undefined) entry.args = event.args;
+  if (event.preview) { entry.preview = event.preview; entry.output = event.preview.text; }
+  if (event.progress) entry.progress = event.progress;
+  if (event.outcome) entry.outcome = event.outcome;
+  if (event.startedAt !== undefined && entry.startedAt === undefined) entry.startedAt = event.startedAt;
+  if (phase === 'settled') entry.settledAt = occurredAt;
+  if (phase === 'persisted') entry.persistedAt = occurredAt;
   entry.message = buildToolStreamMessage(entry);
   trimToolStream(host);
-  scheduleToolStreamSync(host, phase === "result");
+  scheduleToolStreamSync(host, phase === 'settled' || phase === 'persisted');
 }

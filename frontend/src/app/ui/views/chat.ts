@@ -2085,22 +2085,22 @@ function buildChatItems(props: ChatProps, historyStart: number, historyEnd: numb
   // contains text that was streaming before the corresponding tool started.
   // This ensures correct visual ordering: text → tool → text → tool → ...
   const segments = props.streamSegments ?? [];
-  const maxLen = Math.max(segments.length, tools.length);
-  for (let i = 0; i < maxLen; i++) {
-    if (i < segments.length && segments[i].text.trim().length > 0) {
-      items.push({
-        kind: "stream" as const,
-        key: `stream-seg:${props.sessionKey}:${i}`,
-        text: segments[i].text,
-        startedAt: segments[i].ts,
-      });
+  for (let i = 0; i < tools.length; i++) {
+    const matching = segments.filter((segment, index) => {
+      const boundary = (segment as { beforeToolCallId?: string }).beforeToolCallId;
+      return boundary ? boundary === (tools[i] as Record<string, unknown>).toolCallId : index === i;
+    });
+    for (const segment of matching) {
+      if (segment.text.trim()) items.push({ kind: 'stream' as const,
+        key: `stream-seg:${props.sessionKey}:${(segment as { partId?: string }).partId ?? segments.indexOf(segment)}`,
+        text: segment.text, startedAt: segment.ts });
     }
-    if (i < tools.length && props.showToolCalls) {
-      items.push({
-        kind: "message",
-        key: messageKey(tools[i], i + history.length),
-        message: tools[i],
-      });
+    if (props.showToolCalls) items.push({ kind: 'message', key: messageKey(tools[i], i + history.length), message: tools[i] });
+  }
+  for (let i = tools.length; i < segments.length; i++) {
+    const segment = segments[i];
+    if (!(segment as { beforeToolCallId?: string }).beforeToolCallId && segment.text.trim()) {
+      items.push({ kind: 'stream' as const, key: `stream-seg:${props.sessionKey}:${i}`, text: segment.text, startedAt: segment.ts });
     }
   }
 

@@ -1,0 +1,12 @@
+{
+  "source": "Slide@c3195b46c81f6855bab32ee4e5b622575d7ce031",
+  "adapterEvents": [
+    { "type": "tool_start", "toolName": "mysql_query", "args": { "sql": "SELECT 1" } },
+    { "type": "tool_progress", "toolName": "mysql_query", "progress": { "completed": 1, "total": 1 } },
+    { "type": "tool_result", "toolName": "mysql_query", "result": "1 row" },
+    { "type": "tool_error", "toolName": "mysql_query", "error": "denied" }
+  ],
+  "identifiedLegacyAgentEvent": {
+    "toolCallId": "probe-tool-1", "name": "mysql_query", "phase": "start", "args": { "sql": "SELECT 1" }
+  }
+}

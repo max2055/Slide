@@ -27,6 +27,7 @@ import {
 } from "./message-normalizer.ts";
 import {
   extractToolCards,
+  toolLifecycleLabel,
   renderExpandedToolCardContent,
   renderRawOutputToggle,
   renderToolCard,
@@ -1093,12 +1094,12 @@ function renderGroupedMessage(
   const toolPreview =
     markdown && !toolSummaryLabel ? markdown.trim().replace(/\s+/g, " ").slice(0, 120) : "";
   const singleToolCard = toolCards.length === 1 ? toolCards[0] : null;
-  const toolMessageLabel =
+  const toolMessageLabel = (singleToolCard ? toolLifecycleLabel(singleToolCard) : null) ?? (
     singleToolCard && !markdown && !hasImages
       ? singleToolCard.outputText?.trim()
         ? "Tool output"
         : "Tool call"
-      : "Tool output";
+      : "Tool output");
 
   const hasActions = canCopyMarkdown || canExpand;
 
