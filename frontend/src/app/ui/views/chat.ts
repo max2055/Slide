@@ -2086,8 +2086,9 @@ function buildChatItems(props: ChatProps, historyStart: number, historyEnd: numb
       }
       (message.messageParts as { parts: unknown[] }).parts.push(row.part);
     }
+    const projectionToolOutputs = messagePartsToolOutputs([...messages.values()]);
     for (const message of messages.values()) {
-      for (const row of messagePartsRenderRows(message) ?? []) {
+      for (const row of messagePartsRenderRows(message, projectionToolOutputs) ?? []) {
         if (!props.showToolCalls && (row.message as { toolCallId?: string }).toolCallId) continue;
         row.message.isStreaming = !projection.terminal;
         items.push({ kind: 'message', key: `part:${row.partId}`, message: row.message });

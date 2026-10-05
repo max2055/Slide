@@ -97,9 +97,9 @@ export class AdapterMessageProjection {
     const state = retract ? reduceMessageProjection(this.state, { version: 1, runId: this.runId, attempt: this.state.attempt,
       sequence: this.state.sequence + 1, operations: [{ type: 'stream.reset', anchor: this.anchor }] }) : this.state;
     const doc = projectionMessageParts(state, this.messageId, legacy);
-    // Prior continuations have no separate canonical assistant fact. Retain
-    // their generating identities in the final storage container, in order.
-    doc.parts = structuredClone(state.parts.filter(p => !p.factMessageId && p.part.type !== 'tool_input').map(p => ({ ...p.part, sourceMessageId: p.messageId })));
+    // Business REST history reads the final chat message, not the canonical
+    // tool ledger. Retain the whole display turn with the same source identities.
+    doc.parts = structuredClone(state.parts.filter(p => p.part.type !== 'tool_input').map(p => ({ ...p.part, sourceMessageId: p.messageId })));
     return doc;
   }
 }
