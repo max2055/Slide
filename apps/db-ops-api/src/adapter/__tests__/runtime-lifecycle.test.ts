@@ -34,7 +34,7 @@ async function adapter(provider: LLMProvider, tools = new ToolRegistry()) {
 it('actual chat entry passes 120s with LONG_CHAT and still emits one terminal', async () => {
   vi.stubEnv('AGENT_RUNTIME_LONG_CHAT', 'true'); vi.useFakeTimers();
   let started = false;
-  const chatStream = vi.fn<LLMProvider['chatStream']>(async (_m, _t, callbacks) => { started = true; const ticker = setInterval(() => callbacks.onActivity?.(), 10000); try { await new Promise(r => setTimeout(r, 130000)); return ok; } finally { clearInterval(ticker); } });
+  const chatStream = vi.fn<LLMProvider['chatStream']>(async (_m, _t, callbacks) => { started = true; const ticker = setInterval(() => { void callbacks.onContentDelta('working\n'); }, 10000); try { await new Promise(r => setTimeout(r, 130000)); return ok; } finally { clearInterval(ticker); } });
   const app = await adapter({ getDefaultModel: () => 'fixture', chat: async () => ok, chatStream });
   const events: any[] = []; const run = app.chat('long', 'inspect', e => { events.push(e); });
   await vi.waitFor(() => expect(started).toBe(true));
