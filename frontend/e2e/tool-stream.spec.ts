@@ -129,5 +129,14 @@ test('MAX-126 native parts reset atomically and hydrate the same durable history
   await expect(page.getByText('最终答复', { exact: true })).toBeVisible();
   await expect(page.locator('.chat-tool-msg-collapse')).toHaveCount(1);
   await expect(page.getByText('迟到污染', { exact: true })).toHaveCount(0);
+  const historyOrder = await page.locator('#fixture').evaluate(root => {
+    const entries: string[] = [];
+    for (const element of root.querySelectorAll('p, .chat-tool-msg-collapse')) {
+      if (element.matches('.chat-tool-msg-collapse')) entries.push('tool');
+      else if (['已确认前文', '最终答复'].includes(element.textContent ?? '')) entries.push(element.textContent!);
+    }
+    return entries;
+  });
+  expect(historyOrder).toEqual(['已确认前文', 'tool', '最终答复']);
   await page.screenshot({ path: testInfo.outputPath('MAX-126-message-parts-history.png'), fullPage: true, animations: 'disabled' });
 });

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { migrateMessageParts } from '../../../../../packages/agent-core/src/message-parts.ts';
-import { normalizeMessage } from './message-normalizer.ts';
+import { messagePartsRenderRows, messagePartsToolOutputs, normalizeMessage } from './message-normalizer.ts';
 import { extractThinking, extractText } from './message-extract.ts';
 it.each(['system', 'user', 'assistant', 'tool'] as const)('parts/old frontend agree for %s', role => {
   const message = { id: role, role, content: role === 'assistant' ? '<think>analysis</think>\nanswer' : 'text', timestamp: 1 };
@@ -30,4 +30,26 @@ it('ordered parts render the same projection even when legacy content is only a 
   expect(normalizeMessage(message).content).toEqual([{ type: 'thinking', thinking: 'inspect' }, { type: 'text', text: 'current' }]);
   expect(extractThinking(message)).toBe('inspect');
   expect(extractText(message)).toBe('current');
+});
+
+it('history rows preserve text/tool/text order and lifecycle using source part IDs', () => {
+  const message = migrateMessageParts({ id: 'stored', role: 'assistant', content: 'rollback' });
+  message.messageParts.projectionMessageId = 'model';
+  message.messageParts.parts = [
+    { id: 'before', source: 'fact', type: 'text', status: 'partial', text: 'before' },
+    { id: 'tool', source: 'fact', type: 'tool_call', status: 'partial', call: { id: 'real-call', type: 'function', function: { name: 'query', arguments: '{}' } },
+      tool: { toolCallId: 'real-call', name: 'query', phase: 'settled', outcome: 'ok', occurredAt: 1, preview: { kind: 'text', text: 'ok', truncated: false } } },
+    { id: 'after', source: 'fact', type: 'text', status: 'partial', text: 'after' },
+  ];
+  const rows = messagePartsRenderRows(message)!;
+  expect(rows.map(row => row.partId)).toEqual(['before', 'tool', 'after']);
+  expect(rows.map(row => normalizeMessage(row.message).role)).toEqual(['assistant', 'toolResult', 'assistant']);
+  expect(rows[1].message).toMatchObject({ toolCallId: 'real-call', toolPhase: 'settled', toolOutcome: 'ok' });
+  expect(message.messageParts.parts).toHaveLength(3);
+  message.messageParts.runId = 'run';
+  const result = migrateMessageParts({ id: 'result', runId: 'run', role: 'tool', content: 'ok', tool_call_id: 'real-call' });
+  const outputs = messagePartsToolOutputs([message, result]);
+  expect(messagePartsRenderRows(result, outputs)).toEqual([]);
+  result.messageParts.runId = 'other-run';
+  expect(messagePartsRenderRows(result, outputs)).toBeNull();
 });

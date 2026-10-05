@@ -21,6 +21,8 @@ import {
   isToolResultMessage,
   normalizeMessage,
   normalizeRoleForGrouping,
+  messagePartsRenderRows,
+  messagePartsToolOutputs,
 } from "../chat/message-normalizer.ts";
 import { PinnedMessages } from "../chat/pinned-messages.ts";
 import { getPinnedMessageSummary } from "../chat/pinned-summary.ts";
@@ -2035,24 +2037,19 @@ function buildChatItems(props: ChatProps, historyStart: number, historyEnd: numb
   const items: ChatItem[] = [];
   const history = Array.isArray(props.messages) ? props.messages : [];
   const tools = Array.isArray(props.toolMessages) ? props.toolMessages : [];
+  const toolOutputs = messagePartsToolOutputs(history.slice(historyStart, historyEnd));
   for (let i = historyStart; i < historyEnd; i++) {
     const msg = history[i];
-    const normalized = normalizeMessage(msg);
-
-    if (!props.showToolCalls && normalized.role.toLowerCase() === "toolresult") {
-      continue;
-    }
-
     // Apply search filter if active
     if (vs.searchOpen && vs.searchQuery.trim() && !messageMatchesSearchQuery(msg, vs.searchQuery)) {
       continue;
     }
 
-    items.push({
-      kind: "message",
-      key: messageKey(msg, i),
-      message: msg,
-    });
+    const rows = messagePartsRenderRows(msg, toolOutputs) ?? [{ partId: null, message: msg }];
+    for (const row of rows) {
+      if (!props.showToolCalls && normalizeMessage(row.message).role.toLowerCase() === 'toolresult') continue;
+      items.push({ kind: 'message', key: row.partId ? `${messageKey(msg, i)}:part:${row.partId}` : messageKey(msg, i), message: row.message });
+    }
   }
   // Streaming belongs only to the latest segment, never to a historical turn.
   if (historyEnd < history.length) return groupMessages(items);
