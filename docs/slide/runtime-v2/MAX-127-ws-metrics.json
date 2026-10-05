@@ -1,0 +1,29 @@
+{
+  "fragments": 1000,
+  "generatedBodyBytes": 100000,
+  "sample": "one run/two peers; per-provider-fragment setImmediate",
+  "legacy": {
+    "wsBytes": 101614752,
+    "bodyBytes": 101163618,
+    "metadataAndFrameBytes": 451134,
+    "frames": 1019
+  },
+  "parts": {
+    "wsBytes": 560546,
+    "bodyBytes": 528824,
+    "metadataAndFrameBytes": 31722,
+    "frames": 40
+  },
+  "reduction": 0.9947725871172381,
+  "capacity": {
+    "runs": 1,
+    "sources": 0,
+    "bytes": 659008,
+    "ops": 45,
+    "pendingBytes": 0,
+    "subscriptions": 3
+  },
+  "sourceCommit": "442b777ab8f519fea597be8a412d57f971db44a5",
+  "bodyByteDefinition": "JSON encoded bytes of delta/partText/finalContent/thinkingContent/text/content fields; includes snapshots, durable confirmation and tool previews",
+  "wsByteDefinition": "serialized event bytes plus conservative 14 bytes per frame; metadataAndFrameBytes=wsBytes-bodyBytes"
+}

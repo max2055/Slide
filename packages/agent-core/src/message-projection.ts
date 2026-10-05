@@ -13,6 +13,7 @@ export interface MessageProjection {
   attempt: number;
   sequence: number;
   phase: RunPhase;
+  runState?: 'running' | 'saving' | RunTerminal;
   parts: ProjectedPart[];
   anchorId?: string;
   terminal?: RunTerminal;
@@ -69,7 +70,7 @@ const confirmed = (p: MessagePart) => !!p.durable || p.tool?.phase === 'settled'
 
 export function createMessageProjection(runId: string): MessageProjection {
   if (!identity(runId)) throw new Error('INVALID_PROJECTION_RUN');
-  return { version: 1, runId, attempt: 0, sequence: 0, phase: 'preparing', parts: [] };
+  return { version: 1, runId, attempt: 0, sequence: 0, phase: 'preparing', runState: 'running', parts: [] };
 }
 function validatePart(entry: ProjectedPart): void {
   if (!identity(entry?.messageId)) throw new Error('INVALID_PROJECTION_PART');
@@ -88,7 +89,8 @@ function validateParts(parts: ProjectedPart[]): void {
 export function restoreMessageProjection(value: unknown): MessageProjection {
   const state = value as MessageProjection;
   if (!state || state.version !== 1 || !identity(state.runId) || !ordinal(state.attempt) || !ordinal(state.sequence)
-    || !phases.includes(state.phase) || state.terminal !== undefined && !terminal.includes(state.terminal)
+    || !phases.includes(state.phase) || state.runState !== undefined && !['running', 'saving', ...terminal].includes(state.runState)
+    || state.terminal !== undefined && !terminal.includes(state.terminal)
     || state.terminal === 'completed' && !evidence(state.durable)) throw new Error('INVALID_PROJECTION_SNAPSHOT');
   validateParts(state.parts);
   return structuredClone(state);
@@ -120,6 +122,12 @@ function validateOperation(op: ProjectionOperation, runId: string): void {
 }
 
 /** One frame = one atomic operation; invalid frames never advance the watermark. */
+export function validProjectionFrame(value: unknown, runId: string): value is ProjectionFrame {
+  const frame = value as ProjectionFrame;
+  if (!frame || frame.version !== 1 || frame.runId !== runId || !ordinal(frame.attempt) || !ordinal(frame.sequence) || !Array.isArray(frame.operations)) return false;
+  try { frame.operations.forEach(op => validateOperation(op, runId)); } catch { return false; }
+  return true;
+}
 export function reduceMessageProjection(state: MessageProjection, value: unknown): MessageProjection {
   const frame = value as ProjectionFrame;
   if (!frame || frame.version !== 1 || frame.runId !== state.runId || !ordinal(frame.attempt) || !ordinal(frame.sequence)
@@ -130,7 +138,7 @@ export function reduceMessageProjection(state: MessageProjection, value: unknown
   for (const op of frame.operations) {
     if (next.terminal) break;
     switch (op.type) {
-      case 'run.status': next.phase = op.phase; break;
+      case 'run.status': next.phase = op.phase; next.runState = op.phase === 'saving' ? 'saving' : 'running'; break;
       case 'part.start':
         if (!next.parts.some(p => p.part.id === op.part.id)) next.parts.push({ messageId: op.messageId, part: { ...structuredClone(op.part), generation: 'open' } });
         break;
@@ -182,7 +190,7 @@ export function reduceMessageProjection(state: MessageProjection, value: unknown
             : successor ? next.parts.findIndex(a => a.part.id === successor.part.id) : 0;
           next.parts.splice(index, 0, p);
         }
-        next.anchorId = op.anchor.id; next.phase = 'retrying';
+        next.anchorId = op.anchor.id; next.phase = 'retrying'; next.runState = 'running';
         break;
       }
       case 'parts.persisted': {
@@ -207,7 +215,7 @@ export function reduceMessageProjection(state: MessageProjection, value: unknown
         break;
       }
       case 'run.terminal':
-        next.terminal = op.outcome; next.error = op.error; next.durable = structuredClone(op.durable);
+        next.terminal = op.outcome; next.runState = op.outcome; next.error = op.error; next.durable = structuredClone(op.durable);
         for (const p of next.parts) p.part.generation = 'ended';
         break;
     }
@@ -229,7 +237,7 @@ export function hydrateMessageProjection(runId: string, documents: MessageParts[
       if (doc.runTerminal) final = doc;
     } catch { /* original legacy fields remain the caller's fallback */ }
   }
-  if (final) { state.terminal = final.runTerminal; state.durable = structuredClone(final.durable); }
+  if (final) { state.terminal = final.runTerminal; state.runState = final.runTerminal; state.durable = structuredClone(final.durable); }
   return state;
 }
 

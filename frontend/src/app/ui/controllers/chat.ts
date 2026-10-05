@@ -1,5 +1,5 @@
 import { resetToolStream } from "../app-tool-stream.ts";
-import { hydrateChatProjections } from '../chat/message-projection.ts';
+import { hasActiveChatDisplayStream, hydrateChatProjections } from '../chat/message-projection.ts';
 import { extractText, extractRawText } from "../chat/message-extract.ts";
 import { reconcileChatRunLifecycle } from "../chat/run-lifecycle.ts";
 import { formatConnectError } from "../connect-error.ts";
@@ -146,9 +146,18 @@ export async function loadChatHistory(state: ChatState) {
       before = page.nextBefore;
     }
     const messages = pages.reverse().flat();
-    state.chatMessages = messages.filter((message) => !shouldHideHistoryMessage(message));
+    const activeDisplayRun = hasActiveChatDisplayStream(state as unknown as Record<string, unknown>) ? state.chatRunId : null;
+    state.chatMessages = messages.filter((message) => {
+      if (shouldHideHistoryMessage(message)) return false;
+      const record = message as { role?: string; runId?: string; messageParts?: { runId?: string } };
+      // The live snapshot owns this run's assistant/tool display. Keep older
+      // turns and its user prompt; terminal history will replace the live run.
+      return !activeDisplayRun || record.role === 'user'
+        || (record.runId ?? record.messageParts?.runId) !== activeDisplayRun;
+    });
     hydrateChatProjections(state as unknown as Record<string, unknown>, state.chatMessages);
     state.chatThinkingLevel = res.thinkingLevel ?? null;
+    if (hasActiveChatDisplayStream(state as unknown as Record<string, unknown>)) return;
     // Clear all streaming state — history includes tool results and text
     // inline, so keeping streaming artifacts would cause duplicates.
     maybeResetToolStream(state);

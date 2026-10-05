@@ -177,7 +177,7 @@ describe('initChatClient', () => {
 
     initChatClient(host);
     expect(host.client).toBeTruthy();
-    await vi.waitFor(() => expect(MockWebSocket.latest?.frames).toContainEqual(JSON.stringify({ type: 'auth', token: 'jwt-token', deviceIdentity: null, deviceAuth: null })));
+    await vi.waitFor(() => expect(MockWebSocket.latest?.frames).toContainEqual(JSON.stringify({ type: 'auth', capabilities: ['parts-stream-v1'], token: 'jwt-token', deviceIdentity: null, deviceAuth: null })));
     expect(host.connected).toBe(false);
     MockWebSocket.latest?.receive({ type: 'auth_ok' });
     await vi.waitFor(() => expect(host.connected).toBe(true));
