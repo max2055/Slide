@@ -85,4 +85,18 @@ describe('one message projection for live, history and recovery', () => {
     expect(reset.parts).toEqual(state.parts);
     expect(apply(reset, [{ type: 'parts.persisted', documents: [{ ...doc, runId: 'other' }] }])).toBe(reset);
   });
+  it('multiple settled tools keep their original order across repeated empty resets', () => {
+    let state = apply(projection.createMessageProjection('run'), [tool('settled', 'ok'),
+      { ...tool('settled', 'unknown'), partId: 'second/part', event: { ...tool('settled', 'unknown').event, toolCallId: 'second' } }]);
+    state = apply(state, [{ type: 'stream.reset', anchor: { id: 'empty', parts: [] } }]);
+    expect(state.parts.map(p => p.part.id)).toEqual(['call/part', 'second/part']);
+    state = apply(state, [{ type: 'stream.reset', anchor: { id: 'empty', parts: [] } }]);
+    expect(state.parts.map(p => p.part.id)).toEqual(['call/part', 'second/part']);
+  });
+  it('conflicting duplicate persisted events cannot rewrite tool outcome or preview', () => {
+    let state = apply(projection.createMessageProjection('run'), [tool('settled', 'ok'), tool('persisted')]);
+    const prior = structuredClone(state.parts);
+    state = apply(state, [{ ...tool('persisted'), event: { ...tool('persisted').event, outcome: 'unknown', name: 'different' } }]);
+    expect(state.parts).toEqual(prior);
+  });
 });
