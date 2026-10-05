@@ -298,6 +298,7 @@ export class OpenAIProvider implements LLMProvider {
       // Flush any trailing think tag content as reasoning
       if (thinkTagBuffer.trim()) {
         reasoningContent += thinkTagBuffer;
+        await callbacks.onThinkingDelta?.(thinkTagBuffer);
       }
 
       const parsedToolCalls = Object.values(toolCalls).map((tc) => ({
