@@ -205,7 +205,28 @@ export function extractToolCards(message: unknown, prefix = "tool"): ToolCard[] 
     } as ToolCard);
   }
 
+  for (const card of cards) {
+    card.phase = m.toolPhase as ToolCard['phase'];
+    card.outcome = m.toolOutcome as ToolCard['outcome'];
+    card.startedAt = typeof m.toolStartedAt === 'number' ? m.toolStartedAt : undefined;
+    card.settledAt = typeof m.toolSettledAt === 'number' ? m.toolSettledAt : undefined;
+    card.progress = m.toolProgress as Record<string, unknown> | undefined;
+  }
   return cards;
+}
+
+export function toolLifecycleLabel(card: ToolCard): string | null {
+  if (!card.phase) return null;
+  const labels = { planned: '已计划', queued: '排队中', running: '执行中', settled: '已结算', persisted: '已保存' };
+  const outcome = card.outcome === 'unknown' ? '结算未知' : card.outcome === 'cancelled' ? '已取消'
+    : card.outcome === 'error' ? '执行失败' : labels[card.phase];
+  const elapsed = card.startedAt !== undefined && card.settledAt !== undefined
+    ? ` · ${Math.max(0, card.settledAt - card.startedAt)} ms` : '';
+  const completed = card.progress?.completed;
+  const total = card.progress?.total;
+  const count = typeof completed === 'number' && typeof total === 'number' && Number.isFinite(completed) && Number.isFinite(total)
+    ? ` · ${completed}/${total}` : '';
+  return outcome + elapsed + count;
 }
 
 export function buildToolCardSidebarContent(card: ToolCard): string {
@@ -213,6 +234,8 @@ export function buildToolCardSidebarContent(card: ToolCard): string {
   const detail = formatToolDetail(display);
   const sections = [`## ${display.label}`, `**Tool:** \`${display.name}\``];
 
+  const lifecycle = toolLifecycleLabel(card);
+  if (lifecycle) sections.push(`**状态：** ${lifecycle}`);
   if (detail) {
     sections.push(`**Summary:** ${detail}`);
   }
@@ -227,7 +250,7 @@ export function buildToolCardSidebarContent(card: ToolCard): string {
   if (card.outputText?.trim()) {
     sections.push(`### Tool output\n${formatToolOutputForSidebar(card.outputText)}`);
   } else {
-    sections.push(`### Tool output\n*No output — tool completed successfully.*`);
+    sections.push(`### Tool output\n*${toolLifecycleLabel(card) ?? 'No output — tool completed successfully.'}*`);
   }
 
   return sections.join("\n\n");
@@ -410,7 +433,7 @@ export function renderToolCard(
   },
 ) {
   const hasOutput = Boolean(card.outputText?.trim());
-  const previewLabel = hasOutput ? "Tool output" : "Tool call";
+  const previewLabel = toolLifecycleLabel(card) ?? (hasOutput ? "Tool output" : "Tool call");
 
   return html`
     <div
@@ -492,6 +515,7 @@ export function renderExpandedToolCardContent(
             `
           : nothing}
       </div>
+      ${toolLifecycleLabel(card) ? html`<div class="chat-tool-card__status-text muted">${toolLifecycleLabel(card)}</div>` : nothing}
       ${detail ? html`<div class="chat-tool-card__detail">${detail}</div>` : nothing}
       ${hasInput
         ? renderToolDataBlock({
@@ -562,12 +586,13 @@ export function renderToolCardSidebar(
               >${hasText || hasPreview ? "View" : ""} ${icons['check']}</span
             >`
           : nothing}
-        ${isEmpty && !canClick
+        ${isEmpty && !canClick && !card.phase
           ? html`<span class="chat-tool-card__status">${icons['check']}</span>`
           : nothing}
       </div>
+      ${toolLifecycleLabel(card) ? html`<div class="chat-tool-card__status-text muted">${toolLifecycleLabel(card)}</div>` : nothing}
       ${detail ? html`<div class="chat-tool-card__detail">${detail}</div>` : nothing}
-      ${isEmpty ? html`<div class="chat-tool-card__status-text muted">Completed</div>` : nothing}
+      ${isEmpty && !card.phase ? html`<div class="chat-tool-card__status-text muted">Completed</div>` : nothing}
       ${preview
         ? html`${renderToolPreview(preview, "chat_tool", {
             onOpenSidebar,

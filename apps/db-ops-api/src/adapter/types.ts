@@ -19,6 +19,8 @@ import type { ToolSchema, RuntimeResolution } from '@slide/agent-core';
 export interface TextDeltaEvent {
   type: 'text_delta';
   delta: string;
+  partId?: string;
+  partText?: string;
   /** Replace text and reasoning together; old clients already replace delta. */
   reset?: boolean;
   thinkingContent?: string;
@@ -28,23 +30,10 @@ export interface TextDeltaEvent {
 }
 
 
-export interface ToolStartEvent {
-  type: 'tool_start';
-  toolName: string;
-  args: Record<string, unknown>;
-}
-
-export interface ToolResultEvent {
-  type: 'tool_result';
-  toolName: string;
-  result: unknown;
-}
-
-export interface ToolErrorEvent {
-  type: 'tool_error';
-  toolName: string;
-  error: string;
-}
+export type ToolStartEvent = Extract<import('@slide/agent-core/tool-stream').ToolWireEvent, { type: 'tool_start' }>;
+export type ToolResultEvent = Extract<import('@slide/agent-core/tool-stream').ToolWireEvent, { type: 'tool_result' }>;
+export type ToolErrorEvent = Extract<import('@slide/agent-core/tool-stream').ToolWireEvent, { type: 'tool_error' }>;
+export type ToolStateEvent = Extract<import('@slide/agent-core/tool-stream').ToolWireEvent, { type: 'tool_state' }>;
 
 export interface ChatTerminalContent {
   resolution?: RuntimeResolution;
@@ -59,11 +48,7 @@ export interface CompleteEvent extends ChatTerminalContent {
   type: 'complete';
 }
 
-export interface ToolProgressEvent {
-  type: 'tool_progress';
-  toolName: string;
-  progress: Record<string, unknown>;
-}
+export type ToolProgressEvent = Extract<import('@slide/agent-core/tool-stream').ToolWireEvent, { type: 'tool_progress' }>;
 
 export interface ThinkingDeltaEvent {
   type: 'thinking_delta';
@@ -90,6 +75,7 @@ export type ChatEvent = (
   | ToolErrorEvent
   | ThinkingDeltaEvent
   | ThinkingEndEvent
+  | ToolStateEvent
   | ToolProgressEvent
   | CompleteEvent
   | CancelledEvent

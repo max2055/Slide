@@ -1,3 +1,5 @@
+import { boundedToolValue, buildToolPreview } from '@slide/agent-core/tool-stream';
+import { redactSensitiveText } from '../security/log-redaction.js';
 import { BoundedSocketWriter } from './bounded-socket-writer.js';
 import { orderedChatConsumer } from './chat-event-consumer.js';
 import { BusinessMemoryService } from './memory-service.js';
@@ -95,8 +97,12 @@ function mapHookEventToChatEvent(
   onEvent: ChatEventConsumer,
   thinkingHolder?: { text: string },
   streamHolder?: { text: string; safeContent?: string; resetSnapshot?: import('@slide/agent-core').StreamReset },
+  partPrefix = 'live',
 ): AgentHook {
   let reasoningActive = false;
+  let segment = 0;
+  let segmentText = streamHolder?.text ?? '';
+  let toolBoundary = false;
   return {
     wantsStreaming: () => true,
     beforeIteration: async () => {},
@@ -107,24 +113,23 @@ function mapHookEventToChatEvent(
       }
       // Accumulate full text and send as delta so the frontend's chatStream
       // replacement renders as progressively building text (not flickering chars).
+      if (toolBoundary) { segment++; segmentText = ''; toolBoundary = false; }
+      segmentText += delta;
       if (streamHolder) streamHolder.text += delta;
       signal?.throwIfAborted();
-      await onEvent({ type: 'text_delta', delta: streamHolder ? streamHolder.text : delta }, signal);
+      await onEvent({ type: 'text_delta', delta: streamHolder ? streamHolder.text : delta, partId: `${partPrefix}:text:${segment}`, partText: segmentText }, signal);
     },
     onCandidateRejected: async (ctx, safeContent) => {
       reasoningActive = false;
+      segment++; segmentText = safeContent; toolBoundary = false;
       if (thinkingHolder) thinkingHolder.text = ctx.streamReset?.anchor?.reasoning ?? '';
       if (streamHolder) { streamHolder.text = safeContent; streamHolder.safeContent = safeContent; streamHolder.resetSnapshot = ctx.streamReset; }
       if (ctx.streamReset?.reasonCode.startsWith('STREAM_CONSUMER_')) return;
-      await onEvent({ type: 'text_delta', delta: safeContent, reset: true, thinkingContent: thinkingHolder?.text ?? '',
+      await onEvent({ type: 'text_delta', delta: safeContent, partId: `${partPrefix}:text:${segment}`, partText: safeContent, reset: true, thinkingContent: thinkingHolder?.text ?? '',
         anchorId: ctx.streamReset?.anchor?.checkpointId, sourceRequestId: ctx.sourceRequestId, discardedBytes: ctx.streamReset?.discardedBytes });
     },
     onStreamEnd: async () => {},
-    beforeExecuteTools: async (ctx: AgentHookContext) => {
-      for (const tc of ctx.toolCalls) {
-        await onEvent({ type: 'tool_start', toolName: tc.name, args: tc.arguments });
-      }
-    },
+    beforeExecuteTools: async () => { toolBoundary = true; },
     emitReasoning: async (text: string | null, signal?: AbortSignal) => {
       if (text) {
         reasoningActive = true;
@@ -138,15 +143,7 @@ function mapHookEventToChatEvent(
       reasoningActive = false;
       await onEvent({ type: 'thinking_end' });
     },
-    afterIteration: async (ctx: AgentHookContext) => {
-      for (const te of ctx.toolEvents) {
-        if (te.status === 'ok') {
-          await onEvent({ type: 'tool_result', toolName: te.name, result: te.detail });
-        } else {
-          await onEvent({ type: 'tool_error', toolName: te.name, error: te.detail });
-        }
-      }
-    },
+    afterIteration: async () => {},
     finalizeContent: (_ctx: AgentHookContext, content: string | null) => content,
     ...hook,
   };
@@ -168,6 +165,8 @@ function normalizeThinkingLevel(level?: string): string | undefined {
 // ── DirectAdapter Options ──
 
 export interface DirectAdapterOptions {
+  /** Opt in to existing concurrencySafe batch scheduling; serial remains default. */
+  concurrentTools?: boolean;
   tools: ToolRegistry;
   /** Builds an actor-bound registry so LLM calls cannot supply their own identity. */
   toolsForActor?: (actor: ActorContext) => ToolRegistry;
@@ -190,6 +189,7 @@ export interface DirectAdapterOptions {
 // ── DirectAdapter ──
 
 export class DirectAdapter implements IAgentEngine {
+  private readonly concurrentTools: boolean;
   private runner: AgentRunner;
   private readonly socketWriter: BoundedSocketWriter;
   private readonly streamingLimits?: import('@slide/agent-core').StreamingLimits;
@@ -225,6 +225,7 @@ export class DirectAdapter implements IAgentEngine {
     this.registry = opts.tools;
     this.toolsForActor = opts.toolsForActor;
     this.provider = opts.llmProvider;
+    this.concurrentTools = opts.concurrentTools === true;
     this.actorContexts = opts.actorContextService || actorContextService;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs || 30_000;
 
@@ -1030,9 +1031,9 @@ export class DirectAdapter implements IAgentEngine {
       else this.streamSnapshots.set(sessionKey, { type: 'text_delta', delta: streamHolder.text, reset: true,
         thinkingContent: thinkingHolder.text, sequence, attempt, runId, sessionKey,
         anchorId: (session.metadata.runtime_checkpoint?.stream_state_v1 as import('@slide/agent-core').StreamSnapshot | undefined)?.anchor?.checkpointId });
-      return consume(ordered, writerSignal ?? (['complete', 'error', 'cancelled'].includes(event.type) ? undefined : signal));
+      return consume(ordered, writerSignal ?? (['complete', 'error', 'cancelled'].includes(event.type) || (event.type === 'tool_error' && ['unknown', 'cancelled'].includes(event.outcome ?? '')) ? undefined : signal));
     };
-    const hook = mapHookEventToChatEvent({ beforeIteration: ctx => { attempt = ctx.streamAttempt ?? attempt + 1; sourceRequestId = ctx.sourceRequestId; } }, deliver, thinkingHolder, streamHolder);
+    const hook = mapHookEventToChatEvent({ beforeIteration: ctx => { attempt = ctx.streamAttempt ?? attempt + 1; sourceRequestId = ctx.sourceRequestId; } }, deliver, thinkingHolder, streamHolder, runId);
 
     let terminalEmitted = false;
     try {
@@ -1048,6 +1049,7 @@ export class DirectAdapter implements IAgentEngine {
         runtimeRunId: runId,
         onRuntimeEvent: recordRuntimeEvent,
         maxToolResultChars: this.runtimeLimits.maxToolResultChars,
+        concurrentTools: this.concurrentTools,
         temperature: 0.0,
         reasoningEffort,
         hook,
@@ -1058,9 +1060,18 @@ export class DirectAdapter implements IAgentEngine {
         sessionKey,
         signal,
         idempotencyKey,
-        toolProgressCallback: async (progress) => {
-          const toolName = typeof progress.toolName === 'string' ? progress.toolName : 'tool';
-          await deliver({ type: 'tool_progress', toolName, progress });
+        onToolEvent: async event => {
+          const base = { toolCallId: event.toolCallId, toolName: event.toolName, occurredAt: event.occurredAt, outcome: event.outcome };
+          const args = event.args ? boundedToolValue(event.args, redactSensitiveText) as Record<string, unknown> : undefined;
+          if (event.progress) {
+            await deliver({ ...base, type: 'tool_progress', progress: boundedToolValue(event.progress, redactSensitiveText) as Record<string, unknown> });
+          } else if (event.phase === 'running') {
+            await deliver({ ...base, type: 'tool_start', args: args ?? {} });
+          } else if (event.phase === 'settled') {
+            const preview = buildToolPreview(event.result, event.toolCallId, redactSensitiveText);
+            if (event.outcome === 'ok') await deliver({ ...base, type: 'tool_result', result: preview.text, preview });
+            else await deliver({ ...base, type: 'tool_error', error: preview.text, preview });
+          } else await deliver({ ...base, type: 'tool_state', phase: event.phase, ...(args ? { args } : {}) });
         },
       }).catch(async error => {
         if (!signal?.aborted || !(error === signal.reason || error instanceof RuntimeError

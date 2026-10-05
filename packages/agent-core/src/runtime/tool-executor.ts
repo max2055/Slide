@@ -4,6 +4,17 @@ import type { AgentRunSpec, ToolCallRequest, ToolEvent } from "../types.js";
 
 export class ToolExecutor {
   async runTool(
+    spec: AgentRunSpec, toolCall: ToolCallRequest, counts: Record<string, number>,
+    legacyCounts?: Record<string, number>, iteration?: number,
+  ): Promise<{ result: unknown; event: ToolEvent; error: Error | null }> {
+    const returned = await this.executeTool(spec, toolCall, counts, legacyCounts, iteration);
+    await spec.onToolEvent?.({ toolCallId: toolCall.id, toolName: toolCall.name,
+      phase: 'settled', occurredAt: Date.now(), outcome: returned.event.outcome ?? (returned.event.status === 'ok' ? 'ok' : 'error'),
+      result: returned.result });
+    return returned;
+  }
+
+  private async executeTool(
     spec: AgentRunSpec,
     toolCall: ToolCallRequest,
     externalLookupCounts: Record<string, number>,
@@ -30,7 +41,7 @@ export class ToolExecutor {
       });
       return {
         result: lookupError.message + HINT,
-        event: { name: toolCall.name, status: "error", detail: "repeated identical tool call blocked" },
+        event: { toolCallId: toolCall.id, name: toolCall.name, status: "error", detail: "repeated identical tool call blocked" },
         // A guard hit is an expected, per-call safety result. It must not abort a batch.
         error: null,
       };
@@ -40,13 +51,14 @@ export class ToolExecutor {
     const cancel = () => controller.abort(spec.signal?.reason);
     spec.signal?.addEventListener('abort', cancel, { once: true });
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let executionOpen = false;
     let boundaryListener: (() => void) | undefined;
     try {
       if (spec.signal?.aborted) {
         const error = new Error('Tool execution cancelled');
         return {
           result: `Error: ${error.message}`,
-          event: { name: toolCall.name, status: 'error', detail: error.message },
+          event: { toolCallId: toolCall.id, name: toolCall.name, status: 'error', outcome: 'cancelled', detail: error.message },
           error,
         };
       }
@@ -54,11 +66,18 @@ export class ToolExecutor {
       const timeout = Math.min(spec.toolTimeoutMs ?? Infinity, declaredTimeout ?? Infinity);
       if (timeout !== Infinity && (!Number.isSafeInteger(timeout) || timeout <= 0)) throw new RuntimeError('INVALID_POLICY', 'Invalid tool timeout', 'tool');
       if (timeout !== Infinity) timer = setTimeout(() => controller.abort(new RuntimeError('TOOL_TIMEOUT', 'Tool deadline exceeded; cancellation requested, settlement may still be pending', 'tool')), timeout);
+      await spec.onToolEvent?.({ toolCallId: toolCall.id, toolName: toolCall.name, phase: 'running', occurredAt: Date.now(), args: toolCall.arguments });
+      controller.signal.throwIfAborted();
+      executionOpen = true;
       const execution = withBudgetDispatchSignal(controller.signal, () => spec.tools.execute(toolCall.name, toolCall.arguments, {
         signal: timeout === Infinity ? spec.signal : controller.signal,
         sessionKey: spec.sessionKey,
         idempotencyKey: spec.idempotencyKey,
-        progressCallback: event => { if (!controller.signal.aborted) return spec.toolProgressCallback?.(event); },
+        progressCallback: async event => {
+          if (!executionOpen || controller.signal.aborted) return;
+          await spec.onToolEvent?.({ toolCallId: toolCall.id, toolName: toolCall.name, phase: 'running', occurredAt: Date.now(), progress: event });
+          await spec.toolProgressCallback?.({ ...event, toolCallId: toolCall.id, toolName: toolCall.name });
+        },
         preserveErrors: true,
       }));
       spec.onToolExecution?.(execution);
@@ -74,22 +93,24 @@ export class ToolExecutor {
       const result = spec.onToolExecution && timeout !== Infinity ? await Promise.race([execution, boundary]) : await execution;
       if (controller.signal.aborted) throw cancellationError(controller.signal);
       if (spec.signal?.aborted) throw new Error('Tool execution cancelled after settlement');
+      const failed = !spec.tools.get(toolCall.name) || typeof result === 'string' && result.startsWith('Error') || !!result && typeof result === 'object' && ((result as Record<string, unknown>).success === false || (result as Record<string, unknown>).status === 'error');
       const detail = result === undefined || result === null
         ? "(empty)"
         : String(result).replace(/\n/g, " ").trim().slice(0, 120);
       return {
         result,
-        event: { name: toolCall.name, status: "ok", detail: detail || "(empty)" },
+        event: { toolCallId: toolCall.id, name: toolCall.name, status: failed ? "error" : "ok", detail: detail || "(empty)" },
         error: null,
       };
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       return {
         result: `Error: ${message}` + (spec.failOnToolError ? "" : HINT),
-        event: { name: toolCall.name, status: "error", detail: message.slice(0, 120) },
+        event: { toolCallId: toolCall.id, name: toolCall.name, status: "error", outcome: controller.signal.aborted ? "unknown" : "error", detail: message.slice(0, 120) },
         error: e instanceof RuntimeError || spec.failOnToolError ? (e instanceof Error ? e : new Error(message)) : null,
       };
     } finally {
+      executionOpen = false;
       clearTimeout(timer);
       spec.signal?.removeEventListener('abort', cancel);
       if (boundaryListener) controller.signal.removeEventListener('abort', boundaryListener);
@@ -110,6 +131,10 @@ export async function executeTools(
   fatalError: string | null;
   runtimeError?: RuntimeError;
 }> {
+  for (const tc of toolCalls) {
+    await spec.onToolEvent?.({ toolCallId: tc.id, toolName: tc.name, phase: 'planned', occurredAt: Date.now(), args: tc.arguments });
+    await spec.onToolEvent?.({ toolCallId: tc.id, toolName: tc.name, phase: 'queued', occurredAt: Date.now() });
+  }
   const batches = partitionToolBatches(spec, toolCalls);
   const allResults: unknown[] = [];
   const allEvents: ToolEvent[] = [];
@@ -148,6 +173,9 @@ export async function executeTools(
     }
   }
 
+  for (const tc of toolCalls) {
+    if (!allEvents.some(event => event.toolCallId === tc.id)) await spec.onToolEvent?.({ toolCallId: tc.id, toolName: tc.name, phase: 'settled', occurredAt: Date.now(), outcome: 'cancelled' });
+  }
   return { results: allResults, events: allEvents, fatalError, runtimeError };
 }
 

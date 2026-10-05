@@ -64,6 +64,11 @@ export type NormalizedMessage = {
 
 /** Tool card representation for tool calls and results */
 export type ToolCard = {
+  phase?: import("../../../../../packages/agent-core/src/tool-stream.js").ToolPhase;
+  outcome?: import("../../../../../packages/agent-core/src/tool-stream.js").ToolOutcome;
+  startedAt?: number;
+  settledAt?: number;
+  progress?: Record<string, unknown>;
   kind: "call" | "result";
   name: string;
   args?: unknown;

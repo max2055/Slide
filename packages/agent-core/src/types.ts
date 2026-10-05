@@ -170,6 +170,8 @@ export interface AgentHookContext {
 }
 
 export interface ToolEvent {
+  toolCallId: string;
+  outcome?: import("./tool-stream.js").ToolOutcome;
   name: string;
   status: "ok" | "error";
   detail: string;
@@ -198,6 +200,7 @@ export interface AgentHook {
 // ── Agent run spec & result ──
 
 export interface AgentRunSpec {
+  onToolEvent?: (event: import("./tool-stream.js").ToolLifecycleEvent) => Promise<void> | void;
   streamingLimits?: import('./runtime/streaming-coordinator.js').StreamingLimits;
   runtimeRunId?: string;
   onRuntimeEvent?: (event: import("./runtime/events.js").RuntimeEvent) => void | Promise<void>;

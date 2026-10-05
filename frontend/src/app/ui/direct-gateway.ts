@@ -1,3 +1,4 @@
+import { normalizeToolEvent, type ToolWireEvent } from '../../../../packages/agent-core/src/tool-stream.js';
 /**
  * DirectAdapter WS client — Phase 109-04
  *
@@ -15,11 +16,12 @@ import { loadPermissions, readCachedPermissions } from './permissions.ts';
 import { generateUUID } from './uuid.ts';
 import type { DeviceIdentity } from './device-identity.ts';
 
-export type AdapterTextDeltaEvent = { type: 'text_delta'; delta: string; reset?: boolean; thinkingContent?: string; anchorId?: string };
-export type AdapterToolStartEvent = { type: 'tool_start'; toolName: string; args: Record<string, unknown> };
-export type AdapterToolResultEvent = { type: 'tool_result'; toolName: string; result: unknown };
-export type AdapterToolErrorEvent = { type: 'tool_error'; toolName: string; error: string };
-export type AdapterToolProgressEvent = { type: 'tool_progress'; toolName: string; progress: Record<string, unknown> };
+export type AdapterTextDeltaEvent = { type: 'text_delta'; delta: string; reset?: boolean; thinkingContent?: string; anchorId?: string; partId?: string; partText?: string };
+export type AdapterToolStartEvent = Extract<ToolWireEvent, { type: 'tool_start' }>;
+export type AdapterToolResultEvent = Extract<ToolWireEvent, { type: 'tool_result' }>;
+export type AdapterToolErrorEvent = Extract<ToolWireEvent, { type: 'tool_error' }>;
+export type AdapterToolProgressEvent = Extract<ToolWireEvent, { type: 'tool_progress' }>;
+export type AdapterToolStateEvent = Extract<ToolWireEvent, { type: 'tool_state' }>;
 export type AdapterThinkingDeltaEvent = { type: 'thinking_delta'; delta: string };
 export type AdapterThinkingEndEvent = { type: 'thinking_end' };
 export type AdapterCompleteEvent = { type: 'complete'; finalContent?: string; thinkingContent?: string; messageSequence?: number };
@@ -52,12 +54,13 @@ export type AdapterChatEvent = (
   | AdapterToolStartEvent
   | AdapterToolResultEvent
   | AdapterToolErrorEvent
+  | AdapterToolStateEvent
   | AdapterToolProgressEvent
   | AdapterThinkingDeltaEvent
   | AdapterThinkingEndEvent
   | AdapterCompleteEvent
   | AdapterCancelledEvent
-  | AdapterErrorEvent) & { sequence?: number; attempt?: number; runId?: string };
+  | AdapterErrorEvent) & { sequence?: number; attempt?: number; runId?: string; sessionKey?: string };
 
 export type ConnectionState =
   | 'connecting'
@@ -506,6 +509,7 @@ export class DirectGatewayClient {
       case 'text_delta':
       case 'thinking_delta':
       case 'thinking_end':
+      case 'tool_state':
       case 'tool_start':
       case 'tool_result':
       case 'tool_error':
@@ -662,7 +666,7 @@ import {
   refreshActiveTab,
   setLastActiveSessionKey,
 } from "./app-settings.ts";
-import { handleAgentEvent, resetToolStream, type AgentEventPayload } from "./app-tool-stream.ts";
+import { handleToolStreamEvent, resetToolStream } from "./app-tool-stream.ts";
 import { shouldReloadHistoryForFinalEvent } from "./chat-event-reload.ts";
 import { loadAgents, type AgentsState } from "./controllers/agents.ts";
 import {
@@ -688,7 +692,7 @@ function mapAdapterChatEventToPayload(
         runId: runId ?? '',
         sessionKey,
         state: 'delta',
-        message: { content: [{ type: 'text', text: event.delta }] },
+        message: { content: [{ type: 'text', text: event.partText ?? event.delta }] },
       };
     case 'complete': {
       const thinking = (event as any).thinkingContent as string | undefined;
@@ -866,6 +870,13 @@ const directStreamOrder = new WeakMap<object, { runId: string; attempt: number; 
 export function handleDirectAdapterEvent(host: Record<string, unknown>, event: AdapterChatEvent): void {
   const runId = host.chatRunId as string | null;
   const sessionKey = host.sessionKey as string;
+  if (event.sessionKey && event.sessionKey !== sessionKey && !['session.created', 'run.started', 'run.snapshot'].includes(event.type)) return;
+  const normalizedTool = event.type.startsWith('tool_') ? normalizeToolEvent(event) : null;
+  if (event.type.startsWith('tool_') && !normalizedTool) return;
+  if (event.type === 'text_delta' && (typeof event.delta !== 'string'
+    || (event.partId !== undefined || event.partText !== undefined) && (typeof event.partId !== 'string' || !event.partId || typeof event.partText !== 'string'))) return;
+  const priorRun = directStreamOrder.get(host);
+  if (event.type !== 'run.started' && priorRun?.terminal && (!event.runId || priorRun.runId === event.runId)) return;
   if (event.type === 'run.started') directStreamOrder.delete(host);
   if (event.sequence !== undefined && event.attempt !== undefined) {
     const eventRun = event.runId ?? runId ?? '';
@@ -875,6 +886,11 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
       || (event.attempt === prior.attempt && event.sequence <= prior.sequence))) return;
     directStreamOrder.set(host, { runId: eventRun, attempt: event.attempt, sequence: event.sequence,
       terminal: ['complete', 'cancelled', 'error'].includes(event.type) });
+  }
+
+  if (['complete', 'cancelled', 'error'].includes(event.type)) {
+    const prior = directStreamOrder.get(host);
+    directStreamOrder.set(host, { runId: event.runId ?? runId ?? '', attempt: event.attempt ?? prior?.attempt ?? 0, sequence: event.sequence ?? prior?.sequence ?? 0, terminal: true });
   }
 
   switch (event.type) {
@@ -916,8 +932,13 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
       host.chatThinkingComplete = true;
       break;
     case 'text_delta': {
+      if (event.partId !== undefined && host.chatStreamPartId !== event.partId) {
+        flushDirectStreamUpdates(host);
+        host.chatStreamPartId = event.partId;
+      }
       if (event.reset) {
         flushDirectStreamUpdates(host);
+        host.chatStreamSegments = [];
         host.chatThinkingText = event.thinkingContent ?? '';
         host.chatThinkingComplete = false;
       }
@@ -939,38 +960,13 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
       }
       break;
     }
+    case 'tool_state':
     case 'tool_start':
     case 'tool_result':
-    case 'tool_error': {
-      flushDirectStreamUpdates(host);
-      const agentPayload: AgentEventPayload = {
-        runId: runId ?? '',
-        seq: 0,
-        stream: 'tool',
-        ts: Date.now(),
-        sessionKey,
-        data: event as unknown as Record<string, unknown>,
-      };
-      handleAgentEvent(
-        host as unknown as Parameters<typeof handleAgentEvent>[0],
-        agentPayload,
-      );
-      break;
-    }
+    case 'tool_error':
     case 'tool_progress': {
       flushDirectStreamUpdates(host);
-      const agentPayload: AgentEventPayload = {
-        runId: runId ?? '',
-        seq: Number(event.progress.sequence ?? 0),
-        stream: 'tool',
-        ts: Date.now(),
-        sessionKey,
-        data: event as unknown as Record<string, unknown>,
-      };
-      handleAgentEvent(
-        host as unknown as Parameters<typeof handleAgentEvent>[0],
-        agentPayload,
-      );
+      if (normalizedTool) handleToolStreamEvent(host as unknown as Parameters<typeof handleToolStreamEvent>[0], normalizedTool, event.runId ?? runId ?? '', sessionKey);
       break;
     }
   }
