@@ -99,4 +99,13 @@ describe('one message projection for live, history and recovery', () => {
     state = apply(state, [{ ...tool('persisted'), event: { ...tool('persisted').event, outcome: 'unknown', name: 'different' } }]);
     expect(state.parts).toEqual(prior);
   });
+  it('a delayed intent acknowledgement cannot regress an already-settled tool', () => {
+    let state = apply(projection.createMessageProjection('run'), [tool('running')]);
+    const doc = migrateMessageParts({ id: 'message', runId: 'run', role: 'assistant', content: '' }).messageParts;
+    doc.parts = structuredClone(state.parts.map(p => p.part));
+    const saved = acknowledgeMessageParts({ ...doc.legacy, messageParts: doc } as any, { status: 'partial', durable }).messageParts;
+    state = apply(state, [tool('settled', 'unknown')]);
+    state = apply(state, [{ type: 'parts.persisted', documents: [saved] }]);
+    expect(state.parts[0].part.tool).toMatchObject({ phase: 'settled', outcome: 'unknown' });
+  });
 });
