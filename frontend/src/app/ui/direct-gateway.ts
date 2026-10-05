@@ -869,6 +869,7 @@ function handleTerminalChatEvent(
   if (isEventForDifferentActiveRun(payload, activeRunIdBeforeEvent)) {
     return false;
   }
+  host.chatSending = false;
   const toolHost = host as unknown as Parameters<typeof resetToolStream>[0];
   const hadToolEvents = (toolHost as any).toolStreamOrder?.length > 0;
   const flushQueue = () =>
@@ -942,7 +943,8 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     if (host.chatRunId && host.chatRunId !== id) return;
     if (!acceptChatDisplayStream(host, streamEvent)) return;
     const state = getChatProjection(host, id)!;
-    host.chatRunId = state.terminal ? null : id;
+    // Keep ownership until the terminal handler reconciles the active run.
+    host.chatRunId = id;
     host.chatStreamRecovery = streamEvent.recovery;
     host.chatRuntimePhase = state.phase;
     if (streamEvent.recovery?.truncated) host.lastError = '恢复快照仅保留本轮尾部和结果预览；完整已保存内容请查看聊天历史。';

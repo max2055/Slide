@@ -667,6 +667,26 @@ describe('109-04: DirectGatewayClient', () => {
     expect(host.chatStream).toBeNull();
   });
 
+  it.each(['completed', 'cancelled', 'failed'] as const)('parts %s closes Stop and active-run state synchronously', outcome => {
+    vi.useFakeTimers();
+    const host = {
+      chatRunId: 'run-1', sessionKey: 'session-1', chatSending: true,
+      chatStream: 'partial', chatMessages: [], chatQueue: [],
+      settings: {}, applySettings() {}, chatToolMessages: [], chatStreamSegments: [],
+      toolStreamById: new Map(), toolStreamOrder: [],
+    };
+    directGateway.handleDirectAdapterEvent(host, {
+      type: 'stream.snapshot', sessionKey: 'session-1',
+      stream: { version: 1, streamEpoch: 'epoch', runId: 'run-1', turnId: 'turn', subscriptionId: 'sub', fromSeq: 1, toSeq: 1 },
+      snapshot: { version: 1, runId: 'run-1', attempt: 1, sequence: 1, phase: 'generating', parts: [], terminal: outcome, runState: outcome,
+        ...(outcome === 'completed' ? { durable: { kind: 'mysql', reference: 'saved' } } : {}) },
+    });
+    expect(host.chatRunId).toBeNull();
+    expect(host.chatSending).toBe(false);
+    if (outcome !== 'failed') expect(host.chatStream).toBeNull();
+    vi.clearAllTimers();
+  });
+
   it('cancels pending stream updates when an expired session is cleared', async () => {
     const host = {
       connected: true, chatLoading: true, chatSending: true, chatRunId: 'run-1',

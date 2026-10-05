@@ -17,6 +17,10 @@ function session(host: Host) {
 export function getChatProjection(host: Host, runId = String(host.chatRunId ?? '')): MessageProjection | undefined {
   return session(host).runs.get(runId);
 }
+export function hasActiveChatDisplayStream(host: Host): boolean {
+  const active = session(host).streams.get(String(host.chatRunId ?? ''));
+  return !!active?.projection && !active.projection.terminal;
+}
 export function acceptChatProjection(host: Host, frame: ProjectionFrame): boolean {
   if (!frame || typeof frame.runId !== 'string' || host.chatRunId && host.chatRunId !== frame.runId) return false;
   const runs = session(host).runs;
@@ -49,7 +53,15 @@ export function hydrateChatProjections(host: Host, messages: unknown[]): void {
   }
   const runs = new Map<string, MessageProjection>();
   for (const [runId, docs] of grouped) runs.set(runId, hydrateMessageProjection(runId, docs));
-  projections.set(host, { sessionKey: String(host.sessionKey ?? ''), runs, streams: new Map() });
+  // A history read may finish after a live snapshot. Durable history cannot
+  // erase that snapshot's cursor or speculative suffix while the run is active.
+  const stored = session(host), runId = String(host.chatRunId ?? '');
+  const active = stored.streams.get(runId);
+  const streams = new Map<string, DisplayStreamState>();
+  if (active?.projection && !active.projection.terminal) {
+    streams.set(runId, active); runs.set(runId, active.projection);
+  }
+  projections.set(host, { sessionKey: String(host.sessionKey ?? ''), runs, streams });
 }
 
 /** Existing render inputs are derived copies, never another lifecycle reducer. */

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { loadChatHistory, type ChatState } from './chat.ts';
+import { handleDirectAdapterEvent } from '../direct-gateway.ts';
+import { getChatProjection } from '../chat/message-projection.ts';
 
 function state(request: ReturnType<typeof vi.fn>): ChatState {
   return { client: { request } as any, connected: true, sessionKey: 'one', chatLoading: false, chatMessages: [],
@@ -8,6 +10,27 @@ function state(request: ReturnType<typeof vi.fn>): ChatState {
 }
 
 describe('complete paged chat history', () => {
+  it('a late history response preserves live snapshot, suffix cursor and cancellation', async () => {
+    let complete!: (value: unknown) => void;
+    const host = Object.assign(state(vi.fn().mockImplementation(() => new Promise(resolve => { complete = resolve; }))), {
+      chatRunId: 'run', chatSending: true, chatQueue: [], settings: {}, applySettings() {},
+      chatToolMessages: [], chatStreamSegments: [], toolStreamById: new Map(), toolStreamOrder: [],
+    });
+    const pending = loadChatHistory(host);
+    const stream = { version: 1 as const, streamEpoch: 'epoch', runId: 'run', turnId: 'turn', subscriptionId: 'sub', fromSeq: 1, toSeq: 1 };
+    handleDirectAdapterEvent(host as any, { type: 'stream.snapshot', sessionKey: 'one', stream,
+      snapshot: { version: 1, runId: 'run', attempt: 1, sequence: 1, phase: 'generating', parts: [
+        { messageId: 'm', part: { id: 'text', type: 'text', text: 'live', source: 'fact', status: 'partial' } } ] } });
+    complete({ messages: [{ role: 'user', content: 'history' }] });
+    await pending;
+    expect(host.chatStream).toBe('live');
+    handleDirectAdapterEvent(host as any, { type: 'stream.delta', sessionKey: 'one', stream: { ...stream, fromSeq: 2, toSeq: 2 },
+      projection: { version: 1, runId: 'run', attempt: 1, sequence: 2, operations: [{ type: 'run.terminal', outcome: 'cancelled' }] } });
+    expect(getChatProjection(host as any, 'run')?.terminal).toBe('cancelled');
+    expect(host.chatRunId).toBeNull();
+    expect(host.chatSending).toBe(false);
+  });
+
   it('loads older pages and applies the chronological transcript once', async () => {
     const recent = Array.from({ length: 200 }, (_, i) => ({ role: 'user', id: String(i + 201), content: 'recent' }));
     const older = Array.from({ length: 200 }, (_, i) => ({ role: 'user', id: String(i + 1), content: 'old' }));

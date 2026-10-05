@@ -37,3 +37,7 @@ base=`a70de824199e9d2e013e47e5d7dc815f741230e4`，前置 PR #130 已 MERGED 且�
 - 模块：Core/API/frontend tests 与 typecheck；最终候选一次 workspace gate、lint、contracts、build/CSP、Chromium audit 与现有 deterministic qualification。必要真实 MySQL/browser qualification 保持原验收断言。
 - `docs/slide/runtime-v2/MAX-127-display-stream.md`：验收矩阵、容量、配置、协议兼容/冷恢复边界、原始测量与回滚。
 - 单 PR 标题含 MAX-127，推送前确认既有 continuous CI rule 有效，回读关联与当前 head checks；in_review 交父 MAX-124，子任务不 merge/done/启动后继。
+
+## 完成记录
+
+步骤 1–3 已实现；步骤 4 本地验证已完成，CI 以唯一 MAX-127 PR 当前 head 为准。完整配置/协议、原始实测、各门禁与失败修复记录见 `docs/slide/runtime-v2/MAX-127-display-stream.md`。终态修复保留异步 history 后到时的活跃 stream 水位，并清理 sending 状态，真实取消/恢复 5 项、前端 589 项与受影响浏览器 3 项通过。未扩产品范围，无硬预算、无子代理，实际 token/费用不可用。
