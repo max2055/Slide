@@ -10,7 +10,8 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./tool-stream": "./src/tool-stream.ts"
+    "./tool-stream": "./src/tool-stream.ts",
+    "./message-projection": "./src/message-projection.ts"
   },
   "files": ["src/"],
   "dependencies": {

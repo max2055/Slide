@@ -1,4 +1,6 @@
 import { normalizeToolEvent, type ToolWireEvent } from '../../../../packages/agent-core/src/tool-stream.js';
+import type { ProjectionFrame } from '../../../../packages/agent-core/src/message-projection.ts';
+import { acceptChatProjection, renderChatProjection } from './chat/message-projection.ts';
 /**
  * DirectAdapter WS client — Phase 109-04
  *
@@ -46,6 +48,7 @@ export type AdapterProtocolErrorEvent = { type: 'protocol.error'; code: string }
 
 /** ChatEvent discriminated union — mirrors apps/db-ops-api/src/adapter/types.ts */
 export type AdapterChatEvent = (
+  | { type: 'message_parts' }
   | AdapterSessionCreatedEvent
   | AdapterRunStartedEvent
   | AdapterRunSnapshotEvent
@@ -60,7 +63,7 @@ export type AdapterChatEvent = (
   | AdapterThinkingEndEvent
   | AdapterCompleteEvent
   | AdapterCancelledEvent
-  | AdapterErrorEvent) & { sequence?: number; attempt?: number; runId?: string; sessionKey?: string };
+  | AdapterErrorEvent) & { sequence?: number; attempt?: number; runId?: string; sessionKey?: string; projection?: ProjectionFrame; messageParts?: import('../../../../packages/agent-core/src/message-parts.ts').MessageParts };
 
 export type ConnectionState =
   | 'connecting'
@@ -508,6 +511,7 @@ export class DirectGatewayClient {
       case 'protocol.error':
       case 'text_delta':
       case 'thinking_delta':
+      case 'message_parts':
       case 'thinking_end':
       case 'tool_state':
       case 'tool_start':
@@ -748,6 +752,7 @@ function isEventForDifferentActiveRun(
 }
 
 type PendingDirectStreamUpdate = {
+  projectionRunId?: string;
   thinkingText?: string;
   thinkingComplete?: boolean;
   textPayload?: ChatEventPayload;
@@ -774,6 +779,8 @@ function flushDirectStreamUpdates(host: Record<string, unknown>): void {
     clearTimeout(pending.timer);
   }
   pending.timer = null;
+  if (pending.projectionRunId) renderChatProjection(host, pending.projectionRunId);
+  pending.projectionRunId = undefined;
   if (pending.thinkingText !== undefined) {
     host.chatThinkingText = pending.thinkingText;
   }
@@ -871,6 +878,25 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
   const runId = host.chatRunId as string | null;
   const sessionKey = host.sessionKey as string;
   if (event.sessionKey && event.sessionKey !== sessionKey && !['session.created', 'run.started', 'run.snapshot'].includes(event.type)) return;
+  if (event.projection) {
+    if (event.runId && event.runId !== event.projection.runId) return;
+    if (!acceptChatProjection(host, event.projection)) return;
+    const barrier = !['text_delta', 'thinking_delta'].includes(event.type)
+      || event.projection.operations.some(op => op.type === 'stream.reset' || op.type === 'stream.snapshot');
+    if (barrier) { flushDirectStreamUpdates(host); renderChatProjection(host, event.projection.runId); }
+    else { pendingStreamUpdateFor(host).projectionRunId = event.projection.runId; scheduleDirectStreamFlush(host); }
+    if (['complete', 'cancelled', 'error'].includes(event.type)) {
+      directStreamOrder.set(host, { runId: event.projection.runId, attempt: event.projection.attempt, sequence: event.projection.sequence, terminal: true });
+      const payload = mapAdapterChatEventToPayload(event, runId, sessionKey);
+      if (payload) {
+        if (event.messageParts) payload.message = { id: event.messageParts.id, role: 'assistant', runId: event.projection.runId,
+          content: event.messageParts.legacy.content, messageParts: event.messageParts };
+        handleChatGatewayEvent(host, payload);
+      }
+    }
+    return;
+  }
+  if (event.type === 'message_parts') return;
   const normalizedTool = event.type.startsWith('tool_') ? normalizeToolEvent(event) : null;
   if (event.type.startsWith('tool_') && !normalizedTool) return;
   if (event.type === 'text_delta' && (typeof event.delta !== 'string'

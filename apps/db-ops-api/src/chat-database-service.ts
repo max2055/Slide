@@ -293,7 +293,7 @@ export class ChatDatabaseService {
         message.relatedSkill ?? null,
         JSON.stringify({ ...message.metadata, messageParts: persistedMessageParts({ id: message.messageId, role: message.role, content: message.content,
           runId: message.metadata?.canonicalRunId as string | undefined, turnId: message.metadata?.canonicalTurnId as string | undefined,
-          metadata: message.metadata }).messageParts }),
+          metadata: message.metadata, messageParts: message.metadata?.messageParts as import('@slide/agent-core').MessageParts | undefined }).messageParts }),
         sessionId,
         ...this.accessValues(actor, 'append'),
       ],
@@ -318,7 +318,7 @@ export class ChatDatabaseService {
         message.relatedSkill ?? null,
         JSON.stringify({ ...message.metadata, messageParts: persistedMessageParts({ id: message.messageId, role: message.role, content: message.content,
           runId: message.metadata?.canonicalRunId as string | undefined, turnId: message.metadata?.canonicalTurnId as string | undefined,
-          metadata: message.metadata }).messageParts }),
+          metadata: message.metadata, messageParts: message.metadata?.messageParts as import('@slide/agent-core').MessageParts | undefined }).messageParts }),
         sessionId,
       ],
     );

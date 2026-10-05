@@ -36,6 +36,8 @@ export type ToolErrorEvent = Extract<import('@slide/agent-core/tool-stream').Too
 export type ToolStateEvent = Extract<import('@slide/agent-core/tool-stream').ToolWireEvent, { type: 'tool_state' }>;
 
 export interface ChatTerminalContent {
+  projection?: import('@slide/agent-core/message-projection').ProjectionFrame;
+  messageParts?: import('@slide/agent-core').MessageParts;
   resolution?: RuntimeResolution;
   finalContent?: string;
   thinkingContent?: string;
@@ -69,6 +71,7 @@ export interface CancelledEvent extends ChatTerminalContent {
 }
 
 export type ChatEvent = (
+  | { type: 'message_parts'; operations: import('@slide/agent-core/message-projection').ProjectionOperation[] }
   | TextDeltaEvent
   | ToolStartEvent
   | ToolResultEvent
@@ -80,6 +83,7 @@ export type ChatEvent = (
   | CompleteEvent
   | CancelledEvent
   | ErrorEvent) & {
+    projection?: import('@slide/agent-core/message-projection').ProjectionFrame;
     /** Ordered delivery ordinal; only checkpoint snapshots are durable watermarks. */
     sequence?: number;
     /** Model request epoch persisted across checkpoint recovery. */

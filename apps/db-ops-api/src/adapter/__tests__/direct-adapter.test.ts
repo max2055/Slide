@@ -326,6 +326,16 @@ afterEach(async () => {
 // ── Tests ──
 
 describe('DirectAdapter', () => {
+  it('carries the same ordered projection through model EOF and terminal without inventing durability', async () => {
+    const adapter = createMockAdapter(); adaptersToCleanup.push(adapter);
+    const events: ChatEvent[] = [];
+    await adapter.chat('projection-session', 'hello', event => { events.push(event); });
+    const text = events.find(e => e.type === 'text_delta') as any;
+    expect(text.projection?.operations).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'part.start' })]));
+    const complete = events.find(e => e.type === 'complete') as any;
+    expect(complete.messageParts?.parts).toEqual(expect.arrayContaining([expect.objectContaining({ generation: 'ended' })]));
+    expect(complete.messageParts?.parts.every((p: any) => p.status !== 'completed' || p.durable)).toBe(true);
+  });
   it('serializes chat runs for the same session key', async () => {
     const adapter = createMockAdapter();
     const order: string[] = [];
@@ -897,9 +907,9 @@ describe('DirectAdapter', () => {
       await adapter.chat('async-consumer', 'Hello', async event => {
         await new Promise<void>(r => setTimeout(r, 2)); events.push(event);
       });
-      expect(events.map(e => e.sequence)).toEqual([1, 2, 3, 4, 5]);
+      expect(events.map(e => e.sequence)).toEqual(events.map((_, i) => i + 1));
       expect(events.every(e => e.attempt === 1)).toBe(true);
-      expect(events.map(e => e.type)).toEqual(['thinking_delta', 'thinking_delta', 'thinking_end', 'text_delta', 'complete']);
+      expect(events.filter(e => e.type !== 'message_parts').map(e => e.type)).toEqual(['thinking_delta', 'thinking_delta', 'thinking_end', 'text_delta', 'complete']);
     });
 
     it('consumer rejection cancels the reader and produces a precise failed outcome without completion', async () => {
@@ -992,7 +1002,7 @@ describe('DirectAdapter', () => {
 
       await adapter.chat('test-session-thinking', 'Hello', (event) => events.push(event));
 
-      expect(events.map((event) => event.type)).toEqual([
+      expect(events.filter(event => event.type !== 'message_parts').map((event) => event.type)).toEqual([
         'thinking_delta', 'thinking_delta', 'thinking_end', 'text_delta', 'complete',
       ]);
       expect(events.find((event) => event.type === 'text_delta')).toMatchObject({ delta: 'final answer' });

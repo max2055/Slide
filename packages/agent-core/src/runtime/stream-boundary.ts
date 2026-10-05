@@ -48,6 +48,7 @@ export class StreamBoundary {
     this.state.sourceRequestId = randomUUID();
     ctx.streamAttempt = this.state.attempt;
     ctx.sourceRequestId = this.state.sourceRequestId;
+    ctx.messageId = `model_${this.state.sourceRequestId}`;
     ctx.provisionalBytes = { text: 0, reasoning: 0, tool: 0 };
   }
   snapshot(anchor = this.state.anchor): StreamSnapshot { return structuredClone({ ...this.state, anchor }); }

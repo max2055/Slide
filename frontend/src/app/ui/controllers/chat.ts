@@ -1,4 +1,5 @@
 import { resetToolStream } from "../app-tool-stream.ts";
+import { hydrateChatProjections } from '../chat/message-projection.ts';
 import { extractText, extractRawText } from "../chat/message-extract.ts";
 import { reconcileChatRunLifecycle } from "../chat/run-lifecycle.ts";
 import { formatConnectError } from "../connect-error.ts";
@@ -146,6 +147,7 @@ export async function loadChatHistory(state: ChatState) {
     }
     const messages = pages.reverse().flat();
     state.chatMessages = messages.filter((message) => !shouldHideHistoryMessage(message));
+    hydrateChatProjections(state as unknown as Record<string, unknown>, state.chatMessages);
     state.chatThinkingLevel = res.thinkingLevel ?? null;
     // Clear all streaming state — history includes tool results and text
     // inline, so keeping streaming artifacts would cause duplicates.

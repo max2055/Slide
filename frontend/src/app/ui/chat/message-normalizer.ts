@@ -13,7 +13,19 @@ import { mediaKindFromMime } from "../../src/media/constants.ts";
 import { splitMediaFromOutput } from "../../src/media/parse.ts";
 import { parseInlineDirectives } from "../../src/utils/directive-tags.ts";
 import type { NormalizedMessage, MessageContentItem } from "../types/chat-types.ts";
-import { readMessageParts } from '../../../../../packages/agent-core/src/message-parts.ts';
+import { readMessageParts, type MessagePart } from '../../../../../packages/agent-core/src/message-parts.ts';
+
+/** Model continuation boundaries do not add whitespace or split Markdown. */
+function messagePartDisplayGroups(parts: MessagePart[]): MessagePart[][] {
+  const groups: MessagePart[][] = [];
+  for (const part of parts) {
+    if (part.status === 'discarded') continue;
+    const previous = groups.at(-1);
+    if (part.type === 'text' && previous?.[0].type === 'text') previous.push(part);
+    else groups.push([part]);
+  }
+  return groups;
+}
 
 /** Parts are additive. Future versions and invalid documents retain the old UI projection. */
 export function messagePartsDisplay(message: unknown): Record<string, unknown> {
@@ -22,6 +34,23 @@ export function messagePartsDisplay(message: unknown): Record<string, unknown> {
   try {
     const doc = readMessageParts(original.messageParts);
     if (doc.id !== original.id || doc.role !== original.role) return original;
+    if (doc.projectionMessageId || doc.parts.some(p => p.generation || !p.id.startsWith(`${doc.id}/part/`))) {
+      const content = messagePartDisplayGroups(doc.parts).flatMap((parts): Record<string, unknown>[] => {
+        const p = parts[0];
+        switch (p.type) {
+          case 'text': return [{ type: 'text', text: parts.map(part => part.type === 'text' ? part.text : '').join('') }];
+          case 'runtime_notice': return [{ type: 'text', text: p.text }];
+          case 'reasoning': return typeof p.text === 'string' ? [{ type: 'thinking', thinking: p.text }] : [];
+          case 'tool_input': return []; // Partial arguments are process display, never executable tool calls.
+          case 'tool_call': return [{ type: 'toolcall', id: p.call.id, name: p.call.function.name, arguments: p.call.function.arguments },
+            ...(p.tool?.preview ? [{ type: 'toolresult', toolCallId: p.call.id, name: p.call.function.name, text: p.tool.preview.text, isError: p.tool.outcome !== 'ok' }] : [])];
+          case 'tool_result': return [{ type: 'toolresult', toolCallId: p.toolCallId, name: p.name, text: typeof p.content === 'string' ? p.content : JSON.stringify(p.content) }];
+          case 'attachment': return [{ type: 'attachment', attachment: { url: p.attachment.reference, kind: p.attachment.kind === 'image' ? 'image' : 'document',
+            label: p.attachment.kind === 'image' ? '图片附件' : '文件附件', mimeType: p.attachment.mimeType } }];
+        }
+      });
+      return { ...original, id: doc.id, role: doc.role, content };
+    }
     const attachments = doc.parts.filter(part => part.type === 'attachment' && part.status !== 'discarded');
     if (!attachments.length) return { ...doc.legacy, ...original, id: doc.id, role: doc.role };
     const content = typeof doc.legacy.content === 'string' ? [{ type: 'text', text: doc.legacy.content }]
@@ -33,6 +62,37 @@ export function messagePartsDisplay(message: unknown): Record<string, unknown> {
         label: a.kind === 'image' ? '图片附件' : '文件附件', mimeType: a.mimeType } };
     })] };
   } catch { return original; }
+}
+
+/** Ordered render rows only; canonical records and history navigation retain their IDs. */
+export function messagePartsToolOutputs(messages: unknown[]): Set<string> {
+  const keys = new Set<string>();
+  for (const message of messages) {
+    try {
+      const doc = readMessageParts((message as Record<string, unknown>)?.messageParts);
+      if (doc.runId) for (const part of doc.parts) if (part.type === 'tool_call' && part.tool?.preview) keys.add(`${doc.runId}\0${part.call.id}`);
+    } catch { /* legacy tools retain their original rendering */ }
+  }
+  return keys;
+}
+export function messagePartsRenderRows(message: unknown, toolOutputs = new Set<string>()): Array<{ partId: string; message: Record<string, unknown> }> | null {
+  const original = message as Record<string, unknown>;
+  try {
+    const doc = readMessageParts(original?.messageParts);
+    if (doc.id !== original.id || doc.role !== original.role || (doc.role !== 'assistant' && doc.role !== 'tool')) return null;
+    if (doc.role === 'tool' && doc.runId && doc.parts.every(p => p.type === 'tool_result' && toolOutputs.has(`${doc.runId}\0${p.toolCallId}`))) return [];
+    if (!(doc.projectionMessageId || doc.parts.some(p => p.generation))) return null;
+    return messagePartDisplayGroups(doc.parts).filter(parts => parts[0].type !== 'tool_input').map((parts, index) => {
+      const part = parts[0];
+      return { partId: part.id,
+      message: { ...original, ...(index > 0 ? { usage: undefined, cost: undefined } : {}),
+        messageParts: { ...doc, parts },
+        ...(part.type === 'tool_call' ? { toolCallId: part.call.id, toolPhase: part.tool?.phase, toolOutcome: part.tool?.outcome,
+          toolStartedAt: part.tool?.startedAt, toolSettledAt: part.tool?.settledAt, toolProgress: part.tool?.progress } : {}),
+      },
+      };
+    });
+  } catch { return null; }
 }
 
 function coerceCanvasPreview(
@@ -353,6 +413,7 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
         }
         return expanded.content;
       }
+      if (item.type === 'thinking' && typeof item.thinking === 'string') return [{ type: 'thinking', thinking: item.thinking }];
       return [
         {
           type:

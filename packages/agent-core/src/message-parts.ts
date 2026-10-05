@@ -8,11 +8,20 @@ export interface PartBoundary {
   attempt?: number;
   sourceRequestId?: string;
 }
-interface PartBase extends PartBoundary { id: string; source: Message['source']; }
+interface PartBase extends PartBoundary {
+  id: string;
+  source: Message['source'];
+  /** Generating identity retained when several continuation parts share a storage record. */
+  sourceMessageId?: string;
+  /** Model generation is independent of storage acknowledgement. */
+  generation?: 'open' | 'ended';
+  tool?: import('./tool-stream.js').NormalizedToolEvent;
+}
 export type MessagePart = PartBase & (
   | { type: 'text'; text: string }
   | { type: 'reasoning'; text?: string; block?: unknown; format: 'think' | 'reasoning_content' | 'thinking_block' }
   | { type: 'tool_call'; call: ToolCall }
+  | { type: 'tool_input'; toolCallId: string; text: string; name?: string }
   | { type: 'tool_result'; toolCallId: string; content: Message['content']; name?: string }
   | { type: 'attachment'; attachment: AttachmentSource }
   | { type: 'runtime_notice'; text: string }
@@ -34,6 +43,10 @@ export interface MessageParts extends PartBoundary {
   runId?: string;
   turnId?: string;
   source: Message['source'];
+  /** Original generating message ID when storage uses a stable completion key. */
+  projectionMessageId?: string;
+  /** Assigned only by the persistence owner of a terminal record. */
+  runTerminal?: 'completed' | 'partial' | 'cancelled' | 'timed_out' | 'failed';
   parts: MessagePart[];
   /** Exact rollback projection, including null/empty content and unknown legacy fields. */
   legacy: Omit<Message, 'messageParts'> & Record<string, unknown>;
@@ -64,14 +77,18 @@ export function readMessageParts(value: unknown): MessageParts {
   const doc = value as MessageParts;
   if (!doc || doc.version !== 1) throw new Error('UNSUPPORTED_MESSAGE_PARTS_VERSION');
   validateBoundary(doc);
+  if (doc.runTerminal !== undefined && (!doc.durable || !['completed', 'partial', 'cancelled', 'timed_out', 'failed'].includes(doc.runTerminal))) throw new Error('INVALID_MESSAGE_PARTS');
   if (!doc.id || !['system', 'user', 'assistant', 'tool'].includes(doc.role) || !Array.isArray(doc.parts) || !doc.legacy) throw new Error('INVALID_MESSAGE_PARTS');
   const ids = new Set<string>();
   for (const part of doc.parts) {
     validateBoundary(part);
-    if (!part.id || ids.has(part.id) || !['text', 'reasoning', 'tool_call', 'tool_result', 'attachment', 'runtime_notice'].includes(part.type)) throw new Error('INVALID_MESSAGE_PARTS');
+    if (!part.id || ids.has(part.id) || !['text', 'reasoning', 'tool_call', 'tool_input', 'tool_result', 'attachment', 'runtime_notice'].includes(part.type)) throw new Error('INVALID_MESSAGE_PARTS');
     ids.add(part.id);
+    if (part.sourceMessageId !== undefined && (typeof part.sourceMessageId !== 'string' || !part.sourceMessageId)) throw new Error('INVALID_MESSAGE_PARTS');
     if ((part.type === 'text' || part.type === 'runtime_notice') && typeof part.text !== 'string') throw new Error('INVALID_MESSAGE_PARTS');
     if (part.type === 'tool_call' && (!part.call?.id || typeof part.call.function?.arguments !== 'string' || typeof part.call.function.name !== 'string')) throw new Error('INVALID_MESSAGE_PARTS');
+    if (part.type === 'tool_input' && (!part.toolCallId || typeof part.text !== 'string')) throw new Error('INVALID_MESSAGE_PARTS');
+    if (part.generation !== undefined && !['open', 'ended'].includes(part.generation)) throw new Error('INVALID_MESSAGE_PARTS');
     if (part.type === 'tool_result' && typeof part.toolCallId !== 'string') throw new Error('INVALID_MESSAGE_PARTS');
     if (part.type === 'attachment' && (!part.attachment || typeof part.attachment.reference !== 'string' || !['image', 'file'].includes(part.attachment.kind))) throw new Error('INVALID_MESSAGE_PARTS');
   }

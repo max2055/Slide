@@ -26,10 +26,17 @@ const scenarios = [
 const copy = (value: unknown) => JSON.parse(JSON.stringify(value, (key, item) => {
   // S2 metadata has dedicated persistence/epoch assertions; legacy traces exclude it.
   if (['messageParts', 'streamAttempt', 'sourceRequestId', 'provisionalBytes', 'streamReset', 'checkpoint_id', 'stream_state_v1', 'context_estimate_v1', 'context_config_v1'].includes(key)) return undefined;
+  if ((key === 'id' || key === 'messageId') && typeof item === 'string' && item.startsWith('model_')) return undefined;
   if (Array.isArray(item)) return item.filter(m => !(m?.source === 'runtime' && String(m.content).startsWith('Current Time:')));
   if (item?.source === 'runtime') { const { source: _source, ...rest } = item; return rest; }
   return item;
 }));
+
+// Retain undefined fields in the old result API; omit only the additive S2 ID.
+const legacyResultCopy = <T extends { messages: Message[] }>(result: T) => ({ ...result, messages: result.messages.map(message => {
+  if (!message.id?.startsWith('model_')) return message;
+  const { id: _id, ...legacy } = message; return legacy;
+}) });
 
 // Frozen traces assert the pre-identity API; canonical ID invariants have their
 // own checkpoint roundtrip tests. Do not replace the historical snapshots.
@@ -62,7 +69,7 @@ describe('frozen legacy compatibility traces', () => {
       checkpointCallback: async payload => { trace.push(['checkpoint', legacyCheckpointCopy(payload)]); },
       onProviderRequest: promise => { trace.push(['request-observed']); void promise.then(() => trace.push(['settled'])); },
     });
-    expect({ requests, result, trace }).toMatchSnapshot();
+    expect({ requests, result: legacyResultCopy(result), trace }).toMatchSnapshot();
   });
 
   it('preserves streaming thinking, injection order, provider replacement and public defaults', async () => {
@@ -98,6 +105,6 @@ describe('frozen legacy compatibility traces', () => {
       injectionCallback: async () => ++drains === 1 ? [{ role: 'user', content: 'follow-up' }] : [],
       checkpointCallback: async payload => { events.push(['checkpoint', legacyCheckpointCopy(payload)]); },
     });
-    expect({ events, contexts, result, calls, drains }).toMatchSnapshot();
+    expect({ events, contexts, result: legacyResultCopy(result), calls, drains }).toMatchSnapshot();
   });
 });

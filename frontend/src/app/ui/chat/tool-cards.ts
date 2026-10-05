@@ -7,7 +7,7 @@ import type { SidebarContent } from "../sidebar-content.ts";
 import { formatToolDetail, resolveToolDisplay } from "../tool-display.ts";
 import type { ToolCard } from "../types/chat-types.ts";
 import { extractTextCached } from "./message-extract.ts";
-import { isToolResultMessage } from "./message-normalizer.ts";
+import { isToolResultMessage, messagePartsDisplay } from "./message-normalizer.ts";
 import { formatToolOutputForSidebar, getTruncatedPreview } from "./tool-helpers.ts";
 
 export type ToolPreview = NonNullable<ToolCard["preview"]>;
@@ -138,7 +138,7 @@ function findLatestCard(cards: ToolCard[], id: string, name: string): ToolCard |
 }
 
 export function extractToolCards(message: unknown, prefix = "tool"): ToolCard[] {
-  const m = message as Record<string, unknown>;
+  const m = messagePartsDisplay(message);
   const content = normalizeContent(m.content);
   const cards: ToolCard[] = [];
 

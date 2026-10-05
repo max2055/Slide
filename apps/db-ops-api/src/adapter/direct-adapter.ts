@@ -1,4 +1,7 @@
 import { boundedToolValue, buildToolPreview } from '@slide/agent-core/tool-stream';
+import { projectionDocuments, reduceMessageProjection, type ProjectionOperation } from '@slide/agent-core/message-projection';
+import { AdapterMessageProjection } from './message-projection.js';
+import { persistedMessageParts } from './message-parts.js';
 import { redactSensitiveText } from '../security/log-redaction.js';
 import { BoundedSocketWriter } from './bounded-socket-writer.js';
 import { orderedChatConsumer } from './chat-event-consumer.js';
@@ -98,15 +101,18 @@ function mapHookEventToChatEvent(
   thinkingHolder?: { text: string },
   streamHolder?: { text: string; safeContent?: string; resetSnapshot?: import('@slide/agent-core').StreamReset },
   partPrefix = 'live',
+  projection?: AdapterMessageProjection,
 ): AgentHook {
   let reasoningActive = false;
   let segment = 0;
   let segmentText = streamHolder?.text ?? '';
   let toolBoundary = false;
+  let sourceMessageId: string | undefined;
   return {
     wantsStreaming: () => true,
     beforeIteration: async () => {},
     onStream: async (_ctx: AgentHookContext, delta: string, signal?: AbortSignal) => {
+      if (_ctx.messageId !== sourceMessageId) { sourceMessageId = _ctx.messageId; segment++; segmentText = ''; toolBoundary = false; }
       if (reasoningActive) {
         reasoningActive = false;
         await onEvent({ type: 'thinking_end' }, signal);
@@ -117,18 +123,37 @@ function mapHookEventToChatEvent(
       segmentText += delta;
       if (streamHolder) streamHolder.text += delta;
       signal?.throwIfAborted();
-      await onEvent({ type: 'text_delta', delta: streamHolder ? streamHolder.text : delta, partId: `${partPrefix}:text:${segment}`, partText: segmentText }, signal);
+      await onEvent({ type: 'text_delta', delta: streamHolder ? streamHolder.text : delta, partId: `${sourceMessageId ?? partPrefix}:text:${segment}`, partText: segmentText }, signal);
     },
     onCandidateRejected: async (ctx, safeContent) => {
       reasoningActive = false;
-      segment++; segmentText = safeContent; toolBoundary = false;
+      segment++; segmentText = ''; toolBoundary = false;
       if (thinkingHolder) thinkingHolder.text = ctx.streamReset?.anchor?.reasoning ?? '';
       if (streamHolder) { streamHolder.text = safeContent; streamHolder.safeContent = safeContent; streamHolder.resetSnapshot = ctx.streamReset; }
       if (ctx.streamReset?.reasonCode.startsWith('STREAM_CONSUMER_')) return;
-      await onEvent({ type: 'text_delta', delta: safeContent, partId: `${partPrefix}:text:${segment}`, partText: safeContent, reset: true, thinkingContent: thinkingHolder?.text ?? '',
+      await onEvent({ type: 'text_delta', delta: safeContent, partId: `${sourceMessageId ?? partPrefix}:text:${segment}`, partText: safeContent, reset: true, thinkingContent: thinkingHolder?.text ?? '',
         anchorId: ctx.streamReset?.anchor?.checkpointId, sourceRequestId: ctx.sourceRequestId, discardedBytes: ctx.streamReset?.discardedBytes });
     },
-    onStreamEnd: async () => {},
+    onStreamEnd: async (ctx, resuming) => {
+      if (!projection) return;
+      const operations: ProjectionOperation[] = [];
+      if (!ctx.streamedContent && ctx.response?.content) {
+        operations.push({ type: 'part.start', messageId: projection.currentMessageId,
+          part: { id: `${projection.currentMessageId}/batch-text`, source: 'fact', status: 'partial', type: 'text', text: ctx.response.content } });
+        operations.push({ type: 'part.end', partId: `${projection.currentMessageId}/batch-text` });
+      }
+      operations.push(...projection.end());
+      if (resuming && ctx.toolCalls.length) for (const call of ctx.toolCalls) {
+        operations.push({ type: 'tool.state', messageId: projection.currentMessageId, partId: `${projection.currentMessageId}/tool/${call.id}`,
+          event: { toolCallId: call.id, name: call.name, phase: 'planned', occurredAt: Date.now(), args: boundedToolValue(call.arguments, redactSensitiveText) as Record<string, unknown> } });
+      }
+      if (operations.length) await onEvent({ type: 'message_parts', operations });
+    },
+    onToolInput: async (_ctx, delta, signal) => {
+      if (!projection) return;
+      const operations = projection.input(delta);
+      if (operations.length) await onEvent({ type: 'message_parts', operations }, signal);
+    },
     beforeExecuteTools: async () => { toolBoundary = true; },
     emitReasoning: async (text: string | null, signal?: AbortSignal) => {
       if (text) {
@@ -665,7 +690,7 @@ export class DirectAdapter implements IAgentEngine {
                   const assistant = response.message();
                   if (assistant) {
                     event = { ...event, messageSequence: await chatDatabaseService.addMessage(messageActor, sessionKey, {
-                      messageId: `msg_${randomUUID()}_asst`,
+                      messageId: event.messageParts?.id ?? `msg_${randomUUID()}_asst`,
                       role: 'assistant',
                       ...assistant,
                       metadata: { ...assistant.metadata, stopReason: event.type === 'cancelled' ? 'cancelled' : 'failed', canonicalRunId: persistentRun?.run.id, canonicalTurnId: userFactId },
@@ -699,8 +724,15 @@ export class DirectAdapter implements IAgentEngine {
                     const content = event.thinkingContent
                       ? `<think>${event.thinkingContent}</think>\n\n${event.finalContent || ''}` : event.finalContent!;
                     event.messageSequence = await chatDatabaseService.addMessage(messageActor, sessionKey, {
-                      messageId: `msg_${randomUUID()}_asst`, role: 'assistant', content, parentId: userFactId,
+                      messageId: event.messageParts?.id ?? `msg_${randomUUID()}_asst`, role: 'assistant', content, parentId: userFactId,
+                      metadata: { canonicalRunId: event.messageParts?.runId, canonicalTurnId: userFactId, messageParts: event.messageParts },
                     });
+                    if (event.messageParts) {
+                      event.messageParts = persistedMessageParts({ ...event.messageParts.legacy, messageParts: event.messageParts, metadata: { stopReason: 'completed' } } as import('@slide/agent-core').SessionEntry).messageParts;
+                      if (event.projection) event.projection = { ...event.projection, operations: [...event.projection.operations,
+                        { type: 'parts.persisted', documents: projectionDocuments([event.messageParts!]) },
+                        { type: 'run.terminal', outcome: 'completed', durable: event.messageParts!.durable }] };
+                    }
                   }
                   sendToSession(sessionKey, { ...event });
                 }
@@ -954,17 +986,26 @@ export class DirectAdapter implements IAgentEngine {
     }
     // The business history already contains every durably recorded tool fact.
     if (resumeCheckpoint && !_actor) this.runner._restoreRuntimeCheckpoint(session as any);
-    const userFactId = persistedUserId ?? randomUUID();
-    const runId = runtimeRunId ?? userFactId;
-    if (_actor && !persistedUserId) await chatDatabaseService.addMessage(_actor, sessionKey, {
+    // A retry belongs to the checkpoint's original turn. An unresolved tool
+    // also retains that identity until the runner reports its settlement guard.
+    const retainsIdentity = (!runtimeRunId || resumeCheckpoint?.canonical_run_id === runtimeRunId)
+      && (resumeCheckpoint?.runtime_request_key === requestKey || (Array.isArray(pending) && pending.length > 0));
+    const checkpointTurnId = retainsIdentity && typeof resumeCheckpoint?.canonical_turn_id === 'string'
+      ? resumeCheckpoint.canonical_turn_id : undefined;
+    const checkpointRunId = retainsIdentity && typeof resumeCheckpoint?.canonical_run_id === 'string'
+      ? resumeCheckpoint.canonical_run_id : undefined;
+    const userFactId = persistedUserId ?? checkpointTurnId ?? randomUUID();
+    const runId = runtimeRunId ?? checkpointRunId ?? userFactId;
+    const usesCheckpointTurn = checkpointTurnId === userFactId;
+    if (_actor && !persistedUserId && !usesCheckpointTurn) await chatDatabaseService.addMessage(_actor, sessionKey, {
       messageId: userFactId, role: 'user', content: message,
       metadata: { canonicalRunId: runId, canonicalTurnId: userFactId },
     });
     const currentIndex = session.messages.findIndex(m => m.id === userFactId);
-    const resumingTurn = currentIndex >= 0 && resumeCheckpoint?.runtime_request_key === requestKey;
+    const resumingTurn = currentIndex >= 0 && usesCheckpointTurn;
     if (currentIndex >= 0 && !resumingTurn) session.messages = session.messages.slice(0, currentIndex);
     const historyBeforeCurrentMessage = session.getHistory(120) as any[];
-    session.addMessage('user', message, { id: userFactId, runId, turnId: userFactId });
+    if (!resumingTurn) session.addMessage('user', message, { id: userFactId, runId, turnId: userFactId });
     const sessThinkingLevel = (sessMeta?.thinkingLevel as string) || undefined;
     const reasoningEffort = normalizeThinkingLevel(sessThinkingLevel);
 
@@ -991,12 +1032,26 @@ export class DirectAdapter implements IAgentEngine {
     const checkpointCallback = async (payload: Record<string, unknown>) => {
       const streamState = payload.stream_state_v1 as import('@slide/agent-core').StreamSnapshot | undefined;
       if (streamState) streamState.sequence = Math.max(streamState.sequence, sequence);
-      const checkpoint = { ...payload, canonical_run_id: runId, canonical_turn_id: userFactId,
+      const checkpoint: Record<string, unknown> = { ...payload, canonical_run_id: runId, canonical_turn_id: userFactId,
         runtime_request_key: requestKey,
         runtime_policy: { entry: policy.entry, source: policy.source, longChat: policy.longChat, maxIterations: policy.maxIterations, runTimeoutMs: policy.runTimeoutMs } };
       // Final response_ready is a candidate, retained in checkpoint until durable commit.
       const facts = checkpointFacts(checkpoint, runId).filter(m => m.role === 'tool' || m.tool_calls?.length)
-        .map(m => ({ ...m, runId, turnId: userFactId }));
+        .map(m => {
+          const legacy = { ...m, runId, turnId: userFactId }; delete legacy.messageParts;
+          const doc = projection.document(m.id!, legacy);
+          return { ...m, runId, turnId: userFactId, ...(doc.parts.length ? { messageParts: doc } : {}) };
+        });
+      const documents = projectionDocuments(facts.map(m => persistedMessageParts(m, _actor ? 'checkpoint' : 'jsonl',
+        m.tool_calls?.some(call => !facts.some(result => result.tool_call_id === call.id)) ? 'partial' : 'completed').messageParts!));
+      const staged = documents.length ? reduceMessageProjection(projection.state, { version: 1, runId, attempt, sequence: sequence + 1,
+        operations: [{ type: 'parts.persisted', documents }] }) : projection.state;
+      checkpoint.message_projection_v1 = staged;
+      const anchorChanged = streamState?.anchor && streamState.anchor.checkpointId !== projection.anchor.id;
+      const anchorState = { ...structuredClone(staged), anchorId: streamState?.anchor?.checkpointId ?? projection.anchor.id,
+        parts: anchorChanged ? structuredClone(staged.parts).filter(p => p.part.type !== 'tool_input').map(p => ({ ...p, part: { ...p.part, generation: 'ended' as const,
+          durable: p.part.durable ?? { kind: 'checkpoint' as const, reference: streamState!.anchor!.checkpointId } } })) : structuredClone(projection.anchor.parts) };
+      checkpoint.message_projection_anchor_v1 = anchorState;
       if (_actor) {
         if (facts.length) await canonicalStore.appendToolFacts(_actor, sessionKey, userFactId, facts, Number(payload.iteration ?? 0), checkpoint);
         else await canonicalStore.saveCheckpoint(_actor, sessionKey, checkpoint);
@@ -1010,30 +1065,51 @@ export class DirectAdapter implements IAgentEngine {
         if (!_actor) { session.messages = previousMessages; session.metadata.runtime_checkpoint = previousCheckpoint; throw error; }
         this.sessionManager.invalidate(cacheKey);
       }
+      if (documents.length) await deliver({ type: 'message_parts', operations: [{ type: 'parts.persisted', documents }] });
+      if (anchorChanged) {
+        projection.anchor = { id: streamState!.anchor!.checkpointId, parts: structuredClone(anchorState.parts) };
+        projection.state.anchorId = projection.anchor.id;
+      }
     };
 
     // Create streaming hook that maps to ChatEvent.
     // thinkingHolder captures reasoning text from emitReasoning so it can be
     // embedded in the final message (matching external <think> tag behavior).
     // streamHolder accumulates text deltas for progressive display.
-    const restoredStream = resumeCheckpoint?.stream_state_v1 as import('@slide/agent-core').StreamSnapshot | undefined;
+    const restoredStream = (resumeCheckpoint?.canonical_run_id === undefined || resumeCheckpoint.canonical_run_id === runId
+      ? resumeCheckpoint?.stream_state_v1 : undefined) as import('@slide/agent-core').StreamSnapshot | undefined;
     const thinkingHolder: { text: string } = { text: restoredStream?.anchor?.reasoning ?? '' };
     const streamHolder: { text: string; safeContent?: string; resetSnapshot?: import('@slide/agent-core').StreamReset } = { text: restoredStream?.anchor?.text ?? '', safeContent: restoredStream?.anchor?.text ?? '' };
     let sequence = restoredStream?.sequence ?? 0;
     let attempt = restoredStream?.attempt ?? 0;
     let sourceRequestId = restoredStream?.sourceRequestId;
+    // Explicit admission IDs remain authoritative; never graft another run's
+    // projection onto a newly admitted run, including an unresolved old tool.
+    const projection = new AdapterMessageProjection(runId, resumeCheckpoint?.canonical_run_id === runId
+      ? resumeCheckpoint.message_projection_anchor_v1 : undefined);
+    const recoveredFacts = session.messages.filter(m => m.runId === runId && (m.role === 'assistant' || m.role === 'tool') && m.messageParts?.durable).map(m => m.messageParts!);
+    if (recoveredFacts.length) projection.state = reduceMessageProjection(projection.state, { version: 1, runId, attempt: projection.state.attempt,
+      sequence: projection.state.sequence + 1, operations: [{ type: 'parts.persisted', documents: projectionDocuments(recoveredFacts) }] });
+    sequence = Math.max(sequence, projection.state.sequence);
     const consume = orderedChatConsumer(onEvent, this.streamingLimits);
     let streamClosed = false;
     const deliver: ChatEventConsumer = (event, writerSignal) => {
       if (streamClosed && !['complete', 'error', 'cancelled'].includes(event.type)) return;
-      const ordered = { ...event, sequence: ++sequence, attempt, sourceRequestId };
+      const ordinal = ++sequence;
+      const frame = projection.observe(event, attempt, ordinal);
+      const ordered = { ...event, sequence: ordinal, attempt, sourceRequestId, projection: frame };
       if (['complete', 'error', 'cancelled'].includes(event.type)) { streamClosed = true; this.streamSnapshots.delete(sessionKey); }
       else this.streamSnapshots.set(sessionKey, { type: 'text_delta', delta: streamHolder.text, reset: true,
         thinkingContent: thinkingHolder.text, sequence, attempt, runId, sessionKey,
+        projection: { version: 1, runId, sequence, attempt, operations: [{ type: 'stream.snapshot', snapshot: structuredClone(projection.state) }] },
         anchorId: (session.metadata.runtime_checkpoint?.stream_state_v1 as import('@slide/agent-core').StreamSnapshot | undefined)?.anchor?.checkpointId });
       return consume(ordered, writerSignal ?? (['complete', 'error', 'cancelled'].includes(event.type) || (event.type === 'tool_error' && ['unknown', 'cancelled'].includes(event.outcome ?? '')) ? undefined : signal));
     };
-    const hook = mapHookEventToChatEvent({ beforeIteration: ctx => { attempt = ctx.streamAttempt ?? attempt + 1; sourceRequestId = ctx.sourceRequestId; } }, deliver, thinkingHolder, streamHolder, runId);
+    const hook = mapHookEventToChatEvent({ beforeIteration: async ctx => {
+      attempt = ctx.streamAttempt ?? attempt + 1; sourceRequestId = ctx.sourceRequestId;
+      projection.begin(ctx.messageId ?? `model_${sourceRequestId ?? runId}`);
+      await deliver({ type: 'message_parts', operations: [{ type: 'run.status', phase: 'generating' }] });
+    } }, deliver, thinkingHolder, streamHolder, runId, projection);
 
     let terminalEmitted = false;
     try {
@@ -1117,7 +1193,9 @@ export class DirectAdapter implements IAgentEngine {
       if (displayContent && !_actor) {
         const extra: any = {};
         if (thinkingContent) extra.reasoning_content = thinkingContent;
-        session.addMessage('assistant', displayContent, { ...extra, id: `run_${runId}_assistant`, runId, turnId: userFactId, metadata: { stopReason } });
+        const legacy = { id: `run_${runId}_assistant`, runId, turnId: userFactId, role: 'assistant' as const, content: displayContent, source: 'fact' as const };
+        const doc = projection.finalDocument(legacy, stopReason !== 'completed');
+        session.addMessage('assistant', displayContent, { ...extra, ...legacy, messageParts: doc, metadata: { stopReason } });
       }
 
       // Clear checkpoint on successful completion
@@ -1131,7 +1209,10 @@ export class DirectAdapter implements IAgentEngine {
       }
 
       terminalEmitted = true;
-      const terminalContent = { finalContent: cleanContent, thinkingContent, stopReason, resolution: result.resolution };
+      const legacy = { id: `run_${runId}_assistant`, runId, turnId: userFactId, role: 'assistant' as const, content: displayContent, source: 'fact' as const };
+      let messageParts = projection.finalDocument(legacy, stopReason !== 'completed');
+      if (!_actor && displayContent) messageParts = persistedMessageParts({ ...legacy, messageParts, metadata: { stopReason } }, 'jsonl').messageParts!;
+      const terminalContent = { finalContent: cleanContent, thinkingContent, stopReason, resolution: result.resolution, messageParts };
       if (stopReason === 'completed') {
         await deliver({ type: 'complete', ...terminalContent });
       } else if (stopReason === 'cancelled') {

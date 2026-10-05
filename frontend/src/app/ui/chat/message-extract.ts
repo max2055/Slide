@@ -3,6 +3,7 @@ import { stripEnvelope } from "../../src/shared/chat-envelope.ts";
 import { extractAssistantVisibleText as extractSharedAssistantVisibleText } from "../../src/shared/chat-message-content.ts";
 import { stripThinkingTags } from "../format.ts";
 import { normalizeLowercaseStringOrEmpty } from "../string-coerce.ts";
+import { messagePartsDisplay } from './message-normalizer.ts';
 
 const textCache = new WeakMap<object, string | null>();
 const thinkingCache = new WeakMap<object, string | null>();
@@ -18,10 +19,10 @@ function processMessageText(text: string, role: string): string {
 }
 
 export function extractText(message: unknown): string | null {
-  const m = message as Record<string, unknown>;
+  const m = messagePartsDisplay(message);
   const role = typeof m.role === "string" ? m.role : "";
   const raw =
-    role === "assistant" ? extractSharedAssistantVisibleText(message) : extractRawText(message);
+    role === "assistant" ? extractSharedAssistantVisibleText(m) : extractRawText(m);
   if (!raw) {
     return null;
   }
@@ -42,7 +43,7 @@ export function extractTextCached(message: unknown): string | null {
 }
 
 export function extractThinking(message: unknown): string | null {
-  const m = message as Record<string, unknown>;
+  const m = messagePartsDisplay(message);
   const content = m.content;
   const parts: string[] = [];
   if (Array.isArray(content)) {
@@ -86,7 +87,7 @@ export function extractThinkingCached(message: unknown): string | null {
 }
 
 export function extractRawText(message: unknown): string | null {
-  const m = message as Record<string, unknown>;
+  const m = messagePartsDisplay(message);
   const content = m.content;
   if (typeof content === "string") {
     return content;
