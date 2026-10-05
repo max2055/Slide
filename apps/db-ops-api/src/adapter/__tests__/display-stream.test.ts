@@ -19,6 +19,15 @@ function fixture(limits = {}) {
 }
 const start: ProjectionOperation = { type: 'part.start', messageId: 'message', part: { id: 'part', type: 'text', text: 'first', source: 'fact', status: 'partial' } };
 describe('synchronous bounded display authority', () => {
+  it('a full projection leaves no unaccounted pending operation under a small configured cap', () => {
+    vi.useFakeTimers(); const f = fixture({ maxRunOps: 2, maxGlobalOps: 2 });
+    try {
+      f.publish(start, { ...start, part: { ...start.part, id: 'second' } } as ProjectionOperation);
+      f.publish({ type: 'part.append', partId: 'part', text: 'suffix' });
+      expect(f.hub.stats().ops).toBeLessThanOrEqual(2);
+      expect(f.events.at(-1)?.projection?.operations[0]).toMatchObject({ type: 'part.append', text: 'suffix' });
+    } finally { f.hub.dispose(); }
+  });
   it('body bytes grow exactly linearly for 500/1000/2000 fragments under equal sampling', () => {
     vi.useFakeTimers();
     const measured = [500, 1000, 2000].map(n => {

@@ -31,7 +31,7 @@ S3 基于 S2 merge `a70de824199e9d2e013e47e5d7dc815f741230e4`。新端正文 tru
 | textBatchBytes | 8192 | 正文批阈值 |
 | progressWindowMs | 200 | 进度合并窗口 |
 
-pending batch 和 capture 重入队列计入边界；重入 overflow 退最新快照。慢 peer 继续使用既有 bounded writer 并以 4009 断开，不阻塞正常 peer 的 terminal。浏览器 Gateway 水位最多 64 项、订阅最多 8 项，UI 投影最多 64 个 run。此预算约束展示缓存，不替代现有 actor/持久事实/连接准入的预算。
+pending batch 和 capture 重入队列计入边界；快照已占满自定义 operations cap 时立即 flush，不留超限 pending；重入 overflow 退最新快照。慢 peer 继续使用既有 bounded writer 并以 4009 断开，不阻塞正常 peer 的 terminal。浏览器 Gateway 水位最多 64 项、订阅最多 8 项，UI 投影最多 64 个 run。此预算约束展示缓存，不替代现有 actor/持久事实/连接准入的预算。
 
 单快照超限保留尾部；正文按 UTF-8 边界裁剪，工具沿用 S1 的有界结果预览/状态/计时。无空间的 part 可省略，`recovery.truncated/omittedParts` 明示，并提供 `detailRef: {kind:"authorized-history", sessionKey, runId}`。这是经原权限边界读取分页历史的引用，不是绕过授权的 URL。现代 `run.snapshot` 仅携带 durable 状态元数据，不以完整存储答案绕过快照预算。
 
@@ -39,7 +39,7 @@ pending batch 和 capture 重入队列计入边界；重入 overflow 退最新�
 
 ## 实测与验收
 
-原始字节数据见 [MAX-127-ws-metrics.json](MAX-127-ws-metrics.json)，取自 `442b777a` 真实 authenticated WS fixture，同 run 同时两端，每 provider 片段 `setImmediate`，1000 片段/100000 bytes。正文计量为 JSON 的 delta/partText/finalContent/thinkingContent/text/content 字段编码字节，包含快照、持久确认及工具预览；WS 总量加每帧保守 14 bytes，元数据为差值。帧数因 timer 调度在 37–40 间变化。
+原始字节数据见 [MAX-127-ws-metrics.json](MAX-127-ws-metrics.json)，取自 `442b777a` 真实 authenticated WS fixture，同 run 同时两端，每 provider 片段 `setImmediate`，1000 片段/100000 bytes。正文计量为 JSON 的 delta/partText/finalContent/thinkingContent/text/content 字段编码字节，包含快照、持久确认及工具预览；WS 总量加每帧保守 14 bytes，元数据为差值。帧数因 timer 调度在 35–40 间变化。
 
 | 模式 | WS 总 bytes | 正文 bytes | 元数据/帧 bytes | 帧 |
 |---|---:|---:|---:|---:|
@@ -64,7 +64,7 @@ pending batch 和 capture 重入队列计入边界；重入 overflow 退最新�
 | 命令/门禁 | 实际结果 |
 |---|---|
 | `pnpm --filter agent-core test` | 33 文件 / 674 项通过 |
-| `pnpm --filter slide-api test` | 322 文件通过、28 跳过；3037 项通过、251 跳过 |
+| `pnpm --filter slide-api test` | 322 文件通过、28 跳过；3038 项通过、251 跳过 |
 | `pnpm --filter slide-frontend test` | 最终 85 文件 / 589 项通过 |
 | `pnpm --filter slide-sandbox-controller test` | 22 项通过、4 跳过 |
 | 四模块 `typecheck` | 通过；前端最终重新验证 |
@@ -75,7 +75,7 @@ pending batch 和 capture 重入队列计入边界；重入 overflow 退最新�
 | build/CSP、lint、contracts:check、qualification:matrix、security:scan、security:audit | 通过；lint 0 errors/262 既有 warnings；matrix 37/37；已有 bundle warnings |
 | `git diff --check` | 通过 |
 
-初次 workspace gate 发现 malformed delta 测试期望与冻结策略不一致，已修正并重跑 Core/API 完整门禁。真实取消最初暴露历史竞态与 sending 标志遗漏，已修复且保持原端到端断言，未 skip 或放宽。完整集成结果与最终受影响重验分开记录；CI 必须核验 PR 当前精确 head 的全部八项 SUCCESS，不能以本地证据代替。
+初次 workspace gate 发现 malformed delta 测试期望与冻结策略不一致，已修正并重跑 Core/API 完整门禁。小 operations cap 的 pending 超额已用回归复现并修复，重验 API 3038 项与真实 WS 集成通过。真实取消最初暴露历史竞态与 sending 标志遗漏，已修复且保持原端到端断言，未 skip 或放宽。完整集成结果与最终受影响重验分开记录；CI 必须核验 PR 当前精确 head 的全部八项 SUCCESS，不能以本地证据代替。
 
 ## 回滚与交接
 

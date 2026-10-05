@@ -158,7 +158,8 @@ export class DisplayStreamAuthority<Peer extends object> {
         timer.unref();
         run.pending = { kind, key, frame: structuredClone(frame), bytes: size, ops: 1, timer };
       }
-      if (run.pending!.bytes >= this.limits.textBatchBytes || run.pending!.ops >= this.limits.maxRunOps) this.flush(run);
+      if (run.pending!.bytes >= this.limits.textBatchBytes || run.pending!.ops >= this.limits.maxRunOps
+        || run.state.parts.length + run.pending!.frame.operations.length > this.limits.maxRunOps) this.flush(run);
     } else {
       this.flush(run);
       // part.start includes the first nonempty text. No merge-window delay.
