@@ -1,5 +1,6 @@
 /** Distance (px) from the bottom within which we consider the user "near bottom". */
-const NEAR_BOTTOM_THRESHOLD = 450;
+const NEAR_BOTTOM_THRESHOLD = 80;
+const readingPositions = new WeakMap<HTMLElement, number>();
 
 type ScrollHost = {
   updateComplete: Promise<unknown>;
@@ -53,13 +54,12 @@ export function scheduleChatScroll(host: ScrollHost, force = false, smooth = fal
         host.chatNewMessagesBelow = true;
         return;
       }
-      const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
 
       // force=true only overrides when we haven't auto-scrolled yet (initial load).
       // After initial load, respect the user's scroll position.
       const effectiveForce = force && !host.chatHasAutoScrolled;
       const shouldStick =
-        effectiveForce || host.chatUserNearBottom || distanceFromBottom < NEAR_BOTTOM_THRESHOLD;
+        effectiveForce || host.chatUserNearBottom;
 
       if (!shouldStick) {
         // User is scrolled up — flag that new content arrived below.
@@ -89,12 +89,9 @@ export function scheduleChatScroll(host: ScrollHost, force = false, smooth = fal
         if (!latest || latest.dataset.historyReading === "true") {
           return;
         }
-        const latestDistanceFromBottom =
-          latest.scrollHeight - latest.scrollTop - latest.clientHeight;
         const shouldStickRetry =
           effectiveForce ||
-          host.chatUserNearBottom ||
-          latestDistanceFromBottom < NEAR_BOTTOM_THRESHOLD;
+          host.chatUserNearBottom;
         if (!shouldStickRetry) {
           return;
         }
@@ -133,7 +130,10 @@ export function handleChatScroll(host: ScrollHost, event: Event) {
     return;
   }
   const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-  host.chatUserNearBottom = distanceFromBottom < NEAR_BOTTOM_THRESHOLD;
+  const previous = readingPositions.get(container);
+  const upward = previous !== undefined && container.scrollTop < previous - 1;
+  readingPositions.set(container, container.scrollTop);
+  host.chatUserNearBottom = distanceFromBottom <= 4 || (!upward && host.chatUserNearBottom && distanceFromBottom < NEAR_BOTTOM_THRESHOLD);
   host.chatNewMessagesBelow = !host.chatUserNearBottom;
   // Explicit history navigation remains pinned until the user chooses latest.
   if (container.dataset.historyReading === "true") host.chatUserNearBottom = false;

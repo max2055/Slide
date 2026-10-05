@@ -3,7 +3,7 @@ import { readMessageParts, type MessagePart, type MessageParts, type PartBoundar
 import type { NormalizedToolEvent, ToolPhase } from './tool-stream.js';
 import { boundedToolValue, buildToolPreview } from './tool-stream.js';
 
-export type RunPhase = 'preparing' | 'generating' | 'tools' | 'retrying' | 'saving';
+export type RunPhase = 'preparing' | 'waiting_model' | 'generating' | 'tools' | 'approval' | 'retrying' | 'saving';
 export type RunTerminal = 'completed' | 'partial' | 'cancelled' | 'timed_out' | 'failed';
 export interface ProjectedPart { messageId: string; part: MessagePart; factMessageId?: string; }
 export interface ProjectionAnchor { id: string; parts: ProjectedPart[]; }
@@ -60,7 +60,7 @@ function displayPart(value: MessagePart): MessagePart {
   }
   return part;
 }
-const phases: RunPhase[] = ['preparing', 'generating', 'tools', 'retrying', 'saving'];
+const phases: RunPhase[] = ['preparing', 'waiting_model', 'generating', 'tools', 'approval', 'retrying', 'saving'];
 const terminal: RunTerminal[] = ['completed', 'partial', 'cancelled', 'timed_out', 'failed'];
 const ranks: ToolPhase[] = ['planned', 'queued', 'running', 'settled', 'persisted'];
 const identity = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 512;

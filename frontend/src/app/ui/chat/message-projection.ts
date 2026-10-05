@@ -68,6 +68,8 @@ export function hydrateChatProjections(host: Host, messages: unknown[]): void {
 export function renderChatProjection(host: Host, runId = String(host.chatRunId ?? '')): void {
   const state = getChatProjection(host, runId);
   if (!state) return;
+  host.chatRuntimePhase = state.phase;
+  host.chatMessageProjection = state;
   const rows = state.parts.filter(p => p.part.status !== 'discarded');
   const thinking = rows.filter(p => p.part.type === 'reasoning');
   host.chatThinkingText = thinking.map(p => p.part.type === 'reasoning' ? p.part.text ?? '' : '').join('');

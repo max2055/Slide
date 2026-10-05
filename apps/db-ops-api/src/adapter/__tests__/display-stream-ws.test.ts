@@ -1,5 +1,5 @@
 import { afterEach, it, expect, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
@@ -32,8 +32,9 @@ function mockBoundaries() {
 async function peer(port: number, subscriptionId: string, modern = true) {
   const socket = new WebSocket(`ws://127.0.0.1:${port}`);
   const events: any[] = [];
+  const received = new Map<any, number>();
   const listeners = new Set<() => void>();
-  socket.on('message', raw => { events.push(JSON.parse(raw.toString())); for (const notify of listeners) notify(); });
+  socket.on('message', raw => { const event = JSON.parse(raw.toString()); events.push(event); received.set(event, performance.now()); for (const notify of listeners) notify(); });
   const wait = (predicate: () => boolean) => new Promise<void>((resolve, reject) => {
     const finish = () => { if (!predicate()) return; clearTimeout(timer); listeners.delete(finish); resolve(); };
     const timer = setTimeout(() => { listeners.delete(finish); reject(new Error(`WS timeout: ${events.map(e => e.type + ':' + (e.error ?? '')).slice(-15).join(',')}`)); }, 10_000);
@@ -42,7 +43,7 @@ async function peer(port: number, subscriptionId: string, modern = true) {
   await once(socket, 'open');
   socket.send(JSON.stringify({ type: 'auth', token: 'fixture-token', ...(modern ? { capabilities: ['parts-stream-v1'] } : {}) }));
   await wait(() => events.some(e => e.type === 'auth_ok'));
-  return { socket, events, wait, subscriptionId, watch: (cursor?: unknown) => socket.send(JSON.stringify({ type: 'chat.watch', sessionKey: 'fixture', subscriptionId, cursor })) };
+  return { socket, events, received, wait, subscriptionId, watch: (cursor?: unknown) => socket.send(JSON.stringify({ type: 'chat.watch', sessionKey: 'fixture', subscriptionId, cursor })) };
 }
 function fold(events: DisplayStreamEvent[], subscriptionId: string, previous?: DisplayStreamState) {
   let state: DisplayStreamState = previous ? { ...previous, subscriptionId } : { subscriptionId, recovering: true };
@@ -58,6 +59,36 @@ function measure(events: any[]) {
   for (const event of events) { total += Buffer.byteLength(JSON.stringify(event)) + 14; textValues(event); }
   return { wsBytes: total, bodyBytes: body, metadataAndFrameBytes: total - body, frames: events.length };
 }
+
+it('MAX-128 accepted receipt precedes actual waiting-model phase within 100ms over real WS', async () => {
+  mockBoundaries();
+  vi.spyOn(agentRunService, 'findByIdempotencyKey').mockResolvedValue(null);
+  vi.spyOn(agentRunService, 'claim').mockResolvedValue({ created: true,
+    run: { id: 'admitted-run', actorId: actor.userId, sessionId: 'fixture', messageId: 'admitted-message', idempotencyKey: 'admitted-key', state: 'running' } });
+  vi.spyOn(agentRunService, 'complete').mockImplementation(async (run, event) => ({ ...run, state: 'completed', result: { event } }));
+  let release!: () => void;
+  const provider: LLMProvider = { getDefaultModel: () => 'fixture', chat: async () => final,
+    chatStream: async (_, __, callbacks) => { await new Promise<void>(resolve => { release = resolve; }); await callbacks.onContentDelta('end'); return final; } };
+  const workspace = mkdtempSync(join(tmpdir(), 'phase-admission-'));
+  const adapter = new DirectAdapter({ workspace, tools: new ToolRegistry(), llmProvider: provider,
+    actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(actor), revalidateActor: vi.fn().mockResolvedValue(actor) } });
+  vi.spyOn(adapter as any, 'extractCompletedMemory').mockResolvedValue(undefined);
+  let socket: WebSocket | undefined;
+  try {
+    await adapter.start(); const server = (adapter as any).wsServer; if (!server.address()) await once(server, 'listening');
+    const live = await peer(server.address().port, 'admission'); socket = live.socket; live.watch();
+    socket.send(JSON.stringify({ type: 'chat.send', sessionKey: 'fixture', message: 'phase', messageId: 'admitted-message', idempotencyKey: 'admitted-key', subscriptionId: 'admission' }));
+    await live.wait(() => !!release && live.events.some(e => e.snapshot?.phase === 'waiting_model' || e.projection?.operations.some((op: any) => op.type === 'run.status' && op.phase === 'waiting_model')));
+    const accepted = live.events.find(e => e.type === 'run.started');
+    const waiting = live.events.find(e => e.snapshot?.phase === 'waiting_model' || e.projection?.operations.some((op: any) => op.type === 'run.status' && op.phase === 'waiting_model'));
+    const acceptedToActualMs = live.received.get(waiting)! - live.received.get(accepted)!;
+    expect(acceptedToActualMs).toBeGreaterThanOrEqual(0); expect(acceptedToActualMs).toBeLessThanOrEqual(100);
+    expect(live.events.flatMap(e => e.projection?.operations ?? []).some(op => op.phase === 'generating')).toBe(false);
+    if (process.env.MAX128_ACCEPTANCE_METRICS_FILE) writeFileSync(process.env.MAX128_ACCEPTANCE_METRICS_FILE,
+      JSON.stringify({ acceptedToActualMs, clock: 'same Node performance.now at real authenticated WS receipt', storage: 'mocked admission/completion; provider held before first output; no paid model' }, null, 2));
+    release(); await live.wait(() => live.events.some(e => e.type === 'run.snapshot' && e.run?.state === 'completed'));
+  } finally { release?.(); socket?.close(); await adapter.dispose(); rmSync(workspace, { recursive: true, force: true }); }
+}, 15_000);
 
 it('real WS old/new clients, disconnect/refresh, capture suffix and bounded long result preserve projection without tool replay', async () => {
   mockBoundaries();
@@ -86,13 +117,29 @@ it('real WS old/new clients, disconnect/refresh, capture suffix and bounded long
   const adapter = new DirectAdapter({ workspace, tools, toolsForActor: () => tools, llmProvider: provider,
     actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(actor), revalidateActor: vi.fn().mockResolvedValue(actor) } });
   const sockets: WebSocket[] = [];
+  const published = new Map<number, number>();
+  const serverTimings: Array<{ type: string; queueFromLastOperationMs?: number; sendCallbackMs: number }> = [];
+  const publish = (adapter as any).displayStreams.publish.bind((adapter as any).displayStreams);
+  vi.spyOn((adapter as any).displayStreams, 'publish').mockImplementation((session: string, frame: ProjectionFrame) => {
+    published.set(frame.sequence, performance.now()); return publish(session, frame);
+  });
   try {
     await adapter.start(); const server = (adapter as any).wsServer;
     if (!server.address()) await once(server, 'listening');
+    server.on('connection', (socket: any) => {
+      const nativeSend = socket.send.bind(socket);
+      socket.send = (data: string, callback: (error?: Error) => void) => {
+        const event = JSON.parse(String(data)); const at = performance.now();
+        const queued = published.get(event.projection?.sequence);
+        nativeSend(data, (error?: Error) => { serverTimings.push({ type: event.type,
+          ...(queued !== undefined ? { queueFromLastOperationMs: at - queued } : {}), sendCallbackMs: performance.now() - at }); callback?.(error); });
+      };
+    });
     const port = server.address().port;
     const legacy = await peer(port, 'legacy', false); sockets.push(legacy.socket); legacy.watch();
     const modern = await peer(port, 'live'); sockets.push(modern.socket); modern.watch();
     const modern2 = await peer(port, 'other'); sockets.push(modern2.socket); modern2.watch();
+    const sendAt = performance.now();
     legacy.socket.send(JSON.stringify({ type: 'chat.send', sessionKey: 'fixture', message: 'stream fixture' }));
     await modern.wait(() => !!releaseTool && modern.events.some(e => e.projection?.operations.some((o: any) => o.type === 'tool.state' && o.event.phase === 'running')));
     expect(executions).toBe(1);
@@ -119,6 +166,13 @@ it('real WS old/new clients, disconnect/refresh, capture suffix and bounded long
     expect(fresh.projection).toEqual(uninterrupted.projection);
     expect(fresh.projection?.terminal).toBe('completed');
     expect(fresh.projection?.durable).toBeTruthy();
+    const phases = modern2.events.flatMap(e => e.projection?.operations ?? []).filter(op => op.type === 'run.status').map(op => op.phase);
+    expect(phases).toEqual(expect.arrayContaining(['waiting_model', 'generating', 'tools', 'saving']));
+    const firstState = modern2.events.find(e => e.projection?.operations.some((op: any) => op.type === 'run.status'));
+    const sendToFirstPhaseMs = modern2.received.get(firstState)! - sendAt;
+    expect(sendToFirstPhaseMs).toBeLessThanOrEqual(100);
+    const metrics = { sendToFirstPhaseMs, phases, timing: 'local WS sender/receiver performance.now for send-to-state; this legacy send has no admission receipt; server publish-to-writer/send callback measured in server monotonic clock separately; queue duration starts at last operation in coalesced frame', raw: serverTimings };
+    if (process.env.MAX128_SERVER_METRICS_FILE) writeFileSync(process.env.MAX128_SERVER_METRICS_FILE, JSON.stringify(metrics, null, 2));
     expect(fresh.projection?.parts.filter(p => p.part.type === 'tool_call')).toHaveLength(1);
     expect(executions).toBe(1); expect(requests).toBe(2);
     expect(modern2.events.some(e => e.type === 'text_delta' || e.type === 'complete')).toBe(false);

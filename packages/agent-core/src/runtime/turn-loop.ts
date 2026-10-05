@@ -268,6 +268,7 @@ export class TurnLoop {
       if (!response.error && !response.errorKind && response.finishReason !== 'error' && response.finishReason !== 'length' && response.shouldExecuteTools && response.toolCalls.length > 0) {
         try { assertToolBudget(spec, recovery.state, response.toolCalls.length); } catch (error) { stopForBudget(error); break; }
         state = transition(state, "tools_running");
+        await spec.onRuntimePhase?.('tools');
         state.toolCalls += response.toolCalls.length;
         recovery.state.toolCalls += response.toolCalls.length;
         emit('tools.start');

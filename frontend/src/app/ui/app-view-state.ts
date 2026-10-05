@@ -75,6 +75,9 @@ export type AppViewState = {
   chatStream: string | null;
   chatStreamStartedAt: number | null;
   chatRunId: string | null;
+  chatRuntimePhase?: import('../../../../packages/agent-core/src/message-projection.ts').RunPhase | null;
+  chatCancelRequested?: boolean;
+  chatMessageProjection?: import('../../../../packages/agent-core/src/message-projection.ts').MessageProjection | null;
   chatSideResult: ChatSideResult | null;
   chatSideResultTerminalRuns: Set<string>;
   compactionStatus: CompactionStatus | null;

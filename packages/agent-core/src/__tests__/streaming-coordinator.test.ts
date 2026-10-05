@@ -86,6 +86,19 @@ describe('bounded streaming admission and ordered drain', () => {
 });
 
 describe('ModelStep reader/writer lifecycle', () => {
+  it('publishes waiting before provider entry and generating only at actual output', async () => {
+    const gate = deferred(); const entered = deferred(); const phases: string[] = [];
+    const provider: LLMProvider = { getDefaultModel: () => 'test', chat: async () => response,
+      chatStream: async (_, __, callbacks) => {
+        entered.resolve(); await gate.promise;
+        await callbacks.onThinkingDelta?.('actual reasoning'); await callbacks.onContentDelta('a'); return response;
+      } };
+    const hook = Object.assign(new NoopHook(), { wantsStreaming: () => true });
+    const f = fixture(provider, hook); f.spec.onRuntimePhase = phase => { phases.push(phase); };
+    const run = f.step.request(f.spec, [], hook, f.context);
+    await entered.promise; expect(phases).toEqual(['waiting_model']);
+    gate.resolve(); await run; expect(phases).toEqual(['waiting_model', 'generating']);
+  });
   it('real OpenAI SDK SSE decoder advances independently, retaining reasoning/text/tool assembly', async () => {
     const server = createServer((_, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream' });

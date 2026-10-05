@@ -203,6 +203,8 @@ export interface AgentHook {
 // ── Agent run spec & result ──
 
 export interface AgentRunSpec {
+  /** Actual runtime boundaries; never model-generated progress or percentages. */
+  onRuntimePhase?: (phase: import('./message-projection.js').RunPhase) => Promise<void> | void;
   onToolEvent?: (event: import("./tool-stream.js").ToolLifecycleEvent) => Promise<void> | void;
   streamingLimits?: import('./runtime/streaming-coordinator.js').StreamingLimits;
   runtimeRunId?: string;

@@ -49,7 +49,15 @@ export class ModelStep {
       });
       const options = { model: spec.model, temperature: spec.temperature, maxTokens: spec.maxTokens,
         reasoningEffort: spec.reasoningEffort, timeoutS, streamIdleTimeoutS: idleS, signal: controller.signal };
-      const request = Promise.resolve().then(() => {
+      let outputStarted = false;
+      const output = async () => {
+        if (outputStarted) return;
+        outputStarted = true;
+        await spec.onRuntimePhase?.('generating');
+      };
+      const request = Promise.resolve().then(async () => {
+        controller.signal.throwIfAborted();
+        await spec.onRuntimePhase?.('waiting_model');
         controller.signal.throwIfAborted();
         const definitions = spec.tools.getDefinitions();
         // Ordinary requests carry the step's snapshot; internal summary requests
@@ -62,15 +70,16 @@ export class ModelStep {
           onActivity: activity,
           onContentDelta: async delta => {
             if (!active || controller.signal.aborted) return;
-            if (delta) { activity(); context.streamedContent = true; if (context.provisionalBytes) context.provisionalBytes.text += Buffer.byteLength(delta); }
+            if (delta) { await output(); activity(); context.streamedContent = true; if (context.provisionalBytes) context.provisionalBytes.text += Buffer.byteLength(delta); }
             await queue!.enqueue({ type: 'text', delta });
           },
           onThinkingDelta: async delta => {
             if (!active || controller.signal.aborted) return;
-            if (delta) { activity(); context.streamedReasoning = true; if (context.provisionalBytes) context.provisionalBytes.reasoning += Buffer.byteLength(delta); await queue!.enqueue({ type: 'reasoning', delta }); }
+            if (delta) { await output(); activity(); context.streamedReasoning = true; if (context.provisionalBytes) context.provisionalBytes.reasoning += Buffer.byteLength(delta); await queue!.enqueue({ type: 'reasoning', delta }); }
           },
           onToolCallDelta: async delta => {
             if (!active || controller.signal.aborted) return;
+            await output();
             activity();
             if (context.provisionalBytes) context.provisionalBytes.tool += Buffer.byteLength(JSON.stringify(delta));
             // Tool arguments remain provider-owned. This marker fences text

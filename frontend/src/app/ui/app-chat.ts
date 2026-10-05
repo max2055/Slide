@@ -30,6 +30,7 @@ export type ChatHost = {
   chatQueue: ChatQueueItem[];
   chatRunId: string | null;
   chatSending: boolean;
+  chatCancelRequested?: boolean;
   lastError?: string | null;
   sessionKey: string;
   basePath: string;
@@ -91,8 +92,20 @@ function isBtwCommand(text: string) {
 }
 
 export async function handleAbortChat(host: ChatHost) {
-  if (!host.client || !host.chatRunId || !host.sessionKey) return;
-  host.client.cancelChat(host.chatRunId, host.sessionKey);
+  if (!host.client || !host.connected || !host.chatRunId || !host.sessionKey) return;
+  if (host.chatCancelRequested) return;
+  host.chatCancelRequested = true;
+  try {
+    if (host.client.cancelChat(host.chatRunId, host.sessionKey) === false) {
+      host.chatCancelRequested = false;
+      host.lastError = "取消请求未送达，请在连接恢复后重试。";
+      return;
+    }
+  } catch {
+    host.chatCancelRequested = false;
+    host.lastError = "取消请求未送达，请在连接恢复后重试。";
+    return;
+  }
   host.chatSending = true;
 }
 

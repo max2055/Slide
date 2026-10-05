@@ -1157,7 +1157,6 @@ export class DirectAdapter implements IAgentEngine {
     const hook = mapHookEventToChatEvent({ beforeIteration: async ctx => {
       attempt = ctx.streamAttempt ?? attempt + 1; sourceRequestId = ctx.sourceRequestId;
       projection.begin(ctx.messageId ?? `model_${sourceRequestId ?? runId}`);
-      await deliver({ type: 'message_parts', operations: [{ type: 'run.status', phase: 'generating' }] });
     } }, deliver, thinkingHolder, streamHolder, runId, projection);
 
     let terminalEmitted = false;
@@ -1172,6 +1171,7 @@ export class DirectAdapter implements IAgentEngine {
         ...runtimeSpec(policy),
         streamingLimits: this.streamingLimits,
         runtimeRunId: runId,
+        onRuntimePhase: async phase => { await deliver({ type: 'message_parts', operations: [{ type: 'run.status', phase }] }); },
         onRuntimeEvent: recordRuntimeEvent,
         maxToolResultChars: this.runtimeLimits.maxToolResultChars,
         concurrentTools: this.concurrentTools,
@@ -1196,6 +1196,10 @@ export class DirectAdapter implements IAgentEngine {
             const preview = buildToolPreview(event.result, event.toolCallId, redactSensitiveText);
             if (event.outcome === 'ok') await deliver({ ...base, type: 'tool_result', result: preview.text, preview });
             else await deliver({ ...base, type: 'tool_error', error: preview.text, preview });
+            const result = event.result as { errorCode?: string; data?: { approvalId?: unknown } } | undefined;
+            if (result && ['APPROVAL_REQUIRED', 'APPROVAL_PENDING'].includes(result.errorCode ?? '') && result.data?.approvalId) {
+              await deliver({ type: 'message_parts', operations: [{ type: 'run.status', phase: 'approval' }] });
+            }
           } else await deliver({ ...base, type: 'tool_state', phase: event.phase, ...(args ? { args } : {}) });
         },
       }).catch(async error => {

@@ -60,6 +60,12 @@ const sanitizeOptions = {
   ALLOWED_ATTR: allowedAttrs,
 };
 
+/** Shared security boundary for cached block rendering and the legacy renderer. */
+export function sanitizeMarkdownHtml(rendered: string): string {
+  installHooks();
+  return DOMPurify.sanitize(rendered, sanitizeOptions);
+}
+
 let hooksInstalled = false;
 const MARKDOWN_CHAR_LIMIT = 140_000;
 const MARKDOWN_PARSE_LIMIT = 40_000;
