@@ -67,7 +67,8 @@ export class ModelStep {
         const projection = this.provider.projectMessages?.(normalized, spec.model) ?? normalized;
         new ContextManager(spec, this.provider).assertFits(projection, undefined, definitions);
         return hook.wantsStreaming() ? this.provider.chatStream(projection, definitions, {
-          onActivity: activity,
+          // Idle is semantic provider output, not transport heartbeats/metadata.
+          // Content, thinking and tool fragments below own the deadline.
           onContentDelta: async delta => {
             if (!active || controller.signal.aborted) return;
             if (delta) { await output(); activity(); context.streamedContent = true; if (context.provisionalBytes) context.provisionalBytes.text += Buffer.byteLength(delta); }
