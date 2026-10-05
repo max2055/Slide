@@ -9,6 +9,7 @@ import type { LLMProvider, LLMResponse, StreamCallbacks } from '@slide/agent-cor
 import { WebSocket } from 'ws';
 import { DirectAdapter } from '../direct-adapter.js';
 import { canonicalStore } from '../canonical-store.js';
+import { agentRunService } from '../agent-run-service.js';
 import { chatDatabaseService } from '../../chat-database-service.js';
 import type { ActorContext } from '../../auth/actor-context.js';
 
@@ -27,6 +28,7 @@ it('real authenticated Adapter WS → Gateway → tool consumer preserves identi
   vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
   vi.spyOn(chatDatabaseService, 'authorizeSession').mockResolvedValue({} as any);
   vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
+  vi.spyOn(agentRunService, 'pendingCompletions').mockResolvedValue([]);
   const requireFrontend = createRequire(new URL('../../../../../frontend/package.json', import.meta.url));
   const { JSDOM } = requireFrontend('jsdom');
   const dom = new JSDOM('', { url: 'http://localhost' });
@@ -61,6 +63,8 @@ it('real authenticated Adapter WS → Gateway → tool consumer preserves identi
   const adapter = new DirectAdapter({ workspace, concurrentTools: true, tools, toolsForActor: () => tools, llmProvider: provider,
     actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(actor), revalidateActor: vi.fn().mockResolvedValue(actor) } });
   let ws: WebSocket | undefined;
+  let watcher: WebSocket | undefined;
+  let snapshotObserved = false;
   try {
     await adapter.start();
     const server = (adapter as any).wsServer;
@@ -92,7 +96,25 @@ it('real authenticated Adapter WS → Gateway → tool consumer preserves identi
           if (event.type === 'tool_result' && event.toolCallId === 'fast') {
             expect(host.toolStreamById.get('fast').phase).toBe('settled');
             expect(host.toolStreamById.get('slow').phase).toBe('running');
-            releaseSlow();
+            watcher = new WebSocket(`ws://127.0.0.1:${port}`);
+            watcher.on('open', () => watcher!.send(JSON.stringify({ type: 'auth', token: 'fixture-token' })));
+            watcher.on('error', reject);
+            watcher.on('message', rawSnapshot => {
+              try {
+                const snapshot = JSON.parse(rawSnapshot.toString());
+                if (snapshot.type === 'auth_ok') { watcher!.send(JSON.stringify({ type: 'chat.watch', sessionKey: 'stream-fixture' })); return; }
+                if (snapshot.type !== 'text_delta' || snapshotObserved) return;
+                expect(snapshot.projection.operations[0].type).toBe('stream.snapshot');
+                const fresh = { ...host, chatRunId: null, chatStream: '', chatThinkingText: '', chatToolMessages: [],
+                  chatStreamSegments: [], toolStreamById: new Map(), toolStreamOrder: [] };
+                handleDirectAdapterEvent(fresh, snapshot);
+                expect(fresh.chatStreamSegments).toMatchObject([{ text: 'before', beforeToolCallId: 'slow' }]);
+                expect(fresh.toolStreamOrder).toEqual(['slow', 'fast']);
+                expect(fresh.toolStreamById.get('slow')).toMatchObject({ phase: 'running' });
+                expect(fresh.toolStreamById.get('fast')).toMatchObject({ phase: 'settled', outcome: 'ok' });
+                snapshotObserved = true; releaseSlow();
+              } catch (error) { clearTimeout(timeout); reject(error); }
+            });
           }
         } catch (error) { clearTimeout(timeout); reject(error); }
       });
@@ -104,8 +126,9 @@ it('real authenticated Adapter WS → Gateway → tool consumer preserves identi
     const firstPersisted = received.findIndex(e => e.phase === 'persisted');
     expect(firstPersisted).toBeGreaterThan(received.findIndex(e => e.type === 'tool_error'));
     expect(received.filter(e => e.type === 'tool_start')).toHaveLength(2);
+    expect(snapshotObserved).toBe(true);
   } finally {
-    releaseSlow?.(); ws?.close();
+    releaseSlow?.(); watcher?.close(); ws?.close();
     if (host.toolStreamSyncTimer != null) clearTimeout(host.toolStreamSyncTimer);
     gateway.disconnect(); await adapter.dispose(); dom.window.close(); rmSync(workspace, { recursive: true, force: true });
   }

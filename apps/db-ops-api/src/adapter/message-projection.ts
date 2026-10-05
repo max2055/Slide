@@ -75,7 +75,8 @@ export class AdapterMessageProjection {
         { type: 'parts.persisted', documents: projectionDocuments([event.messageParts]) },
         { type: 'run.terminal', outcome: 'completed', durable: event.messageParts.durable });
       // Completion stays a candidate until the admission owner's transaction acknowledges it.
-      if (event.type !== 'complete') operations.push({ type: 'run.terminal', outcome: event.type === 'cancelled' ? 'cancelled' : event.stopReason === 'timed_out' ? 'timed_out' : 'failed',
+      if (event.type !== 'complete') operations.push({ type: 'run.terminal', outcome: event.type === 'cancelled' ? 'cancelled' : event.stopReason === 'timed_out' ? 'timed_out'
+        : event.stopReason === 'max_iterations' || event.resolution?.kind === 'partial' ? 'partial' : 'failed',
         ...(event.type === 'error' ? { error: event.error } : {}) });
     }
     const frame: ProjectionFrame = { version: 1, runId: this.runId, attempt, sequence, operations };

@@ -63,3 +63,10 @@ it('split sensitive JSON stays display-only and never leaks through input or per
   adapter.observe({ type: 'tool_start', toolCallId: 'provider-call', toolName: 'query', args: {}, occurredAt: 1 }, 1, 4);
   expect(adapter.state.parts.map(p => p.part.type)).toEqual(['tool_call']);
 });
+
+it.each([['max_iterations', 'partial'], ['timed_out', 'timed_out'], ['error', 'failed']])('retains %s terminal without fabricating completed storage', (stopReason, outcome) => {
+  const adapter = new AdapterMessageProjection('run');
+  adapter.observe({ type: 'error', error: 'interrupted', stopReason }, 1, 1);
+  expect(adapter.state.terminal).toBe(outcome);
+  expect(adapter.state.durable).toBeUndefined();
+});

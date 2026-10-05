@@ -882,7 +882,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     if (event.runId && event.runId !== event.projection.runId) return;
     if (!acceptChatProjection(host, event.projection)) return;
     const barrier = !['text_delta', 'thinking_delta'].includes(event.type)
-      || event.projection.operations.some(op => op.type === 'stream.reset');
+      || event.projection.operations.some(op => op.type === 'stream.reset' || op.type === 'stream.snapshot');
     if (barrier) { flushDirectStreamUpdates(host); renderChatProjection(host, event.projection.runId); }
     else { pendingStreamUpdateFor(host).projectionRunId = event.projection.runId; scheduleDirectStreamFlush(host); }
     if (['complete', 'cancelled', 'error'].includes(event.type)) {

@@ -1101,6 +1101,7 @@ export class DirectAdapter implements IAgentEngine {
       if (['complete', 'error', 'cancelled'].includes(event.type)) { streamClosed = true; this.streamSnapshots.delete(sessionKey); }
       else this.streamSnapshots.set(sessionKey, { type: 'text_delta', delta: streamHolder.text, reset: true,
         thinkingContent: thinkingHolder.text, sequence, attempt, runId, sessionKey,
+        projection: { version: 1, runId, sequence, attempt, operations: [{ type: 'stream.snapshot', snapshot: structuredClone(projection.state) }] },
         anchorId: (session.metadata.runtime_checkpoint?.stream_state_v1 as import('@slide/agent-core').StreamSnapshot | undefined)?.anchor?.checkpointId });
       return consume(ordered, writerSignal ?? (['complete', 'error', 'cancelled'].includes(event.type) || (event.type === 'tool_error' && ['unknown', 'cancelled'].includes(event.outcome ?? '')) ? undefined : signal));
     };
