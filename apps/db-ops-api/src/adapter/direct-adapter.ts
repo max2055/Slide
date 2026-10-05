@@ -1,5 +1,7 @@
 import { boundedToolValue, buildToolPreview } from '@slide/agent-core/tool-stream';
 import { projectionDocuments, reduceMessageProjection, type ProjectionOperation } from '@slide/agent-core/message-projection';
+import { PARTS_STREAM_CAPABILITY, type DisplayCursor } from '@slide/agent-core/display-stream';
+import { DisplayStreamAuthority, type DisplayStreamLimits } from './display-stream.js';
 import { AdapterMessageProjection } from './message-projection.js';
 import { persistedMessageParts } from './message-parts.js';
 import { redactSensitiveText } from '../security/log-redaction.js';
@@ -205,6 +207,7 @@ export interface DirectAdapterOptions {
   actorContextService?: Pick<ActorContextService, 'authenticateAccessToken' | 'revalidateActor'>;
   heartbeatIntervalMs?: number;
   streamingLimits?: import('@slide/agent-core').StreamingLimits;
+  displayStreamLimits?: Partial<DisplayStreamLimits>;
   socketWriteLimits?: import('./bounded-socket-writer.js').SocketWriteLimits;
   memoryWorkspaceId?: string;
   memoryPipeline?: import('@slide/agent-core').MemoryPipeline;
@@ -233,7 +236,8 @@ export class DirectAdapter implements IAgentEngine {
   private readonly runtimeLimits = loadAgentRuntimeLimits();
   private readonly runLimiter = new ActorConcurrencyLimiter(this.runtimeLimits.maxConcurrentRunsPerActor);
   private wsServer: WebSocketServer | null = null;
-  private streamSnapshots = new Map<string, Extract<ChatEvent, { type: 'text_delta' }> & { runId: string; sessionKey: string }>();
+  private readonly displayStreams: DisplayStreamAuthority<WebSocket>;
+  private readonly partsPeers = new WeakSet<WebSocket>();
   private activeRuns = new Map<string, { actorId: number; sessionId: string; controller: AbortController }>();
   private sessionOperations = new Map<string, Set<Promise<void>>>();
   private sessionLocks = new Map<string, Promise<void>>();
@@ -242,6 +246,7 @@ export class DirectAdapter implements IAgentEngine {
 
   constructor(opts: DirectAdapterOptions) {
     this.runner = new AgentRunner(opts.llmProvider);
+    this.displayStreams = new DisplayStreamAuthority(opts.displayStreamLimits);
     this.streamingLimits = opts.streamingLimits;
     this.socketWriter = new BoundedSocketWriter(opts.socketWriteLimits, code => {
       platformLogs.record({ component: 'ws', eventType: 'stream.delivery_failed', status: 'failed', errorCode: code });
@@ -358,17 +363,21 @@ export class DirectAdapter implements IAgentEngine {
       (ws as any)._authState = authState;
       (ws as any)._actorContext = undefined;
 
-      const subscribeToSession = (sessionKey: string) => {
+      const subscribeToSession = (sessionKey: string, subscriptionId?: string) => {
         if (!this.sessionSubscribers.has(sessionKey)) {
           this.sessionSubscribers.set(sessionKey, new Set());
         }
         this.sessionSubscribers.get(sessionKey)!.add(ws);
+        if (this.partsPeers.has(ws)) this.displayStreams.watch(ws, sessionKey, subscriptionId ?? randomUUID(),
+          event => this.socketWriter.send(ws, JSON.stringify(event)));
       };
 
       const sendToSession = (sessionKey: string, payload: Record<string, unknown>) => {
+        const projection = payload.projection as import('@slide/agent-core/message-projection').ProjectionFrame | undefined;
+        if (projection) this.displayStreams.publish(sessionKey, projection);
         const serialized = JSON.stringify(payload);
         for (const subscriber of this.sessionSubscribers.get(sessionKey) ?? []) {
-          if (subscriber.readyState !== WebSocket.OPEN) continue;
+          if (subscriber.readyState !== WebSocket.OPEN || projection && this.partsPeers.has(subscriber)) continue;
           try { this.socketWriter.send(subscriber, serialized); } catch { /* close logging captures the transport failure */ }
         }
       };
@@ -449,6 +458,7 @@ export class DirectAdapter implements IAgentEngine {
         clearTimeout(authTimer);
         clearInterval(heartbeatTimer);
         clearAuthentication();
+        this.displayStreams.unwatch(ws);
         // Unsubscribe from all session broadcasts
         for (const [, subs] of this.sessionSubscribers) {
           subs.delete(ws);
@@ -516,7 +526,9 @@ export class DirectAdapter implements IAgentEngine {
               (ws as any)._actorContext = authenticatedActor;
               (ws as any)._authState = authState;
               clearTimeout(authTimer);
-              this.socketWriter.send(ws, JSON.stringify({ type: 'auth_ok' }));
+              const partsEnabled = process.env.SLIDE_PARTS_STREAM_ENABLED !== 'false' && Array.isArray(msg.capabilities) && msg.capabilities.includes(PARTS_STREAM_CAPABILITY);
+              if (partsEnabled) this.partsPeers.add(ws);
+              this.socketWriter.send(ws, JSON.stringify({ type: 'auth_ok', ...(partsEnabled ? { capabilities: [PARTS_STREAM_CAPABILITY] } : {}) }));
               console.log('[DirectAdapter] WS authenticated', JSON.stringify({ connectionId, userId: authenticatedUserId }));
             }
           } catch {
@@ -652,7 +664,7 @@ export class DirectAdapter implements IAgentEngine {
                 sessionKey = persistentRun.run.sessionId;
                 await chatDatabaseService.authorizeSession(messageActor, sessionKey, 'append');
                 persistentRun.run = await agentRunService.recoverCompletion(persistentRun.run);
-                subscribeToSession(sessionKey);
+                subscribeToSession(sessionKey, typeof msg.subscriptionId === 'string' ? msg.subscriptionId : undefined);
                 this.socketWriter.send(ws, JSON.stringify({
                   type: 'run.snapshot',
                   run: persistentRun.run,
@@ -664,7 +676,7 @@ export class DirectAdapter implements IAgentEngine {
               }
               if (persistentRun) {
                 this.activeRuns.set(persistentRun.run.id, { actorId: messageActor.userId, sessionId: sessionKey, controller });
-                subscribeToSession(sessionKey);
+                subscribeToSession(sessionKey, typeof msg.subscriptionId === 'string' ? msg.subscriptionId : undefined);
                 this.socketWriter.send(ws, JSON.stringify({ type: 'run.started', runId: persistentRun.run.id, sessionKey, messageId }));
               }
 
@@ -677,7 +689,7 @@ export class DirectAdapter implements IAgentEngine {
               });
 
               // Authorization succeeds before the connection joins broadcasts.
-              subscribeToSession(sessionKey);
+              subscribeToSession(sessionKey, typeof msg.subscriptionId === 'string' ? msg.subscriptionId : undefined);
 
               let completionEvent: Extract<ChatEvent, { type: 'complete' }> | undefined;
               let failureEvent: Extract<ChatEvent, { type: 'error' | 'cancelled' }> | undefined;
@@ -830,12 +842,16 @@ export class DirectAdapter implements IAgentEngine {
             if (watchKey) {
               try {
                 await chatDatabaseService.authorizeSession(connectionActor, watchKey, 'watch');
-                if (!this.sessionSubscribers.has(watchKey)) {
-                  this.sessionSubscribers.set(watchKey, new Set());
-                }
+                if (!this.sessionSubscribers.has(watchKey)) this.sessionSubscribers.set(watchKey, new Set());
                 this.sessionSubscribers.get(watchKey)!.add(ws);
-                const stream = this.streamSnapshots.get(watchKey);
-                if (stream) this.socketWriter.send(ws, JSON.stringify(stream));
+                if (this.partsPeers.has(ws)) {
+                  const ok = this.displayStreams.watch(ws, watchKey, typeof msg.subscriptionId === 'string' ? msg.subscriptionId : '',
+                    event => this.socketWriter.send(ws, JSON.stringify(event)), msg.cursor as DisplayCursor | undefined);
+                  if (!ok) this.socketWriter.send(ws, JSON.stringify({ type: 'protocol.error', code: 'STREAM_SUBSCRIPTION_LIMIT' }));
+                } else {
+                  const stream = this.displayStreams.legacySnapshot(watchKey);
+                  if (stream) this.socketWriter.send(ws, JSON.stringify(stream));
+                }
                 // Refresh/reconnect need not retain the original request key.
                 for (const pending of await agentRunService.pendingCompletions(connectionActor.userId, watchKey)) {
                   try {
@@ -1091,6 +1107,7 @@ export class DirectAdapter implements IAgentEngine {
     if (recoveredFacts.length) projection.state = reduceMessageProjection(projection.state, { version: 1, runId, attempt: projection.state.attempt,
       sequence: projection.state.sequence + 1, operations: [{ type: 'parts.persisted', documents: projectionDocuments(recoveredFacts) }] });
     sequence = Math.max(sequence, projection.state.sequence);
+    this.displayStreams.start(sessionKey, runId, userFactId, () => projection.state);
     const consume = orderedChatConsumer(onEvent, this.streamingLimits);
     let streamClosed = false;
     const deliver: ChatEventConsumer = (event, writerSignal) => {
@@ -1098,11 +1115,10 @@ export class DirectAdapter implements IAgentEngine {
       const ordinal = ++sequence;
       const frame = projection.observe(event, attempt, ordinal);
       const ordered = { ...event, sequence: ordinal, attempt, sourceRequestId, projection: frame };
-      if (['complete', 'error', 'cancelled'].includes(event.type)) { streamClosed = true; this.streamSnapshots.delete(sessionKey); }
-      else this.streamSnapshots.set(sessionKey, { type: 'text_delta', delta: streamHolder.text, reset: true,
-        thinkingContent: thinkingHolder.text, sequence, attempt, runId, sessionKey,
-        projection: { version: 1, runId, sequence, attempt, operations: [{ type: 'stream.snapshot', snapshot: structuredClone(projection.state) }] },
-        anchorId: (session.metadata.runtime_checkpoint?.stream_state_v1 as import('@slide/agent-core').StreamSnapshot | undefined)?.anchor?.checkpointId });
+      const terminal = ['complete', 'error', 'cancelled'].includes(event.type);
+      if (terminal) streamClosed = true;
+      // Actor completion is published only by its existing durable transaction owner.
+      if (!terminal || !_actor) this.displayStreams.publish(sessionKey, frame);
       return consume(ordered, writerSignal ?? (['complete', 'error', 'cancelled'].includes(event.type) || (event.type === 'tool_error' && ['unknown', 'cancelled'].includes(event.outcome ?? '')) ? undefined : signal));
     };
     const hook = mapHookEventToChatEvent({ beforeIteration: async ctx => {
@@ -1226,14 +1242,14 @@ export class DirectAdapter implements IAgentEngine {
       const anchor = (session.metadata.runtime_checkpoint?.stream_state_v1 as import('@slide/agent-core').StreamSnapshot | undefined)?.anchor;
       streamHolder.text = streamHolder.safeContent = anchor?.text ?? '';
       thinkingHolder.text = anchor?.reasoning ?? '';
-      this.streamSnapshots.delete(sessionKey);
+      this.displayStreams.end(sessionKey, runId);
       // Do not emit a second terminal event if persistence or delivery failed.
       if (!terminalEmitted) {
         await deliver({ type: 'error', error: errorMessage, stopReason: 'error',
           finalContent: streamHolder.safeContent ?? streamHolder.text, thinkingContent: thinkingHolder.text || undefined });
       }
       throw err;
-    }
+    } finally { this.displayStreams.end(sessionKey, runId); }
   }
 
   // ── invoke() — fire-and-forget task execution ──
@@ -1435,6 +1451,7 @@ ${result.finalContent || ''}`
    * Used for test cleanup. Not part of IAgentEngine interface.
    */
   async dispose(): Promise<void> {
+    this.displayStreams.dispose();
     await this.businessMemory.close();
     if (this.wsServer) {
       for (const ws of this.wsServer.clients) {

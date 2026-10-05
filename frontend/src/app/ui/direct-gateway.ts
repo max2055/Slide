@@ -1,6 +1,7 @@
+import { PARTS_STREAM_CAPABILITY, readDisplayStreamEvent, inspectDisplayWatermark, type DisplayCursor, type DisplayStreamState, type DisplayStreamEvent } from '../../../../packages/agent-core/src/display-stream.ts';
 import { normalizeToolEvent, type ToolWireEvent } from '../../../../packages/agent-core/src/tool-stream.js';
 import type { ProjectionFrame } from '../../../../packages/agent-core/src/message-projection.ts';
-import { acceptChatProjection, renderChatProjection } from './chat/message-projection.ts';
+import { acceptChatProjection, acceptChatDisplayStream, getChatProjection, renderChatProjection } from './chat/message-projection.ts';
 /**
  * DirectAdapter WS client — Phase 109-04
  *
@@ -48,6 +49,7 @@ export type AdapterProtocolErrorEvent = { type: 'protocol.error'; code: string }
 
 /** ChatEvent discriminated union — mirrors apps/db-ops-api/src/adapter/types.ts */
 export type AdapterChatEvent = (
+  | DisplayStreamEvent
   | { type: 'message_parts' }
   | AdapterSessionCreatedEvent
   | AdapterRunStartedEvent
@@ -136,6 +138,10 @@ export class DirectGatewayClient {
   private url: string;
   private onEvent: (event: AdapterChatEvent) => void;
   private onStateChange: ConnectionStateCallback;
+  private partsStream = false;
+  private streamSubscriptions = new Map<string, string>();
+  private streamStates = new Map<string, Omit<DisplayStreamState, 'projection'>>();
+  private recoveringSessions = new Set<string>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = MAX_RECONNECT_ATTEMPTS;
@@ -187,7 +193,7 @@ export class DirectGatewayClient {
         ? (window as any).__apiClient?.getToken?.()
         : null;
       if (token) {
-        socket.send(JSON.stringify({ type: 'auth', token, deviceIdentity: this.deviceIdentity, deviceAuth: this.deviceAuth }));
+        socket.send(JSON.stringify({ type: 'auth', capabilities: [PARTS_STREAM_CAPABILITY], token, deviceIdentity: this.deviceIdentity, deviceAuth: this.deviceAuth }));
       }
     };
 
@@ -443,7 +449,14 @@ export class DirectGatewayClient {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return;
     }
-    this.ws.send(JSON.stringify({ type: 'chat.watch', sessionKey }));
+    if (!this.partsStream) { this.ws.send(JSON.stringify({ type: 'chat.watch', sessionKey })); return; }
+    const subscriptionId = generateUUID();
+    this.streamSubscriptions.set(sessionKey, subscriptionId);
+    let cursor: DisplayCursor | undefined;
+    for (const state of this.streamStates.values()) if (state.cursor && !state.recovering
+      && this.streamStates.get(`${sessionKey}:${state.cursor.runId}`) === state) cursor = state.cursor;
+    for (const [key, state] of this.streamStates) if (key.startsWith(`${sessionKey}:`)) this.streamStates.set(key, { ...state, subscriptionId });
+    this.ws.send(JSON.stringify({ type: 'chat.watch', sessionKey, subscriptionId, ...(cursor ? { cursor } : {}) }));
   }
 
   isConnected(): boolean {
@@ -469,11 +482,35 @@ export class DirectGatewayClient {
     // Handle auth_ok to flush pending messages (CR-04 race condition fix)
     if (type === 'auth_ok') {
       if (this.authenticated) return;
+      this.partsStream = Array.isArray(msg.capabilities) && msg.capabilities.includes(PARTS_STREAM_CAPABILITY);
       this.authenticated = true;
       this.authenticatedAt = Date.now();
       this.lastCloseDetails = null;
       this.resumePendingChatAcknowledgements();
       this.onStateChange('connected');
+      return;
+    }
+
+    if (type === 'stream.snapshot' || type === 'stream.delta') {
+      const event = readDisplayStreamEvent(data);
+      if (!event || !this.partsStream || event.stream.subscriptionId !== this.streamSubscriptions.get(event.sessionKey)) return;
+      const key = `${event.sessionKey}:${event.stream.runId}`;
+      const prior = this.streamStates.get(key) ?? { subscriptionId: event.stream.subscriptionId, recovering: true };
+      const result = inspectDisplayWatermark(prior, event);
+      this.streamStates.set(key, result === 'applied' ? { subscriptionId: prior.subscriptionId, recovering: false, cursor: { streamEpoch: event.stream.streamEpoch, runId: event.stream.runId, turnId: event.stream.turnId, toSeq: event.stream.toSeq } } : result === 'recover' ? { ...prior, recovering: true } : prior);
+      // Explicit hard bound for a page watching multiple sessions/runs.
+      while (this.streamStates.size > 64) this.streamStates.delete(this.streamStates.keys().next().value!);
+      if (result === 'recover') {
+        if (!this.recoveringSessions.has(event.sessionKey)) {
+          this.recoveringSessions.add(event.sessionKey);
+          this.watchSession(event.sessionKey);
+        }
+        return;
+      }
+      if (result === 'applied') {
+        this.recoveringSessions.delete(event.sessionKey);
+        this.onEvent(event);
+      }
       return;
     }
 
@@ -488,7 +525,10 @@ export class DirectGatewayClient {
       const pending = messageId
         ? this.pendingChatAcknowledgements.get(messageId) ?? this.unconfirmedChats.get(messageId)
         : undefined;
-      if (pending && sessionKey) pending.frame.sessionKey = sessionKey;
+      if (pending && sessionKey) {
+        pending.frame.sessionKey = sessionKey;
+        if (typeof pending.frame.subscriptionId === 'string') this.streamSubscriptions.set(sessionKey, pending.frame.subscriptionId);
+      }
     }
 
     if (type === 'run.snapshot') {
@@ -502,6 +542,8 @@ export class DirectGatewayClient {
       const message = type === 'protocol.error' ? String(msg.code ?? 'protocol error') : String(msg.error ?? 'chat error');
       this.rejectPendingChatAcknowledgements(new Error(message));
     }
+
+    if (this.partsStream && msg.projection) return;
 
     // Forward known AdapterChatEvent shapes
     switch (type) {
@@ -530,7 +572,10 @@ export class DirectGatewayClient {
   }
 
   private chatSendFrame(sessionKey: string | undefined, message: string, options?: { idempotencyKey?: string; attachments?: unknown[] }): Record<string, unknown> {
+    const subscriptionId = this.streamSubscriptions.get(sessionKey ?? '') ?? generateUUID();
+    this.streamSubscriptions.set(sessionKey ?? '', subscriptionId);
     return {
+      subscriptionId,
       type: 'chat.send',
       protocolVersion: 2,
       messageId: generateUUID(),
@@ -878,6 +923,42 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
   const runId = host.chatRunId as string | null;
   const sessionKey = host.sessionKey as string;
   if (event.sessionKey && event.sessionKey !== sessionKey && !['session.created', 'run.started', 'run.snapshot'].includes(event.type)) return;
+  if (event.type === 'stream.snapshot' || event.type === 'stream.delta') {
+    const streamEvent = readDisplayStreamEvent(event);
+    if (!streamEvent || streamEvent.sessionKey !== sessionKey) return;
+    if (streamEvent.recovery?.cold) {
+      host.lastError = '连接已恢复；仅恢复已保存边界，未保存的流尾部可能丢失。';
+      void loadChatHistory(host as unknown as ChatState);
+      return;
+    }
+    const id = streamEvent.stream.runId;
+    if (host.chatRunId && host.chatRunId !== id) return;
+    if (!acceptChatDisplayStream(host, streamEvent)) return;
+    const state = getChatProjection(host, id)!;
+    host.chatRunId = state.terminal ? null : id;
+    host.chatStreamRecovery = streamEvent.recovery;
+    host.chatRuntimePhase = state.phase;
+    if (streamEvent.recovery?.truncated) host.lastError = '恢复快照仅保留本轮尾部和结果预览；完整已保存内容请查看聊天历史。';
+    const barrier = streamEvent.type === 'stream.snapshot' || state.terminal
+      || streamEvent.projection?.operations.some(op => op.type !== 'part.append');
+    if (barrier) { flushDirectStreamUpdates(host); renderChatProjection(host, id); }
+    else { pendingStreamUpdateFor(host).projectionRunId = id; scheduleDirectStreamFlush(host); }
+    if (state.terminal) {
+      const type = state.terminal === 'completed' ? 'complete' : state.terminal === 'cancelled' ? 'cancelled' : 'error';
+      const finalContent = state.parts.map(p => p.part.type === 'text' ? p.part.text : '').join('');
+      const payload = mapAdapterChatEventToPayload({ type, runId: id, sessionKey, finalContent, error: state.error ?? state.terminal } as AdapterChatEvent, id, sessionKey);
+      if (payload) {
+        handleChatGatewayEvent(host, payload);
+        if (type === 'error') {
+          // Error handling clears transient controls; acknowledged tool facts
+          // remain visible until authorized history replaces this projection.
+          renderChatProjection(host, id);
+          void loadChatHistory(host as unknown as ChatState);
+        }
+      }
+    }
+    return;
+  }
   if (event.projection) {
     if (event.runId && event.runId !== event.projection.runId) return;
     if (!acceptChatProjection(host, event.projection)) return;

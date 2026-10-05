@@ -1,5 +1,53 @@
 import { test, expect } from '@playwright/test';
 
+test('MAX-127 snapshot replaces full projection and hidden-page reset/terminal close logically without rAF', async ({ page }) => {
+  await page.goto('/e2e/fixtures/chat-history.html');
+  await page.waitForFunction(() => Boolean((window as any).historyFixture));
+  const state = await page.evaluate(async () => {
+    const { DirectGatewayClient, handleDirectAdapterEvent } = await import('/src/app/ui/direct-gateway.ts');
+    const { getChatProjection } = await import('/src/app/ui/chat/message-projection.ts');
+    // Background rendering cannot gate the logical reducer.
+    window.requestAnimationFrame = () => 0;
+    const fixture = (window as any).historyFixture;
+    const host: any = { chatRunId: 'run', sessionKey: fixture.props.sessionKey, chatStream: '', chatMessages: [], chatSending: true,
+      chatQueue: [], chatThinkingText: '', settings: {}, applySettings() {}, chatToolMessages: [], chatStreamSegments: [], toolStreamById: new Map(), toolStreamOrder: [], client: null };
+    const sends: any[] = [];
+    const gateway: any = new DirectGatewayClient({ onEvent: (event: any) => handleDirectAdapterEvent(host, event), onStateChange() {} });
+    gateway.ws = { readyState: WebSocket.OPEN, send: (s: string) => sends.push(JSON.parse(s)) };
+    gateway.partsStream = true; gateway.streamSubscriptions.set(host.sessionKey, 'sub');
+    const durable = { kind: 'mysql', reference: 'saved' };
+    const snapshot = { version: 1, runId: 'run', attempt: 2, sequence: 4, phase: 'tools', runState: 'running', anchorId: 'anchor', parts: [
+      { messageId: 'model', part: { id: 'text', type: 'text', text: '确认正文', source: 'fact', status: 'completed', durable, generation: 'ended' } },
+      { messageId: 'model', part: { id: 'tool', type: 'tool_call', source: 'fact', status: 'completed', durable, generation: 'ended',
+        call: { id: 'call', type: 'function', function: { name: 'mysql_query', arguments: '{}' } },
+        tool: { toolCallId: 'call', name: 'mysql_query', phase: 'persisted', outcome: 'ok', occurredAt: 5, startedAt: 1, settledAt: 4, persistedAt: 5,
+          preview: { kind: 'text', text: '1 row', truncated: false } } } } ] };
+    const stream = { version: 1, streamEpoch: 'epoch', runId: 'run', turnId: 'turn', subscriptionId: 'sub', fromSeq: 5, toSeq: 5 };
+    gateway.dispatchEvent({ type: 'stream.snapshot', sessionKey: host.sessionKey, stream, snapshot });
+    const restored = structuredClone(getChatProjection(host));
+    const send = (operations: any[], sequence: number, cursor: number) => gateway.dispatchEvent({ type: 'stream.delta', sessionKey: host.sessionKey,
+      stream: { ...stream, fromSeq: cursor, toSeq: cursor }, projection: { version: 1, runId: 'run', attempt: 3, sequence, operations } });
+    send([{ type: 'part.start', messageId: 'next', part: { id: 'invalid', type: 'text', text: '撤回尾部', source: 'fact', status: 'partial' } }], 5, 6);
+    send([{ type: 'stream.reset', anchor: { id: 'anchor', parts: snapshot.parts } }], 6, 7);
+    // Duplicate and an old subscription must not append a second copy.
+    send([{ type: 'part.start', messageId: 'next', part: { id: 'duplicate', type: 'text', text: '污染', source: 'fact', status: 'partial' } }], 6, 7);
+    gateway.dispatchEvent({ type: 'stream.snapshot', sessionKey: host.sessionKey, stream: { ...stream, subscriptionId: 'old' }, snapshot: { ...snapshot, parts: [] } });
+    send([{ type: 'run.status', phase: 'saving' }, { type: 'run.terminal', outcome: 'failed', error: '保存未确认' }], 7, 8);
+    const terminal = structuredClone(getChatProjection(host, 'run'));
+    Object.assign(fixture.props, { messages: [], sending: true, stream: host.chatStream, thinkingText: host.chatThinkingText,
+      streamSegments: host.chatStreamSegments, toolMessages: host.chatToolMessages }); fixture.update();
+    return { restored, terminal, sends, tools: host.toolStreamOrder };
+  });
+  expect(state.restored).toMatchObject({ phase: 'tools', runState: 'running', attempt: 2, anchorId: 'anchor' });
+  expect(state.restored.parts[1].part.tool).toMatchObject({ phase: 'persisted', startedAt: 1, settledAt: 4, persistedAt: 5 });
+  expect(state.terminal).toMatchObject({ terminal: 'failed', runState: 'failed', phase: 'saving', attempt: 3, anchorId: 'anchor' });
+  expect(state.terminal.parts.map((p: any) => p.part.id)).toEqual(['text', 'tool']);
+  expect(state.tools).toEqual(['call']);
+  expect(state.sends).toEqual([]);
+  await expect(page.getByText('撤回尾部', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('污染', { exact: true })).toHaveCount(0);
+});
+
 test('MAX-125 tool lifecycle and explicit text boundaries render in actual chat order', async ({ page }, testInfo) => {
   await page.goto('/e2e/fixtures/chat-history.html');
   await page.waitForFunction(() => Boolean((window as any).historyFixture));

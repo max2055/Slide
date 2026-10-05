@@ -21,7 +21,12 @@ export class AdapterMessageProjection {
   get currentMessageId(): string { return this.messageId; }
   private startText(partId: string, type: 'text' | 'reasoning' | 'tool_input', text: string, toolCallId?: string, name?: string): ProjectionOperation[] {
     const existing = this.state.parts.some(p => p.part.id === partId);
-    if (existing) return [{ type: type === 'text' ? 'part.replace' : 'part.append', partId, text }];
+    if (existing) {
+      const prior = this.state.parts.find(p => p.part.id === partId)?.part;
+      const previous = prior && 'text' in prior ? prior.text ?? '' : '';
+      if (type === 'text' && text.startsWith(previous)) return [{ type: 'part.append', partId, text: text.slice(previous.length) }];
+      return [{ type: type === 'text' ? 'part.replace' : 'part.append', partId, text }];
+    }
     const base = { id: partId, source: 'fact' as const, status: 'partial' as const };
     const part = type === 'reasoning' ? { ...base, type, text, format: 'reasoning_content' as const }
       : type === 'tool_input' ? { ...base, type, text, toolCallId: toolCallId!, name } : { ...base, type, text };

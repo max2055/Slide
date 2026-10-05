@@ -11,7 +11,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./tool-stream": "./src/tool-stream.ts",
-    "./message-projection": "./src/message-projection.ts"
+    "./message-projection": "./src/message-projection.ts",
+    "./display-stream": "./src/display-stream.ts"
   },
   "files": ["src/"],
   "dependencies": {
