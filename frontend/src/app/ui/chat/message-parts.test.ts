@@ -53,3 +53,39 @@ it('history rows preserve text/tool/text order and lifecycle using source part I
   result.messageParts.runId = 'other-run';
   expect(messagePartsRenderRows(result, outputs)).toBeNull();
 });
+
+it.each([
+  ['第一段。', '第二段。'],
+  ['```sql\nSELECT ', '1;\n```'],
+])('continuation parts preserve exact answer bytes and one Markdown row: %s', (first, second) => {
+  const message = migrateMessageParts({ id: 'continued', role: 'assistant', content: first + second });
+  message.messageParts.projectionMessageId = 'model-first';
+  message.messageParts.parts = [
+    { id: 'first-text', sourceMessageId: 'model-first', source: 'fact', type: 'text', status: 'partial', generation: 'ended', text: first },
+    { id: 'second-text', sourceMessageId: 'model-second', source: 'fact', type: 'text', status: 'partial', generation: 'ended', text: second },
+  ];
+  const original = structuredClone(message);
+  expect(extractText(message)).toBe(first + second);
+  expect(normalizeMessage(message).content).toEqual([{ type: 'text', text: first + second }]);
+  const rows = messagePartsRenderRows(message)!;
+  expect(rows).toHaveLength(1);
+  expect(rows[0].partId).toBe('first-text');
+  expect(extractText(rows[0].message)).toBe(first + second);
+  expect(rows[0].message.messageParts).toMatchObject({ parts: original.messageParts.parts });
+  expect(message).toEqual(original);
+});
+
+it('reasoning remains a boundary between text runs', () => {
+  const message = migrateMessageParts({ id: 'reasoned', role: 'assistant', content: 'rollback' });
+  message.messageParts.projectionMessageId = 'model';
+  message.messageParts.parts = [
+    { id: 'before', source: 'fact', type: 'text', status: 'partial', text: 'before' },
+    { id: 'thinking', source: 'fact', type: 'reasoning', status: 'partial', text: 'inspect', format: 'reasoning_content' },
+    { id: 'after', source: 'fact', type: 'text', status: 'partial', text: 'after' },
+    { id: 'continued', source: 'fact', type: 'text', status: 'partial', text: ' continuation' },
+  ];
+  const rows = messagePartsRenderRows(message)!;
+  expect(rows.map(row => row.partId)).toEqual(['before', 'thinking', 'after']);
+  expect(rows.map(row => extractText(row.message))).toEqual(['before', null, 'after continuation']);
+  expect(extractThinking(rows[1].message)).toBe('inspect');
+});
