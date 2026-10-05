@@ -82,7 +82,8 @@ export function messagePartsRenderRows(message: unknown, toolOutputs = new Set<s
     if (doc.id !== original.id || doc.role !== original.role || (doc.role !== 'assistant' && doc.role !== 'tool')) return null;
     if (doc.role === 'tool' && doc.runId && doc.parts.every(p => p.type === 'tool_result' && toolOutputs.has(`${doc.runId}\0${p.toolCallId}`))) return [];
     if (!(doc.projectionMessageId || doc.parts.some(p => p.generation))) return null;
-    return messagePartDisplayGroups(doc.parts).filter(parts => parts[0].type !== 'tool_input').map((parts, index) => {
+    return messagePartDisplayGroups(doc.parts).filter(parts => parts[0].type !== 'tool_input'
+      && !(parts[0].type === 'tool_result' && doc.runId && toolOutputs.has(`${doc.runId}\0${parts[0].toolCallId}`))).map((parts, index) => {
       const part = parts[0];
       return { partId: part.id,
       message: { ...original, ...(index > 0 ? { usage: undefined, cost: undefined } : {}),

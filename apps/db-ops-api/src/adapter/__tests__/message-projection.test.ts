@@ -64,6 +64,22 @@ it('split sensitive JSON stays display-only and never leaks through input or per
   expect(adapter.state.parts.map(p => p.part.type)).toEqual(['tool_call']);
 });
 
+it('final business history retains already acknowledged narration and tools with source IDs', () => {
+  const adapter = new AdapterMessageProjection('run'); adapter.begin('model');
+  adapter.observe({ type: 'text_delta', delta: 'before', partId: 'model/text', partText: 'before' }, 1, 1);
+  adapter.observe({ type: 'tool_start', toolCallId: 'call', toolName: 'query', args: {}, occurredAt: 1 }, 1, 2);
+  adapter.observe({ type: 'tool_result', toolCallId: 'call', toolName: 'query', result: 'ok', occurredAt: 2 }, 1, 3);
+  const fact = persistedMessageParts({ id: 'canonical-model', role: 'assistant', content: 'before',
+    messageParts: adapter.document('model', { id: 'canonical-model', role: 'assistant', content: 'before' }) } as any);
+  adapter.observe({ type: 'message_parts', operations: [{ type: 'parts.persisted', documents: [fact.messageParts!] }] }, 1, 4);
+  adapter.begin('final'); adapter.observe({ type: 'text_delta', delta: 'after', partId: 'final/text', partText: 'after' }, 1, 5);
+  const candidate = adapter.finalDocument({ id: 'business-final', role: 'assistant', content: 'after' });
+  const stored = persistedMessageParts({ ...candidate.legacy, messageParts: candidate } as any);
+  const history = hydrateMessageProjection('run', [stored.messageParts!]);
+  expect(history.parts.map(p => p.part.id)).toEqual(['model/text', 'model/tool/call', 'final/text']);
+  expect(history.parts[1].part).toMatchObject({ type: 'tool_call', tool: { toolCallId: 'call', phase: 'persisted', outcome: 'ok' } });
+});
+
 it.each([['max_iterations', 'partial'], ['timed_out', 'timed_out'], ['error', 'failed']])('retains %s terminal without fabricating completed storage', (stopReason, outcome) => {
   const adapter = new AdapterMessageProjection('run');
   adapter.observe({ type: 'error', error: 'interrupted', stopReason }, 1, 1);

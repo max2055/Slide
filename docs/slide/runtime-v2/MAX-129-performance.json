@@ -1,0 +1,235 @@
+{
+  "live": {
+    "sourceHead": "a0030212a696980bda04b00b651738565c97a94b",
+    "hardware": {
+      "cpu": "Apple M5",
+      "cores": 10,
+      "memoryBytes": 25769803776,
+      "platform": "darwin",
+      "release": "27.0.0"
+    },
+    "browser": "148.0.7778.96",
+    "mode": "real WS/MySQL/Gateway/reducer/renderChat; actor authentication and provider controlled; tools SELECT 1 plus isolated counter",
+    "fragments": 1000,
+    "generatedBytes": 100000,
+    "legacy": {
+      "bodyBytes": 102075034,
+      "jsonBytes": 104034617,
+      "wsBytesUpperBound": 104057857,
+      "metadataAndFrameBytesUpperBound": 1982823,
+      "frames": 1660
+    },
+    "parts": {
+      "bodyBytes": 534563,
+      "jsonBytes": 1525323,
+      "wsBytesUpperBound": 1534941,
+      "metadataAndFrameBytesUpperBound": 1000378,
+      "frames": 687
+    },
+    "reduction": 0.9947630387269819,
+    "refreshFrames": 21,
+    "comparisonBoundary": "same run prefix through 100th tool paused, before first refresh; all original connection subscriptions",
+    "includingRefresh": {
+      "parts": {
+        "bodyBytes": 867589,
+        "jsonBytes": 2320865,
+        "wsBytesUpperBound": 2330777,
+        "metadataAndFrameBytesUpperBound": 1463188,
+        "frames": 708
+      },
+      "legacy": {
+        "bodyBytes": 102622859,
+        "jsonBytes": 105138184,
+        "wsBytesUpperBound": 105161704,
+        "metadataAndFrameBytesUpperBound": 2538845,
+        "frames": 1680
+      }
+    },
+    "acceptedToActualMs": 26.30000001192093,
+    "paintP95": 32.40000003576279,
+    "applyP95": 1.800000011920929,
+    "timing": "same browser performance.now; 2 rAF conservative paint bound; server callback clock separately",
+    "executions": 100,
+    "requests": 11,
+    "assistantMessages": 1,
+    "durable": {
+      "kind": "mysql",
+      "reference": "run_b0a911db-cede-400b-a557-52ef6cf4031d_assistant"
+    },
+    "capacity": {
+      "runs": 1,
+      "sources": 0,
+      "bytes": 246290,
+      "ops": 203,
+      "pendingBytes": 0,
+      "subscriptions": 1
+    }
+  },
+  "rendering": {
+    "environment": {
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.96 Safari/537.36",
+      "hardwareConcurrency": 10,
+      "timing": "browser performance.now; 2 rAF conservative paint upper bound; no server/client clock subtraction",
+      "browserVersion": "148.0.7778.96",
+      "hardware": {
+        "cpu": "Apple M5",
+        "cores": 10,
+        "memoryBytes": 25769803776,
+        "platform": "darwin",
+        "release": "27.0.0"
+      }
+    },
+    "scenarios": [
+      {
+        "kind": "mixed",
+        "size": 20000,
+        "characters": 20028,
+        "baselineP95": 6.200000047683716,
+        "parseP95": 1.600000023841858,
+        "applyP95": 6.199999988079071,
+        "paintP95": 35.39999997615814,
+        "pathLongTaskCount": 0
+      },
+      {
+        "kind": "mixed",
+        "size": 40000,
+        "characters": 40028,
+        "baselineP95": 10.800000011920929,
+        "parseP95": 1.800000011920929,
+        "applyP95": 5.5,
+        "paintP95": 34.40000003576279,
+        "pathLongTaskCount": 0
+      },
+      {
+        "kind": "mixed",
+        "size": 100000,
+        "characters": 100028,
+        "baselineP95": 10.100000023841858,
+        "parseP95": 2.699999988079071,
+        "applyP95": 5.699999988079071,
+        "paintP95": 34.19999998807907,
+        "pathLongTaskCount": 0
+      },
+      {
+        "kind": "plain",
+        "size": 20000,
+        "characters": 20000,
+        "baselineP95": 0.30000001192092896,
+        "parseP95": 0.40000003576278687,
+        "applyP95": 0.800000011920929,
+        "paintP95": 33.40000003576279,
+        "pathLongTaskCount": 0
+      },
+      {
+        "kind": "plain",
+        "size": 40000,
+        "characters": 40000,
+        "baselineP95": 1.2999999523162842,
+        "parseP95": 2.100000023841858,
+        "applyP95": 1.2999999523162842,
+        "paintP95": 35.30000001192093,
+        "pathLongTaskCount": 0
+      },
+      {
+        "kind": "plain",
+        "size": 100000,
+        "characters": 100000,
+        "baselineP95": 2.599999964237213,
+        "parseP95": 5.399999976158142,
+        "applyP95": 2.200000047683716,
+        "paintP95": 33.40000003576279,
+        "pathLongTaskCount": 0
+      },
+      {
+        "kind": "fence",
+        "size": 20000,
+        "characters": 20000,
+        "baselineP95": 0.40000003576278687,
+        "parseP95": 0.800000011920929,
+        "applyP95": 2.099999964237213,
+        "paintP95": 34.19999998807907,
+        "pathLongTaskCount": 0
+      },
+      {
+        "kind": "fence",
+        "size": 40000,
+        "characters": 40000,
+        "baselineP95": 2,
+        "parseP95": 2.900000035762787,
+        "applyP95": 1.800000011920929,
+        "paintP95": 35.19999998807907,
+        "pathLongTaskCount": 0
+      },
+      {
+        "kind": "fence",
+        "size": 100000,
+        "characters": 100000,
+        "baselineP95": 1.899999976158142,
+        "parseP95": 5,
+        "applyP95": 3.5,
+        "paintP95": 34.80000001192093,
+        "pathLongTaskCount": 0
+      },
+      {
+        "kind": "list",
+        "size": 20000,
+        "characters": 20000,
+        "baselineP95": 5,
+        "parseP95": 4,
+        "applyP95": 6.199999988079071,
+        "paintP95": 35.39999997615814,
+        "pathLongTaskCount": 0
+      },
+      {
+        "kind": "list",
+        "size": 40000,
+        "characters": 40000,
+        "baselineP95": 8.700000047683716,
+        "parseP95": 4.199999988079071,
+        "applyP95": 6.600000023841858,
+        "paintP95": 35.39999997615814,
+        "pathLongTaskCount": 0
+      },
+      {
+        "kind": "list",
+        "size": 100000,
+        "characters": 100000,
+        "baselineP95": 2.5,
+        "parseP95": 7,
+        "applyP95": 10.300000011920929,
+        "paintP95": 33.80000001192093,
+        "pathLongTaskCount": 0
+      },
+      {
+        "kind": "table",
+        "size": 20000,
+        "characters": 20000,
+        "baselineP95": 8.299999952316284,
+        "parseP95": 4.100000023841858,
+        "applyP95": 6.599999964237213,
+        "paintP95": 34.299999952316284,
+        "pathLongTaskCount": 0
+      },
+      {
+        "kind": "table",
+        "size": 40000,
+        "characters": 40000,
+        "baselineP95": 14.300000011920929,
+        "parseP95": 5,
+        "applyP95": 7.300000011920929,
+        "paintP95": 34.10000002384186,
+        "pathLongTaskCount": 0
+      },
+      {
+        "kind": "table",
+        "size": 100000,
+        "characters": 100000,
+        "baselineP95": 2.299999952316284,
+        "parseP95": 7.199999988079071,
+        "applyP95": 10.099999964237213,
+        "paintP95": 34.09999996423721,
+        "pathLongTaskCount": 0
+      }
+    ]
+  }
+}

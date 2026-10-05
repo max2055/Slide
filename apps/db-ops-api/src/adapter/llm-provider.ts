@@ -216,8 +216,19 @@ export class AnthropicProvider implements LLMProvider {
         temperature: options?.temperature ?? 0.0,
       }, { signal: options?.signal });
 
+      const toolIds = new Map<number, string>();
       for await (const event of stream) {
         callbacks.onActivity?.();
+        if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
+          toolIds.set(event.index, event.content_block.id);
+          await callbacks.onToolCallDelta?.({ index: event.index, id: event.content_block.id,
+            function: { name: event.content_block.name, arguments: '' } });
+        }
+        if (event.type === 'content_block_delta' && event.delta.type === 'input_json_delta') {
+          const id = toolIds.get(event.index);
+          if (id) await callbacks.onToolCallDelta?.({ index: event.index, id,
+            function: { arguments: event.delta.partial_json } });
+        }
         const delta = event.type === 'content_block_delta' ? event.delta as { type: string; thinking?: string } : undefined;
         if (delta?.type === 'thinking_delta' && delta.thinking) await callbacks.onThinkingDelta?.(delta.thinking);
         if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
