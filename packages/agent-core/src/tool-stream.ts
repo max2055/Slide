@@ -30,6 +30,8 @@ export type ToolWireEvent = WireIdentity & (
 );
 export interface NormalizedToolEvent {
   startedAt?: number;
+  settledAt?: number;
+  persistedAt?: number;
   toolCallId: string;
   name: string;
   phase: ToolPhase;

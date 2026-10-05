@@ -22,6 +22,20 @@ export function messagePartsDisplay(message: unknown): Record<string, unknown> {
   try {
     const doc = readMessageParts(original.messageParts);
     if (doc.id !== original.id || doc.role !== original.role) return original;
+    if (doc.projectionMessageId || doc.parts.some(p => p.generation || !p.id.startsWith(`${doc.id}/part/`))) {
+      const content = doc.parts.filter(p => p.status !== 'discarded').flatMap((p): Record<string, unknown>[] => {
+        switch (p.type) {
+          case 'text': case 'runtime_notice': return [{ type: 'text', text: p.text }];
+          case 'reasoning': return typeof p.text === 'string' ? [{ type: 'thinking', thinking: p.text }] : [];
+          case 'tool_input': return []; // Partial arguments are process display, never executable tool calls.
+          case 'tool_call': return [{ type: 'toolcall', id: p.call.id, name: p.call.function.name, arguments: p.call.function.arguments }];
+          case 'tool_result': return [{ type: 'toolresult', toolCallId: p.toolCallId, name: p.name, text: typeof p.content === 'string' ? p.content : JSON.stringify(p.content) }];
+          case 'attachment': return [{ type: 'attachment', attachment: { url: p.attachment.reference, kind: p.attachment.kind === 'image' ? 'image' : 'document',
+            label: p.attachment.kind === 'image' ? '图片附件' : '文件附件', mimeType: p.attachment.mimeType } }];
+        }
+      });
+      return { ...original, id: doc.id, role: doc.role, content };
+    }
     const attachments = doc.parts.filter(part => part.type === 'attachment' && part.status !== 'discarded');
     if (!attachments.length) return { ...doc.legacy, ...original, id: doc.id, role: doc.role };
     const content = typeof doc.legacy.content === 'string' ? [{ type: 'text', text: doc.legacy.content }]
@@ -353,6 +367,7 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
         }
         return expanded.content;
       }
+      if (item.type === 'thinking' && typeof item.thinking === 'string') return [{ type: 'thinking', thinking: item.thinking }];
       return [
         {
           type:

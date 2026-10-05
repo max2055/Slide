@@ -281,6 +281,7 @@ export class TurnLoop {
           response.toolCalls,
           (response as any)._extra, // Preserve provider-specific fields (e.g., reasoning_content)
         );
+        assistantMsg.id = context.messageId;
         if (continuation.content) { state.messages.push(buildAssistantMessage(continuation.content)); safeContent += continuation.content; continuation.clear(); }
         safeContent += response.content ?? '';
         state.messages.push(assistantMsg);
@@ -551,6 +552,7 @@ export class TurnLoop {
       const assistantMsg = !isBlankText(state.finalContent)
         ? buildAssistantMessage(state.finalContent!, undefined, (response as any)._extra)
         : undefined;
+      if (assistantMsg) assistantMsg.id = context.messageId;
 
       const [shouldContinue, newCycles3] = await tryDrainInjections(
         spec,

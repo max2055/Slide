@@ -45,6 +45,7 @@ export type MessageContentItemBase = {
 };
 
 export type MessageContentItem =
+  | (MessageContentItemBase & { type: 'thinking'; thinking: string })
   | (MessageContentItemBase & { type: "text" })
   | (MessageContentItemBase & { type: "tool_call" })
   | (MessageContentItemBase & { type: "tool_result" })

@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { migrateMessageParts } from '../../../../../packages/agent-core/src/message-parts.ts';
 import { normalizeMessage } from './message-normalizer.ts';
+import { extractThinking, extractText } from './message-extract.ts';
 it.each(['system', 'user', 'assistant', 'tool'] as const)('parts/old frontend agree for %s', role => {
   const message = { id: role, role, content: role === 'assistant' ? '<think>analysis</think>\nanswer' : 'text', timestamp: 1 };
   expect(normalizeMessage(migrateMessageParts(message))).toEqual(normalizeMessage(message));
@@ -27,4 +28,6 @@ it('ordered parts render the same projection even when legacy content is only a 
     { id: 't', source: 'fact', type: 'text', status: 'partial', text: 'current' },
   ];
   expect(normalizeMessage(message).content).toEqual([{ type: 'thinking', thinking: 'inspect' }, { type: 'text', text: 'current' }]);
+  expect(extractThinking(message)).toBe('inspect');
+  expect(extractText(message)).toBe('current');
 });

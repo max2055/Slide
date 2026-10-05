@@ -18,7 +18,9 @@ it('consumes native projection exactly once and atomically resets speculative st
     { type: 'part.start', messageId: 'm', part: { id: 'reasoning', type: 'reasoning', text: 'invalid', format: 'reasoning_content', source: 'fact', status: 'partial' } }]);
   expect(state.chatToolMessages).toHaveLength(1);
   expect(state.chatStreamSegments).toHaveLength(1);
-  frame(2, [{ type: 'stream.reset', anchor: { id: 'empty', parts: [] } }]);
+  handleDirectAdapterEvent(state, { type: 'text_delta', delta: '', reset: true, runId: 'run', sessionKey: 'session',
+    projection: { version: 1, runId: 'run', attempt: 1, sequence: 2,
+      operations: [{ type: 'stream.reset', anchor: { id: 'empty', parts: [] } }] } } as any);
   expect(state.chatStream).toBe('');
   expect(state.chatThinkingText).toBe('');
   expect(state.chatStreamSegments).toEqual([]);
@@ -29,8 +31,13 @@ it('consumes native projection exactly once and atomically resets speculative st
 it('history hydration replaces the session projection and blocks stale prior-session frames', () => {
   const state = host();
   const doc = migrateMessageParts({ id: 'fact', runId: 'run', role: 'assistant', content: 'saved' }, { status: 'completed', durable: { kind: 'mysql', reference: 'fact' } }).messageParts;
+  doc.runTerminal = 'completed';
   hydrateChatProjections(state, [{ id: 'fact', role: 'assistant', messageParts: doc }]);
   expect(getChatProjection(state, 'run')?.parts[0].part).toMatchObject({ type: 'text', text: 'saved', status: 'completed' });
+  handleDirectAdapterEvent(state, { type: 'message_parts', runId: 'run', sessionKey: 'session',
+    projection: { version: 1, runId: 'run', sequence: 9, attempt: 1, operations: [{ type: 'part.start', messageId: 'late',
+      part: { id: 'late', type: 'text', text: 'invalid', source: 'fact', status: 'partial' } }] } } as any);
+  expect(getChatProjection(state, 'run')?.parts).toHaveLength(1);
   state.sessionKey = 'other';
   handleDirectAdapterEvent(state, { type: 'message_parts', runId: 'run', sessionKey: 'session',
     projection: { version: 1, runId: 'run', sequence: 9, attempt: 1, operations: [] } } as any);

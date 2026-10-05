@@ -55,6 +55,15 @@ it('retracts rejected attempts, excludes them from memory/file/next context, ign
   expect(JSON.stringify(sessionManager.getOrCreate('test').getHistory(120))).not.toContain('正在分析');
   const fresh = new SessionManager(directory);
   expect(JSON.stringify(fresh.getOrCreate('test').getHistory(120))).not.toContain('正在分析');
+  const complete = events.find(e => e.type === 'complete');
+  expect(complete?.messageParts).toMatchObject({ runTerminal: 'completed', durable: { kind: 'jsonl' } });
+  const { createMessageProjection, reduceMessageProjection, hydrateMessageProjection } = await import('@slide/agent-core/message-projection');
+  const runId = complete!.projection!.runId;
+  const live = events.reduce((state, event) => reduceMessageProjection(state, event.projection), createMessageProjection(runId));
+  const history = hydrateMessageProjection(runId, fresh.getOrCreate('test').messages.map(m => m.messageParts!));
+  expect(live.terminal).toBe('completed');
+  expect(history.terminal).toBe('completed');
+  expect(history.parts).toEqual(live.parts);
   await adapter.chat('test', '再次检查', () => {});
   expect(JSON.stringify(mock.contexts)).not.toContain('正在分析');
 });
@@ -137,6 +146,8 @@ it.each(['rejection', 'thinking-only', 'partial-tool'])('isolates discarded reas
   const directory = await mkdtemp(join(tmpdir(), 'stream-reset-')); directories.push(directory);
   const sessions = new SessionManager(directory);
   const mock = provider([bad, 'fresh answer']);
+  let releasePartial!: () => void;
+  const partialDisplayed = new Promise<void>(resolve => { releasePartial = resolve; });
   const original = mock.value.chatStream;
   mock.value.chatStream = async (messages, tools, stream, options) => {
     const first = mock.contexts.length === 0;
@@ -145,7 +156,8 @@ it.each(['rejection', 'thinking-only', 'partial-tool'])('isolates discarded reas
       mock.contexts.push(structuredClone(messages)); mock.callbacks.push(stream);
       if (failure === 'partial-tool') {
         await stream.onContentDelta('discarded text');
-        await stream.onToolCallDelta?.({ index: 0, arguments: '{"sql":' } as any);
+        await stream.onToolCallDelta?.({ id: 'provider-partial', index: 0, function: { name: 'query', arguments: '{"sql":' } } as any);
+        await partialDisplayed;
       }
       throw Object.assign(new Error('stream interrupted'), { code: 'ECONNRESET' });
     }
@@ -153,9 +165,17 @@ it.each(['rejection', 'thinking-only', 'partial-tool'])('isolates discarded reas
   };
   const adapter = new DirectAdapter({ tools: new ToolRegistry(), llmProvider: mock.value, sessionManager: sessions });
   const events: ChatEvent[] = []; const response = new ChatResponse();
-  const result = await adapter.chat('isolation', '诊断数据库', e => { events.push(e); response.observe(e); });
+  const result = await adapter.chat('isolation', '诊断数据库', e => {
+    events.push(e); response.observe(e);
+    if (e.projection?.operations.some(op => op.type === 'part.start' && op.part.type === 'tool_input')) releasePartial();
+  });
   expect(result.stopReason).toBe('completed');
   expect(result.thinkingContent).toBe('valid thinking');
+  if (failure === 'partial-tool') {
+    expect(events.some(e => e.projection?.operations.some(op => op.type === 'part.start' && op.part.type === 'tool_input'))).toBe(true);
+    expect(events.some(e => e.type === 'tool_start')).toBe(false);
+    expect(events.at(-1)?.messageParts?.parts.some(p => p.type === 'tool_input')).toBe(false);
+  }
   expect(JSON.stringify([result, response.message(result), sessions.getOrCreate('isolation').getCanonicalPage().messages, mock.contexts])).not.toContain('discarded');
   const count = events.length;
   await mock.callbacks[0].onThinkingDelta?.('late thinking');

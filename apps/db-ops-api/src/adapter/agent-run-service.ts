@@ -3,6 +3,7 @@ import { dbConnection } from '../db-connection.js';
 import type { CompleteEvent } from './types.js';
 import { platformLogs } from '../platform/structured-log-evidence-adapter.js';
 import { persistedMessageParts } from './message-parts.js';
+import { projectionDocuments } from '@slide/agent-core/message-projection';
 
 export type AgentRunState = 'running' | 'completed' | 'partial' | 'failed' | 'cancelled' | 'timed_out';
 export interface AgentRun { id: string; actorId: number; sessionId: string; messageId: string; idempotencyKey: string; state: AgentRunState; result?: unknown; error?: unknown; }
@@ -90,18 +91,23 @@ export class AgentRunService {
       if (!sessions[0]) throw new Error('Chat session not found');
       this.assertCompletion(result.event);
       const event = { ...result.event };
+      const durable = { kind: 'mysql' as const, reference: `run_${run.id}_assistant` };
       if (event.finalContent || event.thinkingContent) {
         const content = event.thinkingContent
           ? `<think>${event.thinkingContent}</think>\n\n${event.finalContent || ''}` : event.finalContent;
         const messageId = `run_${run.id}_assistant`;
+        const acknowledged = persistedMessageParts({
+          id: messageId, runId: run.id, turnId: `run_${run.id}_user`, role: 'assistant', content: content ?? '',
+          ...(event.thinkingContent ? { reasoning_content: event.thinkingContent } : {}),
+          ...(event.messageParts ? { messageParts: event.messageParts } : {}),
+        }).messageParts!;
+        event.messageParts = acknowledged;
+        acknowledged.runTerminal = 'completed';
         await connection.query(
           `INSERT INTO chat_messages (session_id, message_id, role, content, parent_id, metadata)
            VALUES (?, ?, 'assistant', ?, ?, ?) ON DUPLICATE KEY UPDATE message_id = message_id`,
           [run.sessionId, messageId, content, `run_${run.id}_user`,
-            JSON.stringify({ canonicalRunId: run.id, canonicalTurnId: `run_${run.id}_user`, messageParts: persistedMessageParts({
-              id: messageId, runId: run.id, turnId: `run_${run.id}_user`, role: 'assistant', content: content ?? '',
-              ...(event.thinkingContent ? { reasoning_content: event.thinkingContent } : {}),
-            }).messageParts })],
+            JSON.stringify({ canonicalRunId: run.id, canonicalTurnId: `run_${run.id}_user`, messageParts: acknowledged })],
         );
         const [messages] = await connection.query<any[]>(
           'SELECT id, content FROM chat_messages WHERE session_id = ? AND message_id = ?', [run.sessionId, messageId],
@@ -114,6 +120,9 @@ export class AgentRunService {
           [run.sessionId, run.sessionId, run.sessionId],
         );
       }
+      if (event.projection) event.projection = { ...event.projection, operations: [...event.projection.operations,
+        ...(event.messageParts ? [{ type: 'parts.persisted' as const, documents: projectionDocuments([event.messageParts]) }] : []),
+        { type: 'run.terminal', outcome: 'completed', durable }] };
       const committed = { stopReason: 'completed', event };
       const [updated] = await connection.query<{ affectedRows: number }>(
         `UPDATE agent_runs SET state = 'completed', result_json = ?, error_json = NULL, finished_at = NOW()

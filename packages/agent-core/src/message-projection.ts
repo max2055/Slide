@@ -1,10 +1,11 @@
 /** Browser-safe derived display state. No IO, clock, tool execution or storage writes. */
 import { readMessageParts, type MessagePart, type MessageParts, type PartBoundary } from './message-parts.js';
 import type { NormalizedToolEvent, ToolPhase } from './tool-stream.js';
+import { boundedToolValue, buildToolPreview } from './tool-stream.js';
 
 export type RunPhase = 'preparing' | 'generating' | 'tools' | 'retrying' | 'saving';
 export type RunTerminal = 'completed' | 'partial' | 'cancelled' | 'timed_out' | 'failed';
-export interface ProjectedPart { messageId: string; part: MessagePart; }
+export interface ProjectedPart { messageId: string; part: MessagePart; factMessageId?: string; }
 export interface ProjectionAnchor { id: string; parts: ProjectedPart[]; }
 export interface MessageProjection {
   version: 1;
@@ -25,7 +26,7 @@ export type ProjectionOperation =
   | { type: 'part.end'; partId: string }
   | { type: 'tool.state' | 'tool.progress'; messageId: string; partId: string; event: NormalizedToolEvent; durable?: PartBoundary['durable'] }
   | { type: 'stream.reset'; anchor: ProjectionAnchor }
-  | { type: 'parts.persisted'; documents: MessageParts[] }
+  | { type: 'parts.persisted'; documents: ProjectionDocument[] }
   | { type: 'stream.snapshot'; snapshot: MessageProjection }
   | { type: 'run.terminal'; outcome: RunTerminal; durable?: PartBoundary['durable']; error?: string };
 export interface ProjectionFrame {
@@ -34,6 +35,29 @@ export interface ProjectionFrame {
   attempt: number;
   sequence: number;
   operations: ProjectionOperation[];
+}
+/** Display facts deliberately exclude the exact legacy rollback payload. */
+export type ProjectionDocument = Omit<MessageParts, 'legacy'>;
+export function projectionDocuments(documents: MessageParts[]): ProjectionDocument[] {
+  return documents.map(value => {
+    const { legacy: _legacy, ...doc } = readMessageParts(value);
+    return { ...structuredClone(doc), parts: doc.parts.map(displayPart) };
+  });
+}
+function displayPart(value: MessagePart): MessagePart {
+  const part = structuredClone(value);
+  if (part.type === 'tool_result') {
+    let content = part.content;
+    if (typeof content === 'string') { try { content = JSON.parse(content); } catch { /* plain text */ } }
+    part.content = buildToolPreview(content, part.toolCallId).text;
+  }
+  if (part.type === 'tool_call') {
+    let args: unknown = part.call.function.arguments;
+    try { args = JSON.parse(part.call.function.arguments); } catch { /* legacy display */ }
+    const safe = boundedToolValue(args);
+    part.call.function.arguments = typeof safe === 'string' ? safe : JSON.stringify(safe);
+  }
+  return part;
 }
 const phases: RunPhase[] = ['preparing', 'generating', 'tools', 'retrying', 'saving'];
 const terminal: RunTerminal[] = ['completed', 'partial', 'cancelled', 'timed_out', 'failed'];
@@ -87,7 +111,7 @@ function validateOperation(op: ProjectionOperation, runId: string): void {
     case 'stream.reset': if (!identity(op.anchor?.id)) throw new Error('INVALID_PROJECTION_ANCHOR'); validateParts(op.anchor.parts); break;
     case 'parts.persisted':
       if (!Array.isArray(op.documents)) throw new Error('INVALID_PROJECTION_FACTS');
-      for (const doc of op.documents) { readMessageParts(doc); if (doc.runId !== runId || !evidence(doc.durable)) throw new Error('INVALID_PROJECTION_FACTS'); }
+      for (const doc of op.documents) { readMessageParts({ ...doc, legacy: {} }); if (doc.runId !== runId || !evidence(doc.durable)) throw new Error('INVALID_PROJECTION_FACTS'); }
       break;
     case 'stream.snapshot': if (restoreMessageProjection(op.snapshot).runId !== runId) throw new Error('INVALID_PROJECTION_RUN'); break;
     case 'run.terminal': if (!terminal.includes(op.outcome) || op.outcome === 'completed' && !evidence(op.durable)) throw new Error('INVALID_PROJECTION_TERMINAL'); break;
@@ -122,6 +146,11 @@ export function reduceMessageProjection(state: MessageProjection, value: unknown
         let row = next.parts.find(p => p.part.id === op.partId);
         if (row && (row.messageId !== op.messageId || row.part.type !== 'tool_call' || row.part.call.id !== e.toolCallId)) break;
         const prior = row?.part.tool;
+        if (prior && (prior.name !== e.name || prior.outcome !== undefined && e.outcome !== undefined && prior.outcome !== e.outcome)) break;
+        if (prior?.phase === 'persisted') {
+          if (e.phase === 'persisted' && prior.persistedAt === undefined) prior.persistedAt = e.occurredAt;
+          break;
+        }
         if (prior && (ranks.indexOf(e.phase) < ranks.indexOf(prior.phase)
           || ['settled', 'persisted'].includes(prior.phase) && e.phase !== 'persisted')) break;
         if (!row) {
@@ -129,8 +158,12 @@ export function reduceMessageProjection(state: MessageProjection, value: unknown
             call: { id: e.toolCallId, type: 'function', function: { name: e.name, arguments: JSON.stringify(e.args ?? {}) } } } };
           next.parts.push(row);
         }
+        // A complete provider call supersedes its display-only JSON fragments.
+        next.parts = next.parts.filter(p => p.part.type !== 'tool_input' || p.part.toolCallId !== e.toolCallId);
         row.part.tool = { ...prior, ...structuredClone(e), outcome: e.outcome ?? prior?.outcome,
-          args: e.args ?? prior?.args, preview: e.preview ?? prior?.preview, progress: e.progress ?? prior?.progress, startedAt: prior?.startedAt ?? e.startedAt };
+          args: e.args ?? prior?.args, preview: e.preview ?? prior?.preview, progress: e.progress ?? prior?.progress, startedAt: prior?.startedAt ?? e.startedAt,
+          settledAt: prior?.settledAt ?? (e.phase === 'settled' ? e.occurredAt : undefined),
+          persistedAt: prior?.persistedAt ?? (e.phase === 'persisted' ? e.occurredAt : undefined) };
         if (row.part.type === 'tool_call' && e.args) row.part.call.function.arguments = JSON.stringify(e.args);
         if (e.phase === 'persisted') { row.part.durable = structuredClone(op.durable); row.part.status = 'completed'; }
         break;
@@ -144,7 +177,9 @@ export function reduceMessageProjection(state: MessageProjection, value: unknown
         for (const p of kept) if (!next.parts.some(a => a.part.id === p.part.id)) {
           const original = state.parts.findIndex(a => a.part.id === p.part.id);
           const successor = state.parts.slice(original + 1).find(a => next.parts.some(n => n.part.id === a.part.id));
-          const index = successor ? next.parts.findIndex(a => a.part.id === successor.part.id) : 0;
+          const predecessor = state.parts.slice(0, original).reverse().find(a => next.parts.some(n => n.part.id === a.part.id));
+          const index = predecessor ? next.parts.findIndex(a => a.part.id === predecessor.part.id) + 1
+            : successor ? next.parts.findIndex(a => a.part.id === successor.part.id) : 0;
           next.parts.splice(index, 0, p);
         }
         next.anchorId = op.anchor.id; next.phase = 'retrying';
@@ -152,11 +187,14 @@ export function reduceMessageProjection(state: MessageProjection, value: unknown
       }
       case 'parts.persisted': {
         for (const doc of op.documents) for (const part of doc.parts) {
-          const row = { messageId: doc.projectionMessageId ?? doc.id, part: { ...structuredClone(part), generation: 'ended' as const } };
-          if (row.part.tool?.phase === 'settled') row.part.tool.phase = 'persisted';
+          const row: ProjectedPart = { messageId: part.sourceMessageId ?? doc.projectionMessageId ?? doc.id, factMessageId: doc.id,
+            part: { ...displayPart(part), generation: 'ended' as const } };
           const i = next.parts.findIndex(p => p.part.id === part.id);
+          const priorTool = next.parts[i]?.part.tool;
+          if (priorTool && (!row.part.tool || ranks.indexOf(priorTool.phase) >= ranks.indexOf(row.part.tool.phase))) row.part.tool = structuredClone(priorTool);
+          if (row.part.tool?.phase === 'settled' && row.part.status === 'completed') row.part.tool.phase = 'persisted';
           if (i < 0) next.parts.push(row);
-          else if (!next.parts[i].part.durable) next.parts[i] = row;
+          else if (!next.parts[i].part.durable || next.parts[i].part.status !== 'completed') next.parts[i] = row;
         }
         break;
       }
@@ -180,15 +218,18 @@ export function reduceMessageProjection(state: MessageProjection, value: unknown
 /** Only persisted facts hydrate durable state; malformed/future documents stay legacy-readable. */
 export function hydrateMessageProjection(runId: string, documents: MessageParts[]): MessageProjection {
   const state = createMessageProjection(runId);
+  let final: MessageParts | undefined;
   for (const value of documents) {
     try {
       const doc = readMessageParts(value);
-      if (doc.runId !== runId || !doc.durable) continue;
+      if (doc.runId !== runId || !doc.durable || doc.role === 'user' || doc.role === 'system') continue;
       const hydrated = reduceMessageProjection(state, { version: 1, runId, attempt: state.attempt, sequence: state.sequence + 1,
-        operations: [{ type: 'parts.persisted', documents: [doc] }] });
+        operations: [{ type: 'parts.persisted', documents: projectionDocuments([doc]) }] });
       Object.assign(state, hydrated);
+      if (doc.runTerminal) final = doc;
     } catch { /* original legacy fields remain the caller's fallback */ }
   }
+  if (final) { state.terminal = final.runTerminal; state.durable = structuredClone(final.durable); }
   return state;
 }
 
@@ -196,5 +237,5 @@ export function hydrateMessageProjection(runId: string, documents: MessageParts[
 export function projectionMessageParts(state: MessageProjection, messageId: string, legacy: MessageParts['legacy']): MessageParts {
   return { version: 1, id: String(legacy.id ?? messageId), projectionMessageId: messageId, role: legacy.role,
     runId: state.runId, turnId: legacy.turnId, source: legacy.source ?? 'fact', status: 'partial',
-    parts: structuredClone(state.parts.filter(p => p.messageId === messageId).map(p => p.part)), legacy: structuredClone(legacy) };
+    parts: structuredClone(state.parts.filter(p => p.messageId === messageId).map(p => ({ ...p.part, sourceMessageId: p.messageId }))), legacy: structuredClone(legacy) };
 }

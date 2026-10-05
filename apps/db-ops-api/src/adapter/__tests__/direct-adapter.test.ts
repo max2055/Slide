@@ -907,9 +907,9 @@ describe('DirectAdapter', () => {
       await adapter.chat('async-consumer', 'Hello', async event => {
         await new Promise<void>(r => setTimeout(r, 2)); events.push(event);
       });
-      expect(events.map(e => e.sequence)).toEqual([1, 2, 3, 4, 5]);
+      expect(events.map(e => e.sequence)).toEqual(events.map((_, i) => i + 1));
       expect(events.every(e => e.attempt === 1)).toBe(true);
-      expect(events.map(e => e.type)).toEqual(['thinking_delta', 'thinking_delta', 'thinking_end', 'text_delta', 'complete']);
+      expect(events.filter(e => e.type !== 'message_parts').map(e => e.type)).toEqual(['thinking_delta', 'thinking_delta', 'thinking_end', 'text_delta', 'complete']);
     });
 
     it('consumer rejection cancels the reader and produces a precise failed outcome without completion', async () => {
@@ -1002,7 +1002,7 @@ describe('DirectAdapter', () => {
 
       await adapter.chat('test-session-thinking', 'Hello', (event) => events.push(event));
 
-      expect(events.map((event) => event.type)).toEqual([
+      expect(events.filter(event => event.type !== 'message_parts').map((event) => event.type)).toEqual([
         'thinking_delta', 'thinking_delta', 'thinking_end', 'text_delta', 'complete',
       ]);
       expect(events.find((event) => event.type === 'text_delta')).toMatchObject({ delta: 'final answer' });

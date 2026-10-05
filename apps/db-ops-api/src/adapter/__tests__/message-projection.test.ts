@@ -52,3 +52,14 @@ it('final persistence retains earlier checkpoint-only continuation parts with or
   expect(doc.parts.map(p => p.id)).toEqual(['first/text', 'second/text']);
   expect(doc.parts.map(p => p.sourceMessageId)).toEqual(['first', 'second']);
 });
+
+it('split sensitive JSON stays display-only and never leaks through input or persistence', () => {
+  const adapter = new AdapterMessageProjection('run'); adapter.begin('model');
+  const frames = ['{"pass', 'word":"hidden",', '"sql":"SELECT 1"}'].map((arguments_, i) => adapter.observe({ type: 'message_parts',
+    operations: adapter.input({ id: 'provider-call', function: { name: 'query', arguments: arguments_ } }) }, 1, i + 1));
+  expect(JSON.stringify(frames)).not.toContain('hidden');
+  expect(adapter.state.parts[0].part).toMatchObject({ type: 'tool_input', text: '{"password":"[REDACTED]","sql":"SELECT 1"}' });
+  expect(adapter.finalDocument({ id: 'stored', role: 'assistant', content: '' }).parts).toEqual([]);
+  adapter.observe({ type: 'tool_start', toolCallId: 'provider-call', toolName: 'query', args: {}, occurredAt: 1 }, 1, 4);
+  expect(adapter.state.parts.map(p => p.part.type)).toEqual(['tool_call']);
+});

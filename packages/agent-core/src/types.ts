@@ -151,6 +151,8 @@ export type ContentBlock =
 // ── Agent hook ──
 
 export interface AgentHookContext {
+  /** Allocated by the core before provider callbacks; persists with the source fact. */
+  messageId?: string;
   iteration: number;
   streamAttempt?: number;
   sourceRequestId?: string;
@@ -185,6 +187,7 @@ export interface RuntimeResolution {
 }
 
 export interface AgentHook {
+  onToolInput?(ctx: AgentHookContext, delta: Record<string, unknown>, signal?: AbortSignal): Promise<void> | void;
   onCandidateRejected?(ctx: AgentHookContext, safeContent: string, reasonCode: string): Promise<void> | void;
   wantsStreaming(): boolean;
   beforeIteration(ctx: AgentHookContext): Promise<void> | void;

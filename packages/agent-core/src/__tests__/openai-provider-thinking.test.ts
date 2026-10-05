@@ -43,3 +43,22 @@ it('nonstreaming OpenAI responses preserve output limits, including incomplete t
     tool_calls: [{ id: 'one', function: { name: 'write', arguments: '{' } }] } }] });
   expect(await provider.chat([], [])).toMatchObject({ finishReason: 'length', shouldExecuteTools: false, usage: {} });
 });
+
+it('parameter fragments retain real provider IDs for same-name interleaved calls', async () => {
+  const { OpenAIProvider } = await import('../openai-provider.js');
+  const provider = new OpenAIProvider({ apiKey: 'fixture' });
+  (provider as any).client.chat.completions.create = async () => (async function* () {
+    yield { choices: [{ delta: { tool_calls: [
+      { index: 0, id: 'provider-a', function: { name: 'query', arguments: '{"sql":' } },
+      { index: 1, id: 'provider-b', function: { name: 'query', arguments: '{"sql":' } },
+    ] } }] };
+    yield { choices: [{ delta: { tool_calls: [
+      { index: 1, function: { arguments: '"SELECT 2"}' } },
+      { index: 0, function: { arguments: '"SELECT 1"}' } },
+    ] }, finish_reason: 'tool_calls' }] };
+  })();
+  const fragments: any[] = [];
+  const response = await provider.chatStream([], [], { onContentDelta: () => {}, onToolCallDelta: delta => { fragments.push(delta); } });
+  expect(fragments.map(delta => delta.id)).toEqual(['provider-a', 'provider-b', 'provider-b', 'provider-a']);
+  expect(response.toolCalls).toMatchObject([{ id: 'provider-a', arguments: { sql: 'SELECT 1' } }, { id: 'provider-b', arguments: { sql: 'SELECT 2' } }]);
+});

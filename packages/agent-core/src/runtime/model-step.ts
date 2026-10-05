@@ -39,6 +39,7 @@ export class ModelStep {
       if (hook.wantsStreaming()) queue = new StreamingCoordinator(async (event, signal) => {
         if (event.type === 'text') await hook.onStream(context, event.delta, signal);
         else if (event.type === 'reasoning') await hook.emitReasoning(event.delta, signal);
+        else await hook.onToolInput?.(context, JSON.parse(event.delta), signal);
       }, {
         ...spec.streamingLimits,
         size: event => Buffer.byteLength(event.delta, 'utf8') + 32,

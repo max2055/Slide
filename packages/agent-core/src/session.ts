@@ -449,8 +449,14 @@ export class SessionManager {
     const completedTools = new Set(session.messages.filter(m => m.role === 'tool').map(m => m.tool_call_id));
     const storedMessages = session.messages.map(msg => {
       const pending = msg.tool_calls?.some(call => !completedTools.has(call.id));
-      try { return acknowledgeMessageParts(msg, { status: msg.messageParts?.status === 'failed' || msg.messageParts?.status === 'discarded' ? msg.messageParts.status :
-        pending ? 'partial' : statusForStopReason(msg.metadata?.stopReason), durable: { kind: 'jsonl', reference: msg.id! } }); }
+      try {
+        const result = acknowledgeMessageParts(msg, { status: msg.messageParts?.status === 'failed' || msg.messageParts?.status === 'discarded' ? msg.messageParts.status :
+          pending ? 'partial' : statusForStopReason(msg.metadata?.stopReason), durable: { kind: 'jsonl', reference: msg.id! } });
+        const stop = msg.metadata?.stopReason;
+        if (stop) result.messageParts.runTerminal = stop === 'completed' ? 'completed' : stop === 'cancelled' ? 'cancelled'
+          : stop === 'timed_out' ? 'timed_out' : stop === 'max_iterations' ? 'partial' : 'failed';
+        return result;
+      }
       catch { return structuredClone(msg); }
     });
     for (const msg of storedMessages) {

@@ -5,6 +5,7 @@ export class ChatResponse {
   private text = '';
   private thinking = '';
   private stopReason?: string;
+  private parts?: import('@slide/agent-core').MessageParts;
 
   observe(event: ChatEvent): void {
     if (event.type === 'text_delta') { this.text = event.delta; if (event.reset) this.thinking = event.thinkingContent ?? ''; }
@@ -13,6 +14,7 @@ export class ChatResponse {
       this.text = event.finalContent ?? this.text;
       this.thinking = event.thinkingContent ?? this.thinking;
       this.stopReason = event.stopReason || (event.type === 'complete' ? 'completed' : event.type);
+      this.parts = event.messageParts;
     }
   }
 
@@ -23,7 +25,7 @@ export class ChatResponse {
     if (!text.trim() && !thinking.trim()) return null;
     return {
       content: thinking ? `<think>${thinking}</think>\n\n${text}` : text,
-      metadata: { interrupted: stopReason !== 'completed', stopReason, usage: result?.usage },
+      metadata: { interrupted: stopReason !== 'completed', stopReason, usage: result?.usage, ...(this.parts ? { messageParts: this.parts } : {}) },
     };
   }
 }

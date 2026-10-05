@@ -49,3 +49,85 @@ test('MAX-125 tool lifecycle and explicit text boundaries render in actual chat 
   await expect(page.getByText('已取消 · 1 ms', { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('MAX-125-tool-stream.png'), fullPage: true, animations: 'disabled' });
 });
+
+test('MAX-126 native parts reset atomically and hydrate the same durable history', async ({ page }, testInfo) => {
+  await page.goto('/e2e/fixtures/chat-history.html');
+  await page.waitForFunction(() => Boolean((window as any).historyFixture));
+  const before = await page.evaluate(async () => {
+    const { handleDirectAdapterEvent } = await import('/src/app/ui/direct-gateway.ts');
+    const { getChatProjection } = await import('/src/app/ui/chat/message-projection.ts');
+    const fixture = (window as any).historyFixture;
+    const host = { chatRunId: 'native-run', sessionKey: fixture.props.sessionKey, chatStream: '', chatStreamStartedAt: 1,
+      chatMessages: [], chatSending: true, chatQueue: [], chatThinkingText: '', settings: {}, applySettings() {},
+      chatToolMessages: [], chatStreamSegments: [], toolStreamById: new Map(), toolStreamOrder: [], toolStreamSyncTimer: null };
+    let sequence = 0;
+    const send = (operations: object[], attempt = 1) => handleDirectAdapterEvent(host, { type: 'message_parts', runId: 'native-run',
+      sessionKey: host.sessionKey, projection: { version: 1, runId: 'native-run', attempt, sequence: ++sequence, operations } });
+    const part = (id: string, type: string, text: string) => ({ id, type, text, source: 'fact', status: 'partial',
+      ...(type === 'reasoning' ? { format: 'reasoning_content' } : {}),
+      ...(type === 'tool_input' ? { toolCallId: 'partial-call', name: 'mysql_query' } : {}) });
+    const update = () => {
+      Object.assign(fixture.props, { messages: [], sending: true, showThinking: true, stream: host.chatStream,
+        thinkingText: host.chatThinkingText, thinkingComplete: host.chatThinkingComplete,
+        streamSegments: host.chatStreamSegments, toolMessages: host.chatToolMessages }); fixture.update();
+    };
+    send([{ type: 'part.start', messageId: 'model-1', part: part('first', 'text', '已确认前文') }, { type: 'part.end', partId: 'first' }]);
+    const durable = { kind: 'mysql', reference: 'saved-prefix' };
+    const prefix = { version: 1, id: 'saved-prefix', projectionMessageId: 'model-1', role: 'assistant', runId: 'native-run', source: 'fact',
+      status: 'completed', durable, parts: [{ ...part('first', 'text', '已确认前文'), status: 'completed', durable, generation: 'ended' }],
+      legacy: { id: 'saved-prefix', role: 'assistant', content: '已确认前文' } };
+    send([{ type: 'parts.persisted', documents: [prefix] }, { type: 'tool.state', messageId: 'model-1', partId: 'tool-part',
+      event: { toolCallId: 'committed-call', name: 'mysql_query', phase: 'settled', outcome: 'ok', occurredAt: 2,
+        preview: { kind: 'text', text: '1 row', truncated: false } } }]);
+    const anchor = { id: 'saved-anchor', parts: structuredClone(getChatProjection(host).parts) };
+    send([{ type: 'part.start', messageId: 'model-2', part: part('invalid-text', 'text', '待撤回正文') },
+      { type: 'part.start', messageId: 'model-2', part: part('invalid-thinking', 'reasoning', '待撤回思考') },
+      { type: 'part.start', messageId: 'model-2', part: part('invalid-input', 'tool_input', '{"sql":') }]);
+    update();
+    (window as any).nativeFixture = { host, send, update, part, anchor, prefix };
+    return { types: getChatProjection(host).parts.map((p: any) => p.part.type) };
+  });
+  expect(before.types).toEqual(['text', 'tool_call', 'text', 'reasoning', 'tool_input']);
+  await expect(page.getByText('待撤回正文', { exact: true })).toBeVisible();
+  const reset = await page.evaluate(async () => {
+    const { getChatProjection } = await import('/src/app/ui/chat/message-projection.ts');
+    const f = (window as any).nativeFixture;
+    f.send([{ type: 'stream.reset', anchor: f.anchor }], 2);
+    f.send([{ type: 'stream.reset', anchor: f.anchor }], 2);
+    f.update();
+    return { thinking: f.host.chatThinkingText, parts: getChatProjection(f.host).parts.map((p: any) => p.part.id) };
+  });
+  expect(reset).toEqual({ thinking: '', parts: ['first', 'tool-part'] });
+  await expect(page.getByText('待撤回正文', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('正在生成参数', { exact: false })).toHaveCount(0);
+  await expect(page.locator('.chat-tool-msg-collapse')).toHaveCount(1);
+  await expect(page.getByText('已确认前文', { exact: true })).toBeVisible();
+  const equivalence = await page.evaluate(async () => {
+    const { getChatProjection, hydrateChatProjections } = await import('/src/app/ui/chat/message-projection.ts');
+    const f = (window as any).nativeFixture;
+    f.send([{ type: 'part.start', messageId: 'model-3', part: f.part('last', 'text', '最终答复') }, { type: 'part.end', partId: 'last' }], 3);
+    const durable = { kind: 'mysql', reference: 'saved-final' };
+    const doc = { version: 1, id: 'saved-final', projectionMessageId: 'model-3', role: 'assistant', runId: 'native-run',
+      source: 'fact', status: 'completed', durable, runTerminal: 'completed', parts: getChatProjection(f.host).parts
+        .filter((p: any) => p.part.id !== 'first').map((p: any) => ({ ...p.part, sourceMessageId: p.messageId, status: 'completed', durable,
+          ...(p.part.tool ? { tool: { ...p.part.tool, phase: 'persisted' } } : {}) })),
+      legacy: { id: 'saved-final', role: 'assistant', content: '最终答复' } };
+    f.send([{ type: 'parts.persisted', documents: [doc] }, { type: 'run.terminal', outcome: 'completed', durable }], 3);
+    const live = structuredClone(getChatProjection(f.host).parts);
+    const messages = [{ id: 'saved-prefix', role: 'assistant', messageParts: f.prefix }, { id: 'saved-final', role: 'assistant', messageParts: doc }];
+    hydrateChatProjections(f.host, messages);
+    const history = structuredClone(getChatProjection(f.host).parts);
+    // Late data cannot contaminate a hydrated terminal run.
+    f.send([{ type: 'part.start', messageId: 'late', part: f.part('late', 'text', '迟到污染') }], 3);
+    Object.assign((window as any).historyFixture.props, { messages, sending: false, stream: null, thinkingText: '',
+      streamSegments: [], toolMessages: [] }); (window as any).historyFixture.update();
+    return { live, history, afterLate: getChatProjection(f.host).parts };
+  });
+  expect(equivalence.history).toEqual(equivalence.live);
+  expect(equivalence.afterLate).toEqual(equivalence.live);
+  await expect(page.getByText('已确认前文', { exact: true })).toBeVisible();
+  await expect(page.getByText('最终答复', { exact: true })).toBeVisible();
+  await expect(page.locator('.chat-tool-msg-collapse')).toHaveCount(1);
+  await expect(page.getByText('迟到污染', { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('MAX-126-message-parts-history.png'), fullPage: true, animations: 'disabled' });
+});
