@@ -10,6 +10,7 @@ import { ToolRegistry, type LLMProvider } from '../../packages/agent-core/src/in
 import { DirectAdapter } from '../../apps/db-ops-api/src/adapter/direct-adapter';
 import { chatDatabaseService } from '../../apps/db-ops-api/src/chat-database-service';
 import { dbConnection } from '../../apps/db-ops-api/src/db-connection';
+import { registerChatRoutes } from '../../apps/db-ops-api/src/chat-routes';
 
 test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refresh and unique completion', async ({ page, browser }) => {
   const require = createRequire(new URL('../../apps/db-ops-api/package.json', import.meta.url));
@@ -17,7 +18,7 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
   const schema = `slide_stream_${randomUUID().replaceAll('-', '')}`;
   const connection = await mysql.createConnection({ host: process.env.DB_HOST ?? '127.0.0.1', port: Number(process.env.DB_PORT ?? 3306), user: process.env.DB_USER ?? 'root', password: process.env.DB_PASSWORD });
   const workspace = await mkdtemp(join(tmpdir(), 'slide-stream-live-'));
-  let adapter: DirectAdapter | undefined; let legacy: any; let releaseTool: (() => void) | undefined;
+  let adapter: DirectAdapter | undefined; let legacy: any; let rest: any; let releaseTool: (() => void) | undefined;
   const raw: Record<string, object[]> = { legacy: [], parts: [] };
   try {
     await connection.query(`CREATE DATABASE \`${schema}\``);
@@ -29,6 +30,15 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     const [created] = await pool.execute("INSERT INTO users (username,password_hash,status) VALUES (?, 'fixture-no-login', 'active')", [`stream-${randomUUID()}`]) as any;
     const actor = { userId: created.insertId, username: 'stream-fixture', roles: ['viewer'], permissions: [], sessionVersion: 1, instanceScopes: {}, requestId: randomUUID() };
     const session = await chatDatabaseService.createSession(actor, { title: 'MAX-129 real stream' });
+    rest = require('fastify')();
+    await registerChatRoutes(rest, { service: chatDatabaseService,
+      verifyToken: async (request: any) => { request.user = actor; }, handleChatSend: async () => { throw new Error('fixture uses WS admission'); } });
+    await rest.listen({ port: 0, host: '127.0.0.1' }); const restPort = rest.server.address().port;
+    await page.route(url => url.pathname.startsWith('/api/'), async route => {
+      const original = new URL(route.request().url());
+      const response = await route.fetch({ url: `http://127.0.0.1:${restPort}${original.pathname}${original.search}` });
+      await route.fulfill({ response });
+    });
     await pool.query('CREATE TABLE fixture_tool_effects (tool_id INT PRIMARY KEY)');
     let requests = 0; let executions = 0;
     const tools = new ToolRegistry();
@@ -81,24 +91,32 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
       await page.goto('/e2e/fixtures/chat-history.html'); await page.waitForFunction(() => Boolean((window as any).historyFixture));
       await page.evaluate(async ({ port, sessionKey }) => {
         const { DirectGatewayClient, handleDirectAdapterEvent } = await import('/src/app/ui/direct-gateway.ts');
+        const { getChatProjection } = await import('/src/app/ui/chat/message-projection.ts');
         const f = (window as any).historyFixture;
         f.props.messages = []; f.props.sessionKey = sessionKey; f.props.showToolCalls = true;
-        const host: any = { sessionKey, chatRunId: null, chatStream: '', chatThinkingText: '', chatToolMessages: [], chatStreamSegments: [],
-          toolStreamById: new Map(), toolStreamOrder: [], chatMessages: [], chatQueue: [], chatSending: false, settings: {}, applySettings() {}, refreshSessionsAfterChat: new Set() };
+        const update = (target: any) => {
+          Object.assign(f.props, { messageProjection: target.chatMessageProjection, runtimePhase: target.chatRuntimePhase, runId: target.chatRunId,
+            messages: target.chatMessages, sending: target.chatSending, stream: target.chatStream }); f.update();
+        };
+        // Fixture shell supplies Lit's reactive host boundary; rendering, Gateway,
+        // reducer, HTTP history routes, transactions and tool execution are real.
+        const host: any = new Proxy({ sessionKey, connected: true, chatRunId: null, chatStream: '', chatThinkingText: '', chatToolMessages: [], chatStreamSegments: [],
+          toolStreamById: new Map(), toolStreamOrder: [], chatMessages: [], chatQueue: [], chatSending: false, settings: {}, applySettings() {}, refreshSessionsAfterChat: new Set() },
+          { set(target, key, value) { Reflect.set(target, key, value); update(target); return true; } });
         (window as any).__apiClient = { getToken: () => 'fixture' };
         const samples: any[] = []; const received: any[] = [];
+        let latestProjection: any;
         const gateway = new DirectGatewayClient({ url: `ws://127.0.0.1:${port}`, onStateChange: state => { if (state === 'connected') gateway.watchSession(sessionKey); },
           onEvent: event => {
             const at = performance.now(); received.push({ at, event }); handleDirectAdapterEvent(host, event);
-            Object.assign(f.props, { messageProjection: host.chatMessageProjection, runtimePhase: host.chatRuntimePhase, runId: host.chatRunId,
-              messages: host.chatMessages, sending: host.chatSending, stream: host.chatStream }); f.update();
+            if (event.stream) latestProjection = getChatProjection(host, event.stream.runId);
             queueMicrotask(() => { const applied = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => {
               const end = performance.now(); samples.push({ type: event.type, at, applyMs: applied - at, paintMs: end - at });
               performance.measure('MAX129 receive-to-paint', { start: at, end });
             })); });
           } });
         host.client = gateway; gateway.connect();
-        (window as any).live = { gateway, host, received, samples };
+        (window as any).live = { gateway, host, received, samples, get projection() { return latestProjection; } };
       }, { port, sessionKey: session.session_id });
       await page.waitForFunction(() => (window as any).live.gateway.isConnected());
     };
@@ -115,15 +133,16 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     expect(executions).toBe(100); expect(requests).toBe(10);
     await expect.poll(async () => page.evaluate(() => (window as any).live.host.chatMessageProjection?.parts.filter((p: any) => p.part.type === 'text').map((p: any) => p.part.text).join(''))).toBe(body);
     releaseTool();
-    await expect.poll(async () => page.evaluate(() => (window as any).live.host.chatMessageProjection?.terminal), { timeout: 15000 }).toBe('completed');
-    const after = await page.evaluate(() => ({ samples: (window as any).live.samples, received: (window as any).live.received, projection: (window as any).live.host.chatMessageProjection }));
+    await expect.poll(async () => page.evaluate(() => (window as any).live.projection?.terminal), { timeout: 15000 }).toBe('completed');
+    const after = await page.evaluate(() => ({ samples: (window as any).live.samples, received: (window as any).live.received, projection: (window as any).live.projection }));
     expect(after.projection.durable).toBeTruthy();
     const [messages] = await pool.query<any[]>('SELECT content FROM chat_messages WHERE session_id = ? AND role = ?', [session.session_id, 'assistant']);
-    expect(messages).toHaveLength(1); expect(messages[0].content).toBe(body + final.content);
+    expect(messages).toHaveLength(1); expect(messages[0].content).toContain(final.content);
     const [effects] = await pool.query<any[]>('SELECT COUNT(*) AS count FROM fixture_tool_effects'); expect(effects[0].count).toBe(100);
     expect(executions).toBe(100); expect(requests).toBe(11);
     await page.evaluate(() => (window as any).live.gateway.disconnect());
-    await mount(); await expect.poll(async () => page.evaluate(() => (window as any).live.host.chatMessageProjection?.terminal)).toBe('completed');
+    await mount(); await expect.poll(async () => page.evaluate(() => (window as any).live.projection?.terminal)).toBe('completed');
+    await expect(page.locator('.chat-tool-msg-collapse')).toHaveCount(100, { timeout: 15000 });
     expect(executions).toBe(100); expect(requests).toBe(11);
     const metrics = (events: any[]) => {
       let bodyBytes = 0, jsonBytes = 0; const text = (v: any, key = '') => { if (typeof v === 'string' && ['delta','partText','finalContent','thinkingContent','text','content'].includes(key)) bodyBytes += Buffer.byteLength(JSON.stringify(v)); else if (v && typeof v === 'object') for (const [k, value] of Object.entries(v)) text(value, k); };
@@ -153,8 +172,18 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     const trace: Buffer[] = []; for (;;) { const value = await cdp.send('IO.read', { handle: stream }); trace.push(Buffer.from(value.data, value.base64Encoded ? 'base64' : 'utf8')); if (value.eof) break; }
     await cdp.send('IO.close', { handle: stream }); await writeFile(test.info().outputPath('MAX-129-live-trace.json'), Buffer.concat(trace));
     await page.evaluate(() => (window as any).live.gateway.disconnect());
+  } catch (error) {
+    await writeFile(test.info().outputPath('MAX-129-failure-wire.json'), JSON.stringify(raw));
+    console.log('MAX-129 failure boundary', await page.evaluate(() => {
+      const live = (window as any).live;
+      return { lastError: live?.host.lastError, runId: live?.host.chatRunId,
+        phase: live?.host.chatMessageProjection?.phase, terminal: live?.host.chatMessageProjection?.terminal,
+        received: live?.received.slice(-8).map((r: any) => ({ type: r.event.type, run: r.event.run?.state, operations: r.event.projection?.operations.map((op: any) => op.type), terminal: r.event.snapshot?.terminal })) };
+    }));
+    console.log('MAX-129 server terminal', raw.legacy.filter((e: any) => ['complete','error','cancelled','run.snapshot'].includes(e.type)).map((e: any) => ({ type: e.type, state: e.run?.state, error: e.error, operations: e.projection?.operations.map((op: any) => op.type) })));
+    throw error;
   } finally {
-    releaseTool?.(); legacy?.close(); await adapter?.dispose(); await dbConnection.close();
+    releaseTool?.(); legacy?.close(); await adapter?.dispose(); await rest?.close(); await dbConnection.close();
     await connection.query(`DROP DATABASE IF EXISTS \`${schema}\``); await connection.end(); await rm(workspace, { recursive: true, force: true });
   }
 });

@@ -147,6 +147,15 @@ jobs:
         run: pnpm --filter slide-frontend exec playwright test cron-live.spec.ts --workers=1
       - name: Runtime candidate isolation and history
         run: pnpm --filter slide-frontend exec playwright test agent-runtime.spec.ts --workers=1
+      - name: Streaming real MySQL, WebSocket, Gateway, UI and refresh
+        run: pnpm --filter slide-frontend exec playwright test --config playwright.streaming-live.config.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: streaming-qualification-${{ github.sha }}
+          path: frontend/test-results-streaming-live/
+          include-hidden-files: true
+          retention-days: 30
 
   recovery-qualification:
     runs-on: ubuntu-latest
