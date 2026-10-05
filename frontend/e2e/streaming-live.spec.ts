@@ -126,6 +126,7 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     await expect.poll(() => Boolean(releaseTool)).toBe(true);
     await expect(page.locator('.chat-tool-msg-collapse')).toHaveCount(100, { timeout: 15000 });
     const before = await page.evaluate(() => ({ samples: (window as any).live.samples, received: (window as any).live.received }));
+    const uninterrupted = { parts: [...raw.parts], legacy: [...raw.legacy] };
     await page.screenshot({ path: test.info().outputPath('MAX-129-live-tools.png'), fullPage: true });
     await page.evaluate(() => (window as any).live.gateway.disconnect());
     await mount(); // browser navigation discards all projection state: genuine refresh snapshot
@@ -150,9 +151,11 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
       return { bodyBytes, jsonBytes, wsBytesUpperBound: jsonBytes + events.length * 14, metadataAndFrameBytesUpperBound: jsonBytes + events.length * 14 - bodyBytes, frames: events.length };
     };
     // Only the uninterrupted original subscription is compared; refresh traffic is reported separately.
-    const firstSubscription = (raw.parts[0] as any).stream.subscriptionId;
-    const parts = metrics(raw.parts.filter((e: any) => e.stream.subscriptionId === firstSubscription));
-    const old = metrics(raw.legacy); const reduction = 1 - parts.bodyBytes / old.bodyBytes;
+    // Admission replaces the idle watch subscription. Capture every frame on
+    // the original connection up to the same paused-tool boundary in both modes.
+    const parts = metrics(uninterrupted.parts);
+    const old = metrics(uninterrupted.legacy); const reduction = 1 - parts.bodyBytes / old.bodyBytes;
+    expect(parts.bodyBytes).toBeGreaterThanOrEqual(100_000);
     expect(reduction).toBeGreaterThanOrEqual(.8);
     const accepted = before.received.find((s: any) => s.event.type === 'run.started');
     const actual = before.received.find((s: any) => s.event.snapshot?.phase === 'waiting_model' || s.event.projection?.operations.some((op: any) => op.type === 'run.status' && op.phase === 'waiting_model'));
@@ -164,6 +167,8 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
       hardware: { cpu: cpus()[0].model, cores: cpus().length, memoryBytes: totalmem(), platform: platform(), release: release() }, browser: browser.version(),
       pid: process.pid, port, schema, cwd: process.cwd(), mode: 'real WS/MySQL/Gateway/reducer/renderChat; actor authentication and provider controlled; tools SELECT 1 plus isolated counter',
       fragments: 1000, generatedBytes: 100000, legacy: old, parts, reduction, refreshFrames: raw.parts.length - parts.frames,
+      comparisonBoundary: 'same run prefix through 100th tool paused, before first refresh; all original connection subscriptions',
+      includingRefresh: { parts: metrics(raw.parts), legacy: metrics(raw.legacy) },
       acceptedToActualMs, paintP95, applyP95: p95(samples.map(s => s.applyMs)), timing: 'same browser performance.now; 2 rAF conservative paint bound; server callback clock separately',
       executions, requests, assistantMessages: messages.length, durable: after.projection.durable, capacity: (adapter as any).displayStreams.stats(), samples, serverTimings };
     await writeFile(test.info().outputPath('MAX-129-live-metrics.json'), JSON.stringify(evidence, null, 2));
