@@ -229,8 +229,11 @@ export class DisplayStreamAuthority<Peer extends object> {
       sequence: run.state.sequence, attempt: run.state.attempt, projection: { version: 1, runId: run.runId, sequence: run.state.sequence, attempt: run.state.attempt,
         operations: [{ type: 'stream.snapshot', snapshot: run.state }] }, recovery: this.recovery(run) };
   }
-  unwatch(peer: Peer): void {
-    for (const [key, subs] of this.subscriptions) { subs.delete(peer); if (!subs.size) this.subscriptions.delete(key); }
+  unwatch(peer: Peer, sessionKey?: string): void {
+    for (const [key, subs] of this.subscriptions) {
+      if (sessionKey !== undefined && key !== sessionKey) continue;
+      subs.delete(peer); if (!subs.size) this.subscriptions.delete(key);
+    }
   }
   stats() {
     let totalBytes = 0, totalOps = 0, pendingBytes = 0, subscriptions = 0;

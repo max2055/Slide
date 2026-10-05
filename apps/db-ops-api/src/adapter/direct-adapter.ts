@@ -336,6 +336,7 @@ export class DirectAdapter implements IAgentEngine {
       const connectedAt = new Date().toISOString();
       platformLogs.record({ component: 'ws', eventType: 'connection.opened', status: 'ok', correlationId: connectionId, releaseId: process.env.SLIDE_RELEASE_ID });
       const pendingMessages = new Map<string, string>();
+      const subscriptionRequests = new Map<string, string>();
       console.log('[DirectAdapter] WS client connected', JSON.stringify({
         connectionId,
         connectedAt,
@@ -368,7 +369,7 @@ export class DirectAdapter implements IAgentEngine {
           this.sessionSubscribers.set(sessionKey, new Set());
         }
         this.sessionSubscribers.get(sessionKey)!.add(ws);
-        if (this.partsPeers.has(ws)) this.displayStreams.watch(ws, sessionKey, subscriptionId ?? randomUUID(),
+        if (this.partsPeers.has(ws)) this.displayStreams.watch(ws, sessionKey, subscriptionRequests.get(sessionKey) ?? subscriptionId ?? randomUUID(),
           event => this.socketWriter.send(ws, JSON.stringify(event)));
       };
 
@@ -543,6 +544,13 @@ export class DirectAdapter implements IAgentEngine {
         if (authState !== 'authenticated' || !connectionActor) {
           closeAfterAuthFailure(4002, 'Authenticate first');
           return;
+        }
+
+        // Receipt order wins over asynchronous authorization/admission completion.
+        if (this.partsPeers.has(ws) && ['chat.watch', 'chat.send'].includes(msg.type) && typeof msg.sessionKey === 'string'
+          && typeof msg.subscriptionId === 'string' && msg.subscriptionId.length > 0 && msg.subscriptionId.length <= 512) {
+          subscriptionRequests.set(msg.sessionKey, msg.subscriptionId);
+          while (subscriptionRequests.size > this.displayStreams.limits.maxSubscriptionsPerPeer) subscriptionRequests.delete(subscriptionRequests.keys().next().value!);
         }
 
         // A connection may outlive a user disablement or role/session change.
@@ -836,12 +844,21 @@ export class DirectAdapter implements IAgentEngine {
             break;
           }
 
+          case 'chat.unwatch': {
+            if (typeof msg.sessionKey === 'string') {
+              this.sessionSubscribers.get(msg.sessionKey)?.delete(ws);
+              this.displayStreams.unwatch(ws, msg.sessionKey);
+              subscriptionRequests.delete(msg.sessionKey);
+            }
+            break;
+          }
           case 'chat.watch': {
             // Subscribe WS to session for invoke() completion broadcasts
             const watchKey = (msg.sessionKey as string) || '';
             if (watchKey) {
               try {
                 await chatDatabaseService.authorizeSession(connectionActor, watchKey, 'watch');
+                if (this.partsPeers.has(ws) && subscriptionRequests.get(watchKey) !== msg.subscriptionId) break;
                 if (!this.sessionSubscribers.has(watchKey)) this.sessionSubscribers.set(watchKey, new Set());
                 this.sessionSubscribers.get(watchKey)!.add(ws);
                 if (this.partsPeers.has(ws)) {

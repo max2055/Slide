@@ -162,9 +162,11 @@ it('real WS receive fault injection makes Gateway drop duplicates/old subscripti
     (gateway as any).ws = socket; (gateway as any).authenticated = true; (gateway as any).partsStream = true;
     (gateway as any).streamSubscriptions.set('fixture', 'native');
     live.watch();
-    socket.send(JSON.stringify({ type: 'chat.send', sessionKey: 'fixture', message: 'fixture', subscriptionId: 'native' }));
+    socket.send(JSON.stringify({ type: 'chat.send', sessionKey: 'fixture', message: 'fixture', subscriptionId: 'admission-old' }));
+    live.watch(); // newer watch wins even if chat admission authorizes later
     await live.wait(() => !!release && live.events.some(e => e.projection?.operations.some((o: any) => o.type === 'part.start')));
     const stream = live.events.filter(e => e.stream && e.stream.runId !== 'cold');
+    expect(stream.every(e => e.stream.subscriptionId === 'native')).toBe(true);
     for (const event of stream) (gateway as any).dispatchEvent(event);
     handleDirectAdapterEvent(host, { type: 'thinking_end' });
     const runId = stream.at(-1).stream.runId;

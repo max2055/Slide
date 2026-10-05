@@ -452,6 +452,12 @@ export class DirectGatewayClient {
     if (!this.partsStream) { this.ws.send(JSON.stringify({ type: 'chat.watch', sessionKey })); return; }
     const subscriptionId = generateUUID();
     this.streamSubscriptions.set(sessionKey, subscriptionId);
+    while (this.streamSubscriptions.size > 8) {
+      const oldest = this.streamSubscriptions.keys().next().value!;
+      this.streamSubscriptions.delete(oldest);
+      this.ws.send(JSON.stringify({ type: 'chat.unwatch', sessionKey: oldest }));
+      for (const key of this.streamStates.keys()) if (key.startsWith(`${oldest}:`)) this.streamStates.delete(key);
+    }
     let cursor: DisplayCursor | undefined;
     for (const state of this.streamStates.values()) if (state.cursor && !state.recovering
       && this.streamStates.get(`${sessionKey}:${state.cursor.runId}`) === state) cursor = state.cursor;
@@ -486,8 +492,8 @@ export class DirectGatewayClient {
       this.authenticated = true;
       this.authenticatedAt = Date.now();
       this.lastCloseDetails = null;
-      this.resumePendingChatAcknowledgements();
       this.onStateChange('connected');
+      this.resumePendingChatAcknowledgements();
       return;
     }
 
@@ -594,6 +600,7 @@ export class DirectGatewayClient {
     }
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.authenticated) return;
     try {
+      if (this.partsStream) pending.frame.subscriptionId = this.streamSubscriptions.get(String(pending.frame.sessionKey ?? '')) ?? pending.frame.subscriptionId;
       this.ws.send(JSON.stringify(pending.frame));
       if (pending.timer !== null) clearTimeout(pending.timer);
       pending.timer = setTimeout(() => {
