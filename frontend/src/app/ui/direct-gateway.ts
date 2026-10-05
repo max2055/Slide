@@ -964,6 +964,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
           renderChatProjection(host, id);
           void loadChatHistory(host as unknown as ChatState);
         }
+        if (type === 'cancelled') void loadChatHistory(host as unknown as ChatState);
       }
     }
     return;

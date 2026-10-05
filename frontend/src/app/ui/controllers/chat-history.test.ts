@@ -12,7 +12,13 @@ function state(request: ReturnType<typeof vi.fn>): ChatState {
 describe('complete paged chat history', () => {
   it('a late history response preserves live snapshot, suffix cursor and cancellation', async () => {
     let complete!: (value: unknown) => void;
-    const host = Object.assign(state(vi.fn().mockImplementation(() => new Promise(resolve => { complete = resolve; }))), {
+    const history = [{ role: 'user', content: 'history', runId: 'run' },
+      { id: 'saved-live', role: 'assistant', content: 'live', runId: 'run' },
+      { id: 'saved-tool', role: 'tool', content: 'ok', messageParts: { runId: 'run' } },
+      { id: 'older', role: 'assistant', content: 'older turn', runId: 'older-run' }];
+    const request = vi.fn().mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }))
+      .mockResolvedValue({ messages: history });
+    const host = Object.assign(state(request), {
       chatRunId: 'run', chatSending: true, chatQueue: [], settings: {}, applySettings() {},
       chatToolMessages: [], chatStreamSegments: [], toolStreamById: new Map(), toolStreamOrder: [],
     });
@@ -21,14 +27,17 @@ describe('complete paged chat history', () => {
     handleDirectAdapterEvent(host as any, { type: 'stream.snapshot', sessionKey: 'one', stream,
       snapshot: { version: 1, runId: 'run', attempt: 1, sequence: 1, phase: 'generating', parts: [
         { messageId: 'm', part: { id: 'text', type: 'text', text: 'live', source: 'fact', status: 'partial' } } ] } });
-    complete({ messages: [{ role: 'user', content: 'history' }] });
+    complete({ messages: history });
     await pending;
     expect(host.chatStream).toBe('live');
+    expect(host.chatMessages).toEqual([history[0], history[3]]);
     handleDirectAdapterEvent(host as any, { type: 'stream.delta', sessionKey: 'one', stream: { ...stream, fromSeq: 2, toSeq: 2 },
       projection: { version: 1, runId: 'run', attempt: 1, sequence: 2, operations: [{ type: 'run.terminal', outcome: 'cancelled' }] } });
     expect(getChatProjection(host as any, 'run')?.terminal).toBe('cancelled');
     expect(host.chatRunId).toBeNull();
     expect(host.chatSending).toBe(false);
+    await vi.waitFor(() => expect(host.chatMessages).toEqual(history));
+    expect(request).toHaveBeenCalledTimes(2);
   });
 
   it('loads older pages and applies the chronological transcript once', async () => {

@@ -10,7 +10,7 @@ S3 基于 S2 merge `a70de824199e9d2e013e47e5d7dc815f741230e4`。新端正文 tru
 - streamEpoch 是展示缓存身份，独立于 attempt 与 durable。每批占一个展示序号，projection sequence 保留批末的原序号。相同 epoch 窗内游标重播 >W suffix；窗外/淘汰/刷新走完整 snapshot(W)。捕获 W、安装订阅和排队后续事件在同一同步 authority，不跨 await。
 - 重复区间忽略，缺口或非法操作冻结并重新 watch；恢复只 watch，不 chat.send。Gateway 过滤旧订阅和过期 epoch；UI reducer 同步替换 parts、工具、phase、runState、attempt、anchor、durable 与水位。
 - 首个正文/状态立即发送；正文后续 40ms/8KiB、progress 200ms；attempt/part 改变及 reset/tool/terminal 先 flush。终态由现有事务 owner 持久确认后发布。
-- 历史读取可能晚于实时快照返回。活跃 parts stream 的投影和游标保留，不以 durable 历史抹去实时后缀；终态清理 run 与 `chatSending`，不依赖 rAF。
+- 历史读取可能晚于实时快照返回。活跃 parts stream 的投影和游标保留，不以 durable 历史抹去实时后缀；历史只补旧轮次和当前用户提示，活跃 run 的助手/工具由快照唯一展示，避免双重应用；取消终态重新加载 durable 历史。终态清理 run 与 `chatSending`，不依赖 rAF。
 
 ## 容量与配置
 
