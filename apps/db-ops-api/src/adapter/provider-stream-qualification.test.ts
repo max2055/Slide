@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import { afterEach, expect, it } from 'vitest';
-import { OpenAIProvider } from '@slide/agent-core';
+import { AgentRunner, NoopHook, OpenAIProvider, ToolRegistry } from '@slide/agent-core';
 import { AnthropicProvider } from './llm-provider.js';
 
 const servers: Server[] = [];
@@ -76,4 +76,24 @@ it.each(['OpenAI', 'Ollama-compatible'])('%s actual SDK keeps reasoning optional
   expect(c.events.filter(e => e.kind === 'thinking')).toEqual([]);
   expect(c.events.filter(e => e.kind === 'input').map(e => e.value.id)).toEqual(['openai-call', 'openai-call']);
   expect(result.toolCalls).toEqual([{ id: 'openai-call', name: 'query', arguments: { sql: 'SELECT 1' } }]);
+});
+
+it.each(['OpenAI', 'Anthropic'])('%s empty event heartbeat cannot extend provider idle deadline or produce progress', async name => {
+  const server = createServer(async (request, response) => {
+    for await (const _chunk of request) { /* drain */ }
+    response.writeHead(200, { 'Content-Type': 'text/event-stream' }); response.flushHeaders();
+    const heartbeat = name === 'Anthropic' ? 'event: ping\ndata: {"type":"ping"}\n\n' : 'data: {"choices":[{"index":0,"delta":{},"finish_reason":null}]}\n\n';
+    const timer = setInterval(() => response.write(heartbeat), 10); response.on('close', () => clearInterval(timer));
+  });
+  servers.push(server); await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const baseURL = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const provider = name === 'Anthropic' ? new AnthropicProvider({ apiKey: 'fixture', baseURL }) : new OpenAIProvider({ apiKey: 'fixture', baseURL });
+  const hook = new NoopHook(); hook.wantsStreaming = () => true;
+  const phases: string[] = []; const pending: Promise<unknown>[] = [];
+  const result = await new AgentRunner(provider).run({ initialMessages: [{ role: 'user', content: 'fixture' }], tools: new ToolRegistry(), model: 'fixture',
+    hook, maxIterations: 2, maxToolResultChars: 1000, llmTimeoutS: .4, streamIdleTimeoutS: .08,
+    onRuntimePhase: phase => { phases.push(phase); }, onProviderRequest: request => { pending.push(request); } });
+  await Promise.allSettled(pending);
+  expect(result.resolution?.reasonCode).toBe('MODEL_IDLE_TIMEOUT');
+  expect(phases).not.toContain('generating');
 });
