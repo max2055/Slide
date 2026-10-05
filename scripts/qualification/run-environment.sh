@@ -25,13 +25,6 @@ docker run --detach --rm --name "$container" \
   --publish 127.0.0.1::3306 \
   mysql:8.4 >/dev/null
 
-for _ in $(seq 1 60); do
-  if docker exec "$container" mysqladmin ping -uroot "-p$password" --silent >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
-done
-docker exec "$container" mysqladmin ping -uroot "-p$password" --silent >/dev/null
 port="$(docker port "$container" 3306/tcp | awk -F: 'NR==1 { print $NF }')"
 if [[ -z "$port" ]]; then
   echo "unable to resolve qualification MySQL port" >&2

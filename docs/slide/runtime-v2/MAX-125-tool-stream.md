@@ -51,6 +51,18 @@
 资源：未设硬预算；当前平台 run usage=null，raw input/cached/output、费用及标准化吞吐不可用。子代理 0、最大委派深度 0；保留 scope v1，未新增任务或扩展 S2/S3。
 回滚：撤回本 MAX-125 PR；没有数据库迁移、生产配置修改或付费业务调用。
 
+## PR/CI 续修补充 v2（2026-10-05）
+
+范围 v2 保留 S1 产品范围，仅增加当前 PR 的 CI 阻塞修复和本任务族持续跟踪配置。原始 head `a7a907bf` 的 [Actions run 37258282084](https://github.com/max2055/Slide/actions/runs/37258282084) 中，六项成功，recovery-qualification 失败，release-artifact 被依赖跳过；不计完整通过。
+
+失败发生于 `run-environment.sh bootstrap-upgrade`：初始化 MySQL 的首次 socket ping 成功，紧随的无重试 ping 在临时服务重启时退出 1，尚未进入已有的发布端口稳定查询。删除重复 socket ping 前置，直接使用既有 TCP 三次连续查询检测；60 次上限及失败退出、容器清理保持有效，没有放宽门禁。
+
+- `qualification-environment.test.ts` 执行真实 shell 脚本、模拟初始化重启及 TCP 查询中断/持续失败：修复前两个用例失败；修复后两个通过，确认稳定查询完成前不执行迁移、超时不执行迁移且清理容器。
+- `bash scripts/qualification/run-environment.sh bootstrap-upgrade`：真实隔离 Docker MySQL 8.4，空库迁移、重复启动、旧 audit baseline 升级测试通过，115 项 migration invariant 通过；容器由脚本清理。
+- `pnpm --filter slide-api typecheck` 与 `bash -n scripts/qualification/run-environment.sh` 通过。其他未变产品代码复用 v1 验证，最终完整门禁由修复 head 的八项 CI 执行。
+
+自动闭环：MAX-124 原有唯一10分钟巡检正常，但 MAX-125 交付时没有 CI 条件规则。现在为 MAX-125–MAX-129 各配置一个 `until-pr checks`、continuous、168小时、max-fires=1000 的持久化规则，并在父/子任务追加 v2 契约；描述更新使用 `--no-start`，不提前启动 backlog。平台约30秒检查，成功或失败均续跑原子任务；失败读取日志、分类、修复并推送原 PR，成功交父任务合并；父巡检继续兜底和维护规则有效期。规则不回放注册前已完成结果，故登记时和退出前必须读取并处理当前结果。暂停/取消/完成禁用相应规则，禁止重复派发及并发改分支。规则 ID 与实际生效状态以 Multica issue wakeup list 为准。
+
 最终 `227a69d1` deterministic 复验（退出码 0）：
 
 ```json
