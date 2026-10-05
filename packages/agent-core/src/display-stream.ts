@@ -33,7 +33,7 @@ export function readDisplayStreamEvent(value: unknown): DisplayStreamEvent | und
   if (!e || !['stream.snapshot', 'stream.delta'].includes(e.type) || !id(e.sessionKey) || !w || w.version !== 1
     || ![w.streamEpoch, w.runId, w.turnId, w.subscriptionId].every(id)
     || !seq(w.fromSeq) || !seq(w.toSeq) || w.fromSeq > w.toSeq) return;
-  if (e.type === 'stream.delta' && (!validProjectionFrame(e.projection, w.runId) || w.fromSeq === 0)) return;
+  if (e.type === 'stream.delta' && (!e.projection || e.projection.runId !== w.runId || w.fromSeq === 0)) return;
   if (e.type === 'stream.snapshot') {
     try { if (restoreMessageProjection(e.snapshot).runId !== w.runId || w.fromSeq !== w.toSeq) return; } catch { return; }
   }
@@ -44,6 +44,7 @@ export function readDisplayStreamEvent(value: unknown): DisplayStreamEvent | und
 export function inspectDisplayWatermark(state: Omit<DisplayStreamState, 'projection'>, e: DisplayStreamEvent): 'applied' | 'ignored' | 'recover' {
   const w = e.stream, prior = state.cursor;
   if (w.subscriptionId !== state.subscriptionId) return 'ignored';
+  if (e.type === 'stream.delta' && !validProjectionFrame(e.projection, w.runId)) return 'recover';
   const same = prior?.streamEpoch === w.streamEpoch && prior.runId === w.runId && prior.turnId === w.turnId;
   if (e.type === 'stream.snapshot') {
     if (prior && !same && !state.recovering) return 'recover';

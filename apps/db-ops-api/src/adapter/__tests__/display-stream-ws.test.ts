@@ -212,6 +212,13 @@ it('real WS isolates a stalled write callback peer, evicts cache epochs and stil
     const slow = await peer(server.address().port, 'slow'); sockets.push(slow.socket); slow.watch();
     await normal.wait(() => normal.events.some(e => e.type === 'stream.snapshot'));
     await slow.wait(() => slow.events.some(e => e.type === 'stream.snapshot'));
+    const normalServer = [...server.clients].find((ws: any) => ws._socket.remotePort === (normal.socket as any)._socket.localPort) as WebSocket;
+    (adapter as any).sendSocketEvent(normalServer, { type: 'run.snapshot', sessionKey: 'fixture', run: { id: 'stored', sessionId: 'fixture', messageId: 'stored-message',
+      idempotencyKey: 'stored-key', state: 'completed', result: { event: { type: 'complete', finalContent: 'x'.repeat(2_000_000) } } } });
+    await normal.wait(() => normal.events.some(e => e.type === 'run.snapshot'));
+    const status = normal.events.find(e => e.type === 'run.snapshot');
+    expect(status.run.state).toBe('completed'); expect(status.run.result).toBeUndefined();
+    expect(Buffer.byteLength(JSON.stringify(status))).toBeLessThan(1024);
     const slowServer = [...server.clients].find((ws: any) => ws._socket.remotePort === (slow.socket as any)._socket.localPort) as WebSocket;
     // Actual socket/auth/close remain real; inject stalled transport acceptance only.
     vi.spyOn(slowServer, 'send').mockImplementation(() => {});
