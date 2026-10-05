@@ -64,3 +64,28 @@ reset 是单次 reducer 操作，同时撤回未确认 text/reasoning/tool_input
 没有新增数据库 schema。回滚可 revert 本 PR 的代码提交，旧 WS 帧和 legacy 内容继续可读；不删除工具事实、用户消息、completion ledger 或 checkpoint。新增投影字段为 additive；旧版忽略它们，升级版也不得把它们当作可执行命令或未经持久化的事实。
 
 平台 usage 查询当前原始累计字段为 0、metered_task_count=0；当前活跃 run 尚无可用实测 token/费用遥测，不能将其解释成零消耗。标准化吞吐/费用不可用；无硬预算、子代理数=0、深度=0、主线程并发=1。父 MAX-124 巡检可同时运行，家族并发上限未突破。
+
+## PR/CI 续修证据 v2（2026-10-05）
+
+本轮不扩展 S2 范围。原 head `1e810a0fcb76b47817a3cab88e05b85ce347c90b` 的 [browser-qualification](https://github.com/max2055/Slide/actions/runs/37265057968/job/111620339214) 在 `agent-runtime.spec.ts:35` 失败；其余六项 job SUCCESS，release-artifact 因依赖失败 SKIPPED。分类为本次引入的最终展示回归，不按环境问题重跑。
+
+在隔离 MySQL 8.4 容器、受控本地 OpenAI provider、真实 DirectAdapter/WS 与 Chromium 上复现原失败：DB 只有一条 `第一段。第二段。`，完成后 DOM 却有两个独立段落 `第一段。`、`第二段。`，刷新断言未执行。根因是历史按每个 text part 建独立渲染行，文本提取还在续写片段间增加了换行；这同样会断开跨模型请求的 Markdown/SQL。
+
+修复仅调整前端展示：相邻有效 text parts 按原字节拼接成一个 Markdown 行，首个真实 part ID 作为稳定行 key；原 parts、sourceMessageId、durable、usage 与持久事实均保留，不合并跨工具/思考边界。没有放宽、skip 或改写既有资格断言。
+
+RED checkpoint `54351f6a`：新增中文/跨片段 SQL 围栏/思考边界回归实际执行，3 项失败（额外换行或行拆分）；既有真实浏览器资格测试 length 失败、recovery/reject 通过。GREEN 代码 `3119be08`：上述回归和真实资格场景全部通过，后续仅文档变动。
+
+| 当前代码验证 | 实际结果 |
+|---|---|
+| `pnpm --filter slide-frontend exec vitest run src/app/ui/chat/message-parts.test.ts src/app/ui/chat/message-projection.test.ts src/app/ui/chat/grouped-render.test.ts` | 3 文件、17 项通过 |
+| `pnpm --filter slide-frontend test` | 85 文件、585 项通过 |
+| `pnpm --filter slide-frontend typecheck` | 通过 |
+| `pnpm --filter slide-frontend test:browser` | 58 项通过，含真实 DOM 工具交错/reset/history guards |
+| `pnpm --filter slide-frontend build` / `pnpm lint` / `git diff --check` | build/CSP 通过；lint 0 errors、262 既有 warnings；diff 通过 |
+| `pnpm --filter slide-frontend exec playwright test agent-runtime.spec.ts --workers=1`，`QUALIFICATION_CANCELLATION_E2E=1 PLAYWRIGHT_MANAGED_ENV=1` | 3 项通过、0 skipped；recovery（含保存失败 completion pending 恢复与唯一写入）/length（完成态与刷新完整正文）/reject（无候选残留） |
+
+隔离环境使用 `mysql:8.4`、`127.0.0.1:13316`，API/WS/Vite/provider 分别为 13003/38890/15175/38900，避开既有运行实例；容器与测试服务在每次前台运行结束清理。平台和生产库未使用，本地 provider 为受控 fixture，不计真实付费模型质量验收。前一轮 Core/API/sandbox 验证的代码与配置未改变，复用其证据；本轮首次补充的真实 MySQL 浏览器证据替代前文“本地未运行真实 MySQL”的限制，仅覆盖上述三场景，未宣称完整 MySQL qualification、soak 或生产 rollout 已通过。
+
+仍复用 continuous CI 规则 `01a10a15-a5ab-79c5-a948-2e29601c924d`（有效至 `2026-10-12T03:22:33.257353Z`），修复推送前确认 enabled、未暂停、未过期。当前 head 全部八项 CI 必须由平台续跑/父任务重新核验；本地通过不代替 CI SUCCESS，不自行合并。
+
+资源延续原累计。当前查询的既有 terminal 原始累计：input=657,963、output=105,549、cache_read=16,119,424、metered_task_count=1；本轮 active 用量尚未报告，cache/input 包含口径未确认，标准化吞吐/实际费用不可用，0 cost 字段不解释为免费。未设硬预算，无新增子代理。
