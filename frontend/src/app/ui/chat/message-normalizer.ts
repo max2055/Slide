@@ -13,7 +13,19 @@ import { mediaKindFromMime } from "../../src/media/constants.ts";
 import { splitMediaFromOutput } from "../../src/media/parse.ts";
 import { parseInlineDirectives } from "../../src/utils/directive-tags.ts";
 import type { NormalizedMessage, MessageContentItem } from "../types/chat-types.ts";
-import { readMessageParts } from '../../../../../packages/agent-core/src/message-parts.ts';
+import { readMessageParts, type MessagePart } from '../../../../../packages/agent-core/src/message-parts.ts';
+
+/** Model continuation boundaries do not add whitespace or split Markdown. */
+function messagePartDisplayGroups(parts: MessagePart[]): MessagePart[][] {
+  const groups: MessagePart[][] = [];
+  for (const part of parts) {
+    if (part.status === 'discarded') continue;
+    const previous = groups.at(-1);
+    if (part.type === 'text' && previous?.[0].type === 'text') previous.push(part);
+    else groups.push([part]);
+  }
+  return groups;
+}
 
 /** Parts are additive. Future versions and invalid documents retain the old UI projection. */
 export function messagePartsDisplay(message: unknown): Record<string, unknown> {
@@ -23,9 +35,11 @@ export function messagePartsDisplay(message: unknown): Record<string, unknown> {
     const doc = readMessageParts(original.messageParts);
     if (doc.id !== original.id || doc.role !== original.role) return original;
     if (doc.projectionMessageId || doc.parts.some(p => p.generation || !p.id.startsWith(`${doc.id}/part/`))) {
-      const content = doc.parts.filter(p => p.status !== 'discarded').flatMap((p): Record<string, unknown>[] => {
+      const content = messagePartDisplayGroups(doc.parts).flatMap((parts): Record<string, unknown>[] => {
+        const p = parts[0];
         switch (p.type) {
-          case 'text': case 'runtime_notice': return [{ type: 'text', text: p.text }];
+          case 'text': return [{ type: 'text', text: parts.map(part => part.type === 'text' ? part.text : '').join('') }];
+          case 'runtime_notice': return [{ type: 'text', text: p.text }];
           case 'reasoning': return typeof p.text === 'string' ? [{ type: 'thinking', thinking: p.text }] : [];
           case 'tool_input': return []; // Partial arguments are process display, never executable tool calls.
           case 'tool_call': return [{ type: 'toolcall', id: p.call.id, name: p.call.function.name, arguments: p.call.function.arguments },
@@ -68,13 +82,16 @@ export function messagePartsRenderRows(message: unknown, toolOutputs = new Set<s
     if (doc.id !== original.id || doc.role !== original.role || (doc.role !== 'assistant' && doc.role !== 'tool')) return null;
     if (doc.role === 'tool' && doc.runId && doc.parts.every(p => p.type === 'tool_result' && toolOutputs.has(`${doc.runId}\0${p.toolCallId}`))) return [];
     if (!(doc.projectionMessageId || doc.parts.some(p => p.generation))) return null;
-    return doc.parts.filter(p => p.status !== 'discarded' && p.type !== 'tool_input').map((part, index) => ({ partId: part.id,
+    return messagePartDisplayGroups(doc.parts).filter(parts => parts[0].type !== 'tool_input').map((parts, index) => {
+      const part = parts[0];
+      return { partId: part.id,
       message: { ...original, ...(index > 0 ? { usage: undefined, cost: undefined } : {}),
-        messageParts: { ...doc, parts: [part] },
+        messageParts: { ...doc, parts },
         ...(part.type === 'tool_call' ? { toolCallId: part.call.id, toolPhase: part.tool?.phase, toolOutcome: part.tool?.outcome,
           toolStartedAt: part.tool?.startedAt, toolSettledAt: part.tool?.settledAt, toolProgress: part.tool?.progress } : {}),
       },
-    }));
+      };
+    });
   } catch { return null; }
 }
 
