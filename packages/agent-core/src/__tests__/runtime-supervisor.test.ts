@@ -32,7 +32,7 @@ it('accepts recovery while excluding rejected text and temporary reminders from 
   const { result, requests } = await run([response(bad), response('数据库连接正常。')]);
   expect(result.finalContent).toBe('数据库连接正常。');
   expect(requests).toHaveLength(2);
-  expect(result.messages).toEqual([{ role: 'user', content: '诊断数据库并输出结论' }, { role: 'assistant', content: '数据库连接正常。', tool_calls: undefined }]);
+  expect(result.messages).toEqual([{ role: 'user', content: '诊断数据库并输出结论' }, { role: 'assistant', id: expect.stringMatching(/^model_/), content: '数据库连接正常。', tool_calls: undefined }]);
 });
 it('classifies the empty-response remedy again instead of accepting repetition', async () => {
   const { result } = await run([response(''), response(''), response(bad)]);

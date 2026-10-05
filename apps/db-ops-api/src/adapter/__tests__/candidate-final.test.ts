@@ -174,7 +174,9 @@ it.each(['rejection', 'thinking-only', 'partial-tool'])('isolates discarded reas
   if (failure === 'partial-tool') {
     expect(events.some(e => e.projection?.operations.some(op => op.type === 'part.start' && op.part.type === 'tool_input'))).toBe(true);
     expect(events.some(e => e.type === 'tool_start')).toBe(false);
-    expect(events.at(-1)?.messageParts?.parts.some(p => p.type === 'tool_input')).toBe(false);
+    const terminal = events.at(-1)!;
+    expect(terminal.type).toBe('complete');
+    expect(terminal.type === 'complete' && terminal.messageParts?.parts.some(p => p.type === 'tool_input')).toBe(false);
   }
   expect(JSON.stringify([result, response.message(result), sessions.getOrCreate('isolation').getCanonicalPage().messages, mock.contexts])).not.toContain('discarded');
   const count = events.length;
