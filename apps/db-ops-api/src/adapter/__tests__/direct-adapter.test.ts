@@ -326,6 +326,16 @@ afterEach(async () => {
 // ── Tests ──
 
 describe('DirectAdapter', () => {
+  it('carries the same ordered projection through model EOF and terminal without inventing durability', async () => {
+    const adapter = createMockAdapter(); adaptersToCleanup.push(adapter);
+    const events: ChatEvent[] = [];
+    await adapter.chat('projection-session', 'hello', event => { events.push(event); });
+    const text = events.find(e => e.type === 'text_delta') as any;
+    expect(text.projection?.operations).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'part.start' })]));
+    const complete = events.find(e => e.type === 'complete') as any;
+    expect(complete.messageParts?.parts).toEqual(expect.arrayContaining([expect.objectContaining({ generation: 'ended' })]));
+    expect(complete.messageParts?.parts.every((p: any) => p.status !== 'completed' || p.durable)).toBe(true);
+  });
   it('serializes chat runs for the same session key', async () => {
     const adapter = createMockAdapter();
     const order: string[] = [];

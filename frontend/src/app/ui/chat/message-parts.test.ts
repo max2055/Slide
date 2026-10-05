@@ -20,3 +20,11 @@ it('mixed image/text keeps both canonical sources visible', () => {
   expect(normalizeMessage(message).content).toEqual([{ type: 'text', text: 'inspect' },
     { type: 'attachment', attachment: { url: 'data:image/png;base64,aGVsbG8=', kind: 'image', label: '图片附件' } }]);
 });
+it('ordered parts render the same projection even when legacy content is only a rollback copy', () => {
+  const message = migrateMessageParts({ id: 'ordered', role: 'assistant', content: 'old text' });
+  message.messageParts.parts = [
+    { id: 'r', source: 'fact', type: 'reasoning', status: 'partial', text: 'inspect', format: 'reasoning_content' },
+    { id: 't', source: 'fact', type: 'text', status: 'partial', text: 'current' },
+  ];
+  expect(normalizeMessage(message).content).toEqual([{ type: 'thinking', thinking: 'inspect' }, { type: 'text', text: 'current' }]);
+});
