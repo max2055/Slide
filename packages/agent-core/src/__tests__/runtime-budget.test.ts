@@ -117,18 +117,19 @@ it('keeps recovery total finite across restored mixed categories', async () => {
   const result = await new AgentRunner(provider(async () => ({ ...ok, content: '' }))).run(spec({ resumeCheckpoint: { runtime_state_v1: recovery.snapshot() } }));
   expect(result.resolution?.reasonCode).toBe('RECOVERY_LIMIT');
 });
-it('heartbeat cannot evade model wall-clock and idle has its own reason', async () => {
+it('semantic output cannot evade wall-clock and empty heartbeats do not reset idle', async () => {
   vi.useFakeTimers();
-  for (const heartbeat of [false, true]) {
+  for (const activity of ['silent', 'heartbeat', 'content'] as const) {
     let ticker: ReturnType<typeof setInterval> | undefined;
     const mock: LLMProvider = { getDefaultModel: () => 'test', chat: async () => ok, chatStream: async (_m, _t, callbacks, options) => new Promise((_r, reject) => {
-      if (heartbeat) ticker = setInterval(() => callbacks.onActivity?.(), 20);
+      if (activity === 'heartbeat') ticker = setInterval(() => callbacks.onActivity?.(), 20);
+      if (activity === 'content') ticker = setInterval(() => { void callbacks.onContentDelta('real output'); }, 20);
       options?.signal?.addEventListener('abort', () => { clearInterval(ticker); reject(options.signal!.reason); });
     }) };
     const hook = new NoopHook(); hook.wantsStreaming = () => true;
     const run = new AgentRunner(mock).run(spec({ hook, llmTimeoutS: 0.1, streamIdleTimeoutS: 0.05 }));
     await vi.advanceTimersByTimeAsync(110);
-    expect((await run).resolution?.reasonCode).toBe(heartbeat ? 'MODEL_REQUEST_TIMEOUT' : 'MODEL_IDLE_TIMEOUT');
+    expect((await run).resolution?.reasonCode).toBe(activity === 'content' ? 'MODEL_REQUEST_TIMEOUT' : 'MODEL_IDLE_TIMEOUT');
   }
 });
 it('tool timeout retains actual settlement, blocks later tools, and ignores late success', async () => {
