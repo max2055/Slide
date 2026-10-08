@@ -937,7 +937,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     const streamEvent = readDisplayStreamEvent(event);
     if (!streamEvent || streamEvent.sessionKey !== sessionKey) return;
     if (streamEvent.recovery?.cold) {
-      host.lastError = '连接已恢复；仅恢复已保存边界，未保存的流尾部可能丢失。';
+      host.chatRecoveryNotice = '连接已恢复；仅恢复已保存边界，未保存的流尾部可能丢失。';
       void loadChatHistory(host as unknown as ChatState);
       return;
     }
@@ -949,7 +949,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     host.chatRunId = id;
     host.chatStreamRecovery = streamEvent.recovery;
     host.chatRuntimePhase = state.phase;
-    if (streamEvent.recovery?.truncated) host.lastError = '恢复快照仅保留本轮尾部和结果预览；完整已保存内容请查看聊天历史。';
+    if (streamEvent.recovery?.truncated) host.chatRecoveryNotice = '恢复快照仅保留本轮尾部和结果预览；完整已保存内容请查看聊天历史。';
     const barrier = streamEvent.type === 'stream.snapshot' || state.terminal
       || streamEvent.projection?.operations.some(op => op.type !== 'part.append');
     if (barrier) { flushDirectStreamUpdates(host); renderChatProjection(host, id); }
@@ -1139,7 +1139,7 @@ export function initChatClient(host: Record<string, unknown>): void {
     onStateChange: (state) => {
       if (state === 'connected') {
         host.connected = true;
-        host.lastError = null;
+        host.connectionError = null;
         if (!host.permissionsError && !readCachedPermissions()) {
           void loadPermissions(host);
         }
@@ -1160,16 +1160,16 @@ export function initChatClient(host: Record<string, unknown>): void {
         host.lastError = SESSION_EXPIRED_MESSAGE;
       } else if (state === 'rate_limited') {
         host.connected = false;
-        host.lastError = RATE_LIMITED_MESSAGE;
+        host.connectionError = RATE_LIMITED_MESSAGE;
       } else if (state === 'network_interrupted') {
         host.connected = false;
-        host.lastError = NETWORK_INTERRUPTED_MESSAGE;
+        host.connectionError = NETWORK_INTERRUPTED_MESSAGE;
       } else if (state === 'service_restarting') {
         host.connected = false;
-        host.lastError = SERVICE_RESTART_MESSAGE;
+        host.connectionError = SERVICE_RESTART_MESSAGE;
       } else if (state === 'exhausted') {
         host.connected = false;
-        host.lastError = '连接失败，请点击重试';
+        host.connectionError = '连接失败，请点击重试';
       }
     },
   });
@@ -1220,6 +1220,9 @@ export function clearExpiredChatState(host: Record<string, unknown>): void {
   }
   pendingDirectStreamUpdates.delete(host);
   host.connected = false;
+  host.connectionError = null;
+  host.chatRecoveryNotice = null;
+  host.lastError = null;
   host.chatLoading = false;
   host.chatSending = false;
   host.chatRunId = null;

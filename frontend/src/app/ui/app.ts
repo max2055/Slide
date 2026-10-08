@@ -71,7 +71,6 @@ import { type ChatAttachment, type ChatQueueItem, type CronFormState } from "./u
 import { generateUUID } from "./uuid.ts";
 import { buildNavigationUrl } from "./app-navigation.ts";
 import { SESSION_EXPIRED_EVENT, apiClient, isSessionExpiryInProgress } from "../../api/index.ts";
-import { showToast } from "./components/app-toast-container.ts";
 
 declare global {
   interface Window {
@@ -122,6 +121,8 @@ export class SlideApp extends LitElement {
   @state() permissionsLoading = false;
   @state() permissionsError: string | null = null;
   @state() lastError: string | null = null;
+  @state() connectionError: string | null = null;
+  @state() chatRecoveryNotice: string | null = null;
   @state() lastErrorCode: string | null = null;
   @state() eventLog: EventLogEntry[] = [];
   private eventLogBuffer: EventLogEntry[] = [];
@@ -131,7 +132,6 @@ export class SlideApp extends LitElement {
   private readonly sessionExpiredHandler = () => {
     this.logout();
     this.lastError = '登录已超时，请重新登录。';
-    showToast('登录已超时，请重新登录', 'warning');
   };
 
   @state() assistantName = bootAssistantIdentity.name;

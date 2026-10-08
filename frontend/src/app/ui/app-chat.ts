@@ -169,7 +169,9 @@ async function sendChatMessageNow(
   // Reset thinking state for new message
   host.chatThinkingText = '';
   host.chatThinkingComplete = false;
+  const sendingSessionKey = host.sessionKey;
   const runId = await sendChatMessage(host as unknown as ChatState, message, opts?.attachments);
+  if (!runId && host.sessionKey !== sendingSessionKey) return false;
   const ok = Boolean(runId);
   if (!ok && opts?.previousDraft != null) {
     host.chatMessage = opts.previousDraft;
@@ -442,11 +444,11 @@ function injectCommandResult(host: ChatHost, content: string) {
   ];
 }
 
-export async function refreshChat(host: ChatHost, opts?: { scheduleScroll?: boolean }) {
+export async function refreshChat(host: ChatHost, opts?: { scheduleScroll?: boolean; clearNotices?: boolean }) {
   // Subscribe WS to session for invoke() completion broadcasts (e.g., RCA analysis)
   try { (host.client as any)?.watchSession?.(host.sessionKey); } catch { /* best-effort */ }
   await Promise.all([
-    loadChatHistory(host as unknown as ChatState),
+    loadChatHistory(host as unknown as ChatState, { clearNotices: opts?.clearNotices }),
     loadSessions(host as unknown as SessionsState, {
       activeMinutes: 0,
       limit: 0,

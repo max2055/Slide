@@ -84,6 +84,7 @@ function resetChatStateForSessionSwitch(state: AppViewState, sessionKey: string)
   state.chatStream = null;
   state.chatSideResult = null;
   state.lastError = null;
+  state.chatRecoveryNotice = null;
   state.compactionStatus = null;
   state.fallbackStatus = null;
   state.chatAvatarUrl = null;
@@ -297,6 +298,7 @@ export function renderChatControls(state: AppViewState) {
           try {
             await refreshChat(state as unknown as Parameters<typeof refreshChat>[0], {
               scheduleScroll: false,
+              clearNotices: true,
             });
             app.scrollToBottom({ smooth: true });
           } finally {

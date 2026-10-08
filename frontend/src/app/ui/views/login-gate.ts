@@ -5,7 +5,7 @@ import { icons } from "../../../icons.js";
 import { normalizeBasePath } from "../navigation.ts";
 import { agentLogoUrl } from "./agents-utils.ts";
 import { renderConnectCommand } from "./connect-command.ts";
-import { showToast } from "../components/app-toast-container.js";
+import "../components/app-notice.ts";
 
 export function renderLoginGate(state: AppViewState) {
   const basePath = normalizeBasePath(state.basePath ?? "");
@@ -28,7 +28,6 @@ export function renderLoginGate(state: AppViewState) {
     } catch (err) {
       // Network or server error — backend unreachable, not a credential issue
       state.lastError = '无法连接服务器。请确认后端服务已启动（http://localhost:3000），然后刷新页面重试。';
-      showToast('Server unreachable', 'error');
       return;
     }
     if (!token) {
@@ -110,9 +109,7 @@ export function renderLoginGate(state: AppViewState) {
           </button>
         </div>
         ${state.lastError
-          ? html`<div class="callout danger" style="margin-top: 14px;">
-              <div>${state.lastError}</div>
-            </div>`
+          ? html`<app-notice severity="error" role="alert">${state.lastError}</app-notice>`
           : ""}
       </div>
     </div>

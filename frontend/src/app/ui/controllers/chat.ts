@@ -88,6 +88,7 @@ export type ChatState = {
   chatStream: string | null;
   chatStreamStartedAt: number | null;
   lastError: string | null;
+  chatRecoveryNotice?: string | null;
 };
 
 export type ChatEventPayload = {
@@ -110,9 +111,13 @@ function maybeResetToolStream(state: ChatState) {
   }
 }
 
-export async function loadChatHistory(state: ChatState) {
+export async function loadChatHistory(state: ChatState, opts?: { clearNotices?: boolean }) {
   if (!state.client || !state.connected) {
     return;
+  }
+  if (opts?.clearNotices) {
+    state.lastError = null;
+    state.chatRecoveryNotice = null;
   }
   const sessionKey = state.sessionKey.trim();
   if (!sessionKey) {
@@ -123,7 +128,6 @@ export async function loadChatHistory(state: ChatState) {
   }
   const requestVersion = beginChatHistoryRequest(state);
   state.chatLoading = true;
-  state.lastError = null;
   try {
     const res = await state.client.request<{ messages?: Array<unknown>; thinkingLevel?: string; nextBefore?: number | null }>(
       "chat.history",
@@ -350,7 +354,12 @@ export async function sendChatMessage(
     }
   }
 
-  state.chatMessages = [
+  const payload = JSON.stringify({ message: msg, attachments: buildApiAttachments(attachments) });
+  const retrying = (unconfirmedChats.get(state) ?? []).some(item => item.payload === payload
+    && (item.sessionKey === state.sessionKey || item.error.getSessionKey() === state.sessionKey));
+  const hasQuestion = state.chatMessages.some(message => (message as { role?: string } | null)?.role === 'user'
+    && extractText(message) === msg);
+  if (!retrying || !hasQuestion) state.chatMessages = [
     ...state.chatMessages,
     {
       role: "user",
@@ -361,6 +370,7 @@ export async function sendChatMessage(
 
   state.chatSending = true;
   state.lastError = null;
+  state.chatRecoveryNotice = null;
   const runId = generateUUID();
   state.chatRunId = runId;
   state.chatStream = "";
@@ -373,11 +383,10 @@ export async function sendChatMessage(
   try {
     return await sending;
   } catch (err) {
-    // An expired send belongs to its original session, even after navigation.
-    if (err instanceof ChatAcceptanceTimeoutError && (
-      state.chatRunId !== pendingRunId
-      || (state.sessionKey !== sendSessionKey && state.sessionKey !== err.getSessionKey())
-    )) {
+    // A rejected send belongs to its original session, even after navigation.
+    if ((state.chatRunId && state.chatRunId !== pendingRunId)
+      || (state.sessionKey !== sendSessionKey
+        && !(err instanceof ChatAcceptanceTimeoutError && state.sessionKey === err.getSessionKey()))) {
       updateSendingState = false;
       return null;
     }
@@ -386,14 +395,6 @@ export async function sendChatMessage(
     state.chatStream = null;
     state.chatStreamStartedAt = null;
     state.lastError = error;
-    state.chatMessages = [
-      ...state.chatMessages,
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "Error: " + error }],
-        timestamp: Date.now(),
-      },
-    ];
     return null;
   } finally {
     if (updateSendingState) state.chatSending = false;
@@ -414,6 +415,7 @@ export async function sendDetachedChatMessage(
     return null;
   }
   state.lastError = null;
+  state.chatRecoveryNotice = null;
   const runId = generateUUID();
   try {
     return await requestChatSend(state, { message: msg, attachments, runId });

@@ -81,7 +81,7 @@ describe('initChatClient', () => {
       .mockResolvedValue(new Response(JSON.stringify(['chat:read'])));
     const refresh = vi.spyOn(appSettings, 'refreshActiveTab').mockResolvedValue(undefined);
     const host = {
-      client: null, connected: false, lastError: null,
+      client: null, connected: false, lastError: '检查 API Key',
       agentsLoading: false, agentsError: null, agentsList: null, agentsSelectedId: null,
       sessionsLoading: false, sessionsError: null, sessionsResult: null,
       sessionsFilterActive: '', sessionsFilterLimit: '',
@@ -101,7 +101,7 @@ describe('initChatClient', () => {
     expect(host.agentsLoading).toBe(false);
     expect(host.sessionsLoading).toBe(false);
     expect(host.connected).toBe(true);
-    expect(host.lastError).toBeNull();
+    expect(host.lastError).toBe('检查 API Key');
     for (const loader of ['agents', 'sessions'] as const) {
       const error = host[`${loader}Error`];
       if (failedLoader === loader || failedLoader === 'both') {
@@ -155,6 +155,25 @@ describe('initChatClient', () => {
     }
   });
 
+  it.each([1006, 1012, 4008])('connection close %s preserves run failure through reconnect', async code => {
+    localStorage.setItem('permissions', '["chat:read"]');
+    vi.spyOn(api, 'authFetch').mockResolvedValue(Response.json({ agents: [], sessions: [] }));
+    vi.spyOn(appSettings, 'refreshActiveTab').mockResolvedValue(undefined);
+    const host: Record<string, unknown> = { client: null, connected: false, lastError: '模型 API 认证失败，请检查 API Key' };
+    initChatClient(host);
+    await vi.waitFor(() => expect(MockWebSocket.latest?.frames.length).toBeGreaterThan(0));
+    MockWebSocket.latest?.receive({ type: 'auth_ok' });
+    MockWebSocket.latest?.closeWith(code, 'fixture');
+    expect(host.connected).toBe(false);
+    expect(host.connectionError).toBeTruthy();
+    expect(host.lastError).toBe('模型 API 认证失败，请检查 API Key');
+    (host.client as any).reconnect();
+    await vi.waitFor(() => expect(MockWebSocket.latest?.frames.length).toBeGreaterThan(0));
+    MockWebSocket.latest?.receive({ type: 'auth_ok' });
+    expect(host.connectionError).toBeNull();
+    expect(host.lastError).toBe('模型 API 认证失败，请检查 API Key');
+    (host.client as any).disconnect();
+  });
   it('replaces a corrupt initialization cache with validated permissions', async () => {
     localStorage.setItem('permissions', '{"error":"old failure"}');
     vi.spyOn(api.apiClient, 'fetchResponseWithAuth').mockImplementation((url) => Promise.resolve(
