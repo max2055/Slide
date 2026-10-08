@@ -10,6 +10,24 @@ function state(request: ReturnType<typeof vi.fn>): ChatState {
 }
 
 describe('complete paged chat history', () => {
+  it('automatic history refresh preserves the actionable run error', async () => {
+    const host = state(vi.fn().mockResolvedValue({ messages: [] }));
+    host.lastError = '余额不足，请充值后重试';
+    await loadChatHistory(host);
+    expect(host.lastError).toBe('余额不足，请充值后重试');
+  });
+  it('failed display snapshot retains the error after asynchronous history reload', async () => {
+    const host = Object.assign(state(vi.fn().mockResolvedValue({ messages: [{ role: 'user', content: 'question' }] })),
+      { chatRunId: 'run', chatSending: true, chatQueue: [], settings: {}, applySettings() {},
+        chatToolMessages: [], chatStreamSegments: [], toolStreamById: new Map(), toolStreamOrder: [] });
+    handleDirectAdapterEvent(host as any, { type: 'stream.snapshot', sessionKey: 'one',
+      stream: { version: 1, streamEpoch: 'epoch', runId: 'run', turnId: 'turn', subscriptionId: 'sub', fromSeq: 1, toSeq: 1 },
+      snapshot: { version: 1, runId: 'run', attempt: 1, sequence: 1, phase: 'generating', parts: [],
+        terminal: 'failed', runState: 'failed', error: '余额不足，请充值后重试' } });
+    await vi.waitFor(() => expect(host.chatMessages).toHaveLength(1));
+    expect(host.lastError).toBe('余额不足，请充值后重试');
+    expect(host.chatSending).toBe(false);
+  });
   it('a late history response preserves live snapshot, suffix cursor and cancellation', async () => {
     let complete!: (value: unknown) => void;
     const history = [{ role: 'user', content: 'history', runId: 'run' },

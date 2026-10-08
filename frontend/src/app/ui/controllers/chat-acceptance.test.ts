@@ -9,6 +9,26 @@ function state(request: ReturnType<typeof vi.fn>): ChatState {
 }
 
 describe('unconfirmed chat UI', () => {
+  it('send rejection keeps the user question without a fabricated assistant answer', async () => {
+    const host = state(vi.fn().mockRejectedValue(new Error('检查 API Key')));
+    await sendChatMessage(host, 'question');
+    expect(host.chatMessages).toHaveLength(1);
+    expect(host.chatMessages[0]).toMatchObject({ role: 'user' });
+    expect(host.lastError).toBe('检查 API Key');
+    expect(host.chatSending).toBe(false);
+  });
+  it('ordinary send failures cannot overwrite a different session', async () => {
+    let reject!: (error: Error) => void;
+    const host = state(vi.fn().mockImplementation(() => new Promise((_, r) => { reject = r; })));
+    const pending = sendChatMessage(host, 'old question');
+    host.sessionKey = 'other'; host.chatRunId = 'other-run'; host.chatSending = true;
+    host.chatMessages = []; host.lastError = 'other error';
+    reject(new Error('old error')); await pending;
+    expect(host.lastError).toBe('other error');
+    expect(host.chatRunId).toBe('other-run');
+    expect(host.chatSending).toBe(true);
+    expect(host.chatMessages).toEqual([]);
+  });
   it('releases waiting state and retries the original operation for the same payload', async () => {
     const retry = vi.fn().mockResolvedValue(undefined);
     const request = vi.fn().mockRejectedValue(new ChatAcceptanceTimeoutError('message-1', retry, () => ''));
