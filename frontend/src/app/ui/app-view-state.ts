@@ -56,6 +56,8 @@ export type AppViewState = {
   permissionsLoading?: boolean;
   permissionsError?: string | null;
   lastError: string | null;
+  connectionError?: string | null;
+  chatRecoveryNotice?: string | null;
   lastErrorCode: string | null;
   eventLog: EventLogEntry[];
   assistantName: string;

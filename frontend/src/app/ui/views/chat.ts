@@ -50,31 +50,20 @@ import { agentLogoUrl, resolveAgentAvatarUrl } from "./agents-utils.ts";
 import { renderMarkdownSidebar } from "./markdown-sidebar.ts";
 import "../components/resizable-divider.ts";
 import "../components/chat-history-nav.ts";
+import "../components/app-notice.ts";
 import { buildHistoryTurns, historyWindow, type HistoryTurn } from "../chat/history-navigation.ts";
 import type { ChatHistoryNav } from "../components/chat-history-nav.ts";
 
-/**
- * Map raw error messages to user-friendly Chinese text.
- */
+// Only bare protocol codes are translated; actionable provider text stays intact.
 function mapErrorMessage(error: string): string {
-  if (!error) return '未知错误';
-  const lower = error.toLowerCase();
-  if (lower.includes('provider_error') || lower.includes('api')) {
-    return 'AI 服务暂时不可用，请稍后重试';
-  }
-  if (lower.includes('timeout')) {
-    return '响应超时，请重试';
-  }
-  if (lower.includes('rate_limit')) {
-    return '请求过于频繁，请稍后再试';
-  }
-  if (lower.includes('connection') || lower.includes('network')) {
-    return '网络连接异常，请检查网络';
-  }
-  if (lower.includes('auth')) {
-    return '认证失败，请重新登录';
-  }
-  return error;
+  const messages: Record<string, string> = {
+    provider_error: 'AI 服务暂时不可用，请稍后重试',
+    timeout: '响应超时，请重试',
+    rate_limit: '请求过于频繁，请稍后再试',
+    authentication_error: '模型认证失败，请检查 API Key 和提供商配置',
+  };
+  const code = error.toLowerCase();
+  return Object.hasOwn(messages, code) ? messages[code] : error;
 }
 
 /**
@@ -118,6 +107,7 @@ export type ChatProps = {
   disabledReason: string | null;
   error: string | null;
   lastError: string | null;
+  recoveryNotice?: string | null;
   onReconnect?: () => void;
   sessions: SessionsListResult | null;
   focusMode: boolean;
@@ -672,8 +662,7 @@ function formatTokensCompact(n: number): string {
 function renderConnectionStatus(props: ChatProps): TemplateResult | typeof nothing {
   const isConnected = props.connected;
   const isExhausted = props.disabledReason === '连接失败，请点击重试';
-  const isAuthFailed = props.lastError === '认证失败，请重新登录';
-  const isConnecting = !isConnected && !isExhausted && !isAuthFailed;
+  const isAuthFailed = props.disabledReason === '认证失败，请重新登录';
 
   return html`
     <div class="connection-status">
@@ -681,11 +670,11 @@ function renderConnectionStatus(props: ChatProps): TemplateResult | typeof nothi
       <span class="connection-status__text">
         ${isConnected ? '已连接' :
           isExhausted ? '连接失败' :
-          isAuthFailed ? '认证失败，请重新登录' :
+          isAuthFailed ? '认证失败' :
           '重新连接中...'}
       </span>
       ${isExhausted ? html`
-        <button class="connection-status__reconnect" @click=${props.onReconnect ?? props.onRefresh}>重新连接</button>
+        <button class="btn connection-status__reconnect" @click=${props.onReconnect ?? props.onRefresh}>重新连接</button>
       ` : nothing}
     </div>
   `;
@@ -1774,19 +1763,12 @@ export function renderChat(props: ChatProps) {
         .connection-status__dot.connecting { background: var(--muted); box-shadow: 0 0 0 4px color-mix(in srgb, var(--muted) 14%, transparent); }
         .connection-status__reconnect { margin-left: auto; padding: 4px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); color: var(--text); font-size: var(--text-sm); font-weight: 600; cursor: pointer; transition: border-color 100ms ease, background 100ms ease, color 100ms ease; }
         .connection-status__reconnect:hover { border-color: var(--accent); background: var(--accent-subtle); color: var(--accent-text); }
-        .connection-banner { display: flex; align-items: center; gap: var(--space-sm, 8px); padding: var(--space-sm, 8px) var(--space-md, 12px); background: rgba(255, 193, 7, 0.15); border-bottom: 1px solid rgba(255, 193, 7, 0.3); color: var(--text); font-size: 13px; }
-        .connection-banner__icon { font-size: 16px; }
-        .connection-banner__pulse { width: 8px; height: 8px; border-radius: 50%; background: #ffc107; animation: pulse 1.5s ease-in-out infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.85); } }
       </style>
-      ${!props.connected && !props.disabledReason ? html`
-        <div class="connection-banner">
-          <span class="connection-banner__pulse"></span>
-          <span>连接中断，正在重连...</span>
-        </div>
-      ` : nothing}
-      ${props.disabledReason ? html`<div class="callout">${props.disabledReason}</div>` : nothing}
-      ${props.error ? html`<div class="callout danger">${mapErrorMessage(props.error)}</div>` : nothing}
+      ${[...new Set([props.error ?? props.lastError, props.disabledReason].filter(Boolean))].map(message => html`
+        <app-notice severity="error" role="alert">${mapErrorMessage(message!)}</app-notice>
+      `)}
+      ${props.recoveryNotice && ![props.error, props.lastError, props.disabledReason].includes(props.recoveryNotice)
+        ? html`<app-notice severity="warning" role="status">${props.recoveryNotice}</app-notice>` : nothing}
       ${props.focusMode
         ? html`
             <button

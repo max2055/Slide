@@ -221,7 +221,7 @@ export function renderApp(state: AppViewState) {
     return html` ${renderLoginGate(state)} ${renderGatewayUrlConfirmation(state)} `;
   }
 
-  const chatDisabledReason = state.lastError;
+  const chatDisabledReason = state.connectionError ?? null;
   const isChat = state.tab === "chat";
   const chatFocus = isChat && (state.settings.chatFocusMode || state.onboarding);
   const navDrawerOpen = state.navDrawerOpen && !chatFocus && !state.onboarding;
@@ -515,9 +515,6 @@ export function renderApp(state: AppViewState) {
                 ${renderChatSessionSelect(state)}
               </div>
               <div class="page-meta">
-                ${state.lastError
-                  ? html`<div class="pill danger">${state.lastError}</div>`
-                  : nothing}
                 ${renderChatControls(state)}
               </div>
             </section>`
@@ -847,7 +844,8 @@ export function renderApp(state: AppViewState) {
               hello: state.hello,
               canSend: state.connected,
               error: state.lastError,
-              lastError: state.lastError,
+              lastError: null,
+              recoveryNotice: state.chatRecoveryNotice,
               sessions: (state.sessionsResult as any) ?? null,
               focusMode: state.settings.chatFocusMode || false,
               sidebarOpen: state.sidebarOpen,
@@ -877,13 +875,13 @@ export function renderApp(state: AppViewState) {
               onAbort: () => state.handleAbortChat(),
               onNewSession: () => state.handleSendChat("/new", { restoreDraft: true }),
               onRefresh: () => {
-                if (!state.connected && state.lastError === '连接失败，请点击重试') {
+                if (!state.connected && state.connectionError === '连接失败，请点击重试') {
                   state.client?.reconnect();
                   return;
                 }
                 state.chatManualRefreshInFlight = true;
                 try { (state.client as any)?.watchSession?.(state.sessionKey); } catch { /* best-effort */ }
-                void loadChatHistory(state).finally(() => {
+                void loadChatHistory(state, { clearNotices: true }).finally(() => {
                   state.chatManualRefreshInFlight = false;
                 });
               },

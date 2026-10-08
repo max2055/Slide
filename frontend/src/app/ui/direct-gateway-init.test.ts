@@ -155,7 +155,7 @@ describe('initChatClient', () => {
     }
   });
 
-  it.each([1006, 1012, 1013])('connection close %s preserves run failure through reconnect', async code => {
+  it.each([1006, 1012, 4008])('connection close %s preserves run failure through reconnect', async code => {
     localStorage.setItem('permissions', '["chat:read"]');
     vi.spyOn(api, 'authFetch').mockResolvedValue(Response.json({ agents: [], sessions: [] }));
     vi.spyOn(appSettings, 'refreshActiveTab').mockResolvedValue(undefined);
