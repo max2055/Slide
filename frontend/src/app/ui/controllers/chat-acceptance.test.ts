@@ -40,6 +40,7 @@ describe('unconfirmed chat UI', () => {
     await sendChatMessage(host, 'hello');
     expect(retry).toHaveBeenCalledTimes(1);
     expect(request).toHaveBeenCalledTimes(1);
+    expect(host.chatMessages).toHaveLength(1);
   });
 
   it('releases waiting state again when a manual retry also expires', async () => {

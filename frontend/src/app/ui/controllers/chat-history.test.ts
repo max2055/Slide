@@ -10,6 +10,19 @@ function state(request: ReturnType<typeof vi.fn>): ChatState {
 }
 
 describe('complete paged chat history', () => {
+  it('explicit refresh clears stale notices on a pending empty session', async () => {
+    const host = state(vi.fn()); host.sessionKey = ''; host.lastError = 'old send failure';
+    await loadChatHistory(host, { clearNotices: true });
+    expect(host.lastError).toBeNull();
+  });
+  it('explicit refresh clears run/recovery notices while keeping connection failures', async () => {
+    const host = Object.assign(state(vi.fn().mockResolvedValue({ messages: [] })), {
+      lastError: 'old failure', chatRecoveryNotice: 'old recovery', connectionError: 'network interrupted' });
+    await loadChatHistory(host, { clearNotices: true });
+    expect(host.lastError).toBeNull();
+    expect(host.chatRecoveryNotice).toBeNull();
+    expect(host.connectionError).toBe('network interrupted');
+  });
   it('automatic history refresh preserves the actionable run error', async () => {
     const host = state(vi.fn().mockResolvedValue({ messages: [] }));
     host.lastError = '余额不足，请充值后重试';
