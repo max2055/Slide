@@ -1,3 +1,4 @@
+import { markChatRecoveryInterruption } from '../../src/app/ui/chat/recovery-notice.ts';
 import { LitElement } from 'lit';
 import '../../src/app/styles.css';
 import { SlideApp } from '../../src/app/ui/app.ts';
@@ -18,6 +19,9 @@ class NoticeFixture extends SlideApp {
 customElements.define('notice-fixture', NoticeFixture);
 apiClient.setToken('fixture-token');
 const app = new NoticeFixture();
+app.onSlashAction = action => {
+  if (action.startsWith('switch-session:')) switchChatSession(app as any, action.slice('switch-session:'.length));
+};
 app.connected = true;
 app.sessionKey = 'one';
 app.settings = { ...app.settings, navCollapsed: true, chatFocusMode: false, username: 'fixture' };
@@ -39,6 +43,7 @@ const snapshot = { version: 1 as const, runId: 'run', attempt: 1, sequence: 1, p
     app.lastError = null; app.connectionError = null; app.chatRecoveryNotice = null;
     if (source === 'connection') { app.connected = false; app.connectionError = message; }
     else if (source === 'cold' || source === 'truncated') {
+      if (source === 'cold') { app.chatRunId = 'run'; markChatRecoveryInterruption(app); }
       handleDirectAdapterEvent(app as any, { type: 'stream.snapshot', sessionKey: 'one', stream, snapshot,
         recovery: { truncated: source === 'truncated', cold: source === 'cold' } } as any);
     } else {
@@ -60,6 +65,16 @@ const snapshot = { version: 1 as const, runId: 'run', attempt: 1, sequence: 1, p
     await app.handleSendChat();
     await app.updateComplete;
     return { calls, retries };
+  },
+  async hydrate() {
+    handleDirectAdapterEvent(app as any, { type: 'stream.snapshot', sessionKey: app.sessionKey, stream, snapshot,
+      recovery: { cold: true, truncated: true } } as any);
+    await app.updateComplete;
+  },
+  async repeatSnapshot() {
+    handleDirectAdapterEvent(app as any, { type: 'stream.snapshot', sessionKey: 'one',
+      stream: { ...stream, subscriptionId: 'repeat' }, snapshot, recovery: { truncated: true } } as any);
+    await app.updateComplete;
   },
   history: (clearNotices = false) => loadChatHistory(app, { clearNotices }),
   switch: () => { switchChatSession(app as any, 'two'); },

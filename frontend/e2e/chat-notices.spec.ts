@@ -22,17 +22,42 @@ for (const width of [1440, 390]) {
       test(`${name} shows exactly one actionable reason`, async ({ page }, info) => {
         await page.evaluate(({ message, source }) => (window as any).noticeFixture.error(message, source), { message, source });
         await expect(page.locator('app-notice')).toHaveCount(1);
-        await expect(page.getByText(message, { exact: true })).toHaveCount(1);
+        await expect(page.getByText(message, { exact: severity !== 'warning' })).toHaveCount(1);
         await expect(page.locator('app-notice')).toHaveAttribute('severity', severity);
         await expect(page.locator('.content-header')).not.toContainText(message);
         await expect(page.getByText('AI 服务暂时不可用', { exact: false })).toHaveCount(0);
         const box = await page.locator('app-notice').boundingBox();
         expect(box!.x + box!.width).toBeLessThanOrEqual(width);
-        const count = await page.getByText(message, { exact: true }).count();
+        const count = await page.getByText(message, { exact: severity !== 'warning' }).count();
         await info.attach('notice-count.json', { body: JSON.stringify({ width, name, count, severity }), contentType: 'application/json' });
         if (name === 'balance' || name === 'truncated') await page.screenshot({ path: info.outputPath(`${name}-${width}.png`) });
       });
     }
+    test('initial cold history hydration is silent', async ({ page }) => {
+      await page.evaluate(() => (window as any).noticeFixture.hydrate());
+      await expect(page.locator('app-notice')).toHaveCount(0);
+    });
+    test('risk is dismissible with keyboard and does not reappear on watch', async ({ page }, info) => {
+      await page.evaluate(() => (window as any).noticeFixture.error('', 'truncated'));
+      await page.evaluate(() => (window as any).noticeFixture.history());
+      await expect(page.locator('app-notice')).toHaveCount(1);
+      const close = page.getByRole('button', { name: '关闭提示' });
+      await expect(close).toBeVisible();
+      await page.screenshot({ path: info.outputPath(`recovery-${width}.png`) });
+      await close.focus(); await page.keyboard.press('Enter');
+      await expect(page.locator('app-notice')).toHaveCount(0);
+      await page.evaluate(() => (window as any).noticeFixture.repeatSnapshot());
+      await expect(page.locator('app-notice')).toHaveCount(0);
+      await page.screenshot({ path: info.outputPath(`dismissed-${width}.png`) });
+    });
+    test('new view and returning to a session clear the prior risk', async ({ page }) => {
+      await page.evaluate(() => (window as any).noticeFixture.error('', 'truncated'));
+      await expect(page.locator('app-notice')).toHaveCount(1);
+      await page.getByRole('button', { name: '新建对话' }).click();
+      await expect(page.locator('app-notice')).toHaveCount(0);
+      await page.evaluate(() => (window as any).noticeFixture.switch());
+      await expect(page.locator('app-notice')).toHaveCount(0);
+    });
     test('send failure preserves draft and has no assistant error', async ({ page }) => {
       await page.evaluate(() => (window as any).noticeFixture.rejectSend());
       await expect(page.locator('app-notice')).toHaveCount(1);
@@ -81,6 +106,7 @@ for (const width of [1440, 390]) {
       await page.evaluate(async () => {
         const fixture = (window as any).noticeFixture;
         await fixture.error('', 'cold');
+        fixture.app.chatRunId = null;
         fixture.app.chatMessage = 'next question';
         await fixture.app.handleSendChat();
       });

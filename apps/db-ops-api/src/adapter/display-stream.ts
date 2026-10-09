@@ -198,6 +198,9 @@ export class DisplayStreamAuthority<Peer extends object> {
       && cursor.toSeq >= (run.log[0]?.seq ?? run.seq + 1) - 1
       ? run.log.filter(e => e.seq > cursor.toSeq) : undefined;
     const baseline = run ? this.snapshot(run, id) : undefined;
+    // A cold history reference must not echo an unbounded client-supplied ID.
+    const coldRunId = typeof cursor?.runId === 'string' && cursor.runId.length > 0
+      && cursor.runId.length <= 512 ? cursor.runId : 'cold';
     // Delivery order must survive a synchronous reentrant publication.
     const queued: DisplayStreamEvent[] = [];
     let capturing = true;
@@ -214,7 +217,8 @@ export class DisplayStreamAuthority<Peer extends object> {
     if (suffix) for (const entry of suffix) send(this.delta(run!, id, entry));
     else if (baseline) send(baseline);
     else send({ type: 'stream.snapshot', sessionKey, stream: { version: 1, streamEpoch: randomUUID(), runId: 'cold', turnId: 'cold', subscriptionId: id, fromSeq: 0, toSeq: 0 },
-      snapshot: createMessageProjection('cold'), recovery: { truncated: true, cold: true, omittedParts: 0, detailRef: { sessionKey, runId: 'cold', kind: 'authorized-history' } } });
+      snapshot: createMessageProjection('cold'), recovery: { truncated: coldRunId !== 'cold', cold: true, omittedParts: 0,
+        detailRef: { sessionKey, runId: coldRunId, kind: 'authorized-history' } } });
     capturing = false;
     if (overflow) { const latest = this.runs.get(sessionKey); if (latest) send(this.snapshot(latest, id)); }
     else for (const e of queued) send(e);
