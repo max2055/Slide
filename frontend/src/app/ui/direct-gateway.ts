@@ -539,7 +539,11 @@ export class DirectGatewayClient {
       if (pending && sessionKey) {
         this.watchedSessions.add(sessionKey);
         pending.frame.sessionKey = sessionKey;
-        if (typeof pending.frame.subscriptionId === 'string') this.streamSubscriptions.set(sessionKey, pending.frame.subscriptionId);
+        // A watch issued after this send owns the newer recovery subscription.
+        // Only bind the send subscription when admission allocates an unwatched session.
+        if (!this.streamSubscriptions.has(sessionKey) && typeof pending.frame.subscriptionId === 'string') {
+          this.streamSubscriptions.set(sessionKey, pending.frame.subscriptionId);
+        }
       }
     }
 
