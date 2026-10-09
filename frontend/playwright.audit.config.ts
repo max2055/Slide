@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './e2e',
-  testMatch: ['chat-notices.spec.ts', 'tool-stream.spec.ts', 'resource-diagnosis.spec.ts', 'cron-runs.spec.ts', 'audit-dialog.spec.ts', 'dashboard-overview.spec.ts', 'network-device-scheduling.spec.ts', 'readability.spec.ts', 'llm-scenes.spec.ts', 'source-sync.spec.ts', 'resource-metrics.spec.ts'],
+  testMatch: ['chat-notices.spec.ts', 'tool-stream.spec.ts', 'resource-diagnosis.spec.ts', 'cron-runs.spec.ts', 'audit-dialog.spec.ts', 'dashboard-overview.spec.ts', 'network-device-scheduling.spec.ts', 'readability.spec.ts', 'llm-scenes.spec.ts', 'source-sync.spec.ts', 'resource-metrics.spec.ts', 'metric-settings.spec.ts'],
   outputDir: './test-results-audit',
   timeout: 30_000,
   workers: 2,

@@ -19,8 +19,10 @@ export const metricNames: Record<string, string> = {
   'huawei.device.cpu_percent': '华为设备 CPU 使用率', 'huawei.device.memory_percent': '华为设备内存使用率',
 };
 export const resourceLabels: Record<string, string> = { instance: '数据库实例', server: '服务器', network_device: '网络设备' };
-export const packageName = (id: string) => ({ 'mysql-basic': 'MySQL 基础采集', 'linux-basic': 'Linux 基础采集', 'linux-host': 'Linux 主机采集', 'if-mib-basic': '标准接口采集', 'snmp-standard': 'SNMP 标准采集' }[id] ?? '扩展采集包');
-export const metricName = (id: string) => metricNames[id] ?? '扩展指标';
+export const packageName = (id: string) => ({ 'mysql-basic': 'MySQL 基础采集', 'linux-basic': 'Linux 基础采集', 'linux-host': 'Linux 主机采集', 'if-mib-basic': '标准接口采集', 'snmp-standard': 'SNMP 标准采集',
+  'mysql-representative': 'MySQL 数据库采集', 'postgresql-representative': 'PostgreSQL 数据库采集', 'oracle-representative': 'Oracle 数据库采集', 'dameng-representative': '达梦数据库采集',
+}[id] ?? id);
+export const metricName = (id: string) => metricNames[id] ?? id;
 export type MetricRow = { result?: SemanticResult; state: string; lastSuccess?: string; timeUnavailable?: boolean };
 export function collectionState(result: SemanticResult): string {
   const metrics = result.metrics;

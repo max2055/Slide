@@ -14,7 +14,7 @@ type Pin = { id: string; version: string; digest: string };
 import { type Toggle, type Overrides } from './metric-policy-fields.js';
 import './metric-policy-fields.js';
 export type { Overrides } from './metric-policy-fields.js';
-export interface Catalog { packages: Array<{ package: Pin & { resource_type: string; applicability: unknown[]; collectors?: Array<{ mappings?: Array<{ metric: { id: string } }> }> }; recommendations: Record<string, number | boolean>; documentation: Array<{ permissions?: string[]; discovery?: string }> }>;
+export interface Catalog { packages: Array<{ package: Pin & { resource_type: string; applicability: Array<{ attribute: string; values: string[] }>; collectors?: Array<{ mappings?: Array<{ metric: { id: string } }> }> }; derived?: Array<{ output: { id: string } }>; recommendations: Record<string, number | boolean>; documentation: Array<{ collector_id?: string; permissions?: string[]; discovery?: string }> }>;
   metrics: Array<{ id: string; category: string; semantic_version: string; unit: string; kind: string; resource_type: string }> }
 interface Resolved { settings: Record<string, number | boolean>; sources: Record<string, { layer: string; id: string }>;
   metric_templates: Array<{ metric: { id: string; semantic_version: string }; enabled: boolean; decision: string;
