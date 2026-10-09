@@ -7,6 +7,7 @@
  * - sendChat produces correct JSON wire format
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { registerChatSend } from './chat-session-state.ts';
 import * as directGateway from './direct-gateway.ts';
 import { ChatAcceptanceTimeoutError, DirectGatewayClient } from './direct-gateway.ts';
 import type {
@@ -725,9 +726,11 @@ describe('109-04: DirectGatewayClient', () => {
       },
     };
 
+    registerChatSend(host, 'allocation-1');
     (directGateway as any).handleDirectAdapterEvent(host, {
       type: 'session.created',
       sessionKey: 'server-session',
+      messageId: 'allocation-1',
     });
     const sent = client.request('chat.send', { sessionKey: host.sessionKey, message: 'follow-up' });
     acknowledgeLastChat(socket);
@@ -744,6 +747,83 @@ describe('109-04: DirectGatewayClient', () => {
       type: 'chat.send', protocolVersion: 2, sessionKey: 'server-session', message: 'follow-up',
       messageId: expect.any(String), idempotencyKey: expect.any(String),
     }));
+  });
+
+  it('rejects only the affected session send when another conversation fails', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect(); socket.receive({ type: 'auth_ok' });
+    const first = client.sendChat('A', 'question A', { idempotencyKey: 'message-A' });
+    const rejected = expect(first).rejects.toThrow('A failed');
+    const second = client.sendChat('B', 'question B', { idempotencyKey: 'message-B' });
+    socket.receive({ type: 'error', sessionKey: 'A', runId: 'run-A', error: 'A failed' });
+    await rejected;
+    socket.receive({ type: 'run.started', sessionKey: 'B', runId: 'run-B', messageId: 'message-B' });
+    await expect(second).resolves.toBeUndefined();
+    client.disconnect();
+  });
+
+  it('restores both session subscriptions and their distinct cursors after reconnect', async () => {
+    vi.useFakeTimers();
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect(); socket.receive({ type: 'auth_ok', capabilities: ['parts-stream-v1'] });
+    for (const key of ['A', 'B']) {
+      client.watchSession(key);
+      const subscriptionId = socket.frames.at(-1)!.subscriptionId;
+      socket.receive({ type: 'stream.snapshot', sessionKey: key,
+        stream: { version: 1, streamEpoch: `epoch-${key}`, runId: `run-${key}`, turnId: 'turn', subscriptionId, fromSeq: 1, toSeq: 1 },
+        snapshot: { version: 1, runId: `run-${key}`, sequence: 1, attempt: 1, phase: 'generating', parts: [] } });
+    }
+    socket.closeWith(1006, 'network');
+    await vi.advanceTimersByTimeAsync(1500);
+    socket.receive({ type: 'auth_ok', capabilities: ['parts-stream-v1'] });
+    const watches = socket.frames.filter(f => f.type === 'chat.watch');
+    expect(watches.map(f => f.sessionKey)).toEqual(['A', 'B']);
+    for (const frame of watches) expect(frame.cursor).toMatchObject({ runId: `run-${frame.sessionKey}`, toSeq: 1 });
+    expect(watches[0].subscriptionId).not.toBe(watches[1].subscriptionId);
+    client.disconnect();
+  });
+
+  it('keeps a newer recovery subscription when an older send is admitted', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect(); socket.receive({ type: 'auth_ok', capabilities: ['parts-stream-v1'] });
+    client.watchSession('A');
+    const pending = client.sendChat('A', 'question', { idempotencyKey: 'send-A' });
+    const sendFrame = socket.frames.at(-1)!;
+    // A cold snapshot/history read can renew the watch before admission finishes.
+    client.watchSession('A');
+    const subscriptionId = socket.frames.at(-1)!.subscriptionId;
+    expect(subscriptionId).not.toBe(sendFrame.subscriptionId);
+    socket.receive({ type: 'run.started', sessionKey: 'A', runId: 'run-A', messageId: 'send-A' });
+    await pending;
+    socket.receive({ type: 'stream.snapshot', sessionKey: 'A',
+      stream: { version: 1, streamEpoch: 'epoch', runId: 'run-A', turnId: 'turn', subscriptionId, fromSeq: 1, toSeq: 1 },
+      snapshot: { version: 1, runId: 'run-A', sequence: 1, attempt: 1, phase: 'generating', parts: [] } });
+    expect(onEvent).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'stream.snapshot', sessionKey: 'A' }));
+    client.disconnect();
+  });
+
+  it('binds replayed admission to its own subscription when session.created was lost', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect(); socket.receive({ type: 'auth_ok', capabilities: ['parts-stream-v1'] });
+    const first = client.sendChat(undefined, 'A', { idempotencyKey: 'send-A' });
+    const frameA = socket.frames.at(-1)!;
+    const second = client.sendChat(undefined, 'B', { idempotencyKey: 'send-B' });
+    const frameB = socket.frames.at(-1)!;
+    expect(frameA.subscriptionId).not.toBe(frameB.subscriptionId);
+    socket.receive({ type: 'run.snapshot', sessionKey: 'A', messageId: 'send-A',
+      run: { id: 'run-A', sessionId: 'A', messageId: 'send-A', idempotencyKey: 'send-A', state: 'running' } });
+    await first;
+    socket.receive({ type: 'stream.snapshot', sessionKey: 'A',
+      stream: { version: 1, streamEpoch: 'epoch', runId: 'run-A', turnId: 'turn', subscriptionId: frameA.subscriptionId, fromSeq: 1, toSeq: 1 },
+      snapshot: { version: 1, runId: 'run-A', sequence: 1, attempt: 1, phase: 'generating', parts: [] } });
+    expect(onEvent).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'stream.snapshot', sessionKey: 'A' }));
+    socket.receive({ type: 'run.started', sessionKey: 'B', runId: 'run-B', messageId: 'send-B' });
+    await second;
+    client.disconnect();
   });
 });
 

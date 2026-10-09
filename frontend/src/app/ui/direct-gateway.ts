@@ -17,6 +17,7 @@ import { acceptChatProjection, acceptChatDisplayStream, getChatProjection, rende
 
 import { loadPermissions, readCachedPermissions } from './permissions.ts';
 import { generateUUID } from './uuid.ts';
+import { chatSessionForEvent, isVisibleChatSession, clearChatSessions } from './chat-session-state.ts';
 import type { DeviceIdentity } from './device-identity.ts';
 
 export type AdapterTextDeltaEvent = { type: 'text_delta'; delta: string; reset?: boolean; thinkingContent?: string; anchorId?: string; partId?: string; partText?: string };
@@ -140,6 +141,7 @@ export class DirectGatewayClient {
   private onStateChange: ConnectionStateCallback;
   private partsStream = false;
   private streamSubscriptions = new Map<string, string>();
+  private watchedSessions = new Set<string>();
   private streamStates = new Map<string, Omit<DisplayStreamState, 'projection'>>();
   private recoveringSessions = new Set<string>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -451,12 +453,14 @@ export class DirectGatewayClient {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return;
     }
+    this.watchedSessions.add(sessionKey);
     if (!this.partsStream) { this.ws.send(JSON.stringify({ type: 'chat.watch', sessionKey })); return; }
     const subscriptionId = generateUUID();
     this.streamSubscriptions.set(sessionKey, subscriptionId);
     while (this.streamSubscriptions.size > 8) {
       const oldest = this.streamSubscriptions.keys().next().value!;
       this.streamSubscriptions.delete(oldest);
+      this.watchedSessions.delete(oldest);
       this.ws.send(JSON.stringify({ type: 'chat.unwatch', sessionKey: oldest }));
       for (const key of this.streamStates.keys()) if (key.startsWith(`${oldest}:`)) this.streamStates.delete(key);
     }
@@ -494,6 +498,10 @@ export class DirectGatewayClient {
       this.authenticated = true;
       this.authenticatedAt = Date.now();
       this.lastCloseDetails = null;
+      const subscribedSessions = Array.from(this.streamSubscriptions.keys());
+      if (this.partsStream) for (const sessionKey of subscribedSessions) {
+        if (sessionKey && this.watchedSessions.has(sessionKey)) this.watchSession(sessionKey);
+      }
       this.onStateChange('connected');
       this.resumePendingChatAcknowledgements();
       return;
@@ -522,21 +530,26 @@ export class DirectGatewayClient {
       return;
     }
 
-    if (type === 'run.started') {
-      const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
-      if (messageId) this.resolveChatAcknowledgement(messageId);
-    }
-
-    if (type === 'session.created') {
+    if (type === 'session.created' || type === 'run.started' || type === 'run.snapshot') {
       const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
       const sessionKey = typeof msg.sessionKey === 'string' ? msg.sessionKey : '';
       const pending = messageId
         ? this.pendingChatAcknowledgements.get(messageId) ?? this.unconfirmedChats.get(messageId)
         : undefined;
       if (pending && sessionKey) {
+        this.watchedSessions.add(sessionKey);
         pending.frame.sessionKey = sessionKey;
-        if (typeof pending.frame.subscriptionId === 'string') this.streamSubscriptions.set(sessionKey, pending.frame.subscriptionId);
+        // A watch issued after this send owns the newer recovery subscription.
+        // Only bind the send subscription when admission allocates an unwatched session.
+        if (!this.streamSubscriptions.has(sessionKey) && typeof pending.frame.subscriptionId === 'string') {
+          this.streamSubscriptions.set(sessionKey, pending.frame.subscriptionId);
+        }
       }
+    }
+
+    if (type === 'run.started') {
+      const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
+      if (messageId) this.resolveChatAcknowledgement(messageId);
     }
 
     if (type === 'run.snapshot') {
@@ -548,7 +561,13 @@ export class DirectGatewayClient {
 
     if (type === 'protocol.error' || type === 'error') {
       const message = type === 'protocol.error' ? String(msg.code ?? 'protocol error') : String(msg.error ?? 'chat error');
-      this.rejectPendingChatAcknowledgements(new Error(message));
+      if (msg.messageId || msg.sessionKey) {
+        for (const [id, pending] of this.pendingChatAcknowledgements) {
+          if (msg.messageId ? id === msg.messageId : pending.frame.sessionKey === msg.sessionKey) {
+            this.rejectChatAcknowledgement(id, new Error(message));
+          }
+        }
+      } else this.rejectPendingChatAcknowledgements(new Error(message));
     }
 
     if (this.partsStream && msg.projection) return;
@@ -581,12 +600,13 @@ export class DirectGatewayClient {
 
   private chatSendFrame(sessionKey: string | undefined, message: string, options?: { idempotencyKey?: string; attachments?: unknown[] }): Record<string, unknown> {
     const subscriptionId = this.streamSubscriptions.get(sessionKey ?? '') ?? generateUUID();
-    this.streamSubscriptions.set(sessionKey ?? '', subscriptionId);
+    if (sessionKey) this.streamSubscriptions.set(sessionKey, subscriptionId);
     return {
       subscriptionId,
       type: 'chat.send',
       protocolVersion: 2,
-      messageId: generateUUID(),
+      // Let the controller correlate admission even when no session exists yet.
+      messageId: options?.idempotencyKey || generateUUID(),
       idempotencyKey: options?.idempotencyKey || generateUUID(),
       ...(sessionKey ? { sessionKey } : {}),
       ...(options?.attachments ? { attachments: options.attachments } : {}),
@@ -906,7 +926,7 @@ function handleTerminalChatEvent(
 }
 
 function handleChatGatewayEvent(host: Record<string, unknown>, payload: ChatEventPayload | undefined) {
-  if (payload?.sessionKey) {
+  if (payload?.sessionKey && isVisibleChatSession(host)) {
     setLastActiveSessionKey(
       host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
       payload.sessionKey,
@@ -930,8 +950,18 @@ function handleChatGatewayEvent(host: Record<string, unknown>, payload: ChatEven
 const directStreamOrder = new WeakMap<object, { runId: string; attempt: number; sequence: number; terminal: boolean }>();
 
 export function handleDirectAdapterEvent(host: Record<string, unknown>, event: AdapterChatEvent): void {
+  const receiver = chatSessionForEvent(host, event.type === 'run.snapshot'
+    ? { ...event, sessionKey: event.run.sessionId, messageId: event.messageId ?? event.run.messageId }
+    : event);
+  if (!receiver) return;
+  host = receiver;
   const runId = host.chatRunId as string | null;
   const sessionKey = host.sessionKey as string;
+  if ((event.type === 'run.started' || event.type === 'run.snapshot') && runId) {
+    const eventRunId = event.type === 'run.started' ? event.runId : event.run.id;
+    const messageId = event.messageId ?? (event.type === 'run.snapshot' ? event.run.messageId : undefined);
+    if (eventRunId !== runId && messageId !== runId) return;
+  }
   if (event.sessionKey && event.sessionKey !== sessionKey && !['session.created', 'run.started', 'run.snapshot'].includes(event.type)) return;
   if (event.type === 'stream.snapshot' || event.type === 'stream.delta') {
     const streamEvent = readDisplayStreamEvent(event);
@@ -1021,7 +1051,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
       host.chatRunId = event.runId;
       host.chatRuntimePhase = 'preparing';
       host.chatCancelRequested = false;
-      host.sessionKey = event.sessionKey;
+      applyDirectSessionKey(host, event.sessionKey);
       break;
     case 'run.snapshot':
       if (!confirmChatSend(host as unknown as ChatState, event.messageId)) break;
@@ -1102,6 +1132,7 @@ function applyDirectSessionKey(host: Record<string, unknown>, rawSessionKey: str
   const sessionKey = rawSessionKey.trim();
   if (!sessionKey) return '';
   host.sessionKey = sessionKey;
+  if (!isVisibleChatSession(host)) return sessionKey;
   const settings = host.settings as Record<string, unknown> | undefined;
   const applySettings = host.applySettings as ((next: Record<string, unknown>) => void) | undefined;
   if (settings && applySettings) {
@@ -1214,6 +1245,7 @@ export function initChatClient(host: Record<string, unknown>): void {
 }
 
 export function clearExpiredChatState(host: Record<string, unknown>): void {
+  clearChatSessions(host);
   const pendingStream = pendingDirectStreamUpdates.get(host);
   if (pendingStream?.timer !== null && pendingStream?.timer !== undefined) {
     clearTimeout(pendingStream.timer);

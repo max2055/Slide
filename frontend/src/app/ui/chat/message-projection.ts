@@ -3,10 +3,12 @@ import { createMessageProjection, hydrateMessageProjection, reduceMessageProject
 import type { MessageParts } from '../../../../../packages/agent-core/src/message-parts.ts';
 import type { ToolStreamEntry } from '../app-tool-stream.ts';
 import { reduceDisplayStream, type DisplayStreamEvent, type DisplayStreamState } from '../../../../../packages/agent-core/src/display-stream.ts';
+import { chatSessionHost } from '../chat-session-state.ts';
 
 type Host = Record<string, unknown>;
 const projections = new WeakMap<object, { sessionKey: string; runs: Map<string, MessageProjection>; streams: Map<string, DisplayStreamState> }>();
 function session(host: Host) {
+  host = chatSessionHost(host);
   const sessionKey = String(host.sessionKey ?? '');
   let stored = projections.get(host);
   if (!stored || stored.sessionKey !== sessionKey) {
@@ -45,6 +47,7 @@ export function acceptChatDisplayStream(host: Host, event: DisplayStreamEvent): 
   return true;
 }
 export function hydrateChatProjections(host: Host, messages: unknown[]): void {
+  host = chatSessionHost(host);
   const grouped = new Map<string, MessageParts[]>();
   for (const message of messages) {
     const doc = (message as { messageParts?: MessageParts })?.messageParts;

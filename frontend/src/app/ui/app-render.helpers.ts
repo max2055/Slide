@@ -1,7 +1,8 @@
 import { html, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { t } from "../i18n/index.ts";
-import { refreshChat, refreshChatAvatar } from "./app-chat.ts";
+import { refreshChat, refreshChatAvatar, flushChatQueueForEvent } from "./app-chat.ts";
+import { activateChatSession, chatSessionHost } from './chat-session-state.ts';
 import { renderChatAgentSelect } from "./chat/session-controls.ts";
 import { syncUrlWithSessionKey } from "./app-settings.ts";
 import type { AppViewState } from "./app-view-state.ts";
@@ -74,25 +75,7 @@ export { resolveSidebarChatSessionKey };
 
 function resetChatStateForSessionSwitch(state: AppViewState, sessionKey: string) {
   const host = state as unknown as SessionSwitchHost;
-  state.sessionKey = sessionKey;
-  state.chatMessage = "";
-  state.chatAttachments = [];
-  state.chatMessages = [];
-  state.chatToolMessages = [];
-  state.chatStreamSegments = [];
-  state.chatThinkingLevel = null;
-  state.chatStream = null;
-  state.chatSideResult = null;
-  state.lastError = null;
-  state.chatRecoveryNotice = null;
-  state.compactionStatus = null;
-  state.fallbackStatus = null;
-  state.chatAvatarUrl = null;
-  state.chatQueue = [];
-  host.chatStreamStartedAt = null;
-  state.chatRunId = null;
-  host.chatSideResultTerminalRuns?.clear();
-  host.resetToolStream();
+  activateChatSession(state, sessionKey);
   host.resetChatScroll();
   state.applySettings({
     ...state.settings,
@@ -225,6 +208,12 @@ export function renderChatSessionSelect(state: AppViewState) {
   `;
 }
 
+function renderNewChatButton(state: AppViewState) {
+  return html`<button class="btn btn--sm btn--icon" type="button"
+    @click=${() => state.handleSendChat('/new', { restoreDraft: true })}
+    title="新建对话（当前任务继续运行）" aria-label="新建对话">${icons['plus']}</button>`;
+}
+
 export function renderChatControls(state: AppViewState) {
   const hideCron = state.sessionsHideCron ?? true;
   const hiddenCronCount = hideCron
@@ -286,9 +275,10 @@ export function renderChatControls(state: AppViewState) {
   `;
   return html`
     <div class="chat-controls">
+      ${renderNewChatButton(state)}
       <button
         class="btn btn--sm btn--icon"
-        ?disabled=${state.chatLoading || !state.connected}
+        .disabled=${state.chatLoading || !state.connected}
         @click=${async () => {
           const app = state as unknown as ChatRefreshHost;
           app.chatManualRefreshInFlight = true;
@@ -431,6 +421,7 @@ export function renderChatMobileToggle(state: AppViewState) {
 
   return html`
     <div class="chat-mobile-controls-wrapper">
+      ${renderNewChatButton(state)}
       <button
         class="btn btn--sm btn--icon chat-controls-mobile-toggle"
         @click=${(e: Event) => {
@@ -573,7 +564,10 @@ export function switchChatSession(state: AppViewState, nextSessionKey: string) {
     client: state.client,
     agentId: parseAgentSessionKey(nextSessionKey)?.agentId,
   });
-  void loadChatHistory(state as unknown as ChatState);
+  const session = chatSessionHost(state);
+  void loadChatHistory(session as unknown as ChatState).then(() => {
+    void flushChatQueueForEvent(session as unknown as Parameters<typeof flushChatQueueForEvent>[0]);
+  });
   // Subscribe WS to session for invoke() completion broadcasts (e.g., RCA analysis)
   try { (state.client as any)?.watchSession?.(nextSessionKey); } catch { /* best-effort */ }
   void refreshSessionOptions(state);

@@ -7,6 +7,7 @@ import { ChatAcceptanceTimeoutError, type DirectGatewayClient } from "../direct-
 import { normalizeLowercaseStringOrEmpty } from "../string-coerce.ts";
 import type { ChatAttachment } from "../ui-types.ts";
 import { generateUUID } from "../uuid.ts";
+import { chatSessionHost, registerChatSend } from '../chat-session-state.ts';
 import {
   formatMissingOperatorReadScopeMessage,
   isMissingOperatorReadScopeError,
@@ -112,6 +113,7 @@ function maybeResetToolStream(state: ChatState) {
 }
 
 export async function loadChatHistory(state: ChatState, opts?: { clearNotices?: boolean }) {
+  state = chatSessionHost(state);
   if (!state.client || !state.connected) {
     return;
   }
@@ -222,6 +224,7 @@ const unconfirmedChats = new WeakMap<ChatState, UnconfirmedChat[]>();
 
 /** Late acceptance clears the retry draft without stealing a different session/run. */
 export function confirmChatSend(state: ChatState, messageId?: string, accepted = true): boolean {
+  state = chatSessionHost(state);
   const attempts = unconfirmedChats.get(state) ?? [];
   const attempt = attempts.find((item) => item.error.messageId === messageId);
   if (!attempt) return true;
@@ -243,6 +246,7 @@ async function requestChatSend(
   const previous = attempts.find((item) => item.payload === payload
     && (item.sessionKey === sessionKey || item.error.getSessionKey() === sessionKey));
   const runId = previous?.runId ?? params.runId;
+  registerChatSend(state, runId);
   if (previous && state.chatRunId === params.runId) state.chatRunId = runId;
   try {
     if (previous) {
@@ -257,6 +261,7 @@ async function requestChatSend(
     return runId;
   } catch (error) {
     if (error instanceof ChatAcceptanceTimeoutError) {
+      registerChatSend(state, error.messageId);
       unconfirmedChats.set(state, [
         ...(unconfirmedChats.get(state) ?? []).filter((item) => item !== previous),
         { sessionKey, payload, runId, error },
@@ -328,6 +333,7 @@ export async function sendChatMessage(
   message: string,
   attachments?: ChatAttachment[],
 ): Promise<string | null> {
+  state = chatSessionHost(state);
   if (!state.client || !state.connected) {
     return null;
   }
@@ -406,6 +412,7 @@ export async function sendDetachedChatMessage(
   message: string,
   attachments?: ChatAttachment[],
 ): Promise<string | null> {
+  state = chatSessionHost(state);
   if (!state.client || !state.connected) {
     return null;
   }
