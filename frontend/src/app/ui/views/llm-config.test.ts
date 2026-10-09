@@ -107,6 +107,102 @@ describe("llm-config-page connection testing", () => {
   });
 });
 
+describe('connection test feedback lifecycle', () => {
+  const providers = [
+    { id: 1, name: 'deepseek', default_model: 'base', api_base_url: 'https://example.test/v1', enabled: true },
+    { id: 2, name: 'step', default_model: 'other', enabled: true },
+  ];
+  beforeEach(() => {
+    get.mockReset(); post.mockReset();
+    get.mockImplementation(async (url: string) => url === '/llm/configs' ? providers : []);
+    post.mockResolvedValue({ success: true, message: '连接成功' });
+  });
+  afterEach(() => {
+    document.querySelectorAll('llm-config-page').forEach(el => el.remove());
+    vi.useRealTimers();
+  });
+  async function page() {
+    const element = document.createElement('llm-config-page') as any;
+    document.body.append(element); await element._load(); await element.updateComplete;
+    return element;
+  }
+  function pending() {
+    let resolve!: (value: any) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+  }
+  it('announces loading and success in one persistent region immediately after the actions', async () => {
+    const element = await page(); const response = pending(); post.mockReturnValue(response.promise);
+    const run = element._test(element.editing); await element.updateComplete;
+    const region = element.shadowRoot.querySelector('[aria-label="连接测试结果"]');
+    expect(region).not.toBeNull();
+    expect(region.previousElementSibling.className).toBe('actions-bar');
+    expect(region.getAttribute('aria-live')).toBe('polite');
+    expect(region.textContent).toContain('正在测试连接');
+    response.resolve({ success: true, message: '连接成功' }); await run; await element.updateComplete;
+    expect(region.textContent).toContain('连接成功');
+    expect(element.shadowRoot.querySelectorAll('[aria-label="连接测试结果"]')).toHaveLength(1);
+    vi.useFakeTimers(); await vi.advanceTimersByTimeAsync(9000); await element.updateComplete;
+    expect(region.textContent).toContain('连接成功');
+  });
+  it.each(['认证失败：401', '余额不足：402', '网络失败：ECONNRESET'])('keeps diagnostic %s readable after 8 seconds', async error => {
+    const element = await page();
+    post.mockResolvedValue({ success: false, error });
+    vi.useFakeTimers(); await element._test(element.editing); await element.updateComplete;
+    await vi.advanceTimersByTimeAsync(9000); await element.updateComplete;
+    expect(element.shadowRoot.querySelector('[aria-label="连接测试结果"]').textContent).toContain(error);
+  });
+  it('shows a rejected network request locally', async () => {
+    const element = await page(); post.mockRejectedValue(new Error('Failed to fetch'));
+    await element._test(element.editing); await element.updateComplete;
+    expect(element.shadowRoot.querySelector('[aria-label="连接测试结果"]').textContent).toContain('Failed to fetch');
+  });
+  it.each(['resolve', 'reject'] as const)('ignores late %s after switching away and back, without ending the newer request', async outcome => {
+    const element = await page(); const old = pending(); const current = pending();
+    post.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+    const first = element._test(element.editing);
+    element._selectProvider(providers[1]); element._selectProvider(providers[0]);
+    const second = element._test(element.editing);
+    if (outcome === 'resolve') old.resolve({ success: true, message: '旧结果' });
+    else old.reject(new Error('旧错误'));
+    await first; await element.updateComplete;
+    expect(element.shadowRoot.querySelector('[aria-label="连接测试结果"]').textContent).toContain('正在测试连接');
+    expect(element.shadowRoot.querySelector('.actions-bar button').disabled).toBe(true);
+    current.resolve({ success: true, message: '新结果' }); await second; await element.updateComplete;
+    expect(element.shadowRoot.textContent).toContain('新结果');
+    expect(element.shadowRoot.textContent).not.toMatch(/旧结果|旧错误/);
+  });
+  it('invalidates feedback on draft edits, even if the old value is restored before the response', async () => {
+    const element = await page(); const response = pending(); post.mockReturnValue(response.promise);
+    const run = element._test(element.editing);
+    const input = element.shadowRoot.querySelector('input[aria-label="Base URL"]');
+    input.value = 'https://changed.test/v1'; input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.value = providers[0].api_base_url; input.dispatchEvent(new Event('input', { bubbles: true }));
+    response.resolve({ success: true, message: '旧草稿结果' }); await run; await element.updateComplete;
+    expect(element.shadowRoot.textContent).not.toContain('旧草稿结果');
+    expect(element.shadowRoot.querySelector('.actions-bar button').disabled).toBe(false);
+  });
+  it('clears a completed result on model selection and ignores responses after opening the picker or disconnecting', async () => {
+    const element = await page(); await element._test(element.editing); await element.updateComplete;
+    element._selectModel('changed'); await element.updateComplete;
+    expect(element.shadowRoot.textContent).not.toContain('连接成功');
+    for (const leave of [() => element._openAddPicker(), () => element.remove()]) {
+      element._selectProvider(providers[0]); const response = pending(); post.mockReturnValue(response.promise);
+      const run = element._test(element.editing); leave();
+      response.resolve({ success: true, message: '离开后的结果' }); await run;
+      expect(element.testResult).toBeNull(); expect(element.testing).toBe(false);
+    }
+  });
+  it('does not let a previous result timer clear a newer result', async () => {
+    const element = await page(); vi.useFakeTimers();
+    await element._test(element.editing); await vi.advanceTimersByTimeAsync(4000);
+    post.mockResolvedValue({ success: true, message: '最新结果' }); await element._test(element.editing);
+    await vi.advanceTimersByTimeAsync(5000); await element.updateComplete;
+    expect(element.shadowRoot.textContent).toContain('最新结果');
+  });
+});
+
 describe('scene assignments', () => {
   const providers = [{ id: 1, name: 'primary', display_name: 'Primary', enabled: true, is_default: true,
     default_model: 'base', models_supported: [{ id: 'fast' }] }];
