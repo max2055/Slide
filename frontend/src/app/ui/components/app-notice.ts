@@ -19,11 +19,11 @@ export class AppNotice extends LitElement {
           background: color-mix(in srgb, var(--notice-color) 8%, var(--card));
           color: var(--text); border-radius: var(--radius-md); font-size: var(--text-sm);
           overflow-wrap: anywhere; }
-        slot { flex: 1; }
+        .notice-content { flex: 1; min-width: 0; }
         .btn-ghost { flex: none; padding: 0 var(--space-xs); font: inherit; }
         button:focus-visible { outline: 2px solid var(--accent); border-radius: var(--radius-sm); }
       </style>
-      <div part="notice"><slot></slot>${this.dismissible ? html`<button class="btn-ghost" type="button" aria-label="关闭提示"
+      <div part="notice"><span class="notice-content"><slot></slot></span>${this.dismissible ? html`<button class="btn-ghost" type="button" aria-label="关闭提示"
         @click=${() => this.dispatchEvent(new CustomEvent('dismiss', { bubbles: true, composed: true }))}>×</button>` : nothing}</div>`;
   }
 }
