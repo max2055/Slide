@@ -1,0 +1,625 @@
+{
+  "resources": [
+    {
+      "type": "instance",
+      "id": "1",
+      "attributes": {
+        "db.engine": {
+          "value": "mysql",
+          "observed_at": "2026-10-09T09:24:02.200Z",
+          "source": "driver"
+        },
+        "db.version": {
+          "value": "8.4.10",
+          "observed_at": "2026-10-09T09:24:02.200Z",
+          "source": "driver"
+        }
+      }
+    },
+    {
+      "type": "instance",
+      "id": "2",
+      "attributes": {
+        "db.engine": {
+          "value": "postgresql",
+          "observed_at": "2026-10-09T09:24:02.200Z",
+          "source": "driver"
+        },
+        "db.version": {
+          "value": "16.4",
+          "observed_at": "2026-10-09T09:24:02.200Z",
+          "source": "driver"
+        }
+      }
+    }
+  ],
+  "scheduler_clock": "accelerated two normal cycles",
+  "mysql_capacity_sql_reads": 2,
+  "postgresql_capacity_sql_reads": 2,
+  "evidence": [
+    {
+      "width": 1440,
+      "id": 1,
+      "metric": {
+        "definition": {
+          "id": "mysql.tables.estimated_allocated_bytes",
+          "semantic_version": "1.0.0",
+          "meaning": "Estimated data_length plus index_length across visible non-system schemas; engine allocation statistics, not logical data bytes or host disk capacity.",
+          "unit": "By",
+          "resource_type": "instance",
+          "scope": "resource",
+          "kind": "gauge",
+          "roles": [
+            "diagnostic"
+          ],
+          "temporality": "instant",
+          "monotonic": false,
+          "value_type": "uint64",
+          "dimensions": {
+            "keys": [],
+            "max_series_per_resource": 100,
+            "max_value_length": 128,
+            "overflow": "reject"
+          },
+          "aggregation": {
+            "time": [
+              "last",
+              "min",
+              "max",
+              "mean"
+            ],
+            "space": [
+              "none"
+            ],
+            "missing": "preserve_null",
+            "min_coverage": 1,
+            "quantiles": "not_applicable"
+          },
+          "lifecycle": "active",
+          "category": "extension",
+          "namespace": "mysql"
+        },
+        "capability": {
+          "resource_id": "1",
+          "metric": {
+            "id": "mysql.tables.estimated_allocated_bytes",
+            "semantic_version": "1.0.0"
+          },
+          "status": "supported",
+          "method": "sql",
+          "basis": [
+            {
+              "kind": "resource",
+              "evidence": "resource_type:instance;required:instance"
+            },
+            {
+              "kind": "resource",
+              "evidence": "db.engine:matched;allowed:mysql"
+            },
+            {
+              "kind": "version",
+              "evidence": "db.version:matched;allowed:5.7,8.0,8.4"
+            },
+            {
+              "kind": "permission",
+              "evidence": "fixed_read_succeeded"
+            }
+          ],
+          "evaluated_at": "2026-10-09T09:25:12.200Z",
+          "valid_until": "2026-10-09T09:27:12.200Z"
+        },
+        "enabled": true,
+        "state": "available",
+        "attempt": {
+          "id": "11e6a469-be42-47f9-95c1-dde5c6c50f0b:1:mysql-size",
+          "error": null,
+          "status": "succeeded",
+          "ended_at": "2026-10-09T09:25:12.200Z",
+          "binding_id": "instance:1",
+          "started_at": "2026-10-09T09:25:12.200Z",
+          "resource_id": "1",
+          "collector_id": "mysql-size",
+          "config_revision": 1,
+          "observation_ids": [
+            "sha256:cc3887820a90f8e311dd2eb2db4c0d78888edd385b55d8bc8ca76555c848e294"
+          ]
+        },
+        "series": [
+          {
+            "dimensions": {},
+            "buckets": [
+              {
+                "contract_version": "1.0.0",
+                "metric": {
+                  "id": "mysql.tables.estimated_allocated_bytes",
+                  "semantic_version": "1.0.0"
+                },
+                "unit": "By",
+                "dimensions": {},
+                "window": {
+                  "from": "2026-10-09T09:25:12.200Z",
+                  "to": "2026-10-09T09:25:12.201Z"
+                },
+                "value": {
+                  "encoding": "uint64",
+                  "value": "16384"
+                },
+                "quality": {
+                  "status": "partial",
+                  "reason": "partial_input"
+                },
+                "accuracy": "estimated",
+                "coverage": 1,
+                "freshness": "fresh",
+                "sample_count": 1,
+                "sources": [
+                  {
+                    "id": "sha256:cc3887820a90f8e311dd2eb2db4c0d78888edd385b55d8bc8ca76555c848e294",
+                    "source": {
+                      "attempt_id": "11e6a469-be42-47f9-95c1-dde5c6c50f0b:1:mysql-size",
+                      "binding_id": "instance:1",
+                      "collector_id": "mysql-size",
+                      "metric_binding_id": "instance:1:mysql.tables.estimated_allocated_bytes"
+                    },
+                    "versions": {
+                      "contract": "1.0.0",
+                      "package_id": "mysql-basic",
+                      "config_revision": 1,
+                      "package_version": "1.1.0",
+                      "transform_version": "1.0.0"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "observed_at": "2026-10-09T09:25:12.200Z"
+      },
+      "list": "容量验证 MySQL\tmysql\t8.4.10\t127.0.0.1:13371\t未知\t16.00 KiB · 估算\n采集于 2026/10/9 17:25:12\n\t0 天 0 小时\t部分缺失\n近期无成功采集记录\n\t\n详情\n编辑\n测试\n删除"
+    },
+    {
+      "width": 1440,
+      "id": 2,
+      "metric": {
+        "definition": {
+          "id": "postgresql.database.disk_bytes",
+          "semantic_version": "1.0.0",
+          "meaning": "pg_database_size of the bound current database including its physical files; not logical row size or host disk usage.",
+          "unit": "By",
+          "resource_type": "instance",
+          "scope": "resource",
+          "kind": "gauge",
+          "roles": [
+            "diagnostic"
+          ],
+          "temporality": "instant",
+          "monotonic": false,
+          "value_type": "uint64",
+          "dimensions": {
+            "keys": [
+              {
+                "name": "database",
+                "meaning": "database stable resource-local identity",
+                "required": true
+              }
+            ],
+            "max_series_per_resource": 100,
+            "max_value_length": 128,
+            "overflow": "reject"
+          },
+          "aggregation": {
+            "time": [
+              "last",
+              "min",
+              "max",
+              "mean"
+            ],
+            "space": [
+              "none"
+            ],
+            "missing": "preserve_null",
+            "min_coverage": 1,
+            "quantiles": "not_applicable"
+          },
+          "lifecycle": "active",
+          "category": "extension",
+          "namespace": "postgresql"
+        },
+        "capability": {
+          "resource_id": "2",
+          "metric": {
+            "id": "postgresql.database.disk_bytes",
+            "semantic_version": "1.0.0"
+          },
+          "status": "supported",
+          "method": "sql",
+          "basis": [
+            {
+              "kind": "resource",
+              "evidence": "resource_type:instance;required:instance"
+            },
+            {
+              "kind": "resource",
+              "evidence": "db.engine:matched;allowed:postgresql"
+            },
+            {
+              "kind": "version",
+              "evidence": "db.version:matched;allowed:16.4"
+            },
+            {
+              "kind": "permission",
+              "evidence": "fixed_read_succeeded"
+            }
+          ],
+          "evaluated_at": "2026-10-09T09:25:12.200Z",
+          "valid_until": "2026-10-09T09:27:12.200Z"
+        },
+        "enabled": true,
+        "state": "available",
+        "attempt": {
+          "id": "6dcaa3ca-497a-4177-99c4-9062857ba3f0:1:postgresql-size",
+          "error": null,
+          "status": "succeeded",
+          "ended_at": "2026-10-09T09:25:12.200Z",
+          "binding_id": "instance:2",
+          "started_at": "2026-10-09T09:25:12.200Z",
+          "resource_id": "2",
+          "collector_id": "postgresql-size",
+          "config_revision": 1,
+          "observation_ids": [
+            "sha256:d2449e89316af7c503944a6750b7ed7c7fc5f35a7940514c6aa3d7055fa8168f"
+          ]
+        },
+        "series": [
+          {
+            "dimensions": {
+              "database": "max131_target_43150"
+            },
+            "buckets": [
+              {
+                "contract_version": "1.0.0",
+                "metric": {
+                  "id": "postgresql.database.disk_bytes",
+                  "semantic_version": "1.0.0"
+                },
+                "unit": "By",
+                "dimensions": {
+                  "database": "max131_target_43150"
+                },
+                "window": {
+                  "from": "2026-10-09T09:25:12.200Z",
+                  "to": "2026-10-09T09:25:12.201Z"
+                },
+                "value": {
+                  "encoding": "uint64",
+                  "value": "7778787"
+                },
+                "quality": {
+                  "status": "good",
+                  "reason": "none"
+                },
+                "accuracy": "exact",
+                "coverage": 1,
+                "freshness": "fresh",
+                "sample_count": 1,
+                "sources": [
+                  {
+                    "id": "sha256:d2449e89316af7c503944a6750b7ed7c7fc5f35a7940514c6aa3d7055fa8168f",
+                    "source": {
+                      "attempt_id": "6dcaa3ca-497a-4177-99c4-9062857ba3f0:1:postgresql-size",
+                      "binding_id": "instance:2",
+                      "collector_id": "postgresql-size",
+                      "metric_binding_id": "instance:2:postgresql.database.disk_bytes:7fb6cdf9bbbbc68c"
+                    },
+                    "versions": {
+                      "contract": "1.0.0",
+                      "package_id": "postgresql-representative",
+                      "config_revision": 1,
+                      "package_version": "1.0.0",
+                      "transform_version": "1.0.0"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "observed_at": "2026-10-09T09:25:12.200Z"
+      },
+      "list": "容量验证 PostgreSQL\tpostgresql\t16.4\t127.0.0.1:15471\t未知\t7.42 MiB\n采集于 2026/10/9 17:25:12\n\t未配置\t部分缺失\n近期无成功采集记录\n\t\n详情\n编辑\n测试\n删除"
+    },
+    {
+      "width": 375,
+      "id": 1,
+      "metric": {
+        "definition": {
+          "id": "mysql.tables.estimated_allocated_bytes",
+          "semantic_version": "1.0.0",
+          "meaning": "Estimated data_length plus index_length across visible non-system schemas; engine allocation statistics, not logical data bytes or host disk capacity.",
+          "unit": "By",
+          "resource_type": "instance",
+          "scope": "resource",
+          "kind": "gauge",
+          "roles": [
+            "diagnostic"
+          ],
+          "temporality": "instant",
+          "monotonic": false,
+          "value_type": "uint64",
+          "dimensions": {
+            "keys": [],
+            "max_series_per_resource": 100,
+            "max_value_length": 128,
+            "overflow": "reject"
+          },
+          "aggregation": {
+            "time": [
+              "last",
+              "min",
+              "max",
+              "mean"
+            ],
+            "space": [
+              "none"
+            ],
+            "missing": "preserve_null",
+            "min_coverage": 1,
+            "quantiles": "not_applicable"
+          },
+          "lifecycle": "active",
+          "category": "extension",
+          "namespace": "mysql"
+        },
+        "capability": {
+          "resource_id": "1",
+          "metric": {
+            "id": "mysql.tables.estimated_allocated_bytes",
+            "semantic_version": "1.0.0"
+          },
+          "status": "supported",
+          "method": "sql",
+          "basis": [
+            {
+              "kind": "resource",
+              "evidence": "resource_type:instance;required:instance"
+            },
+            {
+              "kind": "resource",
+              "evidence": "db.engine:matched;allowed:mysql"
+            },
+            {
+              "kind": "version",
+              "evidence": "db.version:matched;allowed:5.7,8.0,8.4"
+            },
+            {
+              "kind": "permission",
+              "evidence": "fixed_read_succeeded"
+            }
+          ],
+          "evaluated_at": "2026-10-09T09:25:12.200Z",
+          "valid_until": "2026-10-09T09:27:12.200Z"
+        },
+        "enabled": true,
+        "state": "available",
+        "attempt": {
+          "id": "11e6a469-be42-47f9-95c1-dde5c6c50f0b:1:mysql-size",
+          "error": null,
+          "status": "succeeded",
+          "ended_at": "2026-10-09T09:25:12.200Z",
+          "binding_id": "instance:1",
+          "started_at": "2026-10-09T09:25:12.200Z",
+          "resource_id": "1",
+          "collector_id": "mysql-size",
+          "config_revision": 1,
+          "observation_ids": [
+            "sha256:cc3887820a90f8e311dd2eb2db4c0d78888edd385b55d8bc8ca76555c848e294"
+          ]
+        },
+        "series": [
+          {
+            "dimensions": {},
+            "buckets": [
+              {
+                "contract_version": "1.0.0",
+                "metric": {
+                  "id": "mysql.tables.estimated_allocated_bytes",
+                  "semantic_version": "1.0.0"
+                },
+                "unit": "By",
+                "dimensions": {},
+                "window": {
+                  "from": "2026-10-09T09:25:12.200Z",
+                  "to": "2026-10-09T09:25:12.201Z"
+                },
+                "value": {
+                  "encoding": "uint64",
+                  "value": "16384"
+                },
+                "quality": {
+                  "status": "partial",
+                  "reason": "partial_input"
+                },
+                "accuracy": "estimated",
+                "coverage": 1,
+                "freshness": "fresh",
+                "sample_count": 1,
+                "sources": [
+                  {
+                    "id": "sha256:cc3887820a90f8e311dd2eb2db4c0d78888edd385b55d8bc8ca76555c848e294",
+                    "source": {
+                      "attempt_id": "11e6a469-be42-47f9-95c1-dde5c6c50f0b:1:mysql-size",
+                      "binding_id": "instance:1",
+                      "collector_id": "mysql-size",
+                      "metric_binding_id": "instance:1:mysql.tables.estimated_allocated_bytes"
+                    },
+                    "versions": {
+                      "contract": "1.0.0",
+                      "package_id": "mysql-basic",
+                      "config_revision": 1,
+                      "package_version": "1.1.0",
+                      "transform_version": "1.0.0"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "observed_at": "2026-10-09T09:25:12.200Z"
+      },
+      "list": "容量验证 MySQL\tmysql\t8.4.10\t127.0.0.1:13371\t未知\t16.00 KiB · 估算\n采集于 2026/10/9 17:25:12\n\t0 天 0 小时\t部分缺失\n近期无成功采集记录\n\t\n详情\n编辑\n测试\n删除"
+    },
+    {
+      "width": 375,
+      "id": 2,
+      "metric": {
+        "definition": {
+          "id": "postgresql.database.disk_bytes",
+          "semantic_version": "1.0.0",
+          "meaning": "pg_database_size of the bound current database including its physical files; not logical row size or host disk usage.",
+          "unit": "By",
+          "resource_type": "instance",
+          "scope": "resource",
+          "kind": "gauge",
+          "roles": [
+            "diagnostic"
+          ],
+          "temporality": "instant",
+          "monotonic": false,
+          "value_type": "uint64",
+          "dimensions": {
+            "keys": [
+              {
+                "name": "database",
+                "meaning": "database stable resource-local identity",
+                "required": true
+              }
+            ],
+            "max_series_per_resource": 100,
+            "max_value_length": 128,
+            "overflow": "reject"
+          },
+          "aggregation": {
+            "time": [
+              "last",
+              "min",
+              "max",
+              "mean"
+            ],
+            "space": [
+              "none"
+            ],
+            "missing": "preserve_null",
+            "min_coverage": 1,
+            "quantiles": "not_applicable"
+          },
+          "lifecycle": "active",
+          "category": "extension",
+          "namespace": "postgresql"
+        },
+        "capability": {
+          "resource_id": "2",
+          "metric": {
+            "id": "postgresql.database.disk_bytes",
+            "semantic_version": "1.0.0"
+          },
+          "status": "supported",
+          "method": "sql",
+          "basis": [
+            {
+              "kind": "resource",
+              "evidence": "resource_type:instance;required:instance"
+            },
+            {
+              "kind": "resource",
+              "evidence": "db.engine:matched;allowed:postgresql"
+            },
+            {
+              "kind": "version",
+              "evidence": "db.version:matched;allowed:16.4"
+            },
+            {
+              "kind": "permission",
+              "evidence": "fixed_read_succeeded"
+            }
+          ],
+          "evaluated_at": "2026-10-09T09:25:12.200Z",
+          "valid_until": "2026-10-09T09:27:12.200Z"
+        },
+        "enabled": true,
+        "state": "available",
+        "attempt": {
+          "id": "6dcaa3ca-497a-4177-99c4-9062857ba3f0:1:postgresql-size",
+          "error": null,
+          "status": "succeeded",
+          "ended_at": "2026-10-09T09:25:12.200Z",
+          "binding_id": "instance:2",
+          "started_at": "2026-10-09T09:25:12.200Z",
+          "resource_id": "2",
+          "collector_id": "postgresql-size",
+          "config_revision": 1,
+          "observation_ids": [
+            "sha256:d2449e89316af7c503944a6750b7ed7c7fc5f35a7940514c6aa3d7055fa8168f"
+          ]
+        },
+        "series": [
+          {
+            "dimensions": {
+              "database": "max131_target_43150"
+            },
+            "buckets": [
+              {
+                "contract_version": "1.0.0",
+                "metric": {
+                  "id": "postgresql.database.disk_bytes",
+                  "semantic_version": "1.0.0"
+                },
+                "unit": "By",
+                "dimensions": {
+                  "database": "max131_target_43150"
+                },
+                "window": {
+                  "from": "2026-10-09T09:25:12.200Z",
+                  "to": "2026-10-09T09:25:12.201Z"
+                },
+                "value": {
+                  "encoding": "uint64",
+                  "value": "7778787"
+                },
+                "quality": {
+                  "status": "good",
+                  "reason": "none"
+                },
+                "accuracy": "exact",
+                "coverage": 1,
+                "freshness": "fresh",
+                "sample_count": 1,
+                "sources": [
+                  {
+                    "id": "sha256:d2449e89316af7c503944a6750b7ed7c7fc5f35a7940514c6aa3d7055fa8168f",
+                    "source": {
+                      "attempt_id": "6dcaa3ca-497a-4177-99c4-9062857ba3f0:1:postgresql-size",
+                      "binding_id": "instance:2",
+                      "collector_id": "postgresql-size",
+                      "metric_binding_id": "instance:2:postgresql.database.disk_bytes:7fb6cdf9bbbbc68c"
+                    },
+                    "versions": {
+                      "contract": "1.0.0",
+                      "package_id": "postgresql-representative",
+                      "config_revision": 1,
+                      "package_version": "1.0.0",
+                      "transform_version": "1.0.0"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "observed_at": "2026-10-09T09:25:12.200Z"
+      },
+      "list": "容量验证 PostgreSQL\tpostgresql\t16.4\t127.0.0.1:15471\t未知\t7.42 MiB\n采集于 2026/10/9 17:25:12\n\t未配置\t部分缺失\n近期无成功采集记录\n\t\n详情\n编辑\n测试\n删除"
+    }
+  ]
+}

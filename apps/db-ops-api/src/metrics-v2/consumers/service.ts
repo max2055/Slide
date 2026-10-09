@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { ActorContext } from '../../auth/actor-context.js';
 import { canReadResource } from '../../resources/resource-service.js';
-import type { CollectionAttempt, CoreProfile, MetricDefinition } from '../../contracts/metrics-v2/index.js';
+import type { CollectionAttempt, CoreProfile, MetricDefinition, NormalizedObservation } from '../../contracts/metrics-v2/index.js';
 import type { PolicyService } from '../policy/service.js';
 import { PolicyError, RefSchema, metricKey, rule, type Ref } from '../policy/model.js';
 import type { PackageRegistry } from '../packages/model.js';
 import { canonicalDefinitions } from '../packages/builtins.js';
-import { SemanticQueryService, type QueryStore, type SemanticBucket } from '../query.js';
+import { aggregate, SemanticQueryService, type QueryStore, type SemanticBucket } from '../query.js';
+import { capacityDefinition } from '../database/catalog.js';
 import type { Series } from '../storage.js';
 
 // Product-owned order. Package versions can supply values, never mutate these columns.
@@ -20,11 +21,13 @@ export const ConsumerQuerySchema = z.strictObject({
   metric_ids: z.array(z.string().regex(/^[a-z][a-z0-9_.]{0,127}$/)).min(1).max(32).optional(),
   view: z.enum(['core', 'canonical', 'extension', 'all']).default('core'),
   bucket_ms: z.number().int().positive().max(86400000).optional(),
+  latest_capacity: z.boolean().default(false),
 }).refine(q => Boolean(q.from) === Boolean(q.to), 'Both window endpoints are required');
 export type ConsumerQuery = z.input<typeof ConsumerQuerySchema>;
 export interface ConsumerStore extends QueryStore {
   dimensions(ref: Ref, definition: MetricDefinition, from: string, to: string): Promise<Record<string, string>[]>;
   attempts(ref: Ref): Promise<CollectionAttempt[]>;
+  latestCapacity?(ref: Ref, definition: MetricDefinition, to: string, revision: number): Promise<NormalizedObservation | null>;
 }
 export interface ConsumerMetric {
   definition: MetricDefinition;
@@ -32,6 +35,7 @@ export interface ConsumerMetric {
   enabled: boolean;
   state: string;
   attempt: CollectionAttempt | null;
+  observed_at?: string;
   series: Array<{ dimensions: Record<string, string>; buckets: SemanticBucket[] }>;
 }
 export class MetricConsumerService {
@@ -45,10 +49,16 @@ export class MetricConsumerService {
     const canonical = canonicalDefinitions.filter(d => d.resource_type === ref.type);
     const pin = effective?.resolved.plan.binding.package;
     const extensions = pin ? this.registry.get(pin).extensions : [];
+    const inventory = ref.type === 'instance' ? await this.store.inventory(ref.type, String(ref.id)) : null;
+    const size = capacityDefinition(String(inventory?.attributes['db.engine']?.value ?? ''));
+    const definitions = [...canonical, ...extensions];
+    if (size && !definitions.some(d => d.id === size.id)) definitions.push(size);
     const profile: CoreProfile = { id: `${ref.type}-core`, version: '1.0.0', owner: 'product', resource_type: ref.type,
-      columns: coreProfiles[ref.type].map(c => ({ key: c.id, label: c.label, metric: { id: c.id, semantic_version: '1.0.0' } })) };
+      columns: [...coreProfiles[ref.type].map(c => ({ key: c.id, label: c.label, metric: { id: c.id, semantic_version: '1.0.0' } })),
+        ...(size ? [{ key: 'database_size', label: '数据库大小', metric: { id: size.id, semantic_version: size.semantic_version } }] : [])] };
+    if (size) profile.version = '1.1.0';
     return { profile,
-      definitions: [...canonical, ...extensions], effective };
+      definitions, effective };
   }
   async inventory(actor: ActorContext, ref: Ref) {
     await this.policy.assertAccess(actor, ref, false);
@@ -83,6 +93,22 @@ export class MetricConsumerService {
         : attempt?.error || attempt && ['failed', 'partial', 'cancelled'].includes(attempt.status) ? 'temporary_failure' : template.capability.status === 'unknown' ? 'capability_unknown' : 'available';
       const metric: ConsumerMetric = { definition, capability: template?.capability ?? null,
         enabled: Boolean(template?.enabled && settings?.enabled), state, attempt, series: [] };
+      if (q.latest_capacity && catalog.profile.columns.some(c => c.key === 'database_size' && c.metric.id === id)) {
+        rule(!q.from && !q.to, 'LATEST_CAPACITY_WINDOW');
+        if (template && !['unsupported', 'permission_denied', 'disabled'].includes(state)) {
+          rule(this.store.latestCapacity, 'LATEST_CAPACITY_UNAVAILABLE', 503);
+          const point = await this.store.latestCapacity(q.resource, definition, to, catalog.effective!.published_revision);
+          if (point) {
+            const series: Series = { resource_type: q.resource.type, resource_id: String(q.resource.id), metric: point.metric, dimensions: point.dimensions };
+            metric.observed_at = point.observed_at;
+            metric.series = [{ dimensions: point.dimensions, buckets: aggregate({ definition, series: [series], from: point.observed_at,
+              to: new Date(Date.parse(point.observed_at) + 1).toISOString(), now, interval_ms: 1, bucket_ms: 1,
+              max_gap_ms: settings!.max_counter_gap_ms, stale_after_ms: settings!.stale_after_ms, mode: 'last', space: 'none' }, [[point]]) }];
+          }
+        }
+        metrics.push(metric);
+        continue;
+      }
       if (template && state !== 'unsupported' && state !== 'permission_denied' && state !== 'disabled' && state !== 'query_operation_unavailable') {
         const dimensions = definition.dimensions.keys.some(k => k.required)
           ? await this.store.dimensions(q.resource, definition, from, to) : [{}];

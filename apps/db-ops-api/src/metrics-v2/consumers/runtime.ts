@@ -5,12 +5,14 @@ import { MysqlFormalMetricStore } from '../rollout/formal-store.js';
 import { policyService } from '../policy/service.js';
 import { refKey, rule, type Ref } from '../policy/model.js';
 import { createConfigurationRegistry } from '../config/registry.js';
+import { configurationInventory } from '../config/inventory.js';
 import { MetricConsumerService, type ConsumerStore } from './service.js';
 const pool = () => { const p = dbConnection.getPool(); rule(p, 'METRIC_STORE_UNAVAILABLE', 503); return p; };
 const decode = (v: unknown) => typeof v === 'string' ? JSON.parse(v) : v;
 export const consumerStore: ConsumerStore = {
   queryWindow: (...args) => new MysqlFormalMetricStore(pool()).queryWindow(...args),
-  inventory: (...args) => new MysqlFormalMetricStore(pool()).inventory(...args),
+  inventory: (type, id) => configurationInventory({ type, id: Number(id) }),
+  latestCapacity: (...args) => new MysqlFormalMetricStore(pool()).latestCapacity(...args),
   dimensions: (...args) => new MysqlFormalMetricStore(pool()).dimensions(...args),
   async attempts(ref) {
     const [rows] = await pool().execute<RowDataPacket[]>(`SELECT payload FROM metric_v2_attempts

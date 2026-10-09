@@ -33,6 +33,18 @@ export class MysqlFormalMetricStore {
 
   inventory(type: Series['resource_type'], id: string) { return new MysqlMetricStorage(this.pool).inventory(type, id); }
 
+  /** Latest accepted capacity only: shadow, rolled-back and old configuration samples are excluded. */
+  async latestCapacity(ref: Ref, definition: MetricDefinition, to: string, revision: number): Promise<NormalizedObservation | null> {
+    const [rows] = await this.pool.execute<RowDataPacket[]>(`SELECT o.payload ${formal}
+      AND r.resource_type = ? AND r.resource_id = ?
+      AND JSON_UNQUOTE(JSON_EXTRACT(o.payload, '$.metric.id')) = ?
+      AND JSON_UNQUOTE(JSON_EXTRACT(o.payload, '$.metric.semantic_version')) = ?
+      AND JSON_EXTRACT(o.payload, '$.versions.config_revision') = ? AND p.observed_at < ?
+      ORDER BY p.observed_at DESC, p.observation_id DESC LIMIT 1`,
+    [ref.type, String(ref.id), definition.id, definition.semantic_version, revision, sqlTime(to)]);
+    return rows.length ? decode<NormalizedObservation>(rows[0].payload) : null;
+  }
+
   async queryWindow(series: Series, from: string, to: string, limit = 1000): Promise<NormalizedObservation[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000 || !Number.isFinite(Date.parse(from))
       || !Number.isFinite(Date.parse(to)) || Date.parse(to) <= Date.parse(from)

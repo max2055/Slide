@@ -10,6 +10,7 @@ import './metric-chart.js';
 import { metricName } from './resource-metric-summary.js';
 export interface MetricResult {
   definition: { id: string; category: string; meaning: string; unit: string }; state: string; capability: unknown;
+  observed_at?: string;
   series: Array<{ dimensions: Record<string, string>; buckets: Array<{ value: { encoding: string; value?: number | string } | null;
     unit: string; coverage: number; quality: { status: string; reason: string }; freshness: string; accuracy: string; sources: unknown[]; window: { from: string; to: string } }> }>;
 }
