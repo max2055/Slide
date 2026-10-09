@@ -84,7 +84,8 @@ describe('MAX-75 deterministic consumer contract', () => {
     expect(binding.binding.package.id).toBe('mysql-basic');
   });
   it('canonical default and explicit extension use one query; unknown/InnoDB and inventory are not invented metrics', async () => {
-    const result = await service.query(admin, query()); expect(result.metrics.map(m => m.definition.category)).toEqual(['canonical']);
+    const result = await service.query(admin, query()); expect(result.metrics.map(m => m.definition.category)).toEqual(['canonical', 'extension']);
+    expect(result.metrics[1]).toMatchObject({ state: 'not_configured', series: [] });
     const extension = await service.query(admin, { ...query(), metric_ids: ['mysql.queries.per_second'] });
     expect(extension.metrics[0].definition.category).toBe('extension');
     expect(extension.metrics[0].series[0].buckets[0].value).toBeNull();

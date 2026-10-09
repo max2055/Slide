@@ -37,10 +37,25 @@ export const databaseReads: DatabaseRead[] = [
 // Deliberately bounded version families, matched by the existing major.minor applicability contract.
 export const databaseVersions: Record<Engine, string[]> = { mysql: ['5.7', '8.0', '8.4'], postgresql: ['16.4'], oracle: ['19.3'], dameng: ['8.1'] };
 export const implementationId = (read: DatabaseRead) => `builtin:database.${read.engine}.${read.name}.v1`;
+// Separate identities preserve unlike engine scopes; never alias these to one canonical size.
+export const capacityReads: DatabaseRead[] = [
+  ...databaseReads.filter(r => r.name === 'size'),
+  ...(['oracle', 'dameng'] as const).map(engine => ({ engine, name: 'size', shape: 'array' as const, cost: 'high' as const,
+    sql: engine === 'oracle' ? "SELECT TO_CHAR(SUM(BYTES), 'FM99999999999999999999') FROM DBA_DATA_FILES" : 'SELECT CAST(SUM(BYTES) AS VARCHAR(20)) FROM DBA_DATA_FILES',
+    permissions: ['SELECT DBA_DATA_FILES in bound container/database'],
+    fields: [field('bytes', `${engine}.datafiles.allocated_bytes`, '当前连接容器/数据库 DBA_DATA_FILES 的 BYTES 合计：永久数据文件已分配空间，包含系统表空间；不含临时文件、日志、备份，不是已使用空间或最大扩展容量。', 'By')] })),
+];
+export const capacityDefinition = (engine: string) => capacityReads.find(r => r.engine === engine)?.fields[0].definition;
 export const databaseSpecs: ImplementationSpec[] = databaseReads.map(read => ({ id: implementationId(read), method: 'sql', resource_type: 'instance',
   applicability: [{ attribute: 'db.engine', values: [read.engine] }, { attribute: 'db.version', values: databaseVersions[read.engine] }],
   outputs: read.fields.map(f => ({ raw_field: f.name, definition: f.definition, input_unit: f.definition.unit })), permissions: read.permissions,
   discovery: read.database ? 'one row for the bound current database; database name required' : 'singleton in the authorized instance/container; no schema enumeration' }));
+export const capacitySpecs: ImplementationSpec[] = capacityReads.filter(r => !databaseReads.includes(r)).map(read => ({
+  id: implementationId(read), method: 'sql', resource_type: 'instance',
+  applicability: [{ attribute: 'db.engine', values: [read.engine] }, { attribute: 'db.version', values: databaseVersions[read.engine] }],
+  outputs: read.fields.map(f => ({ raw_field: f.name, definition: f.definition, input_unit: f.definition.unit })),
+  permissions: read.permissions, discovery: 'one total for permanent datafiles in the bound container/database',
+}));
 const ref = (id: string) => ({ id, semantic_version: '1.0.0' });
 export function databaseReleases(): PackageRelease[] {
   return (Object.keys(databaseVersions) as Engine[]).map(engine => {
@@ -71,8 +86,21 @@ export function databaseReleases(): PackageRelease[] {
   });
 }
 /** Opt-in registry for the existing PolicyService/MetricScheduler. Old package pins remain immutable. */
+export function capacityReleases(): PackageRelease[] {
+  const bases = [builtinReleases()[0], ...databaseReleases().filter(r => ['oracle-representative', 'dameng-representative'].includes(r.package.id))];
+  return bases.map(base => {
+    const engine = base.package.applicability.find(a => a.attribute === 'db.engine')!.values[0];
+    const read = capacityReads.find(r => r.engine === engine)!;
+    return sealRelease({ ...base, package: { ...base.package, version: '1.1.0', collectors: [...base.package.collectors,
+      { id: `${engine}-size`, implementation_ref: implementationId(read), method: 'sql', timeout_ms: 5000, estimated_cost: 'high',
+        mappings: read.fields.map(f => ({ metric: ref(f.definition.id), raw_field: f.name, input_unit: 'By', output_unit: 'By', transform_version: '1.0.0', steps: ['decode', 'normalize'] })) }] },
+      extensions: [...base.extensions, ...read.fields.map(f => f.definition as Extract<MetricDefinition, { category: 'extension' }>)],
+      documentation: [...base.documentation, { collector_id: `${engine}-size`, permissions: read.permissions,
+        discovery: [...databaseSpecs, ...capacitySpecs].find(s => s.id === implementationId(read))!.discovery }] });
+  });
+}
 export function createDatabaseRegistry(): PackageRegistry {
-  const registry = new PackageRegistry(canonicalDefinitions, [...implementationSpecs, ...databaseSpecs]);
-  [...builtinReleases(), ...databaseReleases()].forEach(r => registry.install(r));
+  const registry = new PackageRegistry(canonicalDefinitions, [...implementationSpecs, ...databaseSpecs, ...capacitySpecs]);
+  [...builtinReleases(), ...databaseReleases(), ...capacityReleases()].forEach(r => registry.install(r));
   return registry;
 }

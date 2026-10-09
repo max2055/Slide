@@ -5,6 +5,10 @@ export const collectionLabels: Record<string, string> = {
   stale: '已过期', partial: '部分缺失', query_failed: '指标加载失败', forbidden: '无查看权限', unavailable: '资源不可用',
 };
 export const metricNames: Record<string, string> = {
+  'mysql.tables.estimated_allocated_bytes': 'MySQL 非系统库表与索引估算分配空间',
+  'postgresql.database.disk_bytes': 'PostgreSQL 当前数据库物理文件大小',
+  'oracle.datafiles.allocated_bytes': 'Oracle 永久数据文件已分配空间',
+  'dameng.datafiles.allocated_bytes': '达梦永久数据文件已分配空间',
   'db.uptime_seconds': '数据库运行时长', 'host.filesystem.used_bytes': '文件系统已用空间',
   'host.filesystem.size_bytes': '文件系统容量', 'host.network.bytes_total': '接口字节数',
   'network.interface.oper_up': '接口运行状态',
@@ -29,6 +33,33 @@ export function collectionState(result: SemanticResult): string {
   return 'available';
 }
 const latest = (m: MetricResult) => m.series.map(s => ({ dimensions: s.dimensions, bucket: s.buckets.at(-1) }));
+export function formatDatabaseBytes(value: unknown): string | null {
+  const text = typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : value;
+  if (typeof text !== 'string' || !/^(0|[1-9]\d*)$/.test(text) || text.length > 20) return null;
+  const bytes = BigInt(text);
+  if (bytes >= 1n << 64n) return null;
+  const units = ['B', 'KiB', 'MiB', 'GiB'];
+  let unit = 0, divisor = 1n;
+  while (unit < units.length - 1 && bytes >= divisor * 1024n) { divisor *= 1024n; unit++; }
+  if (!unit) return `${bytes.toLocaleString('zh-CN')} B`;
+  const rounded = (bytes * 100n + divisor / 2n) / divisor;
+  return `${(rounded / 100n).toLocaleString('zh-CN')}.${String(rounded % 100n).padStart(2, '0')} ${units[unit]}`;
+}
+export function databaseSizeMetric(result: SemanticResult | undefined) {
+  const id = result?.profile.columns.find(c => c.key === 'database_size')?.metric.id;
+  return result?.metrics.find(m => m.definition.id === id);
+}
+export function databaseSizeSummary(result: SemanticResult | undefined): string {
+  const metric = databaseSizeMetric(result);
+  if (!metric) return '暂不支持';
+  if (['not_configured', 'disabled', 'unsupported', 'permission_denied'].includes(metric.state)) return collectionLabels[metric.state];
+  const points = latest(metric);
+  const bucket = points.length === 1 ? points[0].bucket : undefined;
+  const value = bucket?.unit === 'By' && ['good', 'partial'].includes(bucket.quality.status) && bucket.value
+    ? formatDatabaseBytes(bucket.value.value) : null;
+  if (value == null) return metric.state === 'available' ? '暂无有效值' : collectionLabels[metric.state] ?? '待验证';
+  return `${metric.state !== 'available' ? `${collectionLabels[metric.state] ?? '待验证'} · 上次 ` : ''}${value}${bucket!.accuracy === 'estimated' ? ' · 估算' : ''}${bucket!.freshness === 'stale' ? ' · 已过期' : ''}`;
+}
 export function metricSummary(result: SemanticResult | undefined, id: string): string {
   const m = result?.metrics.find(m => m.definition.id === id);
   if (!m) return '暂无观测';

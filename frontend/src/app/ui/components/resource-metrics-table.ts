@@ -2,7 +2,7 @@ import { LitElement, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
-import { collectionLabels, collectionState, metricSummary, diskSummary, type MetricRow } from './resource-metric-summary.js';
+import { collectionLabels, collectionState, metricSummary, diskSummary, databaseSizeMetric, databaseSizeSummary, type MetricRow } from './resource-metric-summary.js';
 import type { SemanticResult } from './semantic-metrics.js';
 import type { Column } from './app-data-table.js';
 import './app-data-table.js';
@@ -81,7 +81,7 @@ export class ResourceMetricsTable extends LitElement {
         let row: MetricRow;
         try {
           const response = await authFetch('/api/metrics-v2/query', { method: 'POST', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ resource: { type, id: entry.id }, view: 'core' }) });
+            body: JSON.stringify({ resource: { type, id: entry.id }, view: 'core', ...(type === 'instance' ? { latest_capacity: true } : {}) }) });
           if (!response.ok) row = { state: response.status === 403 || response.status === 401 ? 'forbidden' : response.status === 404 ? 'unavailable' : 'query_failed' };
           else {
             const result: SemanticResult = await response.json();
@@ -111,15 +111,20 @@ export class ResourceMetricsTable extends LitElement {
       this.dispatchEvent(new CustomEvent('resource-metric-open', { detail: { id: entry.id, metric: id }, bubbles: true, composed: true }));
     }}>${row ? row.result ? id === 'host.filesystem.used_bytes' ? diskSummary(row.result) : metricSummary(row.result, id) : collectionLabels[row.state] : '正在读取'}</button>`;
   }
+  private databaseSize(entry: ResourceEntry) {
+    const row = this.rows.get(entry.id), metric = databaseSizeMetric(row?.result);
+    return html`<span title=${metric?.definition.meaning ?? '容量支持范围见下方说明'}>${!row ? '正在读取' : !row.result ? collectionLabels[row.state] : databaseSizeSummary(row.result)}</span>
+      ${metric?.observed_at ? html`<small>采集于 <time datetime=${metric.observed_at} title=${new Date(metric.observed_at).toString()}>${new Date(metric.observed_at).toLocaleString('zh-CN')}</time></small>` : nothing}`;
+  }
   render() {
-    const metricColumns = this.resourceType === 'instance' ? [{ key: 'uptime', label: '运行时长' }] : this.resourceType === 'server'
+    const metricColumns = this.resourceType === 'instance' ? [{ key: 'database_size', label: '数据库大小' }, { key: 'uptime', label: '运行时长' }] : this.resourceType === 'server'
       ? [{ key: 'disk', label: '磁盘（挂载点）' }, { key: 'network', label: '网络速率（逐接口）' }]
       : [{ key: 'interfaces', label: '接口摘要' }];
     const columns = [...this.columns.filter(c => c.key !== 'actions'), ...metricColumns, { key: 'collection', label: '采集状态 / 最近成功时间' }, ...this.columns.filter(c => c.key === 'actions')];
     const rows = this.visible.map(entry => {
       const row = this.rows.get(entry.id);
       return { ...entry, ...(['forbidden', 'unavailable'].includes(row?.state ?? '') ? { cpu: '无可用权限或资源', memory: '无可用权限或资源', capacity: '无可用权限或资源' } : {}), type: unknown(entry.type), version: unknown(entry.version), model: unknown(entry.model),
-        uptime: this.metric(entry, 'db.uptime_seconds'), disk: this.metric(entry, 'host.filesystem.used_bytes'),
+        database_size: this.databaseSize(entry), uptime: this.metric(entry, 'db.uptime_seconds'), disk: this.metric(entry, 'host.filesystem.used_bytes'),
         network: this.metric(entry, 'host.network.bytes_total'), interfaces: this.metric(entry, 'network.interface.oper_up'),
         collection: html`<span>${collectionLabels[row?.state ?? 'loading'] ?? '待验证'}</span><small>${row?.lastSuccess ? html`<time title=${new Date(row.lastSuccess).toString()} datetime=${row.lastSuccess}>${new Date(row.lastSuccess).toLocaleString('zh-CN')}</time>` : row?.timeUnavailable ? '成功时间暂不可用' : '近期无成功采集记录'}</small>
           ${row && ['query_failed', 'forbidden', 'unavailable'].includes(row.state) ? html`<button class="btn-ghost" @click=${() => { this.rows.delete(entry.id); void this.load(); }}>重试</button>` : nothing}` };
@@ -131,6 +136,13 @@ export class ResourceMetricsTable extends LitElement {
       <button class="btn" .disabled=${this.pending} @click=${() => this.load(true)}>刷新指标</button>
       <button class="btn" aria-haspopup="dialog" @click=${() => { this.columnsOpen = true; }}>列设置</button>
     </div>
+    ${this.resourceType === 'instance' ? html`<details><summary>数据库大小：支持范围与统计口径</summary>
+      <p>单位使用 B / KiB / MiB / GiB（1024 进制）。读取最近一次已发布采集结果；刷新和翻页只读取指标存储。过期值保留并标注采集时间。</p>
+      <p>MySQL 5.7 / 8.0 / 8.4：可见非系统库的表 data_length + index_length，属于估算分配空间；受账号元数据可见范围限制。</p>
+      <p>PostgreSQL 16.4：当前连接数据库的 pg_database_size，包含物理文件，保留数据库名称维度。</p>
+      <p>Oracle 19.3 / 达梦 8.1：当前容器/数据库 DBA_DATA_FILES 的永久数据文件已分配空间（包含系统表空间），不含临时文件、日志与备份；需查询该视图的权限。</p>
+      <p>其他引擎暂不支持。Redis 内存不计为磁盘大小。版本与权限需通过采集验证；未配置时请在指标配置中选择包含容量的采集包并按现有流程发布。Oracle/达梦和 MySQL 基础包的容量能力从 1.1.0 起提供。</p>
+    </details>` : nothing}
     <app-dialog .open=${this.columnsOpen} size="sm" title="列设置" @app-dialog-close=${() => { this.columnsOpen = false; }}>
       ${columns.filter(c => !['actions', 'name', 'host', 'device'].includes(c.key)).map(c => html`<label class="column-choice"><input type="checkbox" .checked=${!this.hiddenColumns.includes(c.key)} @change=${(e: Event) => { this.hiddenColumns = (e.target as HTMLInputElement).checked ? this.hiddenColumns.filter(k => k !== c.key) : [...this.hiddenColumns, c.key]; }}>${c.label}</label>`)}
       <div slot="footer"><button class="btn" @click=${() => { this.hiddenColumns = []; }}>恢复默认</button> <button class="btn-primary" @click=${() => { this.columnsOpen = false; }}>完成</button></div>

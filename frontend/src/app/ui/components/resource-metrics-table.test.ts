@@ -53,6 +53,23 @@ it('success-time transport errors do not erase successful metric evidence', asyn
   authFetch.mockImplementation(async (url: string) => { if (url.endsWith('/attempts')) throw new Error('network'); return response(sample()); });
   const el = await mount(); await vi.waitFor(() => expect(el.pending).toBe(false)); expect(el.rows.get(1).state).toBe('available'); expect(el.rows.get(1).timeUnavailable).toBe(true);
 });
+it('requests stored latest capacity and renders its own timestamp independently of uptime', async () => {
+  const data = sample();
+  data.profile.columns = [{ key: 'database_size', metric: { id: 'postgresql.database.disk_bytes' }, label: '数据库大小' }];
+  const size = structuredClone(data.metrics[0]); size.definition = { id: 'postgresql.database.disk_bytes', unit: 'By', meaning: 'Current database physical files' };
+  size.observed_at = '2026-09-19T23:59:00Z'; size.series[0].dimensions = { database: 'orders' };
+  size.series[0].buckets[0].value.value = '8192'; size.series[0].buckets[0].unit = 'By'; size.series[0].buckets[0].freshness = 'stale';
+  data.metrics.push(size);
+  authFetch.mockImplementation(async (url: string) => response(url.endsWith('/attempts') ? [] : data));
+  const el = await mount(); await vi.waitFor(() => expect(el.pending).toBe(false)); await el.updateComplete;
+  const table = el.shadowRoot.querySelector('app-data-table');
+  expect(table.columns.some((c: any) => c.key === 'database_size')).toBe(true);
+  await table.updateComplete;
+  expect(table.textContent).toContain('8.00 KiB · 已过期');
+  expect(table.querySelector('time[datetime="2026-09-19T23:59:00Z"]')).not.toBeNull();
+  await el.load(true);
+  expect(authFetch.mock.calls.filter(c => c[0].endsWith('/query')).every(c => JSON.parse(c[1].body).latest_capacity === true)).toBe(true);
+});
 
 it('disk maximum requires complete matching dimensions and sample windows', () => {
   const data = sample(0); const used = data.metrics[0]; used.definition.id = 'host.filesystem.used_bytes'; used.series[0].dimensions = { mount: '/' }; const a = used.series[0].buckets[0]; a.unit = 'By'; a.window = data.window;
