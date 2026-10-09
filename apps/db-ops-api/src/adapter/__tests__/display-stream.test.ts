@@ -27,6 +27,15 @@ describe('synchronous bounded display authority', () => {
       expect(events[0].recovery).toMatchObject({ cold: true, truncated: false });
     } finally { hub.dispose(); }
   });
+  it('bounds the cold history reference from an invalid cursor', () => {
+    const hub = new DisplayStreamAuthority();
+    try {
+      const events: DisplayStreamEvent[] = [];
+      hub.watch({}, 'session', 'sub', e => { events.push(e); return true; },
+        { streamEpoch: 'lost', runId: 'x'.repeat(10_000), turnId: 'turn', toSeq: 3 });
+      expect(events[0].recovery).toMatchObject({ cold: true, truncated: false, detailRef: { runId: 'cold' } });
+    } finally { hub.dispose(); }
+  });
   it('cold watch with a real run cursor identifies the missing replay boundary', () => {
     const hub = new DisplayStreamAuthority();
     try {
