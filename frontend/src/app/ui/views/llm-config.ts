@@ -1,5 +1,6 @@
 import "../components/app-card.js";
 import "../components/app-form-field.js";
+import "../components/app-notice.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * LLM 配置管理 — 两栏布局：左侧提供商列表 + 右侧详情/模板选择
@@ -153,6 +154,7 @@ export class LLMConfigPage extends LitElement {
   @state() private modelsLoading = false;
   @state() private modelsMessage = '';
   private _modelRequestVersion = 0;
+  private _testRequestVersion = 0;
   private _savedOkTimer: ReturnType<typeof setTimeout> | null = null;
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
 
@@ -255,6 +257,7 @@ export class LLMConfigPage extends LitElement {
     super.disconnectedCallback();
     if (this._savedOkTimer) clearTimeout(this._savedOkTimer);
     this._modelRequestVersion++;
+    this._resetTest();
   }
 
   // ── Data ─────────────────────────────────────────────────────────────────
@@ -298,6 +301,7 @@ export class LLMConfigPage extends LitElement {
   // ── Sidebar actions ──────────────────────────────────────────────────────
 
   _selectProvider(p: LLMProvider) {
+    this._resetTest();
     this._resetDiscovery();
     const selectedModel = p.models_supported?.find(m => m.id === p.default_model);
     this.selectedId = p.id;
@@ -327,6 +331,7 @@ export class LLMConfigPage extends LitElement {
   }
 
   _openAddPicker() {
+    this._resetTest();
     this.selectedId = null;
     this.editing = null;
     this.viewMode = "picker";
@@ -335,6 +340,7 @@ export class LLMConfigPage extends LitElement {
   }
 
   _selectTemplate(tpl: ProviderTemplate) {
+    this._resetTest();
     this._resetDiscovery();
     this.editing = null;
     this.form = {
@@ -353,6 +359,7 @@ export class LLMConfigPage extends LitElement {
   }
 
   _openCustomForm() {
+    this._resetTest();
     this._resetDiscovery();
     this.editing = null;
     this.form = { ...blankForm(), is_default: this.providers.length === 0 };
@@ -402,6 +409,7 @@ export class LLMConfigPage extends LitElement {
         if (result?.success === false) throw new Error(result.error || '保存失败');
       }
       this.form = { ...this.form, api_key: '' };
+      this._resetTest();
       this.savedOk = true;
       if (this._savedOkTimer) clearTimeout(this._savedOkTimer);
       this._savedOkTimer = setTimeout(() => { this.savedOk = false; }, 2500);
@@ -456,6 +464,7 @@ export class LLMConfigPage extends LitElement {
     if (!confirm(`确定删除提供商 "${p.display_name || p.name}"？`)) return;
     try {
       await apiClient.delete(`/llm/configs/${p.id}`);
+      this._resetTest();
       if (this.selectedId === p.id) { this.selectedId = null; this.viewMode = "placeholder"; this.editing = null; }
       await this._load(true);
     } catch (e: any) { this.formMsg = e.message || "删除失败"; }
@@ -484,6 +493,7 @@ export class LLMConfigPage extends LitElement {
   }
 
   private _selectModel(id: string) {
+    this._resetTest();
     const selected = this.form.models.find(m => m.id === id);
     this.form = { ...this.form, default_model: id,
       context_window: selected?.contextWindow,
@@ -524,20 +534,44 @@ export class LLMConfigPage extends LitElement {
     } finally { if (version === this._modelRequestVersion) this.modelsLoading = false; }
   }
 
+  private _resetTest() {
+    this._testRequestVersion++;
+    this.testing = false;
+    this.testResult = null;
+  }
+
+  private _testDraft(p: LLMProvider) {
+    // Existing providers are resolved by their persisted name; other fields remain draft-only.
+    const draft: Record<string, string> = { providerName: p.name };
+    if (this.form.api_key.trim()) draft.apiKey = this.form.api_key.trim();
+    if (this.form.api_base_url.trim()) draft.baseURL = this.form.api_base_url.trim();
+    if (this.form.default_model.trim()) draft.model = this.form.default_model.trim();
+    if (this.form.api_format.trim()) draft.apiFormat = this.form.api_format.trim();
+    if (this.form.deployment_type.trim()) draft.deploymentType = this.form.deployment_type.trim();
+    return draft;
+  }
+
   private async _test(p: LLMProvider) {
+    const version = ++this._testRequestVersion;
+    const draft = this._testDraft(p);
+    const isCurrent = () => version === this._testRequestVersion && this.editing?.id === p.id
+      && JSON.stringify(draft) === JSON.stringify(this._testDraft(this.editing));
     this.testing = true; this.testResult = null;
     try {
-      // Existing providers are resolved by their persisted name; other fields remain draft-only.
-      const draft: Record<string, string> = { providerName: p.name };
-      if (this.form.api_key.trim()) draft.apiKey = this.form.api_key.trim();
-      if (this.form.api_base_url.trim()) draft.baseURL = this.form.api_base_url.trim();
-      if (this.form.default_model.trim()) draft.model = this.form.default_model.trim();
-      if (this.form.api_format.trim()) draft.apiFormat = this.form.api_format.trim();
-      if (this.form.deployment_type.trim()) draft.deploymentType = this.form.deployment_type.trim();
       const r = await apiClient.post<any>("/llm/test", draft);
-      this.testResult = r.success ? `✅ ${r.message || "连接成功"}` : `❌ ${r.error || r.message || "连接失败"}`;
-    } catch (e: any) { this.testResult = `❌ ${e.message}`; }
-    finally { this.testing = false; setTimeout(() => { this.testResult = null; }, 8000); }
+      if (isCurrent()) this.testResult = r.success ? `✅ ${r.message || "连接成功"}` : `❌ ${r.error || r.message || "连接失败"}`;
+    } catch (e: any) {
+      if (isCurrent()) this.testResult = `❌ ${e.message || "连接失败"}`;
+    } finally { if (version === this._testRequestVersion) this.testing = false; }
+  }
+
+  protected override async updated(changed: Map<PropertyKey, unknown>) {
+    if ((changed.has('testing') || changed.has('testResult')) && (this.testing || this.testResult)) {
+      const region = this.renderRoot.querySelector('[aria-label="连接测试结果"]');
+      // The nested notice must finish rendering before its height can be scrolled into view.
+      await region?.querySelector<LitElement>('app-notice')?.updateComplete;
+      if (region?.isConnected && (this.testing || this.testResult)) region.scrollIntoView?.({ block: 'nearest' });
+    }
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -661,23 +695,17 @@ export class LLMConfigPage extends LitElement {
   }
 
   _renderDetail() {
-    // test result banner
-    const testBanner = this.testResult ? html`
-      <div style="padding:8px 28px 0">
-        <div class="msg ${this.testResult.startsWith('✅') ? 'msg-ok' : 'msg-err'}">${this.testResult}</div>
-      </div>` : null;
-
     if (this.activeTab === "scenes") {
       return html`<div class="detail"><div class="detail-inner">${this._renderScenes()}</div></div>`;
     }
     if (this.viewMode === "picker") {
-      return html`<div class="detail">${testBanner}<div class="detail-inner">${this._renderPicker()}</div></div>`;
+      return html`<div class="detail"><div class="detail-inner">${this._renderPicker()}</div></div>`;
     }
     if (this.viewMode === "form") {
-      return html`<div class="detail">${testBanner}<div class="detail-inner">${this._renderForm()}</div></div>`;
+      return html`<div class="detail"><div class="detail-inner" @input=${this._resetTest} @change=${this._resetTest}>${this._renderForm()}</div></div>`;
     }
     // placeholder
-    return html`<div class="detail">${testBanner}<div class="placeholder">
+    return html`<div class="detail"><div class="placeholder">
       <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3"/><path d="M15 1v3"/><path d="M9 20v3"/><path d="M15 20v3"/><path d="M20 9h3"/><path d="M20 14h3"/><path d="M1 9h3"/><path d="M1 14h3"/></svg>
       <p>${this.providers.length === 0 ? '选择下方模板快速配置 AI 提供商' : '从左侧选择一个提供商查看详情'}</p>
     </div></div>`;
@@ -883,7 +911,7 @@ export class LLMConfigPage extends LitElement {
 
       <div class="actions-bar">
         ${isEdit ? html`
-          <button class="btn" @click=${() => this._test(this.editing!)} ?disabled=${this.testing}>
+          <button class="btn" @click=${() => this._test(this.editing!)} .disabled=${this.testing}>
             ${this.testing ? '测试中...' : '测试连接'}
           </button>
         ` : ''}
@@ -897,6 +925,13 @@ export class LLMConfigPage extends LitElement {
           ${this.savedOk ? html`<span style="font-size:11px">✓ 已保存</span>` : this.saving ? '保存中...' : '保存'}
         </button>
       </div>
+      ${isEdit ? html`
+        <div role="status" aria-live="polite" aria-atomic="true" aria-label="连接测试结果">
+          ${this.testing || this.testResult ? html`
+            <app-notice severity=${this.testResult?.startsWith('❌') ? 'error' : 'info'}>
+              ${this.testing ? '正在测试连接…' : this.testResult}
+            </app-notice>` : ''}
+        </div>` : ''}
     `;
   }
 }
