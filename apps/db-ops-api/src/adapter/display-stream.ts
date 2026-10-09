@@ -214,7 +214,8 @@ export class DisplayStreamAuthority<Peer extends object> {
     if (suffix) for (const entry of suffix) send(this.delta(run!, id, entry));
     else if (baseline) send(baseline);
     else send({ type: 'stream.snapshot', sessionKey, stream: { version: 1, streamEpoch: randomUUID(), runId: 'cold', turnId: 'cold', subscriptionId: id, fromSeq: 0, toSeq: 0 },
-      snapshot: createMessageProjection('cold'), recovery: { truncated: true, cold: true, omittedParts: 0, detailRef: { sessionKey, runId: 'cold', kind: 'authorized-history' } } });
+      snapshot: createMessageProjection('cold'), recovery: { truncated: !!cursor && cursor.runId !== 'cold', cold: true, omittedParts: 0,
+        detailRef: { sessionKey, runId: cursor?.runId ?? 'cold', kind: 'authorized-history' } } });
     capturing = false;
     if (overflow) { const latest = this.runs.get(sessionKey); if (latest) send(this.snapshot(latest, id)); }
     else for (const e of queued) send(e);

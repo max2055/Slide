@@ -73,7 +73,7 @@ describe('MAX-134 independent conversations', () => {
     expect(state.chatQueue[0].text).toBe('A follow-up');
     expect(state.chatThinkingText).toBe('A thinking');
     expect(state.chatStream).toBe('A still running');
-    expect(state.chatRecoveryNotice).toBe('A recovery');
+    expect(state.chatRecoveryNotice).toBeNull(); // MAX-135: navigation ends the old recovery notice.
   });
 
   it('routes late admission of an unallocated A without stealing the independently admitted B', async () => {

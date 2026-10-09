@@ -134,3 +134,10 @@ export function clearChatSessions(host: object): void {
   store.byKey.clear(); store.byMessage.clear();
   sessions.delete(store.root);
 }
+
+/** Connection loss affects every watched execution, including hidden busy views. */
+export function chatSessionHosts(host: object): Host[] {
+  const active = chatSessionHost(host);
+  const { sessions: store } = receivers.get(active)!;
+  return [...new Set([store.active, ...store.byKey.values()])].map(scope => scope.host);
+}

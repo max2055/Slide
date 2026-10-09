@@ -1,3 +1,4 @@
+import { clearChatRecoveryNotice } from '../chat/recovery-notice.ts';
 import { resetToolStream } from "../app-tool-stream.ts";
 import { hasActiveChatDisplayStream, hydrateChatProjections } from '../chat/message-projection.ts';
 import { extractText, extractRawText } from "../chat/message-extract.ts";
@@ -114,13 +115,11 @@ function maybeResetToolStream(state: ChatState) {
 
 export async function loadChatHistory(state: ChatState, opts?: { clearNotices?: boolean }) {
   state = chatSessionHost(state);
-  if (!state.client || !state.connected) {
-    return;
-  }
   if (opts?.clearNotices) {
     state.lastError = null;
-    state.chatRecoveryNotice = null;
+    clearChatRecoveryNotice(state);
   }
+  if (!state.client || !state.connected) return;
   const sessionKey = state.sessionKey.trim();
   if (!sessionKey) {
     state.chatMessages = [];
@@ -376,7 +375,7 @@ export async function sendChatMessage(
 
   state.chatSending = true;
   state.lastError = null;
-  state.chatRecoveryNotice = null;
+  clearChatRecoveryNotice(state);
   const runId = generateUUID();
   state.chatRunId = runId;
   state.chatStream = "";
@@ -422,7 +421,7 @@ export async function sendDetachedChatMessage(
     return null;
   }
   state.lastError = null;
-  state.chatRecoveryNotice = null;
+  clearChatRecoveryNotice(state);
   const runId = generateUUID();
   try {
     return await requestChatSend(state, { message: msg, attachments, runId });

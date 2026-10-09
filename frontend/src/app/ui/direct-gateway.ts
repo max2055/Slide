@@ -1,3 +1,4 @@
+import { applyChatRecoveryNotice, clearChatRecoveryNotice, markChatRecoveryInterruption } from './chat/recovery-notice.ts';
 import { PARTS_STREAM_CAPABILITY, readDisplayStreamEvent, inspectDisplayWatermark, type DisplayCursor, type DisplayStreamState, type DisplayStreamEvent } from '../../../../packages/agent-core/src/display-stream.ts';
 import { normalizeToolEvent, type ToolWireEvent } from '../../../../packages/agent-core/src/tool-stream.js';
 import type { ProjectionFrame } from '../../../../packages/agent-core/src/message-projection.ts';
@@ -17,7 +18,7 @@ import { acceptChatProjection, acceptChatDisplayStream, getChatProjection, rende
 
 import { loadPermissions, readCachedPermissions } from './permissions.ts';
 import { generateUUID } from './uuid.ts';
-import { chatSessionForEvent, isVisibleChatSession, clearChatSessions } from './chat-session-state.ts';
+import { chatSessionForEvent, isVisibleChatSession, clearChatSessions, chatSessionHosts } from './chat-session-state.ts';
 import type { DeviceIdentity } from './device-identity.ts';
 
 export type AdapterTextDeltaEvent = { type: 'text_delta'; delta: string; reset?: boolean; thinkingContent?: string; anchorId?: string; partId?: string; partText?: string };
@@ -967,7 +968,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     const streamEvent = readDisplayStreamEvent(event);
     if (!streamEvent || streamEvent.sessionKey !== sessionKey) return;
     if (streamEvent.recovery?.cold) {
-      host.chatRecoveryNotice = '连接已恢复；仅恢复已保存边界，未保存的流尾部可能丢失。';
+      applyChatRecoveryNotice(host as unknown as Parameters<typeof applyChatRecoveryNotice>[0], streamEvent);
       void loadChatHistory(host as unknown as ChatState);
       return;
     }
@@ -976,10 +977,11 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     if (!acceptChatDisplayStream(host, streamEvent)) return;
     const state = getChatProjection(host, id)!;
     // Keep ownership until the terminal handler reconciles the active run.
+    if (host.chatRunId !== id) clearChatRecoveryNotice(host as unknown as Parameters<typeof clearChatRecoveryNotice>[0]);
     host.chatRunId = id;
     host.chatStreamRecovery = streamEvent.recovery;
     host.chatRuntimePhase = state.phase;
-    if (streamEvent.recovery?.truncated) host.chatRecoveryNotice = '恢复快照仅保留本轮尾部和结果预览；完整已保存内容请查看聊天历史。';
+    applyChatRecoveryNotice(host as unknown as Parameters<typeof applyChatRecoveryNotice>[0], streamEvent);
     const barrier = streamEvent.type === 'stream.snapshot' || state.terminal
       || streamEvent.projection?.operations.some(op => op.type !== 'part.append');
     if (barrier) { flushDirectStreamUpdates(host); renderChatProjection(host, id); }
@@ -1048,6 +1050,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
   switch (event.type) {
     case 'run.started':
       if (!confirmChatSend(host as unknown as ChatState, event.messageId)) break;
+      if (host.chatRunId !== event.runId) clearChatRecoveryNotice(host as unknown as Parameters<typeof clearChatRecoveryNotice>[0]);
       host.chatRunId = event.runId;
       host.chatRuntimePhase = 'preparing';
       host.chatCancelRequested = false;
@@ -1056,6 +1059,7 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
     case 'run.snapshot':
       if (!confirmChatSend(host as unknown as ChatState, event.messageId)) break;
       applyDirectSessionKey(host, event.run.sessionId);
+      if (host.chatRunId !== event.run.id) clearChatRecoveryNotice(host as unknown as Parameters<typeof clearChatRecoveryNotice>[0]);
       host.chatRunId = event.run.state === 'running' ? event.run.id : null;
       if (event.run.state !== 'running') {
         host.chatCancelRequested = false;
@@ -1168,6 +1172,11 @@ export function initChatClient(host: Record<string, unknown>): void {
       handleDirectAdapterEvent(host, event);
     },
     onStateChange: (state) => {
+      if (host.connected && ['disconnected', 'network_interrupted', 'service_restarting', 'rate_limited'].includes(state)) {
+        for (const scope of chatSessionHosts(host)) {
+          markChatRecoveryInterruption(scope as unknown as Parameters<typeof markChatRecoveryInterruption>[0]);
+        }
+      }
       if (state === 'connected') {
         host.connected = true;
         host.connectionError = null;
@@ -1245,6 +1254,7 @@ export function initChatClient(host: Record<string, unknown>): void {
 }
 
 export function clearExpiredChatState(host: Record<string, unknown>): void {
+  clearChatRecoveryNotice(host as unknown as Parameters<typeof clearChatRecoveryNotice>[0]);
   clearChatSessions(host);
   const pendingStream = pendingDirectStreamUpdates.get(host);
   if (pendingStream?.timer !== null && pendingStream?.timer !== undefined) {

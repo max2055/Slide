@@ -1,3 +1,4 @@
+import { clearChatRecoveryNotice } from './chat/recovery-notice.ts';
 import { html, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { t } from "../i18n/index.ts";
@@ -75,7 +76,9 @@ export { resolveSidebarChatSessionKey };
 
 function resetChatStateForSessionSwitch(state: AppViewState, sessionKey: string) {
   const host = state as unknown as SessionSwitchHost;
+  clearChatRecoveryNotice(state);
   activateChatSession(state, sessionKey);
+  clearChatRecoveryNotice(state);
   host.resetChatScroll();
   state.applySettings({
     ...state.settings,

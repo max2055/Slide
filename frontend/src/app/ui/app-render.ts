@@ -1,3 +1,4 @@
+import { dismissChatRecoveryNotice } from './chat/recovery-notice.ts';
 import { html, nothing } from "lit";
 import { readCachedPermissions, renderPermissionsError } from "./permissions.ts";
 import {
@@ -846,6 +847,7 @@ export function renderApp(state: AppViewState) {
               error: state.lastError,
               lastError: null,
               recoveryNotice: state.chatRecoveryNotice,
+              onDismissRecoveryNotice: () => dismissChatRecoveryNotice(state),
               sessions: (state.sessionsResult as any) ?? null,
               focusMode: state.settings.chatFocusMode || false,
               sidebarOpen: state.sidebarOpen,

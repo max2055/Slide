@@ -5,7 +5,7 @@ vi.mock('./device-identity.ts', () => {
   throw new Error('Outdated Optimize Dep');
 });
 
-import { initChatClient } from './direct-gateway.ts';
+import { initChatClient, handleDirectAdapterEvent } from './direct-gateway.ts';
 import * as api from '../../api/index.ts';
 import * as appSettings from './app-settings.ts';
 import { loadAgents, type AgentsState } from './controllers/agents.ts';
@@ -153,6 +153,26 @@ describe('initChatClient', () => {
     } finally {
       window.removeEventListener('slide-permissions-loaded', loaded);
     }
+  });
+
+  it.each([1006, 1012, 4008])('records the executing run on close %s before a cold recovery', async code => {
+    localStorage.setItem('permissions', '["chat:read"]');
+    vi.spyOn(api, 'authFetch').mockResolvedValue(Response.json({ agents: [], sessions: [] }));
+    vi.spyOn(appSettings, 'refreshActiveTab').mockResolvedValue(undefined);
+    const host: Record<string, unknown> = { client: null, connected: false, sessionKey: 'one', chatRunId: 'run', chatRecoveryNotice: null };
+    initChatClient(host);
+    await vi.waitFor(() => expect(MockWebSocket.latest?.frames.length).toBeGreaterThan(0));
+    MockWebSocket.latest?.receive({ type: 'auth_ok' });
+    MockWebSocket.latest?.closeWith(code, 'fixture');
+    (host.client as any).reconnect();
+    await vi.waitFor(() => expect(MockWebSocket.latest?.frames.length).toBeGreaterThan(0));
+    MockWebSocket.latest?.receive({ type: 'auth_ok' });
+    handleDirectAdapterEvent(host, { type: 'stream.snapshot', sessionKey: 'one',
+      stream: { version: 1, runId: 'cold', turnId: 'cold', streamEpoch: 'cold', subscriptionId: 'sub', fromSeq: 0, toSeq: 0 },
+      snapshot: { version: 1, runId: 'cold', attempt: 0, sequence: 0, phase: 'preparing', parts: [] },
+      recovery: { cold: true, truncated: true, omittedParts: 0, detailRef: { sessionKey: 'one', runId: 'run', kind: 'authorized-history' } } });
+    expect(host.chatRecoveryNotice).toContain('未保存的流尾部可能丢失');
+    (host.client as any).disconnect();
   });
 
   it.each([1006, 1012, 4008])('connection close %s preserves run failure through reconnect', async code => {
