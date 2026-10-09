@@ -11,7 +11,7 @@ import { auditLogManager } from '../audit/audit-log.js';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-it('syncs approved HTTP Git refs without deployment binding, reads partial snapshots and preserves identity', async () => {
+it.each(['gitlab', 'github'] as const)('syncs %s HTTP Git refs, retains encrypted credentials and preserves snapshot identity', async provider => {
   const root = mkdtempSync(join(tmpdir(), 'slide-http-source-'));
   const repo = join(root, 'group/repo.git'); mkdirSync(repo, { recursive: true });
   const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: 'pipe' }).trim();
@@ -27,7 +27,7 @@ it('syncs approved HTTP Git refs without deployment binding, reads partial snaps
   git('add', '.'); git('commit', '-m', 'release'); const commit = git('rev-parse', 'HEAD');
   git('checkout', 'main');
   const token = 'one-use-test-credential';
-  const authorization = 'Basic ' + Buffer.from('oauth2:' + token).toString('base64');
+  const authorization = 'Basic ' + Buffer.from((provider === 'github' ? 'x-access-token:' : 'oauth2:') + token).toString('base64');
   let redirect = false; let requests = 0;
   const upstream = createServer((req, res) => {
     requests++;
@@ -56,6 +56,7 @@ it('syncs approved HTTP Git refs without deployment binding, reads partial snaps
   await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${(upstream.address() as { port: number }).port}`;
   const snapshotsRoot = join(root, 'snapshots');
+  vi.stubEnv('ENCRYPTION_KEY', 'ab'.repeat(32));
   vi.stubEnv('SLIDE_SOURCE_ROOT', snapshotsRoot); vi.stubEnv('SLIDE_SOURCE_SIGNING_KEY', 'fixture-signing-key-'.repeat(3));
   for (const key of ['SLIDE_RELEASE_MANIFEST', 'SLIDE_RELEASE_ID', 'SLIDE_COMMIT_SHA', 'SLIDE_SOURCE_DIGEST']) vi.stubEnv(key, '');
   vi.stubEnv('SLIDE_SOURCE_ALLOW_UNSAFE', 'false'); vi.stubEnv('SLIDE_SOURCE_ALLOW_DRIFT', 'false');
@@ -75,7 +76,7 @@ it('syncs approved HTTP Git refs without deployment binding, reads partial snaps
     const response = await fetch(api + '/api/platform/source/' + path, body === undefined ? undefined : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     return { status: response.status, body: await response.json() as any };
   };
-  const config = { provider: 'gitlab', baseUrl: origin, repositoryPath: 'group/repo', ref: 'release', allowedPaths: ['src/'], allowModelContent: true };
+  const config = { provider, baseUrl: origin, repositoryPath: 'group/repo', ref: 'release', allowedPaths: ['src/'], allowModelContent: true };
   try {
     expect(await call('config', config, 'PUT')).toMatchObject({ status: 200 });
     const sync = await call('sync', { token });
@@ -99,6 +100,15 @@ it('syncs approved HTTP Git refs without deployment binding, reads partial snaps
     expect(await call('symbol?name=selected')).toMatchObject({ status: 200, body: { matches: [{ name: 'selected' }], source: { commitSha: commit } } });
     expect(await call('sync', { token })).toMatchObject({ status: 200, body: { releaseId: sync.body.releaseId } });
     expect(JSON.stringify([...values])).not.toContain(token);
+    expect(await call('sync', { token, retainToken: true })).toMatchObject({ status: 200 });
+    const state = await call('config');
+    expect(state.body.credential.hasSavedToken).toBe(true);
+    expect(JSON.stringify(state.body)).not.toContain(token);
+    const repeated = await call('sync', { token: '', expectedIdentity: state.body.credential.identity });
+    expect(repeated).toMatchObject({ status: 200, body: { commitSha: commit, releaseId: sync.body.releaseId } });
+    expect(await call('manifest')).toMatchObject({ status: 200, body: { commitSha: commit } });
+    expect(JSON.stringify([...values])).not.toContain(token);
+    expect(values.get('source.sync-credential')).toContain('v2:');
 
     // A stale/mismatched deployment can neither block reads nor claim verification.
     vi.stubEnv('SLIDE_RELEASE_ID', 'deployed'); vi.stubEnv('SLIDE_COMMIT_SHA', baseCommit); vi.stubEnv('SLIDE_SOURCE_DIGEST', 'a'.repeat(64));

@@ -2,7 +2,7 @@ import { Type, type Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { dbConnection } from '../db-connection.js';
+import { dbConnection, encryptData, decryptData } from '../db-connection.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { auditLogManager } from '../audit/audit-log.js';
 import { assertRepositoryPath } from './source-repository-path.js';
@@ -65,10 +65,77 @@ export class SourceManagementService {
     }
   }
   async save(actor: ActorContext, input: unknown) {
-    requireSourceAdmin(actor); const config = this.validate(input);
+    requireSourceAdmin(actor);
+    if (this.syncing) throw new Error('SOURCE_SYNC_BUSY');
+    const config = this.validate(input);
     await this.executor().execute('REPLACE INTO system_config (config_key, config_value) VALUES (?, ?)', ['source.gitlab', JSON.stringify(config)]);
     await auditLogManager.logConfigChange({ userId: String(actor.userId), username: actor.username, configKey: 'source.gitlab', newValue: config });
     return config;
+  }
+  private credentialIdentity(config: SourceConfig) {
+    return hash({ provider: config.provider ?? 'gitlab', origin: config.baseUrl, repositoryPath: config.repositoryPath, gitUsername: config.gitUsername ?? '' });
+  }
+  private async savedCredential() {
+    const [rows] = await this.executor().execute('SELECT config_value FROM system_config WHERE config_key = ?', ['source.sync-credential']);
+    if (!rows.length) return null;
+    try {
+      const stored = JSON.parse(rows[0].config_value);
+      if (typeof stored.identity !== 'string' || typeof stored.encrypted !== 'string') throw new Error();
+      return stored as { identity: string; encrypted: string };
+    } catch { throw new Error('SOURCE_SAVED_CREDENTIAL_UNAVAILABLE'); }
+  }
+  async credentialStatus(actor: ActorContext, config?: SourceConfig | null) {
+    requireSourceReader(actor);
+    if (config === undefined) config = await this.load(actor);
+    const identity = config ? this.credentialIdentity(config) : '';
+    try {
+      const stored = await this.savedCredential();
+      return { identity, hasSavedToken: Boolean(stored && stored.identity === identity), hasStoredToken: Boolean(stored) };
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== 'SOURCE_SAVED_CREDENTIAL_UNAVAILABLE') throw error;
+      return { identity, hasSavedToken: false, hasStoredToken: true, error: error.message };
+    }
+  }
+  private checkIdentity(config: SourceConfig, expectedIdentity?: string) {
+    if (expectedIdentity !== undefined && expectedIdentity !== this.credentialIdentity(config)) throw new Error('SOURCE_CONFIG_CHANGED');
+  }
+  private async persistCredential(actor: ActorContext, config: SourceConfig, token: string) {
+    if (!token || token.length > 16_384) throw new Error('SOURCE_CREDENTIAL_INVALID');
+    const identity = this.credentialIdentity(config);
+    let encrypted: string;
+    try { encrypted = encryptData(JSON.stringify({ identity, token })); }
+    catch { throw new Error('SOURCE_CREDENTIAL_ENCRYPTION_UNAVAILABLE'); }
+    await this.executor().execute('REPLACE INTO system_config (config_key, config_value) VALUES (?, ?)', ['source.sync-credential', JSON.stringify({ identity, encrypted })]);
+    await auditLogManager.logConfigChange({ userId: String(actor.userId), username: actor.username, configKey: 'source.sync-credential', newValue: { hasSavedToken: true } });
+  }
+  async saveCredential(actor: ActorContext, token: string, expectedIdentity?: string) {
+    requireSourceAdmin(actor);
+    if (this.syncing) throw new Error('SOURCE_SYNC_BUSY');
+    const config = await this.load(actor);
+    if (!config) throw new Error('SOURCE_NOT_CONFIGURED');
+    this.checkIdentity(config, expectedIdentity);
+    // Empty input keeps the saved credential; deletion is an explicit operation.
+    if (token) await this.persistCredential(actor, config, token);
+    return this.credentialStatus(actor);
+  }
+  async deleteCredential(actor: ActorContext, expectedIdentity?: string) {
+    requireSourceAdmin(actor);
+    if (this.syncing) throw new Error('SOURCE_SYNC_BUSY');
+    const config = await this.load(actor);
+    if (config) this.checkIdentity(config, expectedIdentity);
+    await this.executor().execute('DELETE FROM system_config WHERE config_key = ?', ['source.sync-credential']);
+    await auditLogManager.logConfigChange({ userId: String(actor.userId), username: actor.username, configKey: 'source.sync-credential', newValue: { hasSavedToken: false } });
+    return this.credentialStatus(actor);
+  }
+  private async resolveCredential(config: SourceConfig) {
+    const stored = await this.savedCredential();
+    const identity = this.credentialIdentity(config);
+    if (!stored || stored.identity !== identity) throw new Error('SOURCE_CREDENTIAL_INVALID');
+    try {
+      const credential = JSON.parse(decryptData(stored.encrypted));
+      if (credential.identity !== identity || typeof credential.token !== 'string' || !credential.token || credential.token.length > 16_384) throw new Error();
+      return credential.token as string;
+    } catch { throw new Error('SOURCE_SAVED_CREDENTIAL_UNAVAILABLE'); }
   }
   private deployment() {
     return readDeploymentBinding();
@@ -110,7 +177,7 @@ export class SourceManagementService {
     }
     return manifest;
   }
-  async sync(actor: ActorContext, token: string) {
+  async sync(actor: ActorContext, token: string, options: { retainToken?: boolean; expectedIdentity?: string } = {}) {
     requireSourceAdmin(actor);
     if (this.syncing) throw new Error('SOURCE_SYNC_BUSY');
     this.syncing = true;
@@ -123,7 +190,8 @@ export class SourceManagementService {
     try {
       const config = await this.load(actor);
       if (!config) throw new Error('SOURCE_NOT_CONFIGURED');
-      if (!token) throw new Error('SOURCE_CREDENTIAL_INVALID');
+      this.checkIdentity(config, options.expectedIdentity);
+      if (!token) token = await this.resolveCredential(config);
       const snapshots = this.snapshots(); // Fail missing signing configuration before fetching credentials upstream.
       reportStage();
       stage = 'fetch';
@@ -138,6 +206,7 @@ export class SourceManagementService {
       stage = 'manifest';
       await this.executor().execute('REPLACE INTO system_config (config_key, config_value) VALUES (?, ?)', [this.snapshotKey(config), JSON.stringify(reference)]);
       reportStage();
+      if (options.retainToken) await this.persistCredential(actor, config, token);
       const verification = this.verification(manifest);
       await auditLogManager.logToolCall({ userId: String(actor.userId), username: actor.username, toolName: 'source_sync', toolParams: { ...reference, verification, completeness: manifest.completeness, skippedCount: fetched.skippedFiles.length, warningCount: manifest.warnings?.length ?? 0 }, result: 'success' });
       console.info('[source-sync]', { stage, elapsedMs: Date.now() - startedAt, commitSha: manifest.commitSha, files: manifest.files.length, skipped: fetched.skippedFiles.length });
@@ -147,7 +216,7 @@ export class SourceManagementService {
       console.error('[source-sync]', { stage, elapsedMs: Date.now() - startedAt, errorCode });
       await auditLogManager.logToolCall({ userId: String(actor.userId), username: actor.username, toolName: 'source_sync', toolParams: { stage }, result: 'failure', errorMessage: errorCode });
       throw error;
-    } finally { this.syncing = false; }
+    } finally { token = ''; this.syncing = false; }
   }
   async inspect(actor: ActorContext, mode: 'manifest' | 'search' | 'read' | 'symbol', args: Record<string, unknown> = {}, model = false) {
     requireSourceReader(actor);

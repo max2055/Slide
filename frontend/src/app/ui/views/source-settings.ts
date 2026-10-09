@@ -13,6 +13,10 @@ interface SourceConfig { provider?: 'gitlab' | 'github'; baseUrl: string; reposi
 export class SourceSettings extends LitElement {
   @state() private config: SourceConfig = { provider: 'gitlab', baseUrl: '', repositoryPath: '', allowedPaths: [], allowModelContent: false };
   @state() private token = '';
+  @state() private retainToken = false;
+  @state() private credential: { identity: string; hasSavedToken: boolean; hasStoredToken?: boolean; error?: string } = { identity: '', hasSavedToken: false };
+  @state() private savedConfig = '';
+  private get configChanged() { return JSON.stringify(this.config) !== this.savedConfig; }
   @state() private busy = false;
   @state() private loading = true;
   @state() private error = '';
@@ -44,9 +48,12 @@ export class SourceSettings extends LitElement {
     }
   `];
   override connectedCallback() { super.connectedCallback(); this.readPermissions(); window.addEventListener('slide-permissions-loaded', this.permissionsHandler); void this.load(); }
-  override disconnectedCallback() { this.token = ''; window.removeEventListener('slide-permissions-loaded', this.permissionsHandler); super.disconnectedCallback(); }
+  override disconnectedCallback() { this.token = ''; this.retainToken = false; window.removeEventListener('slide-permissions-loaded', this.permissionsHandler); super.disconnectedCallback(); }
   private readPermissions() {
     try { this.permissions = new Set(JSON.parse(localStorage.getItem('permissions') ?? '[]')); } catch { this.permissions = new Set(); }
+  }
+  private credentialError(code: string) {
+    return ({ SOURCE_CREDENTIAL_INVALID: '令牌无效、已过期或缺少仓库读取权限，请输入有效令牌后重试；勾选保留可替换已保存值。', SOURCE_SAVED_CREDENTIAL_UNAVAILABLE: '已保存令牌无法解密，请重新输入并替换，或删除后重试。', SOURCE_CREDENTIAL_ENCRYPTION_UNAVAILABLE: '服务端加密配置不可用，请联系管理员检查加密密钥后重试。', SOURCE_CONFIG_CHANGED: '仓库配置已发生变化，请重新加载配置后再操作。', SOURCE_REPOSITORY_NOT_FOUND: '仓库不存在或令牌无权读取，请检查仓库路径与令牌权限。' } as Record<string, string>)[code] ?? code;
   }
   private get editable() { return permissionMatches(this.permissions, 'admin:*'); }
   private async load() {
@@ -55,6 +62,8 @@ export class SourceSettings extends LitElement {
       const response = await authFetch('/api/platform/source/config'); const text = await response.text(); let body: any = {}; try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text }; }
       if (!response.ok) throw new Error((body.error === 'SOURCE_REPOSITORY_PATH_REQUIRED' ? '旧 GitLab 数字 ID 已失效，请重新填写平台地址和仓库路径并保存。' : body.error) ?? `SOURCE_CONFIG_UNAVAILABLE (${response.status})`);
       this.config = body.config ?? { provider: 'gitlab', baseUrl: '', repositoryPath: '', allowedPaths: [], allowModelContent: false };
+      this.savedConfig = JSON.stringify(this.config);
+      this.credential = body.credential ?? { identity: '', hasSavedToken: false };
     } catch (error) { this.error = String(error); } finally { this.loading = false; }
   }
   private async save(event: Event) {
@@ -65,17 +74,35 @@ export class SourceSettings extends LitElement {
       if (allowedPaths.some(path => !/^[A-Za-z0-9_/-]+\/$/.test(path))) throw new Error('源码路径必须每行一个目录，并以 / 结尾');
       const response = await authFetch('/api/platform/source/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...this.config, provider: this.config.provider ?? 'gitlab', allowedPaths }) });
       const text = await response.text(); let body: any = {}; try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text }; } if (!response.ok) throw new Error(body.error ?? `SOURCE_SAVE_FAILED (${response.status})`);
-      this.config = body.config; this.revision++; this.message = '配置已保存';
+      this.config = body.config; this.savedConfig = JSON.stringify(this.config);
+      await this.refreshCredential(); this.revision++; this.message = '配置已保存';
+    } catch (error) { this.error = String(error); } finally { this.busy = false; }
+  }
+  private async refreshCredential() {
+    const response = await authFetch('/api/platform/source/config');
+    const body = JSON.parse(await response.text());
+    if (!response.ok) throw new Error(this.credentialError(body.error));
+    if (JSON.stringify(body.config) !== this.savedConfig) throw new Error(this.credentialError('SOURCE_CONFIG_CHANGED'));
+    this.credential = body.credential ?? { identity: '', hasSavedToken: false };
+  }
+  private async manageCredential(remove = false) {
+    if (!this.editable || this.busy || this.configChanged || (!remove && !this.token)) return;
+    const token = this.token; this.token = ''; this.busy = true; this.error = ''; this.message = '';
+    try {
+      const response = await authFetch('/api/platform/source/credential', { method: remove ? 'DELETE' : 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: remove ? '' : token, expectedIdentity: this.credential.identity || undefined }) });
+      const body = JSON.parse(await response.text());
+      if (!response.ok) throw new Error(this.credentialError(body.error));
+      this.credential = body; this.message = remove ? '已保存令牌已删除' : '同步令牌已加密保存';
     } catch (error) { this.error = String(error); } finally { this.busy = false; }
   }
   private async sync() {
-    if (!this.editable || this.busy || !this.token) return;
+    if (!this.editable || this.busy || this.configChanged || (!this.token && !this.credential.hasSavedToken)) return;
     const token = this.token; this.token = ''; this.busy = true; this.error = ''; this.message = '';
     this.syncStatus = '正在连接代码托管平台并同步源码，可能需要几分钟…';
     try {
-      const response = await authFetch('/api/platform/source/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
-      const text = await response.text(); let body: any = {}; try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text }; } if (!response.ok) throw new Error(body.error ?? `SOURCE_SYNC_FAILED (${response.status})`);
-      this.revision++; this.message = body.completeness === 'partial' ? `部分同步完成，已跳过 ${body.skippedFiles?.length ?? 0} 个文件或目录，详见快照清单。` : '源码同步完成'; this.syncStatus = '';
+      const response = await authFetch('/api/platform/source/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, ...(this.retainToken && token ? { retainToken: true } : {}), ...(this.credential.identity ? { expectedIdentity: this.credential.identity } : {}) }) });
+      const text = await response.text(); let body: any = {}; try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text }; } if (!response.ok) throw new Error(this.credentialError(body.error ?? `SOURCE_SYNC_FAILED (${response.status})`));
+      await this.refreshCredential(); this.revision++; this.message = body.completeness === 'partial' ? `部分同步完成，已跳过 ${body.skippedFiles?.length ?? 0} 个文件或目录，详见快照清单。` : '源码同步完成'; this.syncStatus = '';
     } catch (error) { this.error = String(error); this.syncStatus = ''; } finally { this.busy = false; }
   }
   override render() {
@@ -97,8 +124,11 @@ export class SourceSettings extends LitElement {
       </form>
       ${this.editable ? html`<section class="sync-section">
         <h2>同步源码</h2>
-        <app-form-field label="单次同步令牌" hint="令牌提交后立即清除，不会保存或发送给 Agent。" .inline=${true}><input aria-label="单次同步令牌" title="仅本次同步使用" placeholder="请输入本次同步使用的访问令牌" type="password" autocomplete="off" .disabled=${this.busy || this.loading} .value=${this.token} @input=${(e: Event) => { this.token = (e.target as HTMLInputElement).value; }}></app-form-field>
-        <div class="action-row"><div class="action-content"><button type="button" class="btn" data-action="sync" .disabled=${this.busy || this.loading || !this.token} @click=${(e: Event) => { e.preventDefault(); void this.sync(); }}>${this.busy ? icons['loader'] : icons['refresh-cw']} ${this.busy ? '同步中…' : '同步源码'}</button>${!this.token && !this.busy ? html`<span class="sync-status">请输入令牌后开始同步</span>` : nothing}</div></div>
+        <app-form-field label="同步令牌" hint="留空沿用当前仓库已保存的令牌；输入新值仅覆盖本次，勾选保留或点击保存才会替换。令牌不会发送给 Agent。" .inline=${true}><input aria-label="同步令牌" title="提交后立即清空输入" placeholder=${this.credential.hasSavedToken ? "已保存令牌，留空沿用" : "请输入访问令牌"} type="password" autocomplete="off" .disabled=${this.busy || this.loading} .value=${this.token} @input=${(e: Event) => { this.token = (e.target as HTMLInputElement).value; }}></app-form-field>
+        <app-form-field label="保留令牌" .inline=${true}><label class="permission-control"><input aria-label="保留同步令牌" type="checkbox" .checked=${this.retainToken} .disabled=${this.busy || this.loading} @change=${(e: Event) => { this.retainToken = (e.target as HTMLInputElement).checked; }}>保留同步令牌（同步成功后加密保存）</label></app-form-field>
+        <div class="action-row"><div class="action-content"><span role="status">${this.configChanged ? '配置已修改，请先保存配置再操作令牌或同步' : this.credential.error ? this.credentialError(this.credential.error) : this.credential.hasSavedToken ? '当前仓库已保存令牌' : this.credential.hasStoredToken ? '其他仓库已保存令牌，当前仓库不会使用；可删除或输入新令牌替换' : '当前仓库未保存令牌'}</span></div></div>
+        <div class="action-row"><div class="action-content"><button type="button" class="btn" data-action="save-token" .disabled=${this.busy || this.loading || this.configChanged || !this.token} @click=${() => this.manageCredential()}>${this.credential.hasSavedToken ? '替换已保存令牌' : '保存令牌'}</button><button type="button" class="btn-ghost" data-action="delete-token" .disabled=${this.busy || this.loading || this.configChanged || !(this.credential.hasStoredToken ?? this.credential.hasSavedToken)} @click=${() => this.manageCredential(true)}>删除已保存令牌</button></div></div>
+        <div class="action-row"><div class="action-content"><button type="button" class="btn" data-action="sync" .disabled=${this.busy || this.loading || this.configChanged || (!this.token && !this.credential.hasSavedToken)} @click=${(e: Event) => { e.preventDefault(); void this.sync(); }}>${this.busy ? icons['loader'] : icons['refresh-cw']} ${this.busy ? '同步中…' : '同步源码'}</button>${!this.token && !this.credential.hasSavedToken && !this.busy ? html`<span class="sync-status">请输入令牌后开始同步</span>` : nothing}</div></div>
         ${this.syncStatus ? html`<div class="action-row"><p class="action-content sync-status" role="status" aria-live="polite">${this.syncStatus}</p></div>` : nothing}
       </section>` : nothing}
       <source-manifest .revision=${this.revision}></source-manifest>`;
