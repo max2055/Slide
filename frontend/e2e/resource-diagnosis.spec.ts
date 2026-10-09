@@ -162,10 +162,10 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 375, height: 812 
     await source.getByRole('button', { name: '保存配置' }).click();
     await expect(source).toContainText('配置已保存');
     expect(savedConfig).toEqual({ provider: 'gitlab', baseUrl: 'https://gitlab.example.com', repositoryPath: 'group/project', allowedPaths: ['apps/'], allowModelContent: false });
-    await source.getByLabel('单次同步令牌', { exact: true }).fill('single-use-e2e');
+    await source.getByLabel('同步令牌', { exact: true }).fill('single-use-e2e');
     await source.getByRole('button', { name: '同步源码' }).click();
     await expect.poll(() => synced).toBe(true);
-    await expect(source.getByLabel('单次同步令牌', { exact: true })).toHaveValue('');
+    await expect(source.getByLabel('同步令牌', { exact: true })).toHaveValue('');
     expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain('single-use-e2e');
     await expect(source.locator('source-manifest')).toContainText('release-e2e');
     await page.screenshot({ path: testInfo.outputPath(`source-settings-${viewport.width}.png`), fullPage: true });
