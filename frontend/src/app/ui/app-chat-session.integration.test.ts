@@ -4,9 +4,9 @@ import { renderChatSessionSelect, resolveSessionOptionGroups } from './app-rende
 import { renderChatAgentSelect, renderChatSessionSelect as renderControllerSelect } from './chat/session-controls.ts';
 import { resolveSessionOptionGroups as pureGroups } from './session-presentation.ts';
 
-vi.mock('./app-chat.ts', () => ({ refreshChat: vi.fn(), refreshChatAvatar: vi.fn() }));
+vi.mock('./app-chat.ts', () => ({ refreshChat: vi.fn(), refreshChatAvatar: vi.fn(), flushChatQueueForEvent: vi.fn() }));
 vi.mock('./chat/slash-commands.ts', () => ({ refreshSlashCommands: vi.fn() }));
-vi.mock('./controllers/chat.ts', () => ({ loadChatHistory: vi.fn() }));
+vi.mock('./controllers/chat.ts', () => ({ loadChatHistory: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('./controllers/sessions.ts', () => ({ loadSessions: vi.fn() }));
 import { loadChatHistory } from './controllers/chat.ts';
 
@@ -54,7 +54,7 @@ describe('session presentation integration', () => {
     select.dispatchEvent(new Event('change'));
     expect(host.sessionKey).toBe('agent:a:y');
     expect(host.client.watchSession).toHaveBeenCalledWith('agent:a:y');
-    expect(loadChatHistory).toHaveBeenCalledWith(host);
+    expect(loadChatHistory).toHaveBeenCalledWith(expect.objectContaining({ sessionKey: 'agent:a:y' }));
     expect(new URL(window.location.href).searchParams.get('session')).toBe('agent:a:y');
     expect(host.chatMessages).toEqual([]);
     expect(host.chatAttachments).toEqual([]);

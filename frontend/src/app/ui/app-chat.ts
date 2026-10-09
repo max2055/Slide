@@ -19,6 +19,7 @@ import type { ChatModelOverride, ModelCatalogEntry } from "./types.ts";
 import type { SessionsListResult } from "./types.ts";
 import type { ChatAttachment, ChatQueueItem } from "./ui-types.ts";
 import { generateUUID } from "./uuid.ts";
+import { chatSessionHost, isVisibleChatSession } from './chat-session-state.ts';
 
 export type ChatHost = {
   client: DirectGatewayClient | null;
@@ -179,7 +180,7 @@ async function sendChatMessageNow(
   if (!ok && opts?.previousAttachments) {
     host.chatAttachments = opts.previousAttachments;
   }
-  if (ok) {
+  if (ok && isVisibleChatSession(host)) {
     setLastActiveSessionKey(
       host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
       host.sessionKey,
@@ -192,7 +193,7 @@ async function sendChatMessageNow(
     host.chatAttachments = opts.previousAttachments;
   }
   // Force scroll after sending to ensure viewport is at bottom for incoming stream
-  scheduleChatScroll(host as unknown as Parameters<typeof scheduleChatScroll>[0], true);
+  if (isVisibleChatSession(host)) scheduleChatScroll(host as unknown as Parameters<typeof scheduleChatScroll>[0], true);
   if (ok && !host.chatRunId) {
     void flushChatQueue(host);
   }
@@ -223,7 +224,7 @@ async function sendDetachedBtwMessage(
   if (!ok && opts?.previousAttachments) {
     host.chatAttachments = opts.previousAttachments;
   }
-  if (ok) {
+  if (ok && isVisibleChatSession(host)) {
     setLastActiveSessionKey(
       host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
       host.sessionKey,
@@ -233,7 +234,7 @@ async function sendDetachedBtwMessage(
 }
 
 async function flushChatQueue(host: ChatHost) {
-  if (!host.connected || isChatBusy(host)) {
+  if (!isVisibleChatSession(host) || !host.connected || isChatBusy(host)) {
     return;
   }
   const nextIndex = host.chatQueue.findIndex((item) => !item.pendingRunId);
@@ -280,6 +281,11 @@ export async function handleSendChat(
   messageOverride?: string,
   opts?: { restoreDraft?: boolean },
 ) {
+  host = chatSessionHost(host);
+  if (messageOverride?.trim().toLowerCase() === '/new') {
+    host.onSlashAction?.('switch-session:');
+    return;
+  }
   if (!host.connected) {
     return;
   }
@@ -398,6 +404,7 @@ async function dispatchSlashCommand(
     chatModelCatalog: host.chatModelCatalog,
     sessionsResult: host.sessionsResult,
   });
+  if (!isVisibleChatSession(host)) return;
 
   if (result.content) {
     injectCommandResult(host, result.content);
