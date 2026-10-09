@@ -19,6 +19,24 @@ function fixture(limits = {}) {
 }
 const start: ProjectionOperation = { type: 'part.start', messageId: 'message', part: { id: 'part', type: 'text', text: 'first', source: 'fact', status: 'partial' } };
 describe('synchronous bounded display authority', () => {
+  it('cold history hydration does not imply truncated execution output', () => {
+    const hub = new DisplayStreamAuthority();
+    try {
+      const events: DisplayStreamEvent[] = [];
+      hub.watch({}, 'history', 'sub', e => { events.push(e); return true; });
+      expect(events[0].recovery).toMatchObject({ cold: true, truncated: false });
+    } finally { hub.dispose(); }
+  });
+  it('cold watch with a real run cursor identifies the missing replay boundary', () => {
+    const hub = new DisplayStreamAuthority();
+    try {
+      const events: DisplayStreamEvent[] = [];
+      hub.watch({}, 'session', 'sub', e => { events.push(e); return true; },
+        { streamEpoch: 'lost', runId: 'run', turnId: 'turn', toSeq: 3 });
+      expect(events[0].recovery).toMatchObject({ cold: true, truncated: true, detailRef: { runId: 'run' } });
+    } finally { hub.dispose(); }
+  });
+
   it('a full projection leaves no unaccounted pending operation under a small configured cap', () => {
     vi.useFakeTimers(); const f = fixture({ maxRunOps: 2, maxGlobalOps: 2 });
     try {
