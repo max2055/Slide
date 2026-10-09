@@ -785,6 +785,26 @@ describe('109-04: DirectGatewayClient', () => {
     client.disconnect();
   });
 
+  it('keeps a newer recovery subscription when an older send is admitted', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect(); socket.receive({ type: 'auth_ok', capabilities: ['parts-stream-v1'] });
+    client.watchSession('A');
+    const pending = client.sendChat('A', 'question', { idempotencyKey: 'send-A' });
+    const sendFrame = socket.frames.at(-1)!;
+    // A cold snapshot/history read can renew the watch before admission finishes.
+    client.watchSession('A');
+    const subscriptionId = socket.frames.at(-1)!.subscriptionId;
+    expect(subscriptionId).not.toBe(sendFrame.subscriptionId);
+    socket.receive({ type: 'run.started', sessionKey: 'A', runId: 'run-A', messageId: 'send-A' });
+    await pending;
+    socket.receive({ type: 'stream.snapshot', sessionKey: 'A',
+      stream: { version: 1, streamEpoch: 'epoch', runId: 'run-A', turnId: 'turn', subscriptionId, fromSeq: 1, toSeq: 1 },
+      snapshot: { version: 1, runId: 'run-A', sequence: 1, attempt: 1, phase: 'generating', parts: [] } });
+    expect(onEvent).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'stream.snapshot', sessionKey: 'A' }));
+    client.disconnect();
+  });
+
   it('binds replayed admission to its own subscription when session.created was lost', async () => {
     const socket = installMockWebSocket();
     const client = new DirectGatewayClient({ onEvent, onStateChange });
