@@ -222,6 +222,21 @@ export class LLMConfigPage extends LitElement {
     .form-row > .form-group { flex: 1; }
     .model-controls { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-md); margin-bottom: var(--space-md); }
     .model-controls app-form-field { flex: 1; min-width: 180px; }
+    .provider-controls { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-md); margin-bottom: var(--space-md); }
+    .provider-controls app-form-field { min-width: 0; margin-bottom: 0; }
+    .provider-controls .btn { justify-self: start; }
+    @media (min-width: 721px) {
+      .provider-controls { grid-template-columns: repeat(2, minmax(0, 1fr)) auto; grid-template-rows: auto auto auto; row-gap: var(--space-xs); align-items: start; }
+      /* Share label, control and hint rows through the form field's public parts. */
+      .provider-controls app-form-field { display: grid; grid-template-rows: subgrid; grid-row: 1 / -1; }
+      .provider-controls app-form-field:first-child { grid-column: 1; }
+      .provider-controls app-form-field:nth-child(2) { grid-column: 2; }
+      .provider-controls app-form-field::part(field) { display: grid; grid-template-rows: subgrid; grid-row: 1 / -1; }
+      .provider-controls app-form-field::part(label) { grid-row: 1; margin-bottom: 0; }
+      .provider-controls app-form-field::part(control) { grid-row: 2; min-width: 0; }
+      .provider-controls app-form-field::part(hint) { grid-row: 3; margin-top: 0; }
+      .provider-controls .btn { grid-column: 3; grid-row: 2; }
+    }
     .key-wrapper { position: relative; }
     .key-wrapper .form-input { padding-right: 34px; }
     .key-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; padding: 0; border: none; background: transparent; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; }
@@ -782,7 +797,7 @@ export class LLMConfigPage extends LitElement {
         <span class="form-hint">Key 将加密存储到数据库${isEdit ? ' · 留空则不修改' : ''}</span>
       </div>
 
-      <div class="model-controls">
+      <div class="provider-controls">
         <app-form-field label="供应商参数目录" hint="自动识别官方地址；自定义代理可指定供应商。">
           <select class="form-select" aria-label="供应商参数目录" .value=${this.form.provider_type || ''}
             @change=${(e: Event) => { this._resetDiscovery(); this.form = { ...this.form, provider_type: (e.target as HTMLSelectElement).value }; }}>
