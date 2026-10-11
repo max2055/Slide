@@ -144,3 +144,21 @@ it('HTTP endpoints return only status, clear request bodies and reject malformed
     expect(bodies.filter(body => 'token' in body).every(body => body.token === '')).toBe(true);
   } finally { await app.close(); }
 });
+
+it.each(['', 'short'])('fails signing configuration before Git and retains stored credentials and snapshot %s', async key => {
+  await service.saveCredential(actor, 'saved-fixture');
+  await service.sync(actor, '');
+  const before = [...values]; fetchFiles.mockClear();
+  vi.mocked((service as any).snapshots).mockRestore(); vi.stubEnv('SLIDE_SOURCE_SIGNING_KEY', key);
+  await expect(service.sync(actor, '')).rejects.toThrow('SOURCE_SIGNING_KEY_INVALID');
+  await expect(service.inspect(actor, 'manifest')).rejects.toThrow('SOURCE_SIGNING_KEY_INVALID');
+  expect(fetchFiles).not.toHaveBeenCalled(); expect([...values]).toEqual(before);
+});
+
+it('keeps the last successful snapshot and stored credential when upstream authentication fails', async () => {
+  await service.saveCredential(actor, 'saved-fixture');
+  await service.sync(actor, ''); const before = [...values];
+  fetchFiles.mockRejectedValue(new Error('SOURCE_CREDENTIAL_INVALID'));
+  await expect(service.sync(actor, 'bad-fixture', { retainToken: true })).rejects.toThrow('SOURCE_CREDENTIAL_INVALID');
+  expect([...values]).toEqual(before);
+});

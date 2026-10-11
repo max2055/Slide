@@ -66,3 +66,8 @@ describe('Git repository configuration', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 });
+
+it('normalizes storage failures without exposing driver diagnostics', async () => {
+  const service = new SourceManagementService(() => ({ execute: async () => { throw new Error('database Authorization: fixture-secret'); } }));
+  await expect(service.load(actor)).rejects.toThrow(/^SOURCE_STORAGE_UNAVAILABLE$/);
+});

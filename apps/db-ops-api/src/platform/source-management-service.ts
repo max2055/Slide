@@ -1,3 +1,4 @@
+import { safeSourceErrorCode } from './source-error-codes.js';
 import { Type, type Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import { resolve } from 'node:path';
@@ -37,7 +38,14 @@ export class SourceManagementService {
   private readsInFlight = 0;
   private readonly readBudget = new FixedWindowRateLimiter(30, 60_000);
   constructor(private readonly pool: () => Executor | null = () => dbConnection.getPool(), private readonly allowedOrigins = `${process.env.SLIDE_GITLAB_ORIGINS ?? ''},${process.env.SLIDE_GITHUB_ORIGINS ?? 'https://github.com'}`.split(',').map(value => value.trim()).filter(Boolean)) {}
-  private executor() { const executor = this.pool(); if (!executor) throw new Error('SOURCE_STORAGE_UNAVAILABLE'); return executor; }
+  private executor(): Executor {
+    const executor = this.pool();
+    if (!executor) throw new Error('SOURCE_STORAGE_UNAVAILABLE');
+    return { execute: async (sql, values) => {
+      try { return await executor.execute(sql, values); }
+      catch { throw new Error('SOURCE_STORAGE_UNAVAILABLE'); }
+    } };
+  }
   private validate(input: unknown): SourceConfig {
     if (!Value.Check(ConfigSchema, input)) throw new Error('SOURCE_CONFIG_INVALID');
     const url = sourceOrigin(input.baseUrl, this.allowedOrigins);
@@ -212,7 +220,7 @@ export class SourceManagementService {
       console.info('[source-sync]', { stage, elapsedMs: Date.now() - startedAt, commitSha: manifest.commitSha, files: manifest.files.length, skipped: fetched.skippedFiles.length });
       return { ...manifest, verification };
     } catch (error) {
-      const errorCode = error instanceof Error && /^SOURCE_[A-Z_]+$/.test(error.message) ? error.message : 'SOURCE_SYNC_FAILED';
+      const errorCode = safeSourceErrorCode(error, 'SOURCE_SYNC_FAILED');
       console.error('[source-sync]', { stage, elapsedMs: Date.now() - startedAt, errorCode });
       await auditLogManager.logToolCall({ userId: String(actor.userId), username: actor.username, toolName: 'source_sync', toolParams: { stage }, result: 'failure', errorMessage: errorCode });
       throw error;
