@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "findings": [
+    {
+      "id": "FINAL-0026",
+      "beginRejected": true,
+      "releases": 0
+    },
+    {
+      "id": "FINAL-0300",
+      "duplicateReturnedStoredId": false,
+      "boundary": "executor models ON DUPLICATE KEY UPDATE id=id; no real MySQL used"
+    },
+    {
+      "ids": [
+        "FINAL-0126",
+        "FINAL-0127"
+      ],
+      "helperAllowsOutsideBoundary": false,
+      "listedIds": [
+        1,
+        2
+      ],
+      "middlewareStatus": 200,
+      "boundary": "constructed bounded actor; production browser actor does not carry a persisted resourceBoundary"
+    },
+    {
+      "id": "FINAL-2384",
+      "resultFalsePersistedAs": null,
+      "errorZeroPersistedAs": null
+    },
+    {
+      "id": "FINAL-0084",
+      "lateAppendIgnored": true,
+      "sequenceAdvanced": true,
+      "lateFrameEmitted": true,
+      "boundary": "candidate claim of unchanged state reference is false for this case; client divergence still needs end-to-end evidence"
+    }
+  ]
+}

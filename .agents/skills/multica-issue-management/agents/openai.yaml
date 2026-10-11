@@ -1,0 +1,4 @@
+interface:
+  display_name: "Multica Issue Management"
+  short_description: "Create and verify Multica tasks through the bundled CLI"
+  default_prompt: "Create or update a Multica task from the current project context."

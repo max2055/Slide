@@ -1,159 +1,88 @@
 # AGENTS.md
 
-**Slide** - AI-Powered Database Operations Platform
+Slide：智能基础设施运维平台。本文只记录当前架构和全仓执行规则；尚未实施的产品方案不能作为已有能力描述。
 
-## Architecture
-- **Frontend** - Lit 3.3 + Vite (Web Components), port 5173
-- **Backend** - Fastify + TypeScript, port 3000
-- **Agent Engine** - @slide/agent-core (原 nanobot 为 Python；项目组以 TypeScript 重写 Agent 核心), DirectAdapter WS on port 28888
-- **Databases** - MySQL (primary) + Elasticsearch + MongoDB + Redis
-- **Auth** - JWT
-- **LLM** - Anthropic SDK / OpenAI SDK / Ollama
+## 1. 当前架构与专项规则
 
-## Key Commands
+- **前端**：Lit 3.3 + Vite（Web Components），开发端口默认 5173。
+- **后端**：Fastify + TypeScript，端口默认 3000。
+- **Agent**：`@slide/agent-core`；DirectAdapter 自管理 WebSocket，默认 `ws://127.0.0.1:28888/ws`，不依赖外部 Gateway。
+- **平台存储**：MySQL 持久化平台业务数据；Agent Session/Checkpoint 还涉及文件存储，按现有实现处理。
+- **纳管对象**：数据库、服务器、网络设备。数据库类型包含 MySQL、PostgreSQL、Oracle、达梦、MongoDB、Redis、Elasticsearch；各项能力以当前 capability registry 为准，不把类型声明等同于全部功能已支持。
+- **认证与模型**：JWT + 实时权限校验；模型通过 Provider 配置和场景路由选择，复用现有 Anthropic / OpenAI 兼容 / Ollama 接入。
+
+按任务范围读取以下专项规则，根规则继续适用：
+
+| 任务 | 必须读取 |
+|---|---|
+| 前端修改，或复用前端组件制作原型 | [frontend/AGENTS.md](frontend/AGENTS.md) |
+| 源码同步、版本快照、源码访问及相关 UI/故障排查 | [源码同步规则](docs/slide/development/source-sync.md) |
+| 有硬预算、明确用量统计要求或多代理工作 | [资源计量与预算规则](docs/slide/development/resource-governance.md) |
+| Multica 建单、更新、搜索、核验和交接 | [Multica Issue Management](.agents/skills/multica-issue-management/SKILL.md) |
+
+## 2. 标准命令与环境
+
+使用仓库 `package.json` 声明的 pnpm 版本。以下命令从仓库根目录执行；前后端分别在独立终端启动：
+
 ```bash
-# Start backend
-cd apps/db-ops-api && npx tsx server.ts &
+pnpm --filter slide-api dev
+pnpm --filter slide-frontend dev
 
-# Start frontend
-cd frontend && npm run dev &
-
-# Kill ports
-lsof -ti:3000 | xargs kill -9 2>/dev/null
-lsof -ti:5173 | xargs kill -9 2>/dev/null
-
-# Health check
+# 存活与就绪探针；不能代替业务验收
 curl http://localhost:3000/api/health
+curl http://localhost:3000/api/health/ready
+
+# 常用检查；按改动范围选择，不要求每次全部执行
+pnpm --filter slide-api typecheck
+pnpm --filter slide-frontend typecheck
+pnpm --filter slide-frontend build
+pnpm contracts:check
 ```
 
-## Credentials & URLs
-- Admin: `admin` / `Tpam1234`
-- Frontend: http://localhost:5173
-- Backend: http://localhost:3000
-- Agent WS: ws://127.0.0.1:28888/ws
+- 默认前端地址 `http://localhost:5173`、后端地址 `http://localhost:3000`；实际端口以运行配置为准。
+- 后端环境从 `apps/db-ops-api/.env` 加载。平台数据库使用 `DB_HOST`、`DB_PORT`、`DB_USER`、`DB_PASSWORD`、`DB_NAME`，以 [db-connection.ts](apps/db-ops-api/src/db-connection.ts) 为准。
+- JWT、加密密钥及生产初始化管理员要求以 [security-config.ts](apps/db-ops-api/src/config/security-config.ts) 为准。凭据使用环境提供的值，不在规则、任务、日志或版本库中保存真实密码或密钥。
+- Agent 模型配置以 [llm-provider-factory.ts](apps/db-ops-api/src/adapter/llm-provider-factory.ts) 和场景路由为准；不能依赖旧 Anthropic 环境变量绕过已停用的 Provider。
+- 配置示例仅供参考，与实际配置加载和校验代码不符时以代码为准，不复制过时的模型、凭据或数据库连接示例。
+- 排查运行行为或停止服务前，核对 **PID → 端口 → cwd → 启动命令 → 分支/Commit → 日志文件**。确认进程属于当前任务后优先优雅停止，不按端口直接强杀其他工作树的服务。
 
-## Configuration (apps/db-ops-api/.env)
-```bash
-DB_HOST=localhost; DB_PORT=3306; DB_USER=root; DB_PASSWORD=your_password; DB_NAME=db_ops_ai
-ANTHROPIC_API_KEY=sk-ant-...; ANTHROPIC_MODEL=claude-sonnet-4-20250929
-JWT_SECRET_KEY=your-secret-key-min-32-chars
-```
+## 3. 执行、澄清与授权
 
-## Working Principles
-1. DirectAdapter 自管理 WS 传输，不依赖外部 Gateway
-2. 完整开发 → 验证 → 修复循环，自动验证不等待确认
-3. 遇到问题先排查根因再修复
+- 实施前明确目标、排除项、可验证验收、测试层级及停止条件；有预算时记录预算。普通任务可在进度消息中简述，无需新增批准步骤；未设置硬预算时不得自行把估算或上下文容量当作硬预算。
+- 用户已请求实施时，持续完成范围内的开发、验证和必要修复；只请求分析、计划或审阅时，以对应交付物为终点。
+- 先检查代码、文档和当前会话，遇到问题先定位根因。只有未解决的歧义实质影响目标、兼容性、数据安全、外部副作用或授权边界时才询问；可逆的常规选择遵循现有模式继续执行。
+- 缺依赖、测试失败等可恢复问题先诊断处理。需要用户决定时，仅暂停受影响步骤，继续独立工作。
+- 保留适用规则中的明确批准要求、操作时确认和工具拒绝。已有批准仅覆盖同一对象、版本、范围和副作用；无需操作时重确认的事项不重复索取批准。
+- 必须请求批准或用户处理时，先完成独立调查、草稿和验证，说明具体阻塞、已尝试方法、最小输入及要求来源；不把可选 ADR、记忆保存等附带流程变成主任务前置条件。
+- 交付按验收逐项报告证据和未完成项；长内容提供完整文件与链接，不仅为分段输出要求用户发送“继续”。
 
-## Goal 范围、委派与资源治理
+## 4. 范围、委派与预算
 
-### 1. 启动前冻结执行契约
+- 只修改本次必要内容，匹配现有模式，避免无必要抽象、无关格式调整和顺手重构。
+- 新发现工作仅在直接阻塞验收、存在确认的数据损坏风险，或属于本次变更引入/触达的确认安全漏洞时进入当前范围。无关测试失败、架构优化和文档补全记录为 backlog。
+- 扩展范围前说明与验收的直接关系；有版本化计划或 Goal 时保留历史范围与决策，不通过重写计划重置累计用量。
+- 委派须符合当前平台和会话授权，仅用于边界清晰、可独立并行且能缩短关键路径的任务。明确文件所有权、最小上下文和可验证交付物；默认不传递完整对话历史。
+- 默认最大代理深度 `1`、并发不超过 `4`、单个 Goal（无 Goal 时为本次任务）累计子代理不超过 `8`。突破项目上限前记录必要性和收益；不因此绕过平台硬限制或明确审批。
+- 子代理默认不得继续派生代理；同一问题不重复实现或审查，除非明确要求独立交叉验证。可复用代理或由主代理完成，不因技能模板机械增加委派；保留用户要求的独立审查。
+- 实际遥测不可用时明确标注，不编造 token/费用或用内部预算计数冒充实测。无硬预算不因遥测缺失停工；有硬预算但无法可靠计量时，说明缺口，不假定还有额度。
+- 有明确硬预算时执行专项规则中的 **50% / 80% / 100%** 动作；达到 100% 保存可恢复检查点并最小安全收尾，获得明确追加预算后才继续。无人值守同样适用。
 
-- 实施前明确并记录：目标范围、排除项、验收清单、测试层级、资源预算和停止条件。
-- 验收项必须能由具体命令、运行时行为或产物证明，不能只写“完成优化”等模糊描述。
-- 后续范围调整必须形成显式版本记录；保留历史范围、决策原因和累计资源用量，不得通过改写 Goal 重置统计。
+## 5. 验证要求
 
-### 2. 控制范围扩张
+- 开发阶段运行与改动直接相关的 focused checks；阶段边界运行受影响模块测试；最终集成候选统一运行完整 gate。
+- 验证证据对应当前代码、配置和相关环境。未变化时复用结果；变化后重跑受影响检查和最终必要回归，不因汇报或固定时间间隔重复全量测试。
+- 失败先分类为本次引入、相关既有、无关既有或环境问题。修复范围内阻塞验收的问题；无关问题记录，但不能据此绕过合并/发布门禁。
+- 健康探针、单测和 mock 不能替代要求的真实业务端到端验收；必要验证未完成时明确标注，不宣称通过。
+- 前端优先复用共享组件和主题 token，遵循前端专项规则；公开契约变更运行契约检查，权限及发布变更完成对应安全门禁。
 
-- 新发现的工作只有在以下情况才能进入当前 Goal：直接阻塞既定验收、存在确认的数据损坏风险，或属于本次变更引入/触达的确认安全漏洞。
-- 无关测试失败、通用架构优化、无关安全整改、文档补全和顺手重构默认进入 backlog，不得自动成为当前 Goal 的阻塞项。
-- 扩展范围前先说明新增工作与既定验收的直接关系；无法证明关系时不实施。
+## 6. 外部任务建单与交接
 
-### 3. 最小化代理委派
+- 任务正文只记录长期有效的问题、范围、验收、依赖和已有兼容决定；“本次仅建单、不启动”等当次操作说明留在交付回复中。
+- 建单不等于授权启动执行。按用户授权设置状态和分配对象，避免意外触发；建单或更新后回读正文、状态及执行情况。
+- Multica 操作遵循专项 skill，避免重复维护 CLI 用法；任务应引用可供执行环境访问的方案和验收材料，不能只依赖当前聊天历史。
 
-- 仅将边界清晰、可独立并行且能显著缩短关键路径的任务委派给子代理。
-- 子代理只接收完成其任务所需的最小上下文、明确的文件所有权和可验证交付物；默认不传递完整对话历史。
-- 默认最大代理深度为 `1`、并发数不超过 `4`、单个 Goal 累计子代理不超过 `8`。突破任一上限前必须记录必要性和预计收益。
-- 子代理默认不得继续派生代理；同一问题不得交给多个代理重复实现或重复审查，除非明确要求独立交叉验证。
+## 7. 发布与产物
 
-### 4. 分层运行测试
-
-- 开发阶段只运行与当前改动直接相关的 focused checks。
-- 阶段边界运行受影响模块的测试；形成最终集成候选后统一运行一次完整 gate。
-- 完整 gate 通过后若代码未变化，不得重复运行；若发生变化，只重跑受影响门禁和最终必要回归。
-- 测试失败时先确认其与当前改动及验收标准的关系，再决定修复、记录为既有问题或移入 backlog。
-
-### 5. 统一资源统计口径
-
-- 聚合追踪主线程及全部后代线程的 raw input、cached input、output、估算费用、代理总数、最大深度和并发峰值。
-- `cached_input_tokens` 是 `input_tokens` 的子集，计算总吞吐时不得再次相加；总吞吐统一按 `input_tokens + output_tokens` 计算。
-- 子线程必须记录开始执行自身任务时的累计基线，只统计基线后的单调增量；不得把继承的父线程历史计入子线程用量。
-- 重复 token 快照按零增量处理；Goal 的范围调整、暂停、恢复和上下文压缩不得重置累计用量。
-- Goal 账本值与模型实际吞吐量必须分开展示，不得用内部预算计数冒充实际 token 消耗。
-
-### 6. 预算阈值动作
-
-- 达到预算 `50%`：报告已用资源、剩余范围、主要风险和预计完工成本。
-- 达到预算 `80%`：停止扩展范围和新增代理，重新评估方案并压缩到既定完成标准。
-- 达到预算 `100%`：停止新增工作，保存可恢复检查点并执行最小安全收尾；只有获得明确追加预算后才能继续。
-- 无人值守执行同样受上述阈值约束，不得以“持续执行直到完成”为由突破硬预算。
-
-### 7. 允许机制演进
-
-- 未来 Codex 原生能力可以替代当前流程或限制，但必须使用相同验收集证明成本更低，并且安全性、可追溯性和验收覆盖不下降。
-- 新机制应先在有界任务上验证，再替换项目级默认规则。
-
-## 前端共享组件规则
-
-### 核心原则
-
-**第一次出现**：可以用自定义样式实现。
-**第二次出现**：必须提取为共享组件，或者检查是否已有共享组件可复用。
-
-### 已有共享组件清单
-
-新增 UI 时，**优先查此表**，避免手写同类样式：
-
-| 元素类型 | 共享组件/样式 | 禁止做法 |
-|---------|-------------|---------|
-| Primary 按钮 | `class="btn-primary"` (shared-btn-styles.ts) | ❌ `class="btn primary"`, ❌ 内联 `background:var(--accent)` |
-| 次要按钮 | `class="btn"` | ❌ 手写 `.my-btn` |
-| Ghost 按钮 | `class="btn-ghost"` | |
-| 卡片容器 | `<app-card>` | ❌ `.card` CSS 类, ❌ `<div class="card">` |
-| 弹窗/对话框 | `<app-dialog>` | ❌ `.modal-overlay`, ❌ `.dialog` |
-| 表单字段 | `<app-form-field>` | ❌ 手写 label+input 布局 |
-| 数据表格 | `<app-data-table>` | ❌ 手写 `<table class="table">` |
-| 空状态 | `<app-empty-state>` | ❌ `<div>暂无数据</div>` |
-| 徽章/标签 | `<app-badge>` | ❌ `.badge`, `.tag`, `.status-badge` |
-| Toast 通知 | `showToast()` (app-toast-container) | ❌ `alert()`, ❌ 手写 toast |
-| 统计卡片 | `<stat-card>` | |
-| 加载态 | `.skeleton` 类 | ❌ `<div>加载中...</div>` (表格场景) |
-
-### 样式变量
-
-- **主色调**：`var(--accent)` = `#409eff`（蓝色），不用紫色 `#7c5cff`
-- **圆角**：`var(--radius-sm)` / `var(--radius-md)` / `var(--radius-lg)`（不用硬编码 px）
-- **间距**：`var(--space-xs)` ~ `var(--space-xl)`（不用硬编码 px）
-- **颜色**：`var(--text)` / `var(--text-strong)` / `var(--muted)` / `var(--border)`（不用 `#000`, `#ccc`）
-
-### Lit 组件规范
-
-- **共享组件**（app-card, app-dialog 等）：用 Shadow DOM + inline `<style>` 在 render 内
-- **视图子组件**（instance-overview-tab 等）：如用 Light DOM (`createRenderRoot() { return this; }`)，样式必须用 inline `<style>` 在 render 开头注入，**不能用 `static styles`**（adoptedStyleSheets 不支持普通 HTMLElement）
-- **Boolean 属性绑定**：必须用 `.property=${value}`（property binding），不用 `property=${value}`（attribute binding 会把 `"false"` 字符串转成 true）
-
-### 代码审查要点
-
-- 新视图是否使用了已有共享组件？
-- 是否有重复的 CSS 模式应该提取为共享组件？
-- 颜色是否使用了 token 而非硬编码？
-- Boolean 属性是否用了 `.` 前缀？
-
-## Karpathy 编码指南
-
-### 1. 编码前思考
-- 明确说明假设，不确定时询问而不是猜测
-- 存在歧义时呈现多种解释，不默默选择
-- 有更简单的方法时提出异议
-
-### 2. 简洁优先
-- 不添加要求之外的功能
-- 不为一次性代码创建抽象
-- 如果 200 行可以写成 50 行，重写它
-
-### 3. 精准修改
-- 只改必要的代码，不"改进"相邻的代码、注释或格式
-- 不重构没坏的东西，匹配现有风格
-
-### 4. 目标驱动执行
-- 将指令式任务转化为可验证的目标
-- 多步骤任务说明简短计划并逐项验证
+- 镜像、代码发布包、校验和和发布说明统一存放在 `/Users/max/Coding/40-Slide/outputs`，即使从其他 worktree 构建也使用此目录。
+- 当前发布脚本支持 `RELEASE_OUTPUT_DIR`；构建时显式设置为上述目录，不能依赖脚本的 `.artifacts` 默认值。
+- 单个 tar 包（包括 `.tar.gz`、`.tgz`）不得超过 **300,000,000 字节**。超限优先拆成可独立使用的包；交付前逐个检查实际大小并生成校验和，不交付超限包。

@@ -1,0 +1,1249 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Slide · AI Workspace 产品评审原型</title>  <script type="module">var Ae=Object.defineProperty;var Se=(o,e,t)=>e in o?Ae(o,e,{enumerable:!0,configurable:!0,writable:!0,value:t}):o[e]=t;var ne=(o,e,t)=>Se(o,typeof e!="symbol"?e+"":e,t);(function(){const e=document.createElement("link").relList;if(e&&e.supports&&e.supports("modulepreload"))return;for(const r of document.querySelectorAll('link[rel="modulepreload"]'))i(r);new MutationObserver(r=>{for(const n of r)if(n.type==="childList")for(const a of n.addedNodes)a.tagName==="LINK"&&a.rel==="modulepreload"&&i(a)}).observe(document,{childList:!0,subtree:!0});function t(r){const n={};return r.integrity&&(n.integrity=r.integrity),r.referrerPolicy&&(n.referrerPolicy=r.referrerPolicy),r.crossOrigin==="use-credentials"?n.credentials="include":r.crossOrigin==="anonymous"?n.credentials="omit":n.credentials="same-origin",n}function i(r){if(r.ep)return;r.ep=!0;const n=t(r);fetch(r.href,n)}})();/**
+ * @license
+ * Copyright 2019 Google LLC
+ * SPDX-License-Identifier: BSD-3-Clause
+ */const T=globalThis,te=T.ShadowRoot&&(T.ShadyCSS===void 0||T.ShadyCSS.nativeShadow)&&"adoptedStyleSheets"in Document.prototype&&"replace"in CSSStyleSheet.prototype,re=Symbol(),ae=new WeakMap;let we=class{constructor(e,t,i){if(this._$cssResult$=!0,i!==re)throw Error("CSSResult is not constructable. Use `unsafeCSS` or `css` instead.");this.cssText=e,this.t=t}get styleSheet(){let e=this.o;const t=this.t;if(te&&e===void 0){const i=t!==void 0&&t.length===1;i&&(e=ae.get(t)),e===void 0&&((this.o=e=new CSSStyleSheet).replaceSync(this.cssText),i&&ae.set(t,e))}return e}toString(){return this.cssText}};const je=o=>new we(typeof o=="string"?o:o+"",void 0,re),Ee=(o,...e)=>{const t=o.length===1?o[0]:e.reduce((i,r,n)=>i+(a=>{if(a._$cssResult$===!0)return a.cssText;if(typeof a=="number")return a;throw Error("Value passed to 'css' function must be a 'css' function result: "+a+". Use 'unsafeCSS' to pass non-literal values, but take care to ensure page security.")})(r)+o[n+1],o[0]);return new we(t,o,re)},Be=(o,e)=>{if(te)o.adoptedStyleSheets=e.map(t=>t instanceof CSSStyleSheet?t:t.styleSheet);else for(const t of e){const i=document.createElement("style"),r=T.litNonce;r!==void 0&&i.setAttribute("nonce",r),i.textContent=t.cssText,o.appendChild(i)}},le=te?o=>o:o=>o instanceof CSSStyleSheet?(e=>{let t="";for(const i of e.cssRules)t+=i.cssText;return je(t)})(o):o;/**
+ * @license
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: BSD-3-Clause
+ */const{is:Pe,defineProperty:Le,getOwnPropertyDescriptor:Oe,getOwnPropertyNames:He,getOwnPropertySymbols:Ne,getPrototypeOf:Ve}=Object,x=globalThis,de=x.trustedTypes,Ue=de?de.emptyScript:"",K=x.reactiveElementPolyfillSupport,O=(o,e)=>o,q={toAttribute(o,e){switch(e){case Boolean:o=o?Ue:null;break;case Object:case Array:o=o==null?o:JSON.stringify(o)}return o},fromAttribute(o,e){let t=o;switch(e){case Boolean:t=o!==null;break;case Number:t=o===null?null:Number(o);break;case Object:case Array:try{t=JSON.parse(o)}catch{t=null}}return t}},ie=(o,e)=>!Pe(o,e),he={attribute:!0,type:String,converter:q,reflect:!1,useDefault:!1,hasChanged:ie};Symbol.metadata??(Symbol.metadata=Symbol("metadata")),x.litPropertyMetadata??(x.litPropertyMetadata=new WeakMap);let S=class extends HTMLElement{static addInitializer(e){this._$Ei(),(this.l??(this.l=[])).push(e)}static get observedAttributes(){return this.finalize(),this._$Eh&&[...this._$Eh.keys()]}static createProperty(e,t=he){if(t.state&&(t.attribute=!1),this._$Ei(),this.prototype.hasOwnProperty(e)&&((t=Object.create(t)).wrapped=!0),this.elementProperties.set(e,t),!t.noAccessor){const i=Symbol(),r=this.getPropertyDescriptor(e,i,t);r!==void 0&&Le(this.prototype,e,r)}}static getPropertyDescriptor(e,t,i){const{get:r,set:n}=Oe(this.prototype,e)??{get(){return this[t]},set(a){this[t]=a}};return{get:r,set(a){const d=r==null?void 0:r.call(this);n==null||n.call(this,a),this.requestUpdate(e,d,i)},configurable:!0,enumerable:!0}}static getPropertyOptions(e){return this.elementProperties.get(e)??he}static _$Ei(){if(this.hasOwnProperty(O("elementProperties")))return;const e=Ve(this);e.finalize(),e.l!==void 0&&(this.l=[...e.l]),this.elementProperties=new Map(e.elementProperties)}static finalize(){if(this.hasOwnProperty(O("finalized")))return;if(this.finalized=!0,this._$Ei(),this.hasOwnProperty(O("properties"))){const t=this.properties,i=[...He(t),...Ne(t)];for(const r of i)this.createProperty(r,t[r])}const e=this[Symbol.metadata];if(e!==null){const t=litPropertyMetadata.get(e);if(t!==void 0)for(const[i,r]of t)this.elementProperties.set(i,r)}this._$Eh=new Map;for(const[t,i]of this.elementProperties){const r=this._$Eu(t,i);r!==void 0&&this._$Eh.set(r,t)}this.elementStyles=this.finalizeStyles(this.styles)}static finalizeStyles(e){const t=[];if(Array.isArray(e)){const i=new Set(e.flat(1/0).reverse());for(const r of i)t.unshift(le(r))}else e!==void 0&&t.push(le(e));return t}static _$Eu(e,t){const i=t.attribute;return i===!1?void 0:typeof i=="string"?i:typeof e=="string"?e.toLowerCase():void 0}constructor(){super(),this._$Ep=void 0,this.isUpdatePending=!1,this.hasUpdated=!1,this._$Em=null,this._$Ev()}_$Ev(){var e;this._$ES=new Promise(t=>this.enableUpdating=t),this._$AL=new Map,this._$E_(),this.requestUpdate(),(e=this.constructor.l)==null||e.forEach(t=>t(this))}addController(e){var t;(this._$EO??(this._$EO=new Set)).add(e),this.renderRoot!==void 0&&this.isConnected&&((t=e.hostConnected)==null||t.call(e))}removeController(e){var t;(t=this._$EO)==null||t.delete(e)}_$E_(){const e=new Map,t=this.constructor.elementProperties;for(const i of t.keys())this.hasOwnProperty(i)&&(e.set(i,this[i]),delete this[i]);e.size>0&&(this._$Ep=e)}createRenderRoot(){const e=this.shadowRoot??this.attachShadow(this.constructor.shadowRootOptions);return Be(e,this.constructor.elementStyles),e}connectedCallback(){var e;this.renderRoot??(this.renderRoot=this.createRenderRoot()),this.enableUpdating(!0),(e=this._$EO)==null||e.forEach(t=>{var i;return(i=t.hostConnected)==null?void 0:i.call(t)})}enableUpdating(e){}disconnectedCallback(){var e;(e=this._$EO)==null||e.forEach(t=>{var i;return(i=t.hostDisconnected)==null?void 0:i.call(t)})}attributeChangedCallback(e,t,i){this._$AK(e,i)}_$ET(e,t){var n;const i=this.constructor.elementProperties.get(e),r=this.constructor._$Eu(e,i);if(r!==void 0&&i.reflect===!0){const a=(((n=i.converter)==null?void 0:n.toAttribute)!==void 0?i.converter:q).toAttribute(t,i.type);this._$Em=e,a==null?this.removeAttribute(r):this.setAttribute(r,a),this._$Em=null}}_$AK(e,t){var n,a;const i=this.constructor,r=i._$Eh.get(e);if(r!==void 0&&this._$Em!==r){const d=i.getPropertyOptions(r),l=typeof d.converter=="function"?{fromAttribute:d.converter}:((n=d.converter)==null?void 0:n.fromAttribute)!==void 0?d.converter:q;this._$Em=r;const u=l.fromAttribute(t,d.type);this[r]=u??((a=this._$Ej)==null?void 0:a.get(r))??u,this._$Em=null}}requestUpdate(e,t,i,r=!1,n){var a;if(e!==void 0){const d=this.constructor;if(r===!1&&(n=this[e]),i??(i=d.getPropertyOptions(e)),!((i.hasChanged??ie)(n,t)||i.useDefault&&i.reflect&&n===((a=this._$Ej)==null?void 0:a.get(e))&&!this.hasAttribute(d._$Eu(e,i))))return;this.C(e,t,i)}this.isUpdatePending===!1&&(this._$ES=this._$EP())}C(e,t,{useDefault:i,reflect:r,wrapped:n},a){i&&!(this._$Ej??(this._$Ej=new Map)).has(e)&&(this._$Ej.set(e,a??t??this[e]),n!==!0||a!==void 0)||(this._$AL.has(e)||(this.hasUpdated||i||(t=void 0),this._$AL.set(e,t)),r===!0&&this._$Em!==e&&(this._$Eq??(this._$Eq=new Set)).add(e))}async _$EP(){this.isUpdatePending=!0;try{await this._$ES}catch(t){Promise.reject(t)}const e=this.scheduleUpdate();return e!=null&&await e,!this.isUpdatePending}scheduleUpdate(){return this.performUpdate()}performUpdate(){var i;if(!this.isUpdatePending)return;if(!this.hasUpdated){if(this.renderRoot??(this.renderRoot=this.createRenderRoot()),this._$Ep){for(const[n,a]of this._$Ep)this[n]=a;this._$Ep=void 0}const r=this.constructor.elementProperties;if(r.size>0)for(const[n,a]of r){const{wrapped:d}=a,l=this[n];d!==!0||this._$AL.has(n)||l===void 0||this.C(n,void 0,a,l)}}let e=!1;const t=this._$AL;try{e=this.shouldUpdate(t),e?(this.willUpdate(t),(i=this._$EO)==null||i.forEach(r=>{var n;return(n=r.hostUpdate)==null?void 0:n.call(r)}),this.update(t)):this._$EM()}catch(r){throw e=!1,this._$EM(),r}e&&this._$AE(t)}willUpdate(e){}_$AE(e){var t;(t=this._$EO)==null||t.forEach(i=>{var r;return(r=i.hostUpdated)==null?void 0:r.call(i)}),this.hasUpdated||(this.hasUpdated=!0,this.firstUpdated(e)),this.updated(e)}_$EM(){this._$AL=new Map,this.isUpdatePending=!1}get updateComplete(){return this.getUpdateComplete()}getUpdateComplete(){return this._$ES}shouldUpdate(e){return!0}update(e){this._$Eq&&(this._$Eq=this._$Eq.forEach(t=>this._$ET(t,this[t]))),this._$EM()}updated(e){}firstUpdated(e){}};S.elementStyles=[],S.shadowRootOptions={mode:"open"},S[O("elementProperties")]=new Map,S[O("finalized")]=new Map,K==null||K({ReactiveElement:S}),(x.reactiveElementVersions??(x.reactiveElementVersions=[])).push("2.1.2");/**
+ * @license
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: BSD-3-Clause
+ */const H=globalThis,ce=o=>o,Q=H.trustedTypes,pe=Q?Q.createPolicy("lit-html",{createHTML:o=>o}):void 0,xe="$lit$",w=`lit$${Math.random().toFixed(9).slice(2)}$`,ye="?"+w,De=`<${ye}>`,_=document,N=()=>_.createComment(""),V=o=>o===null||typeof o!="object"&&typeof o!="function",se=Array.isArray,ze=o=>se(o)||typeof(o==null?void 0:o[Symbol.iterator])=="function",Y=`[ 	
+\f\r]`,L=/<(?:(!--|\/[^a-zA-Z])|(\/?[a-zA-Z][^>\s]*)|(\/?$))/g,ue=/-->/g,ve=/>/g,y=RegExp(`>|${Y}(?:([^\\s"'>=/]+)(${Y}*=${Y}*(?:[^ 	
+\f\r"'\`<>=]|("|')|))|$)`,"g"),ge=/'/g,me=/"/g,$e=/^(?:script|style|textarea|title)$/i,Ie=o=>(e,...t)=>({_$litType$:o,strings:e,values:t}),s=Ie(1),j=Symbol.for("lit-noChange"),c=Symbol.for("lit-nothing"),fe=new WeakMap,$=_.createTreeWalker(_,129);function Ce(o,e){if(!se(o)||!o.hasOwnProperty("raw"))throw Error("invalid template strings array");return pe!==void 0?pe.createHTML(e):e}const Re=(o,e)=>{const t=o.length-1,i=[];let r,n=e===2?"<svg>":e===3?"<math>":"",a=L;for(let d=0;d<t;d++){const l=o[d];let u,v,p=-1,k=0;for(;k<l.length&&(a.lastIndex=k,v=a.exec(l),v!==null);)k=a.lastIndex,a===L?v[1]==="!--"?a=ue:v[1]!==void 0?a=ve:v[2]!==void 0?($e.test(v[2])&&(r=RegExp("</"+v[2],"g")),a=y):v[3]!==void 0&&(a=y):a===y?v[0]===">"?(a=r??L,p=-1):v[1]===void 0?p=-2:(p=a.lastIndex-v[2].length,u=v[1],a=v[3]===void 0?y:v[3]==='"'?me:ge):a===me||a===ge?a=y:a===ue||a===ve?a=L:(a=y,r=void 0);const b=a===y&&o[d+1].startsWith("/>")?" ":"";n+=a===L?l+De:p>=0?(i.push(u),l.slice(0,p)+xe+l.slice(p)+w+b):l+w+(p===-2?d:b)}return[Ce(o,n+(o[t]||"<?>")+(e===2?"</svg>":e===3?"</math>":"")),i]};class U{constructor({strings:e,_$litType$:t},i){let r;this.parts=[];let n=0,a=0;const d=e.length-1,l=this.parts,[u,v]=Re(e,t);if(this.el=U.createElement(u,i),$.currentNode=this.el.content,t===2||t===3){const p=this.el.content.firstChild;p.replaceWith(...p.childNodes)}for(;(r=$.nextNode())!==null&&l.length<d;){if(r.nodeType===1){if(r.hasAttributes())for(const p of r.getAttributeNames())if(p.endsWith(xe)){const k=v[a++],b=r.getAttribute(p).split(w),R=/([.?@])?(.*)/.exec(k);l.push({type:1,index:n,name:R[2],strings:b,ctor:R[1]==="."?qe:R[1]==="?"?Qe:R[1]==="@"?Ze:F}),r.removeAttribute(p)}else p.startsWith(w)&&(l.push({type:6,index:n}),r.removeAttribute(p));if($e.test(r.tagName)){const p=r.textContent.split(w),k=p.length-1;if(k>0){r.textContent=Q?Q.emptyScript:"";for(let b=0;b<k;b++)r.append(p[b],N()),$.nextNode(),l.push({type:2,index:++n});r.append(p[k],N())}}}else if(r.nodeType===8)if(r.data===ye)l.push({type:2,index:n});else{let p=-1;for(;(p=r.data.indexOf(w,p+1))!==-1;)l.push({type:7,index:n}),p+=w.length-1}n++}}static createElement(e,t){const i=_.createElement("template");return i.innerHTML=e,i}}function E(o,e,t=o,i){var a,d;if(e===j)return e;let r=i!==void 0?(a=t._$Co)==null?void 0:a[i]:t._$Cl;const n=V(e)?void 0:e._$litDirective$;return(r==null?void 0:r.constructor)!==n&&((d=r==null?void 0:r._$AO)==null||d.call(r,!1),n===void 0?r=void 0:(r=new n(o),r._$AT(o,t,i)),i!==void 0?(t._$Co??(t._$Co=[]))[i]=r:t._$Cl=r),r!==void 0&&(e=E(o,r._$AS(o,e.values),r,i)),e}class Te{constructor(e,t){this._$AV=[],this._$AN=void 0,this._$AD=e,this._$AM=t}get parentNode(){return this._$AM.parentNode}get _$AU(){return this._$AM._$AU}u(e){const{el:{content:t},parts:i}=this._$AD,r=((e==null?void 0:e.creationScope)??_).importNode(t,!0);$.currentNode=r;let n=$.nextNode(),a=0,d=0,l=i[0];for(;l!==void 0;){if(a===l.index){let u;l.type===2?u=new z(n,n.nextSibling,this,e):l.type===1?u=new l.ctor(n,l.name,l.strings,this,e):l.type===6&&(u=new Fe(n,this,e)),this._$AV.push(u),l=i[++d]}a!==(l==null?void 0:l.index)&&(n=$.nextNode(),a++)}return $.currentNode=_,r}p(e){let t=0;for(const i of this._$AV)i!==void 0&&(i.strings!==void 0?(i._$AI(e,i,t),t+=i.strings.length-2):i._$AI(e[t])),t++}}class z{get _$AU(){var e;return((e=this._$AM)==null?void 0:e._$AU)??this._$Cv}constructor(e,t,i,r){this.type=2,this._$AH=c,this._$AN=void 0,this._$AA=e,this._$AB=t,this._$AM=i,this.options=r,this._$Cv=(r==null?void 0:r.isConnected)??!0}get parentNode(){let e=this._$AA.parentNode;const t=this._$AM;return t!==void 0&&(e==null?void 0:e.nodeType)===11&&(e=t.parentNode),e}get startNode(){return this._$AA}get endNode(){return this._$AB}_$AI(e,t=this){e=E(this,e,t),V(e)?e===c||e==null||e===""?(this._$AH!==c&&this._$AR(),this._$AH=c):e!==this._$AH&&e!==j&&this._(e):e._$litType$!==void 0?this.$(e):e.nodeType!==void 0?this.T(e):ze(e)?this.k(e):this._(e)}O(e){return this._$AA.parentNode.insertBefore(e,this._$AB)}T(e){this._$AH!==e&&(this._$AR(),this._$AH=this.O(e))}_(e){this._$AH!==c&&V(this._$AH)?this._$AA.nextSibling.data=e:this.T(_.createTextNode(e)),this._$AH=e}$(e){var n;const{values:t,_$litType$:i}=e,r=typeof i=="number"?this._$AC(e):(i.el===void 0&&(i.el=U.createElement(Ce(i.h,i.h[0]),this.options)),i);if(((n=this._$AH)==null?void 0:n._$AD)===r)this._$AH.p(t);else{const a=new Te(r,this),d=a.u(this.options);a.p(t),this.T(d),this._$AH=a}}_$AC(e){let t=fe.get(e.strings);return t===void 0&&fe.set(e.strings,t=new U(e)),t}k(e){se(this._$AH)||(this._$AH=[],this._$AR());const t=this._$AH;let i,r=0;for(const n of e)r===t.length?t.push(i=new z(this.O(N()),this.O(N()),this,this.options)):i=t[r],i._$AI(n),r++;r<t.length&&(this._$AR(i&&i._$AB.nextSibling,r),t.length=r)}_$AR(e=this._$AA.nextSibling,t){var i;for((i=this._$AP)==null?void 0:i.call(this,!1,!0,t);e!==this._$AB;){const r=ce(e).nextSibling;ce(e).remove(),e=r}}setConnected(e){var t;this._$AM===void 0&&(this._$Cv=e,(t=this._$AP)==null||t.call(this,e))}}class F{get tagName(){return this.element.tagName}get _$AU(){return this._$AM._$AU}constructor(e,t,i,r,n){this.type=1,this._$AH=c,this._$AN=void 0,this.element=e,this.name=t,this._$AM=r,this.options=n,i.length>2||i[0]!==""||i[1]!==""?(this._$AH=Array(i.length-1).fill(new String),this.strings=i):this._$AH=c}_$AI(e,t=this,i,r){const n=this.strings;let a=!1;if(n===void 0)e=E(this,e,t,0),a=!V(e)||e!==this._$AH&&e!==j,a&&(this._$AH=e);else{const d=e;let l,u;for(e=n[0],l=0;l<n.length-1;l++)u=E(this,d[i+l],t,l),u===j&&(u=this._$AH[l]),a||(a=!V(u)||u!==this._$AH[l]),u===c?e=c:e!==c&&(e+=(u??"")+n[l+1]),this._$AH[l]=u}a&&!r&&this.j(e)}j(e){e===c?this.element.removeAttribute(this.name):this.element.setAttribute(this.name,e??"")}}class qe extends F{constructor(){super(...arguments),this.type=3}j(e){this.element[this.name]=e===c?void 0:e}}class Qe extends F{constructor(){super(...arguments),this.type=4}j(e){this.element.toggleAttribute(this.name,!!e&&e!==c)}}class Ze extends F{constructor(e,t,i,r,n){super(e,t,i,r,n),this.type=5}_$AI(e,t=this){if((e=E(this,e,t,0)??c)===j)return;const i=this._$AH,r=e===c&&i!==c||e.capture!==i.capture||e.once!==i.once||e.passive!==i.passive,n=e!==c&&(i===c||r);r&&this.element.removeEventListener(this.name,this,i),n&&this.element.addEventListener(this.name,this,e),this._$AH=e}handleEvent(e){var t;typeof this._$AH=="function"?this._$AH.call(((t=this.options)==null?void 0:t.host)??this.element,e):this._$AH.handleEvent(e)}}class Fe{constructor(e,t,i){this.element=e,this.type=6,this._$AN=void 0,this._$AM=t,this.options=i}get _$AU(){return this._$AM._$AU}_$AI(e){E(this,e)}}const G=H.litHtmlPolyfillSupport;G==null||G(U,z),(H.litHtmlVersions??(H.litHtmlVersions=[])).push("3.3.3");const We=(o,e,t)=>{const i=(t==null?void 0:t.renderBefore)??e;let r=i._$litPart$;if(r===void 0){const n=(t==null?void 0:t.renderBefore)??null;i._$litPart$=r=new z(e.insertBefore(N(),n),n,void 0,t??{})}return r._$AI(o),r};/**
+ * @license
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: BSD-3-Clause
+ */const C=globalThis;class f extends S{constructor(){super(...arguments),this.renderOptions={host:this},this._$Do=void 0}createRenderRoot(){var t;const e=super.createRenderRoot();return(t=this.renderOptions).renderBefore??(t.renderBefore=e.firstChild),e}update(e){const t=this.render();this.hasUpdated||(this.renderOptions.isConnected=this.isConnected),super.update(e),this._$Do=We(t,this.renderRoot,this.renderOptions)}connectedCallback(){var e;super.connectedCallback(),(e=this._$Do)==null||e.setConnected(!0)}disconnectedCallback(){var e;super.disconnectedCallback(),(e=this._$Do)==null||e.setConnected(!1)}render(){return j}}var be;f._$litElement$=!0,f.finalized=!0,(be=C.litElementHydrateSupport)==null||be.call(C,{LitElement:f});const J=C.litElementPolyfillSupport;J==null||J({LitElement:f});(C.litElementVersions??(C.litElementVersions=[])).push("4.2.2");/**
+ * @license
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: BSD-3-Clause
+ */const I=o=>(e,t)=>{t!==void 0?t.addInitializer(()=>{customElements.define(o,e)}):customElements.define(o,e)};/**
+ * @license
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: BSD-3-Clause
+ */const Ke={attribute:!0,type:String,converter:q,reflect:!1,hasChanged:ie},Ye=(o=Ke,e,t)=>{const{kind:i,metadata:r}=t;let n=globalThis.litPropertyMetadata.get(r);if(n===void 0&&globalThis.litPropertyMetadata.set(r,n=new Map),i==="setter"&&((o=Object.create(o)).wrapped=!0),n.set(t.name,o),i==="accessor"){const{name:a}=t;return{set(d){const l=e.get.call(this);e.set.call(this,d),this.requestUpdate(a,l,o,!0,d)},init(d){return d!==void 0&&this.C(a,void 0,o,d),d}}}if(i==="setter"){const{name:a}=t;return function(d){const l=this[a];e.call(this,d),this.requestUpdate(a,l,o,!0,d)}}throw Error("Unsupported decorator location: "+i)};function g(o){return(e,t)=>typeof t=="object"?Ye(o,e,t):((i,r,n)=>{const a=r.hasOwnProperty(n);return r.constructor.createProperty(n,i),a?Object.getOwnPropertyDescriptor(r,n):void 0})(o,e,t)}var Ge=Object.defineProperty,Je=Object.getOwnPropertyDescriptor,oe=(o,e,t,i)=>{for(var r=i>1?void 0:i?Je(e,t):e,n=o.length-1,a;n>=0;n--)(a=o[n])&&(r=(i?a(e,t,r):a(r))||r);return i&&r&&Ge(e,t,r),r};let Z=class extends f{constructor(){super(...arguments),this.variant="default",this.compact=!1}createRenderRoot(){return this.attachShadow({mode:"open"})}_onHeaderSlotChange(o){const e=o.target,t=e.parentElement;t&&t.classList.toggle("empty",e.assignedNodes().length===0)}_onFooterSlotChange(o){const e=o.target,t=e.parentElement;t&&t.classList.toggle("empty",e.assignedNodes().length===0)}render(){return s`
+      <style>
+        :host { display: block; }
+        .card {
+          background: var(--card);
+          border: 1px solid var(--border);
+          border-radius: var(--radius-md);
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+          overflow: hidden;
+        }
+        .card--elevated {
+          box-shadow: var(--shadow-md);
+        }
+        .card--bordered {
+          background: transparent;
+          box-shadow: none;
+        }
+        .card--compact .card-header { display: none; }
+        .card--compact .card-body { padding: 0; }
+        .card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: var(--space-sm);
+          font-size: var(--text-md);
+          font-weight: 600;
+          color: var(--text-strong);
+          background: var(--bg-elevated);
+          border-bottom: 1px solid var(--border);
+          padding: var(--space-md) var(--space-lg);
+        }
+        .card-header.empty { display: none; }
+        .card-header ::slotted(svg) {
+          width: 16px;
+          height: 16px;
+          opacity: 1;
+          vertical-align: -2px;
+        }
+        .card-body {
+          padding: var(--space-lg);
+        }
+        .card-footer {
+          border-top: 1px solid var(--border);
+          padding: var(--space-md) var(--space-lg);
+          display: flex;
+          justify-content: flex-end;
+          gap: var(--space-sm);
+          background: var(--bg-elevated);
+        }
+        .card-footer.empty { display: none; }
+      </style>
+      <div class="card card--${this.variant}${this.compact?" card--compact":""}" part="root">
+        <div class="card-header" part="header">
+          <slot name="header" @slotchange=${this._onHeaderSlotChange}></slot>
+        </div>
+        <div class="card-body" part="body"><slot></slot></div>
+        <div class="card-footer" part="footer">
+          <slot name="footer" @slotchange=${this._onFooterSlotChange}></slot>
+        </div>
+      </div>
+    `}};oe([g()],Z.prototype,"variant",2);oe([g({type:Boolean})],Z.prototype,"compact",2);Z=oe([I("app-card")],Z);var Xe=Object.defineProperty,et=Object.getOwnPropertyDescriptor,B=(o,e,t,i)=>{for(var r=i>1?void 0:i?et(e,t):e,n=o.length-1,a;n>=0;n--)(a=o[n])&&(r=(i?a(e,t,r):a(r))||r);return i&&r&&Xe(e,t,r),r};const ke={sm:"400px",md:"520px",lg:"640px",xl:"720px"};let M=class extends f{constructor(){super(...arguments),this.open=!1,this.size="md",this.title="",this.closable=!0,this.closeOnOverlay=!0,this._previousFocus=null,this._nativeDialog=null}connectedCallback(){super.connectedCallback(),this.requestUpdate()}disconnectedCallback(){this._closeNative(),super.disconnectedCallback()}updated(){var t;if(!this.open){this._closeNative();return}const o=this.renderRoot.querySelector("dialog");if(!o||!this.isConnected||o.open)return;let e=document.activeElement;for(;(t=e==null?void 0:e.shadowRoot)!=null&&t.activeElement;)e=e.shadowRoot.activeElement;this._previousFocus=e instanceof HTMLElement?e:null,this._nativeDialog=o,o.showModal()}_closeNative(){var o,e;(o=this._nativeDialog)==null||o.close(),this._nativeDialog=null,(e=this._previousFocus)!=null&&e.isConnected&&this._previousFocus.focus(),this._previousFocus=null}_onKeyDown(o){var a,d;if(o.key!=="Tab"||o.composedPath().find(l=>l instanceof HTMLDialogElement)!==this._nativeDialog)return;const e=[],t=l=>{if(l.hasAttribute("inert")||l.matches(":disabled")||l.hasAttribute("hidden"))return;l instanceof HTMLElement&&l.tabIndex>=0&&l.getClientRects().length&&getComputedStyle(l).visibility!=="hidden"&&e.push(l),(l instanceof HTMLSlotElement?l.assignedElements({flatten:!0}):l.shadowRoot?Array.from(l.shadowRoot.children):Array.from(l.children)).forEach(t)};if(!this._nativeDialog)return;t(this._nativeDialog);let i=document.activeElement;for(;(a=i==null?void 0:i.shadowRoot)!=null&&a.activeElement;)i=i.shadowRoot.activeElement;const r=e[0],n=e[e.length-1];(!r||(o.shiftKey?i===r:i===n))&&(o.preventDefault(),(d=o.shiftKey?n:r)==null||d.focus())}_onCancel(o){o.preventDefault(),this.closable&&this._close()}_onOverlayClick(o){o.target===o.currentTarget&&this.closeOnOverlay&&this.closable&&this._close()}_close(){this.open=!1,this.dispatchEvent(new CustomEvent("app-dialog-close",{bubbles:!0,composed:!0}))}render(){if(!this.open)return c;const o=ke[this.size]??ke.md;return s`
+      <style>
+        *, *::before, *::after { box-sizing: border-box; }
+        .dialog-overlay {
+          position: fixed;
+          inset: 0;
+          margin: 0;
+          border: 0;
+          width: 100vw;
+          height: 100dvh;
+          max-width: none;
+          max-height: none;
+          background: transparent;
+          color: inherit;
+          z-index: var(--z-modal, 1000);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: var(--space-xl, 24px);
+          animation: fade-in 200ms var(--ease-out) both;
+        }
+        .dialog-overlay::backdrop { background: rgba(0, 0, 0, 0.3); }
+        .dialog {
+          background: var(--card, #fff);
+          border-radius: var(--radius-lg);
+          box-shadow: var(--shadow-xl);
+          width: 100%;
+          max-width: 520px;
+          max-height: 85vh;
+          display: flex;
+          flex-direction: column;
+          animation: scale-in 200ms var(--ease-out) both;
+        }
+        .dialog-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: var(--space-lg) var(--space-xl);
+          border-bottom: 1px solid var(--border);
+          flex-shrink: 0;
+        }
+        .dialog-title {
+          font-size: var(--text-lg, 16px);
+          font-weight: 600;
+          color: var(--text-strong);
+          line-height: 1.3;
+        }
+        .dialog-close {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px;
+          height: 32px;
+          flex-shrink: 0;
+          background: none;
+          border: 1px solid transparent;
+          cursor: pointer;
+          color: var(--muted);
+          font-size: 20px;
+          line-height: 1;
+          border-radius: var(--radius-sm);
+          transition: all var(--duration-fast, 100ms) var(--ease-out);
+        }
+        .dialog-close:hover {
+          color: var(--text-strong);
+          background: var(--bg-hover);
+          border-color: var(--border);
+        }
+        .dialog-body {
+          padding: var(--space-xl);
+          overflow-y: auto;
+          flex: 1;
+        }
+        .dialog-footer {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: var(--space-sm);
+          padding: var(--space-lg) var(--space-xl);
+          border-top: 1px solid var(--border);
+          flex-shrink: 0;
+        }
+      </style>
+      <dialog
+        class="dialog-overlay"
+        aria-label=${this.title||c}
+        @click=${this._onOverlayClick}
+        @cancel=${this._onCancel}
+        @keydown=${this._onKeyDown}
+      >
+        <div
+          class="dialog"
+          style="max-width: ${o}"
+        >
+          <div class="dialog-header">
+            <span class="dialog-title">${this.title}</span>
+            ${this.closable?s`
+                  <button
+                    class="dialog-close"
+                    @click=${this._close}
+                    aria-label="Close dialog"
+                    type="button"
+                  >
+                    ×
+                  </button>
+                `:c}
+          </div>
+          <div class="dialog-body">
+            <slot></slot>
+          </div>
+          <div class="dialog-footer">
+            <slot name="footer"></slot>
+          </div>
+        </div>
+      </dialog>
+    `}};B([g({type:Boolean})],M.prototype,"open",2);B([g()],M.prototype,"size",2);B([g()],M.prototype,"title",2);B([g({type:Boolean})],M.prototype,"closable",2);B([g({type:Boolean})],M.prototype,"closeOnOverlay",2);M=B([I("app-dialog")],M);var tt=Object.defineProperty,rt=Object.getOwnPropertyDescriptor,_e=(o,e,t,i)=>{for(var r=i>1?void 0:i?rt(e,t):e,n=o.length-1,a;n>=0;n--)(a=o[n])&&(r=(i?a(e,t,r):a(r))||r);return i&&r&&tt(e,t,r),r};let X=class extends f{constructor(){super(...arguments),this.variant="muted"}createRenderRoot(){return this}render(){return s`
+      <style>
+        app-badge {
+          display: inline-flex; align-items: center; gap: 5px;
+          padding: 3px 10px; border-radius: var(--radius-full);
+          font-size: 11px; font-weight: 600; white-space: nowrap;
+          line-height: 1; letter-spacing: 0.01em;
+        }
+        app-badge::before {
+          content: ""; display: inline-block;
+          width: 6px; height: 6px; border-radius: 50%;
+          flex-shrink: 0;
+        }
+        app-badge[variant="ok"] {
+          background: var(--ok-subtle, rgba(21,128,61,0.12));
+          color: var(--ok);
+          border: 1px solid color-mix(in srgb, var(--ok) 20%, transparent);
+        }
+        app-badge[variant="ok"]::before { background: var(--ok); }
+        app-badge[variant="danger"] {
+          background: var(--danger-subtle, rgba(220,38,38,0.12));
+          color: var(--danger);
+          border: 1px solid color-mix(in srgb, var(--danger) 20%, transparent);
+        }
+        app-badge[variant="danger"]::before { background: var(--danger); }
+        app-badge[variant="warn"] {
+          background: var(--warn-subtle, rgba(180,83,9,0.12));
+          color: var(--warn);
+          border: 1px solid color-mix(in srgb, var(--warn) 20%, transparent);
+        }
+        app-badge[variant="warn"]::before { background: var(--warn); }
+        app-badge[variant="info"] {
+          background: var(--info-subtle, rgba(37,99,235,0.12));
+          color: var(--info);
+          border: 1px solid color-mix(in srgb, var(--info) 20%, transparent);
+        }
+        app-badge[variant="info"]::before { background: var(--info); }
+        app-badge[variant="muted"] {
+          background: var(--bg-hover, rgba(131,131,135,0.12));
+          color: var(--muted);
+          border: 1px solid color-mix(in srgb, var(--muted) 20%, transparent);
+        }
+        app-badge[variant="muted"]::before { background: var(--muted); }
+      </style>
+      <slot></slot>
+    `}};_e([g()],X.prototype,"variant",2);X=_e([I("app-badge")],X);var it=Object.defineProperty,st=Object.getOwnPropertyDescriptor,P=(o,e,t,i)=>{for(var r=i>1?void 0:i?st(e,t):e,n=o.length-1,a;n>=0;n--)(a=o[n])&&(r=(i?a(e,t,r):a(r))||r);return i&&r&&it(e,t,r),r};let A=class extends f{constructor(){super(...arguments),this.label="",this.hint="",this.error="",this.required=!1,this.inline=!1}updated(o){if(o.has("error")){const e=this.querySelector("input, select, textarea");e&&(this.error?e.setAttribute("aria-invalid","true"):e.removeAttribute("aria-invalid"))}}render(){return s`
+      <style>
+        :host {
+          display: block;
+          margin-bottom: var(--space-md, 12px);
+        }
+        :host([inline]) {
+          display: block;
+        }
+        :host([inline]) .form-field {
+          display: grid;
+          grid-template-columns: minmax(120px, var(--app-form-field-label-width, 180px)) minmax(0, 1fr);
+          column-gap: var(--space-lg, 20px);
+          row-gap: var(--space-xs, 4px);
+          align-items: start;
+        }
+        :host([inline]) .form-label {
+          grid-column: 1;
+          grid-row: 1;
+          margin-bottom: 0;
+          overflow-wrap: anywhere;
+          padding-top: 10px;
+        }
+        :host([inline]) .form-control {
+          grid-column: 2;
+          grid-row: 1;
+          min-width: 0;
+        }
+        :host([inline]) .form-hint,
+        :host([inline]) .form-error {
+          grid-column: 2;
+          margin-top: 0;
+        }
+        @media (max-width: 720px) {
+          :host([inline]) .form-field { grid-template-columns: 1fr; }
+          :host([inline]) .form-label,
+          :host([inline]) .form-control,
+          :host([inline]) .form-hint,
+          :host([inline]) .form-error { grid-column: 1; }
+          :host([inline]) .form-label,
+          :host([inline]) .form-control { grid-row: auto; }
+          :host([inline]) .form-label { padding-top: 0; }
+        }
+        .form-field {
+          width: 100%;
+        }
+        .form-label {
+          display: block;
+          font-size: var(--text-sm, 12px);
+          font-weight: 500;
+          color: var(--text-strong, #1a1a1e);
+          margin-bottom: var(--space-xs, 4px);
+          line-height: 1.4;
+        }
+        :host([error]) .form-label {
+          color: var(--danger, #dc2626);
+        }
+        .required-mark {
+          color: var(--danger, #dc2626);
+          margin-left: 4px;
+          vertical-align: middle;
+        }
+        .form-control {
+          position: relative;
+        }
+        :host([error]) .form-control {
+          box-shadow: 0 0 0 2px var(--danger-subtle, rgba(220, 38, 38, 0.12));
+          border-radius: var(--radius-sm, 6px);
+        }
+        .form-hint {
+          font-size: var(--text-xs, 11px);
+          color: var(--muted);
+          margin-top: 6px;
+          line-height: 1.4;
+        }
+        .form-error {
+          font-size: var(--text-xs, 11px);
+          color: var(--danger, #dc2626);
+          margin-top: var(--space-xs, 4px);
+          line-height: 1.4;
+        }
+      </style>
+      <div class="form-field" part="field">
+        ${this.label?s`
+              <label class="form-label" part="label">
+                ${this.label}${this.required?s`<span class="required-mark" aria-hidden="true">*</span>`:""}
+              </label>
+            `:""}
+        <div class="form-control" part="control">
+          <slot></slot>
+        </div>
+        ${this.hint&&!this.error?s`<div class="form-hint" part="hint">${this.hint}</div>`:""}
+        ${this.error?s`<div class="form-error" part="error" role="alert">
+              ${this.error}
+            </div>`:""}
+      </div>
+    `}};P([g()],A.prototype,"label",2);P([g()],A.prototype,"hint",2);P([g()],A.prototype,"error",2);P([g({type:Boolean})],A.prototype,"required",2);P([g({type:Boolean,reflect:!0})],A.prototype,"inline",2);A=P([I("app-form-field")],A);const ee={activity:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+    </svg>
+  `,"alert-circle":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" x2="12" y1="8" y2="12" />
+      <line x1="12" x2="12.01" y1="16" y2="16" />
+    </svg>
+  `,"arrow-down":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 5v14" />
+      <path d="m19 12-7 7-7-7" />
+    </svg>
+  `,"arrow-right":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 12h14" />
+      <path d="m12 5 7 7-7 7" />
+    </svg>
+  `,"arrow-up-down":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m21 16-4 4-4-4" />
+      <path d="M17 20V4" />
+      <path d="m3 8 4-4 4 4" />
+      <path d="M7 4v16" />
+    </svg>
+  `,"bar-chart":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" x2="12" y1="20" y2="10" />
+      <line x1="18" x2="18" y1="20" y2="4" />
+      <line x1="6" x2="6" y1="20" y2="16" />
+    </svg>
+  `,"bar-chart-2":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="18" x2="18" y1="20" y2="10" />
+      <line x1="12" x2="12" y1="20" y2="4" />
+      <line x1="6" x2="6" y1="20" y2="14" />
+    </svg>
+  `,bell:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+      <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+    </svg>
+  `,"bell-off":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 .6 5" />
+      <path d="M17 17H3s3-2 3-9a4.67 4.67 0 0 1 .3-1.7" />
+      <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+      <path d="m2 2 20 20" />
+    </svg>
+  `,book:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+    </svg>
+  `,bookmark:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />
+    </svg>
+  `,bot:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 8V4H8" />
+      <rect width="16" height="12" x="4" y="8" rx="2" />
+      <path d="M2 14h2" />
+      <path d="M20 14h2" />
+      <path d="M15 13v2" />
+      <path d="M9 13v2" />
+    </svg>
+  `,brain:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.529 5.873 4 4 0 0 0 .527 6.428A4 4 0 0 0 12 21a4 4 0 0 0 3.997-3.572 4 4 0 0 0 .527-6.428 4 4 0 0 0-2.529-5.873A3 3 0 0 0 12 5Z" />
+      <path d="M12 5v14" />
+      <path d="M8 9h8" />
+      <path d="M8 15h8" />
+    </svg>
+  `,bug:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m8 2 1.88 1.88" />
+      <path d="M14.12 3.88 16 2" />
+      <path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1" />
+      <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6" />
+      <path d="M12 20v-9" />
+      <path d="M6.53 9C4.6 8.8 3 7.1 3 5" />
+      <path d="M6 13H2" />
+      <path d="M3 21c0-2.1 1.7-3.9 3.8-4" />
+      <path d="M20.97 5c0 2.1-1.6 3.8-3.5 4" />
+      <path d="M22 13h-4" />
+      <path d="M17.2 17c2.1.1 3.8 1.9 3.8 4" />
+    </svg>
+  `,calendar:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+      <line x1="16" x2="16" y1="2" y2="6" />
+      <line x1="8" x2="8" y1="2" y2="6" />
+      <line x1="3" x2="21" y1="10" y2="10" />
+      <path d="M8 14h.01" />
+      <path d="M12 14h.01" />
+      <path d="M16 14h.01" />
+      <path d="M8 18h.01" />
+      <path d="M12 18h.01" />
+      <path d="M16 18h.01" />
+    </svg>
+  `,chart:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" x2="12" y1="20" y2="10" />
+      <line x1="18" x2="18" y1="20" y2="4" />
+      <line x1="6" x2="6" y1="20" y2="16" />
+    </svg>
+  `,check:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  `,"check-circle":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+      <polyline points="22 4 12 14.01 9 11.01" />
+    </svg>
+  `,"chevron-down":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  `,"chevron-left":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m15 18-6-6 6-6" />
+    </svg>
+  `,"chevron-right":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  `,"chevron-up":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m18 15-6-6-6 6" />
+    </svg>
+  `,"chevrons-up-down":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m7 15 5 5 5-5" />
+      <path d="m7 9 5-5 5 5" />
+    </svg>
+  `,circle:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10" />
+    </svg>
+  `,"circle-alert":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 8v4" />
+      <path d="M12 16h.01" />
+    </svg>
+  `,"circle-check":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="m9 12 2 2 4-4" />
+    </svg>
+  `,"circle-close":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="m15 9-6 6" />
+      <path d="m9 9 6 6" />
+    </svg>
+  `,"circle-x":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="m15 9-6 6" />
+      <path d="m9 9 6 6" />
+    </svg>
+  `,clipboard:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+    </svg>
+  `,clock:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  `,code:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="16 18 22 12 16 6" />
+      <polyline points="8 6 2 12 8 18" />
+    </svg>
+  `,copy:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </svg>
+  `,cpu:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <rect x="9" y="9" width="6" height="6" />
+      <path d="M9 1v3" />
+      <path d="M15 1v3" />
+      <path d="M9 20v3" />
+      <path d="M15 20v3" />
+      <path d="M20 9h3" />
+      <path d="M20 14h3" />
+      <path d="M1 9h3" />
+      <path d="M1 14h3" />
+    </svg>
+  `,database:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <ellipse cx="12" cy="5" rx="9" ry="3" />
+      <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+      <path d="M3 12A9 3 0 0 0 21 12" />
+    </svg>
+  `,desktop:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+      <line x1="8" x2="16" y1="21" y2="21" />
+      <line x1="12" x2="12" y1="17" y2="21" />
+    </svg>
+  `,download:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" x2="12" y1="15" y2="3" />
+    </svg>
+  `,droplet:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z" />
+    </svg>
+  `,edit:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+      <path d="m15 5 4 4" />
+    </svg>
+  `,expand:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m15 17 5-5-5-5" />
+      <path d="M4 6h14" />
+      <path d="M4 18h14" />
+    </svg>
+  `,"external-link":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M15 3h6v6M10 14L21 3" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  `,eye:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  `,"eye-off":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" />
+      <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+      <path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" />
+      <path d="m2 2 20 20" />
+    </svg>
+  `,"file-code":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+      <polyline points="14 2 14 8 20 8" />
+      <path d="m10 13-2 2 2 2" />
+      <path d="m14 17 2-2-2-2" />
+    </svg>
+  `,"file-text":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M10 9H8" />
+      <path d="M16 13H8" />
+      <path d="M16 17H8" />
+    </svg>
+  `,fold:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m10 17 5-5-5-5" />
+      <path d="M4 6h14" />
+      <path d="M4 18h14" />
+    </svg>
+  `,folder:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+    </svg>
+  `,gauge:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m12 14 4-4" />
+      <path d="M3.34 19a10 10 0 1 1 17.32 0" />
+    </svg>
+  `,globe:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+      <path d="M2 12h20" />
+    </svg>
+  `,"hard-drive":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="22" x2="2" y1="12" y2="12" />
+      <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+      <line x1="6" x2="6.01" y1="16" y2="16" />
+      <line x1="10" x2="10.01" y1="16" y2="16" />
+    </svg>
+  `,"heart-pulse":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
+      <path d="M12 5 9.04 16l2.96-4.5L15 16 12 5Z" />
+    </svg>
+  `,image:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+    </svg>
+  `,info:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4" />
+      <path d="M12 8h.01" />
+    </svg>
+  `,network:s`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="5" rx="1"/><path d="M12 8v5M5 16v-3h14v3"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/></svg>`,"layout-dashboard":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="7" height="9" x="3" y="3" rx="1" />
+      <rect width="7" height="5" x="14" y="3" rx="1" />
+      <rect width="7" height="9" x="14" y="12" rx="1" />
+      <rect width="7" height="5" x="3" y="16" rx="1" />
+    </svg>
+  `,"layout-grid":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+    </svg>
+  `,link:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </svg>
+  `,lock:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  `,loader:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2v4" />
+      <path d="m16.2 7.8 2.9-2.9" />
+      <path d="M18 12h4" />
+      <path d="m16.2 16.2 2.9 2.9" />
+      <path d="M12 18v4" />
+      <path d="m4.9 19.1 2.9-2.9" />
+      <path d="M2 12h4" />
+      <path d="m4.9 4.9 2.9 2.9" />
+    </svg>
+  `,lobster:s`
+    <svg width="1em" height="1em" viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <defs>
+        <linearGradient id="lob-g" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#ff4d4d" />
+          <stop offset="100%" stop-color="#991b1b" />
+        </linearGradient>
+      </defs>
+      <path d="M60 10C30 10 15 35 15 55C15 75 30 95 45 100L45 110L55 110L55 100C55 100 60 102 65 100L65 110L75 110L75 100C90 95 105 75 105 55C105 35 90 10 60 10Z" fill="url(#lob-g)" />
+      <path d="M20 45C5 40 0 50 5 60C10 70 20 65 25 55C28 48 25 45 20 45Z" fill="url(#lob-g)" />
+      <path d="M100 45C115 40 120 50 115 60C110 70 100 65 95 55C92 48 95 45 100 45Z" fill="url(#lob-g)" />
+      <path d="M45 15Q35 5 30 8" stroke="#ff4d4d" stroke-width="3" stroke-linecap="round" />
+      <path d="M75 15Q85 5 90 8" stroke="#ff4d4d" stroke-width="3" stroke-linecap="round" />
+      <circle cx="45" cy="35" r="6" fill="#050810" />
+      <circle cx="75" cy="35" r="6" fill="#050810" />
+      <circle cx="46" cy="34" r="2.5" fill="#00e5cc" />
+      <circle cx="76" cy="34" r="2.5" fill="#00e5cc" />
+    </svg>
+  `,maximize:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="15 3 21 3 21 9" />
+      <polyline points="9 21 3 21 3 15" />
+      <line x1="21" x2="14" y1="3" y2="10" />
+      <line x1="3" x2="10" y1="21" y2="14" />
+    </svg>
+  `,menu:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="4" x2="20" y1="12" y2="12" />
+      <line x1="4" x2="20" y1="6" y2="6" />
+      <line x1="4" x2="20" y1="18" y2="18" />
+    </svg>
+  `,message:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  `,"message-square":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  `,mic:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <line x1="12" x2="12" y1="19" y2="22" />
+    </svg>
+  `,"mic-off":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="2" x2="22" y1="2" y2="22" />
+      <path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2" />
+      <path d="M5 10v2a7 7 0 0 0 12 5" />
+      <path d="M15 9.34V5a3 3 0 0 0-5.68-1.33" />
+      <path d="M9 9v3a3 3 0 0 0 5.12 2.12" />
+      <line x1="12" x2="12" y1="19" y2="22" />
+    </svg>
+  `,minimize:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="4 14 10 14 10 20" />
+      <polyline points="20 10 14 10 14 4" />
+      <line x1="14" x2="21" y1="10" y2="3" />
+      <line x1="3" x2="10" y1="21" y2="14" />
+    </svg>
+  `,monitor:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="20" height="14" x="2" y="3" rx="2" />
+      <line x1="8" x2="16" y1="21" y2="21" />
+      <line x1="12" x2="12" y1="17" y2="21" />
+    </svg>
+  `,moon:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+    </svg>
+  `,"more-horizontal":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="1.5" />
+      <circle cx="6" cy="12" r="1.5" />
+      <circle cx="18" cy="12" r="1.5" />
+    </svg>
+  `,palette:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+      <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+      <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.12-.29-.289-.438-.652-.438-1.12 0-.922.747-1.67 1.67-1.67H16c3.31 0 6-2.69 6-6s-2.69-6-6-6z" />
+    </svg>
+  `,"panel-left-close":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M9 3v18" stroke-linecap="round" />
+      <path d="M16 10l-3 2 3 2" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  `,"panel-left-open":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M9 3v18" stroke-linecap="round" />
+      <path d="M14 10l3 2-3 2" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  `,"panel-right-open":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M15 3v18" stroke-linecap="round" />
+      <path d="M10 10l-3 2 3 2" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  `,package:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16.5 9.4 7.55 4.24"/>
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+      <polyline points="3.29 7 12 12 20.71 7"/>
+      <line x1="12" y1="22" x2="12" y2="12"/>
+    </svg>
+  `,paperclip:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  `,"party-popper":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5.8 11.3 2 22l10.7-3.79" />
+      <path d="M4 3h.01" />
+      <path d="M22 8h.01" />
+      <path d="M15 2h.01" />
+      <path d="M22.2 13.57 20.5 15" />
+      <path d="M9 7h.01" />
+      <path d="m9.26 14.55 4.23-4.23" />
+      <path d="M18 7.5 15 10" />
+      <path d="m9.96 5.34 1.41-1.41" />
+      <path d="m14.66 9.3 3.54 3.54" />
+      <path d="M6 15.59 9.5 12" />
+    </svg>
+  `,pause:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="14" y="4" width="4" height="16" rx="1" />
+      <rect x="6" y="4" width="4" height="16" rx="1" />
+    </svg>
+  `,"pen-line":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+    </svg>
+  `,pencil:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+      <path d="m15 5 4 4" />
+    </svg>
+  `,pin:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" x2="12" y1="17" y2="22" />
+      <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+    </svg>
+  `,"pin-off":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="2" x2="22" y1="2" y2="22" />
+      <line x1="12" x2="12" y1="17" y2="22" />
+      <path d="M9 9v1.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0-.39.04" />
+    </svg>
+  `,plug:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 22v-5" />
+      <path d="M9 8V2" />
+      <path d="M15 8V2" />
+      <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
+    </svg>
+  `,plus:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
+    </svg>
+  `,puzzle:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.076.874.54 1.02 1.02a2.5 2.5 0 1 0 3.237-3.237c-.48-.146-.944-.505-1.02-1.02a.98.98 0 0 1 .303-.917l1.526-1.526A2.402 2.402 0 0 1 11.998 2c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.236 3.236c-.464.18-.894.527-.967 1.02Z" />
+    </svg>
+  `,radio:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="2" />
+      <path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14" />
+    </svg>
+  `,refresh:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+    </svg>
+  `,"refresh-cw":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+      <path d="M8 16H3v5" />
+    </svg>
+  `,reply:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z" />
+    </svg>
+  `,save:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </svg>
+  `,"scroll-text":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4" />
+      <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+      <path d="M15 8h-5" />
+      <path d="M15 12h-5" />
+    </svg>
+  `,search:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.3-4.3" />
+    </svg>
+  `,send:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="22" x2="11" y1="2" y2="13" />
+      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </svg>
+  `,server:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+      <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+      <line x1="6" x2="6.01" y1="6" y2="6" />
+      <line x1="6" x2="6.01" y1="18" y2="18" />
+    </svg>
+  `,settings:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  `,shield:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  `,smartphone:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="14" height="20" x="5" y="2" rx="2" ry="2" />
+      <path d="M12 18h.01" />
+    </svg>
+  `,spark:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2v4" />
+      <path d="m16.24 7.76-2.828 2.828" />
+      <path d="M12 22v-4" />
+      <path d="m7.76 16.24 2.828-2.828" />
+      <path d="M2 12h4" />
+      <path d="m7.76 7.76 2.828 2.828" />
+      <path d="M22 12h-4" />
+      <path d="m16.24 16.24-2.828-2.828" />
+    </svg>
+  `,sparkles:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+      <path d="M5 3v4" />
+      <path d="M3 5h4" />
+      <path d="M19 17v4" />
+      <path d="M17 19h4" />
+    </svg>
+  `,square:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+    </svg>
+  `,stop:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="14" height="14" x="5" y="5" rx="1" />
+    </svg>
+  `,sun:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2" />
+      <path d="M12 20v2" />
+      <path d="m4.93 4.93 1.41 1.41" />
+      <path d="m17.66 17.66 1.41 1.41" />
+      <path d="M2 12h2" />
+      <path d="M20 12h2" />
+      <path d="m6.34 17.66-1.41 1.41" />
+      <path d="m19.07 4.93-1.41 1.41" />
+    </svg>
+  `,terminal:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" x2="20" y1="19" y2="19" />
+    </svg>
+  `,trash:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 6h18" />
+      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+    </svg>
+  `,"trash-2":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 6h18" />
+      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+      <line x1="10" x2="10" y1="11" y2="17" />
+      <line x1="14" x2="14" y1="11" y2="17" />
+    </svg>
+  `,"trending-down":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="22 17 13.5 8.5 8.5 13.5 2 7" />
+      <polyline points="16 17 22 17 22 11" />
+    </svg>
+  `,"trending-up":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
+      <polyline points="16 7 22 7 22 13" />
+    </svg>
+  `,"triangle-alert":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </svg>
+  `,users:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  `,"volume-2":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+    </svg>
+  `,"volume-off":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      <line x1="22" x2="16" y1="9" y2="15" />
+      <line x1="16" x2="22" y1="9" y2="15" />
+    </svg>
+  `,wrench:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+    </svg>
+  `,x:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </svg>
+  `,"x-circle":s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="m15 9-6 6" />
+      <path d="m9 9 6 6" />
+    </svg>
+  `,zap:s`
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </svg>
+  `};var ot=Object.defineProperty,nt=Object.getOwnPropertyDescriptor,W=(o,e,t,i)=>{for(var r=i>1?void 0:i?nt(e,t):e,n=o.length-1,a;n>=0;n--)(a=o[n])&&(r=(i?a(e,t,r):a(r))||r);return i&&r&&ot(e,t,r),r};let D=class extends f{constructor(){super(...arguments),this.title="",this.description="",this.icon=""}createRenderRoot(){return this}_renderIcon(){return ee[this.icon]??null}render(){return s`
+      <style>
+        app-empty-state { display: block; }
+        .empty-state {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          padding: var(--space-xl);
+          text-align: center;
+        }
+        .empty-state-icon {
+          width: 48px;
+          height: 48px;
+          color: var(--muted);
+          margin-bottom: var(--space-lg);
+        }
+        .empty-state-icon svg {
+          width: 48px;
+          height: 48px;
+        }
+        .empty-state-title {
+          font-size: var(--text-lg);
+          font-weight: 600;
+          color: var(--text-strong);
+          margin-bottom: var(--space-sm);
+        }
+        .empty-state-description {
+          font-size: var(--text-sm);
+          color: var(--muted);
+          max-width: 320px;
+          margin: 0 auto;
+        }
+        .empty-state-actions {
+          margin-top: var(--space-lg);
+          display: flex;
+          gap: var(--space-sm);
+          justify-content: center;
+        }
+      </style>
+      <div class="empty-state">
+        <slot name="icon">
+          ${this.icon?s`<div class="empty-state-icon">${this._renderIcon()}</div>`:c}
+        </slot>
+        ${this.title?s`<div class="empty-state-title">${this.title}</div>`:""}
+        <slot>
+          ${this.description?s`<div class="empty-state-description">${this.description}</div>`:c}
+        </slot>
+        <div class="empty-state-actions">
+          <slot name="actions"></slot>
+        </div>
+      </div>
+    `}};W([g()],D.prototype,"title",2);W([g()],D.prototype,"description",2);W([g()],D.prototype,"icon",2);D=W([I("app-empty-state")],D);const at=Ee`
+  .btn-ghost {
+    display: inline-flex; align-items: center; gap: 3px;
+    background: none;
+    border: 1px solid transparent;
+    color: var(--btn-ghost-color, var(--muted));
+    cursor: pointer;
+    padding: 3px 6px;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    white-space: nowrap;
+    transition: all 0.15s var(--ease-out);
+  }
+  .btn-ghost:hover { color: var(--btn-ghost-hover-color, var(--accent-text)); border-color: var(--border); background: var(--btn-ghost-hover-bg, var(--bg-hover)); }
+  .btn-ghost:active { transform: translateY(0px); background: var(--bg-hover); }
+  .btn-ghost:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; }
+
+  .btn-primary {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    white-space: nowrap;
+    background: var(--btn-primary-bg, var(--accent));
+    color: var(--btn-primary-color, var(--accent-foreground, #fff));
+    border: 1px solid var(--btn-primary-border, var(--accent));
+    padding: 7px 16px;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 0 0 0 var(--accent-glow);
+    transition: all 0.18s var(--ease-out);
+  }
+  .btn-primary:hover {
+    opacity: 0.92;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1), 0 0 0 3px var(--accent-glow);
+    transform: translateY(-1px);
+  }
+  .btn-primary:active { transform: translateY(1px) scale(0.98); }
+  .btn-primary:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; box-shadow: none; transform: none; }
+  .btn-primary.btn-danger { background: var(--btn-danger-bg, var(--danger)); border-color: var(--btn-danger-border, var(--danger)); color: var(--btn-danger-color, #fff); }
+  .btn-primary.btn-danger:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.1), 0 0 0 3px var(--danger-subtle); }
+  .btn-primary.btn-success { background: var(--ok); border-color: var(--ok); color: var(--ok-foreground); }
+  .btn-primary.btn-success:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.1), 0 0 0 3px var(--ok-subtle); }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    white-space: nowrap;
+    background: var(--btn-secondary-bg, var(--secondary, var(--card)));
+    border: 1px solid var(--btn-secondary-border, var(--border));
+    color: var(--btn-secondary-color, var(--text));
+    padding: 7px 16px;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    cursor: pointer;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.04);
+    transition: all 0.18s var(--ease-out);
+  }
+  .btn:hover { background: var(--bg-hover); border-color: var(--border-strong); box-shadow: 0 2px 4px rgba(0,0,0,0.06); }
+  .btn:active { background: var(--bg-elevated); }
+  .btn:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; box-shadow: none; }
+
+  .btn-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: none;
+    border: 1px solid transparent;
+    cursor: pointer;
+    color: var(--muted);
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    transition: all 0.15s var(--ease-out);
+  }
+  .btn-icon:hover { color: var(--accent-text); background: var(--accent-subtle); border-color: color-mix(in srgb, var(--accent) 20%, transparent); }
+  .btn-icon:active { transform: scale(0.95); }
+  .btn-icon:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; }
+
+  .btn-sm {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 10px;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--secondary, var(--card));
+    color: var(--text);
+    white-space: nowrap;
+    transition: all 0.15s var(--ease-out);
+    box-shadow: 0 1px 1px rgba(0,0,0,0.04);
+  }
+  .btn-sm:hover { background: var(--accent); color: var(--accent-foreground, #fff); border-color: var(--accent); box-shadow: 0 2px 4px var(--accent-subtle); transform: translateY(-1px); }
+  .btn-sm:active { transform: translateY(0); }
+  .btn-sm:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; transform: none; }
+  .btn-sm.danger { color: var(--danger); border-color: var(--danger); }
+  .btn-sm.danger:hover { background: var(--danger); color: var(--danger-foreground); box-shadow: 0 2px 4px var(--danger-subtle); }
+
+  .btn-xs {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--secondary, var(--card));
+    color: var(--text);
+    transition: all 0.15s var(--ease-out);
+  }
+  .btn-xs:hover { background: var(--accent); color: var(--accent-foreground, #fff); border-color: var(--accent); }
+  .btn-xs:active { transform: translateY(0px); }
+
+  .btn-danger-outline {
+    display: inline-flex; align-items: center; gap: 4px;
+    color: var(--danger);
+    border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+    background: var(--danger-subtle);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s var(--ease-out);
+  }
+  .btn-danger-outline:hover { background: var(--danger); color: var(--danger-foreground); border-color: var(--danger); }
+  .btn-danger-outline:active { transform: translateY(0px); }
+`,lt={layers:"layout-grid","shield-check":"shield","sliders-horizontal":"settings","help-circle":"info","panel-right":"panel-right-open","arrow-up-right":"external-link","arrow-up":"send"},h=o=>s`<span class="icon">${ee[lt[o]||o]||ee.activity}</span>`,m=(o,e="muted")=>s`<app-badge variant=${e}>${o}</app-badge>`,dt=[{id:"INV-1042",title:"订单库 CPU 持续升高",resource:"mysql-orders-prod",agent:"Operations Agent",source:"数据库告警",status:"等待处理",severity:"严重",time:"18:06",summary:"慢 SQL 扫描量异常，执行计划待验证",events:12},{id:"INV-1041",title:"网络设备采集连续失败",resource:"core-switch-02",agent:"Operations Agent",source:"网络设备告警",status:"调查中",severity:"重要",time:"18:03",summary:"正在核对 SNMP 可达性与采集状态",events:8},{id:"INV-1040",title:"容量采集任务执行异常",resource:"Slide / collector",agent:"System Agent",source:"系统异常",status:"等待处理",severity:"重要",time:"17:58",summary:"错误定位完成，源码版本缺失，根因未确认",events:6},{id:"INV-1039",title:"应用服务器磁盘使用率升高",resource:"app-node-03",agent:"Operations Agent",source:"服务器告警",status:"已关闭",severity:"一般",time:"16:42",summary:"人工处置后，连续 15 分钟验证恢复",events:3}];class Me extends f{constructor(){super(),this.page=location.hash.slice(1)||"home",this.selected="INV-1042",this.tab="evidence",this.modal="",this.filter="全部",this.query="",this.items=structuredClone(dt),this.running=!1,this.notice="",this.chatMessages=[],this.runCount=1,this.mobileContext=!1,this.mode="V1",this.stateDemo="正常",this.verified=!1,this.dialogError="",window.addEventListener("hashchange",()=>{this.page=location.hash.slice(1)||"home"})}createRenderRoot(){return this}updated(e){e.has("modal")&&this.dialogError&&(this.dialogError="")}get totals(){return{waiting:this.items.filter(e=>e.status==="等待处理").length,running:this.items.filter(e=>e.status==="调查中").length,closed:this.items.filter(e=>e.status==="已关闭").length,events:this.items.reduce((e,t)=>e+t.events,0)}}get current(){return this.items.find(e=>e.id===this.selected)||this.items[0]}get isNetwork(){return this.current.resource==="core-switch-02"}get isServer(){return this.current.resource==="app-node-03"}go(e){this.mode=e==="future"?"V3":"V1",this.page=e,location.hash=e,this.notice="",this.stateDemo="正常"}openItem(e){this.selected=e,this.running=e==="INV-1041",this.runCount=1,this.verified=!1,this.tab="evidence",this.go("workspace")}finish(){this.running=!1,this.current.status="等待处理",this.notice="本次只读调查已完成并保存，业务问题仍待验证。",this.requestUpdate()}start(){this.running=!0,this.current.status="调查中",this.runCount++,this.notice="已创建新的只读执行。本原型用“模拟执行完成”演示返回结果。",this.requestUpdate()}render(){return s`<style>${at}</style><div class="review-strip"><span>产品评审原型 · 2026.10.11</span><span>全部为演示数据 · 不连接生产环境</span><div><button class="btn-ghost ${this.mode==="V1"?"selected":""}" @click=${()=>{this.mode="V1",this.go("home")}}>V1 调查平台</button><button class="btn-ghost ${this.mode==="V3"?"selected":""}" @click=${()=>{this.mode="V3",this.go("future")}}>长期演进预览</button></div></div>
+<div class="shell"><aside class="global-nav"><a class="brand" href="#home"><span class="brandmark">S</span>Slide<span class="brand-small">OPS</span></a><div class="env">${h("layers")}生产环境 <span class="dot"></span></div>
+<div class="nav-label">工作空间</div>${this.nav("home","关注事项","layout-dashboard")}${this.nav("workspace","AI 工作空间","sparkles")}${this.nav("chat","普通对话","message-square")}
+<div class="nav-label">资源与运维</div>${this.nav("resource","资源中心","database")}${this.nav("events","事件中心","bell")}
+<div class="nav-label">治理</div>${this.nav("policies","调查策略","sliders-horizontal")}${this.nav("future","行动与验证","shield-check",!0)}
+<div class="nav-bottom"><div class="nav-note">AI 只读调查<br><span>变更操作由人工控制</span></div><div class="user"><span class="avatar">M</span><span>Max<small>运维管理员</small></span></div></div></aside>
+<div class="main"><header class="topbar"><div class="crumb">工作空间 <span>/</span> <strong>${{home:"关注事项",workspace:"AI 工作空间",chat:"普通对话",resource:"资源中心",events:"事件中心",policies:"调查策略",future:"行动与验证"}[this.page]||"关注事项"}</strong></div><div class="top-right"><span class="live">${h("shield-check")}只读诊断已启用</span><button class="btn" @click=${()=>this.modal="guide"}>${h("help-circle")}评审导览</button></div></header>
+${this.notice?s`<div class="notice" role="status">${this.notice}<button class="btn-ghost" @click=${()=>this.notice=""}>关闭</button></div>`:c}
+${this.page==="home"?this.home():this.page==="workspace"?this.workspace():this.page==="chat"?this.chat():this.page==="resource"?this.resource():this.page==="events"?this.events():this.page==="policies"?this.policies():this.future()}
+</div></div>${this.dialog()}`}nav(e,t,i,r=!1){return s`<button aria-label=${t} class="nav-item ${this.page===e?"active":""}" @click=${()=>this.go(e)}>${h(i)}<span>${t}</span>${r?s`<small>后续</small>`:c}</button>`}heading(e,t,i=!0){return s`<div class="page-heading"><div><h1>${e}</h1><p>${t}</p></div>${i?s`<button class="btn-primary" @click=${()=>this.modal="new"}>${h("plus")}新建调查</button>`:c}</div>`}home(){return s`<section class="page home">${this.heading("先关注问题，再深入系统。",`今天，${this.items.length} 项调查汇聚到一个工作空间。AI 已整理证据，由你决定下一步。`)}
+<div class="summary-strip">${[["待你处理",String(this.totals.waiting).padStart(2,"0"),"证据已就绪，等待决策"],["正在调查",String(this.totals.running).padStart(2,"0"),"后台持续执行"],["今日已关闭",String(this.totals.closed).padStart(2,"0"),"已记录验证结果"],["聚合事件",String(this.totals.events),`已关联 ${this.items.length} 项调查`]].map(([e,t,i])=>s`<div><span>${e}</span><strong>${t}</strong><small>${i}</small></div>`)}</div>
+<div class="section-heading"><div><h2>需要关注</h2><p>按严重程度、持续时间和处理状态排序</p></div><div class="segmented">${["全部","等待处理","调查中","已关闭"].map(e=>s`<button class="btn-ghost ${this.filter===e?"selected":""}" @click=${()=>this.filter=e}>${e}</button>`)}</div></div>
+<div class="attention-grid"><div class="attention-list">${this.items.filter(e=>this.filter==="全部"||e.status===this.filter).map((e,t)=>s`<app-card class="attention ${e.severity==="严重"?"urgent":""}"><div class="attention-head"><div>${m(e.severity,e.severity==="严重"?"danger":e.severity==="重要"?"warn":"muted")}<span class="small">${e.source} · ${e.events} 个事件已聚合</span></div><span class="small">${e.time}</span></div><h3><button class="text-button" @click=${()=>this.openItem(e.id)}>${e.title}</button></h3><p>${e.summary}</p><div class="attention-foot"><span class="resource-label">${h("database")}${e.resource}</span><span>${m(e.status,e.status==="调查中"?"info":e.status==="已关闭"?"ok":"warn")}<button class="btn-ghost link" @click=${()=>this.openItem(e.id)}>查看调查 ${h("arrow-right")}</button></span></div></app-card>`)}</div>
+<aside class="home-aside"><app-card><span slot="header">调查边界</span><div class="boundary-icon">${h("shield-check")}</div><h3>让 AI 调查，让人做决定</h3><p>默认只读取授权资源。证据不足会明确标记，建议不会自动变成生产变更。</p><div class="rule-line"><span>自动触发</span><b>已开启</b></div><div class="rule-line"><span>自动修复</span><b>未开放</b></div><div class="rule-line"><span>单次执行上限</span><b>120 秒</b></div><button class="btn full" @click=${()=>this.go("policies")}>查看调查策略</button></app-card><div class="quiet-note"><h4>关注事项 · V1</h4><p>这里聚合已有事件与调查。预测风险、复杂事件关联在后续阶段加入。</p></div><button class="btn-ghost link" @click=${()=>this.go("chat")}>只想问个问题？开始普通对话 ${h("arrow-right")}</button></aside></div></section>`}workspace(){const e=this.current,t=e.agent==="System Agent",i=e.status==="已关闭";return this.stateDemo==="权限不足"?s`<section class="page">${this.stateControls()}${this.exceptionState()}</section>`:s`<div class="workspace"><aside class="work-list"><div class="list-title"><h2>调查</h2><button class="btn-ghost" aria-label="新建调查" @click=${()=>this.modal="new"}>${h("plus")}</button></div><input aria-label="搜索调查" class="search" placeholder="搜索调查或资源…" .value=${this.query} @input=${r=>this.query=r.target.value}><div class="list-count">全部调查 <span>${this.items.length}</span></div>${this.items.filter(r=>(r.title+r.resource).includes(this.query)).map(r=>s`<button class="work-item ${r.id===e.id?"active":""}" @click=${()=>this.openItem(r.id)}><div><span class="state-dot ${r.status==="调查中"?"blue":r.status==="已关闭"?"green":""}"></span><small>${r.id}</small><small>${r.time}</small></div><strong>${r.title}</strong><span>${r.resource}</span><small>${r.status}</small></button>`)}${this.items.some(r=>(r.title+r.resource).includes(this.query))?c:s`<app-empty-state title="未找到调查" description="换一个关键词试试"></app-empty-state>`}<button class="btn-ghost full" @click=${()=>this.go("chat")}>${h("message-square")}普通对话历史</button></aside>
+<section class="investigation"><div class="investigation-heading"><div class="title-meta"><span>${e.id}</span>${m("只读调查","info")}<span>${e.source}</span></div><h1>${e.title}</h1><div class="investigation-meta"><span>${h(t?"cpu":"database")}${e.resource}</span><span>${e.agent}</span><button class="btn-ghost" @click=${()=>this.mobileContext=!this.mobileContext}>${h("panel-right")}证据与结论</button></div><div class="three-states"><span>本次执行 <b>${this.running?"运行中":this.current.status==="已关闭"?"已完成":"已结束"}</b></span><span>调查 <b>${e.status}</b></span><span>业务问题 <b class=${i?"success":"warning"}>${i?"已验证恢复":"未确认解决"}</b></span></div></div>
+<div class="case-content">${this.stateControls()}${this.stateDemo!=="正常"?this.exceptionState():s`
+<div class="timeline-event">${h("bell")} ${e.time} · ${e.events?`${e.events} 个同源事件已聚合，启动${t?"系统异常":"资源异常"}调查`:"用户发起调查，已带入目标与资源上下文"}</div>
+<div class="agent-heading"><span class="agent-avatar">${h("sparkles")}</span><strong>${e.agent}</strong><span>执行 ${String(this.runCount).padStart(2,"0")}</span>${m(this.running?"运行中":"执行已结束",this.running?"info":"ok")}</div>
+<p class="agent-intro">${t?"已检查任务失败记录、请求链路与部署信息。当前存在源码版本证据缺口，以下结果保留不确定性。":e.id==="INV-1041"?"已确认采集数据缺失，正在区分设备不可达与采集凭据问题。未将数据缺失视为设备故障。":this.isServer?"已检查磁盘增长趋势与人工处理记录。清理过期日志后，连续 15 分钟指标处于正常范围。":"已对比异常时段与前一时段的指标。CPU 升高与慢 SQL 扫描量增加同时发生，但仍需执行计划证明因果关系。"}</p>
+<app-card class="execution"><div class="section-heading compact"><strong>调查过程</strong><span class="small">${this.running?"执行中":"4 步已记录"} · 可审计的工具与阶段摘要</span></div>${(t?[["已完成","读取任务执行记录","发现 6 次相同错误 · 只读"],["已完成","关联 request ID","定位 collector 调用链 · 只读"],["已完成","读取部署信息","部署 Commit 可用 · 只读"],["证据缺失","核对源码版本","对应版本快照不可用"]]:this.isNetwork?[["已完成","读取采集记录","8 次失败 · 同一设备"],["已完成","核对凭据元信息","不读取凭据明文"],["待补充","关联网络状态","设备实际状态未知"],[this.running?"执行中":"待补充","读取 SNMP 可达性","只读诊断 · 受限网络目标"]]:this.isServer?[["已完成","读取磁盘历史","使用率峰值 91%"],["已完成","关联日志增长","应用日志目录持续增长"],["已完成","记录人工处理","管理员清理已过期日志"],["已完成","验证恢复窗口","连续 15 分钟低于阈值"]]:[["已完成","读取指标时间窗口","17:45–18:05 · CPU、QPS、连接数"],["已完成","采集慢 SQL 摘要","SQL 已脱敏 · 取得指纹"],["已完成","检查锁等待","未见显著锁等待"],[this.running?"执行中":"待补充","核对执行计划",this.running?"只读工具正在执行":"生产库计划未采集，未执行变更"]]).map(([r,n,a])=>s`<details class="tool-step"><summary><span class="step-check ${r==="已完成"?"done":""}">${r==="已完成"?"✓":r==="执行中"?"◌":"!"}</span><span><b>${n}</b><small>${a}</small></span><span class="small">${r}</span><span>⌄</span></summary><div class="tool-detail">工具结果保留获取时间、数据窗口、资源与执行 ID。${r==="已完成"?"本步骤已形成证据快照。":"本步骤不能作为根因已确认的依据。"}</div></details>`)}</app-card>
+<div class="finding"><div class="finding-top">${h("file-text")}<strong>阶段结论</strong>${m(i?"恢复已验证":"根因待验证",i?"ok":"warn")}</div><h2>${t?"采集链路异常，尚不能定位到代码根因":e.id==="INV-1041"?"采集缺失已确认，设备状态仍未知":this.isServer?"人工处置后，磁盘使用率已恢复":"优先验证 SQL 扫描量异常"}</h2><p>${t?"失败记录集中于同一任务类型。缺少与部署 Commit 一致的源码快照，不能将调用位置等同于缺陷原因。":this.isNetwork?"当前证据只能确认采集失败，设备是否故障还需可达性结果。":this.isServer?"已记录人工处理及后续指标验证。问题恢复与根因判断分别留存。":"当前证据支持优先排查 SQL 执行路径；业务流量增长与锁竞争暂不受现有证据支持。"}</p><div class="citations">${["E01","E02","E03"].map(r=>s`<button class="btn-ghost" @click=${()=>{this.tab="evidence",this.modal=r}}>${h("paperclip")}${r}</button>`)}</div></div>
+<div class="next-step"><h4>建议下一步</h4><p>${t?"补齐部署版本对应的源码快照后继续调查。":this.isNetwork?"继续读取 SNMP 可达性与采集链路状态，不修改设备配置。":this.isServer?"如再次出现异常，可重新收集新的时间窗口证据。":"读取对应 SQL 的 EXPLAIN，核对索引选择与扫描行数。不会执行 SQL 变更。"}</p>${this.running?s`<button class="btn" @click=${()=>this.finish()}>模拟执行完成</button>`:s`<button class="btn" @click=${()=>this.start()}>${h("search")}继续收集证据</button>`}<button class="btn-ghost" @click=${()=>this.modal="close"}>记录处理结果</button></div>
+`}</div><div class="composer"><textarea aria-label="继续调查" placeholder=${this.running?"本次执行中，可观察或取消；结束后可继续追问":t?"继续这个调查，例如：核对最新采集失败记录…":this.isNetwork?"继续这个调查，例如：检查 SNMP 可达性…":this.isServer?"继续这个调查，例如：查看新的磁盘趋势…":"继续这个调查，例如：检查最近 24 小时的慢 SQL…"} .disabled=${this.running} id="followup"></textarea><div><span>${h("lock")}仅使用已授权的只读工具</span>${this.running?s`<button class="btn" @click=${()=>this.modal="cancel"}>取消本次执行</button>`:s`<button class="btn-primary" @click=${()=>{this.querySelector("#followup").value.trim()?this.start():this.notice="请输入继续调查的目标，或使用上方“继续收集证据”。"}}>继续调查 ${h("arrow-up")}</button>`}</div></div></section>
+<aside class="context ${this.mobileContext?"mobile-open":""}"><div class="context-heading"><h2>调查上下文</h2><span>实时关联</span></div><div class="context-tabs">${[["evidence","证据"],["hypotheses","假设"],["result","结论"]].map(([r,n])=>s`<button class="btn-ghost ${this.tab===r?"selected":""}" @click=${()=>this.tab=r}>${n}</button>`)}</div><div class="context-body">${this.tab==="evidence"?this.evidence(t):this.tab==="hypotheses"?this.hypotheses(t):this.result(t)}<div class="context-section"><h4>关联资源</h4><button class="resource-link" @click=${()=>this.go("resource")}>${h(t?"cpu":"database")}<span>${e.resource}<small>${t?"平台组件":"生产环境 · 有读取权限"}</small></span>${h("arrow-up-right")}</button></div><div class="context-section"><h4>触发上下文</h4><dl><dt>来源</dt><dd>${e.source}</dd><dt>聚合事件</dt><dd>${e.events} 条 <button class="btn-ghost link" @click=${()=>this.go("events")}>查看</button></dd><dt>发生窗口</dt><dd>17:45–18:05 CST</dd><dt>执行身份</dt><dd>受限诊断主体</dd><dt>预算</dt><dd>120 秒 / 20 次工具</dd></dl></div></div></aside></div>`}stateControls(){return s`<div class="state-controls"><span>评审状态</span><select aria-label="评审状态" .value=${this.stateDemo} @change=${e=>this.stateDemo=e.target.value}>${["正常","连接中断","结果未知","权限不足","加载中"].map(e=>s`<option>${e}</option>`)}</select></div>`}exceptionState(){const e={连接中断:["实时连接已断开","后台执行不受影响。重连后从已保存的事件继续展示。","重新连接"],结果未知:["本次执行结果未知","模型请求已发出，但完成状态未确认。不会自动重复付费调用。","人工确认后重新调查"],权限不足:["你无权查看此调查内容","关联资源的读取权限已被撤销，证据与摘要同时隐藏。","返回关注事项"]};if(this.stateDemo==="加载中")return s`<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton short"></div>`;const[t,i,r]=e[this.stateDemo];return s`<app-empty-state title=${t} description=${i}><button slot="actions" class="btn" @click=${()=>{this.stateDemo==="权限不足"?this.go("home"):this.stateDemo==="结果未知"?(this.stateDemo="正常",this.start()):this.stateDemo="正常"}}>${r}</button></app-empty-state>`}evidence(e){return s`<h4 class="subheading">证据快照 <span>3</span></h4>${(e?[["E01","任务执行记录","6 次失败 / 相同错误码","good"],["E02","请求关联记录","correlation ID 已匹配","good"],["E03","源码版本","部署版本快照缺失","gap"]]:this.isNetwork?[["E01","采集失败记录","连续 8 次未返回数据","good"],["E02","设备配置元信息","目标与凭据引用存在","good"],["E03","SNMP 可达性","尚未确认设备响应","gap"]]:this.isServer?[["E01","磁盘趋势","使用率峰值 91%","good"],["E02","人工处理记录","已清理过期日志","good"],["E03","恢复验证","15 分钟低于阈值","good"]]:[["E01","CPU 与吞吐量","CPU 92% · QPS +3%","good"],["E02","慢 SQL 统计","扫描行数增长 8.4 倍","good"],["E03","执行计划","尚未采集，无法核实索引","gap"]]).map(([t,i,r,n])=>s`<button class="evidence-item" @click=${()=>this.modal=t}><div><span class="evidence-id">${t}</span>${m(n==="good"?"已获取":"缺失",n==="good"?"ok":"warn")}</div><strong>${i}</strong><span>${r}</span><small>${n==="good"?"采集 18:06 · 查看来源与时间窗口":"补充后才可用于判断"}</small></button>`)}${!e&&!this.isNetwork&&!this.isServer?s`<div class="mini-chart"><div><b>CPU 使用率</b><span>92%</span></div>${this.chart()}<div class="chart-label"><span>17:45</span><span>18:05</span></div><small>演示数据 · 阈值 80%</small></div>`:c}`}chart(){return s`<svg viewBox="0 0 400 110" class="chart" role="img" aria-label="演示 CPU 曲线从 30% 升至 92%"><path d="M0 90H400M0 50H400M0 10H400" fill="none" stroke="var(--border)"/><path d="M0 28H400" fill="none" stroke="var(--warn)" stroke-dasharray="5 5"/><path d="M0 85L25 81L50 86L75 78L100 82L125 75L150 70L175 74L200 58L225 35L250 42L275 19L300 24L325 13L350 17L375 9L400 12" fill="none" stroke="var(--accent)" stroke-width="3"/></svg>`}hypotheses(e){return s`<h4 class="subheading">候选原因</h4>${(e?[["部署配置异常","待验证","缺少完整的配置变更记录"],["源码缺陷","证据不足","没有匹配 Commit 的源码快照"]]:this.isNetwork?[["网络链路不可达","待验证","支持：E01 采集失败；缺口：E03"],["凭据过期","证据不足","仅元信息存在，不代表认证成功"]]:this.isServer?[["日志保留策略失效","待验证","日志增长已观察，保留策略待人工核对"]]:[["SQL 执行路径退化","待验证","支持：E02 扫描量增大；缺口：E03"],["业务流量增长","暂不支持","反面：E01 QPS 仅增加 3%"],["锁竞争","暂不支持","反面：工具未发现显著锁等待"]]).map(([t,i,r])=>s`<div class="hypothesis"><strong>${t}</strong>${m(i,i==="待验证"?"warn":"muted")}<p>${r}</p></div>`)}<p class="small">“引用已绑定”表示来源可追溯，不代表因果关系已证实。</p>`}result(e){return s`<h4 class="subheading">调查结论 · 版本 ${this.runCount}</h4>${m("根因尚未验证","warn")}<h3>${e?"证据不足，保留开放调查":this.isNetwork?"采集缺失已确认，设备状态待核实":this.isServer?"人工处理后恢复已验证":"SQL 扫描量异常是优先验证方向"}</h3><p>已确认事实、候选原因与处理结果分别记录。</p><div class="rule-line"><span>本次执行</span><b>${this.running?"进行中":"已结束"}</b></div><div class="rule-line"><span>根因验证</span><b>待验证</b></div><div class="rule-line"><span>业务恢复</span><b>${this.current.status==="已关闭"?"已验证":"未确认"}</b></div><button class="btn full" @click=${()=>this.modal="feedback"}>反馈结论准确性</button><button class="btn-ghost full" @click=${()=>this.modal="close"}>记录处理与验证结果</button>`}chat(){return s`<section class="chat-page"><div class="chat-top"><h2>普通对话</h2><button class="btn" @click=${()=>this.modal="convert"}>转为调查 ${h("arrow-up-right")}</button></div><div class="chat-body"><span class="big-agent">${h("sparkles")}</span><h1>从一个问题开始。</h1><p>解释概念、讨论思路，或把需要跟踪的问题转为调查。</p>${this.chatMessages.length?this.chatMessages.map((e,t)=>s`<div class="chat-message ${t%2?"answer":"question"}"><strong>${t%2?"Slide 助手":"你"}</strong><p>${e}</p></div>`):s`<div class="suggestions">${["解释 InnoDB Buffer Pool","如何分析数据库 CPU 异常？","锁等待与慢 SQL 有什么关系？"].map(e=>s`<button class="btn" @click=${()=>this.ask(e)}>${e}${h("arrow-up-right")}</button>`)}</div>`}</div><div class="composer chat-composer"><textarea id="question" aria-label="普通对话内容" placeholder="直接提问，无需创建调查…"></textarea><div><span>普通对话 · 不自动调用生产工具</span><button class="btn-primary" @click=${()=>{const e=this.querySelector("#question").value.trim();e&&(this.ask(e),this.querySelector("#question").value="")}}>发送 ${h("arrow-up")}</button></div></div></section>`}ask(e){this.chatMessages=[...this.chatMessages,e,e.includes("Buffer")?"InnoDB Buffer Pool 是用于缓存数据页和索引页的内存区域。它减少磁盘读取；分析命中率时还应结合工作集、物理读与内存压力。":"这类问题适合先确认异常时间窗口，再检查吞吐量、慢 SQL、锁等待和执行计划。以上是原型示例回答；需要资源证据时，可将本对话转为调查。"]}resource(){return this.current.agent==="System Agent"||this.isNetwork||this.isServer?this.otherResource():s`<section class="page">${this.heading("mysql-orders-prod","资源中心 / 数据库实例 / MySQL 8.0",!1)}<div class="resource-toolbar">${m("运行中","ok")}${m("存在严重告警","danger")}<span>生产环境 · 订单业务 · 有读取权限</span><button class="btn-primary" @click=${()=>{this.modal="new",this.notice="已带入资源 mysql-orders-prod 与时间范围 17:45–18:05。"}}>针对当前时段调查</button></div><div class="resource-layout"><app-card><span slot="header">CPU 使用率</span><div class="metric-number">92<small>%</small></div>${this.chart()}<div class="chart-label"><span>17:45</span><span>18:05</span></div></app-card><app-card><span slot="header">关联 AI 调查</span>${m("等待处理","warn")}<h2>订单库 CPU 持续升高</h2><p>慢 SQL 扫描量异常，执行计划待验证。</p><p class="small">INV-1042 · 已聚合 12 个事件</p><button class="btn" @click=${()=>this.openItem("INV-1042")}>打开已有调查 ${h("arrow-right")}</button></app-card></div><div class="info-banner">业务页面与 AI 工作空间引用同一调查。相同事件不会再次启动重复分析。</div><app-card><span slot="header">资源关联</span><div class="relations"><span>${h("database")}mysql-orders-prod</span><span>运行于 →</span><span>${h("server")}db-host-01</span><span>连接至 →</span><span>${h("network")}core-switch-02</span></div><p class="small">关系来自已维护的资源信息。V1 只使用已有关系，不自动推断拓扑。</p></app-card></section>`}otherResource(){const e=this.current;return s`<section class="page">${this.heading(e.resource,e.agent==="System Agent"?"平台组件 / 运行上下文":"资源中心 / 资源详情",!1)}<div class="resource-layout"><app-card><span slot="header">资源上下文</span><h2>${e.resource}</h2><dl><dt>类型</dt><dd>${e.source}</dd><dt>关联事件</dt><dd>${e.events} 条</dd><dt>观测质量</dt><dd>${this.isServer?"恢复已验证":"存在证据缺口"}</dd></dl><p>资源观测与调查状态分别记录，数据缺失不会被当作正常。</p></app-card><app-card><span slot="header">已有调查</span>${m(e.status,"info")}<h2>${e.title}</h2><p>${e.summary}</p><button class="btn" @click=${()=>this.openItem(e.id)}>打开已有调查</button></app-card></div></section>`}events(){return s`<section class="page">${this.heading("事件中心","原始事实保留，重复异常聚合。同一个问题拥有连续的调查上下文。",!1)}<div class="info-banner">29 个事件 → 4 项调查。原始告警仍可独立确认与关闭，调查状态不会代替告警恢复状态。</div><div class="event-list">${this.items.map(e=>s`<app-card><div class="event-row"><span class="event-count">${e.events}<small>条事件</small></span><div><div class="small">${e.source} · ${e.time}</div><h3>${e.title}</h3><p>${e.resource}</p></div><div>${m(e.status,e.status==="已关闭"?"ok":"warn")}<p class="small">${e.id}</p></div><button class="btn" @click=${()=>this.openItem(e.id)}>查看调查 ${h("arrow-right")}</button></div></app-card>`)}</div></section>`}policies(){return s`<section class="page">${this.heading("调查策略","预置策略控制何时调查、能看什么，以及最多消耗多少资源。",!1)}<div class="info-banner">V1 预置配置视图。以下为建议初始值，正式启用需结合故障样本校准；这里可模拟停用与启用。</div><div class="policy-grid">${[["Operations Agent","基础设施诊断","数据库、服务器、网络设备告警","受限资源读取、指标与 SQL 摘要"],["System Agent","Slide 自身诊断","API 5xx、任务与采集持续失败","脱敏日志、任务状态、匹配版本源码"]].map(([e,t,i,r])=>s`<app-card><span slot="header">${e}</span><h3>${t}</h3><p>${i}</p><dl><dt>工具范围</dt><dd>${r}</dd><dt>自动执行</dt><dd>只读</dd><dt>去重窗口</dt><dd>5 分钟，活动调查继续关联</dd><dt>单次超时</dt><dd>120 秒</dd><dt>工具 / 模型请求</dt><dd>20 / 8 次</dd><dt>Token 上限</dt><dd>32,000，含重试</dd></dl><button class="btn" @click=${n=>{n.currentTarget.textContent=n.currentTarget.textContent.includes("停用")?"启用策略":"停用策略",this.notice="策略状态已在原型中变更，未修改实际配置。"}}>停用策略</button></app-card>`)}</div><app-card><span slot="header">全局保护</span><div class="policy-facts"><div><h3>最多 4 个并发</h3><p>手动任务预留 1 个名额，防止告警占满。</p></div><div><h3>每小时 20 次自动调查</h3><p>超限保留事件并标明抑制原因。</p></div><div><h3>禁止递归触发</h3><p>调查引擎自身故障进入事件中心，不再触发调查。</p></div></div></app-card></section>`}future(){return s`<section class="page">${this.heading("从调查走向可验证的行动","长期演进预览 · V3 方向，明确不属于 V1 上线范围。",!1)}<div class="future-banner">${h("shield-check")}人工审批只授权指定版本、资源、参数和有效期。AI 建议本身不构成授权。</div><div class="action-flow">${["调查结论","变更计划","风险与审批","受控执行","效果验证"].map((e,t)=>s`<span class=${t===4&&this.verified?"active":""}><b>0${t+1}</b>${e}</span>`)}</div><div class="resource-layout"><app-card><span slot="header">变更计划 · 示例 ACT-028</span><div class="title-meta">${m("需要人工审批","warn")}<span>计划版本 3</span></div><h2>验证候选索引的性能收益</h2><p>先在隔离验证环境评估执行计划和写入开销。生产 DDL 需另行审批。</p><dl><dt>目标</dt><dd>orders 验证副本</dd><dt>前置条件</dt><dd>快照就绪、存储余量充足</dd><dt>预期结果</dt><dd>扫描行数降低，写入延迟不退化</dd><dt>失败处理</dt><dd>停止后续操作，保留执行事实</dd></dl><div class="action-buttons"><button class="btn" @click=${()=>this.modal="future-plan"}>查看审批边界</button><button class="btn-primary" @click=${()=>{this.verified=!0,this.notice="已切换到未来验证结果示例，没有执行任何实际变更。"}}>预览验证结果</button></div></app-card><app-card><span slot="header">执行效果验证</span>${this.verified?s`${m("验证通过 · 示例","ok")}<h2>先证明效果，再关闭问题</h2><div class="rule-line"><span>扫描行数</span><b>84 万 → 2.1 万</b></div><div class="rule-line"><span>查询 P95</span><b>1,240 → 180 ms</b></div><div class="rule-line"><span>写入延迟</span><b>无显著退化</b></div><p>隔离环境验证通过，不等于生产问题已解决。生产执行仍需独立审批与验证。</p>`:s`<app-empty-state title="等待验证" description="执行结束后，按预先定义的窗口与阈值对比结果。"></app-empty-state>`}</app-card></div><app-card><span slot="header">V2 系统认知先行</span><div class="policy-facts"><div><h3>已有资源关系</h3><p>关系有来源、有效期和权限。</p></div><div><h3>可计算的行为基线</h3><p>标注样本窗口与异常缺口。</p></div><div><h3>经验证的调查案例</h3><p>人工确认后进入知识候选，审核后发布。</p></div></div></app-card></section>`}dialog(){let e=c,t="";const i=this.modal;if(!i)return c;if(i==="new"||i==="convert")t=i==="convert"?"将普通对话转为调查":"发起只读调查",e=s`<p class="small">${i==="convert"?"保留原会话和消息，新增调查目标与资源边界。":"只需说明目标，执行时仅使用当前授权的工具。"}</p><app-form-field label="调查目标"><input id="new-title" aria-label="调查目标" placeholder="例如：分析订单库 CPU 升高原因" .value=${i==="convert"?"进一步分析数据库 CPU 异常":""}></app-form-field><app-form-field label="关联资源"><select id="new-resource" aria-label="关联资源" @change=${r=>{this.querySelector("#new-agent").value=r.target.value==="Slide 平台"?"System Agent":"Operations Agent"}}><option>mysql-orders-prod</option><option>app-node-03</option><option>core-switch-02</option><option>Slide 平台</option></select></app-form-field><app-form-field label="Agent"><select id="new-agent" aria-label="Agent"><option>Operations Agent</option><option>System Agent</option></select></app-form-field><app-form-field label="时间窗口"><input aria-label="时间窗口" value="2026-10-11 17:45–18:05 CST"></app-form-field><p class="small">目标最多 200 字 · 120 秒 / 20 次工具 / 32,000 Token</p><div slot="footer"><button class="btn" @click=${()=>this.modal=""}>取消</button><button class="btn-primary" @click=${()=>{const r=this.querySelector("#new-title").value.trim();if(!r||r.length>200){this.dialogError="请填写 1–200 字的调查目标。";return}const n=this.querySelector("#new-resource").value,a=this.querySelector("#new-agent").value;if(n==="Slide 平台"!=(a==="System Agent")){this.dialogError="Agent 与资源类型不匹配，请调整选择。";return}this.dialogError="";const d="INV-"+(1043+this.items.length-4);this.items=[{id:d,title:r,resource:n,agent:a,source:i==="convert"?"对话转入":"手动发起",status:"调查中",severity:"一般",time:"18:10",summary:"已创建，正在收集证据",events:0},...this.items],this.modal="",this.selected=d,this.go("workspace"),this.running=!0}}>开始调查</button></div>`;else if(i.startsWith("E0")){const r=this.current.agent==="System Agent";t=`证据 ${i} · ${i==="E03"&&!this.isServer?"缺失":"已获取"}`,e=s`<dl><dt>来源</dt><dd>${r?"Slide 平台观测":this.isNetwork?"网络设备采集记录":this.isServer?"服务器监控与人工记录":"数据库指标 / 慢 SQL 快照"}</dd><dt>资源</dt><dd>${this.current.resource}</dd><dt>数据窗口</dt><dd>2026-10-11 17:45–18:05 CST</dd><dt>获取时间</dt><dd>2026-10-11 18:06 CST</dd><dt>执行</dt><dd>${this.current.id} / Run 01</dd><dt>访问范围</dt><dd>授权诊断人员 · 敏感字段已脱敏</dd></dl><div class="evidence-preview">${i==="E03"&&!this.isServer?"证据缺失：不能用于确认根因。":this.isNetwork?`SNMP collection attempts: 8
+collection_status: failed
+device_status: unknown`:this.isServer?`disk_peak: 91%
+recovery_window: 15 minutes
+verification: operator_confirmed`:r?`task_type: capacity.collect
+failed_count: 6
+quality: partial`:i==="E01"?`CPU peak: 92%
+QPS change: +3%
+observation_quality: good`:`SQL fingerprint: 7fa2…
+rows_examined: 840000
+baseline_rows: 100000
+SQL literals: redacted`}</div><p class="small">快照引用保证可追溯，不保证 AI 的因果判断正确。此处均为演示值。</p>`}else i==="cancel"?(t="取消本次执行",e=s`<p>停止后续模型调用与工具调度。已经开始的外部读取可能仍会返回；已获取的证据将保留。</p><div slot="footer"><button class="btn" @click=${()=>this.modal=""}>继续观察</button><button class="btn-primary" @click=${()=>{this.running=!1,this.modal="",this.current.status="等待处理",this.notice="演示：取消已确认，已有证据保留，调查仍待处理。"}}>确认取消</button></div>`):i==="close"?(t="记录处理与验证结果",e=s`<p>执行完成不会自动关闭问题。请记录实际处理与验证依据。</p><app-form-field label="处理记录"><textarea id="resolution" aria-label="处理记录" placeholder="说明实际采取的操作…"></textarea></app-form-field><app-form-field label="验证依据"><textarea id="verification" aria-label="验证依据" placeholder="例如：处理后 15 分钟 CPU 持续低于阈值，附指标引用…"></textarea></app-form-field><div slot="footer"><button class="btn" @click=${()=>{this.modal="",this.notice="已保留当前调查，业务问题仍待验证。"}}>保留开放</button><button class="btn-primary" @click=${()=>{if(!this.querySelector("#resolution").value.trim()||!this.querySelector("#verification").value.trim()){this.dialogError="处理记录与验证依据均为必填。";return}this.current.status="已关闭",this.running=!1,this.modal="",this.notice="演示：已保存人工处理记录和验证依据，调查已关闭。"}}>确认验证并关闭</button></div>`):i==="feedback"?(t="反馈调查结论",e=s`<p>反馈会与当前结果版本关联，不会直接变成可信知识。</p><app-form-field label="反馈类型"><select aria-label="反馈类型"><option>方向有帮助，根因仍待验证</option><option>结论不准确</option><option>证据不完整</option></select></app-form-field><app-form-field label="说明"><textarea aria-label="反馈说明" placeholder="补充你的观察…"></textarea></app-form-field><div slot="footer"><button class="btn-primary" @click=${()=>{this.modal="",this.notice="演示：反馈已关联当前结果版本。"}}>保存反馈</button></div>`):i==="future-plan"?(t="审批边界 · 长期设计",e=s`<p>审批绑定计划版本、参数摘要、目标资源、执行主体与有效期。任一项变化都使原审批失效。</p><p>独立执行器重新校验前置条件和授权；不可逆操作不得声称能够自动回滚。</p><p>V1 仅提供调查与建议，不会出现实际执行入口。</p>`):(t="评审导览",e=s`<ol><li>关注事项：核对信息层级与优先级。</li><li>AI 工作空间：查看调查过程、证据、假设与结论。</li><li>点 E01：查看来源、时间窗口和访问边界。</li><li>继续调查 → 取消，或模拟执行完成。</li><li>切换 System Agent 调查，检查证据不足场景。</li><li>普通对话 → 转为调查。</li><li>资源 / 事件中心：回到同一个调查。</li><li>长期演进预览：审核行动与验证方向。</li></ol><p class="small">本稿用于产品与流程评审。状态切换是内存演示，刷新会重置。策略、模型和生产资源均未实际连接。</p>`);return s`<app-dialog .open=${!0} title=${t} size="md" @app-dialog-close=${()=>{this.modal="",this.dialogError=""}}>${this.dialogError?s`<p class="warning" role="alert">${this.dialogError}</p>`:c}${e}</app-dialog>`}}ne(Me,"properties",{page:{},selected:{},tab:{},modal:{},filter:{},query:{},items:{},running:{},notice:{},chatMessages:{},runCount:{},mobileContext:{},mode:{},stateDemo:{},verified:{},dialogError:{}});customElements.define("slide-prototype",Me);
+</script>
+  <style>:root{font-family:-apple-system,BlinkMacSystemFont,PingFang SC,Microsoft YaHei,sans-serif;color:var(--text);background:var(--bg);font-synthesis:none;--accent:#409eff;--accent-text:#176cc0;--accent-foreground:#082947;--accent-subtle:#edf6ff;--accent-glow:#409eff20;--text:#334155;--text-strong:#16283e;--muted:#66758a;--border:#e0e7ef;--border-strong:#c3cfdc;--bg:#f7f9fc;--bg-elevated:#fbfcfe;--bg-hover:#eef2f7;--card:#fff;--secondary:#fff;--ok:#237855;--ok-subtle:#edf7f1;--warn:#946210;--warn-subtle:#fff6e6;--danger:#b94646;--danger-subtle:#fff0ef;--info:#176cc0;--info-subtle:#edf6ff;--space-xs:4px;--space-sm:8px;--space-md:12px;--space-lg:20px;--space-xl:32px;--radius-sm:6px;--radius-md:10px;--radius-lg:16px;--radius-full:100px;--text-xs:11px;--text-sm:13px;--text-md:14px;--text-lg:17px;--ease-out:cubic-bezier(.2,.8,.2,1);--shadow-md:0 8px 30px #1329460a;--shadow-lg:0 20px 80px #13294624}*{box-sizing:border-box}body{margin:0;font-size:13px}button,input,textarea,select{font:inherit}button,a{-webkit-tap-highlight-color:transparent}button{cursor:pointer}button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent-text);outline-offset:3px}a{color:inherit;text-decoration:none}h1,h2,h3,h4,p{margin:0}h1{font-size:27px;letter-spacing:-.8px;line-height:1.4;color:var(--text-strong)}h2{font-size:17px;line-height:1.5;color:var(--text-strong)}h3{font-size:16px;line-height:1.6;color:var(--text-strong)}h4{font-size:13px;color:var(--text-strong)}p{line-height:1.8;color:var(--muted)}small,.small{font-size:11px;color:var(--muted)}.icon{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;vertical-align:middle}.icon svg{width:18px;height:18px;stroke-width:1.7}.review-strip{height:34px;padding:0 var(--space-lg);display:flex;align-items:center;gap:var(--space-xl);border-bottom:1px solid var(--border);background:var(--bg-elevated);color:var(--muted);font-size:11px}.review-strip>div{margin-left:auto;display:flex;gap:var(--space-sm)}.review-strip .btn-ghost{font-size:11px}.shell{display:grid;grid-template-columns:204px minmax(0,1fr);min-height:calc(100dvh - 34px)}.global-nav{background:var(--card);border-right:1px solid var(--border);padding:var(--space-lg) var(--space-md);display:flex;flex-direction:column;gap:var(--space-xs)}.brand{display:flex;align-items:center;gap:var(--space-sm);font-size:26px;letter-spacing:-1px;font-weight:750;color:var(--text-strong);padding:var(--space-xs) var(--space-sm) var(--space-lg)}.brandmark{background:var(--accent);color:var(--accent-foreground);width:30px;height:32px;border-radius:var(--radius-sm);font-size:24px;text-align:center;font-style:italic}.brand-small{font-size:10px;letter-spacing:2px;color:var(--muted);margin-top:var(--space-sm)}.env{display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-md);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:var(--space-lg);font-size:12px}.dot{height:6px;width:6px;background:var(--ok);border-radius:var(--radius-full);margin-left:auto}.nav-label{font-size:10px;color:var(--muted);padding:var(--space-lg) var(--space-md) var(--space-sm)}.nav-item{border:0;background:none;display:flex;align-items:center;gap:var(--space-md);color:var(--muted);text-align:left;padding:var(--space-md);border-radius:var(--radius-sm);width:100%;font-size:13px}.nav-item.active{background:var(--accent-subtle);color:var(--accent-text);font-weight:600}.nav-item:hover{background:var(--bg-hover)}.nav-item small{margin-left:auto;font-size:9px}.nav-bottom{margin-top:auto;padding-top:var(--space-xl)}.nav-note{padding:var(--space-md);color:var(--text);font-size:11px;line-height:1.8}.nav-note span{color:var(--muted)}.user{border-top:1px solid var(--border);padding:var(--space-lg) var(--space-sm) var(--space-xs);display:flex;gap:var(--space-md);align-items:center}.avatar{background:var(--bg-hover);width:30px;height:30px;border-radius:var(--radius-full);display:grid;place-items:center;font-weight:600}.user small{display:block;margin-top:var(--space-xs)}.main{min-width:0}.topbar{height:64px;background:var(--card);border-bottom:1px solid var(--border);padding:0 var(--space-xl);display:flex;align-items:center;justify-content:space-between;gap:var(--space-md)}.crumb{display:flex;gap:var(--space-md);color:var(--muted);font-size:12px}.crumb strong{font-weight:500;color:var(--text)}.top-right{display:flex;gap:var(--space-lg);align-items:center}.live{font-size:11px;color:var(--ok);display:flex;align-items:center;gap:var(--space-xs)}.top-right .btn{font-size:11px}.page{padding:var(--space-xl);max-width:1500px;margin:auto}.page-heading{display:flex;justify-content:space-between;align-items:center;gap:var(--space-lg);margin-bottom:var(--space-xl)}.page-heading p{margin-top:var(--space-sm);font-size:12px}.summary-strip{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--border);padding:var(--space-xs) 0 var(--space-xl);margin-bottom:var(--space-xl)}.summary-strip>div{padding:0 var(--space-xl);border-right:1px solid var(--border)}.summary-strip>div:first-child{padding-left:0}.summary-strip>div:last-child{border:0}.summary-strip span{display:block;color:var(--muted);font-size:12px}.summary-strip strong{display:block;font-size:34px;font-weight:550;letter-spacing:-1px;color:var(--text-strong);margin:var(--space-sm) 0}.summary-strip small{font-size:11px}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-md);margin-bottom:var(--space-lg)}.section-heading p{font-size:11px;margin-top:var(--space-xs)}.segmented{display:flex;gap:var(--space-xs);border:1px solid var(--border);background:var(--card);padding:var(--space-xs);border-radius:var(--radius-sm)}.selected{background:var(--accent-subtle)!important;color:var(--accent-text)!important}.segmented .btn-ghost{font-size:11px;padding:var(--space-sm)}.attention-grid{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:var(--space-lg)}.attention-list{display:flex;flex-direction:column;gap:var(--space-md)}.attention.urgent::part(root){border-left:3px solid var(--danger)}.attention-head,.attention-foot{display:flex;align-items:center;justify-content:space-between;gap:var(--space-md)}.attention-head>div,.attention-foot>span{display:flex;align-items:center;gap:var(--space-md)}.attention h3{margin:var(--space-md) 0 var(--space-xs)}.attention p{font-size:12px}.attention-foot{margin-top:var(--space-lg)}.resource-label{font-size:11px;color:var(--muted)}.resource-label .icon{width:14px}.text-button{background:none;border:none;padding:0;color:inherit;font-weight:600;text-align:left}.text-button:hover{color:var(--accent-text)}.link{color:var(--accent-text)!important}.home-aside app-card p{margin:var(--space-sm) 0 var(--space-lg);font-size:12px}.boundary-icon{color:var(--accent-text);margin-bottom:var(--space-md)}.boundary-icon .icon,.boundary-icon svg{height:30px;width:30px}.rule-line{display:flex;justify-content:space-between;gap:var(--space-md);padding:var(--space-md) 0;border-bottom:1px solid var(--border);font-size:12px}.rule-line b{font-weight:500;color:var(--text-strong)}.full{width:100%;justify-content:center;margin-top:var(--space-lg)}.quiet-note{margin:var(--space-xl) var(--space-xs)}.quiet-note p{font-size:12px;margin-top:var(--space-sm)}.home-aside>.btn-ghost{font-size:11px;white-space:normal}.notice{padding:var(--space-sm) var(--space-xl);display:flex;justify-content:space-between;align-items:center;background:var(--accent-subtle);color:var(--accent-text);font-size:12px}.workspace{display:grid;grid-template-columns:232px minmax(380px,1fr) 304px;height:calc(100dvh - 98px);min-height:660px;background:var(--card)}.work-list{border-right:1px solid var(--border);background:var(--bg-elevated);padding:var(--space-lg) var(--space-md);overflow:auto}.list-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-lg)}.search,input,select,textarea{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card);color:var(--text);padding:var(--space-md);width:100%}textarea{resize:vertical;min-height:70px}::placeholder{color:var(--muted)}.search{font-size:11px}.list-count{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin:var(--space-lg) var(--space-xs) var(--space-md)}.work-item{padding:var(--space-md);border:1px solid transparent;border-radius:var(--radius-md);background:none;width:100%;text-align:left;margin-bottom:var(--space-sm);color:var(--text)}.work-item.active{background:var(--card);border-color:var(--border);box-shadow:var(--shadow-md)}.work-item>div{display:flex;gap:var(--space-xs);align-items:center}.work-item>div small:last-child{margin-left:auto}.work-item strong{display:block;font-size:12px;margin:var(--space-md) 0 var(--space-sm);color:var(--text-strong);line-height:1.6}.work-item>span{display:block;font-size:11px;color:var(--muted);margin-bottom:var(--space-sm)}.work-item>small{font-size:10px}.state-dot{background:var(--warn);height:5px;width:5px;border-radius:var(--radius-full)}.state-dot.blue{background:var(--accent)}.state-dot.green{background:var(--ok)}.investigation{min-width:0;display:flex;flex-direction:column;overflow:hidden}.investigation-heading{padding:var(--space-lg) var(--space-xl);border-bottom:1px solid var(--border)}.title-meta{display:flex;gap:var(--space-md);align-items:center;color:var(--muted);font-size:10px}.investigation-heading h1{font-size:22px;margin:var(--space-md) 0}.investigation-meta{display:flex;flex-wrap:wrap;gap:var(--space-md);align-items:center;font-size:10px;color:var(--muted)}.investigation-meta>span{display:flex;gap:var(--space-xs);align-items:center}.investigation-meta .btn-ghost{margin-left:auto;font-size:10px}.three-states{display:flex;gap:var(--space-lg);margin-top:var(--space-lg);padding-top:var(--space-md);border-top:1px solid var(--border);font-size:10px;color:var(--muted);flex-wrap:wrap}.three-states b{margin-left:var(--space-xs);font-weight:500;color:var(--text)}.warning{color:var(--warn)!important}.success{color:var(--ok)!important}.case-content{padding:var(--space-lg) var(--space-xl);overflow-y:auto;flex:1}.state-controls{display:flex;align-items:center;justify-content:flex-end;gap:var(--space-sm);font-size:10px;color:var(--muted);margin-bottom:var(--space-md)}.state-controls select{width:110px;font-size:10px;padding:var(--space-xs)}.timeline-event{font-size:10px;color:var(--muted);padding-bottom:var(--space-lg);display:flex;gap:var(--space-sm);align-items:center}.agent-heading{display:flex;align-items:center;gap:var(--space-sm);font-size:12px}.agent-heading>span:not(.agent-avatar){font-size:10px;color:var(--muted);margin-left:auto}.agent-avatar{display:grid;place-items:center;width:28px;height:28px;background:var(--accent-subtle);color:var(--accent-text);border-radius:var(--radius-sm)}.agent-intro{font-size:12px;color:var(--text);margin:var(--space-md) 0 var(--space-lg)}.execution::part(body){padding:var(--space-md) var(--space-lg)}.compact{margin:var(--space-xs) 0 var(--space-sm)}.compact strong{font-size:12px}.compact .small{font-size:9px}.tool-step{border-top:1px solid var(--border)}.tool-step summary{list-style:none;display:flex;align-items:center;gap:var(--space-md);padding:var(--space-md) 0;cursor:pointer}.tool-step summary::-webkit-details-marker{display:none}.step-check{background:var(--warn-subtle);color:var(--warn);width:19px;height:19px;border-radius:var(--radius-full);display:grid;place-items:center;font-size:10px;flex-shrink:0}.step-check.done{color:var(--ok);background:var(--ok-subtle)}.tool-step summary>span:nth-child(2){flex:1}.tool-step b{font-size:11px;font-weight:500}.tool-step small{display:block;font-size:10px;margin-top:var(--space-xs)}.tool-step summary>.small{font-size:10px}.tool-detail{font-size:11px;color:var(--muted);padding:0 0 var(--space-md);line-height:1.8}.finding{margin-top:var(--space-lg);padding:var(--space-lg);background:var(--bg-elevated);border-left:2px solid var(--accent);border-radius:var(--radius-sm)}.finding-top{display:flex;align-items:center;gap:var(--space-sm);font-size:11px}.finding-top app-badge{margin-left:auto}.finding h2{font-size:17px;margin:var(--space-md) 0 var(--space-sm)}.finding p{font-size:12px;color:var(--text)}.citations{display:flex;gap:var(--space-sm);margin-top:var(--space-sm)}.citations .btn-ghost{font-size:10px;color:var(--accent-text)}.citations .icon{width:12px}.next-step{padding:var(--space-lg) 0}.next-step p{font-size:12px;margin:var(--space-sm) 0 var(--space-md)}.next-step .btn{font-size:11px}.composer{border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-md);margin:var(--space-md) var(--space-xl) var(--space-lg);box-shadow:var(--shadow-md);background:var(--card)}.composer textarea{border:0;padding:var(--space-xs);font-size:12px;min-height:48px;resize:none}.composer textarea:disabled{background:var(--bg-elevated)}.composer>div{display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm);margin-top:var(--space-sm)}.composer>div>span{font-size:9px;color:var(--muted)}.composer .icon{width:14px}.composer .btn-primary,.composer .btn{font-size:11px}.context{border-left:1px solid var(--border);background:var(--bg-elevated);overflow-y:auto}.context-heading{display:flex;align-items:center;justify-content:space-between;padding:var(--space-lg)}.context-heading h2{font-size:14px}.context-heading span{font-size:10px;color:var(--muted)}.context-tabs{padding:0 var(--space-lg) var(--space-md);border-bottom:1px solid var(--border);display:flex;gap:var(--space-sm)}.context-tabs button{flex:1;justify-content:center;padding:var(--space-sm)}.context-body{padding:var(--space-lg)}.subheading{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:var(--space-md)}.evidence-item{display:block;text-align:left;width:100%;border:1px solid var(--border);border-radius:var(--radius-sm);padding:var(--space-md);background:var(--card);margin-bottom:var(--space-md)}.evidence-item:hover{border-color:var(--accent)}.evidence-item>div{display:flex;justify-content:space-between;align-items:center}.evidence-id{color:var(--accent-text);font-size:10px}.evidence-item strong{display:block;font-size:12px;color:var(--text-strong);margin:var(--space-md) 0 var(--space-xs)}.evidence-item>span{display:block;font-size:11px;color:var(--text)}.evidence-item small{display:block;font-size:9px;margin-top:var(--space-sm)}.mini-chart{padding:var(--space-md);border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card)}.mini-chart>div:first-child{display:flex;justify-content:space-between;font-size:11px}.mini-chart>div:first-child span{color:var(--accent-text);font-weight:600}.chart{width:100%;height:auto;display:block;margin-top:var(--space-lg)}.chart-label{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin:var(--space-sm) 0}.mini-chart>small{font-size:9px}.context-section{border-top:1px solid var(--border);margin-top:var(--space-xl);padding-top:var(--space-lg)}.context-section h4{font-size:11px;margin-bottom:var(--space-md)}.resource-link{display:flex;gap:var(--space-sm);align-items:center;border:0;background:none;width:100%;padding:0;color:var(--accent-text);text-align:left;font-size:11px}.resource-link>span:nth-child(2){flex:1;overflow-wrap:anywhere}.resource-link small{display:block;margin-top:var(--space-xs);font-size:9px}dl{display:grid;grid-template-columns:90px 1fr;gap:var(--space-md) var(--space-sm);font-size:11px;line-height:1.6;margin:var(--space-lg) 0}dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere;color:var(--text)}.context dl{grid-template-columns:72px 1fr;font-size:10px}.context dl .btn-ghost{font-size:9px;padding:0}.hypothesis{padding:var(--space-md) 0;border-bottom:1px solid var(--border)}.hypothesis strong{display:block;margin-bottom:var(--space-sm);font-size:12px}.hypothesis p{font-size:11px;margin-top:var(--space-sm)}.context-body>p{margin-top:var(--space-lg);font-size:11px}.context-body>h3{margin-top:var(--space-lg);font-size:15px}.chat-page{max-width:1000px;margin:auto;height:calc(100dvh - 98px);min-height:640px;display:flex;flex-direction:column;padding:var(--space-xl)}.chat-top{display:flex;justify-content:space-between;align-items:center}.chat-body{flex:1;padding:70px var(--space-xl) var(--space-xl);overflow:auto;max-width:760px;align-self:center;width:100%}.big-agent{display:block;color:var(--accent-text);margin-bottom:var(--space-lg)}.big-agent .icon,.big-agent svg{width:36px;height:36px}.chat-body h1{font-size:32px;margin-bottom:var(--space-md)}.suggestions{display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-md);margin-top:var(--space-xl)}.suggestions button{justify-content:space-between;min-width:300px;font-size:12px}.chat-composer{margin:var(--space-lg) var(--space-xl) 0}.chat-message{padding:var(--space-lg);margin-top:var(--space-lg);border-radius:var(--radius-md);background:var(--bg-hover)}.chat-message.answer{background:var(--card)}.chat-message p{color:var(--text);margin-top:var(--space-sm)}.resource-toolbar{display:flex;align-items:center;gap:var(--space-md);margin-bottom:var(--space-xl);font-size:12px;color:var(--muted)}.resource-toolbar>.btn-primary{margin-left:auto}.resource-layout{display:grid;grid-template-columns:1.2fr 1fr;gap:var(--space-lg);margin-bottom:var(--space-lg)}.resource-layout h2{margin:var(--space-lg) 0 var(--space-md)}.resource-layout p{margin-bottom:var(--space-lg)}.metric-number{font-size:40px;font-weight:550;color:var(--text-strong)}.metric-number small{font-size:20px;margin-left:var(--space-xs)}.info-banner{background:var(--accent-subtle);border-radius:var(--radius-sm);padding:var(--space-lg);font-size:12px;line-height:1.8;color:var(--accent-text);margin-bottom:var(--space-lg)}.relations{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-xl);padding:var(--space-lg) 0}.relations span{display:flex;gap:var(--space-sm);align-items:center}.event-list{display:flex;flex-direction:column;gap:var(--space-md)}.event-row{display:grid;grid-template-columns:65px 1fr 130px auto;gap:var(--space-xl);align-items:center}.event-count{font-size:26px;font-weight:600;color:var(--accent-text)}.event-count small{display:block;font-size:10px;font-weight:400}.event-row h3{margin:var(--space-xs) 0}.event-row p{font-size:11px}.policy-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-lg);margin-bottom:var(--space-lg)}.policy-grid p{font-size:12px;margin-top:var(--space-sm)}.policy-grid dl{grid-template-columns:120px 1fr;font-size:12px}.policy-facts{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-xl)}.policy-facts h3{font-size:14px}.policy-facts p{font-size:12px;margin-top:var(--space-sm)}.future-banner{display:flex;align-items:center;gap:var(--space-md);background:var(--warn-subtle);color:var(--warn);padding:var(--space-lg);border-radius:var(--radius-sm);line-height:1.7}.action-flow{display:grid;grid-template-columns:repeat(5,1fr);gap:var(--space-lg);margin:var(--space-xl) 0}.action-flow>span{padding:var(--space-lg) 0;border-bottom:2px solid var(--border);font-size:13px}.action-flow>span.active{border-color:var(--ok)}.action-flow b{display:block;color:var(--muted);font-size:11px;margin-bottom:var(--space-sm)}.action-buttons{display:flex;gap:var(--space-sm)}.evidence-preview{white-space:pre-wrap;background:var(--bg-hover);padding:var(--space-lg);border-radius:var(--radius-sm);line-height:1.8;font:12px/1.8 ui-monospace,monospace;margin:var(--space-lg) 0}app-dialog p{margin-bottom:var(--space-lg)}app-dialog textarea{min-height:80px}app-dialog [slot=footer]{display:flex;gap:var(--space-sm)}app-dialog ol{padding-left:var(--space-lg);line-height:2.2;color:var(--text)}.skeleton{height:100px;border-radius:var(--radius-sm);background:linear-gradient(90deg,var(--bg-hover),var(--bg-elevated),var(--bg-hover));background-size:200% 100%;animation:pulse 1.5s infinite;margin:var(--space-lg) 0}.skeleton.short{width:60%;height:25px}@keyframes pulse{to{background-position:-200% 0}}@media (min-width:1700px){.workspace{grid-template-columns:250px minmax(500px,1fr) 340px}.case-content{padding-left:48px;padding-right:48px}}@media (max-width:1250px){.shell{grid-template-columns:172px minmax(0,1fr)}.workspace{grid-template-columns:196px minmax(340px,1fr)}.context{display:none}.context.mobile-open{display:block;position:fixed;right:0;top:98px;bottom:0;width:310px;z-index:10;box-shadow:var(--shadow-lg)}.attention-grid{grid-template-columns:1fr 248px}.page{padding:var(--space-lg)}.global-nav{padding-left:var(--space-sm);padding-right:var(--space-sm)}.nav-item{font-size:12px}.home-aside .rule-line{font-size:11px}}@media (max-width:950px){.shell{grid-template-columns:64px minmax(0,1fr)}.brand{font-size:0;padding:var(--space-sm) 0 var(--space-lg);justify-content:center}.brand-small,.nav-label,.env,.nav-item>span:not(.icon),.nav-item>small,.nav-note,.user>span:not(.avatar){display:none}.nav-item{justify-content:center;padding:var(--space-md)}.global-nav{gap:var(--space-sm)}.user{padding:var(--space-lg) 0;justify-content:center}.workspace{grid-template-columns:180px minmax(320px,1fr)}.attention-grid{grid-template-columns:1fr}.home-aside{display:none}.topbar{padding:0 var(--space-lg)}.page-heading h1{font-size:24px}.summary-strip>div{padding:0 var(--space-lg)}.policy-facts{gap:var(--space-lg)}.event-row{grid-template-columns:50px 1fr auto}.event-row>div:nth-child(3){display:none}}@media (max-width:680px){.review-strip{padding:0 var(--space-sm);height:40px;gap:var(--space-sm);font-size:9px}.review-strip>span:nth-child(2){display:none}.review-strip .btn-ghost{font-size:9px;padding:var(--space-xs)}.shell{grid-template-columns:1fr;min-height:calc(100dvh - 40px);padding-bottom:60px}.global-nav{position:fixed;bottom:0;left:0;right:0;height:60px;display:flex;flex-direction:row;justify-content:space-around;align-items:center;z-index:20;border-top:1px solid var(--border);border-right:0;padding:var(--space-xs)}.brand,.nav-bottom{display:none}.nav-item{width:auto;padding:var(--space-md)}.nav-item:nth-of-type(n+6){display:none}.nav-item .icon{width:20px;height:20px}.topbar{height:56px;padding:0 var(--space-md)}.crumb{font-size:11px;gap:var(--space-sm)}.live{display:none}.top-right .btn{padding:var(--space-sm);font-size:10px}.page{padding:var(--space-lg)}.page-heading{align-items:flex-start;gap:var(--space-md);margin-bottom:var(--space-lg)}.page-heading h1{font-size:22px}.page-heading p{font-size:11px}.page-heading>.btn-primary{padding:var(--space-sm);font-size:11px;margin-top:var(--space-xs)}.summary-strip{grid-template-columns:1fr 1fr;row-gap:var(--space-lg);margin-bottom:var(--space-lg);padding-bottom:var(--space-lg)}.summary-strip>div{padding:0 var(--space-md)}.summary-strip>div:nth-child(3){padding-left:0}.summary-strip>div:nth-child(2){border:0}.summary-strip strong{font-size:28px}.summary-strip small{font-size:10px}.section-heading{align-items:flex-start;flex-direction:column}.section-heading.compact{flex-direction:row}.attention-head>div{gap:var(--space-sm);flex-wrap:wrap}.attention-head .small{font-size:9px}.attention-foot{align-items:flex-start}.attention-foot>span:last-child{flex-direction:column;align-items:flex-end;gap:var(--space-sm)}.attention-foot .resource-label{font-size:10px}.attention h3{font-size:15px}.attention-foot .btn-ghost{font-size:10px}.workspace{grid-template-columns:1fr;height:auto;min-height:calc(100dvh - 156px)}.work-list{display:flex;overflow:auto;gap:var(--space-sm);padding:var(--space-sm);border-bottom:1px solid var(--border);border-right:0}.work-list .list-title,.work-list .search,.work-list .list-count,.work-list>.btn-ghost{display:none}.work-item{min-width:180px;margin:0;padding:var(--space-sm)}.work-item>span,.work-item>small{display:none}.work-item strong{font-size:11px;margin-bottom:0}.work-item>div small{font-size:9px}.investigation-heading{padding:var(--space-lg)}.investigation-heading h1{font-size:20px}.three-states{gap:var(--space-md);font-size:9px}.case-content{overflow:visible;padding:var(--space-lg)}.agent-heading{flex-wrap:wrap}.agent-intro{font-size:12px}.compact .small{display:none}.finding-top{flex-wrap:wrap}.finding-top app-badge{margin-left:0}.finding h2{font-size:16px}.composer{margin:var(--space-md);position:sticky;bottom:64px}.composer>div>span{font-size:8px}.context.mobile-open{top:96px;bottom:60px;width:min(330px,90vw)}.notice{padding:var(--space-md);font-size:11px}.resource-layout,.policy-grid,.policy-facts{grid-template-columns:1fr}.resource-toolbar{flex-wrap:wrap}.resource-toolbar>.btn-primary{margin-left:0}.relations{gap:var(--space-md);font-size:11px}.event-row{grid-template-columns:40px 1fr;gap:var(--space-md)}.event-row>.btn{grid-column:2;font-size:11px;justify-self:start}.action-flow{gap:var(--space-sm)}.action-flow>span{font-size:10px;padding:var(--space-sm) 0}.future-banner{font-size:11px}.action-buttons{flex-wrap:wrap}.chat-page{padding:var(--space-lg);height:calc(100dvh - 156px);min-height:620px}.chat-top h2{font-size:15px}.chat-top .btn{font-size:11px}.chat-body{padding:50px 0 var(--space-lg)}.chat-body h1{font-size:28px}.chat-body>p{font-size:12px}.chat-composer{margin:var(--space-lg) 0 0;position:static}.suggestions button{min-width:0;width:100%;font-size:11px}.chat-message{padding:var(--space-md)}dl{grid-template-columns:80px 1fr}}@media (prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}app-card:not(:has([slot=header]))::part(header),app-card:not(:has([slot=footer]))::part(footer){display:none}
+</style>
+</head><body><slide-prototype></slide-prototype></body></html>
