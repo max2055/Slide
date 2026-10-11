@@ -11,6 +11,8 @@
 5. 有界复现：`reproduce.mts`完成5组断言，记录outbox连接不释放、重复返回ID、受限实例边界不一致、false/0丢失、late projection实际语义。无模型/网络请求、业务数据库表读写或服务启动。
 6. 真MySQL常量查询：9.6.0；原pending谓词=1、unquoted谓词=1。只读取版本和计算JSON常量，无业务表读取或变更；只排除FINAL-0080的恒空主张。
 
+原文完整导入的implementation-baseline末尾空行、prototype内Lit编译模板字面量的两处行尾空白会被`git diff --check`提示。为保留附件hash和模板语义，未改写这两份输入；其余本次变更的diff检查通过。它们是明确记录的输入格式例外，不是忽略业务代码错误。
+
 后端命令（从仓库根运行）：
 
 ```bash
