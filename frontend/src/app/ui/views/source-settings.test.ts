@@ -120,7 +120,7 @@ it('retains only by explicit opt-in, blocks unsaved config changes and explains 
   expect(retain.checked).toBe(false); retain.checked = true; retain.dispatchEvent(new Event('change')); await settle();
   root.querySelector<HTMLButtonElement>('[data-action="sync"]')!.click(); await settle();
   expect(authFetch).toHaveBeenCalledWith('/api/platform/source/sync', expect.objectContaining({ body: JSON.stringify({ token: 'expired-fixture', retainToken: true, expectedIdentity: credential.identity }) }));
-  expect(root.textContent).toContain('已过期或缺少仓库读取权限'); expect(token.value).toBe('');
+  expect(root.textContent).toContain('可能已过期、被撤销或缺少仓库读取权限'); expect(token.value).toBe('');
   const path = root.querySelector<HTMLInputElement>('[aria-label="仓库路径"]')!;
   path.value = 'group/other'; path.dispatchEvent(new Event('input')); await settle();
   token.value = 'other-fixture'; token.dispatchEvent(new Event('input')); await settle();
@@ -144,4 +144,50 @@ it.each([
   expect(remove.disabled).toBe(false); remove.click(); await settle();
   expect(authFetch).toHaveBeenCalledWith('/api/platform/source/credential', expect.objectContaining({ method: 'DELETE' }));
   expect(remove.disabled).toBe(true);
+});
+
+it.each(['SOURCE_SIGNING_KEY_INVALID', 'SOURCE_CREDENTIAL_INVALID', 'SOURCE_REF_NOT_FOUND', 'SOURCE_UNAVAILABLE'])('offers recovery matching failed sync %s and retains existing snapshot and saved token', async code => {
+  localStorage.setItem('permissions', JSON.stringify(['admin:*']));
+  const config = { provider: 'github', baseUrl: 'https://github.com', repositoryPath: 'owner/repo', allowedPaths: [], allowModelContent: false };
+  const credential = { identity: 'a'.repeat(64), hasSavedToken: true };
+  authFetch.mockImplementation(async (url: string) => new Response(JSON.stringify(url.endsWith('/config') ? { config, credential } : url.endsWith('/sync') ? { error: code } : { releaseId: 'good-snapshot', files: [] }), { status: url.endsWith('/sync') ? 503 : 200 }));
+  const view = document.createElement('source-settings'); document.body.append(view); await settle();
+  const root = view.shadowRoot!;
+  root.querySelector<HTMLButtonElement>('[data-action="sync"]')!.click(); await settle();
+  expect(root.querySelector('[role="alert"]')!.textContent).not.toMatch(/SOURCE_|Error:/);
+  expect(root.textContent).not.toContain('重试加载');
+  expect(root.querySelector<HTMLButtonElement>('[data-action="sync"]')!.disabled).toBe(false);
+  expect(root.querySelector('source-manifest')!.shadowRoot!.textContent).toContain('good-snapshot');
+  expect(root.textContent).not.toContain('源码同步完成');
+  if (code === 'SOURCE_CREDENTIAL_INVALID') expect(root.querySelector('[role="alert"]')!.textContent).toContain('GitHub');
+});
+
+it('preserves dirty fields when reloading after a configuration conflict', async () => {
+  localStorage.setItem('permissions', JSON.stringify(['admin:*']));
+  let config = { provider: 'github', baseUrl: 'https://github.com', repositoryPath: 'owner/repo', ref: 'main', allowedPaths: [], allowModelContent: false };
+  authFetch.mockImplementation(async (url: string) => new Response(JSON.stringify(url.endsWith('/config') ? { config } : { files: [] })));
+  const view = document.createElement('source-settings'); document.body.append(view); await settle();
+  const root = view.shadowRoot!; const field = root.querySelector<HTMLInputElement>('[aria-label="仓库路径"]')!;
+  field.value = 'owner/local-edit'; field.dispatchEvent(new Event('input')); await settle();
+  config = { ...config, ref: 'server-change' };
+  await (view as any).load(); await settle();
+  expect(field.value).toBe('owner/local-edit');
+  expect(root.querySelector<HTMLInputElement>('[aria-label="分支、标签或 Commit"]')!.value).toBe('main');
+  expect(root.textContent).toContain('请先保存配置');
+});
+
+it('blocks duplicate sync and clears the failure on a successful replacement retry', async () => {
+  localStorage.setItem('permissions', JSON.stringify(['admin:*']));
+  const config = { provider: 'github', baseUrl: 'https://github.com', repositoryPath: 'owner/repo', allowedPaths: [], allowModelContent: false };
+  let fail = true; let finish!: (value: Response) => void; let syncCalls = 0;
+  authFetch.mockImplementation(async (url: string) => {
+    if (url.endsWith('/sync')) { syncCalls++; if (fail) return new Response(JSON.stringify({ error: 'SOURCE_CREDENTIAL_INVALID' }), { status: 400 }); return new Promise<Response>(resolve => { finish = resolve; }); }
+    return new Response(JSON.stringify(url.endsWith('/config') ? { config, credential: { hasSavedToken: true } } : { files: [] }));
+  });
+  const view = document.createElement('source-settings'); document.body.append(view); await settle();
+  const root = view.shadowRoot!; const button = root.querySelector<HTMLButtonElement>('[data-action="sync"]')!;
+  button.click(); await settle(); expect(root.querySelector('[role="alert"]')).not.toBeNull();
+  fail = false; button.click(); button.click(); await settle(); expect(syncCalls).toBe(2); expect(button.disabled).toBe(true);
+  finish(new Response('{}')); await settle();
+  expect(root.querySelector('[role="alert"]')).toBeNull(); expect(root.textContent).toContain('源码同步完成');
 });

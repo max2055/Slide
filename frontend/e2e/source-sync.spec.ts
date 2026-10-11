@@ -92,7 +92,7 @@ for (const provider of ['gitlab', 'github']) for (const width of [390, 1440]) te
   await page.getByLabel('同步令牌', { exact: true }).fill('override-fixture'); await sync.click();
   await expect(page.getByLabel('同步令牌', { exact: true })).toHaveValue(''); expect(saved).toBe('saved-fixture');
   await page.getByLabel('同步令牌', { exact: true }).fill('expired-fixture'); await sync.click();
-  await expect(page.locator('[role="alert"]')).toContainText('已过期或缺少仓库读取权限');
+  await expect(page.locator('[role="alert"]')).toContainText('可能已过期、被撤销或缺少仓库读取权限');
   await page.getByLabel('同步令牌', { exact: true }).fill('replacement-fixture');
   await page.getByRole('button', { name: '替换已保存令牌', exact: true }).click();
   await expect(page.getByLabel('同步令牌', { exact: true })).toHaveValue(''); expect(saved).toBe('replacement-fixture');
@@ -106,4 +106,52 @@ for (const provider of ['gitlab', 'github']) for (const width of [390, 1440]) te
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain('fixture');
   expect(await page.locator('source-settings').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   expect(errors).toEqual([]);
+});
+
+for (const code of ['SOURCE_SIGNING_KEY_INVALID', 'SOURCE_CREDENTIAL_INVALID', 'UNKNOWN_UPSTREAM', 'HTML_RESPONSE']) test(`safe source error and successful recovery: ${code}`, async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('permissions', JSON.stringify(['admin:*'])));
+  const config = { provider: 'github', baseUrl: 'https://github.com', repositoryPath: 'owner/repo', allowedPaths: [], allowModelContent: false };
+  let fail = true; let saved = 'original-fixture'; let syncCalls = 0;
+  const identity = 'a'.repeat(64);
+  const manifest = { releaseId: 'last-good', commitSha: 'a'.repeat(40), files: [], verification: { status: 'repository-unbound' } };
+  await page.route('**/api/platform/source/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/config')) return route.fulfill({ json: { config, credential: { identity, hasSavedToken: true } } });
+    if (path.endsWith('/credential')) { saved = route.request().postDataJSON().token; return route.fulfill({ json: { identity, hasSavedToken: true } }); }
+    if (path.endsWith('/sync')) {
+      syncCalls++;
+      if (fail) return code === 'HTML_RESPONSE' ? route.fulfill({ status: 502, contentType: 'text/html', body: '<html>Authorization: fixture-secret https://user:fixture-secret@host</html>' }) : route.fulfill({ status: 503, json: { error: code === 'UNKNOWN_UPSTREAM' ? 'upstream fixture-secret' : code } });
+      expect(saved).toBe('replacement-fixture'); return route.fulfill({ json: { ...manifest, releaseId: 'fresh-snapshot' } });
+    }
+    if (fail && code === 'SOURCE_SIGNING_KEY_INVALID') return route.fulfill({ status: 503, json: { error: code } });
+    return route.fulfill({ json: fail ? manifest : { ...manifest, releaseId: 'fresh-snapshot' } });
+  });
+  await page.route('**/source-error-fixture', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><source-settings></source-settings><script type="module">import "/src/app/styles.css"; import "/src/app/ui/views/source-settings.ts";</script></body></html>' }));
+  await page.goto('/source-error-fixture');
+  const sync = page.getByRole('button', { name: '同步源码', exact: true });
+  await expect(sync).toBeEnabled(); await sync.click();
+  // Locators pierce Lit shadow roots; scope the form alert to exclude the snapshot alert.
+  await expect(page.locator('source-settings').getByRole('alert').first()).toBeVisible();
+  const formAlert = page.locator('source-settings').getByRole('alert').first();
+  await expect(formAlert).not.toContainText(/SOURCE_|Error:|fixture-secret/);
+  expect(saved).toBe('original-fixture'); expect(syncCalls).toBe(1);
+  if (code === 'SOURCE_SIGNING_KEY_INVALID') {
+    await expect(formAlert).toContainText('服务端源码快照签名配置不完整');
+    await expect(page.locator('source-manifest').getByRole('alert')).toContainText('服务端源码快照签名配置不完整');
+    await expect(page.getByRole('button', { name: '输入新令牌' })).toHaveCount(0);
+  } else if (code === 'SOURCE_CREDENTIAL_INVALID') {
+    await expect(formAlert).toContainText('GitHub'); await expect(formAlert).toContainText('可能已过期');
+    await page.getByRole('button', { name: '输入新令牌' }).click();
+    await expect(page.getByLabel('同步令牌', { exact: true })).toBeFocused();
+    await expect(page.locator('source-manifest')).toContainText('last-good');
+  }
+  await page.screenshot({ path: `test-results-audit/MAX-139-${code}.png`, fullPage: true });
+  await expect(page.locator('source-settings')).not.toContainText('fixture-secret');
+  fail = false;
+  await page.getByLabel('同步令牌', { exact: true }).fill('replacement-fixture');
+  await page.getByRole('button', { name: '替换已保存令牌', exact: true }).click();
+  await expect(page.getByLabel('同步令牌', { exact: true })).toHaveValue('');
+  await sync.click(); await expect(page.locator('source-settings')).toContainText('源码同步完成');
+  await expect(page.locator('source-settings').getByRole('alert')).toHaveCount(0);
+  await expect(page.locator('source-manifest')).toContainText('fresh-snapshot');
 });

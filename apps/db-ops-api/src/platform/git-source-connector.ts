@@ -1,3 +1,4 @@
+import { safeSourceErrorCode } from './source-error-codes.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, mkdtemp, readFile, readdir, rm, lstat } from 'node:fs/promises';
@@ -108,12 +109,16 @@ export class GitSourceConnector {
       const message = error instanceof Error ? error.message : '';
       const stderr = typeof error === 'object' && error && 'stderr' in error ? String((error as { stderr?: unknown }).stderr ?? '') : '';
       const diagnostic = message + ' ' + stderr;
-      const code = /^SOURCE_[A-Z_]+$/.test(message) ? message
-        : /authentication failed|invalid credentials|HTTP Basic: Access denied|bad credentials|returned error: (401|403)|could not read Username/i.test(diagnostic) ? 'SOURCE_CREDENTIAL_INVALID'
+      const code = safeSourceErrorCode(error, '') ? safeSourceErrorCode(error)
+        : /returned error: 429|too many requests|rate limit(?: exceeded)?|secondary rate limit/i.test(diagnostic) ? 'SOURCE_UPSTREAM_RATE_LIMITED'
+        : /read access.*(?:not granted|denied)|not allowed to (?:download|read)|insufficient (?:permission|scope)|permission to .* denied/i.test(diagnostic) ? 'SOURCE_UPSTREAM_PERMISSION_DENIED'
+        : /authentication failed|invalid credentials|HTTP Basic: Access denied|bad credentials|returned error: 401|could not read Username/i.test(diagnostic) ? 'SOURCE_CREDENTIAL_INVALID'
+        : /returned error: 403/i.test(diagnostic) ? 'SOURCE_UPSTREAM_FORBIDDEN'
         : /repository.*(?:not found|does not exist)|project.*(?:not found|could not be found)|returned error: 404/i.test(diagnostic) ? 'SOURCE_REPOSITORY_NOT_FOUND'
         : /pathspec|not our ref|couldn.t find remote ref|unadvertised object|reference is not a tree|bad object/i.test(diagnostic) ? 'SOURCE_REF_NOT_FOUND'
         : Date.now() >= deadline ? 'SOURCE_SYNC_DEADLINE'
         : /timed out|timeout|ETIMEDOUT|Could not resolve|Failed to connect|unable to access|Proxy CONNECT|SSL certificate|redirect|returned error: 30[1278]/i.test(diagnostic) ? 'SOURCE_UPSTREAM_UNAVAILABLE'
+        : /EACCES|ENOSPC|EROFS|EIO/.test(diagnostic) ? 'SOURCE_STORAGE_UNAVAILABLE'
         : 'SOURCE_SYNC_FAILED';
       console.error('[source-sync:git]', { stage, elapsedMs: Date.now() - startedAt, errorCode: code });
       throw new Error(code);

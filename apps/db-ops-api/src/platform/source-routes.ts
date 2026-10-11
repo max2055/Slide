@@ -1,3 +1,4 @@
+import { safeSourceErrorCode } from './source-error-codes.js';
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { expensiveOperationRateLimitConfig } from '../security/http-security.js';
 import { sourceManagementService, requireSourceAdmin, requireSourceReader, type SourceManagementService } from './source-management-service.js';
@@ -10,10 +11,9 @@ export async function registerSourceRoutes(app: FastifyInstance, verifyToken: pr
       if (admin) requireSourceAdmin(request.user); else requireSourceReader(request.user);
       return reply.send(await action(request));
     } catch (error) {
-      const raw = error instanceof Error ? error.message : '';
-      const code = /^SOURCE_[A-Z_]+$/.test(raw) ? raw : 'SOURCE_UNAVAILABLE';
+      const code = safeSourceErrorCode(error);
       console.error('[source-route]', code);
-      const status = /REPOSITORY_PATH_REQUIRED/.test(code) ? 409 : /REPOSITORY_NOT_FOUND|REF_NOT_FOUND/.test(code) ? 404 : /COMMIT_MISMATCH|CONFIG_CHANGED/.test(code) ? 409 : /REQUIRED|FORBIDDEN|DENIED|PATH_NOT_ALLOWED/.test(code) ? 403 : /RATE_LIMITED/.test(code) ? 429 : /BUSY|UNKNOWN|NOT_CONFIGURED|NOT_SYNCED|UNTRUSTED|POLICY_CHANGED/.test(code) ? 409 : /INVALID|TOO_LARGE/.test(code) ? 400 : 503;
+      const status = /^(SOURCE_SIGNING_KEY_INVALID|SOURCE_CREDENTIAL_ENCRYPTION_UNAVAILABLE|SOURCE_STORAGE_UNAVAILABLE|SOURCE_SAVED_CREDENTIAL_UNAVAILABLE)$/.test(code) ? 503 : /UPSTREAM_FORBIDDEN|UPSTREAM_PERMISSION_DENIED/.test(code) ? 403 : /REPOSITORY_PATH_REQUIRED/.test(code) ? 409 : /REPOSITORY_NOT_FOUND|REF_NOT_FOUND/.test(code) ? 404 : /COMMIT_MISMATCH|CONFIG_CHANGED/.test(code) ? 409 : /REQUIRED|FORBIDDEN|DENIED|PATH_NOT_ALLOWED/.test(code) ? 403 : /RATE_LIMITED/.test(code) ? 429 : /BUSY|UNKNOWN|NOT_CONFIGURED|NOT_SYNCED|UNTRUSTED|POLICY_CHANGED/.test(code) ? 409 : /INVALID|TOO_LARGE/.test(code) ? 400 : 503;
       return reply.code(status).send({ error: code });
     } finally {
       if (request.body && typeof request.body === 'object' && 'token' in request.body) request.body.token = '';
