@@ -126,8 +126,8 @@ describe.skipIf(!port)('T05-A canonical fact integrity with production MySQL', (
     const settled = structuredClone(entry);
     Object.assign(settled.messageParts!.parts[0].tool!, { phase: 'settled', occurredAt: 3, startedAt: 2, settledAt: 3, outcome: 'ok',
       preview: { kind: 'text', text: 'durable result', truncated: false } });
-    // Another call is still pending, so lifecycle changes must persist without
-    // relying on a document-status UPDATE trigger.
+    // The result is not yet in this batch, so lifecycle changes must persist
+    // without relying on a document-status UPDATE trigger.
     await append([settled]);
     expect((await store.getPage(actor, 'owned')).messages.find(m => m.id === 'intent')?.messageParts?.parts[0].tool).toEqual(settled.messageParts!.parts[0].tool);
     await append([settled, result()]);
