@@ -7,6 +7,7 @@ import { WebSocket, type WebSocketServer } from 'ws';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolRegistry, Session, checkpointFacts, migrateMessageParts, acknowledgeMessageParts, type SessionEntry, type LLMProvider } from '@slide/agent-core';
 import { hydrateMessageProjection } from '@slide/agent-core/message-projection';
+import { buildToolPreview } from '@slide/agent-core/tool-stream';
 import { MigrationRunner } from '../../migrations/runner.js';
 import { ActorContextService, signAccessToken, type ActorContext } from '../../auth/actor-context.js';
 import { dbConnection } from '../../db-connection.js';
@@ -189,6 +190,17 @@ describe.skipIf(!port)('T05-A canonical fact integrity with production MySQL', (
     const conflict = structuredClone(anchor); conflict.metadata = { changed: true }; await rejectUnchanged([conflict, result()]);
     const wrong = structuredClone(entry); wrong.messageParts!.parts[0].tool!.persistedAt = 5; await rejectUnchanged([wrong, result()]);
   });
+  it.each([{ success: true, rows: [{ result: 1 }] }, { text: 'x'.repeat(10_000) }])('reconstructs exact tool Parts from a proven display preview without changing the raw fact', async output => {
+    const fact = result(); fact.content = JSON.stringify(output, null, 2);
+    await append([fact]); const before = await rows();
+    const projected = (await store.getPage(actor, 'owned')).messages.find(m => m.id === 'result')!;
+    const part = projected.messageParts!.parts[0];
+    if (part.type !== 'tool_result') throw new Error('TOOL_RESULT_EXPECTED');
+    part.content = buildToolPreview(output, 'call').text;
+    await append([projected]); expect(await rows()).toEqual(before);
+    expect((await store.getPage(actor, 'owned')).messages.find(m => m.id === 'result')?.messageParts?.parts[0]).toMatchObject({ content: fact.content });
+    part.content = 'arbitrary replacement'; await rejectUnchanged([projected]);
+  });
   it('rejects wrong actor, session and ordinary read share append while preserving read access', async () => {
     await append([intent()]); const before = await snapshot();
     await expect(store.appendToolFacts(other, 'owned', 'turn', [result()], 1)).rejects.toThrow('Chat session not found');
@@ -216,20 +228,23 @@ describe.skipIf(!port)('T05-A canonical fact integrity with production MySQL', (
     expect(hash(hydrateMessageProjection('run', cold.messages.map(m => m.messageParts!)))).toBe(hash(hydrateMessageProjection('run', page.messages.map(m => m.messageParts!))));
   });
 
-  it('real JWT/WS tool checkpoints settle and a cold adapter resumes SQL facts without duplicate execution', async () => {
+  it.each([0, 100_000])('real JWT/WS %i-byte tool checkpoints settle and a cold adapter resumes SQL facts without duplicate execution', async bodyBytes => {
     vi.stubEnv('AGENT_WS_HOST', '127.0.0.1'); vi.stubEnv('AGENT_WS_PORT', '0'); vi.stubEnv('SLIDE_MEMORY_PIPELINE_ENABLED', 'false');
     const secret = randomUUID(); vi.stubEnv('JWT_SECRET_KEY', secret);
     const contexts = new ActorContextService(() => pool as never);
     const workspace = await mkdtemp(join(tmpdir(), 't05-a-runtime-'));
     let toolCalls = 0, requests = 0; const observed: unknown[][] = [];
     const tools = new ToolRegistry();
-    tools.register({ name: 'read', description: 'Read fixture', parameters: { type: 'object', properties: {} }, readOnly: true, concurrencySafe: true, exclusive: false, execute: async () => { toolCalls++; return 'durable result'; } });
+    tools.register({ name: 'read', description: 'Read fixture', parameters: { type: 'object', properties: {} }, readOnly: true, concurrencySafe: true, exclusive: false, execute: async () => { toolCalls++; return { success: true, rows: [{ result: 1 }] }; } });
     const provider: LLMProvider = { getDefaultModel: () => 'controlled-fixture',
       getModelCapabilities: () => ({ model: 'controlled-fixture', contextWindowTokens: 200_000, preferredOutputTokens: 4096, source: 'configuration', version: 't05-a/v1' }),
       chat: async () => { throw new Error('NON_STREAMING_NOT_EXPECTED'); },
       chatStream: async (messages, _tools, callbacks) => {
         observed.push(messages); requests++;
-        if (requests === 1) return { content: null, finishReason: 'tool_calls', toolCalls: ['runtime-call-1', 'runtime-call-2'].map(id => ({ id, name: 'read', arguments: {} })), hasToolCalls: true, shouldExecuteTools: true, usage: {} };
+        if (requests <= 2) {
+          if (bodyBytes && requests === 1) await callbacks.onContentDelta?.('x'.repeat(bodyBytes));
+          return { content: bodyBytes && requests === 1 ? 'x'.repeat(bodyBytes) : null, finishReason: 'tool_calls', toolCalls: ['runtime-call-1', 'runtime-call-2'].map(id => ({ id: `${requests}-${id}`, name: 'read', arguments: {} })), hasToolCalls: true, shouldExecuteTools: true, usage: {} };
+        }
         await callbacks.onContentDelta?.('answer');
         return { content: 'answer', finishReason: 'stop', toolCalls: [], hasToolCalls: false, shouldExecuteTools: false, usage: {} };
       } };
@@ -258,10 +273,10 @@ describe.skipIf(!port)('T05-A canonical fact integrity with production MySQL', (
         expect(events.find(e => e.type === 'complete')).toMatchObject({ finalContent: 'answer' });
         client.close(); await adapter.dispose(); adapters.pop();
       }
-      expect(toolCalls).toBe(2); expect(await rows()).toHaveLength(3);
-      expect(observed.at(-1)?.some((m: any) => m.role === 'tool' && m.content === 'durable result')).toBe(true);
+      expect(toolCalls).toBe(4); expect(await rows()).toHaveLength(6);
+      expect(observed.at(-1)?.some((m: any) => m.role === 'tool' && m.content === JSON.stringify({ success: true, rows: [{ result: 1 }] }, null, 2))).toBe(true);
       const page = await store.getPage(actor, 'owned');
-      expect(page.messages.filter(m => m.role === 'tool')).toHaveLength(2);
+      expect(page.messages.filter(m => m.role === 'tool')).toHaveLength(4);
       expect(page.messages.find(m => m.role === 'tool')?.messageParts?.status).toBe('completed');
     } finally {
       clients.forEach(client => client.terminate()); await Promise.all(pending);
