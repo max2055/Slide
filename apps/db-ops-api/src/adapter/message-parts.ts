@@ -1,4 +1,5 @@
 import { compatibleMessageParts, acknowledgeMessageParts, statusForStopReason, type SessionEntry, type PartBoundary, type PartStatus } from '@slide/agent-core';
+import { buildToolPreview } from '@slide/agent-core/tool-stream';
 
 export function persistedMessageParts(entry: SessionEntry, kind: 'mysql' | 'checkpoint' | 'jsonl' = 'mysql', requestedStatus?: PartStatus): SessionEntry {
   entry = { ...entry, runId: entry.runId ?? `legacy_run_${entry.id}`, turnId: entry.turnId ?? `legacy_turn_${entry.id}` };
@@ -29,6 +30,17 @@ export function persistedMessageParts(entry: SessionEntry, kind: 'mysql' | 'chec
         const value = doc.parts[0][key];
         if (doc[key] === undefined && value !== undefined && doc.parts.every(part => part[key] === value)) Object.assign(doc, { [key]: value });
       }
+    }
+    // ProjectionDocument stores a bounded display preview, not the original
+    // tool result. Reconstruct the exact canonical Part only when this is the
+    // known display transform of the same raw/legacy fact. Any other content
+    // stays intact for canonical-store's full-payload conflict check.
+    if (kind === 'checkpoint' && entry.role === 'tool' && doc.legacy.content === entry.content) {
+      let content: unknown = entry.content;
+      if (typeof content === 'string') { try { content = JSON.parse(content); } catch { /* plain result */ } }
+      const preview = buildToolPreview(content, entry.tool_call_id ?? '').text;
+      doc.parts = doc.parts.map(part => part.type === 'tool_result' && part.toolCallId === entry.tool_call_id && part.content === preview
+        ? { ...part, content: entry.content } : part);
     }
     const stopReason = entry.metadata?.stopReason;
     if (stopReason) result.messageParts.runTerminal = stopReason === 'completed' ? 'completed' : stopReason === 'cancelled' ? 'cancelled'
