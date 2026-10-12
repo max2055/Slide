@@ -36,9 +36,11 @@ export interface AdmissionInvestigation {
   version: number;
 }
 /** Mandatory trusted server port, executed inside the transaction even on
- * idempotent retries. T03 must implement live actor/resource/Profile authority
- * and Session append; a model or an HTTP payload cannot supply this callback.
- * Invisible objects must throw NOT_FOUND; visible non-operators FORBIDDEN. */
+ * idempotent retries. T03 must implement live actor/resource/Profile authority;
+ * this hook must not append messages or perform other acceptance side effects.
+ * Session append belongs only in the new-request branch when T03 integrates it.
+ * A model or HTTP payload cannot supply this callback. Invisible objects must
+ * throw NOT_FOUND; visible non-operators FORBIDDEN. */
 export type AdmissionAuthorizer = (connection: TransactionConnection, actor: InvestigationActor,
   investigation: Readonly<AdmissionInvestigation>) => Promise<void>;
 
