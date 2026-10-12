@@ -1,3 +1,4 @@
+import { investigationBudgetConfiguration } from './src/investigations/session-bridge.js';
 import { InvestigationExecutor } from './src/investigations/executor.js';
 import { instanceHistoryContext } from './src/resources/instance-history-context.js';
 import { InstanceRemovalResponseSchema } from './src/contracts/public-api.js';
@@ -5536,10 +5537,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   );
   engine!.configureInvestigationExecutor?.(new InvestigationExecutor({
     pool: () => dbConnection.getPool(), providerForPurpose: createLLMProvider, toolsForActor: createActorBoundToolRegistry,
-    budget: { domain: 'investigation-v1', reserveCostMicros: Number(process.env.INVESTIGATION_RESERVED_COST_MICROS ?? 1_000_000),
-      policy: { currency: 'USD', maxConcurrent: 4, manualReserved: 1, maxPerResourceConcurrent: 2,
-        maxAutomaticRequestsPerHour: 20, maxAutomaticTokensPerDay: 256_000, maxTotalTokensPerDay: 1_000_000,
-        maxCostMicrosPerDay: Number(process.env.INVESTIGATION_DAILY_COST_MICROS ?? 10_000_000) } },
+    budget: investigationBudgetConfiguration(),
   }));
   registerWorkflowHandlers(workflowRegistry, {
     investigationEngine: getAgentEngine,

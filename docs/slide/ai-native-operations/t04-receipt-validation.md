@@ -73,3 +73,7 @@ git diff --check
 后端 `.env` 仍缺失，本地 Ollama :11434 连接拒绝，未提供授权免费Provider的地址/模型/有限调用上限。未读取生产凭据或调用旧停用Anthropic配置。PR #154继续draft，完整T04保持blocked；当前源码差异须父独立Review，真实Provider、排队取消、普通merge/main核验仍未完成。已有旧head绿色CI/父审查不替代本次新head。
 
 起始托管提交与既有用户历史通过普通merge保留，交付独立PR增量历史合回平台任务分支；不reset、不force、不自动推进后续阶段。精确run `01a1306c-0602-7844-b8cc-ae872f6e4cf3` 已有一次性completed/failed/cancelled交接唤醒；不重复注册或提前rerun父。实际Agent token/费用遥测不可用，无硬预算；fixture usage不是Agent用量。
+
+## 2026-10-12 v1.2.5 当前修订
+
+上述排队取消 RED 和未实施方案为 v1.2.3 历史。v1.2.5 获得临时共享文件授权后，同连接核销、真实HTTP默认装配及queued/retry安全矩阵已实施验证，当前证据见 [t04-queued-cancel-validation.md](t04-queued-cancel-validation.md)。免费真实Provider及完整T04出口仍未通过，不能把这一有界修复当完整交付。

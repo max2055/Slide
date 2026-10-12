@@ -94,6 +94,27 @@ export type InvestigationOperation = 'create' | 'read' | 'patch' | 'admit' | 'ca
 export type AdmissionAuthorizer = (connection: TransactionConnection, actor: Readonly<InvestigationActor>,
   investigation: Readonly<AdmissionInvestigation>, operation: InvestigationOperation) => Promise<void>;
 
+/** Only trusted server composition supplies this hook. Session/Investigation/
+ * Request/Job are locked and live cancel authority is checked before invocation.
+ * Hook must use this connection, perform SQL only, and never terminate a Run. */
+export interface InvestigationCancellation {
+  investigation: Readonly<InvestigationRecord>;
+  requestId: string;
+  actor: Readonly<InvestigationActor>;
+  messageId: string | null;
+  snapshot: unknown;
+  job: { id: string; state: string; attempts: number; fencingToken: number; leaseActive: boolean };
+}
+export type InvestigationCancellationHook = (connection: TransactionConnection,
+  cancellation: Readonly<InvestigationCancellation>) => Promise<void>;
+const requireCancellationHook: InvestigationCancellationHook = async (connection, value) => {
+  const snapshot = typeof value.snapshot === 'string' ? JSON.parse(value.snapshot) : value.snapshot;
+  const [allocations] = await connection.execute('SELECT id FROM investigation_budget_ledger WHERE request_id = ? FOR UPDATE',
+    [value.requestId]) as [RowDataPacket[], unknown];
+  if (value.actor.kind === 'service' || snapshot?.budgetReceipt || allocations.length)
+    throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
+};
+
 const invalid = () => new InvestigationStoreError('INVESTIGATION_INPUT_INVALID');
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 function validate(input: InvestigationAdmission): void {
@@ -119,7 +140,8 @@ const lifecycles = ['open', 'waiting', 'closed', 'archived'];
 /** T02-B persistence port. T03 must implement authority/Session append before
  * T02-C registers HTTP. This module creates no Agent Run or Chat messages. */
 export class MysqlInvestigationStore {
-  constructor(private readonly poolProvider: () => Pool | null, private readonly authorize: AdmissionAuthorizer) {}
+  constructor(private readonly poolProvider: () => Pool | null, private readonly authorize: AdmissionAuthorizer,
+    private readonly cancelBudget: InvestigationCancellationHook = requireCancellationHook) {}
 
   async transaction<T>(work: (connection: TransactionConnection, append: (event: OutboxInput) => Promise<string>) => Promise<T>): Promise<T> {
     if (typeof this.authorize !== 'function') throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
@@ -299,7 +321,7 @@ export class MysqlInvestigationStore {
    * owns Run termination; queued jobs can be cancelled without an executor. */
   async cancel(actor: InvestigationActor, id: string, requestId: string): Promise<{ accepted: true }> {
     if (!validActor(actor) || !uuid.test(id) || !uuid.test(requestId)) throw invalid();
-    return this.transaction(async connection => {
+    return this.cancelTransaction(async connection => {
       const [binding] = await select(connection, 'SELECT session_id FROM investigations WHERE id = ?', [id]);
       if (!binding) throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
       await connection.execute('SELECT id FROM chat_sessions WHERE session_id = ? FOR UPDATE', [binding.session_id]);
@@ -307,16 +329,31 @@ export class MysqlInvestigationStore {
       await this.authorize(connection, Object.freeze({ ...actor }), Object.freeze(record), 'cancel');
       const [request] = await select(connection, 'SELECT * FROM investigation_requests WHERE id = ? AND investigation_id = ? FOR UPDATE', [requestId, id]);
       if (!request) throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
-      const [job] = await select(connection, 'SELECT state FROM workflow_jobs WHERE id = ? FOR UPDATE', [request.job_id]);
+      const [job] = await select(connection, `SELECT *, (lease_expires_at > NOW() AND lease_owner IS NOT NULL) AS lease_active
+        FROM workflow_jobs WHERE id = ? FOR UPDATE`, [request.job_id]);
       if (!job) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
       await connection.execute('UPDATE investigation_requests SET cancel_requested_at = COALESCE(cancel_requested_at, NOW()) WHERE id = ?', [requestId]);
       if (['queued', 'retry'].includes(job.state)) {
+        await this.cancelBudget(connection, { investigation: record, requestId,
+          actor: Object.freeze({ kind: request.actor_kind, id: Number(request.actor_id) }), messageId: request.message_id,
+          snapshot: request.request_snapshot, job: { id: request.job_id, state: job.state, attempts: Number(job.attempts),
+            fencingToken: Number(job.fencing_token), leaseActive: !!job.lease_active } });
         await connection.execute("UPDATE workflow_jobs SET state = 'cancelled' WHERE id = ?", [request.job_id]);
         if (record.activeRequestId === requestId) await connection.execute(`UPDATE investigations
           SET active_request_id = NULL, lifecycle = 'waiting', version = version + 1 WHERE id = ?`, [id]);
       }
       return { accepted: true };
     });
+  }
+
+  private async cancelTransaction<T>(work: (connection: TransactionConnection) => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try { return await this.transaction(work); }
+      catch (error) {
+        const cause = error instanceof InvestigationStoreError ? error.cause : error;
+        if (attempt >= 2 || (cause as { code?: string })?.code !== 'ER_LOCK_DEADLOCK') throw error;
+      }
+    }
   }
 
   async admit(input: InvestigationAdmission): Promise<InvestigationAcceptance> {

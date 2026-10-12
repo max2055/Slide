@@ -22,7 +22,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { MigrationRunner } from '../migrations/runner.js';
 import { ActorContextService, signAccessToken, type ActorContext } from '../auth/actor-context.js';
 import { InvestigationAuthorization, provisionInvestigationServiceIdentity } from './authorization.js';
-import { InvestigationSessionBridge } from './session-bridge.js';
+import { MysqlInvestigationStore } from './store.js';
+import { InvestigationSessionBridge, investigationBudgetConfiguration } from './session-bridge.js';
 import { MysqlWorkflowStore } from '../workflows/worker-runtime.js';
 import { AgentRunService, type AgentRun } from '../adapter/agent-run-service.js';
 import {
@@ -134,7 +135,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       "INSERT INTO database_instances (id, name, host, port, username, password_encrypted) VALUES (101, 'one', 'fixture.invalid', 3306, 'fixture', 'unused'), (103, 'two', 'fixture.invalid', 3306, 'fixture', 'unused')",
     );
     canonical = new CanonicalStore(() => pool as never, new InvestigationAuthorization(contexts));
-    bridge = new InvestigationSessionBridge(() => pool, new InvestigationAuthorization(contexts));
+    bridge = new InvestigationSessionBridge(() => pool, new InvestigationAuthorization(contexts), {domain:'test-investigation',policy});
   }, 60_000);
   beforeEach(async () => {
     await pool.query("UPDATE users SET status='active' WHERE id IN (101,102,104)");
@@ -362,18 +363,456 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
   it('queued cancellation must cancel the unsent admitted receipt through JWT HTTP', async () => {
     const admitted = await automatic(32000, false);
     const request = (await rows('SELECT * FROM investigation_requests WHERE id=?', [admitted.request_id]))[0];
-    await pool.query("INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,?,'operator',?)", [request.investigation_id,owner.userId,serviceId]);
+    await pool.query(
+      "INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,?,'operator',?)",
+      [request.investigation_id, owner.userId, serviceId],
+    );
     const secret = randomUUID();
     const app = Fastify();
     await registerInvestigationRoutes(app, createVerifyToken(secret, contexts), bridge);
     try {
-      const response = await app.inject({method:'POST',url:`/api/investigations/${request.investigation_id}/requests/${request.id}/cancel`,headers:{authorization:`Bearer ${signAccessToken(owner,secret)}`}});
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/investigations/${request.investigation_id}/requests/${request.id}/cancel`,
+        headers: { authorization: `Bearer ${signAccessToken(owner, secret)}` },
+      });
       expect(response.statusCode, response.body).toBe(202);
-      expect((await rows('SELECT state FROM workflow_jobs WHERE id=?', [request.job_id]))[0].state).toBe('cancelled');
-      expect(await new MysqlWorkflowStore(() => pool as never).claim('after-cancel',60,{types:['investigation.execute'],exclude:false})).toBeNull();
-      expect(await rows('SELECT * FROM agent_runs WHERE idempotency_key=?',[`investigation:${request.id}`])).toEqual([]);
-      expect(await ledger().read(admitted.id)).toMatchObject({state:'cancelled',chargedTokens:0,chargedCostMicros:0});
-    } finally { await app.close(); }
+      expect((await rows('SELECT state FROM workflow_jobs WHERE id=?', [request.job_id]))[0].state).toBe(
+        'cancelled',
+      );
+      expect(
+        await new MysqlWorkflowStore(() => pool as never).claim('after-cancel', 60, {
+          types: ['investigation.execute'],
+          exclude: false,
+        }),
+      ).toBeNull();
+      expect(
+        await rows('SELECT * FROM agent_runs WHERE idempotency_key=?', [`investigation:${request.id}`]),
+      ).toEqual([]);
+      expect(await ledger().read(admitted.id)).toMatchObject({
+        state: 'cancelled',
+        chargedTokens: 0,
+        chargedCostMicros: 0,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+  async function unclaimedManual(reserve = false) {
+    await pool.query("UPDATE workflow_jobs SET state='completed'");
+    const { acceptance } = await bridge.create(owner, create, {
+      idempotencyKey: randomUUID(),
+      message: 'Inspect',
+    });
+    const request = (
+      await rows('SELECT * FROM investigation_requests WHERE id=?', [acceptance!.requestId])
+    )[0];
+    if (reserve)
+      await ledger().reserveExecution({
+        requestId: request.id,
+        domain: 'test-investigation',
+        mode: 'manual',
+        profile: INVESTIGATION_PROFILES.ops,
+        reserveTokens: 32000,
+        reserveCostMicros: 1000000,
+      });
+    return request;
+  }
+  async function queuedAutomatic() {
+    const allocation = await automatic(32000, false);
+    const request = (
+      await rows('SELECT * FROM investigation_requests WHERE id=?', [allocation.request_id])
+    )[0];
+    await pool.query(
+      "INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,?,'operator',?)",
+      [request.investigation_id, owner.userId, serviceId],
+    );
+    return { allocation, request };
+  }
+  async function httpCancel(request: RowDataPacket, actor = owner, selectedBridge = bridge) {
+    const secret = randomUUID(),
+      app = Fastify();
+    await registerInvestigationRoutes(app, createVerifyToken(secret, contexts), selectedBridge);
+    try {
+      return await app.inject({
+        method: 'POST',
+        url: `/api/investigations/${request.investigation_id}/requests/${request.id}/cancel`,
+        headers: { authorization: `Bearer ${signAccessToken(actor, secret)}` },
+      });
+    } finally {
+      await app.close();
+    }
+  }
+  async function cancelSnapshot(request: RowDataPacket) {
+    return {
+      request: (
+        await rows('SELECT cancel_requested_at FROM investigation_requests WHERE id=?', [request.id])
+      )[0],
+      job: (await rows('SELECT state,fencing_token FROM workflow_jobs WHERE id=?', [request.job_id]))[0],
+      investigation: (
+        await rows('SELECT active_request_id,version,lifecycle FROM investigations WHERE id=?', [
+          request.investigation_id,
+        ])
+      )[0],
+      allocations: await rows('SELECT * FROM investigation_budget_ledger WHERE request_id=?', [request.id]),
+    };
+  }
+  it.each(['queued', 'retry'])(
+    'cancellation receipt: %s auto HTTP, shared caller, repeated cancellation stays idempotent',
+    async (state) => {
+      const { allocation, request } = await queuedAutomatic();
+      await pool.query('UPDATE workflow_jobs SET state=? WHERE id=?', [state, request.job_id]);
+      expect((await httpCancel(request)).statusCode).toBe(202);
+      const original = await cancelSnapshot(request);
+      expect(original.investigation.active_request_id).toBeNull();
+      expect(original.request.cancel_requested_at).toBeTruthy();
+      expect(original.job.state).toBe('cancelled');
+      expect(await ledger().read(allocation.id)).toMatchObject({
+        state: 'cancelled',
+        chargedTokens: 0,
+        chargedCostMicros: 0,
+      });
+      expect((await httpCancel(request)).statusCode).toBe(202);
+      expect(await cancelSnapshot(request)).toEqual(original);
+    },
+  );
+  it.each([false, true])(
+    'cancellation receipt: trusted manual reserved=%s preserves compatibility',
+    async (reserve) => {
+      const request = await unclaimedManual(reserve);
+      expect((await httpCancel(request)).statusCode).toBe(202);
+      const state = await cancelSnapshot(request);
+      expect(state.job.state).toBe('cancelled');
+      expect(state.allocations).toHaveLength(reserve ? 1 : 0);
+      if (reserve)
+        expect(state.allocations[0]).toMatchObject({
+          state: 'cancelled',
+          charged_tokens: 0,
+          charged_cost_micros: 0,
+        });
+    },
+  );
+  it.each(['reserved', 'sent', 'unknown', 'settled', 'cancelled'])(
+    'cancellation receipt: retry with old Run and %s allocation never invents a refund',
+    async (state) => {
+      const allocation = await automatic();
+      const request = (
+        await rows('SELECT * FROM investigation_requests WHERE id=?', [allocation.request_id])
+      )[0];
+      await pool.query(
+        "INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,?,'operator',?)",
+        [request.investigation_id, owner.userId, serviceId],
+      );
+      await pool.query(
+        "UPDATE workflow_jobs SET state='retry',lease_owner=NULL,lease_expires_at=NULL WHERE id=?",
+        [request.job_id],
+      );
+      if (state !== 'reserved' && state !== 'cancelled') await ledger().markSent(allocation.id);
+      if (state === 'unknown') await ledger().settle(allocation.id, null);
+      if (state === 'settled')
+        await ledger().settle(allocation.id, { inputTokens: 20, cachedInputTokens: 5, outputTokens: 10 });
+      if (state === 'cancelled') await ledger().cancelUnsent(allocation.id);
+      // The actual durable intent shape, persisted before a provider could send.
+      await pool.query('UPDATE agent_runs SET result_json=? WHERE id=?', [
+        JSON.stringify({
+          investigationExecution: {
+            requestId: request.id,
+            jobId: request.job_id,
+            fencingToken: binding.fencingToken,
+            provider: { id: randomUUID(), status: 'sent' },
+          },
+        }),
+        binding.runId,
+      ]);
+      const before = await ledger().read(allocation.id);
+      expect((await httpCancel(request)).statusCode).toBe(202);
+      const after = await ledger().read(allocation.id);
+      expect(after).toMatchObject({
+        state: ['settled', 'cancelled'].includes(state) ? state : 'unknown',
+        chargedTokens: before.chargedTokens,
+        chargedCostMicros: before.chargedCostMicros,
+      });
+      expect((await rows('SELECT state FROM agent_runs WHERE id=?', [binding.runId]))[0].state).toBe(
+        'running',
+      );
+      await expect(execute(fixture())).rejects.toThrow();
+      expect(providerCalls).toBe(0);
+      expect(toolCalls).toBe(0);
+    },
+  );
+  it.each(['sent', 'unknown'])(
+    'cancellation receipt: %s with no Run remains unknown and charged',
+    async (state) => {
+      const { allocation, request } = await queuedAutomatic();
+      await ledger().markSent(allocation.id);
+      if (state === 'unknown') await ledger().settle(allocation.id, null);
+      expect((await httpCancel(request)).statusCode).toBe(202);
+      expect(await ledger().read(allocation.id)).toMatchObject({
+        state: 'unknown',
+        chargedTokens: 32000,
+        chargedCostMicros: 1000000,
+      });
+    },
+  );
+  it.each(['missing', 'reservation', 'hash', 'domain', 'lane', 'profile', 'resources', 'actor'])(
+    'cancellation receipt: tampered %s fails closed and rolls back cancel',
+    async (kind) => {
+      const { request } = await queuedAutomatic();
+      const snapshot = request.request_snapshot;
+      if (kind === 'missing') delete snapshot.budgetReceipt;
+      if (kind === 'reservation') snapshot.budgetReceipt.reservationId = randomUUID();
+      if (kind === 'hash') snapshot.budgetReceipt.commandHash = 'wrong';
+      if (kind === 'domain') snapshot.budgetReceipt.domain = 'untrusted-domain';
+      if (kind === 'lane') snapshot.budgetReceipt.mode = 'manual';
+      if (kind === 'profile') snapshot.profileId = 'system';
+      if (kind === 'actor') snapshot.actor = { kind: 'user', id: owner.userId };
+      if (kind === 'resources')
+        await pool.query('DELETE FROM investigation_resources WHERE investigation_id=? AND resource_id=103', [
+          request.investigation_id,
+        ]);
+      await pool.query('UPDATE investigation_requests SET request_snapshot=? WHERE id=?', [
+        JSON.stringify(snapshot),
+        request.id,
+      ]);
+      const before = await cancelSnapshot(request);
+      expect((await httpCancel(request)).statusCode).toBe(503);
+      expect(await cancelSnapshot(request)).toEqual(before);
+    },
+  );
+  it('cancellation receipt: removed manual receipt is not treated as never reserved', async () => {
+    const request = await unclaimedManual(true);
+    const snapshot = (
+      await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?', [request.id])
+    )[0].request_snapshot;
+    delete snapshot.budgetReceipt;
+    await pool.query('UPDATE investigation_requests SET request_snapshot=? WHERE id=?', [
+      JSON.stringify(snapshot),
+      request.id,
+    ]);
+    const before = await cancelSnapshot(request);
+    expect((await httpCancel(request)).statusCode).toBe(503);
+    expect(await cancelSnapshot(request)).toEqual(before);
+  });
+  it.each(['viewer', 'revoked'])(
+    'cancellation receipt: %s caller cannot mutate intent/job/budget',
+    async (mode) => {
+      const { request } = await queuedAutomatic();
+      await pool.query(
+        "INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,?,'viewer',?)",
+        [request.investigation_id, viewer.userId, serviceId],
+      );
+      if (mode === 'revoked')
+        await pool.query('DELETE FROM instance_permissions WHERE user_id=? AND instance_id=103', [
+          owner.userId,
+        ]);
+      const before = await cancelSnapshot(request);
+      expect([403, 404]).toContain(
+        (await httpCancel(request, mode === 'viewer' ? viewer : owner)).statusCode,
+      );
+      expect(await cancelSnapshot(request)).toEqual(before);
+    },
+  );
+  it.each(['workflow_jobs', 'investigations'])(
+    'cancellation receipt: SQL failure after refund at %s rolls back all four writes',
+    async (table) => {
+      const { request } = await queuedAutomatic(),
+        before = await cancelSnapshot(request);
+      await pool.query(
+        `CREATE TRIGGER cancel_write_failure BEFORE UPDATE ON ${table} FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='CANCEL_WRITE_FAILURE'`,
+      );
+      try {
+        expect((await httpCancel(request)).statusCode).toBe(503);
+        expect(await cancelSnapshot(request)).toEqual(before);
+      } finally {
+        await pool.query('DROP TRIGGER cancel_write_failure');
+      }
+      expect((await httpCancel(request)).statusCode).toBe(202);
+    },
+  );
+  it('cancellation receipt: lost commit ack is recovered by duplicate HTTP cancel without second refund', async () => {
+    const { request } = await queuedAutomatic();
+    let lose = true;
+    const wrappedPool = new Proxy(pool, {
+      get(target, key) {
+        if (key === 'getConnection')
+          return async () => {
+            const connection = await target.getConnection();
+            return new Proxy(connection, {
+              get(c, k) {
+                if (k === 'commit')
+                  return async () => {
+                    await c.commit();
+                    if (lose) {
+                      lose = false;
+                      throw Error('LOST_ACK');
+                    }
+                  };
+                const v = Reflect.get(c, k);
+                return typeof v === 'function' ? v.bind(c) : v;
+              },
+            });
+          };
+        const v = Reflect.get(target, key);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+    const lostAckBridge = new InvestigationSessionBridge(
+      () => wrappedPool,
+      new InvestigationAuthorization(contexts),
+      { domain: 'test-investigation', policy },
+    );
+    expect((await httpCancel(request, owner, lostAckBridge)).statusCode).toBe(503);
+    const committed = await cancelSnapshot(request);
+    expect(committed.allocations[0]).toMatchObject({
+      state: 'cancelled',
+      charged_tokens: 0,
+      charged_cost_micros: 0,
+    });
+    expect((await httpCancel(request)).statusCode).toBe(202);
+    expect(await cancelSnapshot(request)).toEqual(committed);
+  });
+  it('cancellation receipt: claim race either leaves running owner intact or atomically prevents claim', async () => {
+    const { request, allocation } = await queuedAutomatic();
+    const [response, job] = await Promise.all([
+      httpCancel(request),
+      new MysqlWorkflowStore(() => pool as never).claim('cancel-racer', 60, {
+        types: ['investigation.execute'],
+        exclude: false,
+      }),
+    ]);
+    expect(response.statusCode).toBe(202);
+    const state = await cancelSnapshot(request);
+    if (job) {
+      expect(state.job.state).toBe('running');
+      expect(await ledger().read(allocation.id)).toMatchObject({ state: 'reserved', chargedTokens: 32000 });
+    } else {
+      expect(state.job.state).toBe('cancelled');
+      expect(await ledger().read(allocation.id)).toMatchObject({ state: 'cancelled', chargedTokens: 0 });
+    }
+  });
+  it('cancellation receipt: markSent race permits either unknown retention or rejected dispatch, never sent refund', async () => {
+    const { request, allocation } = await queuedAutomatic();
+    const [cancel, sent] = await Promise.allSettled([httpCancel(request), ledger().markSent(allocation.id)]);
+    expect(cancel.status).toBe('fulfilled');
+    if (cancel.status === 'fulfilled') expect(cancel.value.statusCode).toBe(202);
+    const result = await ledger().read(allocation.id);
+    if (sent.status === 'fulfilled') {
+      expect(sent.value.dispatchAllowed).toBe(true);
+      expect(result).toMatchObject({ state: 'unknown', chargedTokens: 32000, chargedCostMicros: 1000000 });
+    } else {
+      expect(result).toMatchObject({ state: 'cancelled', chargedTokens: 0, chargedCostMicros: 0 });
+    }
+  });
+  it.each(['lease', 'fence'])(
+    'cancellation receipt: retry with inconsistent %s fails closed',
+    async (kind) => {
+      const allocation = await automatic(),
+        request = (await rows('SELECT * FROM investigation_requests WHERE id=?', [allocation.request_id]))[0];
+      await pool.query(
+        "INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,?,'operator',?)",
+        [request.investigation_id, owner.userId, serviceId],
+      );
+      await pool.query("UPDATE workflow_jobs SET state='retry' WHERE id=?", [request.job_id]);
+      if (kind === 'fence') {
+        await pool.query('UPDATE workflow_jobs SET lease_owner=NULL,lease_expires_at=NULL WHERE id=?', [
+          request.job_id,
+        ]);
+        await pool.query('UPDATE agent_runs SET result_json=? WHERE id=?', [
+          JSON.stringify({
+            investigationExecution: {
+              requestId: request.id,
+              jobId: request.job_id,
+              fencingToken: binding.fencingToken + 1,
+            },
+          }),
+          binding.runId,
+        ]);
+      }
+      const before = await cancelSnapshot(request);
+      expect((await httpCancel(request)).statusCode).toBe(503);
+      expect(await cancelSnapshot(request)).toEqual(before);
+    },
+  );
+  it('cancellation receipt: production default HTTP bridge uses the same trusted budget configuration as executor', async () => {
+    const request = await unclaimedManual(),
+      budget = investigationBudgetConfiguration();
+    const productionLedger = new MysqlInvestigationBudgetLedger(() => pool, budget.policy);
+    const reserved = await productionLedger.reserveExecution({
+      requestId: request.id,
+      domain: budget.domain,
+      mode: 'manual',
+      profile: INVESTIGATION_PROFILES.ops,
+      reserveTokens: 32000,
+      reserveCostMicros: budget.reserveCostMicros,
+    });
+    expect(reserved.accepted).toBe(true);
+    const secret = randomUUID(),
+      app = Fastify(),
+      spy = vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
+    try {
+      await registerInvestigationRoutes(app, createVerifyToken(secret, contexts));
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/investigations/${request.investigation_id}/requests/${request.id}/cancel`,
+        headers: { authorization: `Bearer ${signAccessToken(owner, secret)}` },
+      });
+      expect(response.statusCode, response.body).toBe(202);
+      if (reserved.accepted)
+        expect(await productionLedger.read(reserved.reservation.id)).toMatchObject({
+          state: 'cancelled',
+          chargedTokens: 0,
+          chargedCostMicros: 0,
+        });
+    } finally {
+      await app.close();
+      spy.mockRestore();
+    }
+  });
+  it('cancellation receipt: absent trusted hook refuses reserved requests before changing durable state', async () => {
+    const { request } = await queuedAutomatic();
+    const before = await cancelSnapshot(request);
+    const unsafeStore = new MysqlInvestigationStore(
+      () => pool,
+      new InvestigationAuthorization(contexts).forActor(owner),
+    );
+    await expect(
+      unsafeStore.cancel({ kind: 'user', id: owner.userId }, request.investigation_id, request.id),
+    ).rejects.toMatchObject({ code: 'INVESTIGATION_QUEUE_UNAVAILABLE' });
+    expect(await cancelSnapshot(request)).toEqual(before);
+  });
+  it('cancellation receipt: ledger transaction port refuses sent, reuses caller rollback and duplicate transitions', async () => {
+    const { allocation } = await queuedAutomatic();
+    await expect(
+      tx(async (c) => {
+        await ledger().cancelUnsentInTransaction(c, allocation.id);
+        throw Error('ROLLBACK');
+      }),
+    ).rejects.toThrow('ROLLBACK');
+    expect(await ledger().read(allocation.id)).toMatchObject({ state: 'reserved', chargedTokens: 32000 });
+    await ledger().markSent(allocation.id);
+    await expect(tx((c) => ledger().cancelUnsentInTransaction(c, allocation.id))).rejects.toMatchObject({
+      code: 'BUDGET_TRANSITION_INVALID',
+    });
+    expect(await ledger().read(allocation.id)).toMatchObject({ state: 'sent', chargedTokens: 32000 });
+    const unknown = await tx((c) => ledger().retainUnknownInTransaction(c, allocation.id));
+    expect(await tx((c) => ledger().retainUnknownInTransaction(c, allocation.id))).toEqual(unknown);
+  });
+  it('cancellation receipt: SQL deadlocks retry at most three transactions and preserve budget on exhaustion', async () => {
+    const { request } = await queuedAutomatic(),
+      before = await cancelSnapshot(request);
+    const acquire = vi.spyOn(pool, 'getConnection');
+    await pool.query(
+      "CREATE TRIGGER cancel_deadlock BEFORE UPDATE ON workflow_jobs FOR EACH ROW SIGNAL SQLSTATE '40001' SET MYSQL_ERRNO=1213,MESSAGE_TEXT='CANCEL_DEADLOCK'",
+    );
+    try {
+      expect((await httpCancel(request)).statusCode).toBe(503);
+      expect(acquire).toHaveBeenCalledTimes(3);
+      expect(await cancelSnapshot(request)).toEqual(before);
+    } finally {
+      await pool.query('DROP TRIGGER cancel_deadlock');
+      acquire.mockRestore();
+    }
+    expect((await httpCancel(request)).statusCode).toBe(202);
   });
   it('event admission receipt is reused by actual workflow/executor/Runtime without duplicate allocation or changed prices', async () => {
     const admitted = await automatic();
