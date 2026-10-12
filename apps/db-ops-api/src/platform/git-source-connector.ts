@@ -39,13 +39,14 @@ export class GitSourceConnector {
     // Ignore ambient URL rewrites, proxy settings, credential helpers and templates.
     env.GIT_CONFIG_NOSYSTEM = '1'; env.GIT_CONFIG_GLOBAL = '/dev/null'; env.GIT_TERMINAL_PROMPT = '0';
     env.GIT_ALLOW_PROTOCOL = 'http:https';
-    const proxyArgs = ['-c', 'http.proxy=' + ((origin.protocol === 'https:' ? config.httpsProxy : config.httpProxy) || config.allProxy || ''),
-      '-c', 'http.followRedirects=false', '-c', 'core.hooksPath=/dev/null', '-c', 'init.templateDir='];
+    const proxyArgs = ['-c', 'http.followRedirects=false', '-c', 'core.hooksPath=/dev/null', '-c', 'init.templateDir='];
     // Command-scoped environment keeps the token out of argv and repository config.
-    env.GIT_CONFIG_COUNT = '2';
+    env.GIT_CONFIG_COUNT = '3';
     env.GIT_CONFIG_KEY_0 = 'http.' + origin.origin + '/.extraHeader';
     env.GIT_CONFIG_VALUE_0 = 'Authorization: Basic ' + Buffer.from(username + ':' + config.token).toString('base64');
     env.GIT_CONFIG_KEY_1 = 'credential.helper'; env.GIT_CONFIG_VALUE_1 = '';
+    env.GIT_CONFIG_KEY_2 = 'http.proxy';
+    env.GIT_CONFIG_VALUE_2 = (origin.protocol === 'https:' ? config.httpsProxy : config.httpProxy) || config.allProxy || '';
     const git = async (args: string[]) => (await run('git', [...proxyArgs, ...args], { cwd: dir, env, encoding: 'utf8', timeout: remaining(), maxBuffer: 4 * 1024 * 1024 })).stdout.trim();
     let stage = 'fetch'; const startedAt = Date.now(); let stageStartedAt = startedAt;
     const reportStage = () => {

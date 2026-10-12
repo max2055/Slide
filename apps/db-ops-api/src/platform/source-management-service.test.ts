@@ -3,6 +3,25 @@ import { SourceManagementService } from './source-management-service.js';
 import { auditLogManager } from '../audit/audit-log.js';
 const actor = { userId: 1, username: 'admin', permissions: ['admin:*'], roles: [], instanceScopes: {}, requestId: 'request', sessionVersion: 1 };
 describe('source management authorization', () => {
+  it('keeps proxy credentials for admin sync but strips them from readers and audit', async () => {
+    const config = { baseUrl: 'http://gitlab.internal', repositoryPath: 'group/repo', allowedPaths: [], allowModelContent: false,
+      httpProxy: 'http://fixture-user:fixture-proxy-credential@localhost:8000',
+      httpsProxy: 'http://fixture-user:fixture-proxy-credential@localhost:8001',
+      allProxy: 'http://fixture-user:fixture-proxy-credential@localhost:8002' };
+    const execute = vi.fn(async () => [[{ config_value: JSON.stringify(config) }], []]);
+    const service = new SourceManagementService(() => ({ execute }), [config.baseUrl]);
+    const audit = vi.spyOn(auditLogManager, 'logConfigChange').mockResolvedValue(undefined as any);
+    try {
+      expect(await service.load(actor)).toMatchObject(config);
+      const reader = await service.load({ ...actor, permissions: ['config:view'] });
+      expect(reader).toMatchObject({ httpProxy: 'http://localhost:8000/', httpsProxy: 'http://localhost:8001/', allProxy: 'http://localhost:8002/' });
+      expect(JSON.stringify(reader)).not.toContain('fixture-proxy-credential');
+      await service.save(actor, config);
+      expect(JSON.stringify(audit.mock.calls)).not.toContain('fixture-proxy-credential');
+      expect(await service.load(actor)).toMatchObject(config);
+      await expect(service.save(actor, { ...config, httpProxy: 'http://localhost:invalid-port' })).rejects.toThrow('SOURCE_CONFIG_INVALID');
+    } finally { audit.mockRestore(); }
+  });
   it('keeps reader authorization and explicit model sharing even without deployment binding', async () => {
     const config = { baseUrl: 'http://gitlab.internal', repositoryPath: 'group/repo', allowedPaths: [], allowModelContent: false };
     const service = new SourceManagementService(() => ({ execute: vi.fn(async () => [[{ config_value: JSON.stringify(config) }], []]) }), [config.baseUrl]);
