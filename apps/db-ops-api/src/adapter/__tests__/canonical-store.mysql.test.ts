@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
 import { WebSocket, type WebSocketServer } from 'ws';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ToolRegistry, Session, migrateMessageParts, type SessionEntry, type LLMProvider } from '@slide/agent-core';
+import { ToolRegistry, Session, checkpointFacts, migrateMessageParts, acknowledgeMessageParts, type SessionEntry, type LLMProvider } from '@slide/agent-core';
 import { hydrateMessageProjection } from '@slide/agent-core/message-projection';
 import { MigrationRunner } from '../../migrations/runner.js';
 import { ActorContextService, signAccessToken, type ActorContext } from '../../auth/actor-context.js';
@@ -112,6 +112,65 @@ describe.skipIf(!port)('T05-A canonical fact integrity with production MySQL', (
     await expect(store.appendToolFacts(actor, 'owned', 'turn-2', [entry], 1, { marker: 'after' })).rejects.toThrow('CANONICAL_ID_CONFLICT');
     expect(await snapshot()).toEqual(before);
   });
+  it.each(['document-durable', 'part-durable', 'part-terminal'])('rejects %s conflicts before storage normalization can erase them', async field => {
+    const entry = intent(); await append([entry]);
+    if (field === 'document-durable') entry.messageParts!.durable = { kind: 'mysql', reference: 'other' };
+    if (field === 'part-durable') entry.messageParts!.parts[0].durable = { kind: 'checkpoint', reference: 'other' };
+    if (field === 'part-terminal') entry.messageParts!.parts[0].status = 'failed';
+    await rejectUnchanged([entry]);
+  });
+  it('persists planned to settled to persisted lifecycle data even with unchanged document status', async () => {
+    const entry = intent();
+    entry.messageParts!.parts[0].tool = { toolCallId: 'call', name: 'read', phase: 'planned', occurredAt: 1, args: {} };
+    await append([entry]);
+    const settled = structuredClone(entry);
+    Object.assign(settled.messageParts!.parts[0].tool!, { phase: 'settled', occurredAt: 3, startedAt: 2, settledAt: 3, outcome: 'ok',
+      preview: { kind: 'text', text: 'durable result', truncated: false } });
+    // Another call is still pending, so lifecycle changes must persist without
+    // relying on a document-status UPDATE trigger.
+    await append([settled]);
+    expect((await store.getPage(actor, 'owned')).messages.find(m => m.id === 'intent')?.messageParts?.parts[0].tool).toEqual(settled.messageParts!.parts[0].tool);
+    await append([settled, result()]);
+    const persisted = structuredClone(settled);
+    Object.assign(persisted.messageParts!.parts[0].tool!, { phase: 'persisted', occurredAt: 4, persistedAt: 4 });
+    await append([persisted, result()]);
+    expect((await store.getPage(actor, 'owned')).messages.find(m => m.id === 'intent')?.messageParts?.parts[0].tool).toEqual(persisted.messageParts!.parts[0].tool);
+    await append([persisted, result()]);
+    expect(await rows()).toHaveLength(2);
+    const wrong = structuredClone(persisted); wrong.messageParts!.parts[0].tool!.preview!.text = 'replacement';
+    await rejectUnchanged([wrong, result()]);
+    await rejectUnchanged([settled, result()]);
+  });
+  it('serializes the legacy checkpoint result turn before its first commit, then accepts its equivalent projection', async () => {
+    const fallback = checkpointFacts({ canonical_run_id: 'run', completedToolResults: [result()] }, 'run')[0];
+    // Reproduce the actual DirectAdapter binding after checkpointFacts migration.
+    fallback.messageParts!.turnId = 'run'; fallback.messageParts!.legacy.turnId = 'run'; fallback.turnId = 'turn';
+    await append([intent(), fallback]);
+    const persisted = (await store.getPage(actor, 'owned')).messages.find(m => m.id === 'result')!;
+    expect(persisted.messageParts).toMatchObject({ turnId: 'turn', projectionMessageId: 'result', legacy: { turnId: 'turn' },
+      parts: [{ sourceMessageId: 'result', generation: 'ended' }] });
+    await append([intent(), persisted]);
+    const conflict = structuredClone(persisted); conflict.messageParts!.legacy.metadata = { different: true };
+    await rejectUnchanged([intent(), conflict]);
+    const wrong = structuredClone(persisted); wrong.messageParts!.turnId = 'wrong';
+    await rejectUnchanged([intent(), wrong]);
+  });
+  it('accepts pre-upgrade checkpoint defaults without rewriting committed legacy JSON', async () => {
+    const fallback = migrateMessageParts(result(), { status: 'partial' });
+    fallback.messageParts.turnId = 'run'; fallback.messageParts.legacy.turnId = 'run';
+    const legacy = acknowledgeMessageParts(fallback, { status: 'completed', durable: { kind: 'checkpoint', reference: 'result' } });
+    const [turns] = await pool.query<RowDataPacket[]>("SELECT id FROM chat_messages WHERE message_id = 'turn'");
+    await pool.query('INSERT INTO agent_canonical_facts (session_id, message_id, turn_sequence, ordinal, entry_json) VALUES (?, ?, ?, ?, ?)',
+      ['owned', 'result', turns[0].id, 10002, JSON.stringify(legacy)]);
+    const before = await rows(); await append([fallback]); expect(await rows()).toEqual(before);
+    const page = await store.getPage(actor, 'owned');
+    expect(page.messages.find(m => m.id === 'result')?.messageParts?.legacy.turnId).toBe('turn');
+    const changed = structuredClone(fallback); changed.metadata = { changed: true }; await rejectUnchanged([changed]);
+  });
+  it('never normalizes an arbitrary legacy turn mismatch away', async () => {
+    const fallback = migrateMessageParts(result(), { status: 'partial' }); await append([fallback]);
+    fallback.messageParts.legacy.turnId = 'wrong'; await rejectUnchanged([fallback]);
+  });
   it('rejects wrong actor, session and ordinary read share append while preserving read access', async () => {
     await append([intent()]); const before = await snapshot();
     await expect(store.appendToolFacts(other, 'owned', 'turn', [result()], 1)).rejects.toThrow('Chat session not found');
@@ -152,7 +211,7 @@ describe.skipIf(!port)('T05-A canonical fact integrity with production MySQL', (
       chat: async () => { throw new Error('NON_STREAMING_NOT_EXPECTED'); },
       chatStream: async (messages, _tools, callbacks) => {
         observed.push(messages); requests++;
-        if (requests === 1) return { content: null, finishReason: 'tool_calls', toolCalls: [{ id: 'runtime-call', name: 'read', arguments: {} }], hasToolCalls: true, shouldExecuteTools: true, usage: {} };
+        if (requests === 1) return { content: null, finishReason: 'tool_calls', toolCalls: ['runtime-call-1', 'runtime-call-2'].map(id => ({ id, name: 'read', arguments: {} })), hasToolCalls: true, shouldExecuteTools: true, usage: {} };
         await callbacks.onContentDelta?.('answer');
         return { content: 'answer', finishReason: 'stop', toolCalls: [], hasToolCalls: false, shouldExecuteTools: false, usage: {} };
       } };
@@ -181,10 +240,10 @@ describe.skipIf(!port)('T05-A canonical fact integrity with production MySQL', (
         expect(events.find(e => e.type === 'complete')).toMatchObject({ finalContent: 'answer' });
         client.close(); await adapter.dispose(); adapters.pop();
       }
-      expect(toolCalls).toBe(1); expect(await rows()).toHaveLength(2);
+      expect(toolCalls).toBe(2); expect(await rows()).toHaveLength(3);
       expect(observed.at(-1)?.some((m: any) => m.role === 'tool' && m.content === 'durable result')).toBe(true);
       const page = await store.getPage(actor, 'owned');
-      expect(page.messages.filter(m => m.role === 'tool')).toHaveLength(1);
+      expect(page.messages.filter(m => m.role === 'tool')).toHaveLength(2);
       expect(page.messages.find(m => m.role === 'tool')?.messageParts?.status).toBe('completed');
     } finally {
       clients.forEach(client => client.terminate()); await Promise.all(pending);
