@@ -20,7 +20,7 @@
 ```bash
 bash scripts/qualification/run-auth-boundary.sh
 bash scripts/qualification/run-report-recovery.sh
-pnpm --filter slide-api exec vitest run src/investigations/contracts.test.ts src/workflows/outbox-service.test.ts src/workflows/worker-runtime.test.ts src/auth/chat-ownership.test.ts src/chat-history-page.test.ts
+pnpm --filter slide-api exec vitest run src/contracts/public-api.test.ts src/investigations/contracts.test.ts src/workflows/outbox-service.test.ts src/workflows/worker-runtime.test.ts src/auth/chat-ownership.test.ts src/chat-history-page.test.ts
 pnpm --filter slide-api typecheck
 pnpm --filter slide-frontend typecheck
 pnpm contracts:check
@@ -34,7 +34,7 @@ git diff --check
 |---|---|
 |auth/HTTP qualification|7文件148通过，0失败/0skip；其中真实MySQL+JWT：HTTP35、桥接24、instance8；其余为授权模块回归|
 |store/outbox/report qualification|3文件64通过，0失败/0skip；正式MySQL迁移、升级/重复run与历史保留应用回退|
-|契约/outbox/worker/Chat回归|5文件64通过，0失败/0skip|
+|公开API/调查契约/outbox/worker/Chat回归|6文件74通过，0失败/0skip|
 |触达安全回归|35文件334通过，0失败/0skip|
 |安全扫描|security secret scan passed|
 |后端与生成类型检查|api/frontend typecheck、contracts:check、focused oxlint、diff检查通过|
@@ -55,7 +55,7 @@ git diff --check
 |普通Chat转换|原Session/message ID保留且原消息只一次；read-share转换404，active Run转换409；Run已结束后转换与创建重试同ID|
 |取消边界|排队取消事务记录意图/真实jobcancelled/释放active，重复安全；running只持久意图、不伪造Run终态或释放active|
 
-初轮失败已分类并修复：新增夹具辅助JOIN两种表collation不能直接比较、read-share列名与正式schema不符；pre-112升级夹具原来只排除112导致误提前执行依赖113，改为真正pre-112集合；新fetch JSON响应需显式类型；T01旧“接口未实施”断言随公开HTTP落地更新。未降低门禁或skip测试。
+初轮失败已分类并修复：新增夹具辅助JOIN两种表collation不能直接比较、read-share列名与正式schema不符；pre-112升级夹具原来只排除112导致误提前执行依赖113，改为真正pre-112集合；新fetch JSON响应需显式类型；T01旧“接口未实施”断言随公开HTTP落地更新。首轮PR CI还暴露公开API完整路径清单遗漏本次5条新路径（其余328文件通过），已补清单并运行包含public-api.test.ts的74项focused回归；首轮资格验收依赖失败而未运行，不计作通过。未降低门禁或skip测试。
 
 ## 有界 Review 与剩余模块边界
 
