@@ -109,6 +109,15 @@ export class CanonicalStore {
         if (existing.length) {
           const prior = typeof existing[0].entry_json === 'string' ? JSON.parse(existing[0].entry_json) : existing[0].entry_json;
           if (String(existing[0].turn_sequence) !== String(turns[0].id)) throw new Error('CANONICAL_ID_CONFLICT');
+          // A crash anchor precedes the post-COMMIT tool_persisted event. The
+          // storage-owned receipt time may be absent from that replay; it cannot
+          // revoke an acknowledgement already in SQL. Explicit timestamps and
+          // every other field are still compared, so content conflicts reject.
+          for (const part of persisted.messageParts!.parts) {
+            const receipt = prior.messageParts?.parts.find((p: MessagePart) => p.id === part.id)?.tool;
+            if (part.type === 'tool_call' && part.tool?.phase === 'persisted' && part.tool.persistedAt === undefined
+              && receipt?.phase === 'persisted' && receipt.persistedAt !== undefined) part.tool.persistedAt = receipt.persistedAt;
+          }
           // MySQL reorders object keys; compare the complete JSON value, not a
           // subset of fields or serializer order. Exact replay performs no UPDATE.
           if (stable(prior) === stable(persisted)) continue;
@@ -118,8 +127,10 @@ export class CanonicalStore {
           const compatible = persistedMessageParts(prior, 'checkpoint', prior.messageParts?.status);
           if (stable(compatible) === stable(persisted)) continue;
           if (!successor(prior, persisted)) throw new Error('CANONICAL_ID_CONFLICT');
+          const advancedJson = JSON.stringify(persisted);
+          if (Buffer.byteLength(advancedJson) > MAX_FACT_BYTES) throw new Error('CANONICAL_CAPACITY_EXCEEDED');
           await connection.query(
-            'UPDATE agent_canonical_facts SET entry_json = ? WHERE session_id = ? AND message_id = ?', [json, sessionId, entry.id]);
+            'UPDATE agent_canonical_facts SET entry_json = ? WHERE session_id = ? AND message_id = ?', [advancedJson, sessionId, entry.id]);
           continue;
         }
         if (++counts[0].total > MAX_FACTS) throw new Error('CANONICAL_CAPACITY_EXCEEDED');
