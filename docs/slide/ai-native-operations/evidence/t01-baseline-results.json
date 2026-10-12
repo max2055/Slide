@@ -1,0 +1,234 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-12T01:19:21.161403+00:00",
+  "baseSha": "730b0bc1564efd72c21066d73e560db28288e434",
+  "reviewSourceSha": "fb0766d606c9f07448a5eddac2a6657847d90830",
+  "node": "v24.18.0",
+  "pnpm": "11.19.0",
+  "groups": [
+    {
+      "name": "T01 specified acceptance",
+      "command": "pnpm --filter slide-api exec vitest run src/investigations/contracts.test.ts src/analysis/analysis-envelope.test.ts src/adapter/__tests__/agent-run-service.test.ts",
+      "files": 3,
+      "passed": 37,
+      "failed": 0,
+      "skipped": 0,
+      "suites": [
+        {
+          "path": "apps/db-ops-api/src/investigations/contracts.test.ts",
+          "passed": 28
+        },
+        {
+          "path": "apps/db-ops-api/src/analysis/analysis-envelope.test.ts",
+          "passed": 5
+        },
+        {
+          "path": "apps/db-ops-api/src/adapter/__tests__/agent-run-service.test.ts",
+          "passed": 4
+        }
+      ]
+    },
+    {
+      "name": "existing backend baseline",
+      "command": "pnpm --filter slide-api exec vitest run src/ai-analysis-database-service.active.test.ts src/ai-analysis-lifecycle.test.ts src/ai-analysis-routes.test.ts src/alert-evaluator.test.ts src/alert-rca-service.test.ts src/chat-history-page.test.ts src/server-alert-evaluator.test.ts src/analysis/analysis-evidence-binding.test.ts src/analysis/analysis-provider.test.ts src/analysis/analysis-recovery-schedule.test.ts src/auth/chat-handler-ownership.test.ts src/auth/chat-ownership.test.ts src/auth/chat-routes.test.ts src/auth/require-instance-access.test.ts src/network-devices/network-device-alert-database.test.ts src/network-devices/network-device-alert-evaluator.test.ts src/network-devices/network-device-alert-route.test.ts src/platform/runtime-events.test.ts src/workflows/worker-cancellation.test.ts src/workflows/worker-runtime.test.ts src/adapter/__tests__/direct-adapter.test.ts",
+      "files": 21,
+      "passed": 225,
+      "failed": 0,
+      "skipped": 0,
+      "suites": [
+        {
+          "path": "apps/db-ops-api/src/ai-analysis-database-service.active.test.ts",
+          "passed": 8
+        },
+        {
+          "path": "apps/db-ops-api/src/ai-analysis-lifecycle.test.ts",
+          "passed": 5
+        },
+        {
+          "path": "apps/db-ops-api/src/ai-analysis-routes.test.ts",
+          "passed": 10
+        },
+        {
+          "path": "apps/db-ops-api/src/alert-evaluator.test.ts",
+          "passed": 13
+        },
+        {
+          "path": "apps/db-ops-api/src/alert-rca-service.test.ts",
+          "passed": 7
+        },
+        {
+          "path": "apps/db-ops-api/src/chat-history-page.test.ts",
+          "passed": 2
+        },
+        {
+          "path": "apps/db-ops-api/src/server-alert-evaluator.test.ts",
+          "passed": 3
+        },
+        {
+          "path": "apps/db-ops-api/src/analysis/analysis-evidence-binding.test.ts",
+          "passed": 40
+        },
+        {
+          "path": "apps/db-ops-api/src/analysis/analysis-provider.test.ts",
+          "passed": 5
+        },
+        {
+          "path": "apps/db-ops-api/src/analysis/analysis-recovery-schedule.test.ts",
+          "passed": 2
+        },
+        {
+          "path": "apps/db-ops-api/src/auth/chat-handler-ownership.test.ts",
+          "passed": 11
+        },
+        {
+          "path": "apps/db-ops-api/src/auth/chat-ownership.test.ts",
+          "passed": 10
+        },
+        {
+          "path": "apps/db-ops-api/src/auth/chat-routes.test.ts",
+          "passed": 4
+        },
+        {
+          "path": "apps/db-ops-api/src/auth/require-instance-access.test.ts",
+          "passed": 12
+        },
+        {
+          "path": "apps/db-ops-api/src/network-devices/network-device-alert-database.test.ts",
+          "passed": 4
+        },
+        {
+          "path": "apps/db-ops-api/src/network-devices/network-device-alert-evaluator.test.ts",
+          "passed": 7
+        },
+        {
+          "path": "apps/db-ops-api/src/network-devices/network-device-alert-route.test.ts",
+          "passed": 1
+        },
+        {
+          "path": "apps/db-ops-api/src/platform/runtime-events.test.ts",
+          "passed": 3
+        },
+        {
+          "path": "apps/db-ops-api/src/workflows/worker-cancellation.test.ts",
+          "passed": 6
+        },
+        {
+          "path": "apps/db-ops-api/src/workflows/worker-runtime.test.ts",
+          "passed": 17
+        },
+        {
+          "path": "apps/db-ops-api/src/adapter/__tests__/direct-adapter.test.ts",
+          "passed": 55
+        }
+      ]
+    },
+    {
+      "name": "public API and shared projection",
+      "command": "pnpm --filter slide-api exec vitest run src/contracts/public-api.test.ts src/adapter/__tests__/display-stream-ws.test.ts src/adapter/__tests__/display-stream.test.ts src/adapter/__tests__/message-projection.test.ts",
+      "files": 4,
+      "passed": 33,
+      "failed": 0,
+      "skipped": 0,
+      "suites": [
+        {
+          "path": "apps/db-ops-api/src/contracts/public-api.test.ts",
+          "passed": 10
+        },
+        {
+          "path": "apps/db-ops-api/src/adapter/__tests__/display-stream-ws.test.ts",
+          "passed": 4
+        },
+        {
+          "path": "apps/db-ops-api/src/adapter/__tests__/display-stream.test.ts",
+          "passed": 10
+        },
+        {
+          "path": "apps/db-ops-api/src/adapter/__tests__/message-projection.test.ts",
+          "passed": 9
+        }
+      ]
+    },
+    {
+      "name": "existing frontend baseline",
+      "command": "pnpm --filter slide-frontend exec vitest run src/app/ui/app-chat-cancel.test.ts src/app/ui/chat/message-parts.test.ts src/app/ui/chat/message-projection.test.ts src/app/ui/controllers/chat-acceptance.test.ts src/app/ui/views/ai-analysis-result.test.ts src/app/ui/views/alerts-analysis.test.ts src/app/ui/views/network-device-detail.test.ts",
+      "files": 7,
+      "passed": 60,
+      "failed": 0,
+      "skipped": 0,
+      "suites": [
+        {
+          "path": "frontend/src/app/ui/app-chat-cancel.test.ts",
+          "passed": 3
+        },
+        {
+          "path": "frontend/src/app/ui/chat/message-parts.test.ts",
+          "passed": 12
+        },
+        {
+          "path": "frontend/src/app/ui/chat/message-projection.test.ts",
+          "passed": 2
+        },
+        {
+          "path": "frontend/src/app/ui/controllers/chat-acceptance.test.ts",
+          "passed": 8
+        },
+        {
+          "path": "frontend/src/app/ui/views/ai-analysis-result.test.ts",
+          "passed": 25
+        },
+        {
+          "path": "frontend/src/app/ui/views/alerts-analysis.test.ts",
+          "passed": 3
+        },
+        {
+          "path": "frontend/src/app/ui/views/network-device-detail.test.ts",
+          "passed": 7
+        }
+      ]
+    },
+    {
+      "name": "navigation baseline",
+      "command": "pnpm --filter slide-frontend exec vitest run src/app/ui/app-navigation.integration.test.ts src/app/ui/app-navigation.test.ts",
+      "files": 2,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "suites": [
+        {
+          "path": "frontend/src/app/ui/app-navigation.integration.test.ts",
+          "passed": 1
+        },
+        {
+          "path": "frontend/src/app/ui/app-navigation.test.ts",
+          "passed": 3
+        }
+      ]
+    }
+  ],
+  "checks": {
+    "backendTypecheck": "passed",
+    "frontendTypecheck": "passed",
+    "contractsCheck": "passed",
+    "frontendBuildAndCsp": "passed",
+    "focusedOxlint": "passed (0 warnings/errors)",
+    "securityAgent": "17 files / 187 passed / 0 skipped",
+    "securitySecretScan": "passed",
+    "diffCheck": "passed"
+  },
+  "failureClassification": [
+    {
+      "classification": "introduced_and_fixed",
+      "detail": "Initial new-file syntax, browser shared-type import and request.accepted test fixture errors corrected; final affected checks pass."
+    },
+    {
+      "classification": "environment_resolved",
+      "detail": "Concurrent local DirectAdapter WS suites shared fixed ports: 426/ECONNRESET and mock assertion failures. Sequential existing suite: 225/225; security:agent: 187/187. No adapter source/test changes."
+    }
+  ],
+  "notRun": [
+    "Investigation real MySQL/provider/SSH/SNMP/browser chain (T02–T12)",
+    "40-sample model evaluation and blind review (T11)",
+    "V1 final integrated gate (T12)"
+  ],
+  "telemetry": "Actual token/cost telemetry unavailable; no paid model requests."
+}
