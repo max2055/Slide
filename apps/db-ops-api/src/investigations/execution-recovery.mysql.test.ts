@@ -291,7 +291,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       await pool.query(`DELETE FROM ${table}`);
   });
   const ledger = () => new MysqlInvestigationBudgetLedger(() => pool, policy);
-  async function automatic(reserveTokens = 32000) {
+  async function automatic(reserveTokens = 32000, claim = true) {
     await pool.query("UPDATE workflow_jobs SET state='completed'");
     const trusted: TriggerBinding = {
       source: 't04-receipt-fixture',
@@ -334,6 +334,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       callsite: 't04:receipt',
     });
     expect(receipt.disposition).toBe('accepted');
+    if (!claim) return (await rows('SELECT * FROM investigation_budget_ledger WHERE request_id=?', [receipt.requestId]))[0];
     const job = await new MysqlWorkflowStore(() => pool as never).claim('canonical-worker', 60, {
       types: ['investigation.execute'],
       exclude: false,
@@ -358,6 +359,22 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     };
     return (await rows('SELECT * FROM investigation_budget_ledger WHERE request_id=?', [binding.requestId]))[0];
   }
+  it('queued cancellation must cancel the unsent admitted receipt through JWT HTTP', async () => {
+    const admitted = await automatic(32000, false);
+    const request = (await rows('SELECT * FROM investigation_requests WHERE id=?', [admitted.request_id]))[0];
+    await pool.query("INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,?,'operator',?)", [request.investigation_id,owner.userId,serviceId]);
+    const secret = randomUUID();
+    const app = Fastify();
+    await registerInvestigationRoutes(app, createVerifyToken(secret, contexts), bridge);
+    try {
+      const response = await app.inject({method:'POST',url:`/api/investigations/${request.investigation_id}/requests/${request.id}/cancel`,headers:{authorization:`Bearer ${signAccessToken(owner,secret)}`}});
+      expect(response.statusCode, response.body).toBe(202);
+      expect((await rows('SELECT state FROM workflow_jobs WHERE id=?', [request.job_id]))[0].state).toBe('cancelled');
+      expect(await new MysqlWorkflowStore(() => pool as never).claim('after-cancel',60,{types:['investigation.execute'],exclude:false})).toBeNull();
+      expect(await rows('SELECT * FROM agent_runs WHERE idempotency_key=?',[`investigation:${request.id}`])).toEqual([]);
+      expect(await ledger().read(admitted.id)).toMatchObject({state:'cancelled',chargedTokens:0,chargedCostMicros:0});
+    } finally { await app.close(); }
+  });
   it('event admission receipt is reused by actual workflow/executor/Runtime without duplicate allocation or changed prices', async () => {
     const admitted = await automatic();
     const executor = fixture();
