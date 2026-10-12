@@ -31,13 +31,22 @@ export class InvestigationSessionBridge {
       resources: command.resources.map(ref => ({ ...ref })) };
     const first = firstRequest && { ...firstRequest };
     const store = this.storeFor(actor);
-    return store.transaction(async (connection, append) => {
-      const investigation = await store.createInTransaction(connection, input);
-      if (!first) return { investigation };
-      const acceptance = await this.admitOnConnection(actor, store, connection, append,
-        { ...first, investigationId: investigation.id, expectedVersion: investigation.version });
-      return { investigation: { ...investigation, version: acceptance.version, activeRequestId: acceptance.requestId }, acceptance };
-    });
+    return store.transaction((connection, append) => this.createOnConnection(actor, connection, append, input, first));
+  }
+
+  /** Trusted internal composition only. Caller owns the transaction and may
+   * roll back create/admit/message together with budget and event decisions. */
+  async createOnConnection(actor: ActorContext, connection: TransactionConnection,
+    append: (event: OutboxInput) => Promise<string>, command: CreateCommand,
+    firstRequest?: Omit<RequestCommand, 'investigationId' | 'expectedVersion'>): Promise<{ investigation: InvestigationRecord; acceptance?: InvestigationAcceptance }> {
+    actor = freezeInvestigationCaller(actor);
+    const store = this.storeFor(actor);
+    const investigation = await store.createInTransaction(connection,
+      { ...command, actor: { kind: actor.principalKind ?? 'user', id: actor.userId }, resources: command.resources.map(ref => ({ ...ref })) });
+    if (!firstRequest) return { investigation };
+    const acceptance = await this.admitOnConnection(actor, store, connection, append,
+      { ...firstRequest, investigationId: investigation.id, expectedVersion: investigation.version });
+    return { investigation: { ...investigation, version: acceptance.version, activeRequestId: acceptance.requestId }, acceptance };
   }
 
   async admit(actor: ActorContext, command: RequestCommand): Promise<InvestigationAcceptance> {
