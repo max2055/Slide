@@ -6,6 +6,7 @@ import mysql, { type Pool } from 'mysql2/promise';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { MigrationRunner, loadMigrations } from '../migrations/runner.js';
 import { ChatDatabaseService } from '../chat-database-service.js';
+import { ActorContextService } from '../auth/actor-context.js';
 import { MysqlInvestigationStore, InvestigationStoreError, type InvestigationAdmission } from './store.js';
 
 const port = Number(process.env.INVESTIGATION_TEST_MYSQL_PORT ?? process.env.REPORT_TEST_MYSQL_PORT);
@@ -232,6 +233,8 @@ describe.skipIf(!port)('formal investigation persistence transactions', () => {
     expect(retry.acceptance).toEqual(accepted.acceptance);
   });
 
+  // This case builds the entire historical schema, upgrades it and reruns the
+  // production runner. CI DDL can exceed Vitest's default five-second limit.
   it('upgrades a pre-112 schema, reruns, and supports application rollback without deleting history', async () => {
     const prior = await mkdtemp(join(tmpdir(), 'slide-investigation-migrations-'));
     const upgradeDatabase = `inv_upgrade_${randomUUID().replaceAll('-', '')}`;
@@ -246,14 +249,16 @@ describe.skipIf(!port)('formal investigation persistence transactions', () => {
       await upgraded.query("INSERT INTO chat_messages (session_id, message_id, role, content) VALUES ('legacy-session', 'legacy-message', 'user', 'legacy')");
       await new MigrationRunner(upgraded).run();
       await new MigrationRunner(upgraded).run();
+      await upgraded.execute("INSERT INTO database_instances (id, name, host, port, username, password_encrypted) VALUES (1, 'upgrade-fixture', 'fixture.invalid', 3306, 'fixture', 'unused')");
       const upgradedStore = new MysqlInvestigationStore(() => upgraded, async () => {});
       const created = await upgradedStore.create({ ...createInput(), sessionId: 'legacy-session' });
       await upgradedStore.patch({ kind: 'user', id: 1 }, created.id, { expectedVersion: 1, lifecycle: 'archived' });
       // Application rollback retains new additive tables/constraints. Legacy
       // Chat reads remain valid; never down-drop a populated investigation.
       const legacyChat = new ChatDatabaseService(() => upgraded);
-      expect((await legacyChat.authorizeSession({ userId: 1 } as never, 'legacy-session', 'read')).session_id).toBe('legacy-session');
-      await expect(legacyChat.deleteSession({ userId: 1 } as never, 'legacy-session')).rejects.toThrow();
+      const legacyActor = await new ActorContextService(() => upgraded as never).loadActiveActor(1);
+      expect((await legacyChat.authorizeSession(legacyActor, 'legacy-session', 'read')).session_id).toBe('legacy-session');
+      await expect(legacyChat.deleteSession(legacyActor, 'legacy-session')).rejects.toThrow();
       const [messages] = await upgraded.query<mysql.RowDataPacket[]>('SELECT message_id FROM chat_messages');
       expect(messages.map(message => message.message_id)).toEqual(['legacy-message']);
       expect((await upgradedStore.detail({ kind: 'user', id: 1 }, created.id)).lifecycle).toBe('archived');
@@ -262,7 +267,7 @@ describe.skipIf(!port)('formal investigation persistence transactions', () => {
       await admin.query(`DROP DATABASE ${upgradeDatabase}`);
       await rm(prior, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it('100 concurrent same-key admissions produce one request, job, outbox and stable response', async () => {
     const acceptances = await Promise.all(Array.from({ length: 100 }, () => store.admit(input())));

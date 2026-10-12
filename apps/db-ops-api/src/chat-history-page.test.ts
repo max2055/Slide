@@ -11,8 +11,10 @@ afterEach(() => vi.restoreAllMocks());
 describe('history database cursor boundary', () => {
   it('uses exclusive IDs for equal timestamps, returns chronological pages, and keeps ACL in every query', async () => {
     const query = vi.fn().mockResolvedValueOnce([[session]])
+      .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([[row(9), row(8), row(7)]])
       .mockResolvedValueOnce([[session]])
+      .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([[row(7)]]);
     vi.spyOn(dbConnection, 'getPool').mockReturnValue({ query } as any);
     const service = new ChatDatabaseService();
@@ -22,10 +24,11 @@ describe('history database cursor boundary', () => {
     const second = await service.getMessagePage(actor, 'one', 2, first.nextBefore!);
     expect(second.messages.map((message) => message.id)).toEqual([7]);
     expect(second.nextBefore).toBeNull();
-    expect(query.mock.calls[3][0]).toContain('cm.id < ?');
-    expect(query.mock.calls[3][0]).toContain('ORDER BY cm.id DESC LIMIT ?');
-    expect(query.mock.calls[3][1]).toEqual(['one', 7, 7, 8, 3]);
+    expect(query.mock.calls[5][0]).toContain('cm.id < ?');
+    expect(query.mock.calls[5][0]).toContain('ORDER BY cm.id DESC LIMIT ?');
+    expect(query.mock.calls[5][1]).toEqual(['one', 7, 7, 8, 3]);
     for (const [sql] of query.mock.calls) {
+      if (sql.startsWith('SELECT id FROM investigations')) continue;
       expect(sql).toContain('cs.user_id = ?');
       expect(sql).toContain('chat_session_shares');
     }
@@ -37,7 +40,7 @@ describe('history database cursor boundary', () => {
     const service = new ChatDatabaseService();
     await expect(service.getMessagePage(actor, 'foreign', 200, 100)).rejects.toBeInstanceOf(ChatSessionNotFoundError);
     expect(query).toHaveBeenCalledTimes(1);
-    query.mockResolvedValueOnce([[session]]).mockResolvedValueOnce([[]]);
+    query.mockResolvedValueOnce([[session]]).mockResolvedValueOnce([[]]).mockResolvedValueOnce([[]]);
     await expect(service.getMessagePage(actor, 'one', 200)).resolves.toEqual({ messages: [], nextBefore: null });
   });
 });

@@ -3,10 +3,12 @@ import jwt from 'jsonwebtoken';
 import type { Pool, PoolConnection } from 'mysql2/promise';
 import { dbConnection } from '../db-connection.js';
 import { securityEventService } from '../security/security-event-service.js';
+import { isInvestigationServiceIdentity, isValidInvestigationServiceIdentity, INVESTIGATION_SERVICE_PERMISSIONS } from './investigation-service-identity.js';
 
 export type InstanceAccessLevel = 'read-only' | 'read-write' | 'admin';
 
 export interface ActorContext {
+  readonly principalKind?: 'user' | 'service';
   readonly userId: number;
   readonly username: string;
   readonly roles: readonly string[];
@@ -45,6 +47,7 @@ interface ActorSnapshotRow {
   id: number;
   username: string;
   status: string;
+  password_hash?: string;
   session_version: number;
   role_name: string | null;
   permission_code: string | null;
@@ -58,7 +61,7 @@ interface AccessTokenClaims {
 }
 
 const ACTOR_SNAPSHOT_SQL = `
-  SELECT u.id, u.username, u.status, u.session_version,
+  SELECT u.id, u.username, u.status, u.password_hash, u.session_version,
          r.name AS role_name, p.code AS permission_code,
          ip.instance_id, ip.access_level
   FROM users u
@@ -209,6 +212,15 @@ export class ActorContextService {
     }
   }
 
+  /** Trusted investigation port. The same transaction performs current grant
+   * reads; service actors never pass through interactive authentication. */
+  async loadInvestigationActorFrom(
+    executor: QueryExecutor, userId: number, kind: 'user' | 'service',
+    expectedSessionVersion?: number, requestId: string = randomUUID(),
+  ): Promise<ActorContext> {
+    return this.loadActorFrom(executor, userId, expectedSessionVersion, requestId, kind, true);
+  }
+
   async revalidateActor(actor: ActorContext, requestId: string = randomUUID()): Promise<ActorContext> {
     // Snapshot the server-owned ceiling before the asynchronous live grant read.
     // Revalidation must never turn a delegated actor into an unrestricted one.
@@ -218,7 +230,12 @@ export class ActorContextService {
       serverIds: Object.freeze([...boundary.serverIds]),
       networkDeviceIds: Object.freeze([...boundary.networkDeviceIds]),
     }) : undefined;
-    const current = await this.loadActiveActor(actor.userId, actor.sessionVersion, requestId);
+    const servicePool = actor.principalKind === 'service' ? this.poolProvider() : undefined;
+    if (actor.principalKind === 'service' && !servicePool) throw new ActorAuthenticationError();
+    const current = actor.principalKind === 'service'
+      ? await this.loadInvestigationActorFrom(servicePool!,
+        actor.userId, 'service', actor.sessionVersion, requestId)
+      : await this.loadActiveActor(actor.userId, actor.sessionVersion, requestId);
     return resourceBoundary ? Object.freeze({ ...current, resourceBoundary }) : current;
   }
 
@@ -226,6 +243,7 @@ export class ActorContextService {
     actor: ActorContext,
     expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
   ): Promise<string> {
+    if (actor.principalKind === 'service' || isInvestigationServiceIdentity(actor.username)) throw new ActorAuthenticationError();
     const pool = this.poolProvider();
     if (!pool) throw new ActorAuthenticationError();
 
@@ -336,14 +354,20 @@ export class ActorContextService {
     userId: number,
     expectedSessionVersion: number | undefined,
     requestId: string,
+    kind: 'user' | 'service' = 'user',
+    currentRead = false,
   ): Promise<ActorContext> {
     if (!Number.isInteger(userId) || userId <= 0) throw new ActorAuthenticationError();
 
-    const [rows] = await executor.execute(ACTOR_SNAPSHOT_SQL, [userId]);
+    const [rows] = await executor.execute(ACTOR_SNAPSHOT_SQL + (currentRead ? ' FOR SHARE' : ''), [userId]);
     if (!Array.isArray(rows) || rows.length === 0) throw new ActorAuthenticationError();
 
     const actorRows = rows as ActorSnapshotRow[];
     const user = actorRows[0];
+    const service = isInvestigationServiceIdentity(String(user.username), user.password_hash);
+    if (kind === 'service'
+      ? !isValidInvestigationServiceIdentity(String(user.username), user.password_hash ?? '')
+      : service) throw new ActorAuthenticationError();
     const sessionVersion = Number(user.session_version);
     if (user.status !== 'active'
       || !Number.isInteger(sessionVersion)
@@ -364,9 +388,13 @@ export class ActorContextService {
     }
     // The bootstrap admin identity is a super administrator even when an
     // older database has a partially populated role_permissions table.
-    if (String(user.username).toLowerCase() === 'admin' || roles.has('admin')) permissions.add('*');
+    if (kind === 'service' && (roles.has('admin') || [...permissions].some(permission => !INVESTIGATION_SERVICE_PERMISSIONS.includes(permission)))) {
+      throw new ActorAuthenticationError();
+    }
+    if (kind !== 'service' && (String(user.username).toLowerCase() === 'admin' || roles.has('admin'))) permissions.add('*');
 
     return Object.freeze({
+      ...(kind === 'service' ? { principalKind: 'service' as const } : {}),
       userId: Number(user.id),
       username: String(user.username),
       roles: Object.freeze([...roles].sort()),
@@ -383,6 +411,7 @@ export function signAccessToken(
   secret: string,
   expiresIn: jwt.SignOptions['expiresIn'] = '1h',
 ): string {
+  if (actor.principalKind === 'service' || isInvestigationServiceIdentity(actor.username)) throw new ActorAuthenticationError();
   return jwt.sign(
     { userId: actor.userId, sessionVersion: actor.sessionVersion },
     secret,
