@@ -1,5 +1,5 @@
 import { compatibleMessageParts, acknowledgeMessageParts, statusForStopReason, type SessionEntry, type PartBoundary, type PartStatus } from '@slide/agent-core';
-import { buildToolPreview } from '@slide/agent-core/tool-stream';
+import { buildToolPreview, boundedToolValue } from '@slide/agent-core/tool-stream';
 
 export function persistedMessageParts(entry: SessionEntry, kind: 'mysql' | 'checkpoint' | 'jsonl' = 'mysql', requestedStatus?: PartStatus): SessionEntry {
   entry = { ...entry, runId: entry.runId ?? `legacy_run_${entry.id}`, turnId: entry.turnId ?? `legacy_turn_${entry.id}` };
@@ -41,6 +41,20 @@ export function persistedMessageParts(entry: SessionEntry, kind: 'mysql' | 'chec
       const preview = buildToolPreview(content, entry.tool_call_id ?? '').text;
       doc.parts = doc.parts.map(part => part.type === 'tool_result' && part.toolCallId === entry.tool_call_id && part.content === preview
         ? { ...part, content: entry.content } : part);
+    }
+    if (kind === 'checkpoint' && entry.role === 'assistant') {
+      doc.parts = doc.parts.map(part => {
+        if (part.type !== 'tool_call') return part;
+        const call = entry.tool_calls?.find(call => call.id === part.call.id);
+        const legacy = doc.legacy.tool_calls?.find(call => call.id === part.call.id);
+        if (!call || legacy?.function.arguments !== call.function.arguments || legacy.function.name !== call.function.name || legacy.type !== call.type) return part;
+        let args: unknown = call.function.arguments;
+        try { args = JSON.parse(call.function.arguments); } catch { /* legacy display */ }
+        const safe = boundedToolValue(args);
+        const preview = typeof safe === 'string' ? safe : JSON.stringify(safe);
+        return part.call.function.arguments === preview
+          ? { ...part, call: { ...part.call, function: { ...part.call.function, arguments: call.function.arguments } } } : part;
+      });
     }
     const stopReason = entry.metadata?.stopReason;
     if (stopReason) result.messageParts.runTerminal = stopReason === 'completed' ? 'completed' : stopReason === 'cancelled' ? 'cancelled'
