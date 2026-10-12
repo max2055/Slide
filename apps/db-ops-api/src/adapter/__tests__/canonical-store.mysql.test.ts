@@ -180,6 +180,15 @@ describe.skipIf(!port)('T05-A canonical fact integrity with production MySQL', (
     const wrong = structuredClone(reconstructed); wrong.messageParts!.parts[0].sourceRequestId = 'wrong';
     await rejectUnchanged([wrong, result()]);
   });
+  it('replays a crash anchor lacking only the storage-owned persistence acknowledgement timestamp', async () => {
+    const entry = intent(); entry.messageParts!.parts[0].tool = { toolCallId: 'call', name: 'read', phase: 'persisted', occurredAt: 3,
+      startedAt: 1, settledAt: 2, persistedAt: 4, outcome: 'ok' };
+    await append([entry, result()]); const before = await rows();
+    const anchor = structuredClone(entry); delete anchor.messageParts!.parts[0].tool!.persistedAt;
+    await append([anchor, result()]); expect(await rows()).toEqual(before);
+    const conflict = structuredClone(anchor); conflict.metadata = { changed: true }; await rejectUnchanged([conflict, result()]);
+    const wrong = structuredClone(entry); wrong.messageParts!.parts[0].tool!.persistedAt = 5; await rejectUnchanged([wrong, result()]);
+  });
   it('rejects wrong actor, session and ordinary read share append while preserving read access', async () => {
     await append([intent()]); const before = await snapshot();
     await expect(store.appendToolFacts(other, 'owned', 'turn', [result()], 1)).rejects.toThrow('Chat session not found');
