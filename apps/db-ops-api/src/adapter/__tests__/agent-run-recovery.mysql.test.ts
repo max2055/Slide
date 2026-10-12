@@ -65,7 +65,7 @@ describe.skipIf(!port)('T04-A durable terminal and real WebSocket regressions', 
   afterEach(async () => {
     for (const release of providerReleases.splice(0)) release();
     for (const client of clients.splice(0)) client.terminate();
-    await Promise.all([...handlers]);
+    await Promise.all(handlers);
     await Promise.all(adapters.splice(0).map(adapter => adapter.dispose()));
     vi.restoreAllMocks(); vi.unstubAllEnvs();
     cachedChat.pool = priorChatPool;
