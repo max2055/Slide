@@ -30,9 +30,9 @@
 
 |发现ID|当前文件:行|结论与影响契约|责任任务|实施门禁 / 关闭证据|
 |---|---|---|---|---|
-|FINAL-0026|`apps/db-ops-api/src/workflows/outbox-service.ts:10`（Review基线）|confirmed；begin失败不release，事务可耗尽连接池|T02/MAX-143；T04/T07消费修复|修复候选已通过：begin在释放保护内；真实MySQL启动故障仍release，rollback失败保留原错误。正常合并证据前仍blocked；见[t02-outbox-validation.md](t02-outbox-validation.md)|
-|FINAL-0300|`apps/db-ops-api/src/workflows/outbox-service.ts:27`（Review基线）|confirmed；重复意图返回未落库新UUID，破坏返回稳定ID契约；当前报表按幂等键定位|T02/MAX-143，T07/MAX-146|修复候选已通过：按幂等键当前读取得已落库ID；真实MySQL重复/100并发只返回同一实际行ID且无孤儿。正常合并证据前仍blocked；见[t02-outbox-validation.md](t02-outbox-validation.md)|
-|FINAL-0126 / 0127|`apps/db-ops-api/src/auth/require-instance-access.ts:34`、`:88`（Review基线）|confirmed；列表/中间件与hasInstanceAccess对boundary语义不一致；构造受限actor可复现，不宣称普通浏览器已有同样漏洞|T03/MAX-144|T03-A候选已统一列表/过滤/URL交集；真实MySQL/JWT撤权与三类scope负例通过。仅正常合并后解除本条blocked；见[t03-auth-baseline-validation.md](t03-auth-baseline-validation.md)|
+|FINAL-0026|`apps/db-ops-api/src/workflows/outbox-service.ts:10`（Review基线）|confirmed，具体阻塞已修复；begin失败不release的Review原始记录保留|T02/MAX-143；T04/T07消费修复|[PR #145](https://github.com/max2055/Slide/pull/145)正常合并；真实连接中断后begin失败仍release，rollback失败保留原错误；[验证](t02-outbox-validation.md)，合并/CI证据见下|
+|FINAL-0300|`apps/db-ops-api/src/workflows/outbox-service.ts:27`（Review基线）|confirmed，具体阻塞已修复；重复返回未落库UUID的Review原始记录保留|T02/MAX-143，T07/MAX-146|同一修复PR已合并；真实MySQL重复/100并发只返回同一实际行ID且无孤儿；REPEATABLE READ旧快照负例通过；[验证](t02-outbox-validation.md)|
+|FINAL-0126 / 0127|`apps/db-ops-api/src/auth/require-instance-access.ts:34`、`:88`（Review基线）|confirmed；列表/中间件与hasInstanceAccess对boundary语义不一致；构造受限actor可复现，不宣称普通浏览器已有同样漏洞|T03/MAX-144|T03-A已正常合并[PR #147](https://github.com/max2055/Slide/pull/147)，merge `8a1910b13935d131681724f020d14355b758efdd`；真实MySQL/JWT撤权与三类scope负例、8项CI通过；仅本条blocked关闭，调查授权仍pending；见[t03-auth-baseline-validation.md](t03-auth-baseline-validation.md)|
 |FINAL-2384|`apps/db-ops-api/src/adapter/agent-run-service.ts:161`|confirmed；false/0错误与结果写成NULL|T04/MAX-145|相关任务内修复；定义合法非成功payload，保留明确空值语义|
 |FINAL-2385|`apps/db-ops-api/src/adapter/agent-run-service.ts:182`|confirmed静态窗口；取消遗留completionPending且running恢复不再查询|T04/MAX-145|blocked于调查取消/恢复接入；真实MySQL staged-complete/cancel竞争及唯一终态契约|
 |FINAL-0618|`apps/db-ops-api/src/adapter/direct-adapter.ts:812`|confirmed静态比较；send解析agent前缀，cancel直接比原key|T04/MAX-145，T06/MAX-148验收|blocked于复用取消；有前缀/裸session真实WS两路径可取消|
@@ -71,9 +71,9 @@
 
 |领域|当前准入|复用证据|缺口与恢复条件|涉及任务|
 |---|---|---|---|---|
-|auth / actor / session|pending；0126/0127仅在T03-A修复正常合并后解除blocked|T03-A实例边界交集、保留边界的live revalidation、真实MySQL/JWT撤权及三类scope负例；[验证记录](t03-auth-baseline-validation.md)|仅授权基线修复；服务主体、调查Session shares、Profile/工具交集及调查消息/证据/WS撤权仍待后续phase，未授予整域clear|T01、T02、T03、T04、T06、T10、T11、T12|
+|auth / actor / session|pending；0126/0127已由#147关闭|T03-A实例边界交集、保留边界的live revalidation、真实MySQL/JWT撤权及三类scope负例；[验证记录](t03-auth-baseline-validation.md)|仅授权基线修复；服务主体、调查Session shares、Profile/工具交集及调查消息/证据/WS撤权仍待后续phase，未授予整域clear|T01、T02、T03、T04、T06、T10、T11、T12|
 |DirectAdapter / agent-run / message projection|blocked + pending|Run、DirectAdapter、display/WS现有测试通过；MySQL常量查询否定0080|T04取消/staged-result/key；T05事实版本；消息并发与client reducer；agent-core恢复/预算其余候选待有界复核|T01、T04、T05、T06、T08、T09、T11、T12|
-|Workflow / outbox|pending；0026/0300仅在[修复PR #145](https://github.com/max2055/Slide/pull/145)正常合并后解除blocked|outbox两个probe；T02真实MySQL8.4.10稳定ID/释放/回滚与报表恢复44项通过；[验证记录](t02-outbox-validation.md)|当前head的CI/正常合并证据见T02交付；T04真实租约/恢复；T07事件/admission持久唯一与预算仍待验证，未授予整个领域clear|T01、T02、T04、T07、T08、T09、T10、T12|
+|Workflow / outbox|pending；0026/0300具体阻塞已由[PR #145](https://github.com/max2055/Slide/pull/145)关闭|T02真实MySQL8.4.10稳定ID/释放/回滚与报表恢复44项通过；[正式schema/store验证](t02-b-validation.md)|T04真实租约/恢复；T07事件/admission预算；T02-B正式schema/store具备真实MySQL阶段证据；T03调查授权/消息桥接与T02-C HTTP仍待后续phase，未授予整个领域clear|T01、T02、T04、T07、T08、T09、T10、T12|
 |Analysis / 告警|pending|envelope/evidence/provider/recovery现有单测通过|legacy retry/归属、告警并发唯一、事件聚合；服务器/网络覆盖与真实链路未完成|T01、T07、T08、T10、T11、T12|
 |platform / source evidence|blocked + pending|source当前测试通过；旧connector可达性排除|T09终态映射、查询窗口、部署commit匹配、模型egress；保留名与真实同步；持久异常防自举循环|T01、T05、T09、T12|
 |前端导航 / Chat|pending|导航与告警/源码呈现76项通过；旧组件未引用|现用Chat并发附件/greeting/cache、路由/权限深链、1600/1024/390与真实WS/撤权浏览器验收|T01、T06、T08、T10、T11、T12|
@@ -81,7 +81,7 @@
 |任务 / 已有Issue|明确交付与关联验收|准入条件|
 |---|---|---|
 |T01 / MAX-142|契约、状态/subject版本、固定样本；A01–A18框架|baseline-only；R00材料合并后推进契约，不替后续领域签字|
-|T02 / MAX-143|调查数据/事务API、唯一admission；A02、A06、A10、A18|先有界关闭0026/0300；auth领域未就绪时限于隔离事务测试，不上线业务入口|
+|T02 / MAX-143|调查数据/事务API、唯一admission；A02、A06、A10、A18|0026/0300已由#145关闭；按v1.2消费已合并T03-A，T02-B交付正式schema/store；T03-B后才接HTTP，不上线业务入口|
 |T03 / MAX-144|Profiles、服务主体、实时授权、Session桥接；A10、A18|关闭0126/0127；覆盖普通read share不可append及多资源全scope|
 |T04 / MAX-145|后台执行、取消、恢复、有限工具；A03、A07、A09、A13|关闭2385/0618，裁定0083/0171并补真实MySQL/WS/provider；不得自授admin|
 |T05 / MAX-147|事实观察、证据/结果版本；A02、A08、A11|关闭0614；裁定0084，bound与根因验证分离|
