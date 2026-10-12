@@ -134,4 +134,43 @@ describe('requireInstanceAccess middleware', () => {
     await requireUnrestrictedInstanceAccess()({ user: { permissions: ['instance:*'], instanceScopes: {} } }, unrestrictedReply as any);
     expect(unrestrictedReply.code).not.toHaveBeenCalled();
   });
+
+  it.each([[[]], [['*']], [['instance:*']]])('intersects list, filter and URL access with the boundary for permissions %j', async (permissions) => {
+    const user = { permissions, roles: ['admin'], instanceScopes: { 7: 'read-only', 8: 'admin' },
+      resourceBoundary: { instanceIds: [7, 9] } } as const;
+    expect(getAccessibleInstanceIds(user)).toEqual([7]);
+    expect(hasUnrestrictedInstanceAccess(user)).toBe(false);
+    expect(filterByInstanceAccess(user, [7, 8, 9], (id) => id)).toEqual([7]);
+    for (const id of [8, 9]) {
+      expect(hasInstanceAccess(user, id)).toBe(false);
+      const reply = makeReply();
+      await requireInstanceAccess()({ user, params: { id: String(id) } }, reply);
+      expect(reply.code).toHaveBeenCalledWith(403);
+    }
+    const reply = makeReply();
+    await requireInstanceAccess()({ user, params: { instanceId: '7' } }, reply);
+    expect(reply.code).not.toHaveBeenCalled();
+  });
+
+  it('an empty boundary denies all explicit grants and wildcards', async () => {
+    const user = { permissions: ['*'], instanceScopes: { 7: 'admin' }, resourceBoundary: { instanceIds: [] } } as const;
+    expect(getAccessibleInstanceIds(user)).toEqual([]);
+    const reply = makeReply();
+    await requireInstanceAccess()({ user, params: { id: '7' } }, reply);
+    expect(reply.code).toHaveBeenCalledWith(403);
+  });
+
+  it.each(['0', '-1', '1.5', 'NaN', '9007199254740992'])('rejects invalid URL instance ID %s even for an unrestricted actor', async (id) => {
+    const reply = makeReply();
+    await requireInstanceAccess()({ user: { permissions: ['*'] }, params: { id } }, reply);
+    expect(reply.code).toHaveBeenCalledWith(400);
+  });
+
+  it('lists only valid access levels and enforces the same default level at the URL boundary', async () => {
+    const user = { permissions: [], instanceScopes: { 7: 'unknown', 8: 'read-only' } } as any;
+    expect(getAccessibleInstanceIds(user)).toEqual([8]);
+    const reply = makeReply();
+    await requireInstanceAccess()({ user, params: { id: '7' } }, reply);
+    expect(reply.code).toHaveBeenCalledWith(403);
+  });
 });
