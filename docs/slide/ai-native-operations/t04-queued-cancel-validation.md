@@ -15,7 +15,7 @@
 - HTTP默认Bridge与server Workflow executor调用同一 `investigationBudgetConfiguration()`；default route真实JWT/SQL测试不注入Bridge，证明默认生产装配不会漏hook。配置数值与原server预算保持一致。API契约无变化。
 - cancel SQL遇ER_LOCK_DEADLOCK最多三个完整事务，每次rollback/release。真实SQL trigger注入1213验证三次上限和零部分提交；没有外部I/O重试。
 
-本次增量仅store.ts、session-bridge.ts、budget-ledger.ts、server.ts最小装配、直接execution测试及本验收文档/历史指引。未改event、auth/Profile、迁移、前端、source/platform/watch/result或共享Review矩阵。共享文件按父临时所有权授权使用，父核验后归还。
+本次增量仅store.ts、session-bridge.ts、budget-ledger.ts、server.ts最小装配、直接execution/routes测试及本验收文档/历史指引。未改event、auth/Profile、迁移、前端、source/platform/watch/result或共享Review矩阵。共享文件按父临时所有权授权使用，父核验后归还。
 
 ## 当前候选验证
 
@@ -31,6 +31,8 @@
 |Agent安全gate|17模块187 passed，0skip；与上面模块有重叠，不相加|
 |静态检查|API typecheck、contracts:check、security:scan、focused oxlint、git diff --check通过|
 |真实Provider|未执行：后端.env缺失，环境无Provider配置，本地Ollama11434连接拒绝；仍需授权免费地址、模型与有限调用上限，凭据只通过运行环境|
+
+当前head `7883d772` 的CI38268619582：6成功、recovery-qualification失败、release-artifact未运行。唯一失败是既有routes.test.ts真实TCP＋完整迁移重跑测试默认5秒超时；此用例不调用取消，取消路径40项和本地完整536项已通过。仅对此长SQL/E2E用例设置30秒有限deadline，保留全部断言、正式迁移与真实TCP；不修改CI配置、全局timeout或skip。修改后本地重跑CI同一授权/HTTP组：7模块158 passed/0skip，和18模块gate有重叠，不相加。新head需重查完整CI，不能用这次失败结果声称通过。
 
 新增crash夹具初轮把intent-COMMIT窗口误断言为ledger=sent，两项失败；实际持久intent先COMMIT再markSent，窗口账本仍reserved。已按实际SQL顺序修正夹具，证明reserved本身不能证明未发送；未改产品路径，失败不计通过证据。
 

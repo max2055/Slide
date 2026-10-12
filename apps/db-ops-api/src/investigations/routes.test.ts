@@ -104,6 +104,8 @@ describe.skipIf(!port)('T02-C real investigation HTTP/JWT/MySQL', () => {
     if (admin) { await admin.query(`DROP DATABASE IF EXISTS ${database}`); await admin.end(); }
   });
 
+  // Full formal migration inspection plus real TCP CRUD can exceed the unit
+  // default under concurrent isolated-MySQL CI load; retain a finite SQL/E2E deadline.
   it('real TCP HTTP preserves CRUD/context after reopening the database connection and migration rerun', async () => {
     const command = { ...payload(), from: '2026-10-12T01:00:00Z', to: '2026-10-12T01:30:00Z' };
     const response = await fetch(`${address}/api/investigations`, { method: 'POST', headers: { ...headers, 'content-type':'application/json', 'idempotency-key':'tcp-key' }, body: JSON.stringify(command) });
@@ -119,7 +121,7 @@ describe.skipIf(!port)('T02-C real investigation HTTP/JWT/MySQL', () => {
     const replay=await post('tcp-key',command as never); expect(replay.statusCode).toBe(202); expect(replay.json()).toEqual(accepted);
     const query=await fetch(`${address}/api/investigations?query=TCP`,{headers}); expect((await query.json() as { authorizedCounts: { total: number } }).authorizedCounts.total).toBe(1);
     const connection=await pool.getConnection(); try { const [rows]=await connection.execute<RowDataPacket[]>('SELECT title FROM investigations WHERE id=?',[accepted.id]); expect(rows[0].title).toBe('TCP updated'); } finally { connection.release(); }
-  });
+  }, 30_000);
 
   it('create retry and original request retry share the actor/key-first lock order', async () => {
     const accepted=(await post()).json();
