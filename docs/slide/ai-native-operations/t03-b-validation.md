@@ -88,6 +88,8 @@ git diff --check
 
 ## 出口与保留门禁
 
+第二个 head `69f258d73f6ac96c1853322c14645793a8abdd4d` 的 CI run `38209600534`：六项通过，recovery-qualification 在正式 store 的旧库升级用例于 5026ms 超时（默认 5000ms），release-artifact 依赖跳过。该用例创建完整 pre-112 schema，再执行升级、重复启动及应用回退兼容断言；本地新建 MySQL 8.4 实测旧 schema 初始化 2296ms、测试主体 2456ms，相关 64 项通过/0 skip。分类为已触达集成测试的 CI 时限问题，已先在父任务 phase 台账记录有界修复范围：仅此用例设为 30 秒，保留全部真实 SQL 与业务断言，其他用例/门禁默认时限不变，生产 store/迁移和 T02 文件所有权不变。诊断埋点不提交；最终准确代码再次运行同一真实 SQL gate：64 项通过/0 skip；typecheck、focused lint（0 warning/0 error）和 diff 检查通过。新 head 仍必须重新通过全部 CI，旧 head 的六项通过不能代替。
+
 当前 head CI、PR URL、head/merge SHA 和 main包含关系记录于 MAX-144 最终评论及父任务 phase evidence。仅在该 PR 当前检查与正常 merge 核验后释放 T02-C；完整 T03 等 T02-C 合并证据再做 T03-C。本材料不替代未来 provider/executor、WS/证据/浏览器撤权、预算/恢复或 T12 完整端到端门禁。
 
 没有生产发布/迁移，没有新任务/子代理，实际 token/费用遥测不可用，无硬预算。

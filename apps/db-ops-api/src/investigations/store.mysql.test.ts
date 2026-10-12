@@ -233,6 +233,8 @@ describe.skipIf(!port)('formal investigation persistence transactions', () => {
     expect(retry.acceptance).toEqual(accepted.acceptance);
   });
 
+  // This case builds the entire historical schema, upgrades it and reruns the
+  // production runner. CI DDL can exceed Vitest's default five-second limit.
   it('upgrades a pre-112 schema, reruns, and supports application rollback without deleting history', async () => {
     const prior = await mkdtemp(join(tmpdir(), 'slide-investigation-migrations-'));
     const upgradeDatabase = `inv_upgrade_${randomUUID().replaceAll('-', '')}`;
@@ -265,7 +267,7 @@ describe.skipIf(!port)('formal investigation persistence transactions', () => {
       await admin.query(`DROP DATABASE ${upgradeDatabase}`);
       await rm(prior, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it('100 concurrent same-key admissions produce one request, job, outbox and stable response', async () => {
     const acceptances = await Promise.all(Array.from({ length: 100 }, () => store.admit(input())));
