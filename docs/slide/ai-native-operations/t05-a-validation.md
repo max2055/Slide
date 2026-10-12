@@ -12,7 +12,7 @@
 
 - 对**持久化后的完整 JSON 值**进行比较：对象成员次序无意义，数组次序、字段值、metadata、legacy、完整 Parts、额外字段均有意义；同 ID 必须属于同一个 SQL user turn。精确重放不 UPDATE，不改变分页 id/turn_sequence/ordinal。
 - 除下述生命周期推进与确定性序列化默认值外，同 ID 不一致报 CANONICAL_ID_CONFLICT。事务内先插入的新事实、合法推进以及 checkpoint 一并回滚；禁止失败后前移 checkpoint。
-- 文档/Part status 只允许保持或 partial→completed；generation 只允许 open→ended。工具 phase 按 planned/queued/running/settled/persisted 单调推进；尚未 settled 时可更新显示进度、补齐 startedAt/settlement/outcome/preview，已定义 outcome 保持。settled 后其 preview/progress/settledAt/startedAt/args/name/ID 等保持，persisted 仅增加持久化时间；事件时间不得倒退，settled/persisted 同 phase 不可更改事件时间。完整字段比较仍拒绝其他变化。
+- 文档/Part status 只允许保持或 partial→completed；generation 只允许 open→ended。工具 phase 按 planned/queued/running/settled/persisted 单调推进；尚未 settled 时可更新显示进度、补齐 startedAt/settlement/outcome/preview，已定义 outcome 保持。settled 后其 preview/progress/settledAt/startedAt/args/name/ID 等保持，persisted 仅增加持久化时间；事件时间不得倒退，settled/persisted 同 phase 不可更改事件时间。SQL 已提交 persistedAt 是存储拥有的确认：恢复 anchor 仅缺少此确认时继承原值，显式改值仍拒绝，其他字段逐项比较；等价重放不 UPDATE。完整字段比较仍拒绝其他变化。
 - supplied failed/discarded、runTerminal、错误 durable kind/reference 在 acknowledgement 前拒绝，避免归一化消除冲突。合法工具失败结果仍是已完成的工具执行事实，其 outcome=error 不被伪装成成功。
 - 复用原会话锁及实时 Chat append 授权；wrong actor/session、普通 read share 不获得 append。无 auth、迁移、ledger/outbox、executor、公开契约修改。
 
@@ -38,6 +38,8 @@ AGENT_RUN_TEST_MYSQL_PORT=<isolated-port> AGENT_RUN_TEST_MYSQL_PASSWORD=<test-fi
     src/auth/chat-ownership.test.ts src/chat-history-page.test.ts
 DB_HOST=127.0.0.1 DB_PORT=<isolated-port> DB_USER=root DB_PASSWORD=<test-fixture> \
   SLIDE_MEMORY_PIPELINE_ENABLED=false pnpm --filter slide-api exec tsx ../../tests/qualification/canonical-history-mysql.ts
+DB_HOST=127.0.0.1 DB_PORT=<isolated-port> DB_USER=root DB_PASSWORD=<test-fixture> \
+  SLIDE_MEMORY_PIPELINE_ENABLED=false pnpm --filter slide-api exec tsx ../../tests/qualification/agent-runtime-mysql.ts
 pnpm --filter slide-api typecheck
 pnpm --filter @slide/agent-core exec vitest run src/__tests__/message-parts.test.ts src/__tests__/message-projection.test.ts
 pnpm contracts:check
@@ -53,12 +55,13 @@ git diff --check
 |---|---|
 |原生产代码 RED|22项：17 failed / 5 passed / 0 skip；失败为遗漏 payload、非法回退、错误 turn；测试先完成 typecheck。RED checkpoint `fcebdab9`。|
 |序列化新增 RED|旧记录等价重放、任意 legacy turn、文档 provider 边界缺失分别复现，补齐兼容规则后 GREEN。`c7df9503`、`2e734040` 保存额外 reproducer。单例过滤的其他案例未执行，未计入实际验收。|
-|最终受影响模块|18文件 **211 passed / 0 failed / 0 skip**，含新 canonical MySQL **30项**和 T04-A MySQL/JWT/WS **25项**；兼容生命周期、Chat、memory、projection 和 history。|
+|最终受影响模块|18文件 **212 passed / 0 failed / 0 skip**，含新 canonical MySQL **31项**和 T04-A MySQL/JWT/WS **25项**；兼容生命周期、Chat、memory、projection 和 history。|
 |既有真实 canonical-history|八个场景通过；505事实稳定分页/JSONL/hash、partial→completed、legacy rollback、真实提交 ack loss、并发 service 恢复、JSONL 故障下 SQL 恢复、整 turn 保留策略。|
+|当前执行恢复 gate|`agent-runtime-mysql.ts` 退出0；普通 Chat 真实 SQL/JWT/WS、OS-process-exit-before-commit、OS-stream-crash-durable-tool-anchor-restored、unknown settlement、取消与 effective snapshot fixtures通过。首次 PR head `998476a8` 的 browser-qualification 在崩溃 anchor 缺 persistedAt 时失败（CI run 38224615641）；新增 RED `fd2bd391` 后修复，重新核验新 head CI，不使用旧结果。|
 |核心 Parts/Projection|2文件 **30 passed / 0 failed / 0 skip**；未修改 agent-core 的公共 Parts schema。|
 |权限与静态|security:agent 187 passed / 0 skip，security:scan、API typecheck、contracts:check、focused lint（0 warning/error）、diff check passed。安全全套与模块存在重叠，不累加冒充独立案例。|
 
-新30项包括完整同 ID 并发重放、数组次序差异、metadata/Parts/未知字段冲突、合法 status 和工具生命周期、终态拒绝、事务回滚且 checkpoint 不前移、wrong actor/session/read-share、实际 COMMIT ack loss、冷 service/history/投影 hash 一致、真实 JWT/WS 双工具执行后冷 adapter 读取 SQL 历史且不重复执行工具、旧格式只读重放及 generating boundary 保留。
+新31项包括完整同 ID 并发重放、数组次序差异、metadata/Parts/未知字段冲突、合法 status 和工具生命周期、终态拒绝、事务回滚且 checkpoint 不前移、wrong actor/session/read-share、实际 COMMIT ack loss、冷 service/history/投影 hash 一致、真实 JWT/WS 双工具执行后冷 adapter 读取 SQL 历史且不重复执行工具、旧格式只读重放及 generating boundary 保留。
 
 最终 head、准确 head CI、PR/merge SHA 和 main 包含关系在 MAX-147 交付附件记录，不能用旧 head CI 代替。未修改 CI 或绕过其门禁。
 
@@ -66,4 +69,4 @@ git diff --check
 
 已按调用链复核：写入前拒绝被归一化掩盖的终态/引用冲突；完整比较覆盖 metadata/Parts/legacy；只有显式单调字段可 UPDATE；事务内同 turn 绑定与 Session 行锁保留；任何冲突均 rollback/release；exact/旧默认等价重放保持原 SQL 行；getPage 继续使用原 owner/read share 谓词与 v1 兼容 reader。普通 read share 和服务主体无新增权限。没有再次派生代理或运行全仓 Review。
 
-没有覆盖全部历史损坏数据或自动修复；非法同 ID 内容需要上层明确处理，不能忽略错误继续推进。没有声称真实付费 provider、跨 Worker 崩溃/取消、真实浏览器 E2E 或完整 V1 已验收。最终完整 V1 gate 仍归 T12；T04-B/T05 完整功能需父任务另行准入。本出口正常合并后仍保持 in_review 等父核验，不标完整 T05 done。实际 token/费用遥测不可用，未设置硬预算。
+没有覆盖全部历史损坏数据或自动修复；非法同 ID 内容需要上层明确处理，不能忽略错误继续推进。上述 fixture 验证普通 Chat 的真实 OS 进程退出恢复，不冒充完整调查跨 Worker 执行/取消验收。没有声称真实付费 provider、真实浏览器产品 E2E 或完整 V1 已验收。最终完整 V1 gate 仍归 T12；T04-B/T05 完整功能需父任务另行准入。本出口正常合并后仍保持 in_review 等父核验，不标完整 T05 done。实际 token/费用遥测不可用，未设置硬预算。
