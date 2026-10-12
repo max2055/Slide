@@ -1,7 +1,7 @@
 import { dbConnection } from '../db-connection.js';
 import { chatDatabaseService } from '../chat-database-service.js';
 import type { ActorContext } from '../auth/actor-context.js';
-import { memoryHash, type MemoryInput, type SessionEntry } from '@slide/agent-core';
+import { memoryHash, readMessageParts, type MemoryInput, type SessionEntry, type MessagePart } from '@slide/agent-core';
 import { persistedMessageParts, recordMessageParts } from './message-parts.js';
 
 interface Executor { query<T = any>(sql: string, values?: unknown[]): Promise<[T, unknown?]>; }
@@ -15,6 +15,53 @@ function stable(value: unknown): string {
   return JSON.stringify(sort(value));
 }
 const FINAL_ORDINAL = 9_000_000_000;
+
+/** A durable fact's entire JSON payload is immutable, except its explicit
+ * acknowledgement/tool lifecycle. Compare the proposed successor against a
+ * copy of the prior fact with only those permitted fields advanced. Unknown
+ * fields, metadata, legacy projection, IDs and part order remain significant.
+ */
+function successor(prior: SessionEntry, next: SessionEntry): boolean {
+  const expected = structuredClone(prior);
+  const before = expected.messageParts, after = next.messageParts;
+  if (!before || !after || before.parts.length !== after.parts.length) return false;
+  const advanceStatus = (old: string, proposed: string) => old === proposed || old === 'partial' && proposed === 'completed';
+  if (!advanceStatus(before.status, after.status)) return false;
+  before.status = after.status;
+  for (let i = 0; i < before.parts.length; i++) {
+    const old = before.parts[i], proposed = after.parts[i];
+    if (!advanceStatus(old.status, proposed.status)) return false;
+    old.status = proposed.status;
+    if (old.generation === 'open' && proposed.generation === 'ended') old.generation = 'ended';
+    if (!advanceTool(old, proposed)) return false;
+  }
+  return stable(expected) === stable(next);
+}
+
+function advanceTool(old: MessagePart, next: MessagePart): boolean {
+  if (stable(old.tool) === stable(next.tool)) return true;
+  if (old.type !== 'tool_call' || next.type !== 'tool_call' || !old.tool || !next.tool) return false;
+  const phases = ['planned', 'queued', 'running', 'settled', 'persisted'];
+  const a = old.tool, b = next.tool;
+  const rank = phases.indexOf(a.phase), nextRank = phases.indexOf(b.phase);
+  if (rank < 0 || nextRank < rank || !Number.isFinite(b.occurredAt) || b.occurredAt < a.occurredAt) return false;
+  if (rank >= phases.indexOf('settled') && rank === nextRank && a.occurredAt !== b.occurredAt) return false;
+  if (a.outcome !== undefined && a.outcome !== b.outcome) return false;
+  // Once settled, outcome/preview/progress and settlement time are facts.
+  // Persistence may only acknowledge them and add its own timestamp.
+  const expected = structuredClone(a);
+  expected.phase = b.phase; expected.occurredAt = b.occurredAt;
+  if (rank < phases.indexOf('settled')) {
+    for (const key of ['outcome', 'preview', 'progress', 'settledAt'] as const) {
+      if (b[key] !== undefined) Object.assign(expected, { [key]: structuredClone(b[key]) });
+    }
+    if (a.startedAt === undefined && b.startedAt !== undefined) expected.startedAt = b.startedAt;
+  }
+  if (a.persistedAt === undefined && b.phase === 'persisted' && b.persistedAt !== undefined) expected.persistedAt = b.persistedAt;
+  if (stable(expected) !== stable(b)) return false;
+  old.tool = expected;
+  return true;
+}
 
 /** MySQL is authoritative for actor-owned chats. JSONL is a disposable cache.
  * Existing DB message IDs are already durable: no replacement IDs or double writes.
@@ -44,18 +91,34 @@ export class CanonicalStore {
       if (!turns.length) throw new Error('CANONICAL_TURN_NOT_FOUND');
       const [counts] = await connection.query<any[]>('SELECT COUNT(*) AS total FROM agent_canonical_facts WHERE session_id = ?', [sessionId]);
       for (let index = 0; index < entries.length; index++) {
+        // Do not let acknowledgement normalization erase a terminal conflict.
+        const supplied = entries[index].messageParts;
+        const invalidBoundary = (boundary: { status: string; durable?: { kind: string; reference: string } }) =>
+          boundary.status === 'failed' || boundary.status === 'discarded'
+          || boundary.durable && (boundary.durable.kind !== 'checkpoint' || boundary.durable.reference !== entries[index].id);
+        if (supplied && (invalidBoundary(supplied) || supplied.runTerminal !== undefined || supplied.parts?.some(invalidBoundary)))
+          throw new Error('CANONICAL_ID_CONFLICT');
         const pending = entries[index].tool_calls?.some(call => !entries.some(result => result.role === 'tool' && result.tool_call_id === call.id));
         const entry = persistedMessageParts(entries[index], 'checkpoint', pending ? 'partial' : 'completed');
         if (!entry.id || (entry.source && entry.source !== 'fact') || !(entry.role === 'tool' || (entry.role === 'assistant' && entry.tool_calls?.length))) throw new Error('INVALID_CANONICAL_FACT');
         const json = JSON.stringify(entry);
         if (Buffer.byteLength(json) > MAX_FACT_BYTES) throw new Error('CANONICAL_CAPACITY_EXCEEDED');
-        const [existing] = await connection.query<any[]>('SELECT entry_json FROM agent_canonical_facts WHERE session_id = ? AND message_id = ?', [sessionId, entry.id]);
+        const persisted: SessionEntry = JSON.parse(json);
+        readMessageParts(persisted.messageParts);
+        const [existing] = await connection.query<any[]>('SELECT entry_json, turn_sequence FROM agent_canonical_facts WHERE session_id = ? AND message_id = ?', [sessionId, entry.id]);
         if (existing.length) {
           const prior = typeof existing[0].entry_json === 'string' ? JSON.parse(existing[0].entry_json) : existing[0].entry_json;
-          // JSON object member order is not preserved by MySQL.
-          const payload = (m: SessionEntry) => stable([m.role, m.content, m.tool_calls, m.tool_call_id, m.runId, m.turnId, m.reasoning_content, m.thinking_blocks, m.attachments]);
-          if (payload(prior) !== payload(entry)) throw new Error('CANONICAL_ID_CONFLICT');
-          if (prior.messageParts?.status !== entry.messageParts?.status) await connection.query(
+          if (String(existing[0].turn_sequence) !== String(turns[0].id)) throw new Error('CANONICAL_ID_CONFLICT');
+          // MySQL reorders object keys; compare the complete JSON value, not a
+          // subset of fields or serializer order. Exact replay performs no UPDATE.
+          if (stable(prior) === stable(persisted)) continue;
+          // Pre-upgrade tool facts use the same deterministic legacy defaults
+          // as getPage. Equivalent replay remains read-only; never backfill or
+          // overwrite their committed JSON just to enrich display identities.
+          const compatible = persistedMessageParts(prior, 'checkpoint', prior.messageParts?.status);
+          if (stable(compatible) === stable(persisted)) continue;
+          if (!successor(prior, persisted)) throw new Error('CANONICAL_ID_CONFLICT');
+          await connection.query(
             'UPDATE agent_canonical_facts SET entry_json = ? WHERE session_id = ? AND message_id = ?', [json, sessionId, entry.id]);
           continue;
         }

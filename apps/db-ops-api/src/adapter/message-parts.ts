@@ -7,6 +7,20 @@ export function persistedMessageParts(entry: SessionEntry, kind: 'mysql' | 'chec
   const boundary: PartBoundary = { status, durable: { kind, reference: entry.id! } };
   try {
     const result = acknowledgeMessageParts(entry, boundary);
+    // checkpointFacts creates legacy tool Parts before DirectAdapter binds the
+    // persisted user turn. Its next projection.document adds these same default
+    // display identities. Serialize that fallback once, before the first commit,
+    // so a later acknowledgement never rewrites an already-committed legacy ID.
+    const doc = result.messageParts;
+    if (kind === 'checkpoint' && entry.role === 'tool' && doc.projectionMessageId === undefined
+      && doc.runId === entry.runId && (doc.turnId === entry.turnId && doc.legacy.turnId === entry.turnId
+        || doc.turnId === entry.runId && doc.legacy.turnId === entry.runId)
+      && doc.parts.every((part, index) => part.id === `${entry.id}/part/${index}` && part.sourceMessageId === undefined)) {
+      doc.turnId = entry.turnId;
+      doc.legacy.turnId = entry.turnId;
+      doc.projectionMessageId = entry.id;
+      doc.parts = doc.parts.map(part => ({ ...part, sourceMessageId: entry.id, generation: part.generation ?? 'ended' }));
+    }
     const stopReason = entry.metadata?.stopReason;
     if (stopReason) result.messageParts.runTerminal = stopReason === 'completed' ? 'completed' : stopReason === 'cancelled' ? 'cancelled'
       : stopReason === 'timed_out' ? 'timed_out' : stopReason === 'max_iterations' ? 'partial' : 'failed';
