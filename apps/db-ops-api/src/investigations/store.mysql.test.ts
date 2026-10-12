@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { splitSqlStatements } from '../migrations/runner.js';
 import { MysqlInvestigationStore, InvestigationStoreError, type InvestigationAdmission } from './store.js';
 
-const port = Number(process.env.INVESTIGATION_TEST_MYSQL_PORT);
+const port = Number(process.env.INVESTIGATION_TEST_MYSQL_PORT ?? process.env.REPORT_TEST_MYSQL_PORT);
 // Deliberately isolated schema fixture. No production migration, Session
 // creation/append or HTTP route is registered by this bounded store work.
 describe.skipIf(!port)('isolated investigation admission transactions', () => {
@@ -20,7 +20,7 @@ describe.skipIf(!port)('isolated investigation admission transactions', () => {
 
   beforeAll(async () => {
     const options = { host: '127.0.0.1', port, user: 'root',
-      password: process.env.INVESTIGATION_TEST_MYSQL_PASSWORD ?? '', timezone: 'Z' };
+      password: process.env.INVESTIGATION_TEST_MYSQL_PASSWORD ?? process.env.REPORT_TEST_MYSQL_PASSWORD ?? '', timezone: 'Z' };
     admin = mysql.createPool(options);
     await admin.query(`CREATE DATABASE ${database}`);
     pool = mysql.createPool({ ...options, database, connectionLimit: 10 });
@@ -52,9 +52,9 @@ describe.skipIf(!port)('isolated investigation admission transactions', () => {
       PRIMARY KEY(investigation_id, actor_kind, actor_id)
     ) ENGINE=InnoDB`);
     store = new MysqlInvestigationStore(() => pool, async (connection, actor, investigation) => {
-      const [grants] = await connection.execute<mysql.RowDataPacket[]>(
+      const [grants] = await connection.execute(
         'SELECT actor_id FROM test_operator_grants WHERE investigation_id = ? AND actor_kind = ? AND actor_id = ? FOR SHARE',
-        [investigation.id, actor.kind, actor.id]);
+        [investigation.id, actor.kind, actor.id]) as [mysql.RowDataPacket[]];
       if (!grants.length) throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
     });
   });
@@ -130,6 +130,32 @@ describe.skipIf(!port)('isolated investigation admission transactions', () => {
 
   it('preserves session uniqueness in the isolated schema', async () => {
     await expect(pool.execute('UPDATE investigations SET session_id = ? WHERE id = ?', [`session-${investigationId}`, secondId])).rejects.toThrow('Duplicate entry');
+  });
+
+  it('keeps exact key bytes and actor namespaces separate', async () => {
+    const first = await store.admit(input());
+    const spaced = await store.admit({ ...input(), investigationId: secondId, idempotencyKey: 'request:1 ' });
+    expect(spaced.requestId).not.toBe(first.requestId);
+    await pool.execute("INSERT INTO test_operator_grants VALUES (?, 'service', 1)", [secondId]);
+    // A same-key request in another actor namespace gets past dedupe, but is
+    // still rejected by this Session's active-request invariant.
+    await expect(store.admit({ ...input(), investigationId: secondId, actor: { kind: 'service', id: 1 } }))
+      .rejects.toMatchObject({ code: 'INVESTIGATION_ACTIVE_REQUEST' });
+    expect(await all('investigation_requests')).toHaveLength(2);
+  });
+
+  it('fails closed if the server authorizer or pool is missing', async () => {
+    await expect(new MysqlInvestigationStore(() => pool, undefined as never).admit(input()))
+      .rejects.toMatchObject({ code: 'INVESTIGATION_OPERATION_FORBIDDEN' });
+    await expect(new MysqlInvestigationStore(() => null, async () => {}).admit(input()))
+      .rejects.toMatchObject({ code: 'INVESTIGATION_QUEUE_UNAVAILABLE' });
+    expect(await all('investigation_admission_keys')).toHaveLength(0);
+  });
+
+  it('rolls back the key reservation when the investigation is missing', async () => {
+    await expect(store.admit({ ...input(), investigationId: randomUUID() }))
+      .rejects.toMatchObject({ code: 'INVESTIGATION_NOT_FOUND', statusCode: 404 });
+    expect(await all('investigation_admission_keys')).toHaveLength(0);
   });
 
   it.each(['closed', 'archived'])('does not accept new work for %s investigations', async lifecycle => {

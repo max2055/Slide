@@ -22,4 +22,4 @@ for _ in $(seq 1 60); do
 done
 if [[ "$stable" -lt 3 ]]; then echo "isolated report MySQL unavailable" >&2; exit 1; fi
 REPORT_TEST_MYSQL_PORT="$port" REPORT_TEST_MYSQL_PASSWORD=qualification-test-password \
-  pnpm --filter slide-api exec vitest run src/workflows/report-recovery.mysql.test.ts src/workflows/outbox-service.mysql.test.ts
+  pnpm --filter slide-api exec vitest run src/workflows/report-recovery.mysql.test.ts src/workflows/outbox-service.mysql.test.ts src/investigations/store.mysql.test.ts
