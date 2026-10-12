@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { TSchema } from '@sinclair/typebox';
 import { PublicApiSchemas } from './public-api.js';
+import { InvestigationHttpSchemas } from '../investigations/http-contracts.js';
 import { InvestigationSchemas } from '../investigations/contracts.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -23,6 +24,10 @@ function refSchema(schema: TSchema): Record<string, string> {
   return { $ref: `#/components/schemas/${schema.$id}` };
 }
 
+function investigationId() {
+  return { name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-f0-9-]{36}$' } };
+}
+
 function pathId(name: 'id' | 'serverId' | 'backupId') {
   return { name, in: 'path', required: true, schema: { type: 'integer', minimum: 1 } };
 }
@@ -32,6 +37,39 @@ export function buildOpenApiDocument() {
     openapi: '3.1.0',
     info: { title: 'Slide Public API', version: '0.10' },
     paths: {
+      '/api/investigations': {
+        post: { operationId: 'createInvestigation', security: [{ bearerAuth: [] }],
+          description: 'Atomic creation plus first admission/message/job/outbox. Server-owned actor and Profile version; all scopes revalidated even on retry. Same actor/key/command recovers the original investigation and Session. No executor registered by this API.',
+          parameters: [{ name: 'Idempotency-Key', in: 'header', required: true, schema: { type: 'string', minLength: 1, maxLength: 255 } }],
+          requestBody: { required: true, content: { 'application/json': { schema: refSchema(PublicApiSchemas.InvestigationCreateRequest) } } },
+          responses: { '202': { description: 'Durably accepted', content: { 'application/json': { schema: refSchema(PublicApiSchemas.InvestigationAccepted) } } },
+            '400': { description: 'Invalid input or client authority field' }, '401': { description: 'Invalid JWT or service interactive token' },
+            '404': { description: 'Not visible under all current scopes' }, '409': { description: 'Active Session or idempotency payload mismatch' },
+            '422': { description: 'Profile subject unsupported' }, '503': { description: 'Rolled back; not accepted' } },
+        },
+        get: { operationId: 'listInvestigations', security: [{ bearerAuth: [] }],
+          description: 'Items, nextCursor and authorizedCounts.total. Live authorization before count/limit. Cursor encodes an offset and filter hash; concurrent changes can shift pages. All responses private/no-store.',
+          parameters: ['state','profile','resource','query','cursor','limit'].map(name => ({ name, in: 'query', schema: { type: 'string' }, description: name === 'resource' ? 'instance:id, server:id or network_device:id' : name === 'limit' ? '1 to 50; default 20' : undefined })),
+          responses: { '200': { description: 'Authorized page' }, '400': { description: 'Invalid filters/cursor' }, '401': { description: 'JWT required' }, '503': { description: 'Store unavailable' } },
+        },
+      },
+      '/api/investigations/{id}': {
+        get: { operationId: 'getInvestigation', security: [{ bearerAuth: [] }], parameters: [investigationId()],
+          description: 'Persisted metadata/version/context. derivedRunState/latestResult are null until T04/T05 fact owners are integrated; admission is not a Run or a result.',
+          responses: { '200': { description: 'Authorized metadata' }, '404': { description: 'Absent or inaccessible' }, '401': { description: 'JWT required' }, '503': { description: 'Store unavailable' } } },
+        patch: { operationId: 'patchInvestigation', security: [{ bearerAuth: [] }], parameters: [investigationId()],
+          description: 'Operator, live all-scope authority and expectedVersion required. Active request prevents goal/lifecycle change. Immutable scopes/Profile/context; human recovery/verification fields belong to the feedback module.',
+          requestBody: { required: true, content: { 'application/json': { schema: refSchema(PublicApiSchemas.InvestigationPatchRequest) } } },
+          responses: { '200': { description: 'Persisted updated metadata/version' }, '400': { description: 'Invalid patch' }, '403': { description: 'Visible viewer cannot operate' }, '404': { description: 'Absent or inaccessible' }, '409': { description: 'Version/active request conflict' }, '503': { description: 'Rolled back' } } },
+      },
+      '/api/investigations/{id}/runs': { post: { operationId: 'admitInvestigationRequest', security: [{ bearerAuth: [] }], parameters: [investigationId(), { name: 'Idempotency-Key', in: 'header', required: true, schema: { type: 'string', minLength: 1, maxLength: 255 } }],
+        requestBody: { required: true, content: { 'application/json': { schema: refSchema(PublicApiSchemas.InvestigationRequest) } } },
+        responses: { '202': { description: 'Durable request; no fabricated Run', content: { 'application/json': { schema: refSchema(PublicApiSchemas.InvestigationAccepted) } } }, '403': { description: 'Viewer cannot append' }, '404': { description: 'Absent or inaccessible' }, '409': { description: 'Version, payload or active request conflict' }, '503': { description: 'Rolled back; no message/job/outbox orphan' } } } },
+      '/api/investigations/{id}/messages': { get: { operationId: 'getInvestigationMessages', security: [{ bearerAuth: [] }], parameters: [investigationId(), { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200 } }],
+        responses: { '200': { description: 'Authorized chronological messages from the existing Session' }, '404': { description: 'Absent or any required scope missing' } } } },
+      '/api/investigations/{id}/requests/{requestId}/cancel': { post: { operationId: 'cancelInvestigationRequest', security: [{ bearerAuth: [] }], parameters: [investigationId(), { name: 'requestId', in: 'path', required: true, schema: { type: 'string' } }],
+        description: 'Real-time operator/all-scope authorization. Atomically records cancellation intent. Unclaimed queued/retry job becomes cancelled and releases active admission. Running owner retains active admission; T04 consumes intent and owns Run termination.',
+        responses: { '202': { description: 'Intent persisted, repeat safe' }, '403': { description: 'Viewer cannot cancel' }, '404': { description: 'Request or investigation inaccessible' }, '503': { description: 'Rolled back' } } } },
       '/api/platform/observations': { get: {
         operationId: 'getPlatformObservations', security: [{ bearerAuth: [] }],
         description: 'Requires config:view, config:* or *. Queue gauges are a current MySQL snapshot (not restricted by the log time window), capped at 100 job types. Logs are process-local, retained for one hour with at most 10000 events and 100 groups: queue lifecycle groups include jobType, count, durationMs (sum), durationSamples and maxDurationMs. job.wait is overdue time from max(created_at, available_at) at claim, including reclaimed jobs; job.executed is handler elapsed time and terminal events include settlement time. Retry scheduling delays are excluded. Missing logs, omitted groups and unavailable queue stores are explicit gaps, never zero backlog or a throughput SLA. Ready follows claim eligibility including ANALYSIS_DISPATCH_ENABLED; queued/retry include scheduled and disabled jobs. No payloads, handler error text or credentials.',
@@ -434,7 +472,7 @@ function schemaType(schema: TSchema): string {
 function buildInvestigationClientTypes(): string {
   return '// Generated investigation contract baseline; routes are not implemented by these types.\n'
     + "import type { ProjectionFrame } from '../../../../packages/agent-core/src/message-projection.ts';\n\n"
-    + Object.entries(InvestigationSchemas).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
+    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
 }
 
 export function buildClientTypes(): string {

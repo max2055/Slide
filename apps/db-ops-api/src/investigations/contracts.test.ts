@@ -153,10 +153,12 @@ describe('Profile and permission contract', () => {
     expect(INVESTIGATION_PERMISSION_RULES).toMatchObject({ toolAuthority: ['profile_allowlist', 'live_actor_grants', 'investigation_scope', 'live_tool_policy'], visibility: 'all_required_scopes', revalidate: ['admission', 'execution', 'tool_call', 'model_call', 'subscription', 'content_read'], ordinaryChatReadShareAllowsAppend: false, serviceActorMayInheritAdmin: false, modelMayGrantAuthority: false });
     expect(INVESTIGATION_ERROR_STATUS).toMatchObject({ INVESTIGATION_INPUT_INVALID: 400, INVESTIGATION_OPERATION_FORBIDDEN: 403, INVESTIGATION_NOT_FOUND: 404, INVESTIGATION_ACTIVE_REQUEST: 409, PROFILE_SUBJECT_UNSUPPORTED: 422, INVESTIGATION_QUEUE_UNAVAILABLE: 503 });
   });
-  it('publishes the same schemas/types without claiming unimplemented endpoints', () => {
+  it('publishes current HTTP schemas/types while keeping future evidence endpoints absent', () => {
     const document = buildOpenApiDocument() as { components: { schemas: Record<string, unknown> }; paths: Record<string, unknown> };
     expect(document.components.schemas).toHaveProperty('InvestigationSubject');
-    expect(document.paths).not.toHaveProperty('/api/investigations');
+    expect(document.paths).toHaveProperty('/api/investigations');
+    expect(document.paths).not.toHaveProperty('/api/investigations/{id}/events');
+    expect(document.paths).not.toHaveProperty('/api/investigations/{id}/results');
     expect(buildClientTypes()).toContain('export type InvestigationSubject =');
     expect(buildClientTypes()).toContain('ProjectionFrame');
   });

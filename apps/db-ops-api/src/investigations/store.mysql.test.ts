@@ -242,7 +242,7 @@ describe.skipIf(!port)('formal investigation persistence transactions', () => {
     const upgraded = mysql.createPool({ host: '127.0.0.1', port, user: 'root',
       password: process.env.INVESTIGATION_TEST_MYSQL_PASSWORD ?? process.env.REPORT_TEST_MYSQL_PASSWORD ?? '', database: upgradeDatabase });
     try {
-      for (const migration of (await loadMigrations()).filter(migration => migration.id !== '112_investigations.sql'))
+      for (const migration of (await loadMigrations()).filter(migration => migration.id < '112_investigations.sql'))
         await writeFile(join(prior, migration.id), migration.sql);
       await new MigrationRunner(upgraded, prior).run();
       await upgraded.query("INSERT INTO chat_sessions (session_id, user_id, title) VALUES ('legacy-session', 1, 'legacy')");
