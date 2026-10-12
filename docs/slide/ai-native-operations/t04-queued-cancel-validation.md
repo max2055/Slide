@@ -23,14 +23,16 @@
 
 |验证|结果|
 |---|---|
-|完整受影响gate|18模块530 passed，0skip；execution模块93项，其中本轮新增34项|
+|完整受影响gate|18模块536 passed，0skip；execution模块99项，其中本轮新增40项|
 |取消矩阵|queued/retry自动；手动无receipt/已reserved；共享operator；重复cancel及COMMIT lost-ack；原主体lane|
 |失败关闭|缺失/篡改allocation、commandHash、domain/lane/Profile/resources/actor；manual receipt移除；viewer与全部scope中的撤权；retry有效lease/未来fence；默认hook缺失|
 |事务与竞争|真实SQL refund后Job/marker失败全部rollback；有限SQL deadlock重试；claim与markSent竞态；sent/unknown无Run仍保留额度|
-|旧Run/恢复|retry的reserved/sent/unknown/settled/cancelled分别检查；旧durable intent不退款或重放；原自动/手动各九个SIGKILL窗口、canonical/Chat/Runtime、浏览器关闭继续全部重跑|
+|旧Run/恢复|retry的reserved/sent/unknown/settled/cancelled分别检查；旧durable intent不退款或重放；新增手动/自动的provider-before、intent-COMMIT-before-markSent、provider-after六个真实SIGKILL→retry→HTTP取消→进程重启窗口，及原自动/手动各九个SIGKILL恢复窗口、canonical/Chat/Runtime、浏览器关闭继续全部重跑|
 |Agent安全gate|17模块187 passed，0skip；与上面模块有重叠，不相加|
 |静态检查|API typecheck、contracts:check、security:scan、focused oxlint、git diff --check通过|
 |真实Provider|未执行：后端.env缺失，环境无Provider配置，本地Ollama11434连接拒绝；仍需授权免费地址、模型与有限调用上限，凭据只通过运行环境|
+
+新增crash夹具初轮把intent-COMMIT窗口误断言为ledger=sent，两项失败；实际持久intent先COMMIT再markSent，窗口账本仍reserved。已按实际SQL顺序修正夹具，证明reserved本身不能证明未发送；未改产品路径，失败不计通过证据。
 
 原始日志、当前源码SHA-256、准确PR head/CI和交接run由本次Issue交付附件提供。源码未变的检查复用有效证据；格式调整仅触及新增测试。未把focused filtered计数当完整gate，也未将fixture usage作为Agent token用量。
 

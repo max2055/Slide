@@ -1508,7 +1508,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     },
     context: { workerId: binding.workerId, fencingToken: binding.fencingToken },
   });
-  async function child(crash?: string) {
+  async function child(crash?: string, allowFailure = false) {
     const worker = fork(fileURLToPath(new URL('./execution-recovery-child.ts', import.meta.url)), [], {
       execArgv: ['--import', import.meta.resolve('tsx')],
       silent: true,
@@ -1543,13 +1543,61 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
         });
         worker.once('exit', (exitCode, signal) => {
           clearTimeout(timeout);
-          if (!crash && exitCode !== 0) reject(Error(`CHILD_FAILED ${JSON.stringify(messages)} ${diagnostic}`));
+          if (!crash && !allowFailure && exitCode !== 0) reject(Error(`CHILD_FAILED ${JSON.stringify(messages)} ${diagnostic}`));
           else resolve({ messages, exitCode, signal });
         });
       },
     );
     return result;
   }
+  it.each(
+    ['manual', 'automatic'].flatMap((lane) =>
+      ['provider-before', 'provider-intent', 'provider-after'].map((point) => [lane, point]),
+    ),
+  )(
+    'cancellation receipt: real SIGKILL %s %s -> retry -> JWT cancel -> restart preserves unknown without dispatch',
+    async (lane, point) => {
+      if (lane === 'automatic') await automatic();
+      const request = (await rows('SELECT * FROM investigation_requests WHERE id=?', [binding.requestId]))[0];
+      if (lane === 'automatic')
+        await pool.query(
+          "INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,?,'operator',?)",
+          [request.investigation_id, owner.userId, serviceId],
+        );
+      const first = await child(point);
+      expect(first.signal).toBe('SIGKILL');
+      expect(first.messages.some((m) => m.point === point)).toBe(true);
+      const allocation = (
+        await rows('SELECT * FROM investigation_budget_ledger WHERE request_id=?', [request.id])
+      )[0];
+      // Intent COMMIT precedes markSent: a durable intent can still own a reserved allocation.
+      expect(allocation.state).toBe(point === 'provider-after' ? 'sent' : 'reserved');
+      const store = new MysqlWorkflowStore(() => pool as never);
+      expect(
+        await store.fail(childCommand().job, binding.workerId, Error('fixture worker crashed'), new Date()),
+      ).toBe(true);
+      expect((await httpCancel(request)).statusCode).toBe(202);
+      expect(await ledger().read(allocation.id)).toMatchObject({
+        state: 'unknown',
+        chargedTokens: 32000,
+        chargedCostMicros: 1000000,
+      });
+      expect(
+        await store.claim('after-crash-cancel', 60, { types: ['investigation.execute'], exclude: false }),
+      ).toBeNull();
+      const second = await child(undefined, true);
+      expect(second.exitCode).toBe(1);
+      expect(second.messages.some((m) => m.providerCall || m.toolCall || m.terminal)).toBe(false);
+      expect(second.messages.some((m) => m.failure)).toBe(true);
+      expect((await rows('SELECT state FROM agent_runs WHERE id=?', [binding.runId]))[0].state).toBe(
+        'running',
+      );
+      expect(
+        await rows('SELECT id FROM investigation_budget_ledger WHERE request_id=?', [request.id]),
+      ).toHaveLength(1);
+    },
+    30000,
+  );
   it.each(
     [
       'provider-before',
