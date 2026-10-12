@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { OutboxService, type TransactionConnection, type TransactionPool } from '../workflows/outbox-service.js';
 import { validateInvestigationProfile, type InvestigationProfile } from './contracts.js';
@@ -119,6 +120,62 @@ export class MysqlInvestigationBudgetLedger {
   private readonly policy: BudgetPolicy;
   constructor(private readonly poolProvider: () => Pool | null, policy: BudgetPolicy) {
     this.policy = Object.freeze(policySnapshot(policy));
+  }
+  /** Trusted ingress may retain the stable domain lock/configuration across an
+   * admission savepoint rollback. This creates no allocation and charges nothing. */
+  async prepareDomainInTransaction(connection: TransactionConnection, domain: string): Promise<void> {
+    if (!key(domain)) throw invalid();
+    await this.lockDomain(connection, domain, true);
+  }
+  /** Shared admission/executor contract. Both manual and automatic consumers
+   * use this SAME request operation, never execution:<runId>. Live authority,
+   * lease and Runtime limits remain the consumer's responsibility. */
+  async reserveExecutionInTransaction(connection: TransactionConnection,
+    value: Omit<BudgetReservationInput, 'operationId'>): Promise<BudgetAdmission> {
+    const input = reservationInput({ ...value, operationId: `request:${value.requestId}` });
+    await select(connection, 'SELECT id FROM investigation_requests WHERE id = ? FOR UPDATE', [input.requestId]);
+    const result = await this.reserveInTransaction(connection, input);
+    if (!result.accepted) return result;
+    const [request] = await select(connection, 'SELECT request_snapshot FROM investigation_requests WHERE id = ? FOR UPDATE', [input.requestId]);
+    const snapshot = json<Record<string, unknown>>(request.request_snapshot);
+    const receipt = { schemaVersion: 1, requestId: input.requestId, reservationId: result.reservation.id,
+      operationId: input.operationId, domain: input.domain, mode: input.mode, commandHash: hash(input) };
+    if (snapshot.budgetReceipt) {
+      const previous = snapshot.budgetReceipt as typeof receipt;
+      if (Object.keys(previous).length !== Object.keys(receipt).length
+        || Object.entries(receipt).some(([key, value]) => previous[key as keyof typeof receipt] !== value)) throw new BudgetLedgerError('BUDGET_CONFLICT');
+    }
+    if (!snapshot.budgetReceipt) await connection.execute('UPDATE investigation_requests SET request_snapshot = ? WHERE id = ?',
+      [JSON.stringify({ ...snapshot, budgetReceipt: receipt }), input.requestId]);
+    return result;
+  }
+  reserveExecution(value: Omit<BudgetReservationInput, 'operationId'>): Promise<BudgetAdmission> {
+    const input = reservationInput({ ...value, operationId: `request:${value.requestId}` });
+    return this.transaction(connection => this.reserveExecutionInTransaction(connection, input));
+  }
+  /** Executor reads the durable ingress allocation, validates the independently
+   * selected domain/lane/Profile and reuses its original request operation.
+   * Never creates a missing receipt or guesses a new Run allocation. */
+  async reuseExecutionInTransaction(connection: TransactionConnection, requestId: string,
+    expected: Pick<BudgetReservationInput, 'domain' | 'mode' | 'profile'>): Promise<BudgetReservation> {
+    if (!uuid.test(requestId)) throw invalid();
+    const ceiling = structuredClone(expected);
+    const [request] = await select(connection, 'SELECT request_snapshot FROM investigation_requests WHERE id = ? FOR UPDATE', [requestId]);
+    const snapshot = request && json<{ budgetReceipt?: { reservationId: string; operationId: string; domain: string; mode: string; commandHash: string } }>(request.request_snapshot);
+    if (!snapshot?.budgetReceipt) throw new BudgetLedgerError('BUDGET_REQUEST_INVALID');
+    if (snapshot.budgetReceipt.domain !== ceiling.domain || snapshot.budgetReceipt.mode !== ceiling.mode) throw new BudgetLedgerError('BUDGET_CONFLICT');
+    await this.lockDomain(connection, ceiling.domain);
+    const [row] = await select(connection, 'SELECT * FROM investigation_budget_ledger WHERE id = ? AND request_id = ? FOR UPDATE',
+      [snapshot.budgetReceipt.reservationId, requestId]);
+    if (!row) throw new BudgetLedgerError('BUDGET_REQUEST_INVALID');
+    const stored = json<BudgetReservationInput>(row.reservation_snapshot);
+    if (stored.domain !== ceiling.domain || stored.mode !== ceiling.mode || !isDeepStrictEqual(stored.profile, ceiling.profile)
+      || stored.operationId !== `request:${requestId}` || stored.requestId !== requestId) throw new BudgetLedgerError('BUDGET_CONFLICT');
+    // mysql JSON normalizes object key order. Rebuild with the resolved Profile
+    // and fixed-order prices before checking the original command hash.
+    const result = await this.reserveExecutionInTransaction(connection, { ...stored, profile: ceiling.profile });
+    if (result.accepted === false || !result.reused || result.reservation.id !== row.id) throw new BudgetLedgerError('BUDGET_CONFLICT');
+    return result.reservation;
   }
   /** Compose after request/authority locks in the existing store transaction.
    * No model dispatch or nested transaction; caller persists suppressions. */
