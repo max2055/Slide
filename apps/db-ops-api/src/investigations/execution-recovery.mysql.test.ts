@@ -546,6 +546,47 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
         .active_request_id,
     ).toBeNull();
   });
+  it('ordinary Chat recovery and cancellation cannot mutate a staged investigation Run', async () => {
+    const runs = new AgentRunService(() => pool as never);
+    await tx((c) =>
+      runs.stageInvestigationCompletion(c, canonical, owner, binding, {
+        type: 'complete',
+        stopReason: 'completed',
+        finalContent: 'staged investigation',
+      }),
+    );
+    const pending = await runs.getForActor(binding.runId, owner.userId, sessionId);
+    expect(await runs.pendingCompletions(owner.userId, sessionId)).toEqual([]);
+    await expect(runs.recoverCompletion(pending!)).rejects.toThrow('INVESTIGATION_EXECUTION_REQUIRED');
+    await expect(runs.recoverCompletion({ ...pending!, idempotencyKey: 'forged-chat-key' })).rejects.toThrow(
+      'INVESTIGATION_EXECUTION_REQUIRED',
+    );
+    await expect(runs.complete(pending!, { type: 'complete', finalContent: 'ordinary answer' })).rejects.toThrow(
+      'INVESTIGATION_EXECUTION_REQUIRED',
+    );
+    expect(await runs.cancelForActor(binding.runId, owner.userId, sessionId)).toBe(false);
+    expect(await runs.finish(binding.runId, 'failed')).toBe(false);
+    await runs.failUnstagedCompletion(binding.runId);
+    expect((await runs.getForActor(binding.runId, owner.userId, sessionId))!.state).toBe('running');
+    expect(await rows("SELECT * FROM chat_messages WHERE role='assistant'")).toHaveLength(0);
+    await bridge.storeFor(owner).cancel({ kind: 'user', id: owner.userId }, binding.investigationId, binding.requestId);
+    expect((await execute(fixture())).state).toBe('cancelled');
+    expect(await rows("SELECT * FROM chat_messages WHERE role='assistant'")).toHaveLength(0);
+  });
+  it('an unbound ordinary Chat key with the investigation prefix retains completion compatibility', async () => {
+    const runs = new AgentRunService(() => pool as never),
+      chatId = randomUUID();
+    await pool.query('INSERT INTO chat_sessions(session_id,user_id,title) VALUES (?,?,?)', [
+      chatId,
+      owner.userId,
+      'Ordinary Chat',
+    ]);
+    const { run } = await runs.claim(owner.userId, chatId, 'ordinary-turn', `investigation:${randomUUID()}`);
+    expect(
+      (await runs.complete(run, { type: 'complete', stopReason: 'completed', finalContent: 'ordinary response' }))
+        .state,
+    ).toBe('completed');
+  });
   it.skipIf(process.env.T04_BROWSER_TEST !== '1')(
     'real Chromium closes authenticated HTTP/WS while Workflow keeps executing',
     async () => {

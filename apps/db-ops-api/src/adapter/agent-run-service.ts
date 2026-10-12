@@ -18,6 +18,10 @@ interface CompletionResult { completionPending?: boolean; event: CompleteEvent; 
 // mysql2 decodes JSON columns by default, including scalar strings. Read their
 // serialized form explicitly so map() never parses an already-decoded string.
 const runColumns = '*, CAST(result_json AS CHAR) AS result_json, CAST(error_json AS CHAR) AS error_json';
+// Dispatch ownership is a persisted binding, not an arbitrary client key prefix.
+const ordinaryRun = `NOT EXISTS (SELECT 1 FROM investigation_requests ir
+  WHERE agent_runs.idempotency_key = CONCAT('investigation:', ir.id)
+  AND agent_runs.actor_id = ir.actor_id AND agent_runs.message_id = ir.message_id)`;
 
 export class AgentRunService {
   constructor(private readonly poolProvider: () => Pool | null = () => dbConnection.getPool() as unknown as Pool | null) {}
@@ -172,10 +176,12 @@ export class AgentRunService {
   // Persist the answer before attempting the atomic message + terminal commit.
   // A replay can finish this intent even after the originating process exits.
   async complete(run: AgentRun, event: CompleteEvent): Promise<AgentRun> {
+    await this.assertOrdinaryRun(this.requirePool(),run);
     this.assertCompletion(event);
     await this.requirePool().query(
       `UPDATE agent_runs SET result_json = ?, error_json = ?
-       WHERE id = ? AND actor_id = ? AND session_id = ? AND state = 'running' AND result_json IS NULL`,
+       WHERE id = ? AND actor_id = ? AND session_id = ? AND state = 'running' AND result_json IS NULL
+       AND ${ordinaryRun}`,
       [JSON.stringify({ completionPending: true, event, stopReason: 'completed' }),
         JSON.stringify({ code: 'COMPLETION_PENDING', retryable: true }), run.id, run.actorId, run.sessionId],
     );
@@ -187,12 +193,13 @@ export class AgentRunService {
   async failUnstagedCompletion(id: string): Promise<void> {
     await this.requirePool().query(
       `UPDATE agent_runs SET state = 'failed', error_json = ?, finished_at = NOW()
-       WHERE id = ? AND state = 'running' AND result_json IS NULL`,
+       WHERE id = ? AND state = 'running' AND result_json IS NULL AND ${ordinaryRun}`,
       [JSON.stringify({ code: 'COMPLETION_STORAGE_FAILED', retryable: true }), id],
     );
   }
 
   async recoverCompletion(run: AgentRun): Promise<AgentRun> {
+    await this.assertOrdinaryRun(this.requirePool(),run);
     if (run.state !== 'running' || !(run.result as CompletionResult | undefined)?.completionPending) return run;
     const pool = this.requirePool();
     if (!pool.getConnection) throw new Error('Completion requires a database transaction');
@@ -205,6 +212,7 @@ export class AgentRunService {
       );
       if (!rows[0]) throw new Error('Agent run not found');
       const current = this.map(rows[0]);
+      await this.assertOrdinaryRun(connection,current);
       const result = current.result as CompletionResult;
       if (current.state !== 'running' || !result?.completionPending) {
         await connection.commit();
@@ -271,6 +279,7 @@ export class AgentRunService {
   async pendingCompletions(actorId: number, sessionId: string): Promise<AgentRun[]> {
     const [rows] = await this.requirePool().query<any[]>(
       `SELECT ${runColumns} FROM agent_runs WHERE actor_id = ? AND session_id = ? AND state = 'running'
+       AND ${ordinaryRun}
        AND JSON_EXTRACT(result_json, '$.completionPending') = true ORDER BY created_at LIMIT 100`,
       [actorId, sessionId],
     );
@@ -283,11 +292,19 @@ export class AgentRunService {
     const [outcome] = await this.requirePool().query<{ affectedRows: number }>(
       `UPDATE agent_runs SET state = ?, result_json = ?, error_json = ?, finished_at = NOW()
        WHERE id = ? AND state = 'running'
+       AND ${ordinaryRun}
        AND (result_json IS NULL OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(result_json, '$.completionPending')), 'false') <> 'true')`,
       [state, result == null ? null : JSON.stringify(result), error == null ? null : JSON.stringify(error), id],
     );
     if (Number(outcome.affectedRows) === 1) platformLogs.record({ component: 'agent', eventType: 'run.' + state, status: state === 'failed' || state === 'timed_out' ? 'failed' : 'unknown', correlationId: id });
     return Number(outcome.affectedRows) === 1;
+  }
+
+  private async assertOrdinaryRun(executor: Executor, run: AgentRun): Promise<void> {
+    if (!run.idempotencyKey.startsWith('investigation:')) return;
+    const [bound] = await executor.query<any[]>(`SELECT id FROM investigation_requests
+      WHERE id = ? AND actor_id = ? AND message_id = ?`, [run.idempotencyKey.slice('investigation:'.length),run.actorId,run.messageId]);
+    if (bound[0]) throw new Error('INVESTIGATION_EXECUTION_REQUIRED');
   }
 
   private assertCompletion(event: CompleteEvent): void {
@@ -310,7 +327,7 @@ export class AgentRunService {
     // success intent so a cancelled replay cannot advertise pending completion.
     const [outcome] = await this.requirePool().query<{ affectedRows: number }>(
       `UPDATE agent_runs SET state = 'cancelled', result_json = NULL, finished_at = NOW(), error_json = ?
-       WHERE id = ? AND actor_id = ? AND session_id = ? AND state = 'running'`,
+       WHERE id = ? AND actor_id = ? AND session_id = ? AND state = 'running' AND ${ordinaryRun}`,
       [JSON.stringify({ reasonCode: 'CANCELLED_BY_ACTOR' }), id, actorId, sessionId],
     );
     return Number(outcome.affectedRows) === 1;
