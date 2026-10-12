@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
-import { WebSocket, type WebSocketServer } from 'ws';
+import { WebSocket, type WebSocketServer, type RawData } from 'ws';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolRegistry, type LLMProvider, type LLMResponse } from '@slide/agent-core';
 import { MigrationRunner } from '../../migrations/runner.js';
@@ -35,6 +35,7 @@ describe.skipIf(!port)('T04-A durable terminal and real WebSocket regressions', 
   const clients: WebSocket[] = [];
   const directories: string[] = [];
   const providerReleases: Array<() => void> = [];
+  const handlers = new Set<Promise<unknown>>();
   const cachedChat = chatDatabaseService as unknown as { pool: Pool | null };
   const priorChatPool = cachedChat.pool;
 
@@ -64,6 +65,7 @@ describe.skipIf(!port)('T04-A durable terminal and real WebSocket regressions', 
   afterEach(async () => {
     for (const release of providerReleases.splice(0)) release();
     for (const client of clients.splice(0)) client.terminate();
+    await Promise.all([...handlers]);
     await Promise.all(adapters.splice(0).map(adapter => adapter.dispose()));
     vi.restoreAllMocks(); vi.unstubAllEnvs();
     cachedChat.pool = priorChatPool;
@@ -86,10 +88,12 @@ describe.skipIf(!port)('T04-A durable terminal and real WebSocket regressions', 
     return current(run);
   }
 
-  it.each([false, 0, '', null, undefined])('round trips non-success result/error %j without losing legitimate falsy values', async value => {
+  it.each([false, 0, '', 'false', 'null', '0', 'plain text', { code: 'FAILED' }, null, undefined])('round trips non-success result/error %j without losing legitimate falsy values', async value => {
     const run = await claim();
     expect(await service.finish(run.id, 'failed', value, value)).toBe(true);
     expect(await current(run)).toMatchObject({ state: 'failed', result: value ?? null, error: value ?? null });
+    expect(await service.findByIdempotencyKey(7, run.idempotencyKey)).toMatchObject({ result: value ?? null, error: value ?? null });
+    expect((await service.claim(7, run.sessionId, run.messageId, run.idempotencyKey)).run).toMatchObject({ result: value ?? null, error: value ?? null });
     expect(await service.finish(run.id, 'partial', 'late')).toBe(false);
   });
   it('a new service recovers staged completion once without executing a provider', async () => {
@@ -205,9 +209,13 @@ describe.skipIf(!port)('T04-A durable terminal and real WebSocket regressions', 
     const socket = [...server.clients].find(peer => (peer as any)._actorContext === undefined)!;
     // Observe settlement of actual network-delivered async handlers, without
     // directly invoking handlers or mocking authentication/persistence.
-    const original = socket.listeners('message')[0];
+    const original = socket.listeners('message')[0] as (raw: RawData) => Promise<void>;
     socket.removeListener('message', original);
-    socket.on('message', async raw => { await original.call(socket, raw); handled.push(JSON.parse(raw.toString()).type); });
+    socket.on('message', raw => {
+      const pending = original.call(socket, raw).then(() => { handled.push(JSON.parse(raw.toString()).type); });
+      handlers.add(pending);
+      void pending.finally(() => handlers.delete(pending));
+    });
     client.send(JSON.stringify({ type: 'auth', token: signAccessToken(await contexts.loadActiveActor(userId, 1), secret) }));
     await vi.waitFor(() => expect(events.some(event => event.type === 'auth_ok')).toBe(true));
     return { client, socket, events, handled, send: (frame: unknown) => client.send(JSON.stringify(frame)) };
@@ -283,5 +291,14 @@ describe.skipIf(!port)('T04-A durable terminal and real WebSocket regressions', 
     const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM worker_leases WHERE lease_name = 't04-a-singleton'");
     expect(rows[0]).toMatchObject({ owner_id: next.ownerId, fencing_token: 1 });
     await next.release();
+  });
+  it('expired singleton owner cannot renew or release its replacement', async () => {
+    const old = new WorkerLease(pool as never, 't04-a-expired');
+    const next = new WorkerLease(pool as never, 't04-a-expired');
+    expect(await old.acquire()).toBe(true);
+    await pool.query("UPDATE worker_leases SET expires_at = DATE_SUB(NOW(), INTERVAL 1 SECOND) WHERE lease_name = 't04-a-expired'");
+    expect(await next.acquire()).toBe(true);
+    expect(await old.renew()).toBe(false); await old.release();
+    expect(await next.renew()).toBe(true); await next.release();
   });
 });

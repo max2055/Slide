@@ -189,6 +189,12 @@ function normalizeThinkingLevel(level?: string): string | undefined {
   return valid.has(level) ? level : undefined;
 }
 
+/** Ordinary Chat's legacy agent-prefixed key addresses the same durable Session. */
+function chatSessionId(raw: string): string {
+  const key = raw.trim();
+  return key.startsWith('agent:') ? key.split(':').slice(2).join(':') || key : key;
+}
+
 // ── DirectAdapter Options ──
 
 export interface DirectAdapterOptions {
@@ -572,11 +578,17 @@ export class DirectAdapter implements IAgentEngine {
         // A connection may outlive a user disablement or role/session change.
         // Revalidate before every command so revocation takes effect without
         // waiting for the heartbeat interval.
+        const commandGeneration = authGeneration;
         try {
-          connectionActor = await this.actorContexts.revalidateActor(
+          const revalidatedActor = await this.actorContexts.revalidateActor(
             connectionActor,
             randomUUID(),
           );
+          // Another frame or transport close may revoke this generation while
+          // SQL revalidation is in flight. Never restore it or admit new work.
+          if (ws.readyState !== WebSocket.OPEN || authState !== 'authenticated'
+            || authGeneration !== commandGeneration) return;
+          connectionActor = revalidatedActor;
           (ws as any)._actorContext = connectionActor;
         } catch {
           closeAfterAuthFailure(4001, 'Unauthorized');
@@ -603,9 +615,7 @@ export class DirectAdapter implements IAgentEngine {
               return;
             }
             // Parse session key (agent format): agent:<agentId>:<actualKey> → actualKey
-            let sessionKey = rawSessionKey.startsWith('agent:')
-              ? rawSessionKey.split(':').slice(2).join(':') || rawSessionKey
-              : rawSessionKey;
+            let sessionKey = chatSessionId(rawSessionKey);
             const userMessage = (msg.message as string) || '';
             if (!userMessage) {
               this.sendSocketEvent(ws, { type: 'error', error: 'Message is required' });
@@ -811,7 +821,7 @@ export class DirectAdapter implements IAgentEngine {
 
           case 'chat.cancel': {
             const runId = typeof msg.runId === 'string' ? msg.runId : '';
-            const cancelSession = typeof msg.sessionKey === 'string' ? msg.sessionKey : '';
+            const cancelSession = chatSessionId(typeof msg.sessionKey === 'string' ? msg.sessionKey : '');
             const active = this.activeRuns.get(runId);
             if (!active || active.actorId !== connectionActor.userId || active.sessionId !== cancelSession) {
               this.sendSocketEvent(ws, { type: 'protocol.error', code: 'RUN_NOT_CANCELLABLE' });

@@ -13,6 +13,10 @@ interface Connection extends Executor { beginTransaction(): Promise<void>; commi
 interface Pool extends Executor { getConnection?(): Promise<Connection>; }
 interface CompletionResult { completionPending?: boolean; event: CompleteEvent; stopReason: 'completed'; }
 
+// mysql2 decodes JSON columns by default, including scalar strings. Read their
+// serialized form explicitly so map() never parses an already-decoded string.
+const runColumns = '*, CAST(result_json AS CHAR) AS result_json, CAST(error_json AS CHAR) AS error_json';
+
 export class AgentRunService {
   constructor(private readonly poolProvider: () => Pool | null = () => dbConnection.getPool() as unknown as Pool | null) {}
 
@@ -26,7 +30,7 @@ export class AgentRunService {
       [id, actorId, sessionId, messageId, idempotencyKey],
     );
     const [rows] = await pool.query<any[]>(
-      'SELECT * FROM agent_runs WHERE actor_id = ? AND idempotency_key = ?',
+      `SELECT ${runColumns} FROM agent_runs WHERE actor_id = ? AND idempotency_key = ?`,
       [actorId, idempotencyKey],
     );
     const row = rows[0];
@@ -37,7 +41,7 @@ export class AgentRunService {
 
   async findByIdempotencyKey(actorId: number, idempotencyKey: string): Promise<AgentRun | null> {
     const [rows] = await this.requirePool().query<any[]>(
-      'SELECT * FROM agent_runs WHERE actor_id = ? AND idempotency_key = ?',
+      `SELECT ${runColumns} FROM agent_runs WHERE actor_id = ? AND idempotency_key = ?`,
       [actorId, idempotencyKey],
     );
     return rows[0] ? this.map(rows[0]) : null;
@@ -74,7 +78,7 @@ export class AgentRunService {
     try {
       await connection.beginTransaction();
       const [rows] = await connection.query<any[]>(
-        'SELECT * FROM agent_runs WHERE id = ? AND actor_id = ? AND session_id = ? FOR UPDATE',
+        `SELECT ${runColumns} FROM agent_runs WHERE id = ? AND actor_id = ? AND session_id = ? FOR UPDATE`,
         [run.id, run.actorId, run.sessionId],
       );
       if (!rows[0]) throw new Error('Agent run not found');
@@ -144,7 +148,7 @@ export class AgentRunService {
 
   async pendingCompletions(actorId: number, sessionId: string): Promise<AgentRun[]> {
     const [rows] = await this.requirePool().query<any[]>(
-      `SELECT * FROM agent_runs WHERE actor_id = ? AND session_id = ? AND state = 'running'
+      `SELECT ${runColumns} FROM agent_runs WHERE actor_id = ? AND session_id = ? AND state = 'running'
        AND JSON_EXTRACT(result_json, '$.completionPending') = true ORDER BY created_at LIMIT 100`,
       [actorId, sessionId],
     );
@@ -158,7 +162,7 @@ export class AgentRunService {
       `UPDATE agent_runs SET state = ?, result_json = ?, error_json = ?, finished_at = NOW()
        WHERE id = ? AND state = 'running'
        AND (result_json IS NULL OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(result_json, '$.completionPending')), 'false') <> 'true')`,
-      [state, result ? JSON.stringify(result) : null, error ? JSON.stringify(error) : null, id],
+      [state, result == null ? null : JSON.stringify(result), error == null ? null : JSON.stringify(error), id],
     );
     if (Number(outcome.affectedRows) === 1) platformLogs.record({ component: 'agent', eventType: 'run.' + state, status: state === 'failed' || state === 'timed_out' ? 'failed' : 'unknown', correlationId: id });
     return Number(outcome.affectedRows) === 1;
@@ -173,14 +177,17 @@ export class AgentRunService {
 
   async getForActor(id: string, actorId: number, sessionId: string): Promise<AgentRun | null> {
     const [rows] = await this.requirePool().query<any[]>(
-      'SELECT * FROM agent_runs WHERE id = ? AND actor_id = ? AND session_id = ?', [id, actorId, sessionId],
+      `SELECT ${runColumns} FROM agent_runs WHERE id = ? AND actor_id = ? AND session_id = ?`, [id, actorId, sessionId],
     );
     return rows[0] ? this.map(rows[0]) : null;
   }
 
   async cancelForActor(id: string, actorId: number, sessionId: string): Promise<boolean> {
+    // Staging is not a terminal commit. The row lock/CAS lets cancellation win
+    // until recoverCompletion commits the answer, and discards that uncommitted
+    // success intent so a cancelled replay cannot advertise pending completion.
     const [outcome] = await this.requirePool().query<{ affectedRows: number }>(
-      `UPDATE agent_runs SET state = 'cancelled', finished_at = NOW(), error_json = ?
+      `UPDATE agent_runs SET state = 'cancelled', result_json = NULL, finished_at = NOW(), error_json = ?
        WHERE id = ? AND actor_id = ? AND session_id = ? AND state = 'running'`,
       [JSON.stringify({ reasonCode: 'CANCELLED_BY_ACTOR' }), id, actorId, sessionId],
     );

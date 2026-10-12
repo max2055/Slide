@@ -9,7 +9,7 @@ class Pool {
       if (!this.row) this.row = { id: values[0], actor_id: values[1], session_id: values[2], message_id: values[3], idempotency_key: values[4], state: 'running' };
       return [{}];
     }
-    if (sql.startsWith('SELECT * FROM agent_runs')) return [[this.row]];
+    if (sql.startsWith('SELECT') && sql.includes('FROM agent_runs')) return [[this.row]];
     if (sql.startsWith('UPDATE agent_runs')) {
       if (this.row.state !== 'running') return [{ affectedRows: 0 }];
       this.row.state = values[0];
