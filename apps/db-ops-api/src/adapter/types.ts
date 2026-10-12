@@ -162,6 +162,9 @@ export interface InvokeOptions {
 // ── IAgentEngine interface ──
 
 export interface IAgentEngine {
+  configureInvestigationExecutor?(executor: import('../investigations/executor.js').InvestigationExecutor): void;
+  /** Trusted Workflow-only entry; not exposed through ordinary invoke or WS chat. */
+  executeInvestigation?(command: import('../investigations/executor.js').InvestigationExecuteCommand): Promise<import('./agent-run-service.js').AgentRun>;
   /** Close partially initialized transport and owned resources on startup failure. */
   dispose?(): Promise<void>;
   /**
