@@ -23,6 +23,13 @@ const ConfigSchema = Type.Object({
   httpProxy: Type.Optional(Type.String({ maxLength: 512 })), httpsProxy: Type.Optional(Type.String({ maxLength: 512 })), allProxy: Type.Optional(Type.String({ maxLength: 512 })),
 }, { additionalProperties: false });
 export type SourceConfig = Static<typeof ConfigSchema>;
+function publicSourceConfig(config: SourceConfig): SourceConfig {
+  const safe = { ...config };
+  for (const key of ['httpProxy', 'httpsProxy', 'allProxy'] as const) if (safe[key]) {
+    const url = new URL(safe[key]); url.username = ''; url.password = ''; safe[key] = url.toString();
+  }
+  return safe;
+}
 interface Executor { execute(sql: string, values?: string[]): Promise<any> }
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 interface SnapshotReference { releaseId: string; commitSha: string; treeDigest: string }
@@ -52,7 +59,10 @@ export class SourceManagementService {
     sourceRef(input.ref);
     assertRepositoryPath(input.repositoryPath, input.provider ?? 'gitlab');
     if (input.allowedPaths.some(path => path.split('/').slice(0, -1).some(part => !part || part === '..'))) throw new Error('SOURCE_CONFIG_INVALID');
-    for (const key of ['httpProxy', 'httpsProxy', 'allProxy'] as const) if (input[key] && !/^https?:\/\/[^\s]+$/.test(input[key])) throw new Error('SOURCE_CONFIG_INVALID');
+    for (const key of ['httpProxy', 'httpsProxy', 'allProxy'] as const) if (input[key]) {
+      try { if (!/^https?:\/\/[^\s]+$/.test(input[key])) throw new Error(); new URL(input[key]); }
+      catch { throw new Error('SOURCE_CONFIG_INVALID'); }
+    }
     return { ...input, provider: input.provider ?? 'gitlab', baseUrl: url.origin };
   }
   async load(actor: ActorContext): Promise<SourceConfig | null> {
@@ -66,7 +76,8 @@ export class SourceManagementService {
         stored.repositoryPath = stored.projectId;
         delete stored.projectId;
       }
-      return this.validate(stored);
+      const config = this.validate(stored);
+      return actor.permissions.some(value => value === '*' || value === 'admin:*') ? config : publicSourceConfig(config);
     } catch (error) {
       if (error instanceof Error && error.message === 'SOURCE_REPOSITORY_PATH_REQUIRED') throw error;
       throw new Error('SOURCE_CONFIG_INVALID');
@@ -77,7 +88,7 @@ export class SourceManagementService {
     if (this.syncing) throw new Error('SOURCE_SYNC_BUSY');
     const config = this.validate(input);
     await this.executor().execute('REPLACE INTO system_config (config_key, config_value) VALUES (?, ?)', ['source.gitlab', JSON.stringify(config)]);
-    await auditLogManager.logConfigChange({ userId: String(actor.userId), username: actor.username, configKey: 'source.gitlab', newValue: config });
+    await auditLogManager.logConfigChange({ userId: String(actor.userId), username: actor.username, configKey: 'source.gitlab', newValue: publicSourceConfig(config) });
     return config;
   }
   private credentialIdentity(config: SourceConfig) {

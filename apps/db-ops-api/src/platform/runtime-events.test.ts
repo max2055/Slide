@@ -1,7 +1,20 @@
 import { expect, it, vi } from 'vitest';
 import { recordRuntimeEvent } from './runtime-events.js';
-import { platformLogs } from './structured-log-evidence-adapter.js';
+import { platformLogs, StructuredLogEvidenceAdapter } from './structured-log-evidence-adapter.js';
 import type { RuntimeEvent } from '@slide/agent-core';
+
+it('marks non-completed terminals unknown without inventing a failure or durable success', () => {
+  const store = new StructuredLogEvidenceAdapter(() => 1000);
+  const record = vi.spyOn(platformLogs, 'record').mockImplementation(input => store.record(input));
+  try {
+    recordRuntimeEvent({ type: 'turn.terminal', runId: 'run-1', turnId: 'turn-1', modelStep: 1, sequence: 1 } as RuntimeEvent);
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ status: 'unknown', errorCode: 'RUNTIME_TERMINAL_OUTCOME_UNKNOWN' }));
+    const evidence = store.query({ component: 'agent' });
+    expect(evidence.quality).toBe('degraded');
+    expect(evidence.gaps).toContain('LOG_STATUS_UNKNOWN');
+    expect(evidence.groups[0]).toMatchObject({ eventType: 'runtime.turn.terminal', failures: 0 });
+  } finally { record.mockRestore(); }
+});
 
 it('bridges only safe correlation fields and distinguishes readiness from commit', () => {
   const record = vi.spyOn(platformLogs, 'record').mockImplementation(() => {});

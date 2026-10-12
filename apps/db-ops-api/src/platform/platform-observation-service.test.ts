@@ -4,6 +4,27 @@ import { installPlatformObservation } from './platform-observation-service.js';
 import { StructuredLogEvidenceAdapter } from './structured-log-evidence-adapter.js';
 
 describe('platform observation runtime hooks', () => {
+  it('uses the requested historical window for every component summary', async () => {
+    const now = Date.parse('2026-10-12T12:00:00Z');
+    let observedAt = now - 30 * 60_000;
+    const logs = new StructuredLogEvidenceAdapter(() => observedAt);
+    logs.record({ component: 'collector', eventType: 'collection.failed', status: 'failed' });
+    observedAt = now;
+    logs.record({ component: 'collector', eventType: 'collection.ok', status: 'ok' });
+    const app = Fastify();
+    await installPlatformObservation(app, async request => { (request as any).user = { permissions: ['config:view'] }; }, logs);
+    try {
+      const from = new Date(now - 40 * 60_000).toISOString();
+      const to = new Date(now - 20 * 60_000).toISOString();
+      const response = await app.inject({ url: `/api/platform/observations?from=${from}&to=${to}&component=collector` });
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      const collector = body.components.find((item: any) => item.component === 'collector');
+      expect(body.logs.groups).toEqual([expect.objectContaining({ eventType: 'collection.failed', failures: 1 })]);
+      expect(collector).toMatchObject({ groups: body.logs.groups, quality: body.logs.quality, gaps: body.logs.gaps });
+      expect(body.components.find((item: any) => item.component === 'api').gaps).toContain('LOG_EVIDENCE_MISSING');
+    } finally { await app.close(); }
+  });
   it('exposes queue gauges only after authorization and marks store failures unknown', async () => {
     const app = Fastify();
     const queue = vi.fn(async () => ({ schemaVersion: 1, generatedAt: new Date().toISOString(),
