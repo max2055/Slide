@@ -7,7 +7,7 @@ import { WebSocket, type WebSocketServer } from 'ws';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolRegistry, Session, checkpointFacts, migrateMessageParts, acknowledgeMessageParts, type SessionEntry, type LLMProvider } from '@slide/agent-core';
 import { hydrateMessageProjection } from '@slide/agent-core/message-projection';
-import { buildToolPreview } from '@slide/agent-core/tool-stream';
+import { buildToolPreview, boundedToolValue } from '@slide/agent-core/tool-stream';
 import { MigrationRunner } from '../../migrations/runner.js';
 import { ActorContextService, signAccessToken, type ActorContext } from '../../auth/actor-context.js';
 import { dbConnection } from '../../db-connection.js';
@@ -200,6 +200,18 @@ describe.skipIf(!port)('T05-A canonical fact integrity with production MySQL', (
     await append([projected]); expect(await rows()).toEqual(before);
     expect((await store.getPage(actor, 'owned')).messages.find(m => m.id === 'result')?.messageParts?.parts[0]).toMatchObject({ content: fact.content });
     part.content = 'arbitrary replacement'; await rejectUnchanged([projected]);
+  });
+  it('reconstructs the other display transform: bounded tool call arguments, while rejecting arbitrary argument replacement', async () => {
+    const args = { sql: 'SELECT '.repeat(1000), token: 'fixture-value' };
+    const entry = intent(); entry.tool_calls![0].function.arguments = JSON.stringify(args);
+    delete entry.messageParts; const fact = migrateMessageParts(entry, { status: 'partial' });
+    await append([fact]); const before = await rows();
+    const projected = (await store.getPage(actor, 'owned')).messages.find(m => m.id === 'intent')!;
+    const part = projected.messageParts!.parts[0];
+    if (part.type !== 'tool_call') throw new Error('TOOL_CALL_EXPECTED');
+    part.call.function.arguments = JSON.stringify(boundedToolValue(args));
+    await append([projected]); expect(await rows()).toEqual(before);
+    part.call.function.arguments = '{"sql":"arbitrary replacement"}'; await rejectUnchanged([projected]);
   });
   it('rejects wrong actor, session and ordinary read share append while preserving read access', async () => {
     await append([intent()]); const before = await snapshot();
