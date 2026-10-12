@@ -12,6 +12,7 @@ import { INVESTIGATION_SERVICE_PASSWORD } from '../auth/investigation-service-id
 import { ChatDatabaseService } from '../chat-database-service.js';
 import { InvestigationAuthorization, provisionInvestigationServiceIdentity, type AuthorityExecutor } from './authorization.js';
 import { InvestigationSessionBridge } from './session-bridge.js';
+import { registerInvestigationRoutes } from './routes.js';
 import type { InvestigationRecord, InvestigationResource } from './store.js';
 
 const port = Number(process.env.AUTH_TEST_MYSQL_PORT ?? process.env.REPORT_TEST_MYSQL_PORT);
@@ -69,7 +70,8 @@ describe.skipIf(!port)('T03-B real MySQL/JWT authorization and atomic Session br
     chat = new ChatDatabaseService(() => pool, authorization);
     app = Fastify();
     app.addHook('preHandler', createVerifyToken(secret, contexts));
-    // Harness only: production investigation HTTP registration belongs to T02-C.
+    // Retain bridge fixtures and exercise the merged T02-C production routes.
+    await registerInvestigationRoutes(app, createVerifyToken(secret, contexts), bridge);
     app.get('/fixture/list', request => bridge.storeFor(actorOf(request)).list({ kind: 'user', id: actorOf(request).userId }, { limit: 1 }));
     app.get('/fixture/messages/:id', request => bridge.messages(actorOf(request), (request.params as { id: string }).id));
     app.get('/fixture/detail/:id', request => bridge.storeFor(actorOf(request)).detail({ kind: 'user', id: actorOf(request).userId }, (request.params as { id: string }).id));
@@ -283,5 +285,92 @@ describe.skipIf(!port)('T03-B real MySQL/JWT authorization and atomic Session br
         system, 'content', [{ type: 'instance', id: 101 }])).rejects.toMatchObject({ statusCode: 404 });
       await expect(authorization.authorize(c, { ...owner, permissions: owner.permissions.filter(code => code !== 'config:view') }, system, 'read')).rejects.toMatchObject({ statusCode: 404 });
     });
+  });
+
+  it.each(['member-delete', 'member-expire', 'role-permission', 'role-expire'] as const)(
+    'production HTTP and retained consumer authority hide content after %s with the same JWT', async mode => {
+      await pool.execute("INSERT INTO investigation_members (investigation_id, user_id, role, granted_by) VALUES (?, 102, 'operator', 101)", [investigation.id]);
+      const cmd = { ...command(), idempotencyKey: 'member-request' };
+      const accepted = await bridge.admit(member, cmd);
+      const frozen = await bridge.requestAuthority(member, investigation.id, accepted.requestId);
+      const auth = { authorization: `Bearer ${signAccessToken(member, secret)}` };
+      const base = `/api/investigations/${investigation.id}`;
+      expect((await app.inject({ url: `${base}/messages`, headers: auth })).json().messages).toHaveLength(1);
+      if (mode === 'member-delete') await pool.execute('DELETE FROM investigation_members WHERE investigation_id = ? AND user_id = 102', [investigation.id]);
+      else if (mode === 'member-expire') await pool.execute('UPDATE investigation_members SET expires_at = DATE_SUB(NOW(), INTERVAL 1 SECOND) WHERE investigation_id = ?', [investigation.id]);
+      else if (mode === 'role-permission') await pool.execute("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = ? AND p.code = 'chat:view'", [roleId]);
+      else await pool.execute('UPDATE user_roles SET grant_expiry = DATE_SUB(NOW(), INTERVAL 1 SECOND) WHERE user_id = 102');
+
+      for (const url of [base, `${base}/messages`]) {
+        const response = await app.inject({ url, headers: auth });
+        expect(response.statusCode).toBe(404);
+        expect(response.body).not.toContain('Protected');
+        expect(response.headers['cache-control']).toContain('no-store');
+      }
+      const list = await app.inject({ url: '/api/investigations?limit=1', headers: auth });
+      expect(list.json()).toMatchObject({ items: [], authorizedCounts: { total: 0 }, nextCursor: null });
+      expect((await app.inject({ method: 'POST', url: `${base}/runs`, headers: { ...auth, 'idempotency-key': cmd.idempotencyKey },
+        payload: { expectedVersion: cmd.expectedVersion, message: cmd.message } })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'POST', url: `${base}/requests/${accepted.requestId}/cancel`, headers: auth })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'PATCH', url: base, headers: auth, payload: { expectedVersion: accepted.version, title: 'no' } })).statusCode).toBe(404);
+      await expect(bridge.requestAuthority(member, investigation.id, accepted.requestId)).rejects.toMatchObject({ statusCode: 404 });
+      await withConnection(async c => {
+        const current = await authorization.load(c, investigation.id);
+        await expect(authorization.authorize(c, member, current, 'watch')).rejects.toMatchObject({ statusCode: 404 });
+        await expect(authorization.authorizeTool(c, member, current, frozen, 'get_instance_summary', [{ type: 'instance', id: 101 }]))
+          .rejects.toMatchObject({ statusCode: 404 });
+      });
+      for (const call of [() => chat.getMessages(member, investigation.sessionId), () => chat.getSessionCount(member, investigation.sessionId),
+        () => chat.authorizeSession(member, investigation.sessionId, 'watch')]) await expect(call()).rejects.toThrow('Chat session not found');
+      for (const table of ['chat_messages', 'investigation_requests', 'workflow_jobs', 'outbox_events']) expect(await all(table)).toHaveLength(1);
+    });
+
+  it('operator downgrade preserves reads but revokes retry, cancel, patch and retained tool authority', async () => {
+    await pool.execute("INSERT INTO investigation_members (investigation_id, user_id, role, granted_by) VALUES (?, 102, 'operator', 101)", [investigation.id]);
+    const cmd = { ...command(), idempotencyKey: 'operator-request' };
+    const accepted = await bridge.admit(member, cmd);
+    const frozen = await bridge.requestAuthority(member, investigation.id, accepted.requestId);
+    const auth = { authorization: `Bearer ${signAccessToken(member, secret)}` };
+    await pool.execute("UPDATE investigation_members SET role = 'viewer' WHERE investigation_id = ?", [investigation.id]);
+    const base = `/api/investigations/${investigation.id}`;
+    expect((await app.inject({ url: `${base}/messages`, headers: auth })).json().messages).toHaveLength(1);
+    expect((await app.inject({ method: 'POST', url: `${base}/runs`, headers: { ...auth, 'idempotency-key': cmd.idempotencyKey },
+      payload: { expectedVersion: cmd.expectedVersion, message: cmd.message } })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url: `${base}/requests/${accepted.requestId}/cancel`, headers: auth })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'PATCH', url: base, headers: auth, payload: { expectedVersion: accepted.version, title: 'no' } })).statusCode).toBe(403);
+    await withConnection(async c => {
+      const current = await authorization.load(c, investigation.id);
+      await expect(authorization.authorize(c, member, current, 'watch')).resolves.toBeDefined();
+      await expect(authorization.authorizeTool(c, member, current, frozen, 'get_instance_summary', [{ type: 'instance', id: 101 }]))
+        .rejects.toMatchObject({ statusCode: 403 });
+    });
+    for (const table of ['chat_messages', 'investigation_requests', 'workflow_jobs', 'outbox_events']) expect(await all(table)).toHaveLength(1);
+  });
+
+  it.each(['profileHash', 'scopeVersion', 'sessionId', 'sessionVersion'] as const)(
+    'reopening the bridge rejects persisted authority with stale %s', async field => {
+      const accepted = await bridge.admit(owner, command());
+      const request = (await all('investigation_requests'))[0];
+      const snapshot = request.request_snapshot;
+      snapshot.authority[field] = field === 'sessionVersion' ? 999 : 'stale';
+      await pool.execute('UPDATE investigation_requests SET request_snapshot = ? WHERE id = ?', [JSON.stringify(snapshot), accepted.requestId]);
+      const reopened = new InvestigationSessionBridge(() => pool, authorization);
+      await expect(reopened.requestAuthority(owner, investigation.id, accepted.requestId)).rejects.toMatchObject({ statusCode: 404 });
+      // Content readers have their own live ACL; they cannot inherit execution authority.
+      await expect(reopened.messages(owner, investigation.id)).resolves.toHaveLength(1);
+    });
+
+  it('another operator can read service history but cannot inherit the admitted user authority', async () => {
+    const automatic = (await bridge.create(service, create())).investigation;
+    await pool.execute("INSERT INTO investigation_members (investigation_id, user_id, role, granted_by) VALUES (?, 101, 'operator', ?), (?, 102, 'operator', ?)",
+      [automatic.id, serviceId, automatic.id, serviceId]);
+    const accepted = await bridge.admit(member, { ...command(), investigationId: automatic.id });
+    const reopened = new InvestigationSessionBridge(() => pool, authorization);
+    await expect(reopened.messages(owner, automatic.id)).resolves.toHaveLength(1);
+    await expect(reopened.requestAuthority(owner, automatic.id, accepted.requestId)).rejects.toMatchObject({ statusCode: 404 });
+    const snapshot = await reopened.requestAuthority(member, automatic.id, accepted.requestId);
+    expect(snapshot.actor).toEqual({ kind: 'user', id: 102 });
+    expect(Object.isFrozen(snapshot.resourceBoundary.instanceIds)).toBe(true);
+    expect((await all('chat_sessions')).find(row => row.session_id === automatic.sessionId)?.user_id).toBe(serviceId);
   });
 });
