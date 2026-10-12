@@ -171,6 +171,15 @@ describe.skipIf(!port)('T05-A canonical fact integrity with production MySQL', (
     const fallback = migrateMessageParts(result(), { status: 'partial' }); await append([fallback]);
     fallback.messageParts.legacy.turnId = 'wrong'; await rejectUnchanged([fallback]);
   });
+  it('retains generating boundary identity when the projection reconstructs the document from its parts', async () => {
+    const entry = migrateMessageParts({ ...intent(), messageParts: undefined }, { status: 'partial', attempt: 1, sourceRequestId: 'provider-request' });
+    await append([entry, result()]);
+    const reconstructed = (await store.getPage(actor, 'owned')).messages.find(m => m.id === 'intent')!;
+    delete reconstructed.messageParts!.attempt; delete reconstructed.messageParts!.sourceRequestId;
+    const before = await rows(); await append([reconstructed, result()]); expect(await rows()).toEqual(before);
+    const wrong = structuredClone(reconstructed); wrong.messageParts!.parts[0].sourceRequestId = 'wrong';
+    await rejectUnchanged([wrong, result()]);
+  });
   it('rejects wrong actor, session and ordinary read share append while preserving read access', async () => {
     await append([intent()]); const before = await snapshot();
     await expect(store.appendToolFacts(other, 'owned', 'turn', [result()], 1)).rejects.toThrow('Chat session not found');
