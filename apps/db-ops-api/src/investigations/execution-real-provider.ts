@@ -42,8 +42,10 @@ const record = (value: Record<string, unknown>) => {
   console.log(line);
 };
 config({ path: process.env.T04_PROVIDER_ENV, quiet: true });
-const database =
-  process.env.T04_REAL_CHILD_DATABASE ?? `t04_real_${randomUUID().replaceAll("-", "")}`;
+const database = process.env.T04_REAL_CHILD_JOB
+  ? process.env.T04_REAL_CHILD_DATABASE!
+  : `t04_real_${randomUUID().replaceAll("-", "")}`;
+if (!/^t04_real_[a-f0-9]{32}$/.test(database)) throw Error("T04_TEST_SCHEMA_INVALID");
 const testConfig = {
   host: "127.0.0.1",
   port: Number(process.env.AGENT_RUN_TEST_MYSQL_PORT),
@@ -266,8 +268,10 @@ const executeJob = async (job: ClaimedJob, provider: LLMProvider) => {
 async function main() {
   const admin = mysql.createPool(testConfig);
   const app = Fastify();
+  let createdDatabase = false;
   try {
     await admin.query(`CREATE DATABASE ${database}`);
+    createdDatabase = true;
     pool = mysql.createPool({ ...testConfig, database, connectionLimit: 12 });
     await new MigrationRunner(pool).run();
     await pool.query(
@@ -465,7 +469,7 @@ async function main() {
   } finally {
     await app.close();
     await pool?.end();
-    await admin.query(`DROP DATABASE IF EXISTS ${database}`);
+    if (createdDatabase) await admin.query(`DROP DATABASE ${database}`);
     await admin.end();
   }
 }
