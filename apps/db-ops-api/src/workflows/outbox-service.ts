@@ -8,13 +8,18 @@ export class OutboxService {
   constructor(private readonly pool: TransactionPool) {}
   async transaction<T>(work: (connection: TransactionConnection, append: (event: OutboxInput) => Promise<string>) => Promise<T>): Promise<T> {
     const connection = await this.pool.getConnection();
-    await connection.beginTransaction();
+    let begun = false;
     try {
+      await connection.beginTransaction();
+      begun = true;
       const result = await work(connection, (event) => this.append(connection, event));
       await connection.commit();
       return result;
     } catch (error) {
-      await connection.rollback();
+      if (begun) {
+        // A broken connection can also reject rollback; retain the original failure.
+        try { await connection.rollback(); } catch { /* release still runs below */ }
+      }
       throw error;
     } finally { connection.release(); }
   }
@@ -27,6 +32,13 @@ export class OutboxService {
        ON DUPLICATE KEY UPDATE id = id`,
       [id, event.eventType, event.schemaVersion, event.aggregateType, event.aggregateId, event.aggregateVersion, JSON.stringify(event.payload), event.idempotencyKey, event.availableAt ?? new Date()],
     );
-    return id;
+    // The insert may have matched an existing idempotency key. Read the actual
+    // row on this connection, using a current read even in REPEATABLE READ.
+    const [rows] = await connection.execute(
+      'SELECT id FROM outbox_events WHERE idempotency_key = ? FOR UPDATE',
+      [event.idempotencyKey],
+    ) as [Array<{ id: string }>, unknown];
+    if (!rows[0]) throw new Error('OUTBOX_EVENT_NOT_FOUND');
+    return rows[0].id;
   }
 }
