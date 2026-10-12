@@ -62,7 +62,7 @@ afterEach(() => {
 
 describe('outbox transaction and dedupe', () => {
   it('rolls back an event with its business transaction and commits only once', async () => {
-    const calls: string[] = []; const connection = { execute: async () => { calls.push('event'); }, beginTransaction: async () => { calls.push('begin'); }, commit: async () => { calls.push('commit'); }, rollback: async () => { calls.push('rollback'); }, release: () => { calls.push('release'); } };
+    const calls: string[] = []; const connection = { execute: async (sql: string) => { if (sql.startsWith('SELECT')) return [[{ id: 'persisted-event' }]]; calls.push('event'); }, beginTransaction: async () => { calls.push('begin'); }, commit: async () => { calls.push('commit'); }, rollback: async () => { calls.push('rollback'); }, release: () => { calls.push('release'); } };
     const service = new OutboxService({ getConnection: async () => connection });
     await expect(service.transaction(async (_connection, append) => { await append({ eventType: 'report.ready', schemaVersion: 1, aggregateType: 'report', aggregateId: '1', aggregateVersion: 1, payload: {}, idempotencyKey: 'report:1' }); throw new Error('rollback'); })).rejects.toThrow('rollback');
     expect(calls).toEqual(['begin', 'event', 'rollback', 'release']);

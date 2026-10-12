@@ -30,8 +30,8 @@
 
 |发现ID|当前文件:行|结论与影响契约|责任任务|实施门禁 / 关闭证据|
 |---|---|---|---|---|
-|FINAL-0026|`apps/db-ops-api/src/workflows/outbox-service.ts:10`|confirmed；begin失败不release，事务可耗尽连接池|T02/MAX-143；T04/T07消费修复|blocked；先交有界修复PR，将begin纳入释放保护并注入连接失效验证|
-|FINAL-0300|`apps/db-ops-api/src/workflows/outbox-service.ts:27`|confirmed；重复意图返回未落库新UUID，破坏返回稳定ID契约；当前报表按幂等键定位|T02/MAX-143，T07/MAX-146|blocked于新ID关联；复用同一修复包，真实MySQL重复append返回同一实际行ID|
+|FINAL-0026|`apps/db-ops-api/src/workflows/outbox-service.ts:10`（Review基线）|confirmed；begin失败不release，事务可耗尽连接池|T02/MAX-143；T04/T07消费修复|修复候选已通过：begin在释放保护内；真实MySQL启动故障仍release，rollback失败保留原错误。正常合并证据前仍blocked；见[t02-outbox-validation.md](t02-outbox-validation.md)|
+|FINAL-0300|`apps/db-ops-api/src/workflows/outbox-service.ts:27`（Review基线）|confirmed；重复意图返回未落库新UUID，破坏返回稳定ID契约；当前报表按幂等键定位|T02/MAX-143，T07/MAX-146|修复候选已通过：按幂等键当前读取得已落库ID；真实MySQL重复/100并发只返回同一实际行ID且无孤儿。正常合并证据前仍blocked；见[t02-outbox-validation.md](t02-outbox-validation.md)|
 |FINAL-0126 / 0127|`apps/db-ops-api/src/auth/require-instance-access.ts:34`、`:88`|confirmed；列表/中间件与hasInstanceAccess对boundary语义不一致；构造受限actor可复现，不宣称普通浏览器已有同样漏洞|T03/MAX-144|blocked；新服务身份接入前统一权限交集、实时撤权与全部scope负例|
 |FINAL-2384|`apps/db-ops-api/src/adapter/agent-run-service.ts:161`|confirmed；false/0错误与结果写成NULL|T04/MAX-145|相关任务内修复；定义合法非成功payload，保留明确空值语义|
 |FINAL-2385|`apps/db-ops-api/src/adapter/agent-run-service.ts:182`|confirmed静态窗口；取消遗留completionPending且running恢复不再查询|T04/MAX-145|blocked于调查取消/恢复接入；真实MySQL staged-complete/cancel竞争及唯一终态契约|
@@ -73,7 +73,7 @@
 |---|---|---|---|---|
 |auth / actor / session|blocked + pending|实例边界probe；现有实例权限测试通过|T03统一交集/服务主体；session shares、撤权、Profile、工具交集与枚举计数真实验证|T01、T02、T03、T04、T06、T10、T11、T12|
 |DirectAdapter / agent-run / message projection|blocked + pending|Run、DirectAdapter、display/WS现有测试通过；MySQL常量查询否定0080|T04取消/staged-result/key；T05事实版本；消息并发与client reducer；agent-core恢复/预算其余候选待有界复核|T01、T04、T05、T06、T08、T09、T11、T12|
-|Workflow / outbox|blocked + pending|outbox两个probe；worker现有测试通过|T02先修事务释放/稳定ID；T04真实租约/恢复；T07事件/admission持久唯一与预算|T01、T02、T04、T07、T08、T09、T10、T12|
+|Workflow / outbox|pending；0026/0300仅在[修复PR #145](https://github.com/max2055/Slide/pull/145)正常合并后解除blocked|outbox两个probe；T02真实MySQL8.4.10稳定ID/释放/回滚与报表恢复44项通过；[验证记录](t02-outbox-validation.md)|当前head的CI/正常合并证据见T02交付；T04真实租约/恢复；T07事件/admission持久唯一与预算仍待验证，未授予整个领域clear|T01、T02、T04、T07、T08、T09、T10、T12|
 |Analysis / 告警|pending|envelope/evidence/provider/recovery现有单测通过|legacy retry/归属、告警并发唯一、事件聚合；服务器/网络覆盖与真实链路未完成|T01、T07、T08、T10、T11、T12|
 |platform / source evidence|blocked + pending|source当前测试通过；旧connector可达性排除|T09终态映射、查询窗口、部署commit匹配、模型egress；保留名与真实同步；持久异常防自举循环|T01、T05、T09、T12|
 |前端导航 / Chat|pending|导航与告警/源码呈现76项通过；旧组件未引用|现用Chat并发附件/greeting/cache、路由/权限深链、1600/1024/390与真实WS/撤权浏览器验收|T01、T06、T08、T10、T11、T12|
