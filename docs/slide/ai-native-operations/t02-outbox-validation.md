@@ -17,7 +17,7 @@ RED checkpoint `b8319924`：生产代码未修改时，unit 3失败/4通过；�
 
 首次故障注入尝试中，prepared statement不支持SIGNAL，为测试设置问题；已改为业务表重复主键注入，真实SQL回滚断言通过，再记录有效RED。
 
-GREEN checkpoint `7625bb65`：同一测试和现有worker/report回归 **4文件43项通过，0失败、0skip**。真实MySQL8.4.10运行在仅本任务创建的临时容器内，使用随机隔离数据库，结束删除测试schema。
+GREEN checkpoint `7625bb65`：同一测试和现有worker/report回归 **4文件44项通过，0失败、0skip**。真实MySQL8.4.10运行在仅本任务创建的临时容器内，使用随机隔离数据库，结束删除测试schema。
 
 ```bash
 REPORT_TEST_MYSQL_PORT=<隔离端口> REPORT_TEST_MYSQL_PASSWORD=<测试凭据> \
@@ -34,7 +34,7 @@ pnpm exec oxlint apps/db-ops-api/src/workflows/outbox-service.ts \
 bash scripts/qualification/run-report-recovery.sh
 ```
 
-typecheck与focused oxlint通过；lint 0警告/错误。真实验收包括：首次与重复ID匹配实际行、payload保持原值、100并发同键只一条outbox且100条业务关联无孤儿、SQL失败业务/outbox全部回滚后可重试、事务启动MySQL故障释放连接、现有报表恢复/通知兼容。
+补充真实KILL CONNECTION（未mock begin）与旧快照回归后，同一focused命令44项全通过且typecheck再次通过；实际最终head由Issue记录。此前隔离脚本本身19项通过、0skip，后续新增第五项MySQL回归进入同一CI脚本。typecheck与focused oxlint通过；lint 0警告/错误。真实验收包括：首次与重复ID匹配实际行、payload保持原值、100并发同键只一条outbox且100条业务关联无孤儿、SQL失败业务/outbox全部回滚后可重试、REPEATABLE READ旧快照后仍取得已提交ID、KILL本测试连接后真实begin失败仍释放连接、现有报表恢复/通知兼容。
 
 ## 尚未解除的门禁
 

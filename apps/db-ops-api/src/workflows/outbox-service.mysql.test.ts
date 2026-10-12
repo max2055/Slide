@@ -74,22 +74,36 @@ describe.skipIf(!port)('outbox in isolated MySQL', () => {
   it('releases a real pooled connection after a MySQL failure at transaction startup', async () => {
     const connection = await pool.getConnection();
     const release = vi.spyOn(connection, 'release');
-    const begin = vi.spyOn(connection, 'beginTransaction').mockImplementation(async () => {
-      await connection.query("SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'INJECTED_BEGIN_FAILURE'");
-    });
+    const [identity] = await connection.query<mysql.RowDataPacket[]>('SELECT CONNECTION_ID() AS id');
+    // Kill only this test-owned connection; beginTransaction itself is real.
+    await admin.query(`KILL CONNECTION ${Number(identity[0].id)}`);
     const work = vi.fn();
     try {
       await expect(new OutboxService({ getConnection: async () => connection as unknown as Awaited<ReturnType<TransactionPool['getConnection']>> })
-        .transaction(work)).rejects.toThrow('INJECTED_BEGIN_FAILURE');
+        .transaction(work)).rejects.toThrow();
       expect(release).toHaveBeenCalledOnce();
       expect(work).not.toHaveBeenCalled();
       expect(await rows()).toHaveLength(0);
     } finally {
-      begin.mockRestore();
       if (release.mock.calls.length === 0) connection.release();
       release.mockRestore();
     }
     const id = await service.transaction(async (_connection, append) => append(event));
     expect((await rows())[0].id).toBe(id);
+  });
+
+  it('finds an existing ID even when the transaction snapshot predates its commit', async () => {
+    const connection = await pool.getConnection();
+    await connection.query('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    let persistedId = '';
+    const snapshotService = new OutboxService({ getConnection: async () => connection as unknown as Awaited<ReturnType<TransactionPool['getConnection']>> });
+    const id = await snapshotService.transaction(async (current, append) => {
+      const [snapshot] = await current.execute('SELECT id FROM outbox_events') as [unknown[]];
+      expect(snapshot).toHaveLength(0);
+      persistedId = await service.transaction(async (_connection, innerAppend) => innerAppend(event));
+      return append(event);
+    });
+    expect(id).toBe(persistedId);
+    expect((await rows())[0].id).toBe(persistedId);
   });
 });
