@@ -32,7 +32,7 @@
 |---|---|---|---|---|
 |FINAL-0026|`apps/db-ops-api/src/workflows/outbox-service.ts:10`（Review基线）|confirmed，具体阻塞已修复；begin失败不release的Review原始记录保留|T02/MAX-143；T04/T07消费修复|[PR #145](https://github.com/max2055/Slide/pull/145)正常合并；真实连接中断后begin失败仍release，rollback失败保留原错误；[验证](t02-outbox-validation.md)，合并/CI证据见下|
 |FINAL-0300|`apps/db-ops-api/src/workflows/outbox-service.ts:27`（Review基线）|confirmed，具体阻塞已修复；重复返回未落库UUID的Review原始记录保留|T02/MAX-143，T07/MAX-146|同一修复PR已合并；真实MySQL重复/100并发只返回同一实际行ID且无孤儿；REPEATABLE READ旧快照负例通过；[验证](t02-outbox-validation.md)|
-|FINAL-0126 / 0127|`apps/db-ops-api/src/auth/require-instance-access.ts:34`、`:88`|confirmed；列表/中间件与hasInstanceAccess对boundary语义不一致；构造受限actor可复现，不宣称普通浏览器已有同样漏洞|T03/MAX-144|blocked；新服务身份接入前统一权限交集、实时撤权与全部scope负例|
+|FINAL-0126 / 0127|`apps/db-ops-api/src/auth/require-instance-access.ts:34`、`:88`（Review基线）|confirmed；列表/中间件与hasInstanceAccess对boundary语义不一致；构造受限actor可复现，不宣称普通浏览器已有同样漏洞|T03/MAX-144|T03-A候选已统一列表/过滤/URL交集；真实MySQL/JWT撤权与三类scope负例通过。仅正常合并后解除本条blocked；见[t03-auth-baseline-validation.md](t03-auth-baseline-validation.md)|
 |FINAL-2384|`apps/db-ops-api/src/adapter/agent-run-service.ts:161`|confirmed；false/0错误与结果写成NULL|T04/MAX-145|相关任务内修复；定义合法非成功payload，保留明确空值语义|
 |FINAL-2385|`apps/db-ops-api/src/adapter/agent-run-service.ts:182`|confirmed静态窗口；取消遗留completionPending且running恢复不再查询|T04/MAX-145|blocked于调查取消/恢复接入；真实MySQL staged-complete/cancel竞争及唯一终态契约|
 |FINAL-0618|`apps/db-ops-api/src/adapter/direct-adapter.ts:812`|confirmed静态比较；send解析agent前缀，cancel直接比原key|T04/MAX-145，T06/MAX-148验收|blocked于复用取消；有前缀/裸session真实WS两路径可取消|
@@ -53,7 +53,7 @@
 |---|---|---|
 |FINAL-0080|真实MySQL9.6.0常量SELECT，JSON布尔原查询和unquoted查询都返回1；[结果](evidence/mysql-json-comparison.json)|rejected：“永远无法匹配”不成立；不凭该查询宣称完整crash recovery通过，其他支持版本由T12覆盖|
 |FINAL-0029等|`components/chat-message-list.ts`无生产引用；现用`views/chat.ts:1035`把全局RegExp建在while外|rejected当前Chat卡死主张；旧组件自身问题backlog，T06不得未经修复引入|
-|FINAL-0109|ActorContextService.revalidateActor从DB重建；resourceBoundary是调用方调度限制，没有可由管理员缩减的同名持久字段|rejected候选前提；T03新Profile/live scope必须求交并撤权|
+|FINAL-0109|ActorContextService.revalidateActor从DB重建；resourceBoundary是调用方调度限制，没有可由管理员缩减的同名持久字段|rejected原候选前提不变；T03-A另确认并修复DB重建时丢失已有调用方边界，见验证记录。新Profile/live scope仍待T03-B|
 |FINAL-0120 / 0128|admin身份/角色为当前明确bootstrap超管兼容；未证明保留身份可被非管理员控制|rejected可利用升级结论；不扩成RBAC重写，T03服务身份不能继承该旁路|
 |FINAL-0218 / 2794|源码测试明确保护signed advisory与单文件可用全部快照预算；reader权限及model egress为访问边界|rejected设计缺陷主张；T09模型证据脱敏/egress仍为pending|
 |FINAL-0013 / 0213等|旧REST GitHub/GitLab connector已deprecated；生产SourceManagementService.sync只用GitSourceConnector|rejected生产可达主张，潜伏代码风险backlog；不能仅看类存在认定在用漏洞|
@@ -71,7 +71,7 @@
 
 |领域|当前准入|复用证据|缺口与恢复条件|涉及任务|
 |---|---|---|---|---|
-|auth / actor / session|blocked + pending|实例边界probe；现有实例权限测试通过|T03统一交集/服务主体；session shares、撤权、Profile、工具交集与枚举计数真实验证|T01、T02、T03、T04、T06、T10、T11、T12|
+|auth / actor / session|pending；0126/0127仅在T03-A修复正常合并后解除blocked|T03-A实例边界交集、保留边界的live revalidation、真实MySQL/JWT撤权及三类scope负例；[验证记录](t03-auth-baseline-validation.md)|仅授权基线修复；服务主体、调查Session shares、Profile/工具交集及调查消息/证据/WS撤权仍待后续phase，未授予整域clear|T01、T02、T03、T04、T06、T10、T11、T12|
 |DirectAdapter / agent-run / message projection|blocked + pending|Run、DirectAdapter、display/WS现有测试通过；MySQL常量查询否定0080|T04取消/staged-result/key；T05事实版本；消息并发与client reducer；agent-core恢复/预算其余候选待有界复核|T01、T04、T05、T06、T08、T09、T11、T12|
 |Workflow / outbox|pending；0026/0300具体阻塞已由[PR #145](https://github.com/max2055/Slide/pull/145)关闭|T02真实MySQL8.4.10稳定ID/释放/回滚与报表恢复44项通过；[隔离admission验证](t02-store-validation.md)|T04真实租约/恢复；T07事件/admission预算；生产调查schema、T03真实授权/Session与HTTP接入仍待准入，未授予整个领域clear|T01、T02、T04、T07、T08、T09、T10、T12|
 |Analysis / 告警|pending|envelope/evidence/provider/recovery现有单测通过|legacy retry/归属、告警并发唯一、事件聚合；服务器/网络覆盖与真实链路未完成|T01、T07、T08、T10、T11、T12|

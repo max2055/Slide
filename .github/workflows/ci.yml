@@ -180,6 +180,8 @@ jobs:
         run: pnpm --filter slide-api exec tsx ../../tests/qualification/startup-readiness.test.ts
       - name: Report occurrence crashes and atomic notification outbox
         run: bash scripts/qualification/run-report-recovery.sh
+      - name: Delegation ceilings and live grant revocation in isolated MySQL
+        run: bash scripts/qualification/run-auth-boundary.sh
       - name: Analysis dispatch crashes, unknown billing windows and revoked authority
         run: bash scripts/qualification/run-analysis-recovery.sh
       - name: Metrics retention through production workflow assembly and isolated MySQL

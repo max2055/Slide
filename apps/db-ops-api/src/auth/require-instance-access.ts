@@ -33,7 +33,7 @@ export function getAccessibleInstanceIds(actor: InstanceScopedActor | null | und
   if (hasUnrestrictedInstanceAccess(actor)) return null;
   return Object.keys(actor?.instanceScopes ?? {})
     .map(Number)
-    .filter((id) => Number.isSafeInteger(id) && id > 0)
+    .filter((id) => hasInstanceAccess(actor, id))
     .sort((a, b) => a - b);
 }
 
@@ -67,10 +67,6 @@ export function requireInstanceAccess(minLevel?: AccessLevel) {
       return reply.code(401).send({ error: '请先登录' });
     }
 
-    if (hasUnrestrictedInstanceAccess(user)) {
-      return;
-    }
-
     // 实例 ID 必须来自 URL 参数（规范规则）
     const instanceId = request.params?.id || request.params?.instanceId;
     if (!instanceId) {
@@ -85,17 +81,17 @@ export function requireInstanceAccess(minLevel?: AccessLevel) {
       return reply.code(400).send({ error: '缺少实例 ID' });
     }
 
-    const accessLevel = user.instanceScopes?.[Number(instanceId)] as AccessLevel | undefined;
-    if (!accessLevel) {
+    const numericId = Number(instanceId);
+    if (!Number.isSafeInteger(numericId) || numericId <= 0) {
+      return reply.code(400).send({ error: '无效的实例 ID' });
+    }
+
+    if (!hasInstanceAccess(user, numericId)) {
       return reply.code(403).send({ error: '无权访问该实例' });
     }
 
-    if (minLevel) {
-      const userNum = ACCESS_LEVEL_HIERARCHY[accessLevel as AccessLevel] ?? -1;
-      const requiredNum = ACCESS_LEVEL_HIERARCHY[minLevel];
-      if (userNum < requiredNum) {
-        return reply.code(403).send({ error: '权限不足，需要 ' + minLevel + ' 级别' });
-      }
+    if (minLevel && !hasInstanceAccess(user, numericId, minLevel)) {
+      return reply.code(403).send({ error: '权限不足，需要 ' + minLevel + ' 级别' });
     }
   };
 }
