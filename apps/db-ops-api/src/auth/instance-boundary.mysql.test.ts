@@ -12,6 +12,7 @@ import { getAccessibleInstanceIds, hasInstanceAccess, requireInstanceAccess } fr
 import { requirePermission } from './require-permission.js';
 
 const port = Number(process.env.AUTH_TEST_MYSQL_PORT);
+type ActorPool = ReturnType<NonNullable<ConstructorParameters<typeof ActorContextService>[0]>>;
 describe.skipIf(!port)('bounded actors with real JWT and isolated MySQL grants', () => {
   const database = `auth_boundary_${process.pid}_${randomUUID().replaceAll('-', '')}`;
   // Test-owned secret and ceiling; neither comes from a client or a model.
@@ -59,7 +60,7 @@ describe.skipIf(!port)('bounded actors with real JWT and isolated MySQL grants',
       await pool.execute(`INSERT INTO database_instances
         (id, name, host, port, username, password_encrypted) VALUES (?, ?, 'fixture.invalid', 3306, 'fixture', 'unused')`, [id, `fixture-${id}`]);
     }
-    contexts = new ActorContextService(() => pool);
+    contexts = new ActorContextService(() => pool as unknown as ActorPool);
     app = Fastify();
     app.addHook('preHandler', createVerifyToken(secret, contexts));
     app.addHook('preHandler', async (request) => {

@@ -210,7 +210,16 @@ export class ActorContextService {
   }
 
   async revalidateActor(actor: ActorContext, requestId: string = randomUUID()): Promise<ActorContext> {
-    return this.loadActiveActor(actor.userId, actor.sessionVersion, requestId);
+    // Snapshot the server-owned ceiling before the asynchronous live grant read.
+    // Revalidation must never turn a delegated actor into an unrestricted one.
+    const boundary = actor.resourceBoundary;
+    const resourceBoundary = boundary ? Object.freeze({
+      instanceIds: Object.freeze([...boundary.instanceIds]),
+      serverIds: Object.freeze([...boundary.serverIds]),
+      networkDeviceIds: Object.freeze([...boundary.networkDeviceIds]),
+    }) : undefined;
+    const current = await this.loadActiveActor(actor.userId, actor.sessionVersion, requestId);
+    return resourceBoundary ? Object.freeze({ ...current, resourceBoundary }) : current;
   }
 
   async issueRefreshToken(
