@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { TSchema } from '@sinclair/typebox';
 import { PublicApiSchemas } from './public-api.js';
+import { InvestigationSchemas } from '../investigations/contracts.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const openApiPath = resolve(root, 'docs/slide/openapi.json');
@@ -407,8 +408,37 @@ export interface CollectServerDiagnosticsResponse { success: true; diagnostics: 
 
 `;
 
+// New contracts are rendered from the backend schemas, not hand-maintained
+// string copies. Fail closed if the baseline starts using an unsupported kind.
+function schemaType(schema: TSchema): string {
+  if (schema['x-typescript-type'] === 'ProjectionFrame') return 'ProjectionFrame';
+  if ('const' in schema) return JSON.stringify(schema.const);
+  if (schema.anyOf) return `(${(schema.anyOf as TSchema[]).map(schemaType).join(' | ')})`;
+  if (schema.type === 'string') return 'string';
+  if (schema.type === 'number' || schema.type === 'integer') return 'number';
+  if (schema.type === 'boolean') return 'boolean';
+  if (schema.type === 'null') return 'null';
+  if (schema.type === 'array') return `Array<${schemaType(schema.items as TSchema)}>`;
+  if (schema.type === 'object') {
+    if (schema.patternProperties) {
+      const values = Object.values(schema.patternProperties) as TSchema[];
+      if (values.length !== 1) throw new Error('Unsupported investigation record schema');
+      return `Record<string, ${schemaType(values[0])}>`;
+    }
+    const required = new Set(schema.required as string[] ?? []);
+    return `{ ${Object.entries(schema.properties ?? {}).map(([key, value]) =>
+      `${JSON.stringify(key)}${required.has(key) ? '' : '?'}: ${schemaType(value as TSchema)};`).join(' ')} }`;
+  }
+  throw new Error('Unsupported investigation client schema');
+}
+function buildInvestigationClientTypes(): string {
+  return '// Generated investigation contract baseline; routes are not implemented by these types.\n'
+    + "import type { ProjectionFrame } from '../../../../packages/agent-core/src/message-projection.ts';\n\n"
+    + Object.entries(InvestigationSchemas).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
+}
+
 export function buildClientTypes(): string {
-  return buildLegacyClientTypes()
+  return buildInvestigationClientTypes() + buildLegacyClientTypes()
     .replace('export interface HealthResponse {', `export interface QueueTypeObservation {
   jobType: string; queued: number; retry: number; scheduled: number; ready: number;
   running: number; deadLetter: number; expiredLeases: number; oldestReadyWaitMs: number | null;

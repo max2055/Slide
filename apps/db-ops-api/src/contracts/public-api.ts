@@ -1,4 +1,5 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
+import { InvestigationSchemas } from '../investigations/contracts.js';
 
 export const InfrastructureReadinessSchema = Type.Object({ ready: Type.Boolean() }, { $id: 'InfrastructureReadiness', additionalProperties: false });
 
@@ -655,6 +656,7 @@ export const OkResponseSchema = Type.Object({
 }, { $id: 'OkResponse', additionalProperties: false });
 
 export const PublicApiSchemas = {
+  ...InvestigationSchemas,
   QueueObservation: QueueObservationSchema,
   PlatformObservations: PlatformObservationsSchema,
   EventResolveRequest: Type.Object({ resolution_notes: Type.String() }, { $id: 'EventResolveRequest', additionalProperties: false }),

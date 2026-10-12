@@ -16,6 +16,9 @@
 |[reproduce.mts](evidence/reproduce.mts)、[结果](evidence/probe-results.json)|outbox、实例边界、非成功结果、late projection有界复现|无网络/业务数据库/模型调用；executor模拟SQL边界不能替代真实MySQL|
 |[mysql-json-comparison.json](evidence/mysql-json-comparison.json)|真实MySQL9.6.0常量SELECT|只否定FINAL-0080的恒空断言；无表读取或写入，不证明crash recovery|
 |[validation.md](validation.md)|当前命令、结果、文档核验与未完成项|当前PR/CI/合并状态单独移交，未使用历史head结果|
+|[t01-contract-baseline.md](t01-contract-baseline.md)|T01 契约使用、数据生产位置、confirmed/pending 与后续责任映射|baseline-only，不解除 R00 领域门禁|
+|[t01-samples.json](evidence/t01-samples.json)|第13.3节固定40样本，带脱敏合成快照与正反证据|T11 runner 输入；尚未运行模型评估，不替代真实资源夹具|
+|[t01-validation.md](t01-validation.md)、[结果](evidence/t01-baseline-results.json)|T01 当前验收和逐文件测试基线、失败分类|不替代 T12 真实链路与最终 gate；CI/合并证据见任务交付|
 
 原型截图和图册仍在资料包：`outputs/2026-10-11-ai-workspace/screens/01-attention.png`至`13-mobile-evidence.png`、`review.html`。这些路径指**下载解包后的相对路径**；不要假设存在作者本机的outputs目录。资料包没有完整的原型构建/验证源脚本，本仓库交付仅承诺已生成HTML可取用，不凭原README提到的build.mjs/verify.mjs宣称可重建。
 
