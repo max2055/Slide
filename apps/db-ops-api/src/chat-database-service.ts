@@ -7,6 +7,8 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { dbConnection } from './db-connection.js';
 import type { ActorContext } from './auth/actor-context.js';
 import { recordMessageParts, persistedMessageParts } from './adapter/message-parts.js';
+import { investigationAuthorization, type AuthorityExecutor, type InvestigationAuthorization } from './investigations/authorization.js';
+import { InvestigationStoreError } from './investigations/store.js';
 
 export type ChatAction =
   | 'read'
@@ -88,6 +90,7 @@ export class ChatDatabaseService {
 
   constructor(
     private readonly poolProvider: () => ChatPool | null = () => dbConnection.getPool() as ChatPool | null,
+    private readonly investigations: InvestigationAuthorization = investigationAuthorization,
   ) {}
 
   private getPool(): ChatPool {
@@ -97,7 +100,8 @@ export class ChatDatabaseService {
   }
 
   private accessPredicate(action: ChatAction, sessionAlias = 'cs'): string {
-    if (!READ_ACTIONS.has(action)) return `${sessionAlias}.user_id = ?`;
+    if (!READ_ACTIONS.has(action)) return `${sessionAlias}.user_id = ? AND NOT EXISTS
+      (SELECT 1 FROM investigations i WHERE i.session_id = ${sessionAlias}.session_id)`;
     return `(${sessionAlias}.user_id = ? OR EXISTS (
       SELECT 1 FROM chat_session_shares chat_share
       WHERE chat_share.session_id = ${sessionAlias}.session_id
@@ -125,7 +129,23 @@ export class ChatDatabaseService {
       [sessionId, ...this.accessValues(actor, action)],
     );
     if (!rows[0]) throw new ChatSessionNotFoundError();
+    await this.authorizeLinkedInvestigation(actor, sessionId, action, executor);
     return this.mapSessionRow(rows[0]);
+  }
+
+  private async authorizeLinkedInvestigation(actor: ActorContext, sessionId: string, action: ChatAction,
+    executor: QueryExecutor): Promise<void> {
+    const [bindings] = await executor.query<RowDataPacket[]>('SELECT id FROM investigations WHERE session_id = ?', [sessionId]);
+    if (!bindings.length) return;
+    if (!READ_ACTIONS.has(action)) throw new ChatSessionNotFoundError();
+    const connection: AuthorityExecutor = { execute: (sql, values) => executor.query(sql, values) };
+    try {
+      const investigation = await this.investigations.load(connection, bindings[0].id);
+      await this.investigations.authorize(connection, actor, investigation, 'read');
+    } catch (error) {
+      if (error instanceof InvestigationStoreError && error.code === 'INVESTIGATION_NOT_FOUND') throw new ChatSessionNotFoundError();
+      throw error;
+    }
   }
 
   async createSession(
@@ -161,11 +181,17 @@ export class ChatDatabaseService {
     const [rows] = await this.getPool().query<RowDataPacket[]>(
       `SELECT cs.* FROM chat_sessions cs
        WHERE ${this.accessPredicate('read')}
-       ORDER BY cs.last_message_at DESC, cs.created_at DESC
-       LIMIT ?`,
-      [...this.accessValues(actor, 'read'), limit],
+       ORDER BY cs.last_message_at DESC, cs.created_at DESC`,
+      this.accessValues(actor, 'read'),
     );
-    return rows.map((row) => this.mapSessionRow(row));
+    const visible: ChatSessionRecord[] = [];
+    for (const row of rows) {
+      try { await this.authorizeLinkedInvestigation(actor, row.session_id, 'read', this.getPool()); }
+      catch (error) { if (error instanceof ChatSessionNotFoundError) continue; throw error; }
+      visible.push(this.mapSessionRow(row));
+      if (visible.length >= limit) break;
+    }
+    return visible;
   }
 
   async getSessionsForMaintenance(limit: number): Promise<ChatSessionRecord[]> {
@@ -195,6 +221,7 @@ export class ChatDatabaseService {
     sessionId: string,
     limit = 200,
   ): Promise<ChatMessageRecord[]> {
+    await this.authorizeSession(actor, sessionId, 'history');
     const [rows] = await this.getPool().query<RowDataPacket[]>(
       `SELECT cm.*, cs.id AS authorized_session_id
        FROM chat_sessions cs
@@ -265,6 +292,7 @@ export class ChatDatabaseService {
     parentId: string,
     sessionId: string,
   ): Promise<ChatMessageRecord[]> {
+    await this.authorizeSession(actor, sessionId, 'history');
     const [rows] = await this.getPool().query<RowDataPacket[]>(
       `SELECT cm.* FROM chat_messages cm
        JOIN chat_sessions cs ON cs.session_id = cm.session_id
@@ -277,6 +305,7 @@ export class ChatDatabaseService {
   }
 
   async addMessage(actor: ActorContext, sessionId: string, message: NewChatMessage): Promise<number | undefined> {
+    await this.authorizeSession(actor, sessionId, 'append');
     const [result] = await this.getPool().query<ResultSetHeader>(
       `INSERT INTO chat_messages
          (session_id, message_id, parent_id, role, content, related_tool, related_skill, metadata)
@@ -301,6 +330,41 @@ export class ChatDatabaseService {
     if (result.affectedRows !== 1) throw new ChatSessionNotFoundError();
     await this.updateSessionStats(this.getPool(), sessionId, actor.userId);
     return Number.isFinite(Number(result.insertId)) && Number(result.insertId) > 0 ? Number(result.insertId) : undefined;
+  }
+
+  /** Only an active authorized admission may append its exact request message
+   * on the existing connection. No maintenance bypass or nested transaction. */
+  async appendInvestigationMessage(actor: ActorContext, investigationId: string, expectedVersion: number,
+    requestId: string, message: NewChatMessage, connection: AuthorityExecutor): Promise<number> {
+    const investigation = await this.investigations.load(connection, investigationId);
+    await this.investigations.authorize(connection, actor, investigation, 'continue');
+    if (investigation.version !== expectedVersion) throw new InvestigationStoreError('VERSION_CONFLICT');
+    const [requestRows] = await connection.execute(`SELECT r.*, i.active_request_id FROM investigation_requests r
+      JOIN investigations i ON i.id = r.investigation_id WHERE r.id = ? AND i.id = ? FOR UPDATE`,
+    [requestId, investigationId]) as [RowDataPacket[], unknown];
+    const request = requestRows[0];
+    const snapshot = request && (typeof request.request_snapshot === 'string' ? JSON.parse(request.request_snapshot) : request.request_snapshot);
+    if (!request || request.active_request_id !== requestId || Number(request.accepted_version) !== expectedVersion
+      || Number(request.actor_id) !== actor.userId || request.actor_kind !== (actor.principalKind ?? 'user')
+      || request.message_id !== null || message.role !== 'user' || snapshot.message !== message.content
+      || message.parentId || message.relatedTool || message.relatedSkill || !snapshot.authority
+      || !/^[a-f0-9-]{36}$/.test(message.messageId)) throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
+    await this.investigations.authorize(connection, actor, investigation, 'continue', [], snapshot.authority);
+    const [result] = await connection.execute(`INSERT INTO chat_messages (session_id, message_id, role, content, metadata)
+      SELECT cs.session_id, ?, 'user', ?, ? FROM chat_sessions cs
+      WHERE cs.session_id = ? AND cs.user_id = ?
+        AND (SELECT COUNT(*) FROM chat_messages bounded WHERE bounded.session_id = cs.session_id) < 99999`,
+    [message.messageId, message.content, JSON.stringify({ investigationId, requestId,
+      messageParts: persistedMessageParts({ id: message.messageId, role: 'user', content: message.content }).messageParts }),
+    investigation.sessionId, investigation.owner.id]) as [ResultSetHeader, unknown];
+    if (result.affectedRows !== 1) throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
+    const [binding] = await connection.execute('UPDATE investigation_requests SET message_id = ? WHERE id = ? AND message_id IS NULL', [message.messageId, requestId]) as [ResultSetHeader, unknown];
+    if (binding.affectedRows !== 1) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
+    const [stats] = await connection.execute(`UPDATE chat_sessions SET message_count = (SELECT COUNT(*) FROM chat_messages WHERE session_id = ?),
+      last_message_at = (SELECT MAX(created_at) FROM chat_messages WHERE session_id = ?) WHERE session_id = ?`,
+    [investigation.sessionId, investigation.sessionId, investigation.sessionId]) as [ResultSetHeader, unknown];
+    if (stats.affectedRows !== 1) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
+    return Number(result.insertId);
   }
 
   async addMessageForMaintenance(sessionId: string, message: NewChatMessage): Promise<number | undefined> {
@@ -440,6 +504,7 @@ export class ChatDatabaseService {
   }
 
   async getSessionCount(actor: ActorContext, sessionId: string): Promise<number> {
+    await this.authorizeSession(actor, sessionId, 'history');
     const [rows] = await this.getPool().query<RowDataPacket[]>(
       `SELECT COUNT(cm.id) AS cnt
        FROM chat_sessions cs

@@ -116,6 +116,7 @@ class ChatAclPool {
 
   private async execute(sql: string, values: unknown[] = []): Promise<any> {
     const compact = sql.replace(/\s+/g, ' ').trim();
+    if (compact.startsWith('SELECT id FROM investigations WHERE session_id')) return [[]];
 
     if (compact.startsWith('INSERT INTO chat_sessions')) {
       const [sessionId, ownerId, title, instanceId] = values as [string, number, string, number | null];
@@ -140,7 +141,7 @@ class ChatAclPool {
 
     if (compact.startsWith('SELECT cs.*') && compact.includes('ORDER BY')) {
       const actorId = Number(values[0]);
-      const limit = Number(values.at(-1));
+      const limit = compact.includes('LIMIT') ? Number(values.at(-1)) : this.sessions.length;
       return [this.sessions.filter((item) => this.canRead(item, actorId)).slice(0, limit)];
     }
 

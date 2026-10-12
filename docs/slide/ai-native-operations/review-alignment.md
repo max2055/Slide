@@ -71,7 +71,7 @@
 
 |领域|当前准入|复用证据|缺口与恢复条件|涉及任务|
 |---|---|---|---|---|
-|auth / actor / session|pending；0126/0127已由#147关闭|T03-A实例边界交集、保留边界的live revalidation、真实MySQL/JWT撤权及三类scope负例；[验证记录](t03-auth-baseline-validation.md)|仅授权基线修复；服务主体、调查Session shares、Profile/工具交集及调查消息/证据/WS撤权仍待后续phase，未授予整域clear|T01、T02、T03、T04、T06、T10、T11、T12|
+|auth / actor / session|pending；0126/0127已由#147关闭；T03-B当前模块补证|T03-A[基线验证](t03-auth-baseline-validation.md)；T03-B服务禁登录/无admin、Profile冻结交集、全部scope、viewer/operator、原子Session追加/转换及真实MySQL/JWT撤权，见[阶段验证](t03-b-validation.md)|T03-B源码模块具备有界证据，当前head CI/正常合并由父任务核验；T02-C HTTP、T04执行、T05证据/watch、T06浏览器缓存/深链与T12端到端仍pending，未授予整域clear|T01、T02、T03、T04、T06、T10、T11、T12|
 |DirectAdapter / agent-run / message projection|blocked + pending|Run、DirectAdapter、display/WS现有测试通过；MySQL常量查询否定0080|T04取消/staged-result/key；T05事实版本；消息并发与client reducer；agent-core恢复/预算其余候选待有界复核|T01、T04、T05、T06、T08、T09、T11、T12|
 |Workflow / outbox|pending；0026/0300具体阻塞已由[PR #145](https://github.com/max2055/Slide/pull/145)关闭|T02真实MySQL8.4.10稳定ID/释放/回滚与报表恢复44项通过；[正式schema/store验证](t02-b-validation.md)|T04真实租约/恢复；T07事件/admission预算；T02-B正式schema/store具备真实MySQL阶段证据；T03调查授权/消息桥接与T02-C HTTP仍待后续phase，未授予整个领域clear|T01、T02、T04、T07、T08、T09、T10、T12|
 |Analysis / 告警|pending|envelope/evidence/provider/recovery现有单测通过|legacy retry/归属、告警并发唯一、事件聚合；服务器/网络覆盖与真实链路未完成|T01、T07、T08、T10、T11、T12|

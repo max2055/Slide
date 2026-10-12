@@ -5,6 +5,7 @@ import mysql from 'mysql2/promise';
 import bcrypt from 'bcrypt';
 import { createHash } from 'crypto';
 import { dbConnection, encryptData, decryptData } from './db-connection';
+import { isInvestigationServiceIdentity } from './auth/investigation-service-identity.js';
 
 export interface User {
   id: number;
@@ -39,12 +40,13 @@ export interface ActionLog {
   created_at: Date;
 }
 
-class AuthDatabaseService {
+export class AuthDatabaseService {
+  constructor(private readonly poolProvider: () => mysql.Pool | null = () => dbConnection.getPool()) {}
   /**
    * 获取数据库连接池
    */
   private getPool(): mysql.Pool | null {
-    return dbConnection.getPool();
+    return this.poolProvider();
   }
 
   /**
@@ -149,12 +151,13 @@ class AuthDatabaseService {
 
     try {
       const [rows] = await pool.execute(
-        'SELECT id, password_hash FROM users WHERE username = ? AND status = "active"',
+        'SELECT id, username, password_hash FROM users WHERE username = ? AND status = "active"',
         [username]
       ) as any;
 
       if (Array.isArray(rows) && rows.length > 0) {
         const passwordHash = rows[0].password_hash;
+        if (isInvestigationServiceIdentity(rows[0].username ?? username, passwordHash)) return false;
         const userId = rows[0].id;
 
         // 检测哈希格式：bcrypt 以 $2 开头，SHA-256 是 64 位十六进制
