@@ -5040,6 +5040,56 @@
         ],
         "type": "object"
       },
+      "InvestigationAccepted": {
+        "$id": "InvestigationAccepted",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 36,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "investigationId": {
+            "maxLength": 36,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "jobId": {
+            "maxLength": 36,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "requestId": {
+            "maxLength": 36,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "sessionId": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "version": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "investigationId",
+          "sessionId",
+          "requestId",
+          "jobId",
+          "version"
+        ],
+        "type": "object"
+      },
       "InvestigationClosure": {
         "$id": "InvestigationClosure",
         "additionalProperties": false,
@@ -5131,6 +5181,186 @@
         "required": [
           "lifecycle",
           "problemStatus"
+        ],
+        "type": "object"
+      },
+      "InvestigationCreateRequest": {
+        "$id": "InvestigationCreateRequest",
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "goal": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "profileId": {
+            "anyOf": [
+              {
+                "const": "ops",
+                "type": "string"
+              },
+              {
+                "const": "system",
+                "type": "string"
+              }
+            ]
+          },
+          "resourceRefs": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "maximum": 4294967295,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "role": {
+                  "anyOf": [
+                    {
+                      "const": "primary",
+                      "type": "string"
+                    },
+                    {
+                      "const": "related",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "type": {
+                  "anyOf": [
+                    {
+                      "const": "instance",
+                      "type": "string"
+                    },
+                    {
+                      "const": "server",
+                      "type": "string"
+                    },
+                    {
+                      "const": "network_device",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "id",
+                "role"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "sessionId": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "subject": {
+            "$id": "InvestigationSubject",
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "resource",
+                    "type": "string"
+                  },
+                  "resource": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "maximum": 9007199254740991,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "type": {
+                        "anyOf": [
+                          {
+                            "const": "instance",
+                            "type": "string"
+                          },
+                          {
+                            "const": "server",
+                            "type": "string"
+                          },
+                          {
+                            "const": "network_device",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "resource"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "component": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "platform",
+                    "type": "string"
+                  },
+                  "releaseId": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "component"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "to": {
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "goal",
+          "profileId",
+          "subject",
+          "resourceRefs"
         ],
         "type": "object"
       },
@@ -5240,6 +5470,54 @@
             "type": "string"
           }
         ]
+      },
+      "InvestigationPatchRequest": {
+        "$id": "InvestigationPatchRequest",
+        "additionalProperties": false,
+        "properties": {
+          "expectedVersion": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "goal": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "lifecycle": {
+            "$id": "InvestigationLifecycle",
+            "anyOf": [
+              {
+                "const": "open",
+                "type": "string"
+              },
+              {
+                "const": "waiting",
+                "type": "string"
+              },
+              {
+                "const": "closed",
+                "type": "string"
+              },
+              {
+                "const": "archived",
+                "type": "string"
+              }
+            ]
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedVersion"
+        ],
+        "type": "object"
       },
       "InvestigationProblemStatus": {
         "$id": "InvestigationProblemStatus",
@@ -5729,6 +6007,28 @@
           "evidenceIds",
           "verifiedAt",
           "verifiedBy"
+        ],
+        "type": "object"
+      },
+      "InvestigationRequest": {
+        "$id": "InvestigationRequest",
+        "additionalProperties": false,
+        "properties": {
+          "expectedVersion": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "message": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "expectedVersion"
         ],
         "type": "object"
       },
@@ -13792,6 +14092,371 @@
           }
         },
         "security": []
+      }
+    },
+    "/api/investigations": {
+      "get": {
+        "description": "Items, nextCursor and authorizedCounts.total. Live authorization before count/limit. Cursor encodes an offset and filter hash; concurrent changes can shift pages. All responses private/no-store.",
+        "operationId": "listInvestigations",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "profile",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "instance:id, server:id or network_device:id",
+            "in": "query",
+            "name": "resource",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "1 to 50; default 20",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized page"
+          },
+          "400": {
+            "description": "Invalid filters/cursor"
+          },
+          "401": {
+            "description": "JWT required"
+          },
+          "503": {
+            "description": "Store unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "description": "Atomic creation plus first admission/message/job/outbox. Server-owned actor and Profile version; all scopes revalidated even on retry. Same actor/key/command recovers the original investigation and Session. No executor registered by this API.",
+        "operationId": "createInvestigation",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvestigationCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationAccepted"
+                }
+              }
+            },
+            "description": "Durably accepted"
+          },
+          "400": {
+            "description": "Invalid input or client authority field"
+          },
+          "401": {
+            "description": "Invalid JWT or service interactive token"
+          },
+          "404": {
+            "description": "Not visible under all current scopes"
+          },
+          "409": {
+            "description": "Active Session or idempotency payload mismatch"
+          },
+          "422": {
+            "description": "Profile subject unsupported"
+          },
+          "503": {
+            "description": "Rolled back; not accepted"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/investigations/{id}": {
+      "get": {
+        "description": "Persisted metadata/version/context. derivedRunState/latestResult are null until T04/T05 fact owners are integrated; admission is not a Run or a result.",
+        "operationId": "getInvestigation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-f0-9-]{36}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized metadata"
+          },
+          "401": {
+            "description": "JWT required"
+          },
+          "404": {
+            "description": "Absent or inaccessible"
+          },
+          "503": {
+            "description": "Store unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "patch": {
+        "description": "Operator, live all-scope authority and expectedVersion required. Active request prevents goal/lifecycle change. Immutable scopes/Profile/context; human recovery/verification fields belong to the feedback module.",
+        "operationId": "patchInvestigation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-f0-9-]{36}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvestigationPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Persisted updated metadata/version"
+          },
+          "400": {
+            "description": "Invalid patch"
+          },
+          "403": {
+            "description": "Visible viewer cannot operate"
+          },
+          "404": {
+            "description": "Absent or inaccessible"
+          },
+          "409": {
+            "description": "Version/active request conflict"
+          },
+          "503": {
+            "description": "Rolled back"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/investigations/{id}/messages": {
+      "get": {
+        "operationId": "getInvestigationMessages",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-f0-9-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized chronological messages from the existing Session"
+          },
+          "404": {
+            "description": "Absent or any required scope missing"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/investigations/{id}/requests/{requestId}/cancel": {
+      "post": {
+        "description": "Real-time operator/all-scope authorization. Atomically records cancellation intent. Unclaimed queued/retry job becomes cancelled and releases active admission. Running owner retains active admission; T04 consumes intent and owns Run termination.",
+        "operationId": "cancelInvestigationRequest",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-f0-9-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Intent persisted, repeat safe"
+          },
+          "403": {
+            "description": "Viewer cannot cancel"
+          },
+          "404": {
+            "description": "Request or investigation inaccessible"
+          },
+          "503": {
+            "description": "Rolled back"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/investigations/{id}/runs": {
+      "post": {
+        "operationId": "admitInvestigationRequest",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-f0-9-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvestigationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationAccepted"
+                }
+              }
+            },
+            "description": "Durable request; no fabricated Run"
+          },
+          "403": {
+            "description": "Viewer cannot append"
+          },
+          "404": {
+            "description": "Absent or inaccessible"
+          },
+          "409": {
+            "description": "Version, payload or active request conflict"
+          },
+          "503": {
+            "description": "Rolled back; no message/job/outbox orphan"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/api/llm/models": {

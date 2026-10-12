@@ -23,4 +23,4 @@ if [[ "$stable" -lt 3 ]]; then echo "isolated authorization MySQL unavailable" >
 AUTH_TEST_MYSQL_PORT="$port" AUTH_TEST_MYSQL_PASSWORD=qualification-test-password \
   pnpm --filter slide-api exec vitest run src/auth/instance-boundary.mysql.test.ts \
     src/auth/require-instance-access.test.ts src/auth/security-boundaries.test.ts src/auth/chat-routes.test.ts \
-    src/investigations/authorization.test.ts src/investigations/session-bridge.test.ts
+    src/investigations/authorization.test.ts src/investigations/session-bridge.test.ts src/investigations/routes.test.ts

@@ -102,3 +102,10 @@ stage及UUID以MAX-140当前Issue为准，不能只按旧附件的任务列举�
 未完成：当前GitHub凭据401，PR创建、当前head required CI、合并及merge SHA核验尚无证据；新V1功能的真实MySQL事务竞争、provider、SSH/网络、浏览器端到端和最终gate没有运行。这些必须分别报告，不能把323项既有单测或原型24项历史记录当作V1验收。R00只需本矩阵和材料可用后走独立PR门禁，不要求全仓所有问题清零。
 
 后续增量协议：MAX-140记录新默认分支SHA、报告hash与候选来源；逐项增补账本、重用责任Issue并核对修复PR当前head与合并SHA。只解除有当前证据的领域，保持其他pending。报告已完成所选扫描范围，仍有未逐项核实候选和工具排除文件；不可将二者遗忘或写成扫描未结束。业务修复不在R00材料PR中。
+
+
+## T02-C HTTP 当前模块准入增量（2026-10-12）
+
+消费 #145/#146/#147/#148 已合并能力。真实 JWT/HTTP/MySQL 35 项新增验收：100同键create与request唯一调查/Session/message/request/job/outbox、跨入口同键锁序、全事务失败回滚、授权后分页/count、viewer/普通read-share负例、同JWT三类scope与System config撤权、原Chat转换及version409。HTTP不接受actor/Profile权限；authority与message仍由T03桥接在单一store事务写入。详见 [T02-C验证](t02-c-validation.md)。
+
+仅关闭本步骤所消费的HTTP公开入口证据缺口；auth/actor/session与Workflow/outbox整域仍pending。运行取消仅持久意图，不接DirectAdapter、不裁定T04取消/staged-result/key候选；Run、证据、WS、provider与浏览器/T12总验收保留。problemStatus/verification由T11提供，未发布无证据resolved操作。没有追加全仓Review或子代理。

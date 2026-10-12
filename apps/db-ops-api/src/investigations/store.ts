@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
-import { INVESTIGATION_ERROR_STATUS } from './contracts.js';
+import { INVESTIGATION_ERROR_STATUS, type InvestigationSubject } from './contracts.js';
 import { OutboxService, type TransactionConnection, type TransactionPool, type OutboxInput } from '../workflows/outbox-service.js';
 
 type ErrorCode = keyof typeof INVESTIGATION_ERROR_STATUS;
@@ -49,12 +49,16 @@ export interface AdmissionInvestigation {
 export interface InvestigationRecord extends AdmissionInvestigation {
   title: string;
   goal: string;
+  context?: { subject: InvestigationSubject; from?: string; to?: string };
   problemStatus: 'unconfirmed' | 'in_progress' | 'resolved' | 'not_applicable';
   activeRequestId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
 export interface InvestigationCreate {
+  /** Trusted HTTP command, recovered before allocating a new investigation. */
+  idempotencyKey?: string;
+  context?: { subject: InvestigationSubject; from?: string; to?: string };
   actor: InvestigationActor;
   title: string;
   goal: string;
@@ -78,7 +82,7 @@ export interface InvestigationList {
   limit?: number;
   offset?: number;
 }
-export type InvestigationOperation = 'create' | 'read' | 'patch' | 'admit';
+export type InvestigationOperation = 'create' | 'read' | 'patch' | 'admit' | 'cancel';
 /** Trusted server port, never accepted from HTTP/model input. T03 supplies live
  * actor + ACL + Profile + tool/resource intersection, covering EVERY resource.
  * Runs inside the same transaction on every read/write, including retries.
@@ -132,7 +136,9 @@ export class MysqlInvestigationStore {
   private async map(connection: TransactionConnection, row: RowDataPacket): Promise<InvestigationRecord> {
     const resources = await select(connection, `SELECT resource_type, resource_id, role FROM investigation_resources
       WHERE investigation_id = ? ORDER BY resource_type, resource_id FOR SHARE`, [row.id]);
-    return { id: row.id, sessionId: row.session_id, title: row.title, goal: row.goal,
+    const [creation] = await select(connection, 'SELECT command_snapshot FROM investigation_create_keys WHERE investigation_id = ?', [row.id]);
+    const context = creation?.command_snapshot?.context;
+    return { ...(context ? { context } : {}), id: row.id, sessionId: row.session_id, title: row.title, goal: row.goal,
       profileId: row.profile_id, profileVersion: Number(row.profile_version), scopeVersion: row.scope_version,
       lifecycle: row.lifecycle, problemStatus: row.problem_status, version: Number(row.version),
       owner: Object.freeze({ kind: row.owner_kind, id: Number(row.owner_id) }),
@@ -159,6 +165,7 @@ export class MysqlInvestigationStore {
     if (typeof this.authorize !== 'function') throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
     if (!input || !validActor(input.actor) || !validText(input.title, 200) || !validText(input.goal, 2_000)
       || !['ops', 'system'].includes(input.profileId) || !Number.isSafeInteger(input.profileVersion) || input.profileVersion < 1
+      || input.idempotencyKey !== undefined && (typeof input.idempotencyKey !== 'string' || !input.idempotencyKey.trim() || Buffer.byteLength(input.idempotencyKey) > 255)
       || input.sessionId !== undefined && !validText(input.sessionId, 100)
       || !Array.isArray(input.resources) || input.resources.length > 20
       || input.resources.some(resource => !resource || !['instance', 'server', 'network_device'].includes(resource.type)
@@ -166,8 +173,40 @@ export class MysqlInvestigationStore {
     if (input.profileId === 'ops' && !input.resources.length || input.profileId === 'system' && input.resources.length)
       throw new InvestigationStoreError('PROFILE_SUBJECT_UNSUPPORTED');
     input = { ...input, actor: { ...input.actor }, resources: input.resources.map(resource => ({ ...resource })) };
-    const resources = [...input.resources].sort((a, b) => a.type.localeCompare(b.type) || a.id - b.id);
+    const resources = input.resources.map(({ type, id, role }) => ({ type, id, role }))
+      .sort((a, b) => a.type.localeCompare(b.type) || a.id - b.id);
     if (new Set(resources.map(resource => `${resource.type}:${resource.id}`)).size !== resources.length) throw invalid();
+    const command = { title: input.title, goal: input.goal, profileId: input.profileId,
+      profileVersion: input.profileVersion, resources, sessionId: input.sessionId ?? null,
+      context: input.context ?? null };
+    const commandHash = createHash('sha256').update(JSON.stringify(command)).digest('hex');
+    const createKey = input.idempotencyKey === undefined ? undefined : [input.actor.kind, input.actor.id, Buffer.from(input.idempotencyKey)];
+    if (createKey) {
+      await connection.execute(`INSERT INTO investigation_create_keys
+        (actor_kind, actor_id, idempotency_key, command_hash, command_snapshot) VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE investigation_id = investigation_id`, [...createKey, commandHash, JSON.stringify(command)]);
+      const [previous] = await select(connection, `SELECT * FROM investigation_create_keys
+        WHERE actor_kind = ? AND actor_id = ? AND idempotency_key = ? FOR UPDATE`, createKey);
+      // Match admit's actor/key -> Session -> investigation order even when
+      // a retry arrives simultaneously through the /runs entrance.
+      await connection.execute(`INSERT INTO investigation_admission_keys (actor_kind, actor_id, idempotency_key)
+        VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE request_id = request_id`, createKey);
+      await connection.execute(`SELECT request_id FROM investigation_admission_keys
+        WHERE actor_kind = ? AND actor_id = ? AND idempotency_key = ? FOR UPDATE`, createKey);
+      if (previous.investigation_id) {
+        // Preserve the common lock order with admission. Never create a second
+        // Session and never use an old acceptance as reusable authorization.
+        const [binding] = await select(connection, 'SELECT session_id FROM investigations WHERE id = ?', [previous.investigation_id]);
+        if (!binding) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
+        await connection.execute('SELECT id FROM chat_sessions WHERE session_id = ? FOR UPDATE', [binding.session_id]);
+        const record = await this.load(connection, previous.investigation_id, 'UPDATE');
+        await this.authorize(connection, Object.freeze(input.actor), Object.freeze(record), 'create');
+        if (previous.command_hash !== commandHash) throw new InvestigationStoreError('IDEMPOTENCY_PAYLOAD_MISMATCH');
+        // Bridge.create passes this ORIGINAL creation version to the original
+        // first admission; later patches/runs must not change its request hash.
+        return { ...record, version: 1 };
+      }
+    }
     const scopeVersion = createHash('sha256').update(JSON.stringify(resources)).digest('hex');
     const sessionId = input.sessionId ?? randomUUID();
     if (input.sessionId) {
@@ -193,6 +232,8 @@ export class MysqlInvestigationStore {
       record.profileVersion, sessionId, record.owner.kind, record.owner.id, scopeVersion]);
     for (const resource of resources) await connection.execute(`INSERT INTO investigation_resources
       (investigation_id, resource_type, resource_id, role) VALUES (?, ?, ?, ?)`, [record.id, resource.type, resource.id, resource.role]);
+    if (createKey) await connection.execute(`UPDATE investigation_create_keys SET investigation_id = ?
+      WHERE actor_kind = ? AND actor_id = ? AND idempotency_key = ?`, [record.id, ...createKey]);
     return this.load(connection, record.id, 'UPDATE');
   }
 
@@ -245,11 +286,36 @@ export class MysqlInvestigationStore {
       const record = await this.load(connection, id, 'UPDATE');
       await this.authorize(connection, actor, Object.freeze(record), 'patch');
       if (record.version !== patch.expectedVersion || !Number.isSafeInteger(record.version + 1)) throw new InvestigationStoreError('VERSION_CONFLICT');
-      if (record.activeRequestId && patch.lifecycle !== undefined && patch.lifecycle !== record.lifecycle)
+      if (record.activeRequestId && (patch.goal !== undefined && patch.goal !== record.goal
+        || patch.lifecycle !== undefined && patch.lifecycle !== record.lifecycle))
         throw new InvestigationStoreError('INVESTIGATION_ACTIVE_REQUEST');
       await connection.execute(`UPDATE investigations SET title = ?, goal = ?, lifecycle = ?, version = version + 1 WHERE id = ?`,
         [patch.title ?? record.title, patch.goal ?? record.goal, patch.lifecycle ?? record.lifecycle, id]);
       return this.load(connection, id, 'UPDATE');
+    });
+  }
+
+  /** Only persists intent for a running owner. T04 consumes that intent and
+   * owns Run termination; queued jobs can be cancelled without an executor. */
+  async cancel(actor: InvestigationActor, id: string, requestId: string): Promise<{ accepted: true }> {
+    if (!validActor(actor) || !uuid.test(id) || !uuid.test(requestId)) throw invalid();
+    return this.transaction(async connection => {
+      const [binding] = await select(connection, 'SELECT session_id FROM investigations WHERE id = ?', [id]);
+      if (!binding) throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
+      await connection.execute('SELECT id FROM chat_sessions WHERE session_id = ? FOR UPDATE', [binding.session_id]);
+      const record = await this.load(connection, id, 'UPDATE');
+      await this.authorize(connection, Object.freeze({ ...actor }), Object.freeze(record), 'cancel');
+      const [request] = await select(connection, 'SELECT * FROM investigation_requests WHERE id = ? AND investigation_id = ? FOR UPDATE', [requestId, id]);
+      if (!request) throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
+      const [job] = await select(connection, 'SELECT state FROM workflow_jobs WHERE id = ? FOR UPDATE', [request.job_id]);
+      if (!job) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
+      await connection.execute('UPDATE investigation_requests SET cancel_requested_at = COALESCE(cancel_requested_at, NOW()) WHERE id = ?', [requestId]);
+      if (['queued', 'retry'].includes(job.state)) {
+        await connection.execute("UPDATE workflow_jobs SET state = 'cancelled' WHERE id = ?", [request.job_id]);
+        if (record.activeRequestId === requestId) await connection.execute(`UPDATE investigations
+          SET active_request_id = NULL, lifecycle = 'waiting', version = version + 1 WHERE id = ?`, [id]);
+      }
+      return { accepted: true };
     });
   }
 
