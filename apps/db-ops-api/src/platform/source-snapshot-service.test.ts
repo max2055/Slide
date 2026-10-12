@@ -15,6 +15,18 @@ async function setup() {
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
 describe('source snapshot boundary', () => {
+  it('rejects the reserved root manifest name before publication and permits nested names', async () => {
+    const { root, service } = await setup();
+    const identity = { releaseId: 'reserved-name', commitSha: commit, projectId: '7' };
+    for (const path of ['manifest.json', 'Manifest.json', 'MANIFEST.json', 'manifest.json/child.ts']) {
+      await expect(service.publish(identity, [{ path, content: '{}' }])).rejects.toThrow('SOURCE_PATH_INVALID');
+    }
+    await expect(readFile(join(root, identity.releaseId, 'manifest.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    const files = [{ path: 'src/manifest.json', content: '{"name":"source"}' }];
+    const manifest = await service.publish(identity, files);
+    expect((await service.read(identity.releaseId, manifest, 'src/manifest.json', 1, 1)).content).toBe(files[0].content);
+    expect(await service.publish(identity, files)).toEqual(manifest);
+  });
   it('keeps flagged and larger source files readable with signed advisory warnings', async () => {
     const { service, root } = await setup();
     const files = [

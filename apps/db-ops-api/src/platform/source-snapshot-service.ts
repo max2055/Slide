@@ -29,7 +29,7 @@ function releaseName(value: string): string {
   return value;
 }
 export function assertSourcePath(path: string): void {
-  if (typeof path !== 'string' || path.length > 512 || !/^[a-zA-Z0-9_./-]+$/.test(path)
+  if (typeof path !== 'string' || path.split('/')[0].toLowerCase() === 'manifest.json' || path.length > 512 || !/^[a-zA-Z0-9_./-]+$/.test(path)
     || path.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.'))
     || /(^|\/)(node_modules|dist|coverage|secrets)(\/|$)/i.test(path)
     || !/\.(ts|tsx|js|mjs|cjs|json|sql|yaml|yml|sh|md|html|css)$/.test(path)) throw new Error('SOURCE_PATH_INVALID');

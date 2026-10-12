@@ -59,7 +59,8 @@ it('clears ambient proxies and credentials; explicitly configures HTTPS proxy', 
   const options: any = run.mock.calls[0][2];
   expect(options.env.HTTPS_PROXY).toBe('http://localhost:8001');
   expect(options.env.https_proxy).toBe('http://localhost:8001');
-  expect(run.mock.calls[0][1]).toContain('http.proxy=http://localhost:8001');
+  expect(options.env.GIT_CONFIG_KEY_2).toBe('http.proxy');
+  expect(options.env.GIT_CONFIG_VALUE_2).toBe('http://localhost:8001');
 });
 it('never logs raw or encoded credentials on failure', async () => {
   const encoded = Buffer.from(`oauth2:${config.token}`).toString('base64');
@@ -78,7 +79,7 @@ it('clears inherited proxies when no task proxy is configured', async () => {
   await new GitSourceConnector([config.baseUrl]).fetchFiles(config);
   const env = (run.mock.calls[0][2] as any).env;
   expect(env.http_proxy).toBeUndefined(); expect(env.HTTPS_PROXY).toBeUndefined();
-  expect(run.mock.calls[0][1]).toContain('http.proxy=');
+  expect(env.GIT_CONFIG_VALUE_2).toBe('');
 });
 it('does not follow repository symlinks', async () => {
   const previous = run.getMockImplementation()!;
@@ -99,10 +100,20 @@ it('defaults to remote HEAD and uses the HTTP proxy for an approved HTTP origin'
   expect(result.ref).toBe('HEAD'); expect(result.commitSha).toBe(config.ref);
   const fetch = run.mock.calls.find(call => call[1].includes('fetch'))!;
   expect(fetch[1].slice(-2)).toEqual(['origin', 'HEAD']);
-  expect(fetch[1]).toContain('http.proxy=http://localhost:8000');
+  expect(fetch[2].env.GIT_CONFIG_VALUE_2).toBe('http://localhost:8000');
   expect(fetch[1]).toContain('http.followRedirects=false');
   expect(fetch[2].env.GIT_ALLOW_PROTOCOL).toBe('http:https');
   expect(existsSync(fetch[2].cwd)).toBe(false);
+});
+
+it('keeps authenticated proxy URLs out of every Git command argument', async () => {
+  const proxy = 'http://fixture-user:fixture-proxy-credential@127.0.0.1:8001';
+  await new GitSourceConnector([config.baseUrl]).fetchFiles({ ...config, httpsProxy: proxy });
+  for (const [, args, options] of run.mock.calls) {
+    expect(JSON.stringify(args)).not.toContain('fixture-proxy-credential');
+    expect(options.env.GIT_CONFIG_COUNT).toBe('3');
+    expect(options.env.GIT_CONFIG_VALUE_2).toBe(proxy);
+  }
 });
 
 it('rejects expired credentials before starting Git', async () => {

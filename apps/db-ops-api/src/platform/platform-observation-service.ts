@@ -35,7 +35,7 @@ export async function installPlatformObservation(app: FastifyInstance, verifyTok
         quality: 'unknown', types: [], gaps: ['QUEUE_STORE_UNAVAILABLE'] };
       try { if (observeQueue) queue = await observeQueue(); } catch { /* A missing gauge is not zero backlog. */ }
       const components = ['api', 'agent', 'ws', 'collector', 'queue', 'frontend'].map(component => {
-        const evidence = logs.query({ component });
+        const evidence = logs.query({ from: summary.from, to: summary.to, component });
         return { component, quality: evidence.quality, gaps: evidence.gaps, groups: evidence.groups };
       });
       return { schemaVersion: 1, generatedAt: new Date().toISOString(), releaseId: process.env.SLIDE_RELEASE_ID ?? null,
