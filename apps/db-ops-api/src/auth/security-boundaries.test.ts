@@ -120,6 +120,25 @@ function waitForClose(ws: WebSocket): Promise<number> {
 }
 
 describe('actor context security boundary', () => {
+  it('revalidation refreshes live grants while preserving an immutable delegation ceiling', async () => {
+    const boundary = { instanceIds: [12], serverIds: [5], networkDeviceIds: [6] };
+    const execute = vi.fn().mockImplementation(async () => {
+      // A caller mutation while the database read is pending must not widen it.
+      boundary.instanceIds.push(99);
+      return [[...ACTIVE_ROWS, { ...ACTIVE_ROWS[0], instance_id: 99 }]];
+    });
+    const service = new ActorContextService(() => ({ execute } as any));
+    const result = await service.revalidateActor({ ...actor(), resourceBoundary: boundary }, 'revalidated');
+    expect(result.requestId).toBe('revalidated');
+    expect(result.resourceBoundary).toEqual({ instanceIds: [12], serverIds: [5], networkDeviceIds: [6] });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.resourceBoundary)).toBe(true);
+    for (const ids of Object.values(result.resourceBoundary!)) expect(Object.isFrozen(ids)).toBe(true);
+    const { getAccessibleInstanceIds, hasInstanceAccess } = await import('./require-instance-access.js');
+    expect(getAccessibleInstanceIds(result)).toEqual([12]);
+    expect(hasInstanceAccess(result, 99)).toBe(false);
+  });
+
   it('actor builds an immutable authorization snapshot for an active user', async () => {
     const execute = vi.fn().mockResolvedValue([ACTIVE_ROWS]);
     const service = new ActorContextService(() => ({ execute } as any));
