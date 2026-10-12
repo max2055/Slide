@@ -1,0 +1,424 @@
+{
+  "schemaVersion": 1,
+  "alignmentAtUtc": "2026-10-11T23:19:40.301466+00:00",
+  "reviewCommit": "fb0766d606c9f07448a5eddac2a6657847d90830",
+  "implementationSourceCommit": "fb0766d606c9f07448a5eddac2a6657847d90830",
+  "defaultBranch": "main",
+  "defaultBranchDifference": [],
+  "archive": {
+    "attachmentId": "01a12b4b-4fd6-7434-85eb-539890035766",
+    "bytes": 2545916,
+    "sha256": "8e8f0424b4e92dc451c502b1aa84eeb573c6d19a5fda1345bb8e0fb4ea874be5"
+  },
+  "inputFiles": [
+    {
+      "path": "implementation-baseline.md",
+      "bytes": 59426,
+      "sha256": "af021d703d108819e78b03c1afd25dd933b621313da5a0c79878a89490550969"
+    },
+    {
+      "path": "menu-addendum.md",
+      "bytes": 1337,
+      "sha256": "2b2e15e761d3d31c2bc5b385f3b082cfd80fc7e3a9c580eeb3ae4489ca7d2804"
+    },
+    {
+      "path": "delivery-contract.md",
+      "bytes": 2594,
+      "sha256": "078ecc9751bc1fbb94cd4d7dcb461451976950383d4aabbb840e8d39b4dd9d19"
+    },
+    {
+      "path": "AGENTS.md",
+      "bytes": 8334,
+      "sha256": "cb9e53fd9936ba14ba7587ee85531a8ca2481623ec0627cd9506029effad8ef4"
+    },
+    {
+      "path": "frontend/AGENTS.md",
+      "bytes": 3336,
+      "sha256": "57682c072295f8687f408d41278b1f0aa21936ad15d3803c954995a7dd79a506"
+    },
+    {
+      "path": "docs/slide/development/source-sync.md",
+      "bytes": 1790,
+      "sha256": "1349718bc0966b5ce082a5a50f553a489424281cfc5a758f8be515d1acec9f46"
+    },
+    {
+      "path": "docs/slide/development/resource-governance.md",
+      "bytes": 2130,
+      "sha256": "38c20a0c73549c4deaec2de9d5ddabae86e4a098a5593c965fbfd14fa958245a"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/screens/03-evidence.png",
+      "bytes": 240238,
+      "sha256": "f4e4fbbbbce2f43b9d874c98223f2d1339a33a8bf366ea5ec58f3805b7b95d6f"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/screens/02-investigation.png",
+      "bytes": 238773,
+      "sha256": "64695e15efbd25986c527cad3aa91dc2ea46f708ee404bb7f1506b6f1a72f922"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/screens/11-controlled-action.png",
+      "bytes": 182342,
+      "sha256": "c8d752df2b8c74cde736935b9e474476537b07e1bc2e3752c3117794e8ee4f35"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/screens/08-events.png",
+      "bytes": 140602,
+      "sha256": "94af4c0a7b215b7f8c42b7f5d93952bda1737272f89747c85dd0595110c8bdeb"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/screens/04-hypotheses.png",
+      "bytes": 238152,
+      "sha256": "e47544f8172377424fea6a046bad186f6d3c3682ba53ffbaca18642d20a36875"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/screens/05-system-agent.png",
+      "bytes": 242061,
+      "sha256": "5cbc04b2f863bfcfc639edee8f832fe1d18bcb9cf94aa9d1119099ede60d6f89"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/screens/01-attention.png",
+      "bytes": 211507,
+      "sha256": "4fdcb14249ed78188187de68d58b2bc135af0959574bccc961ba8c2cf74f1537"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/screens/09-unknown.png",
+      "bytes": 190664,
+      "sha256": "b515930b569cc778e3e566fadcb26a111b27a8aec66e55111086acfe81635578"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/screens/12-mobile-workspace.png",
+      "bytes": 75223,
+      "sha256": "a6f7a38f3eb8cb39a11cc761502496faaad8fab79d3674448161d00ced779b55"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/screens/06-chat.png",
+      "bytes": 93077,
+      "sha256": "d0269867e1cb6fa1b573017aba9604891823519f541295a0ae799aa1fdeca07e"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/screens/13-mobile-evidence.png",
+      "bytes": 63291,
+      "sha256": "9e6285376e6c35c8e2e0aa3614f03e12817b022d51c3e68c58088c5bd0dcb079"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/screens/07-resource.png",
+      "bytes": 127617,
+      "sha256": "221c8aaf4fa75234b4d7bbdb0caf75d1db775b0e8510f5c281a398133fa85103"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/screens/10-policy.png",
+      "bytes": 140942,
+      "sha256": "7ece997ed9adb1e508a8915419c3f3319ccbace3825b3d01f0b19bdd675639ca"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/prototype.html",
+      "bytes": 144829,
+      "sha256": "ae66d9cc2ceed24b598e47d2183a62e32ede83477f670bfcaa8cdca7cf480853"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/review.html",
+      "bytes": 3620,
+      "sha256": "5c28115d3cce8ca7bfbffd1dfcc792df7d32380095df2cf5986051f84d95cfa8"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/README.md",
+      "bytes": 1334,
+      "sha256": "6b642949208021be46baf89741f443fef225c0e074fde770666f62ebd76e4575"
+    },
+    {
+      "path": "outputs/2026-10-11-ai-workspace/verification.json",
+      "bytes": 2164,
+      "sha256": "b62eacbb595b67d5bc1e59f05deac0219dd334b584653fa7c737f677ea24d754"
+    },
+    {
+      "path": "review-snapshot/report.partial.zh-CN.md",
+      "bytes": 1092669,
+      "sha256": "9068e4fdc3d04328510694eb85c8ea64df32578b78d35bc48870ba78ea571797"
+    },
+    {
+      "path": "review-snapshot/progress.json",
+      "bytes": 1845,
+      "sha256": "5b13222d76dffded1003f353ea201a320508bdf8f0f045a0565a0865a9f9b37a"
+    },
+    {
+      "path": "review-snapshot/RUNNING.md",
+      "bytes": 727,
+      "sha256": "43167ea059f152745c960517653ec676252b1d6474c67f857b3084d87d6b25dd"
+    }
+  ],
+  "latestReviewFiles": [
+    {
+      "name": "report.zh-CN.md",
+      "sha256": "a4ce8ec93aa69e01180b99e3810eb698598468b7e48059073b32e6cc9345236f",
+      "bytes": 2901496,
+      "mtimeUtc": "2026-10-11T15:35:23.220959+00:00"
+    },
+    {
+      "name": "report.partial.zh-CN.md",
+      "sha256": "9068e4fdc3d04328510694eb85c8ea64df32578b78d35bc48870ba78ea571797",
+      "bytes": 1092669,
+      "mtimeUtc": "2026-10-11T11:42:57.154099+00:00"
+    },
+    {
+      "name": "progress.json",
+      "sha256": "49f00fe8961e72c1a805fb4b74710872588f3a33dd7e499a8990b8d40ae8027f",
+      "bytes": 1789,
+      "mtimeUtc": "2026-10-11T15:28:02.366194+00:00"
+    },
+    {
+      "name": "RUNNING.md",
+      "sha256": "c5dd68628a8b9b9b6bff9c59c58bdca5e58984488035533c09949bbb0ddbea31",
+      "bytes": 616,
+      "mtimeUtc": "2026-10-11T15:35:49.141718+00:00"
+    },
+    {
+      "name": "coverage-manifest.json",
+      "sha256": "61c38ef9ba0fa053e6df0998c8da08b0cfc69da3ebb1e090285028b8bb9eaf21",
+      "bytes": 606825,
+      "mtimeUtc": "2026-10-11T15:34:33.818293+00:00"
+    },
+    {
+      "name": "scan-results.json",
+      "sha256": "6f174c3584364c636266b9f83ea3d5e4e2be584eadbbc851f6d68686ed033aa0",
+      "bytes": 59536460,
+      "mtimeUtc": "2026-10-11T15:27:54.298719+00:00"
+    },
+    {
+      "name": "failed-recovery-results.json",
+      "sha256": "e4e0203953583818bc3836bf370531fc36ef9d49ab778ed9d40f48aa57dd7c47",
+      "bytes": 94919,
+      "mtimeUtc": "2026-10-11T15:31:59.027284+00:00"
+    }
+  ],
+  "scopedCoverage": [
+    {
+      "path": "apps/db-ops-api/src/adapter/agent-run-service.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/adapter/canonical-store.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/adapter/direct-adapter.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/adapter/display-stream.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/adapter/message-projection.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/alert-database-service.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/alert-engine.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/analysis/analysis-dispatch-handler.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/analysis/analysis-dispatch-store.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/analysis/analysis-evidence.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/analysis/analysis-identity.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/auth/actor-context.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/auth/require-instance-access.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/auth/require-permission.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/chat-database-service.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/event-aggregator.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/lifecycle/worker-lease.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/platform/deployment-binding.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/platform/git-source-connector.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/platform/github-source-connector.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/platform/gitlab-source-connector.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/platform/platform-observation-service.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/platform/runtime-events.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/platform/source-error-codes.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/platform/source-management-service.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/platform/source-policy.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/platform/source-repository-path.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/platform/source-routes.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/platform/source-snapshot-service.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/platform/structured-log-evidence-adapter.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/workflows/outbox-service.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "apps/db-ops-api/src/workflows/worker-runtime.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "frontend/src/app/ui/components/chat-message-list.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "frontend/src/app/ui/control-ui-contract.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "frontend/src/app/ui/controllers/chat.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "frontend/src/app/ui/embed-sandbox.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "frontend/src/app/ui/navigation.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    },
+    {
+      "path": "frontend/src/app/ui/views/chat.ts",
+      "will_review": true,
+      "audit_status": "completed",
+      "exclude_reason": null
+    }
+  ]
+}

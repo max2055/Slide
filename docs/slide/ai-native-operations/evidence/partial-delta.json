@@ -1,0 +1,94 @@
+{
+  "boundary": "path+line are location aliases, not assertions of semantic equivalence; latest dedup may remove/rewrite candidates",
+  "partialSelectedPathCandidates": 88,
+  "finalSelectedCandidates": 180,
+  "partialLocationsNotInFinal": [
+    {
+      "id": "PARTIAL-0012",
+      "path": "apps/db-ops-api/src/analysis/analysis-identity.ts",
+      "line": 40
+    },
+    {
+      "id": "PARTIAL-0080",
+      "path": "apps/db-ops-api/src/adapter/direct-adapter.ts",
+      "line": 575
+    },
+    {
+      "id": "PARTIAL-0081",
+      "path": "apps/db-ops-api/src/adapter/direct-adapter.ts",
+      "line": 672
+    },
+    {
+      "id": "PARTIAL-0103",
+      "path": "apps/db-ops-api/src/alert-engine.ts",
+      "line": 50
+    },
+    {
+      "id": "PARTIAL-0104",
+      "path": "apps/db-ops-api/src/alert-engine.ts",
+      "line": 240
+    },
+    {
+      "id": "PARTIAL-0115",
+      "path": "apps/db-ops-api/src/analysis/analysis-identity.ts",
+      "line": 39
+    },
+    {
+      "id": "PARTIAL-0465",
+      "path": "apps/db-ops-api/src/alert-database-service.ts",
+      "line": 555
+    },
+    {
+      "id": "PARTIAL-0468",
+      "path": "apps/db-ops-api/src/alert-engine.ts",
+      "line": 268
+    },
+    {
+      "id": "PARTIAL-0543",
+      "path": "apps/db-ops-api/src/auth/require-instance-access.ts",
+      "line": 75
+    },
+    {
+      "id": "PARTIAL-0545",
+      "path": "apps/db-ops-api/src/auth/require-permission.ts",
+      "line": 16
+    },
+    {
+      "id": "PARTIAL-0565",
+      "path": "apps/db-ops-api/src/chat-database-service.ts",
+      "line": 363
+    },
+    {
+      "id": "PARTIAL-0973",
+      "path": "apps/db-ops-api/src/adapter/message-projection.ts",
+      "line": 31
+    },
+    {
+      "id": "PARTIAL-1012",
+      "path": "apps/db-ops-api/src/alert-engine.ts",
+      "line": 8
+    },
+    {
+      "id": "PARTIAL-1038",
+      "path": "apps/db-ops-api/src/analysis/analysis-dispatch-store.ts",
+      "line": 239
+    },
+    {
+      "id": "PARTIAL-1074",
+      "path": "apps/db-ops-api/src/auth/actor-context.ts",
+      "line": 29
+    },
+    {
+      "id": "PARTIAL-1082",
+      "path": "apps/db-ops-api/src/auth/require-instance-access.ts",
+      "line": 64
+    },
+    {
+      "id": "PARTIAL-1103",
+      "path": "apps/db-ops-api/src/chat-database-service.ts",
+      "line": 511
+    }
+  ],
+  "unmatchedDisposition": "pending: compare original descriptions before declaring removed or fixed",
+  "partialOnlyLocationsRegistered": 17
+}

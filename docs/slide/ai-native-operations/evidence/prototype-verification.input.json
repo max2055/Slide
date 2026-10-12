@@ -1,0 +1,105 @@
+{
+  "artifact": "prototype.html",
+  "date": "2026-10-11",
+  "environment": "Chromium headless; offline file; simulated data",
+  "checks": [
+    {
+      "name": "初始关注事项呈现四项调查",
+      "status": "passed"
+    },
+    {
+      "name": "关注事项状态筛选",
+      "status": "passed"
+    },
+    {
+      "name": "三层状态同时可见",
+      "status": "passed"
+    },
+    {
+      "name": "证据快照可追溯",
+      "status": "passed"
+    },
+    {
+      "name": "假设包含反面证据",
+      "status": "passed"
+    },
+    {
+      "name": "继续调查与取消确认",
+      "status": "passed"
+    },
+    {
+      "name": "执行完成后可继续追问",
+      "status": "passed"
+    },
+    {
+      "name": "错误与重连状态",
+      "status": "passed"
+    },
+    {
+      "name": "无权限不残留证据及标题",
+      "status": "passed"
+    },
+    {
+      "name": "搜索空状态",
+      "status": "passed"
+    },
+    {
+      "name": "System Agent 版本缺口",
+      "status": "passed"
+    },
+    {
+      "name": "网络资源使用采集证据",
+      "status": "passed"
+    },
+    {
+      "name": "普通对话不要求调查表单",
+      "status": "passed"
+    },
+    {
+      "name": "普通对话转调查",
+      "status": "passed"
+    },
+    {
+      "name": "资源页引用同一调查",
+      "status": "passed"
+    },
+    {
+      "name": "事件页引用同一调查",
+      "status": "passed"
+    },
+    {
+      "name": "关闭需验证依据",
+      "status": "passed"
+    },
+    {
+      "name": "策略开关仅本地模拟",
+      "status": "passed"
+    },
+    {
+      "name": "V3 范围标识及验证预览",
+      "status": "passed"
+    },
+    {
+      "name": "键盘 Escape 与原焦点恢复",
+      "status": "passed"
+    },
+    {
+      "name": "1600px 无横向溢出",
+      "status": "passed"
+    },
+    {
+      "name": "1024px 无横向溢出",
+      "status": "passed"
+    },
+    {
+      "name": "390px 无横向溢出",
+      "status": "passed"
+    },
+    {
+      "name": "页面无 JavaScript 未捕获异常",
+      "status": "passed"
+    }
+  ],
+  "errors": [],
+  "productionVerified": false
+}

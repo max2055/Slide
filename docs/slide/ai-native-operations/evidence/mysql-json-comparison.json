@@ -1,0 +1,13 @@
+{
+  "atUtc": "2026-10-11T23:19:40.340944+00:00",
+  "operation": "constant SELECT only; no table reads or writes",
+  "sql": "SELECT VERSION() AS version, JSON_EXTRACT(JSON_OBJECT(\"completionPending\", CAST(\"true\" AS JSON)), \"$.completionPending\") = true AS original_predicate, JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT(\"completionPending\", CAST(\"true\" AS JSON)), \"$.completionPending\")) = \"true\" AS unquoted_predicate",
+  "result": [
+    {
+      "version": "9.6.0",
+      "original_predicate": 1,
+      "unquoted_predicate": 1
+    }
+  ],
+  "conclusion": "FINAL-0080 rejected on this MySQL; qualification on other supported MySQL versions remains T12 responsibility"
+}
