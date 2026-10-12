@@ -68,7 +68,7 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
     await admin.query(`CREATE DATABASE ${database}`);
     pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database, connectionLimit: 8 });
     for (const sql of [
-      `CREATE TABLE users (id INT UNSIGNED PRIMARY KEY, username VARCHAR(100), status VARCHAR(20), session_version BIGINT DEFAULT 1)`,
+      `CREATE TABLE users (id INT UNSIGNED PRIMARY KEY, username VARCHAR(100), password_hash VARCHAR(255) NOT NULL DEFAULT 'not-a-login-hash', status VARCHAR(20), session_version BIGINT DEFAULT 1)`,
       `CREATE TABLE roles (id INT PRIMARY KEY, name VARCHAR(100))`,
       `CREATE TABLE permissions (id INT PRIMARY KEY, code VARCHAR(100))`,
       `CREATE TABLE user_roles (user_id INT, role_id INT, grant_expiry DATETIME)`,
@@ -90,7 +90,7 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
       'CREATE TABLE metric_baselines (id INT PRIMARY KEY, computed_at DATETIME) ENGINE=InnoDB',
       'CREATE TABLE silence_periods (id INT PRIMARY KEY, silenced_until DATETIME) ENGINE=InnoDB',
     ]) await pool.query(sql);
-    await pool.query("INSERT INTO users VALUES (7, 'global-manager', 'active', 1), (8, 'scoped-manager', 'active', 1), (9, 'viewer', 'active', 1)");
+    await pool.query("INSERT INTO users (id, username, status, session_version) VALUES (7, 'global-manager', 'active', 1), (8, 'scoped-manager', 'active', 1), (9, 'viewer', 'active', 1)");
     await pool.query("INSERT INTO roles VALUES (1, 'global'), (2, 'scoped'), (3, 'viewer')");
     await pool.query("INSERT INTO permissions VALUES (1, '*'), (2, 'cron:manage'), (3, 'cron:view'), (4, 'instance:view'), (5, 'metric:view'), (6, 'alert:view')");
     await pool.query("INSERT INTO user_roles VALUES (7,1,NULL),(8,2,NULL),(9,3,NULL)");
@@ -460,7 +460,7 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
       expect((await lastLog(id)).error_message).toBe(change === 'target-deleted' ? 'CRON_TARGET_CHANGED' : 'CRON_OWNER_UNAVAILABLE');
       expect((await lastLog(id)).status).toBe('error');
     } finally {
-      if (change === 'owner-deleted') await pool.query("INSERT INTO users VALUES (8,'scoped-manager','active',1)");
+      if (change === 'owner-deleted') await pool.query("INSERT INTO users (id, username, status, session_version) VALUES (8,'scoped-manager','active',1)");
     }
   });
 

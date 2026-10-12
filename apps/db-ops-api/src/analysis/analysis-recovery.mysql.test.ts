@@ -45,7 +45,7 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
       for (const sql of splitSqlStatements(readFileSync(new URL(`../../sql/migrations/${file}`, import.meta.url), 'utf8'))) await pool.query(sql);
     }
     for (const sql of [
-      'CREATE TABLE users (id INT PRIMARY KEY, username VARCHAR(64), status VARCHAR(32), session_version INT)',
+      'CREATE TABLE users (id INT PRIMARY KEY, username VARCHAR(64), password_hash VARCHAR(255) NOT NULL, status VARCHAR(32), session_version INT)',
       'CREATE TABLE roles (id INT PRIMARY KEY, name VARCHAR(64))',
       'CREATE TABLE permissions (id INT PRIMARY KEY, code VARCHAR(64))',
       'CREATE TABLE user_roles (user_id INT, role_id INT, grant_expiry DATETIME)',
@@ -53,7 +53,7 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
       'CREATE TABLE instance_permissions (user_id INT, instance_id INT, access_level VARCHAR(32), grant_expiry DATETIME)',
       'CREATE TABLE database_instances (id INT PRIMARY KEY)',
     ]) await pool.query(sql);
-    await pool.query("INSERT INTO users VALUES (7,'operator','active',1)");
+    await pool.query("INSERT INTO users VALUES (7,'operator','not-a-login-hash','active',1)");
     await pool.query("INSERT INTO roles VALUES (1,'operator')");
     await pool.query("INSERT INTO permissions VALUES (1,'ai:manage'),(2,'instance:view')");
     await pool.query('INSERT INTO database_instances VALUES (42)');

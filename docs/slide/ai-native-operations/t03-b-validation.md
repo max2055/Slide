@@ -6,7 +6,7 @@
 
 从最新 `origin/main` `915ec9b447aacae1f143e6b4262d4d9f5e8a85fe` 建立独立 `codex/MAX-144-session-bridge` worktree。复用 T03-A / #147 与 T02-B / #146；其 PR、当前 head CI、真实验收和 merge 证据已由 MAX-140 准入。原 Review 基线 `fb0766d606c9f07448a5eddac2a6657847d90830` 的差异仅按触达能力复核，不重新开展全仓 Review。
 
-实现仓库版本化 ops/system Profile、受限 numeric 服务主体、实时调查授权、同事务 request 消息追加、普通 Chat 转换与关联会话读取保护。没有修改 store 生产代码、迁移、调查 HTTP/server 注册、DirectAdapter、executor、watch、canonical store、证据或前端。T02 升级测试仅补齐真实 actor/资源夹具，验证新增 Chat 读取门禁；没有改 schema/store 所有权。
+实现仓库版本化 ops/system Profile、受限 numeric 服务主体、实时调查授权、同事务 request 消息追加、普通 Chat 转换与关联会话读取保护。没有修改 store 生产代码、迁移、调查 HTTP/server 注册、DirectAdapter、executor、watch、canonical store、证据或前端。T02 升级测试仅补齐真实 actor/资源夹具；Analysis/Cron 手写用户夹具仅补齐正式 schema 已有的 password_hash 列，验证共享身份加载兼容；没有改 schema/store 或 Analysis/Cron 业务所有权。
 
 本轮内联有界审查覆盖：真实主体/status/sessionVersion；服务禁密码/JWT/refresh/admin；owner/member ACL 与过期；全部资源、调用方与冻结上限；只读安全目录、Profile 和 live policy 交集；权限失败不泄露版本/计数；事务锁序、幂等消息 ID、统计和整体回滚；普通 Chat 与 maintenance 边界。未发现本阶段未处理阻塞。仅确认当前模块能力，不授予 auth/session 整域 clear；无子代理或人工批准声明。
 
@@ -47,6 +47,7 @@
 ```bash
 bash scripts/qualification/run-auth-boundary.sh
 bash scripts/qualification/run-report-recovery.sh
+bash scripts/qualification/run-analysis-recovery.sh
 pnpm --filter slide-api exec vitest run src/auth/chat-ownership.test.ts \
   src/auth/chat-routes.test.ts src/auth/chat-handler-ownership.test.ts \
   src/chat-history-page.test.ts src/investigations/authorization.test.ts
@@ -62,6 +63,7 @@ git diff --check
 
 - 授权 qualification：**6 文件、113 项通过、0 skip**；其中 T03-B 真 SQL/JWT 24 项、既有实例 MySQL 8 项实际执行。脚本已接入既有 CI auth gate，默认测试的 skip 不替代该实际执行。
 - 正式 store/report/outbox SQL 回归：**3 文件、64 项通过、0 skip**；含 T02 升级/回退与事务回归。生产 store/迁移未改变，后续仅 Chat 窄入口的写入返回值校验变化由真实 bridge SQL gate覆盖。
+- CI 相关兼容补证：Analysis 真实恢复/provider **2 文件、41 项通过、0 skip**；Cron 真实 SQL/授权 **1 文件、28 项通过、0 skip**，新建临时 MySQL 专门运行 `src/cron/cron-mysql.integration.test.ts`，容器退出清理。只修改两处手写 users fixture，不削弱生产身份校验。
 - Chat compatibility/Profile focused：5 文件、35 项通过、0 skip；新增一项服务写权限负例后由授权专项及后端全量覆盖。
 - 安全门禁：35 文件、334 项通过、0 skip。后端全量：329 文件通过、33 文件跳过，3161 项通过 / 335 跳过；默认未配置其他外部环境，不宣称这些 skip 通过。
 - 后端 typecheck、公共 contracts check、focused lint 和 diff 检查通过。focused lint 仅3条既有 warning（auth-database-service 两个未使用 import，actor-context 的 Boolean），无 error；未顺手整改。
@@ -81,6 +83,8 @@ git diff --check
 |停用/会话版本|同JWT401及保留actor404；role expiry使内容不可见|
 
 初轮问题已分类并修复：本次 Profile TypeScript 判别联合表达、mysql2 新版本 executor 类型适配、服务器夹具误用表/列名；旧 Chat mock 缺调查binding查询、旧升级夹具只有userId而缺真实actor/资源。均未改变权限规则来放过测试，当前受影响检查已复跑。
+
+首个 head `21730de540275109cc080c25f505db881b8ca273` 的 CI run `38208820546`：六项通过，recovery-qualification失败，release-artifact因依赖失败跳过。根因是旧 Analysis 手写 users 表没有 password_hash，新增服务身份标记读取在四项真实撤权/恢复测试报 ER_BAD_FIELD_ERROR；正式 users schema 始终有该列。本次相关CI阻塞已通过最小fixture修复及41项真实回归定位关闭；同类已触达Cron actor fixture一起补齐并28项验证。不复用失败head的CI声明新head通过，也不重复无证据重试或修改门禁。新head仍须收集全部CI、正常合并及main包含关系。
 
 ## 出口与保留门禁
 
