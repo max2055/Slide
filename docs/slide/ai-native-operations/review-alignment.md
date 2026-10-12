@@ -109,3 +109,9 @@ stage及UUID以MAX-140当前Issue为准，不能只按旧附件的任务列举�
 消费 #145/#146/#147/#148 已合并能力。真实 JWT/HTTP/MySQL 35 项新增验收：100同键create与request唯一调查/Session/message/request/job/outbox、跨入口同键锁序、全事务失败回滚、授权后分页/count、viewer/普通read-share负例、同JWT三类scope与System config撤权、原Chat转换及version409。HTTP不接受actor/Profile权限；authority与message仍由T03桥接在单一store事务写入。详见 [T02-C验证](t02-c-validation.md)。
 
 仅关闭本步骤所消费的HTTP公开入口证据缺口；auth/actor/session与Workflow/outbox整域仍pending。运行取消仅持久意图，不接DirectAdapter、不裁定T04取消/staged-result/key候选；Run、证据、WS、provider与浏览器/T12总验收保留。problemStatus/verification由T11提供，未发布无证据resolved操作。没有追加全仓Review或子代理。
+
+## T03-C 当前模块集成出口增量（2026-10-12）
+
+基线 `58491d49b48073be527506eb89fb8180b17753ff` 包含 #147/#148/#149。复核实际消费的 Profile、numeric服务身份、live actor/member/三类资源 scope、调用方及 request 冻结上限、Chat窄入口与 HTTP 桥接，无当前模块未处理阻塞；生产实现不变。新增10项真实 MySQL/JWT/生产HTTP负例：成员删除/过期、角色权限撤销/过期、operator降viewer、持久授权 Profile/scope/Session失配及他人不能继承request authority。授权专项158、模块74、安全334项通过，均0 skip；typecheck/contracts/scan/lint/diff通过。详见 [T03-C验证及下游实时撤权契约](t03-c-validation.md)。
+
+仅补齐完整T03当前源码模块出口的证据；准确head CI/普通合并/main包含关系及父独立准入仍由当前PR与MAX-140阶段台账核验。auth/actor/session整域继续pending：T04必须接入逐工具live授权、T05验证可信内容scope/新证据与watch撤权、T06验证浏览器缓存隐藏/深链、T12汇总真实端到端。没有以现有授权端口宣称WS/证据投影/浏览器已经通过，也不放行stage5或全仓领域。
