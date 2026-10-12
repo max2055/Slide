@@ -12,14 +12,23 @@ export function persistedMessageParts(entry: SessionEntry, kind: 'mysql' | 'chec
     // display identities. Serialize that fallback once, before the first commit,
     // so a later acknowledgement never rewrites an already-committed legacy ID.
     const doc = result.messageParts;
-    if (kind === 'checkpoint' && entry.role === 'tool' && doc.projectionMessageId === undefined
+    if (kind === 'checkpoint' && doc.projectionMessageId === undefined
       && doc.runId === entry.runId && (doc.turnId === entry.turnId && doc.legacy.turnId === entry.turnId
-        || doc.turnId === entry.runId && doc.legacy.turnId === entry.runId)
+        || entry.role === 'tool' && doc.turnId === entry.runId && doc.legacy.turnId === entry.runId)
       && doc.parts.every((part, index) => part.id === `${entry.id}/part/${index}` && part.sourceMessageId === undefined)) {
       doc.turnId = entry.turnId;
       doc.legacy.turnId = entry.turnId;
       doc.projectionMessageId = entry.id;
       doc.parts = doc.parts.map(part => ({ ...part, sourceMessageId: entry.id, generation: part.generation ?? 'ended' }));
+    }
+    // projectionMessageParts reconstructs the document from acknowledged parts
+    // but omits its generating boundary. Preserve the identity already present
+    // on every part; explicit document values are never overwritten.
+    if (kind === 'checkpoint' && doc.parts.length) {
+      for (const key of ['attempt', 'sourceRequestId'] as const) {
+        const value = doc.parts[0][key];
+        if (doc[key] === undefined && value !== undefined && doc.parts.every(part => part[key] === value)) Object.assign(doc, { [key]: value });
+      }
     }
     const stopReason = entry.metadata?.stopReason;
     if (stopReason) result.messageParts.runTerminal = stopReason === 'completed' ? 'completed' : stopReason === 'cancelled' ? 'cancelled'
