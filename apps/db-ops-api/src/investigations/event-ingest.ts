@@ -5,6 +5,7 @@ import { InvestigationAuthorization } from './authorization.js';
 import { InvestigationSessionBridge } from './session-bridge.js';
 import { InvestigationStoreError, type AdmissionInvestigation } from './store.js';
 import { MysqlInvestigationBudgetLedger, type BudgetSuppression } from './budget-ledger.js';
+import { validateOperationalEvent, type OperationalEvent } from './contracts.js';
 import { resolveInvestigationProfile } from './profiles.js';
 import { EventIngestError, freezeTriggerBinding, normalizeEvent, policyExclusion, scopeSupported, stableHash, triggerIdentity,
   type EventInput, type TriggerBinding, type TriggerSuppression } from './trigger-policy.js';
@@ -14,7 +15,9 @@ export interface EventReceipt {
   suppressionReason: TriggerSuppression | BudgetSuppression | null;
   investigationId: string | null; requestId: string | null; previousInvestigationId: string | null;
 }
-export interface StoredOperationalEvent extends EventReceipt { envelope: ReturnType<typeof normalizeEvent> }
+export interface StoredOperationalEvent extends EventReceipt {
+  envelope: OperationalEvent; classification: Pick<EventInput, 'stableErrorCode' | 'callsite' | 'httpStatus'>;
+}
 const sqlTime = (value: string) => value.replace('T', ' ').replace('Z', '');
 const parse = <T>(value: T | string): T => typeof value === 'string' ? JSON.parse(value) : value;
 async function rows(connection: Pick<TransactionConnection, 'execute'>, sql: string, values: unknown[] = []): Promise<RowDataPacket[]> {
@@ -53,10 +56,12 @@ export class MysqlOperationalEventIngest {
           const { scopeHash, fingerprint, policyHash } = triggerIdentity(event, this.binding);
           const triggerKey = fingerprint;
           const commandHash = stableHash(input);
+          const { stableErrorCode, callsite, httpStatus, ...envelope } = event;
+          const classification = { stableErrorCode, callsite, ...(httpStatus === undefined ? {} : { httpStatus }) };
           await connection.execute(`INSERT INTO operational_events
-            (id, source, source_event_id, command_hash, envelope, occurred_at, received_at, fingerprint, trigger_key)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = id`,
-          [event.id, event.source, event.sourceEventId, commandHash, JSON.stringify(event), sqlTime(event.occurredAt), sqlTime(now), fingerprint, triggerKey]);
+            (id, source, source_event_id, command_hash, envelope, classification, occurred_at, received_at, fingerprint, trigger_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = id`,
+          [event.id, event.source, event.sourceEventId, commandHash, JSON.stringify(envelope), JSON.stringify(classification), sqlTime(event.occurredAt), sqlTime(now), fingerprint, triggerKey]);
           const [stored] = await rows(connection, 'SELECT * FROM operational_events WHERE source = ? AND source_event_id = ? FOR UPDATE', [event.source, event.sourceEventId]);
           if (stored.command_hash !== commandHash) throw new EventIngestError('EVENT_DELIVERY_CONFLICT');
           if (stored.id !== event.id) {
@@ -183,12 +188,14 @@ export class MysqlOperationalEventIngest {
     return new OutboxService(pool as unknown as TransactionPool).transaction(async connection => {
       const [row] = await rows(connection, 'SELECT * FROM operational_events WHERE id = ? AND source = ? FOR SHARE', [eventId, this.binding.source]);
       if (!row) return null;
-      const envelope = parse<ReturnType<typeof normalizeEvent>>(row.envelope);
+      const envelope = parse<OperationalEvent>(row.envelope);
+      if (!validateOperationalEvent(envelope).ok) throw new EventIngestError('EVENT_STORE_UNAVAILABLE');
+      const classification = parse<StoredOperationalEvent['classification']>(row.classification);
       // Only this bound policy's scope may query, including origin exclusions.
       if (!scopeSupported(envelope, this.binding))
         throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
-      await this.authorizeSubject(connection, envelope);
-      return { ...receipt(row), envelope };
+      await this.authorizeSubject(connection, { ...envelope, ...classification });
+      return { ...receipt(row), envelope, classification };
     });
   }
 }

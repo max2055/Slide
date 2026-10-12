@@ -12,6 +12,7 @@ import { MysqlInvestigationBudgetLedger, type BudgetPolicy, type BudgetAdmission
 import { INVESTIGATION_PROFILES } from './profiles.js';
 import { InvestigationSessionBridge } from './session-bridge.js';
 import { MysqlOperationalEventIngest } from './event-ingest.js';
+import { validateOperationalEvent } from './contracts.js';
 import type { EventInput, TriggerBinding } from './trigger-policy.js';
 import { OutboxService, type TransactionPool } from '../workflows/outbox-service.js';
 
@@ -165,7 +166,9 @@ describe('T07-B durable event/admission concurrency, real MySQL', () => {
     ['daily cost', { maxCostMicrosPerDay: 50 }, 'DAILY_COST']] as const)('%s refusal persists queryable event without orphan allocations', async (_name, limits, reason) => {
     const port = ingest({}, ledger(limits)); const result = await port.ingest(event());
     expect(result.suppressionReason).toBe(reason);
-    expect((await port.get(result.eventId))?.suppressionReason).toBe(reason);
+    const persisted = await port.get(result.eventId);
+    expect(persisted?.suppressionReason).toBe(reason);
+    expect(validateOperationalEvent(persisted?.envelope).ok).toBe(true);
     expect(await count('operational_events')).toBe(1);
     for (const table of allocations) expect(await count(table)).toBe(0);
     expect(await count('investigation_create_keys')).toBe(0); expect(await count('investigation_admission_keys')).toBe(0);

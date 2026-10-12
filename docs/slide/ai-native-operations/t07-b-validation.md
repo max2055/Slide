@@ -9,7 +9,7 @@
 沿用已批准方案，在同一 MySQL 事务内锁定投递事实与问题聚合。内存聚合不能跨进程；固定时间桶会在边界重复建调查。采用唯一(source,sourceEventId)和不含时间桶的 policy/version/scope/subject/error/callsite/release/commit 指纹，配合当前读行锁。阈值窗口使用数据库接收 UTC 时间；发生时间独立保留，不能由生产者篡改接收时间来重置配额。
 
 1. `trigger-policy.ts`：绑定可信来源、policy与禁登录服务主体；严格拒绝输入的actor/grants/policy/source/id/receivedAt/fingerprint；原 envelope schema 与calendar验证；origin/HTTP/verified/kind/scope排除；全部资源边界与不可变策略hash。
-2. `116_operational_events.sql`：新增事件、聚合、资源cooldown、唯一关联；MigrationRunner自动发现，无旧迁移或共享runner修改；精确二进制source/key，所有列注释。投递hash不匹配或同version策略变更fail closed，不产生半份事务。
+2. `116_operational_events.sql`：新增严格OperationalEvent v1事件envelope、独立classification字段、聚合、资源cooldown、唯一关联；MigrationRunner自动发现，无旧迁移或共享runner修改；精确二进制source/key，所有列注释。投递hash不匹配或同version策略变更fail closed，不产生半份事务。
 3. `event-ingest.ts`：投递事实→锁聚合→live授权→关联已开放调查，或阈值/cooldown→同连接create/admit/message→预算→关联→提交。全部需要的资源cooldown跨指纹/version/release共享。closed/archived后新调查引用旧ID，不重开旧结论。开放调查只关联，不自动为每个事件创建新Run。
 4. `session-bridge.ts`：仅提取可信`createOnConnection`；HTTP/普通Chat原create行为、原主体、冻结authority及消息幂等算法保持。额度不足通过同连接savepoint回滚新Session/message/create-key/request/job/outbox/reservation，事件和suppression保留；基础设施故障回滚完整事务，由生产者同键重试。域锁/配置与cooldown初始化在配额保存点外保留，避免拒绝后删除锁行的间隙锁风暴；它们不占token或并发。仅对MySQL死锁做至多3次有界事务重试，无外部调用。
 5. `budget-ledger.ts`：共享request整次执行receipt，精确重用与严格domain/lane/Profile/资源/command校验；支持从持久allocation读取原token/cost/prices而非executor重算。既有ledger行为保留；unknown非零、终态才结算契约沿用T07-A。
@@ -37,6 +37,8 @@
 ## 验证记录
 
 初轮真实SQL定位并修复：mysql2.execute使用预处理协议不支持SAVEPOINT，改用同连接query；BIGINT布尔表达式返回字符串0，使用数值判断；夹具正式用户状态是inactive；MigrationRunner第二参数是目录字符串。真实并发满额进一步暴露保存点回滚首次cooldown插入产生supremum间隙锁冲突，通过保存点外持久域锁/cooldown初始化修复。共享MySQL并行正式迁移使既有store默认10s hook超时，最终模块命令显式hookTimeout=120000；未跳过失败或放宽校验。
+
+最终内联审查补充严格回读契约：内部stableErrorCode/callsite/httpStatus独立保存到classification，不能扩展既有strict OperationalEvent v1 envelope；真实回读仍用现有validator通过。
 
 当前产品源码验收：隔离MySQL8.4.10，随机schema，正式MigrationRunner；调查模块9文件 **241 passed / 0 skip**；迁移runner/outbox focused 2文件 **25 passed / 0 skip**。两组用途不同，不冒充全仓/T12验收。API typecheck、contracts、秘密扫描、6文件lint、diff检查通过。
 
