@@ -8,6 +8,10 @@ import { chatDatabaseService } from '../chat-database-service.js';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { InvestigationExecutor } from './executor.js';
+import { MysqlInvestigationBudgetLedger } from './budget-ledger.js';
+import { MysqlOperationalEventIngest } from './event-ingest.js';
+import { INVESTIGATION_PROFILES } from './profiles.js';
+import type { TriggerBinding } from './trigger-policy.js';
 import { ToolRegistry, type LLMProvider } from '@slide/agent-core';
 import { JobRegistry } from '../workflows/job-registry.js';
 import { createInvestigationWorkflowHandler } from './workflow-handler.js';
@@ -135,6 +139,10 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
   beforeEach(async () => {
     await pool.query("UPDATE users SET status='active' WHERE id IN (101,102,104)");
     for (const table of [
+      'investigation_event_links',
+      'operational_events',
+      'investigation_trigger_keys',
+      'investigation_trigger_cooldowns',
       'investigation_budget_resources',
       'investigation_budget_ledger',
       'investigation_budget_domains',
@@ -282,6 +290,301 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     ])
       await pool.query(`DELETE FROM ${table}`);
   });
+  const ledger = () => new MysqlInvestigationBudgetLedger(() => pool, policy);
+  async function automatic(reserveTokens = 32000) {
+    await pool.query("UPDATE workflow_jobs SET state='completed'");
+    const trusted: TriggerBinding = {
+      source: 't04-receipt-fixture',
+      verified: true,
+      allowedOrigins: ['collector'],
+      policy: {
+        id: 'readonly-event',
+        version: 1,
+        domain: 'test-investigation',
+        actor: service,
+        profileId: 'ops',
+        profileVersion: 1,
+        kinds: ['resource.alert'],
+        resources: create.resources,
+        threshold: 1,
+        windowMs: 60000,
+        cooldownMs: 60000,
+        criticalSingle: true,
+        reserveTokens,
+        reserveCostMicros: 1000000,
+        prices: { input: 100, cachedInput: 50, output: 200 },
+      },
+    };
+    const ingest = new MysqlOperationalEventIngest(
+      () => pool,
+      trusted,
+      ledger(),
+      new InvestigationAuthorization(contexts),
+    );
+    const receipt = await ingest.ingest({
+      schemaVersion: 1,
+      sourceEventId: randomUUID(),
+      kind: 'resource.alert',
+      subject: { kind: 'resource', resource: { type: 'instance', id: 101 } },
+      occurredAt: new Date().toISOString(),
+      severity: 'critical',
+      summary: '只读测试事件',
+      origin: 'collector',
+      stableErrorCode: 'TEST_ALERT',
+      callsite: 't04:receipt',
+    });
+    expect(receipt.disposition).toBe('accepted');
+    const job = await new MysqlWorkflowStore(() => pool as never).claim('canonical-worker', 60, {
+      types: ['investigation.execute'],
+      exclude: false,
+    });
+    const request = (await rows('SELECT * FROM investigation_requests WHERE id=?', [receipt.requestId]))[0];
+    const inv = (await rows('SELECT * FROM investigations WHERE id=?', [receipt.investigationId]))[0];
+    turnId = request.message_id;
+    sessionId = inv.session_id;
+    const { run } = await new AgentRunService(() => pool as never).claim(
+      service.userId,
+      sessionId,
+      turnId,
+      `investigation:${receipt.requestId}`,
+    );
+    binding = {
+      investigationId: inv.id,
+      requestId: receipt.requestId!,
+      jobId: job!.id,
+      runId: run.id,
+      workerId: 'canonical-worker',
+      fencingToken: job!.fencingToken,
+    };
+    return (await rows('SELECT * FROM investigation_budget_ledger WHERE request_id=?', [binding.requestId]))[0];
+  }
+  it('event admission receipt is reused by actual workflow/executor/Runtime without duplicate allocation or changed prices', async () => {
+    const admitted = await automatic();
+    const executor = fixture();
+    const adapter = new DirectAdapter({
+      tools: new ToolRegistry(),
+      llmProvider: await (executor as any).options.providerForPurpose('fault_diagnosis'),
+    });
+    (adapter as any).toolsForActor = (executor as any).options.toolsForActor;
+    adapter.configureInvestigationExecutor(executor);
+    const registry = new JobRegistry();
+    registry.register(
+      'investigation.execute',
+      createInvestigationWorkflowHandler(async () => adapter),
+    );
+    const command = childCommand();
+    const result = (await registry.executeWithResult(command.job, {
+      ...command.context,
+      signal: new AbortController().signal,
+    })) as AgentRun;
+    expect(result.state, JSON.stringify(result.error)).toBe('completed');
+    const allocations = await rows(
+      'SELECT *, CAST(operation_id AS CHAR) AS operation_id FROM investigation_budget_ledger',
+    );
+    expect(allocations).toHaveLength(1);
+    expect(allocations[0]).toMatchObject({
+      id: admitted.id,
+      operation_id: `request:${binding.requestId}`,
+      state: 'settled',
+      charged_tokens: 60,
+      charged_cost_micros: 1,
+      cost_status: 'known',
+    });
+    expect(providerCalls).toBe(2);
+    expect(toolCalls).toBe(1);
+    await execute(executor);
+    expect(providerCalls).toBe(2);
+    expect(await rows('SELECT *, CAST(operation_id AS CHAR) AS operation_id FROM investigation_budget_ledger')).toEqual(
+      allocations,
+    );
+  });
+  it('Runtime refuses provider dispatch when the original receipt cannot fit the prompt', async () => {
+    const admitted = await automatic(1);
+    const result = await execute(fixture());
+    expect(result.state).toBe('partial');
+    expect(providerCalls).toBe(0);
+    expect(toolCalls).toBe(0);
+    const allocations = await rows(
+      'SELECT *, CAST(operation_id AS CHAR) AS operation_id FROM investigation_budget_ledger',
+    );
+    expect(allocations).toHaveLength(1);
+    expect(allocations[0]).toMatchObject({
+      id: admitted.id,
+      reserved_tokens: 1,
+      state: 'cancelled',
+      charged_tokens: 0,
+    });
+  });
+  it.each(['missing', 'reservation', 'hash', 'domain', 'lane', 'profile', 'resources'])(
+    'automatic receipt %s fails closed without replacement allocation',
+    async (kind) => {
+      const admitted = await automatic();
+      const request = (
+        await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?', [binding.requestId])
+      )[0];
+      const snapshot = request.request_snapshot;
+      if (kind === 'missing') delete snapshot.budgetReceipt;
+      if (kind === 'reservation') snapshot.budgetReceipt.reservationId = randomUUID();
+      if (kind === 'hash') snapshot.budgetReceipt.commandHash = 'forged';
+      if (kind === 'domain') snapshot.budgetReceipt.domain = 'another-domain';
+      if (kind === 'lane') snapshot.budgetReceipt.mode = 'manual';
+      if (kind === 'profile') {
+        const stored = admitted.reservation_snapshot;
+        stored.profile.budget.maxTokens--;
+        await pool.query('UPDATE investigation_budget_ledger SET reservation_snapshot=? WHERE id=?', [
+          JSON.stringify(stored),
+          admitted.id,
+        ]);
+      }
+      if (kind === 'resources')
+        await pool.query(
+          'UPDATE investigation_resources SET role=role, resource_id=102 WHERE investigation_id=? AND resource_id=103',
+          [binding.investigationId],
+        );
+      await pool.query('UPDATE investigation_requests SET request_snapshot=? WHERE id=?', [
+        JSON.stringify(snapshot),
+        binding.requestId,
+      ]);
+      if (kind === 'missing') expect((await execute(fixture())).state).toBe('failed');
+      else await expect(execute(fixture())).rejects.toThrow(/^BUDGET_/);
+      expect((await rows('SELECT state FROM agent_runs WHERE id=?', [binding.runId]))[0].state).toBe('failed');
+      expect(providerCalls).toBe(0);
+      expect(toolCalls).toBe(0);
+      expect(await rows('SELECT id FROM investigation_budget_ledger')).toEqual([{ id: admitted.id }]);
+    },
+  );
+  it('an already sent receipt without execution checkpoint cannot restart Runtime or refund unknown budget', async () => {
+    const admitted = await automatic();
+    const first = await ledger().markSent(admitted.id);
+    expect(first.dispatchAllowed).toBe(true);
+    expect((await ledger().markSent(admitted.id)).dispatchAllowed).toBe(false);
+    const executor = fixture();
+    expect((await execute(executor)).state).toBe('partial');
+    expect(providerCalls).toBe(0);
+    expect(toolCalls).toBe(0);
+    expect(await ledger().read(admitted.id)).toMatchObject({
+      state: 'unknown',
+      chargedTokens: 32000,
+      chargedCostMicros: 1000000,
+    });
+    await execute(executor);
+    expect(providerCalls).toBe(0);
+  });
+  it('service request without an admitted receipt never invents an automatic allocation', async () => {
+    await pool.query("UPDATE workflow_jobs SET state='completed'");
+    await admit(service);
+    expect((await execute(fixture())).state).toBe('failed');
+    expect(providerCalls).toBe(0);
+    expect(toolCalls).toBe(0);
+    expect(await rows('SELECT id FROM investigation_budget_ledger')).toEqual([]);
+  });
+  it.each(['stale', 'expired'])(
+    'automatic receipt %s fence prevents any model call or new allocation',
+    async (kind) => {
+      const admitted = await automatic();
+      await pool.query(
+        kind === 'stale'
+          ? 'UPDATE workflow_jobs SET fencing_token=fencing_token+1 WHERE id=?'
+          : 'UPDATE workflow_jobs SET lease_expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE id=?',
+        [binding.jobId],
+      );
+      await expect(execute(fixture())).rejects.toThrow('INVESTIGATION_FENCE_LOST');
+      expect(providerCalls).toBe(0);
+      expect((await ledger().read(admitted.id)).state).toBe('reserved');
+      expect(await rows('SELECT id FROM investigation_budget_ledger')).toEqual([{ id: admitted.id }]);
+    },
+  );
+  it('related scope withdrawal from the original service actor stops admitted Runtime before dispatch', async () => {
+    const admitted = await automatic();
+    await pool.query('DELETE FROM instance_permissions WHERE user_id=? AND instance_id=103', [serviceId]);
+    expect((await execute(fixture())).state).toBe('failed');
+    expect(providerCalls).toBe(0);
+    expect(toolCalls).toBe(0);
+    expect(await rows('SELECT id FROM investigation_budget_ledger')).toEqual([{ id: admitted.id }]);
+    expect(await ledger().read(admitted.id)).toMatchObject({
+      state: 'cancelled',
+      chargedTokens: 0,
+      chargedCostMicros: 0,
+    });
+  });
+  it('receipt mutated during tool I/O is revalidated before the next provider intent', async () => {
+    await automatic();
+    const executor = fixture({
+      beforeTool: async () => {
+        await pool.query(
+          "UPDATE investigation_requests SET request_snapshot=JSON_SET(request_snapshot,'$.budgetReceipt.domain','wrong-domain') WHERE id=?",
+          [binding.requestId],
+        );
+      },
+    });
+    const result = await execute(executor);
+    expect(result.state).toBe('partial');
+    expect(providerCalls).toBe(1);
+    expect(toolCalls).toBe(1);
+    expect(await rows('SELECT id FROM investigation_budget_ledger')).toHaveLength(1);
+  });
+  it('executor reserve and checkpoint roll back together on a real SQL write failure', async () => {
+    await pool.query(
+      "CREATE TRIGGER t04_checkpoint_failure BEFORE UPDATE ON agent_runs FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='CHECKPOINT_WRITE_FAILURE'",
+    );
+    try {
+      await expect(execute(fixture())).rejects.toThrow();
+    } finally {
+      await pool.query('DROP TRIGGER t04_checkpoint_failure');
+    }
+    expect(providerCalls).toBe(0);
+    expect(await rows('SELECT id FROM investigation_budget_ledger')).toEqual([]);
+    expect(
+      (await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?', [binding.requestId]))[0]
+        .request_snapshot.budgetReceipt,
+    ).toBeUndefined();
+    expect((await execute(fixture())).state).toBe('completed');
+  });
+  it.each(['global', 'resource'])('automatic admission and manual executor share the %s quota', async (kind) => {
+    const manual = { ...binding };
+    const saved = { ...policy };
+    try {
+      policy.maxConcurrent = kind === 'global' ? 1 : 4;
+      policy.manualReserved = 0;
+      policy.maxPerResourceConcurrent = kind === 'resource' ? 1 : 4;
+      const admitted = await automatic();
+      const auto = { ...binding };
+      await pool.query(
+        "UPDATE workflow_jobs SET state='running',lease_owner='canonical-worker',lease_expires_at=DATE_ADD(NOW(),INTERVAL 1 MINUTE) WHERE id=?",
+        [manual.jobId],
+      );
+      binding = manual;
+      const result = await execute(fixture());
+      expect(result.error).toMatchObject({
+        reasonCode:
+          kind === 'global' ? 'INVESTIGATION_BUDGET_GLOBAL_CONCURRENCY' : 'INVESTIGATION_BUDGET_RESOURCE_CONCURRENCY',
+      });
+      expect(providerCalls).toBe(0);
+      expect(await rows('SELECT id FROM investigation_budget_ledger')).toEqual([{ id: admitted.id }]);
+      binding = auto;
+      expect((await execute(fixture())).state).toBe('completed');
+    } finally {
+      Object.assign(policy, saved);
+    }
+  });
+  it('trusted manual request with receipt reuses original token/cost allocation and its request operation', async () => {
+    const receipt = await tx((c) =>
+      ledger().reserveExecutionInTransaction(c, {
+        requestId: binding.requestId,
+        domain: 'test-investigation',
+        mode: 'manual',
+        profile: INVESTIGATION_PROFILES.ops,
+        reserveTokens: 32000,
+        reserveCostMicros: 1000000,
+        prices: { input: 100, cachedInput: 50, output: 200 },
+      }),
+    );
+    expect(receipt.accepted).toBe(true);
+    expect((await execute(fixture())).state).toBe('completed');
+    expect(
+      await rows('SELECT CAST(operation_id AS CHAR) AS operation_id,state FROM investigation_budget_ledger'),
+    ).toEqual([{ operation_id: `request:${binding.requestId}`, state: 'settled' }]);
+  });
   it('actual Workflow -> adapter -> executor -> Runtime -> durable terminal, original IDs and whole-execution aggregate usage', async () => {
     const executor = fixture();
     const adapter = new DirectAdapter({
@@ -335,7 +638,9 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     expect(JSON.stringify(facts)).not.toContain('must-redact');
     const inv = (await rows('SELECT * FROM investigations WHERE id=?', [binding.investigationId]))[0];
     expect(inv).toMatchObject({ active_request_id: null, lifecycle: 'waiting', problem_status: 'unconfirmed' });
-    const ledger = (await rows('SELECT * FROM investigation_budget_ledger'))[0];
+    const ledger = (
+      await rows('SELECT *, CAST(operation_id AS CHAR) AS operation_id FROM investigation_budget_ledger')
+    )[0];
     expect(ledger).toMatchObject({ state: 'settled', charged_tokens: 60, cost_status: 'known' });
     expect(ledger.usage_snapshot).toEqual({ inputTokens: 40, cachedInputTokens: 10, outputTokens: 20 });
     const before = await rows('SELECT * FROM agent_canonical_facts');
@@ -413,6 +718,18 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     await pool.query("UPDATE workflow_jobs SET state='completed'");
     const actor = kind === 'operator' ? operator : service;
     await admit(actor, service);
+    if (kind === 'service')
+      await tx((c) =>
+        ledger().reserveExecutionInTransaction(c, {
+          requestId: binding.requestId,
+          domain: 'test-investigation',
+          mode: 'automatic',
+          profile: INVESTIGATION_PROFILES.ops,
+          reserveTokens: 32000,
+          reserveCostMicros: 1000000,
+          prices: { input: 100, cachedInput: 50, output: 200 },
+        }),
+      );
     expect((await execute(fixture())).state).toBe('completed');
     expect((await rows('SELECT user_id FROM chat_sessions WHERE session_id=?', [sessionId]))[0].user_id).toBe(
       serviceId,
@@ -432,7 +749,9 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     expect((await execute(fixture())).state).toBe('failed');
     expect(providerCalls).toBe(0);
     expect(toolCalls).toBe(0);
-    expect(await rows('SELECT * FROM investigation_budget_ledger')).toHaveLength(0);
+    expect(
+      await rows('SELECT *, CAST(operation_id AS CHAR) AS operation_id FROM investigation_budget_ledger'),
+    ).toHaveLength(0);
   });
   it.each(['keep', 'revoke'])('global instance grant provenance is restored and remains live: %s', async (mode) => {
     await pool.query("UPDATE workflow_jobs SET state='completed'");
@@ -454,7 +773,9 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       expect((await execute(executor)).state).toBe('failed');
       expect(providerCalls).toBe(0);
       expect(toolCalls).toBe(0);
-      expect(await rows('SELECT * FROM investigation_budget_ledger')).toHaveLength(0);
+      expect(
+        await rows('SELECT *, CAST(operation_id AS CHAR) AS operation_id FROM investigation_budget_ledger'),
+      ).toHaveLength(0);
       expect(
         (await rows('SELECT active_request_id FROM investigations WHERE id=?', [binding.investigationId]))[0]
           .active_request_id,
@@ -477,7 +798,9 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       expect(terminal.state).toBe(mode === 'cancel' ? 'cancelled' : 'failed');
       expect(providerCalls).toBe(0);
       expect(toolCalls).toBe(0);
-      expect(await rows('SELECT * FROM investigation_budget_ledger')).toHaveLength(0);
+      expect(
+        await rows('SELECT *, CAST(operation_id AS CHAR) AS operation_id FROM investigation_budget_ledger'),
+      ).toHaveLength(0);
       expect(
         (await rows('SELECT active_request_id FROM investigations WHERE id=?', [binding.investigationId]))[0]
           .active_request_id,
@@ -771,19 +1094,28 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     );
     return result;
   }
-  it.each([
-    'provider-before',
-    'provider-intent',
-    'provider-after',
-    'provider-received',
-    'tool-before',
-    'tool-after',
-    'final-candidate',
-    'response-ready',
-    'staging-after',
-  ])(
-    'real OS SIGKILL %s and new worker recovery do not replay sent unknown or durable tool/message',
-    async (point) => {
+  it.each(
+    [
+      'provider-before',
+      'provider-intent',
+      'provider-after',
+      'provider-received',
+      'tool-before',
+      'tool-after',
+      'final-candidate',
+      'response-ready',
+      'staging-after',
+    ].flatMap(
+      (point) =>
+        [
+          ['manual', point],
+          ['automatic', point],
+        ] as const,
+    ),
+  )(
+    'real OS SIGKILL %s %s and new worker recovery do not replay sent unknown or durable tool/message',
+    async (lane, point) => {
+      const admitted = lane === 'automatic' ? await automatic() : undefined;
       const first = await child(point);
       expect(first.signal).toBe('SIGKILL');
       expect(first.messages.some((m) => m.point === point)).toBe(true);
@@ -826,8 +1158,12 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       expect(await rows("SELECT * FROM chat_messages WHERE role='assistant'")).toHaveLength(
         expected === 'completed' ? 1 : 0,
       );
-      const ledger = (await rows('SELECT * FROM investigation_budget_ledger'))[0];
+      const ledger = (
+        await rows('SELECT *, CAST(operation_id AS CHAR) AS operation_id FROM investigation_budget_ledger')
+      )[0];
       expect(ledger.state).toBe(expected === 'completed' ? 'settled' : 'unknown');
+      expect(await rows('SELECT id FROM investigation_budget_ledger')).toHaveLength(1);
+      if (admitted) expect(ledger.id).toBe(admitted.id);
       if (expected === 'partial') expect(Number(ledger.charged_tokens)).toBe(32000);
       const replay = await child();
       expect(replay.messages.some((m) => m.providerCall || m.toolCall)).toBe(false);

@@ -28,6 +28,7 @@ import {
   type BudgetPolicy,
   type BudgetPrices,
   type BudgetUsage,
+  type BudgetReservation,
 } from './budget-ledger.js';
 import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 import { resolveToolResourceFromArgs } from '../tools/resource-resolver.js';
@@ -71,6 +72,7 @@ interface ExecutionState {
   fencingToken: number;
   deadlineAt: number;
   reservationId: string;
+  reservedTokens: number;
   usage: BudgetUsage;
   usageUnknown: boolean;
   provider: { id: string; inputHash: string; messageId: string | null; status: 'sent' | 'received' } | null;
@@ -217,6 +219,18 @@ export class InvestigationExecutor {
     this.ledger = new MysqlInvestigationBudgetLedger(options.pool, options.budget.policy);
   }
   private async transaction<T>(work: (c: InvestigationConnection) => Promise<T>): Promise<T> {
+    // Ingress owns domain before newly created Session rows. Executor owns
+    // Session -> Investigation -> Request -> Job before domain. InnoDB may
+    // choose either transaction as a deadlock victim; retry SQL-only work.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.transactionOnce(work);
+      } catch (error) {
+        if ((error as { code?: string }).code !== 'ER_LOCK_DEADLOCK' || attempt >= 3) throw error;
+      }
+    }
+  }
+  private async transactionOnce<T>(work: (c: InvestigationConnection) => Promise<T>): Promise<T> {
     const pool = this.options.pool();
     if (!pool) throw new Error('INVESTIGATION_STORE_UNAVAILABLE');
     const c = await pool.getConnection();
@@ -297,7 +311,7 @@ export class InvestigationExecutor {
     const prior = await this.runs.findByIdempotencyKey(actor.userId, `investigation:${requestId}`);
     if (prior && prior.state !== 'running') {
       await this.transaction((c) => this.canonical.assertInvestigationLease(c, base));
-      await this.settle(prior);
+      await this.settle(prior, base);
       return prior;
     }
     let run: AgentRun;
@@ -313,12 +327,14 @@ export class InvestigationExecutor {
           !['INVESTIGATION_NOT_FOUND', 'INVESTIGATION_OPERATION_FORBIDDEN', 'INVESTIGATION_CANCELLED'].includes(reason)
         )
           throw error;
-        return this.transaction((c) => this.runs.rejectInvestigationRequest(c, actor, base, reason));
+        const rejected = await this.transaction((c) => this.runs.rejectInvestigationRequest(c, actor, base, reason));
+        await this.settle(rejected, base);
+        return rejected;
       }
       const terminal = await this.transaction((c) =>
         this.runs.terminateInvestigation(c, actor, { ...base, runId: prior.id }, 'failed', this.reason(error)),
       );
-      await this.settle(terminal);
+      await this.settle(terminal, base);
       return terminal;
     }
     const existingState = (run.result as { investigationExecution?: ExecutionState } | undefined)
@@ -357,7 +373,7 @@ export class InvestigationExecutor {
         const completed = await this.transaction((c) =>
           this.runs.recoverInvestigationCompletion(c, this.canonical, actor, binding),
         );
-        await this.settle(completed);
+        await this.settle(completed, base);
         return completed;
       }
       if (!state) {
@@ -369,24 +385,39 @@ export class InvestigationExecutor {
               throw new Error('INVESTIGATION_EXECUTION_ALREADY_RUNNING');
             return persisted;
           }
-          const reservation = await this.ledger.reserveInTransaction(c, {
-            requestId,
-            operationId: `execution:${run.id}`,
-            domain: this.options.budget.domain,
-            mode: actor.principalKind === 'service' ? 'automatic' : 'manual',
-            profile,
-            reserveTokens: profile.budget.maxTokens,
-            reserveCostMicros: this.options.budget.reserveCostMicros,
-            prices: this.options.budget.prices,
-          });
-          if (reservation.accepted === false) throw new Error(`INVESTIGATION_BUDGET_${reservation.reason}`);
+          const receipt = decode(current.request.request_snapshot)?.budgetReceipt;
+          const mode = actor.principalKind === 'service' ? 'automatic' : 'manual';
+          let reservation: BudgetReservation;
+          if (mode === 'automatic' || receipt) {
+            reservation = await this.ledger.reuseExecutionInTransaction(c, requestId, {
+              domain: this.options.budget.domain,
+              mode,
+              profile,
+            });
+          } else {
+            const admission = await this.ledger.reserveExecutionInTransaction(c, {
+              requestId,
+              domain: this.options.budget.domain,
+              mode,
+              profile,
+              reserveTokens: profile.budget.maxTokens,
+              reserveCostMicros: this.options.budget.reserveCostMicros,
+              prices: this.options.budget.prices,
+            });
+            if (admission.accepted === false) throw new Error(`INVESTIGATION_BUDGET_${admission.reason}`);
+            reservation = admission.reservation;
+          }
+          // An allocation sent without our execution checkpoint is unknown,
+          // never a permit to restart the whole Runtime.
+          if (reservation.state !== 'reserved') throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
           const initial: ExecutionState = {
             schemaVersion: 1,
             requestId,
             jobId: job.id,
             fencingToken: context.fencingToken,
             deadlineAt: Date.now() + profile.budget.deadlineMs,
-            reservationId: reservation.reservation.id,
+            reservationId: reservation.id,
+            reservedTokens: reservation.reservedTokens,
             usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
             usageUnknown: false,
             provider: null,
@@ -402,12 +433,12 @@ export class InvestigationExecutor {
       }
       if (state.schemaVersion !== 1 || state.requestId !== requestId || state.jobId !== job.id)
         throw new Error('INVESTIGATION_CHECKPOINT_INVALID');
-      const update = async (work: (s: ExecutionState) => void) =>
+      const update = async (work: (s: ExecutionState, c: InvestigationConnection) => void | Promise<void>) =>
         this.transaction(async (c) => {
           const current = await this.canonical.lockInvestigationExecution(c, actor, binding);
           const result = decode(current.run.result_json),
             next: ExecutionState = result.investigationExecution;
-          work(next);
+          await work(next, c);
           await c.query('UPDATE agent_runs SET result_json = ? WHERE id = ?', [
             JSON.stringify({ ...result, investigationExecution: next }),
             run.id,
@@ -417,6 +448,21 @@ export class InvestigationExecutor {
         });
       await update((s) => {
         s.fencingToken = context.fencingToken;
+      });
+      const readReceipt = async (c: InvestigationConnection) => {
+        const reservation = await this.ledger.reuseExecutionInTransaction(c, requestId, {
+          domain: this.options.budget.domain,
+          mode: actor.principalKind === 'service' ? 'automatic' : 'manual',
+          profile,
+        });
+        if (reservation.id !== state.reservationId || reservation.reservedTokens !== state.reservedTokens)
+          throw new Error('BUDGET_CONFLICT');
+        await this.canonical.assertInvestigationLease(c, binding);
+        return reservation;
+      };
+      let receipt = await this.transaction(async (c) => {
+        await this.canonical.lockInvestigationExecution(c, actor, binding);
+        return readReceipt(c);
       });
       if (state.provider) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
       let checkpoint = access.checkpoint?.canonical_run_id === run.id ? access.checkpoint : undefined;
@@ -446,7 +492,7 @@ export class InvestigationExecutor {
           const completed = await this.transaction((c) =>
             this.runs.recoverInvestigationCompletion(c, this.canonical, actor, binding),
           );
-          await this.settle(completed);
+          await this.settle(completed, base);
           return completed;
         }
         if (!resolution) {
@@ -466,7 +512,7 @@ export class InvestigationExecutor {
             resolution.reasonCode ?? 'INVESTIGATION_RUNTIME_PARTIAL',
           ),
         );
-        await this.settle(terminal);
+        await this.settle(terminal, base);
         return terminal;
       }
       const pending = (checkpoint?.pendingToolCalls ?? checkpoint?.pending_tool_calls) as any[] | undefined;
@@ -493,13 +539,24 @@ export class InvestigationExecutor {
         control.signal.throwIfAborted();
         if (state.provider) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
         const id = randomUUID();
-        await update((s) => {
+        await update(async (s, c) => {
+          // Recheck the immutable receipt at each new intent, including after
+          // tool I/O and recovery. Neither a stale snapshot nor model/event
+          // supplied lane/domain may authorize this provider call.
+          receipt = await readReceipt(c);
           if (s.provider) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
           s.provider = { id, inputHash: hash(input), messageId: modelMessageId ?? null, status: 'sent' };
         });
         // The entire execution allocation stays sent through all subsequent
         // turns. Only the Run's durable terminal receipt may release it.
-        await this.ledger.markSent(state.reservationId);
+        // markSent gates the first dispatch of this whole request. Further
+        // model turns are distinct intents within the same allocation; a
+        // recovered sent intent is rejected above, never replayed here.
+        if (receipt.state === 'reserved') {
+          const sent = await this.ledger.markSent(state.reservationId);
+          if (!sent.dispatchAllowed) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
+          receipt.state = 'sent';
+        } else if (receipt.state !== 'sent') throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
         await this.transaction((c) => this.canonical.lockInvestigationExecution(c, actor, binding));
         control.signal.throwIfAborted();
         const response = await send();
@@ -635,12 +692,12 @@ export class InvestigationExecutor {
         model: provider.getDefaultModel(),
         contextWindowTokens: Math.min(actual.getModelCapabilities?.()?.contextWindowTokens ?? 16_000, 16_000),
         maxIterations: profile.budget.maxProviderAttempts,
-        maxTokens: Math.min(4096, profile.budget.maxTokens),
+        maxTokens: Math.min(4096, state.reservedTokens),
         maxToolResultChars: profile.budget.maxBytes,
         budgetLimits: {
           maxToolCalls: profile.budget.maxToolCalls,
           maxProviderAttempts: profile.budget.maxProviderAttempts,
-          maxTotalTokens: profile.budget.maxTokens,
+          maxTotalTokens: state.reservedTokens,
           maxNoProgressSteps: profile.budget.maxProviderAttempts,
         },
         runTimeoutMs: Math.max(1, state.deadlineAt - Date.now()),
@@ -704,7 +761,7 @@ export class InvestigationExecutor {
           ),
         );
       }
-      await this.settle(terminal);
+      await this.settle(terminal, base);
       return terminal;
     } catch (error) {
       const code = this.reason(control.signal.aborted ? control.signal.reason : error);
@@ -723,7 +780,7 @@ export class InvestigationExecutor {
               ? 'partial'
               : 'failed';
       const terminal = await this.transaction((c) => this.runs.terminateInvestigation(c, actor, binding, state, code));
-      await this.settle(terminal);
+      await this.settle(terminal, base);
       return terminal;
     } finally {
       clearInterval(timer);
@@ -796,9 +853,51 @@ export class InvestigationExecutor {
       await this.canonical.assertInvestigationLease(c, binding);
     });
   }
-  private async settle(run: AgentRun): Promise<void> {
+  private async settle(run: AgentRun, binding: Omit<InvestigationExecutionBinding, 'runId'>): Promise<void> {
     const state = (run.result as { investigationExecution?: ExecutionState } | undefined)?.investigationExecution;
-    if (!state) return;
+    if (!state) {
+      // Live withdrawal/cancel can reject an admitted request before Runtime
+      // checkpoint creation. The persisted terminal, original binding and
+      // current lease authorize accounting cleanup, never provider dispatch.
+      const reservation = await this.transaction(async (c) => {
+        await c.query('SELECT session_id FROM chat_sessions WHERE session_id=? FOR UPDATE', [run.sessionId]);
+        const [investigations] = await c.query<any[]>('SELECT session_id FROM investigations WHERE id=? FOR UPDATE', [
+          binding.investigationId,
+        ]);
+        const [requests] = await c.query<any[]>('SELECT * FROM investigation_requests WHERE id=? FOR UPDATE', [
+          binding.requestId,
+        ]);
+        await this.canonical.assertInvestigationLease(c, binding);
+        const [runs] = await c.query<any[]>('SELECT * FROM agent_runs WHERE id=? FOR UPDATE', [run.id]);
+        const request = requests[0],
+          terminal = runs[0],
+          snapshot = request && decode(request.request_snapshot);
+        if (
+          !terminal ||
+          terminal.state === 'running' ||
+          terminal.session_id !== run.sessionId ||
+          investigations[0]?.session_id !== run.sessionId ||
+          request?.investigation_id !== binding.investigationId ||
+          request.job_id !== binding.jobId ||
+          request.message_id !== terminal.message_id ||
+          Number(request.actor_id) !== Number(terminal.actor_id) ||
+          terminal.idempotency_key !== `investigation:${binding.requestId}` ||
+          snapshot?.authority?.actor?.id !== Number(request.actor_id) ||
+          snapshot?.authority?.actor?.kind !== request.actor_kind
+        )
+          throw new Error('INVESTIGATION_EXECUTION_INVALID');
+        if (!snapshot.budgetReceipt) return null;
+        return this.ledger.reuseExecutionInTransaction(c, binding.requestId, {
+          domain: this.options.budget.domain,
+          mode: request.actor_kind === 'service' ? 'automatic' : 'manual',
+          profile: resolveInvestigationProfile(snapshot.profileId, snapshot.profileVersion),
+        });
+      });
+      if (reservation?.state === 'reserved') await this.ledger.cancelUnsent(reservation.id);
+      else if (reservation && ['sent', 'unknown'].includes(reservation.state))
+        await this.ledger.settle(reservation.id, null);
+      return;
+    }
     const reservation = await this.ledger.read(state.reservationId);
     if (reservation.state === 'reserved') {
       if (state.provider) {
