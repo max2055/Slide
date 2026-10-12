@@ -1,5 +1,7 @@
 # T02 隔离 admission 事务候选与剩余门禁
 
+> 本文保留早期隔离候选的历史证据。当前 T02-B 正式迁移/store、事务接口及剩余门禁见 [T02-B 验证与交接](t02-b-validation.md)。
+
 日期：2026-10-12。此候选仅为 MAX-143 被放行的隔离 store/事务工作，不是完整调查 API 或当前平台已有能力。分支 `codex/MAX-143-investigation-store`，基于修复已合并的 main `1a3940e2ef79b9529a9f394d074a47e89d36be3d`。
 
 ## 前置修复的关闭证据

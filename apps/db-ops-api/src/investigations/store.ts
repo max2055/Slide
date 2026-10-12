@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { INVESTIGATION_ERROR_STATUS } from './contracts.js';
-import { OutboxService, type TransactionConnection, type TransactionPool } from '../workflows/outbox-service.js';
+import { OutboxService, type TransactionConnection, type TransactionPool, type OutboxInput } from '../workflows/outbox-service.js';
 
 type ErrorCode = keyof typeof INVESTIGATION_ERROR_STATUS;
 export class InvestigationStoreError extends Error {
@@ -26,6 +26,15 @@ export interface InvestigationAcceptance {
   jobId: string;
   version: number;
 }
+export interface InvestigationResource {
+  type: 'instance' | 'server' | 'network_device';
+  id: number;
+  role: 'primary' | 'related';
+}
+export interface InvestigationAdmissionResult {
+  acceptance: InvestigationAcceptance;
+  isNew: boolean;
+}
 export interface AdmissionInvestigation {
   id: string;
   sessionId: string;
@@ -34,21 +43,58 @@ export interface AdmissionInvestigation {
   scopeVersion: string;
   lifecycle: 'open' | 'waiting' | 'closed' | 'archived';
   version: number;
+  owner: Readonly<InvestigationActor>;
+  resources: readonly Readonly<InvestigationResource>[];
 }
-/** Mandatory trusted server port, executed inside the transaction even on
- * idempotent retries. T03 must implement live actor/resource/Profile authority;
- * this hook must not append messages or perform other acceptance side effects.
- * Session append belongs only in the new-request branch when T03 integrates it.
- * A model or HTTP payload cannot supply this callback. Invisible objects must
- * throw NOT_FOUND; visible non-operators FORBIDDEN. */
-export type AdmissionAuthorizer = (connection: TransactionConnection, actor: InvestigationActor,
-  investigation: Readonly<AdmissionInvestigation>) => Promise<void>;
+export interface InvestigationRecord extends AdmissionInvestigation {
+  title: string;
+  goal: string;
+  problemStatus: 'unconfirmed' | 'in_progress' | 'resolved' | 'not_applicable';
+  activeRequestId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+export interface InvestigationCreate {
+  actor: InvestigationActor;
+  title: string;
+  goal: string;
+  sessionId?: string;
+  /** Resolved by the trusted Profile service before calling this port. */
+  profileId: 'ops' | 'system';
+  profileVersion: number;
+  resources: readonly InvestigationResource[];
+}
+export interface InvestigationPatch {
+  expectedVersion: number;
+  title?: string;
+  goal?: string;
+  lifecycle?: AdmissionInvestigation['lifecycle'];
+}
+export interface InvestigationList {
+  lifecycle?: AdmissionInvestigation['lifecycle'];
+  profileId?: 'ops' | 'system';
+  resource?: Pick<InvestigationResource, 'type' | 'id'>;
+  query?: string;
+  limit?: number;
+  offset?: number;
+}
+export type InvestigationOperation = 'create' | 'read' | 'patch' | 'admit';
+/** Trusted server port, never accepted from HTTP/model input. T03 supplies live
+ * actor + ACL + Profile + tool/resource intersection, covering EVERY resource.
+ * Runs inside the same transaction on every read/write, including retries.
+ * Invisible objects throw NOT_FOUND; visible non-operators throw FORBIDDEN.
+ * Resources and Profile/scope versions are immutable in this store. No callback
+ * may append messages or execute a model. Use this connection for authority
+ * reads/locks; do not substitute cached authorization. The service actor ID must
+ * be the real numeric disabled-login user, validated by T03 before this call. */
+export type AdmissionAuthorizer = (connection: TransactionConnection, actor: Readonly<InvestigationActor>,
+  investigation: Readonly<AdmissionInvestigation>, operation: InvestigationOperation) => Promise<void>;
 
 const invalid = () => new InvestigationStoreError('INVESTIGATION_INPUT_INVALID');
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 function validate(input: InvestigationAdmission): void {
   if (!input || !uuid.test(input.investigationId) || !input.actor
-    || !['user', 'service'].includes(input.actor.kind) || !Number.isSafeInteger(input.actor.id) || input.actor.id <= 0
+    || !validActor(input.actor)
     || typeof input.idempotencyKey !== 'string' || !input.idempotencyKey.trim() || Buffer.byteLength(input.idempotencyKey) > 255
     || typeof input.message !== 'string' || !input.message.trim() || input.message.length > 2_000
     || !Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1) throw invalid();
@@ -58,18 +104,170 @@ async function select<T extends RowDataPacket>(connection: TransactionConnection
   return rows;
 }
 
-/** Isolated admission kernel only. No routes, production schema registration,
- * Profile execution or Chat append are installed by this module. Callers must
- * complete T03 authority/Session integration before accepting business input. */
+function validActor(actor: InvestigationActor): boolean {
+  return !!actor && ['user', 'service'].includes(actor.kind) && Number.isSafeInteger(actor.id) && actor.id > 0 && actor.id <= 4_294_967_295;
+}
+function validText(value: unknown, max: number): value is string {
+  return typeof value === 'string' && !!value.trim() && value.length <= max;
+}
+const lifecycles = ['open', 'waiting', 'closed', 'archived'];
+
+/** T02-B persistence port. T03 must implement authority/Session append before
+ * T02-C registers HTTP. This module creates no Agent Run or Chat messages. */
 export class MysqlInvestigationStore {
   constructor(private readonly poolProvider: () => Pool | null, private readonly authorize: AdmissionAuthorizer) {}
 
-  async admit(input: InvestigationAdmission): Promise<InvestigationAcceptance> {
-    validate(input);
-    input = { ...input, actor: { ...input.actor } };
+  async transaction<T>(work: (connection: TransactionConnection, append: (event: OutboxInput) => Promise<string>) => Promise<T>): Promise<T> {
     if (typeof this.authorize !== 'function') throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
     const pool = this.poolProvider();
     if (!pool) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
+    try {
+      return await new OutboxService(pool as unknown as TransactionPool).transaction(work);
+    } catch (error) {
+      if (error instanceof InvestigationStoreError) throw error;
+      throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE', error);
+    }
+  }
+
+  private async map(connection: TransactionConnection, row: RowDataPacket): Promise<InvestigationRecord> {
+    const resources = await select(connection, `SELECT resource_type, resource_id, role FROM investigation_resources
+      WHERE investigation_id = ? ORDER BY resource_type, resource_id FOR SHARE`, [row.id]);
+    return { id: row.id, sessionId: row.session_id, title: row.title, goal: row.goal,
+      profileId: row.profile_id, profileVersion: Number(row.profile_version), scopeVersion: row.scope_version,
+      lifecycle: row.lifecycle, problemStatus: row.problem_status, version: Number(row.version),
+      owner: Object.freeze({ kind: row.owner_kind, id: Number(row.owner_id) }),
+      resources: Object.freeze(resources.map(resource => Object.freeze({ type: resource.resource_type,
+        id: Number(resource.resource_id), role: resource.role }))),
+      activeRequestId: row.active_request_id, createdAt: row.created_at, updatedAt: row.updated_at };
+  }
+
+  private async load(connection: TransactionConnection, id: string, lock: 'UPDATE' | 'SHARE'): Promise<InvestigationRecord> {
+    const [row] = await select(connection, `SELECT * FROM investigations WHERE id = ? FOR ${lock}`, [id]);
+    if (!row) throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
+    return this.map(connection, row);
+  }
+
+  async create(input: InvestigationCreate): Promise<InvestigationRecord> {
+    input = input && { ...input, actor: { ...input.actor }, resources: Array.isArray(input.resources)
+      ? input.resources.map(resource => ({ ...resource })) : input.resources };
+    return this.transaction(connection => this.createInTransaction(connection, input));
+  }
+
+  /** Compose with admitInTransaction under ONE transaction to create and admit
+   * atomically. Connection/inputs are trusted server service ports only. */
+  async createInTransaction(connection: TransactionConnection, input: InvestigationCreate): Promise<InvestigationRecord> {
+    if (typeof this.authorize !== 'function') throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
+    if (!input || !validActor(input.actor) || !validText(input.title, 200) || !validText(input.goal, 2_000)
+      || !['ops', 'system'].includes(input.profileId) || !Number.isSafeInteger(input.profileVersion) || input.profileVersion < 1
+      || input.sessionId !== undefined && !validText(input.sessionId, 100)
+      || !Array.isArray(input.resources) || input.resources.length > 20
+      || input.resources.some(resource => !resource || !['instance', 'server', 'network_device'].includes(resource.type)
+        || !Number.isSafeInteger(resource.id) || resource.id <= 0 || resource.id > 4_294_967_295 || !['primary', 'related'].includes(resource.role))) throw invalid();
+    if (input.profileId === 'ops' && !input.resources.length || input.profileId === 'system' && input.resources.length)
+      throw new InvestigationStoreError('PROFILE_SUBJECT_UNSUPPORTED');
+    input = { ...input, actor: { ...input.actor }, resources: input.resources.map(resource => ({ ...resource })) };
+    const resources = [...input.resources].sort((a, b) => a.type.localeCompare(b.type) || a.id - b.id);
+    if (new Set(resources.map(resource => `${resource.type}:${resource.id}`)).size !== resources.length) throw invalid();
+    const scopeVersion = createHash('sha256').update(JSON.stringify(resources)).digest('hex');
+    const sessionId = input.sessionId ?? randomUUID();
+    if (input.sessionId) {
+      const [session] = await select(connection, 'SELECT user_id FROM chat_sessions WHERE session_id = ? FOR UPDATE', [sessionId]);
+      // Conversion is owner-only, regardless of ordinary read shares.
+      if (!session || Number(session.user_id) !== input.actor.id) throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
+      const linked = await select(connection, 'SELECT id FROM investigations WHERE session_id = ? FOR UPDATE', [sessionId]);
+      const running = await select(connection, "SELECT id FROM agent_runs WHERE session_id = ? AND state = 'running' FOR UPDATE", [sessionId]);
+      if (linked.length || running.length) throw new InvestigationStoreError('INVESTIGATION_ACTIVE_REQUEST');
+    } else {
+      await connection.execute(`INSERT INTO chat_sessions (session_id, user_id, title, message_count, last_message_at)
+        VALUES (?, ?, ?, 0, NOW())`, [sessionId, input.actor.id, input.title]);
+      }
+    const now = new Date();
+    const record: InvestigationRecord = { id: randomUUID(), sessionId, title: input.title, goal: input.goal,
+      profileId: input.profileId, profileVersion: input.profileVersion, scopeVersion, lifecycle: 'open',
+      problemStatus: 'unconfirmed', version: 1, owner: Object.freeze({ ...input.actor }),
+      resources: Object.freeze(resources.map(resource => Object.freeze(resource))), activeRequestId: null, createdAt: now, updatedAt: now };
+    await this.authorize(connection, Object.freeze(input.actor), Object.freeze(record), 'create');
+    await connection.execute(`INSERT INTO investigations
+      (id, title, goal, profile_id, profile_version, session_id, owner_kind, owner_id, scope_version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [record.id, record.title, record.goal, record.profileId,
+      record.profileVersion, sessionId, record.owner.kind, record.owner.id, scopeVersion]);
+    for (const resource of resources) await connection.execute(`INSERT INTO investigation_resources
+      (investigation_id, resource_type, resource_id, role) VALUES (?, ?, ?, ?)`, [record.id, resource.type, resource.id, resource.role]);
+    return this.load(connection, record.id, 'UPDATE');
+  }
+
+  async detail(actor: InvestigationActor, id: string): Promise<InvestigationRecord> {
+    if (!validActor(actor) || !uuid.test(id)) throw invalid();
+    actor = Object.freeze({ ...actor });
+    return this.transaction(async connection => {
+      const record = await this.load(connection, id, 'SHARE');
+      await this.authorize(connection, actor, Object.freeze(record), 'read');
+      return record;
+    });
+  }
+
+  async list(actor: InvestigationActor, options: InvestigationList = {}): Promise<{ items: InvestigationRecord[]; total: number }> {
+    const { limit = 20, offset = 0, lifecycle, profileId, query, resource } = { ...options, resource: options.resource ? { ...options.resource } : undefined };
+    if (!validActor(actor) || !Number.isSafeInteger(limit) || limit < 1 || limit > 50
+      || !Number.isSafeInteger(offset) || offset < 0 || lifecycle !== undefined && !lifecycles.includes(lifecycle)
+      || profileId !== undefined && !['ops', 'system'].includes(profileId) || query !== undefined && !validText(query, 200)
+      || resource !== undefined && (!['instance', 'server', 'network_device'].includes(resource.type) || !Number.isSafeInteger(resource.id) || resource.id <= 0)) throw invalid();
+    actor = Object.freeze({ ...actor });
+    return this.transaction(async connection => {
+      // Deliberately no SQL LIMIT/COUNT before trusted per-object authority.
+      // A later SQL authority optimization must preserve this same contract.
+      const rows = await select(connection, `SELECT * FROM investigations ${lifecycle ? 'WHERE lifecycle = ?' : ''}
+        ORDER BY updated_at DESC, id DESC FOR SHARE`, lifecycle ? [lifecycle] : []);
+      const visible: InvestigationRecord[] = [];
+      for (const row of rows) {
+        const record = await this.map(connection, row);
+        try { await this.authorize(connection, actor, Object.freeze(record), 'read'); }
+        catch (error) {
+          if (error instanceof InvestigationStoreError && error.code === 'INVESTIGATION_NOT_FOUND') continue;
+          throw error;
+        }
+        if (profileId && record.profileId !== profileId || resource && !record.resources.some(ref => ref.type === resource.type && ref.id === resource.id)
+          || query && !`${record.title} ${record.goal}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())) continue;
+        visible.push(record);
+      }
+      return { total: visible.length, items: visible.slice(offset, offset + limit) };
+    });
+  }
+
+  async patch(actor: InvestigationActor, id: string, patch: InvestigationPatch): Promise<InvestigationRecord> {
+    if (!validActor(actor) || !uuid.test(id) || !patch || !Number.isSafeInteger(patch.expectedVersion) || patch.expectedVersion < 1
+      || Object.keys(patch).some(key => !['expectedVersion', 'title', 'goal', 'lifecycle'].includes(key))
+      || patch.title !== undefined && !validText(patch.title, 200) || patch.goal !== undefined && !validText(patch.goal, 2_000)
+      || patch.lifecycle !== undefined && !lifecycles.includes(patch.lifecycle)
+      || patch.title === undefined && patch.goal === undefined && patch.lifecycle === undefined) throw invalid();
+    patch = { ...patch }; actor = Object.freeze({ ...actor });
+    return this.transaction(async connection => {
+      const record = await this.load(connection, id, 'UPDATE');
+      await this.authorize(connection, actor, Object.freeze(record), 'patch');
+      if (record.version !== patch.expectedVersion || !Number.isSafeInteger(record.version + 1)) throw new InvestigationStoreError('VERSION_CONFLICT');
+      if (record.activeRequestId && patch.lifecycle !== undefined && patch.lifecycle !== record.lifecycle)
+        throw new InvestigationStoreError('INVESTIGATION_ACTIVE_REQUEST');
+      await connection.execute(`UPDATE investigations SET title = ?, goal = ?, lifecycle = ?, version = version + 1 WHERE id = ?`,
+        [patch.title ?? record.title, patch.goal ?? record.goal, patch.lifecycle ?? record.lifecycle, id]);
+      return this.load(connection, id, 'UPDATE');
+    });
+  }
+
+  async admit(input: InvestigationAdmission): Promise<InvestigationAcceptance> {
+    input = input && { ...input, actor: { ...input.actor } };
+    return this.transaction(async (connection, append) => (await this.admitInTransaction(connection, append, input)).acceptance);
+  }
+
+  /** T03 may compose its authorized append using this same connection, after
+   * checking isNew; never append on an idempotent retry. Attach message_id to
+   * the new request in that same transaction; its snapshot contains the message.
+   * No nested transaction and no second queue owner. */
+  async admitInTransaction(connection: TransactionConnection,
+    append: (event: OutboxInput) => Promise<string>,
+    input: InvestigationAdmission): Promise<InvestigationAdmissionResult> {
+    validate(input);
+    input = { ...input, actor: { ...input.actor } };
+    if (typeof this.authorize !== 'function') throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
     // All fields are primitives in fixed order. Freeze the caller's command,
     // not a newly resolved Profile version that could change on a retry.
     const requestHash = createHash('sha256').update(JSON.stringify([
@@ -77,60 +275,54 @@ export class MysqlInvestigationStore {
     ])).digest('hex');
     const key = Buffer.from(input.idempotencyKey, 'utf8');
     const keyValues = [input.actor.kind, input.actor.id, key];
-    try {
-      return await new OutboxService(pool as unknown as TransactionPool).transaction(async (connection, append) => {
-        // Lock order: actor/key -> investigation -> request. An actor/key lock
-        // also serializes first-use retries across different investigations.
-        await connection.execute(`INSERT INTO investigation_admission_keys (actor_kind, actor_id, idempotency_key)
-          VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE request_id = request_id`, keyValues);
-        const [reservation] = await select(connection, `SELECT request_id FROM investigation_admission_keys
-          WHERE actor_kind = ? AND actor_id = ? AND idempotency_key = ? FOR UPDATE`, keyValues);
-        const [row] = await select(connection, 'SELECT * FROM investigations WHERE id = ? FOR UPDATE', [input.investigationId]);
-        if (!row) throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
-        const investigation: AdmissionInvestigation = { id: row.id, sessionId: row.session_id,
-          profileId: row.profile_id, profileVersion: Number(row.profile_version), scopeVersion: row.scope_version,
-          lifecycle: row.lifecycle, version: Number(row.version) };
-        await this.authorize(connection, input.actor, investigation);
-        if (reservation.request_id) {
-          const [previous] = await select(connection,
-            'SELECT * FROM investigation_requests WHERE id = ? FOR UPDATE', [reservation.request_id]);
-          if (!previous) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
-          if (previous.request_hash !== requestHash) throw new InvestigationStoreError('IDEMPOTENCY_PAYLOAD_MISMATCH');
-          return { investigationId: previous.investigation_id, sessionId: investigation.sessionId,
-            requestId: previous.id, jobId: previous.job_id, version: Number(previous.accepted_version) };
-        }
-        if (row.active_request_id) throw new InvestigationStoreError('INVESTIGATION_ACTIVE_REQUEST');
-        if (investigation.version !== input.expectedVersion) throw new InvestigationStoreError('VERSION_CONFLICT');
-        if (['closed', 'archived'].includes(investigation.lifecycle)) throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
-        const version = investigation.version + 1;
-        if (!Number.isSafeInteger(version)) throw new InvestigationStoreError('VERSION_CONFLICT');
-        const requestId = randomUUID();
-        const jobId = randomUUID();
-        const jobKey = `investigation.execute:${requestId}`;
-        // Only IDs go in the Workflow queue; the immutable request owns the
-        // execution snapshot. No Agent Run is fabricated at admission time.
-        const snapshot = { ...investigation, actor: { ...input.actor }, message: input.message };
-        await connection.execute(`INSERT INTO investigation_requests
-          (id, investigation_id, actor_kind, actor_id, idempotency_key, request_hash, request_snapshot, job_id, accepted_version)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [requestId, input.investigationId, ...keyValues, requestHash, JSON.stringify(snapshot), jobId, version]);
-        const eventId = await append({ eventType: 'investigation.request.accepted', schemaVersion: 1,
-          aggregateType: 'investigation', aggregateId: investigation.id, aggregateVersion: version,
-          payload: { requestId, jobId, version }, idempotencyKey: jobKey });
-        await connection.execute(`INSERT INTO workflow_jobs (id, job_type, schema_version, payload, idempotency_key)
-          VALUES (?, 'investigation.execute', 1, ?, ?)`, [jobId, JSON.stringify({ investigationId: investigation.id, requestId }), jobKey]);
-        // Match the existing report/Analysis durable-delivery pattern: the job
-        // and outbox publication are committed together by this single owner.
-        await connection.execute('UPDATE outbox_events SET published_at = NOW() WHERE id = ?', [eventId]);
-        await connection.execute(`UPDATE investigations SET active_request_id = ?, version = ?, lifecycle = 'open' WHERE id = ?`,
-          [requestId, version, investigation.id]);
-        await connection.execute(`UPDATE investigation_admission_keys SET request_id = ?
-          WHERE actor_kind = ? AND actor_id = ? AND idempotency_key = ?`, [requestId, ...keyValues]);
-        return { investigationId: investigation.id, sessionId: investigation.sessionId, requestId, jobId, version };
-      });
-    } catch (error) {
-      if (error instanceof InvestigationStoreError) throw error;
-      throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE', error);
+    // Lock order: actor/key -> Session -> investigation -> request. An actor/key lock
+    // also serializes first-use retries across different investigations.
+    await connection.execute(`INSERT INTO investigation_admission_keys (actor_kind, actor_id, idempotency_key)
+      VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE request_id = request_id`, keyValues);
+    const [reservation] = await select(connection, `SELECT request_id FROM investigation_admission_keys
+      WHERE actor_kind = ? AND actor_id = ? AND idempotency_key = ? FOR UPDATE`, keyValues);
+    const [binding] = await select(connection, 'SELECT session_id FROM investigations WHERE id = ?', [input.investigationId]);
+    if (!binding) throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
+    await connection.execute('SELECT id FROM chat_sessions WHERE session_id = ? FOR UPDATE', [binding.session_id]);
+    const [row] = await select(connection, 'SELECT * FROM investigations WHERE id = ? FOR UPDATE', [input.investigationId]);
+    if (!row) throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
+    const investigation = await this.map(connection, row);
+    await this.authorize(connection, Object.freeze(input.actor), Object.freeze(investigation), 'admit');
+    if (reservation.request_id) {
+      const [previous] = await select(connection,
+        'SELECT * FROM investigation_requests WHERE id = ? FOR UPDATE', [reservation.request_id]);
+      if (!previous) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
+      if (previous.request_hash !== requestHash) throw new InvestigationStoreError('IDEMPOTENCY_PAYLOAD_MISMATCH');
+      return { isNew: false, acceptance: { investigationId: previous.investigation_id, sessionId: investigation.sessionId,
+        requestId: previous.id, jobId: previous.job_id, version: Number(previous.accepted_version) } };
     }
+    if (row.active_request_id) throw new InvestigationStoreError('INVESTIGATION_ACTIVE_REQUEST');
+    if (investigation.version !== input.expectedVersion) throw new InvestigationStoreError('VERSION_CONFLICT');
+    if (['closed', 'archived'].includes(investigation.lifecycle)) throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
+    const version = investigation.version + 1;
+    if (!Number.isSafeInteger(version)) throw new InvestigationStoreError('VERSION_CONFLICT');
+    const requestId = randomUUID();
+    const jobId = randomUUID();
+    const jobKey = `investigation.execute:${requestId}`;
+    // Only IDs go in the Workflow queue; the immutable request owns the
+    // execution snapshot. No Agent Run is fabricated at admission time.
+    const snapshot = { ...investigation, actor: { ...input.actor }, message: input.message };
+    await connection.execute(`INSERT INTO investigation_requests
+      (id, investigation_id, actor_kind, actor_id, idempotency_key, request_hash, request_snapshot, job_id, accepted_version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [requestId, input.investigationId, ...keyValues, requestHash, JSON.stringify(snapshot), jobId, version]);
+    const eventId = await append({ eventType: 'investigation.request.accepted', schemaVersion: 1,
+      aggregateType: 'investigation', aggregateId: investigation.id, aggregateVersion: version,
+      payload: { requestId, jobId, version }, idempotencyKey: jobKey });
+    await connection.execute(`INSERT INTO workflow_jobs (id, job_type, schema_version, payload, idempotency_key)
+      VALUES (?, 'investigation.execute', 1, ?, ?)`, [jobId, JSON.stringify({ investigationId: investigation.id, requestId }), jobKey]);
+    // Match the existing report/Analysis durable-delivery pattern: the job
+    // and outbox publication are committed together by this single owner.
+    await connection.execute('UPDATE outbox_events SET published_at = NOW() WHERE id = ?', [eventId]);
+    await connection.execute(`UPDATE investigations SET active_request_id = ?, version = ?, lifecycle = 'open' WHERE id = ?`,
+      [requestId, version, investigation.id]);
+    await connection.execute(`UPDATE investigation_admission_keys SET request_id = ?
+      WHERE actor_kind = ? AND actor_id = ? AND idempotency_key = ?`, [requestId, ...keyValues]);
+    return { isNew: true, acceptance: { investigationId: investigation.id, sessionId: investigation.sessionId, requestId, jobId, version } };
   }
 }

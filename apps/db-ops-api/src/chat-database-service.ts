@@ -539,7 +539,8 @@ export class ChatDatabaseService {
     const pool = this.getPool();
     const [result] = await pool.query<ResultSetHeader>(
       `DELETE FROM chat_sessions
-       WHERE last_message_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
+       WHERE last_message_at < DATE_SUB(NOW(), INTERVAL ? DAY)
+         AND NOT EXISTS (SELECT 1 FROM investigations i WHERE i.session_id = chat_sessions.session_id)`,
       [retentionDays],
     );
     await pool.query(
