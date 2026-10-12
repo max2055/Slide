@@ -17,7 +17,7 @@ RED checkpoint `b8319924`：生产代码未修改时，unit 3失败/4通过；�
 
 首次故障注入尝试中，prepared statement不支持SIGNAL，为测试设置问题；已改为业务表重复主键注入，真实SQL回滚断言通过，再记录有效RED。
 
-GREEN checkpoint `7625bb65`：同一测试和现有worker/report回归 **4文件44项通过，0失败、0skip**。真实MySQL8.4.10运行在仅本任务创建的临时容器内，使用随机隔离数据库，结束删除测试schema。
+GREEN checkpoint `7625bb65`：同一测试和现有worker/report回归 **4文件43项通过，0失败、0skip**。`79b73033`补充真实连接中断与旧快照测试后为**44项通过，0失败、0skip**。真实MySQL8.4.10运行在仅本任务创建的临时容器内，使用随机隔离数据库，结束删除测试schema。
 
 ```bash
 REPORT_TEST_MYSQL_PORT=<隔离端口> REPORT_TEST_MYSQL_PASSWORD=<测试凭据> \
