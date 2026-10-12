@@ -22,7 +22,7 @@
 
 1. checkpointFacts 首次构建 legacy tool Parts 时，turn 默认为 run；DirectAdapter 随后绑定实际持久化 user turn，但旧 Parts 的默认 turn 未同步。下次 projection.document 才补齐 turn/projectionMessageId/sourceMessageId/generation。先在首次 checkpoint acknowledgement 将明确符合 legacy 默认形态的文档归一化，避免后续重写已提交身份；任意不一致 legacy turn 不会被覆盖。
 2. projectionMessageParts 从原 Parts 重建文档时遗漏文档层 attempt/sourceRequestId，但各 Part 保留原边界。只有文档字段缺失且所有 Part 对应值一致时才从 Parts 派生；显式值不覆盖，冲突值拒绝。原 canonical-history 真实恢复脚本在严格比较的首轮因此失败；新增 RED reproducer 后修复，原脚本八个场景全部 GREEN。
-3. projectionDocuments/displayPart 将原始工具结果转换为紧凑、脱敏/截断的显示摘要；下一 checkpoint 的 projection.document 会携带该摘要。若 tool Part 的 call ID 匹配，外层原始 content 与 legacy.content 相同，且 Part.content 精确等于现有 buildToolPreview 转换，则在首次/后续序列化恢复完整原始 Part；任意其他 Parts 内容仍逐项比较并拒绝。针对结构化 JSON、10KB 截断及100KB/多迭代 WS 输出新增 RED 后修复（`194e9e5c`），原结果不丢失、等价重放不 UPDATE。没有修改投影 reducer 或 raw tool content。
+3. projectionDocuments/displayPart 将原始工具结果转换为紧凑、脱敏/截断的显示摘要；下一 checkpoint 的 projection.document 会携带该摘要。若 tool Part 的 call ID 匹配，外层原始 content 与 legacy.content 相同，且 Part.content 精确等于现有 buildToolPreview 转换，则在首次/后续序列化恢复完整原始 Part；任意其他 Parts 内容仍逐项比较并拒绝。针对结构化 JSON、10KB 截断及100KB/多迭代 WS 输出新增 RED 后修复（`194e9e5c`），原结果不丢失、等价重放不 UPDATE。同函数的另一个已确认转换是 tool_call.arguments 的 boundedToolValue 裁剪/脱敏；仅在 raw call 与 legacy call 的 ID/type/name/arguments 一致，且输入 Part.arguments 精确等于该转换时恢复原参数，其他值继续拒绝（RED `9166869a`）。两个转换分支均已覆盖，没有修改投影 reducer 或 raw tool content。
 4. 已提交的旧格式默认值允许与 getPage 的同一确定性兼容视图等价重放，**不回填、不 UPDATE 原 JSON**；其他变化仍冲突。对原 legacy 数据无生产迁移或清理。
 
 这些默认值只是现有 Parts v1 的序列化规则，不是新增事实版本，也不允许删除 metadata 或未知 Parts 内容。v1 reader/schema 保持。
@@ -58,14 +58,14 @@ git diff --check
 |---|---|
 |原生产代码 RED|22项：17 failed / 5 passed / 0 skip；失败为遗漏 payload、非法回退、错误 turn；测试先完成 typecheck。RED checkpoint `fcebdab9`。|
 |序列化新增 RED|旧记录等价重放、任意 legacy turn、文档 provider 边界缺失分别复现，补齐兼容规则后 GREEN。`c7df9503`、`2e734040` 保存额外 reproducer。单例过滤的其他案例未执行，未计入实际验收。|
-|最终受影响模块|18文件 **215 passed / 0 failed / 0 skip**，含新 canonical MySQL **34项**和 T04-A MySQL/JWT/WS **25项**；兼容生命周期、Chat、memory、projection 和 history。|
+|最终受影响模块|18文件 **216 passed / 0 failed / 0 skip**，含新 canonical MySQL **35项**和 T04-A MySQL/JWT/WS **25项**；兼容生命周期、Chat、memory、projection 和 history。|
 |既有真实 canonical-history|八个场景通过；505事实稳定分页/JSONL/hash、partial→completed、legacy rollback、真实提交 ack loss、并发 service 恢复、JSONL 故障下 SQL 恢复、整 turn 保留策略。|
 |当前执行恢复 gate|`agent-runtime-mysql.ts` 退出0；普通 Chat 真实 SQL/JWT/WS、OS-process-exit-before-commit、OS-stream-crash-durable-tool-anchor-restored、unknown settlement、取消与 effective snapshot fixtures通过。首次 PR head `998476a8` 的 browser-qualification 在崩溃 anchor 缺 persistedAt 时失败（CI run 38224615641）；新增 RED `fd2bd391` 后修复，重新核验新 head CI，不使用旧结果。|
 |真实浏览器 Chat 兼容 gate|未改动的 `streaming-live.spec.ts` **1 passed / 0 skip**，真实 MySQL→Adapter→WS→Gateway→reducer→UI，100000字节/100次工具执行、活动连接刷新、唯一最终回答、重新刷新已完成投影和性能断言全部通过。前一 head `2e6972cd` 的 CI 38225872357 在此 gate 失败：Parts 显示摘要与 raw 不一致导致 canonical conflict，保存大体积错误回答又触发 TEXT 超长（次生错误）；上述序列化修复解除初因，未改 schema/Chat错误存储或门禁。|
 |核心 Parts/Projection|2文件 **30 passed / 0 failed / 0 skip**；未修改 agent-core 的公共 Parts schema。|
 |权限与静态|security:agent 187 passed / 0 skip，security:scan、API typecheck、contracts:check、focused lint（0 warning/error）、diff check passed。安全全套与模块存在重叠，不累加冒充独立案例。|
 
-新34项包括完整同 ID 并发重放、数组次序差异、metadata/Parts/未知字段冲突、合法 status 和工具生命周期、终态拒绝、事务回滚且 checkpoint 不前移、wrong actor/session/read-share、实际 COMMIT ack loss、冷 service/history/投影 hash 一致、真实 JWT/WS 四工具/多迭代及100KB输出后冷 adapter 读取 SQL 历史且不重复执行工具、旧格式只读重放及 generating boundary 保留。
+新35项包括完整同 ID 并发重放、数组次序差异、metadata/Parts/未知字段冲突、合法 status 和工具生命周期、终态拒绝、事务回滚且 checkpoint 不前移、wrong actor/session/read-share、实际 COMMIT ack loss、冷 service/history/投影 hash 一致、真实 JWT/WS 四工具/多迭代及100KB输出后冷 adapter 读取 SQL 历史且不重复执行工具、旧格式只读重放及 generating boundary 保留。
 
 最终 head、准确 head CI、PR/merge SHA 和 main 包含关系在 MAX-147 交付附件记录，不能用旧 head CI 代替。未修改 CI 或绕过其门禁。
 
