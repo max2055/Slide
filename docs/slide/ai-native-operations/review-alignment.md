@@ -73,7 +73,7 @@
 |---|---|---|---|---|
 |auth / actor / session|blocked + pending|实例边界probe；现有实例权限测试通过|T03统一交集/服务主体；session shares、撤权、Profile、工具交集与枚举计数真实验证|T01、T02、T03、T04、T06、T10、T11、T12|
 |DirectAdapter / agent-run / message projection|blocked + pending|Run、DirectAdapter、display/WS现有测试通过；MySQL常量查询否定0080|T04取消/staged-result/key；T05事实版本；消息并发与client reducer；agent-core恢复/预算其余候选待有界复核|T01、T04、T05、T06、T08、T09、T11、T12|
-|Workflow / outbox|blocked + pending（0026/0300修复候选已验证，待正常合并）|outbox两个probe；T02真实MySQL8.4.10稳定ID/释放/回滚与报表恢复43项通过|0026/0300合并证据见T02交付；T04真实租约/恢复；T07事件/admission持久唯一与预算仍待验证，未授予整个领域clear|T01、T02、T04、T07、T08、T09、T10、T12|
+|Workflow / outbox|blocked + pending（0026/0300修复候选已验证，待正常合并）|outbox两个probe；T02真实MySQL8.4.10稳定ID/释放/回滚与报表恢复44项通过|0026/0300合并证据见T02交付；T04真实租约/恢复；T07事件/admission持久唯一与预算仍待验证，未授予整个领域clear|T01、T02、T04、T07、T08、T09、T10、T12|
 |Analysis / 告警|pending|envelope/evidence/provider/recovery现有单测通过|legacy retry/归属、告警并发唯一、事件聚合；服务器/网络覆盖与真实链路未完成|T01、T07、T08、T10、T11、T12|
 |platform / source evidence|blocked + pending|source当前测试通过；旧connector可达性排除|T09终态映射、查询窗口、部署commit匹配、模型egress；保留名与真实同步；持久异常防自举循环|T01、T05、T09、T12|
 |前端导航 / Chat|pending|导航与告警/源码呈现76项通过；旧组件未引用|现用Chat并发附件/greeting/cache、路由/权限深链、1600/1024/390与真实WS/撤权浏览器验收|T01、T06、T08、T10、T11、T12|
