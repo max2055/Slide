@@ -94,6 +94,7 @@ describe('generated public API contract', () => {
       '/api/database/instances/{id}/hosts/{serverId}',
       '/api/health',
       '/api/health/ready',
+      '/api/investigation-profiles',
       '/api/investigations',
       '/api/investigations/{id}',
       '/api/investigations/{id}/events',

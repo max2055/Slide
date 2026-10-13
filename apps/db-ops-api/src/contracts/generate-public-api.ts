@@ -6,6 +6,7 @@ import { PublicApiSchemas } from './public-api.js';
 import { InvestigationHttpSchemas } from '../investigations/http-contracts.js';
 import { InvestigationSchemas } from '../investigations/contracts.js';
 import { InvestigationObservationSchemas } from '../investigations/observation-contracts.js';
+import { InvestigationProfileSchemas } from '../investigations/profile-contracts.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const openApiPath = resolve(root, 'docs/slide/openapi.json');
@@ -38,6 +39,16 @@ export function buildOpenApiDocument() {
     openapi: '3.1.0',
     info: { title: 'Slide Public API', version: '0.10' },
     paths: {
+      '/api/investigation-profiles': { get: {
+        operationId: 'listInvestigationProfiles', security: [{ bearerAuth: [] }],
+        description: 'Repository-versioned System/Ops presets for AI settings. Requires live ai:view; private, no-store on success and rejection. Prompt version/hash only, no credentials or principal data. Allowlist is an authority ceiling, not tool availability or execution permission. No query parameters or editing. Output schema is InvestigationResult at the profile outputSchemaVersion.',
+        responses: {
+          '200': { description: 'Current preset facts; tool availability not evaluated', content: { 'application/json': { schema: refSchema(InvestigationProfileSchemas.InvestigationProfilesResponse) } } },
+          '400': { description: 'Unsupported query parameters' },
+          '401': { description: 'Missing, invalid, disabled or revoked identity' },
+          '403': { description: 'Live AI settings read permission absent' },
+        },
+      } },
       '/api/investigations': {
         post: { operationId: 'createInvestigation', security: [{ bearerAuth: [] }],
           description: 'Atomic creation plus first admission/message/job/outbox. Server-owned actor and Profile version; all scopes revalidated even on retry. Same actor/key/command recovers the original investigation and Session. No executor registered by this API.',
@@ -490,7 +501,7 @@ function schemaType(schema: TSchema): string {
 function buildInvestigationClientTypes(): string {
   return '// Generated investigation contract baseline; routes are not implemented by these types.\n'
     + "import type { ProjectionFrame } from '../../../../packages/agent-core/src/message-projection.ts';\n\n"
-    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas, ...InvestigationObservationSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
+    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas, ...InvestigationObservationSchemas, ...InvestigationProfileSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
 }
 
 export function buildClientTypes(): string {
