@@ -258,12 +258,28 @@ export class MysqlInvestigationBudgetLedger {
     return { ...reservation, dispatchAllowed };
   }
   cancelUnsent(id: string): Promise<BudgetReservation> {
-    return this.mutate(id, async (connection, row) => {
-      if (row.state === 'cancelled') return;
-      if (row.state !== 'reserved') throw new BudgetLedgerError('BUDGET_TRANSITION_INVALID');
-      await connection.execute(`UPDATE investigation_budget_ledger SET state = 'cancelled', charged_tokens = 0,
-        charged_cost_micros = 0, cost_status = 'known', settled_at = UTC_TIMESTAMP(3) WHERE id = ?`, [id]);
+    return this.transaction(connection => this.cancelUnsentInTransaction(connection, id));
+  }
+  /** Same-connection port. Caller proves no durable execution could have sent.
+   * Domain/row locks serialize this transition against markSent. */
+  cancelUnsentInTransaction(connection: TransactionConnection, id: string): Promise<BudgetReservation> {
+    return this.mutateInTransaction(connection, id, (c, row) => this.cancelReserved(c, row));
+  }
+  /** Cancellation of an unowned retry is NOT proof of unsent execution. Keep
+   * original token/cost/concurrency until a trusted terminal receipt resolves it.
+   * Known settlements and previous cancellations are immutable here. */
+  retainUnknownInTransaction(connection: TransactionConnection, id: string): Promise<BudgetReservation> {
+    return this.mutateInTransaction(connection, id, async (c, row) => {
+      if (['settled', 'cancelled'].includes(row.state)) return;
+      if (!['reserved', 'sent', 'unknown'].includes(row.state)) throw new BudgetLedgerError('BUDGET_TRANSITION_INVALID');
+      await c.execute("UPDATE investigation_budget_ledger SET state = 'unknown', cost_status = 'unknown' WHERE id = ?", [id]);
     });
+  }
+  private async cancelReserved(connection: TransactionConnection, row: RowDataPacket): Promise<void> {
+    if (row.state === 'cancelled') return;
+    if (row.state !== 'reserved') throw new BudgetLedgerError('BUDGET_TRANSITION_INVALID');
+    await connection.execute(`UPDATE investigation_budget_ledger SET state = 'cancelled', charged_tokens = 0,
+      charged_cost_micros = 0, cost_status = 'known', settled_at = UTC_TIMESTAMP(3) WHERE id = ?`, [row.id]);
   }
   /** Trusted terminal receipt only. A per-provider-turn receipt must NOT release
    * an execution's concurrency slot or remaining allocation. */
@@ -306,17 +322,19 @@ export class MysqlInvestigationBudgetLedger {
     if (create && row.policy_hash !== hash(this.policy)) throw new BudgetLedgerError('BUDGET_POLICY_CONFLICT');
   }
   private async mutate(id: string, work: (connection: TransactionConnection, row: RowDataPacket) => Promise<void>): Promise<BudgetReservation> {
+    return this.transaction(connection => this.mutateInTransaction(connection, id, work));
+  }
+  private async mutateInTransaction(connection: TransactionConnection, id: string,
+    work: (connection: TransactionConnection, row: RowDataPacket) => Promise<void>): Promise<BudgetReservation> {
     if (!uuid.test(id)) throw invalid();
-    return this.transaction(async connection => {
-      const [location] = await select(connection, 'SELECT domain_key FROM investigation_budget_ledger WHERE id = ?', [id]);
-      if (!location) throw new BudgetLedgerError('BUDGET_NOT_FOUND');
-      await this.lockDomain(connection, location.domain_key.toString());
-      const [row] = await select(connection, 'SELECT * FROM investigation_budget_ledger WHERE id = ? FOR UPDATE', [id]);
-      await work(connection, row);
-      // Current read: do not return an older snapshot after a mutation.
-      const [updated] = await select(connection, 'SELECT * FROM investigation_budget_ledger WHERE id = ? FOR UPDATE', [id]);
-      return record(updated);
-    });
+    const [location] = await select(connection, 'SELECT domain_key FROM investigation_budget_ledger WHERE id = ?', [id]);
+    if (!location) throw new BudgetLedgerError('BUDGET_NOT_FOUND');
+    await this.lockDomain(connection, location.domain_key.toString());
+    const [row] = await select(connection, 'SELECT * FROM investigation_budget_ledger WHERE id = ? FOR UPDATE', [id]);
+    if (!row) throw new BudgetLedgerError('BUDGET_NOT_FOUND');
+    await work(connection, row);
+    const [updated] = await select(connection, 'SELECT * FROM investigation_budget_ledger WHERE id = ? FOR UPDATE', [id]);
+    return record(updated);
   }
   private async transaction<T>(work: (connection: TransactionConnection) => Promise<T>): Promise<T> {
     const pool = this.poolProvider();

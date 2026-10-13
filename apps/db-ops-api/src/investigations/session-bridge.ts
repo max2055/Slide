@@ -1,3 +1,6 @@
+import { isDeepStrictEqual } from 'node:util';
+import { MysqlInvestigationBudgetLedger, type BudgetPolicy } from './budget-ledger.js';
+import { resolveInvestigationProfile } from './profiles.js';
 import { randomUUID } from 'node:crypto';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
 import type { ActorContext } from '../auth/actor-context.js';
@@ -5,23 +8,76 @@ import { ChatDatabaseService, type ChatMessageRecord } from '../chat-database-se
 import { recordMessageParts } from '../adapter/message-parts.js';
 import { InvestigationAuthorization, freezeInvestigationCaller, type InvestigationAuthoritySnapshot } from './authorization.js';
 import { MysqlInvestigationStore, InvestigationStoreError, type InvestigationAdmission, type InvestigationCreate,
-  type InvestigationAcceptance, type InvestigationRecord } from './store.js';
+  type InvestigationAcceptance, type InvestigationRecord, type InvestigationCancellation } from './store.js';
 import type { TransactionConnection, OutboxInput } from '../workflows/outbox-service.js';
 
 type RequestCommand = Omit<InvestigationAdmission, 'actor'>;
 type CreateCommand = Omit<InvestigationCreate, 'actor'>;
 
+/** One trusted configuration for HTTP cancellation and Workflow execution. */
+export function investigationBudgetConfiguration() {
+  return { domain: 'investigation-v1', reserveCostMicros: Number(process.env.INVESTIGATION_RESERVED_COST_MICROS ?? 1_000_000),
+    policy: { currency: 'USD', maxConcurrent: 4, manualReserved: 1, maxPerResourceConcurrent: 2,
+      maxAutomaticRequestsPerHour: 20, maxAutomaticTokensPerDay: 256_000, maxTotalTokensPerDay: 1_000_000,
+      maxCostMicrosPerDay: Number(process.env.INVESTIGATION_DAILY_COST_MICROS ?? 10_000_000) } };
+}
+
 /** Server-owned bridge. The actor is a verified ActorContext, never the actor
  * field of a client command. One store owns admission/queue delivery. */
 export class InvestigationSessionBridge {
   private readonly chat: ChatDatabaseService;
+  private readonly ledger: MysqlInvestigationBudgetLedger;
+  private readonly budgetDomain: string;
   constructor(private readonly poolProvider: () => Pool | null,
-    private readonly authorization = new InvestigationAuthorization()) {
+    private readonly authorization = new InvestigationAuthorization(),
+    cancellationBudget: { domain: string; policy: BudgetPolicy } = investigationBudgetConfiguration()) {
     this.chat = new ChatDatabaseService(poolProvider, authorization);
+    this.budgetDomain = cancellationBudget.domain;
+    this.ledger = new MysqlInvestigationBudgetLedger(poolProvider, cancellationBudget.policy);
   }
 
   storeFor(actor: ActorContext): MysqlInvestigationStore {
-    return new MysqlInvestigationStore(this.poolProvider, this.authorization.forActor(actor));
+    return new MysqlInvestigationStore(this.poolProvider, this.authorization.forActor(actor),
+      (connection, cancellation) => this.cancelBudgetOnConnection(connection, cancellation));
+  }
+
+  private async cancelBudgetOnConnection(connection: TransactionConnection, value: Readonly<InvestigationCancellation>): Promise<void> {
+    const snapshot = typeof value.snapshot === 'string' ? JSON.parse(value.snapshot) : value.snapshot as any;
+    const investigation = value.investigation;
+    if (!snapshot || snapshot.id !== investigation.id || snapshot.sessionId !== investigation.sessionId
+      || snapshot.profileId !== investigation.profileId || snapshot.profileVersion !== investigation.profileVersion
+      || !isDeepStrictEqual(snapshot.actor, value.actor) || !isDeepStrictEqual(snapshot.authority?.actor, value.actor)
+      || snapshot.authority?.investigationId !== investigation.id || snapshot.authority?.sessionId !== investigation.sessionId
+      || !value.messageId || value.job.leaseActive)
+      throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
+    // Run locks come after Job, before the ledger domain, as in the executor.
+    // Any prior Run is conservatively uncertain here, even a reserved allocation:
+    // cancelling a retry must never erase a persisted/unconfirmed provider intent.
+    const [runs] = await connection.execute('SELECT * FROM agent_runs WHERE idempotency_key = ? FOR UPDATE',
+      [`investigation:${value.requestId}`]) as [RowDataPacket[], unknown];
+    for (const run of runs) {
+      const result = typeof run.result_json === 'string' ? JSON.parse(run.result_json) : run.result_json;
+      const execution = result?.investigationExecution;
+      if (run.actor_id !== value.actor.id || run.session_id !== investigation.sessionId || run.message_id !== value.messageId
+        || execution && (execution.requestId !== value.requestId || execution.jobId !== value.job.id
+          || !Number.isSafeInteger(execution.fencingToken) || execution.fencingToken > value.job.fencingToken))
+        throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
+    }
+    const mode = value.actor.kind === 'service' ? 'automatic' : 'manual';
+    if (!snapshot.budgetReceipt) {
+      // A trusted manual request before its first reservation stays compatible.
+      // A removed receipt on either lane is never interpreted as refundable.
+      const [allocations] = await connection.execute('SELECT id FROM investigation_budget_ledger WHERE request_id = ? FOR UPDATE',
+        [value.requestId]) as [RowDataPacket[], unknown];
+      if (mode === 'automatic' || allocations.length) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
+      return;
+    }
+    const reservation = await this.ledger.reuseExecutionInTransaction(connection, value.requestId,
+      { domain: this.budgetDomain, mode, profile: resolveInvestigationProfile(investigation.profileId, investigation.profileVersion) });
+    if (reservation.state === 'settled' || reservation.state === 'cancelled') return;
+    if (!runs.length && reservation.state === 'reserved')
+      await this.ledger.cancelUnsentInTransaction(connection, reservation.id);
+    else await this.ledger.retainUnknownInTransaction(connection, reservation.id);
   }
 
   async create(actor: ActorContext, command: CreateCommand,

@@ -1,3 +1,4 @@
+import { createInvestigationWorkflowHandler } from '../investigations/workflow-handler.js';
 import type { CronCompletion } from '../cron/cron-run-store.js';
 import { createCapacityConsistencyJob } from '../capacity-consistency-monitor.js';
 import type { JobRegistry } from './job-registry.js';
@@ -6,6 +7,7 @@ import { registerNotificationHandlers } from './notification-handlers.js';
 import { registerReportScheduleHandler } from './report-schedule-handler.js';
 
 interface WorkflowHandlerDependencies {
+  investigationEngine?: () => Promise<import('../adapter/types.js').IAgentEngine>;
   faultDiagnosisService: { diagnoseUnhealthyInstances(): Promise<unknown> };
   monitorCollector: { collectCapacityNow(): Promise<unknown> };
   baselineCalculator: { cleanupOldBaselines(): Promise<unknown> };
@@ -29,6 +31,7 @@ function completion(handler: string, data: unknown): CronCompletion | undefined 
 
 /** Register handlers only; server retains service construction and worker lifecycle. */
 export function registerWorkflowHandlers(registry: JobRegistry, deps: WorkflowHandlerDependencies): void {
+  if (deps.investigationEngine) registry.register('investigation.execute', createInvestigationWorkflowHandler(deps.investigationEngine));
   const {
     faultDiagnosisService, monitorCollector, baselineCalculator, alertEngine,
     workflowStore, capacityConsistencyMonitor, notificationScheduler, enqueueNotificationDispatch,

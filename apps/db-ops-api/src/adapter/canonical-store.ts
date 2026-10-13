@@ -1,5 +1,7 @@
 import { dbConnection } from '../db-connection.js';
 import { chatDatabaseService } from '../chat-database-service.js';
+import type { TransactionConnection } from '../workflows/outbox-service.js';
+import { InvestigationAuthorization, type InvestigationAuthoritySnapshot } from '../investigations/authorization.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { memoryHash, readMessageParts, type MemoryInput, type SessionEntry, type MessagePart } from '@slide/agent-core';
 import { persistedMessageParts, recordMessageParts } from './message-parts.js';
@@ -7,6 +9,16 @@ import { persistedMessageParts, recordMessageParts } from './message-parts.js';
 interface Executor { query<T = any>(sql: string, values?: unknown[]): Promise<[T, unknown?]>; }
 interface Connection extends Executor { beginTransaction(): Promise<void>; commit(): Promise<void>; rollback(): Promise<void>; release(): void; }
 interface Pool extends Executor { getConnection(): Promise<Connection>; }
+export interface InvestigationExecutionBinding {
+  investigationId: string; requestId: string; jobId: string; runId: string;
+  workerId: string; fencingToken: number;
+}
+export type InvestigationConnection = TransactionConnection & Executor;
+export interface InvestigationExecutionAccess {
+  sessionId: string; messageId: string; authority: InvestigationAuthoritySnapshot;
+  request: any; run: any; checkpoint: Record<string, unknown> | null;
+}
+const decode = (value: any) => typeof value === 'string' ? JSON.parse(value) : value;
 const MAX_FACTS = 100_000;
 const MAX_FACT_BYTES = 4 * 1024 * 1024;
 function stable(value: unknown): string {
@@ -67,7 +79,8 @@ function advanceTool(old: MessagePart, next: MessagePart): boolean {
  * Existing DB message IDs are already durable: no replacement IDs or double writes.
  */
 export class CanonicalStore {
-  constructor(private readonly poolProvider: () => Pool | null = () => dbConnection.getPool() as unknown as Pool) {}
+  constructor(private readonly poolProvider: () => Pool | null = () => dbConnection.getPool() as unknown as Pool,
+    private readonly authorization = new InvestigationAuthorization()) {}
   private pool(): Pool { const pool = this.poolProvider(); if (!pool) throw new Error('Canonical database unavailable'); return pool; }
 
   async saveCheckpoint(actor: ActorContext, sessionId: string, checkpoint: Record<string, unknown> | null): Promise<void> {
@@ -87,6 +100,20 @@ export class CanonicalStore {
       // Serialize fact writes and verify ownership again inside the transaction.
       const [owners] = await connection.query<any[]>('SELECT session_id FROM chat_sessions WHERE session_id = ? AND user_id = ? FOR UPDATE', [sessionId, actor.userId]);
       if (!owners.length) throw new Error('Chat session not found');
+      await this.writeToolFacts(connection, sessionId, userId, entries, iteration);
+      if (checkpoint) await this.writeCheckpoint(connection, sessionId, checkpoint);
+      await connection.commit();
+    } catch (error) { try { await connection.rollback(); } catch { /* retain original */ } throw error; }
+    finally { connection.release(); }
+  }
+
+  private async writeCheckpoint(connection: Executor, sessionId: string, checkpoint: Record<string, unknown> | null): Promise<void> {
+    await connection.query("UPDATE chat_sessions SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.canonicalRuntimeCheckpoint', CAST(? AS JSON)) WHERE session_id = ?",
+      [JSON.stringify(checkpoint), sessionId]);
+  }
+
+  private async writeToolFacts(connection: Executor, sessionId: string, userId: string, entries: SessionEntry[], iteration: number): Promise<void> {
+    if (!Number.isSafeInteger(iteration) || iteration < 0 || iteration > 100_000 || entries.length > 10_000) throw new Error('INVALID_CANONICAL_ORDINAL');
       const [turns] = await connection.query<any[]>("SELECT id FROM chat_messages WHERE session_id = ? AND message_id = ? AND role = 'user'", [sessionId, userId]);
       if (!turns.length) throw new Error('CANONICAL_TURN_NOT_FOUND');
       const [counts] = await connection.query<any[]>('SELECT COUNT(*) AS total FROM agent_canonical_facts WHERE session_id = ?', [sessionId]);
@@ -139,12 +166,93 @@ export class CanonicalStore {
         await connection.query('INSERT INTO agent_canonical_facts (session_id, message_id, turn_sequence, ordinal, entry_json) VALUES (?, ?, ?, ?, ?)',
           [sessionId, entry.id, turns[0].id, ordinal, json]);
       }
-      if (checkpoint) await connection.query(
-        "UPDATE chat_sessions SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.canonicalRuntimeCheckpoint', CAST(? AS JSON)) WHERE session_id = ? AND user_id = ?",
-        [JSON.stringify(checkpoint), sessionId, actor.userId]);
-      await connection.commit();
-    } catch (error) { try { await connection.rollback(); } catch { /* retain original */ } throw error; }
-    finally { connection.release(); }
+  }
+
+  /** Trusted internal port, on the caller's checked-out transaction. No boolean
+   * authorization receipt is accepted. Locks compose with admission/cancellation;
+   * the Run is locked last and ordinary Chat cannot append to linked Sessions. */
+  async assertInvestigationLease(connection: InvestigationConnection, binding: Omit<InvestigationExecutionBinding, 'runId'>): Promise<void> {
+    const [rows] = await connection.query<any[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND state = 'running'
+      AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW(3) FOR UPDATE`, [binding.jobId,binding.workerId,binding.fencingToken]);
+    if (!rows[0]) throw new Error('INVESTIGATION_FENCE_LOST');
+  }
+
+  async lockInvestigationRequest(connection: InvestigationConnection, caller: ActorContext,
+    binding: Omit<InvestigationExecutionBinding, 'runId'>): Promise<Omit<InvestigationExecutionAccess, 'run'>> {
+    const [locations] = await connection.query<any[]>('SELECT session_id FROM investigations WHERE id = ?', [binding.investigationId]);
+    if (!locations[0]) throw new Error('INVESTIGATION_EXECUTION_INVALID');
+    const sessionId = locations[0].session_id;
+    const [sessions] = await connection.query<any[]>('SELECT * FROM chat_sessions WHERE session_id = ? FOR UPDATE', [sessionId]);
+    const [investigations] = await connection.query<any[]>('SELECT * FROM investigations WHERE id = ? FOR UPDATE', [binding.investigationId]);
+    const investigation = investigations[0];
+    const [requests] = await connection.query<any[]>('SELECT * FROM investigation_requests WHERE id = ? FOR UPDATE', [binding.requestId]);
+    const request = requests[0];
+    if (!sessions[0] || !investigation || investigation.session_id !== sessionId || investigation.active_request_id !== binding.requestId
+      || !request || request.investigation_id !== binding.investigationId || request.job_id !== binding.jobId
+      || request.actor_kind !== (caller.principalKind ?? 'user') || Number(request.actor_id) !== caller.userId
+      || Number(sessions[0].user_id) !== Number(investigation.owner_id) || !request.message_id)
+      throw new Error('INVESTIGATION_EXECUTION_INVALID');
+    const [jobs] = await connection.query<any[]>("SELECT *, lease_expires_at > NOW(3) AS live FROM workflow_jobs WHERE id = ? FOR UPDATE", [binding.jobId]);
+    const job = jobs[0], payload = job && decode(job.payload);
+    if (!job || job.state !== 'running' || !job.live || job.lease_owner !== binding.workerId
+      || Number(job.fencing_token) !== binding.fencingToken || job.job_type !== 'investigation.execute'
+      || payload?.investigationId !== binding.investigationId || payload?.requestId !== binding.requestId)
+      throw new Error('INVESTIGATION_FENCE_LOST');
+    if (request.cancel_requested_at) throw new Error('INVESTIGATION_CANCELLED');
+    const [turns] = await connection.query<any[]>("SELECT id, content FROM chat_messages WHERE session_id = ? AND message_id = ? AND role = 'user'", [sessionId, request.message_id]);
+    const snapshot = decode(request.request_snapshot);
+    if (!turns[0] || turns[0].content !== snapshot.message || snapshot.actor?.kind !== request.actor_kind
+      || snapshot.actor?.id !== Number(request.actor_id) || snapshot.sessionId !== sessionId || !snapshot.authority)
+      throw new Error('INVESTIGATION_EXECUTION_INVALID');
+    const record = await this.authorization.load(connection, binding.investigationId);
+    await this.authorization.authorize(connection, caller, record, 'continue', [], snapshot.authority);
+    await this.assertInvestigationLease(connection,binding);
+    return { sessionId, messageId: request.message_id, authority: snapshot.authority, request,
+      checkpoint: decode(sessions[0].metadata)?.canonicalRuntimeCheckpoint ?? null };
+  }
+  async lockInvestigationExecution(connection: InvestigationConnection, caller: ActorContext,
+    binding: InvestigationExecutionBinding): Promise<InvestigationExecutionAccess> {
+    const access = await this.lockInvestigationRequest(connection, caller, binding);
+    const { sessionId, request } = access;
+    const [runs] = await connection.query<any[]>('SELECT * FROM agent_runs WHERE id = ? FOR UPDATE', [binding.runId]);
+    const run = runs[0];
+    if (!run || run.state !== 'running' || Number(run.actor_id) !== caller.userId || run.session_id !== sessionId
+      || run.message_id !== request.message_id || run.idempotency_key !== `investigation:${request.id}`)
+      throw new Error('INVESTIGATION_RUN_INVALID');
+    await this.assertInvestigationLease(connection,binding);
+    return { ...access, run };
+  }
+
+
+  async appendInvestigationToolFacts(connection: InvestigationConnection, caller: ActorContext,
+    binding: InvestigationExecutionBinding, entries: SessionEntry[], iteration: number, checkpoint?: Record<string, unknown>): Promise<void> {
+    const access = await this.lockInvestigationExecution(connection, caller, binding);
+    if (entries.some(entry => entry.runId !== binding.runId || entry.turnId !== access.messageId)) throw new Error('INVESTIGATION_FACT_BINDING_INVALID');
+    this.assertInvestigationCheckpoint(checkpoint,binding.runId,access.messageId);
+    await this.writeToolFacts(connection, access.sessionId, access.messageId, entries, iteration);
+    if (checkpoint !== undefined) await this.writeCheckpoint(connection, access.sessionId, checkpoint);
+    await this.assertInvestigationLease(connection,binding);
+  }
+
+  async saveInvestigationCheckpoint(connection: InvestigationConnection, caller: ActorContext,
+    binding: InvestigationExecutionBinding, checkpoint: Record<string, unknown> | null): Promise<void> {
+    const access = await this.lockInvestigationExecution(connection, caller, binding);
+    this.assertInvestigationCheckpoint(checkpoint,binding.runId,access.messageId);
+    await this.writeCheckpoint(connection, access.sessionId, checkpoint);
+    await this.assertInvestigationLease(connection,binding);
+  }
+
+  async getInvestigationPage(connection: InvestigationConnection, caller: ActorContext,
+    binding: InvestigationExecutionBinding, limit = 200, before?: string): Promise<{ messages: SessionEntry[]; nextBefore: string | null }> {
+    const access = await this.lockInvestigationExecution(connection, caller, binding);
+    const page = await this.readPage(connection, access.sessionId, limit, before);
+    await this.assertInvestigationLease(connection,binding);
+    return page;
+  }
+
+  private assertInvestigationCheckpoint(checkpoint: Record<string, unknown> | null | undefined, runId: string, turnId: string): void {
+    if (checkpoint && (checkpoint.canonical_run_id !== undefined && checkpoint.canonical_run_id !== runId
+      || checkpoint.canonical_turn_id !== undefined && checkpoint.canonical_turn_id !== turnId)) throw new Error('INVESTIGATION_CHECKPOINT_INVALID');
   }
 
   /** One committed SQL snapshot. Only user statements from durably completed runs.
@@ -169,22 +277,28 @@ export class CanonicalStore {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error('INVALID_CANONICAL_PAGE');
     if (before && !/^\d+:\d+:\d+$/.test(before)) throw new Error('INVALID_CANONICAL_CURSOR');
     await chatDatabaseService.authorizeSession(actor, sessionId, 'history');
+    return this.readPage(this.pool(), sessionId, limit, before, actor);
+  }
+
+  private async readPage(connection: Executor, sessionId: string, limit: number, before?: string, actor?: ActorContext): Promise<{ messages: SessionEntry[]; nextBefore: string | null }> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error('INVALID_CANONICAL_PAGE');
+    if (before && !/^\d+:\d+:\d+$/.test(before)) throw new Error('INVALID_CANONICAL_CURSOR');
     const cursor = before?.split(':').map(Number);
     if (cursor?.some(n => !Number.isSafeInteger(n))) throw new Error('INVALID_CANONICAL_CURSOR');
-    const [rows] = await this.pool().query<any[]>(
+    const [rows] = await connection.query<any[]>(
       `SELECT history.* FROM (
          SELECT cm.id AS tie, cm.message_id, cm.role, cm.content, cm.created_at, cm.metadata, NULL AS entry_json,
            COALESCE((SELECT u.id FROM chat_messages u WHERE u.session_id = cm.session_id AND u.message_id = cm.parent_id AND u.role = 'user'), (SELECT MAX(u.id) FROM chat_messages u WHERE u.session_id = cm.session_id AND u.role = 'user' AND u.id <= cm.id), cm.id) AS turn_sequence,
            CASE WHEN cm.role = 'user' THEN 0 ELSE ${FINAL_ORDINAL} + cm.id END AS ordinal
          FROM chat_messages cm JOIN chat_sessions cs ON cs.session_id = cm.session_id
-         WHERE cm.session_id = ? AND (cs.user_id = ? OR EXISTS (SELECT 1 FROM chat_session_shares sh WHERE sh.session_id = cs.session_id AND sh.recipient_user_id = ? AND sh.permission = 'read'))
+         WHERE cm.session_id = ? ${actor ? "AND (cs.user_id = ? OR EXISTS (SELECT 1 FROM chat_session_shares sh WHERE sh.session_id = cs.session_id AND sh.recipient_user_id = ? AND sh.permission = 'read'))" : ''}
          UNION ALL
          SELECT f.id, f.message_id, NULL, NULL, NULL, NULL, f.entry_json, f.turn_sequence, f.ordinal
          FROM agent_canonical_facts f JOIN chat_sessions cs ON cs.session_id = f.session_id
-         WHERE f.session_id = ? AND (cs.user_id = ? OR EXISTS (SELECT 1 FROM chat_session_shares sh WHERE sh.session_id = cs.session_id AND sh.recipient_user_id = ? AND sh.permission = 'read'))
+         WHERE f.session_id = ? ${actor ? "AND (cs.user_id = ? OR EXISTS (SELECT 1 FROM chat_session_shares sh WHERE sh.session_id = cs.session_id AND sh.recipient_user_id = ? AND sh.permission = 'read'))" : ''}
        ) history ${cursor ? 'WHERE (turn_sequence, ordinal, tie) < (?, ?, ?)' : ''}
        ORDER BY turn_sequence DESC, ordinal DESC, tie DESC LIMIT ?`,
-      [sessionId, actor.userId, actor.userId, sessionId, actor.userId, actor.userId, ...(cursor ?? []), limit + 1]);
+      [sessionId, ...(actor ? [actor.userId, actor.userId] : []), sessionId, ...(actor ? [actor.userId, actor.userId] : []), ...(cursor ?? []), limit + 1]);
     const page = rows.slice(0, limit);
     return { nextBefore: rows.length > limit ? `${page.at(-1).turn_sequence}:${page.at(-1).ordinal}:${page.at(-1).tie}` : null,
       messages: page.reverse().map(row => {

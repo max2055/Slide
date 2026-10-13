@@ -198,6 +198,7 @@ function chatSessionId(raw: string): string {
 // ── DirectAdapter Options ──
 
 export interface DirectAdapterOptions {
+  investigationExecutor?: import('../investigations/executor.js').InvestigationExecutor;
   /** Opt in to existing concurrencySafe batch scheduling; serial remains default. */
   concurrentTools?: boolean;
   tools: ToolRegistry;
@@ -224,6 +225,21 @@ export interface DirectAdapterOptions {
 
 export class DirectAdapter implements IAgentEngine {
   private readonly concurrentTools: boolean;
+  private investigationExecutor?: import('../investigations/executor.js').InvestigationExecutor;
+
+  configureInvestigationExecutor(executor: import('../investigations/executor.js').InvestigationExecutor): void {
+    if (this.investigationExecutor && this.investigationExecutor !== executor) throw new Error('INVESTIGATION_EXECUTOR_ALREADY_CONFIGURED');
+    this.investigationExecutor = executor;
+  }
+
+  async executeInvestigation(command: import('../investigations/executor.js').InvestigationExecuteCommand): Promise<import('./agent-run-service.js').AgentRun> {
+    if (!this.investigationExecutor || !this.toolsForActor) throw new Error('INVESTIGATION_EXECUTOR_UNAVAILABLE');
+    return this.investigationExecutor.execute(command, {
+      providerForPurpose: purpose => this.providerForPurpose ? this.providerForPurpose(purpose) : Promise.resolve(this.provider),
+      toolsForActor: actor => this.toolsForActor!(actor),
+    });
+  }
+
   private runner: AgentRunner;
   private readonly socketWriter: BoundedSocketWriter;
   private readonly streamingLimits?: import('@slide/agent-core').StreamingLimits;
@@ -269,6 +285,7 @@ export class DirectAdapter implements IAgentEngine {
     this.socketWriter = new BoundedSocketWriter(opts.socketWriteLimits, code => {
       platformLogs.record({ component: 'ws', eventType: 'stream.delivery_failed', status: 'failed', errorCode: code });
     });
+    this.investigationExecutor = opts.investigationExecutor;
     this.providerForPurpose = opts.providerForPurpose;
     this.registry = opts.tools;
     this.toolsForActor = opts.toolsForActor;

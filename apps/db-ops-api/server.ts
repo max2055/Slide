@@ -1,3 +1,5 @@
+import { investigationBudgetConfiguration } from './src/investigations/session-bridge.js';
+import { InvestigationExecutor } from './src/investigations/executor.js';
 import { instanceHistoryContext } from './src/resources/instance-history-context.js';
 import { InstanceRemovalResponseSchema } from './src/contracts/public-api.js';
 import { instanceRemovalStore, instanceRemovalService } from './src/resources/instance-removal-service.js';
@@ -144,7 +146,7 @@ import { CronManager } from './src/cron/cron-manager';
 import { CronExecutor } from './src/cron/cron-executor';
 import { CronJob } from 'cron';
 import { registerCronRoutes } from './src/cron/cron-routes.js';
-import { getAgentEngine, createCronToolRegistry, createLLMProvider } from './src/adapter/get-agent-engine.js';
+import { createLLMProvider, createActorBoundToolRegistry, getAgentEngine, createCronToolRegistry } from './src/adapter/get-agent-engine.js';
 import { DirectAdapter } from './src/adapter/direct-adapter.js';
 import { AgentRunner } from '@slide/agent-core';
 import { agentManagementService } from './src/agent-management-service.js';
@@ -5533,7 +5535,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     consistencyChecker,
     alertDatabaseService,
   );
+  engine!.configureInvestigationExecutor?.(new InvestigationExecutor({
+    pool: () => dbConnection.getPool(), providerForPurpose: createLLMProvider, toolsForActor: createActorBoundToolRegistry,
+    budget: investigationBudgetConfiguration(),
+  }));
   registerWorkflowHandlers(workflowRegistry, {
+    investigationEngine: getAgentEngine,
     faultDiagnosisService, monitorCollector, baselineCalculator, alertEngine,
     workflowStore, capacityConsistencyMonitor, notificationScheduler, enqueueNotificationDispatch,
     reportSchedule: {

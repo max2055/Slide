@@ -1,3 +1,5 @@
+import type { ActorContext } from '../auth/actor-context.js';
+import { CanonicalStore, type InvestigationConnection, type InvestigationExecutionBinding } from './canonical-store.js';
 import { randomUUID } from 'node:crypto';
 import { dbConnection } from '../db-connection.js';
 import type { CompleteEvent } from './types.js';
@@ -16,6 +18,10 @@ interface CompletionResult { completionPending?: boolean; event: CompleteEvent; 
 // mysql2 decodes JSON columns by default, including scalar strings. Read their
 // serialized form explicitly so map() never parses an already-decoded string.
 const runColumns = '*, CAST(result_json AS CHAR) AS result_json, CAST(error_json AS CHAR) AS error_json';
+// Dispatch ownership is a persisted binding, not an arbitrary client key prefix.
+const ordinaryRun = `NOT EXISTS (SELECT 1 FROM investigation_requests ir
+  WHERE agent_runs.idempotency_key = CONCAT('investigation:', ir.id)
+  AND agent_runs.actor_id = ir.actor_id AND agent_runs.message_id = ir.message_id)`;
 
 export class AgentRunService {
   constructor(private readonly poolProvider: () => Pool | null = () => dbConnection.getPool() as unknown as Pool | null) {}
@@ -39,6 +45,126 @@ export class AgentRunService {
     return { created: row.id === id, run: this.map(row) };
   }
 
+  /** Investigation Run creation shares the request/job transaction and retains
+   * the admitted actor and user message; Session owner is never impersonated. */
+  async claimInvestigation(connection: InvestigationConnection, canonical: CanonicalStore, actor: ActorContext,
+    binding: Omit<InvestigationExecutionBinding, 'runId'>): Promise<AgentRun> {
+    const access = await canonical.lockInvestigationRequest(connection, actor, binding);
+    const id = randomUUID();
+    await connection.query(`INSERT INTO agent_runs (id, actor_id, session_id, message_id, idempotency_key, state, expires_at)
+      VALUES (?, ?, ?, ?, ?, 'running', DATE_ADD(NOW(), INTERVAL 24 HOUR)) ON DUPLICATE KEY UPDATE id = id`,
+      [id, actor.userId, access.sessionId, access.messageId, `investigation:${binding.requestId}`]);
+    const [rows] = await connection.query<any[]>(`SELECT ${runColumns} FROM agent_runs WHERE actor_id = ? AND idempotency_key = ? FOR UPDATE`,
+      [actor.userId, `investigation:${binding.requestId}`]);
+    if (!rows[0] || rows[0].session_id !== access.sessionId || rows[0].message_id !== access.messageId) throw new Error('INVESTIGATION_RUN_INVALID');
+    await canonical.assertInvestigationLease(connection,binding);
+    return this.map(rows[0]);
+  }
+
+  async rejectInvestigationRequest(connection: InvestigationConnection, actor: ActorContext,
+    binding: Omit<InvestigationExecutionBinding, 'runId'>, reasonCode: string): Promise<AgentRun> {
+    const [locations] = await connection.query<any[]>('SELECT session_id FROM investigations WHERE id = ?', [binding.investigationId]);
+    if (!locations[0]) throw new Error('INVESTIGATION_EXECUTION_INVALID');
+    const sessionId = locations[0].session_id;
+    await connection.query('SELECT session_id FROM chat_sessions WHERE session_id = ? FOR UPDATE', [sessionId]);
+    const [investigations] = await connection.query<any[]>('SELECT * FROM investigations WHERE id = ? FOR UPDATE', [binding.investigationId]);
+    const [requests] = await connection.query<any[]>('SELECT * FROM investigation_requests WHERE id = ? FOR UPDATE', [binding.requestId]);
+    const request=requests[0];
+    if (!request || request.investigation_id !== binding.investigationId || request.job_id !== binding.jobId || !request.message_id
+      || request.actor_kind !== (actor.principalKind ?? 'user') || Number(request.actor_id) !== actor.userId
+      || investigations[0]?.active_request_id !== binding.requestId) throw new Error('INVESTIGATION_EXECUTION_INVALID');
+    const [jobs] = await connection.query<any[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND state = 'running'
+      AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW(3) FOR UPDATE`, [binding.jobId,binding.workerId,binding.fencingToken]);
+    if(!jobs[0]) throw new Error('INVESTIGATION_FENCE_LOST');
+    const id=randomUUID();
+    await connection.query(`INSERT INTO agent_runs (id, actor_id, session_id, message_id, idempotency_key, state, expires_at)
+      VALUES (?, ?, ?, ?, ?, 'running', DATE_ADD(NOW(),INTERVAL 24 HOUR)) ON DUPLICATE KEY UPDATE id = id`,
+      [id,actor.userId,sessionId,request.message_id,`investigation:${binding.requestId}`]);
+    const [runs] = await connection.query<any[]>('SELECT id FROM agent_runs WHERE actor_id = ? AND idempotency_key = ? FOR UPDATE',[actor.userId,`investigation:${binding.requestId}`]);
+    return this.terminateInvestigation(connection,actor,{...binding,runId:runs[0].id},'failed',reasonCode);
+  }
+
+  async stageInvestigationCompletion(connection: InvestigationConnection, canonical: CanonicalStore,
+    actor: ActorContext, binding: InvestigationExecutionBinding, event: CompleteEvent): Promise<void> {
+    this.assertCompletion(event);
+    const access = await canonical.lockInvestigationExecution(connection, actor, binding);
+    const current = typeof access.run.result_json === 'string' ? JSON.parse(access.run.result_json) : access.run.result_json;
+    if (current?.completionPending) {
+      if (JSON.stringify(current.event) !== JSON.stringify(event)) throw new Error('Completion message conflict');
+      return;
+    }
+    await connection.query(`UPDATE agent_runs SET result_json = ?, error_json = ? WHERE id = ? AND state = 'running'`,
+      [JSON.stringify({ ...current, completionPending: true, event, stopReason: 'completed' }),
+        JSON.stringify({ code: 'COMPLETION_PENDING', retryable: true }), binding.runId]);
+    await canonical.assertInvestigationLease(connection,binding);
+  }
+
+  async recoverInvestigationCompletion(connection: InvestigationConnection, canonical: CanonicalStore,
+    actor: ActorContext, binding: InvestigationExecutionBinding): Promise<AgentRun> {
+    const access = await canonical.lockInvestigationExecution(connection, actor, binding);
+    const current = this.map(access.run), result = current.result as CompletionResult;
+    if (!result?.completionPending) throw new Error('INVESTIGATION_COMPLETION_NOT_STAGED');
+    this.assertCompletion(result.event);
+    const event = { ...result.event }, messageId = `run_${binding.runId}_assistant`;
+    const content = event.finalContent ?? '';
+    const acknowledged = persistedMessageParts({ id: messageId, role: 'assistant', content,
+      runId: binding.runId, turnId: access.messageId }).messageParts!;
+    acknowledged.runTerminal = 'completed'; event.messageParts = acknowledged;
+    await connection.query(`INSERT INTO chat_messages (session_id, message_id, role, content, parent_id, metadata)
+      VALUES (?, ?, 'assistant', ?, ?, ?) ON DUPLICATE KEY UPDATE message_id = message_id`,
+      [access.sessionId, messageId, content, access.messageId, JSON.stringify({ canonicalRunId: binding.runId,
+        canonicalTurnId: access.messageId, messageParts: acknowledged })]);
+    const [messages] = await connection.query<any[]>('SELECT id, content, parent_id FROM chat_messages WHERE session_id = ? AND message_id = ?', [access.sessionId,messageId]);
+    if (!messages[0] || messages[0].content !== content || messages[0].parent_id !== access.messageId) throw new Error('Completion message conflict');
+    event.messageSequence = Number(messages[0].id);
+    const committed = { ...current.result as object, completionPending: false, event, stopReason: 'completed' };
+    await connection.query("UPDATE agent_runs SET state = 'completed', result_json = ?, error_json = NULL, finished_at = NOW() WHERE id = ? AND state = 'running'", [JSON.stringify(committed),binding.runId]);
+    await connection.query(`UPDATE chat_sessions SET message_count = (SELECT COUNT(*) FROM chat_messages WHERE session_id = ?),
+      last_message_at = (SELECT MAX(created_at) FROM chat_messages WHERE session_id = ?),
+      metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.canonicalRuntimeCheckpoint', CAST('null' AS JSON)) WHERE session_id = ?`, [access.sessionId,access.sessionId,access.sessionId]);
+    await connection.query("UPDATE investigations SET active_request_id = NULL, lifecycle = 'waiting', version = version + 1 WHERE id = ? AND active_request_id = ?", [binding.investigationId,binding.requestId]);
+    await canonical.assertInvestigationLease(connection,binding);
+    return { ...current,state:'completed',result:committed,error:null };
+  }
+
+  /** Terminal failure/cancel after withdrawal requires no content access. Only
+   * the persisted request actor and current job owner may close this exact Run.
+   * Lock order matches admission/complete: Session -> Investigation -> Request -> Job -> Run. */
+  async terminateInvestigation(connection: InvestigationConnection, actor: ActorContext,
+    binding: InvestigationExecutionBinding, state: Exclude<AgentRunState, 'running' | 'completed'>,
+    reasonCode: string): Promise<AgentRun> {
+    const [locations] = await connection.query<any[]>('SELECT session_id FROM investigations WHERE id = ?', [binding.investigationId]);
+    if (!locations[0]) throw new Error('INVESTIGATION_EXECUTION_INVALID');
+    const sessionId = locations[0].session_id;
+    await connection.query('SELECT session_id FROM chat_sessions WHERE session_id = ? FOR UPDATE', [sessionId]);
+    const [investigations] = await connection.query<any[]>('SELECT * FROM investigations WHERE id = ? FOR UPDATE', [binding.investigationId]);
+    const [requests] = await connection.query<any[]>('SELECT * FROM investigation_requests WHERE id = ? FOR UPDATE', [binding.requestId]);
+    const request = requests[0];
+    if (!request || request.investigation_id !== binding.investigationId || request.job_id !== binding.jobId
+      || Number(request.actor_id) !== actor.userId || request.actor_kind !== (actor.principalKind ?? 'user')) throw new Error('INVESTIGATION_EXECUTION_INVALID');
+    const [jobs] = await connection.query<any[]>("SELECT *, lease_expires_at > NOW(3) AS live FROM workflow_jobs WHERE id = ? FOR UPDATE", [binding.jobId]);
+    const job=jobs[0];
+    if (!job || job.state !== 'running' || !job.live || job.lease_owner !== binding.workerId || Number(job.fencing_token) !== binding.fencingToken) throw new Error('INVESTIGATION_FENCE_LOST');
+    const [rows] = await connection.query<any[]>(`SELECT ${runColumns} FROM agent_runs WHERE id = ? FOR UPDATE`, [binding.runId]);
+    if (!rows[0] || rows[0].session_id !== sessionId || rows[0].message_id !== request.message_id
+      || Number(rows[0].actor_id) !== actor.userId || rows[0].idempotency_key !== `investigation:${binding.requestId}`) throw new Error('INVESTIGATION_RUN_INVALID');
+    const run = this.map(rows[0]);
+    if (run.state !== 'running') return run;
+    if (investigations[0].active_request_id !== binding.requestId) throw new Error('INVESTIGATION_EXECUTION_INVALID');
+    const terminal = request.cancel_requested_at ? 'cancelled' : state;
+    const result = { ...run.result as object, completionPending: false,
+      resolution: { kind: terminal === 'partial' ? 'partial' : terminal, reasonCode, retryable: false } };
+    // A cancelled/withdrawn staged answer never becomes observable content.
+    delete (result as any).event;
+    await connection.query(`UPDATE agent_runs SET state = ?, result_json = ?, error_json = ?, finished_at = NOW() WHERE id = ? AND state = 'running'`,
+      [terminal,JSON.stringify(result),JSON.stringify({reasonCode}),binding.runId]);
+    await connection.query("UPDATE investigations SET active_request_id = NULL, lifecycle = 'waiting', version = version + 1 WHERE id = ? AND active_request_id = ?", [binding.investigationId,binding.requestId]);
+    await connection.query("UPDATE chat_sessions SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.canonicalRuntimeCheckpoint', CAST('null' AS JSON)) WHERE session_id = ?", [sessionId]);
+    const [live] = await connection.query<any[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND state = 'running' AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW(3) FOR UPDATE`, [binding.jobId,binding.workerId,binding.fencingToken]);
+    if(!live[0]) throw new Error('INVESTIGATION_FENCE_LOST');
+    return { ...run,state:terminal,result,error:{reasonCode} };
+  }
+
   async findByIdempotencyKey(actorId: number, idempotencyKey: string): Promise<AgentRun | null> {
     const [rows] = await this.requirePool().query<any[]>(
       `SELECT ${runColumns} FROM agent_runs WHERE actor_id = ? AND idempotency_key = ?`,
@@ -50,10 +176,12 @@ export class AgentRunService {
   // Persist the answer before attempting the atomic message + terminal commit.
   // A replay can finish this intent even after the originating process exits.
   async complete(run: AgentRun, event: CompleteEvent): Promise<AgentRun> {
+    await this.assertOrdinaryRun(this.requirePool(),run);
     this.assertCompletion(event);
     await this.requirePool().query(
       `UPDATE agent_runs SET result_json = ?, error_json = ?
-       WHERE id = ? AND actor_id = ? AND session_id = ? AND state = 'running' AND result_json IS NULL`,
+       WHERE id = ? AND actor_id = ? AND session_id = ? AND state = 'running' AND result_json IS NULL
+       AND ${ordinaryRun}`,
       [JSON.stringify({ completionPending: true, event, stopReason: 'completed' }),
         JSON.stringify({ code: 'COMPLETION_PENDING', retryable: true }), run.id, run.actorId, run.sessionId],
     );
@@ -65,12 +193,13 @@ export class AgentRunService {
   async failUnstagedCompletion(id: string): Promise<void> {
     await this.requirePool().query(
       `UPDATE agent_runs SET state = 'failed', error_json = ?, finished_at = NOW()
-       WHERE id = ? AND state = 'running' AND result_json IS NULL`,
+       WHERE id = ? AND state = 'running' AND result_json IS NULL AND ${ordinaryRun}`,
       [JSON.stringify({ code: 'COMPLETION_STORAGE_FAILED', retryable: true }), id],
     );
   }
 
   async recoverCompletion(run: AgentRun): Promise<AgentRun> {
+    await this.assertOrdinaryRun(this.requirePool(),run);
     if (run.state !== 'running' || !(run.result as CompletionResult | undefined)?.completionPending) return run;
     const pool = this.requirePool();
     if (!pool.getConnection) throw new Error('Completion requires a database transaction');
@@ -83,6 +212,7 @@ export class AgentRunService {
       );
       if (!rows[0]) throw new Error('Agent run not found');
       const current = this.map(rows[0]);
+      await this.assertOrdinaryRun(connection,current);
       const result = current.result as CompletionResult;
       if (current.state !== 'running' || !result?.completionPending) {
         await connection.commit();
@@ -149,6 +279,7 @@ export class AgentRunService {
   async pendingCompletions(actorId: number, sessionId: string): Promise<AgentRun[]> {
     const [rows] = await this.requirePool().query<any[]>(
       `SELECT ${runColumns} FROM agent_runs WHERE actor_id = ? AND session_id = ? AND state = 'running'
+       AND ${ordinaryRun}
        AND JSON_EXTRACT(result_json, '$.completionPending') = true ORDER BY created_at LIMIT 100`,
       [actorId, sessionId],
     );
@@ -161,11 +292,19 @@ export class AgentRunService {
     const [outcome] = await this.requirePool().query<{ affectedRows: number }>(
       `UPDATE agent_runs SET state = ?, result_json = ?, error_json = ?, finished_at = NOW()
        WHERE id = ? AND state = 'running'
+       AND ${ordinaryRun}
        AND (result_json IS NULL OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(result_json, '$.completionPending')), 'false') <> 'true')`,
       [state, result == null ? null : JSON.stringify(result), error == null ? null : JSON.stringify(error), id],
     );
     if (Number(outcome.affectedRows) === 1) platformLogs.record({ component: 'agent', eventType: 'run.' + state, status: state === 'failed' || state === 'timed_out' ? 'failed' : 'unknown', correlationId: id });
     return Number(outcome.affectedRows) === 1;
+  }
+
+  private async assertOrdinaryRun(executor: Executor, run: AgentRun): Promise<void> {
+    if (!run.idempotencyKey.startsWith('investigation:')) return;
+    const [bound] = await executor.query<any[]>(`SELECT id FROM investigation_requests
+      WHERE id = ? AND actor_id = ? AND message_id = ?`, [run.idempotencyKey.slice('investigation:'.length),run.actorId,run.messageId]);
+    if (bound[0]) throw new Error('INVESTIGATION_EXECUTION_REQUIRED');
   }
 
   private assertCompletion(event: CompleteEvent): void {
@@ -188,7 +327,7 @@ export class AgentRunService {
     // success intent so a cancelled replay cannot advertise pending completion.
     const [outcome] = await this.requirePool().query<{ affectedRows: number }>(
       `UPDATE agent_runs SET state = 'cancelled', result_json = NULL, finished_at = NOW(), error_json = ?
-       WHERE id = ? AND actor_id = ? AND session_id = ? AND state = 'running'`,
+       WHERE id = ? AND actor_id = ? AND session_id = ? AND state = 'running' AND ${ordinaryRun}`,
       [JSON.stringify({ reasonCode: 'CANCELLED_BY_ACTOR' }), id, actorId, sessionId],
     );
     return Number(outcome.affectedRows) === 1;
