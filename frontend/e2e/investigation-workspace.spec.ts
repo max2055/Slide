@@ -217,6 +217,80 @@ test('ordinary authorized observation has no idempotency storage errors', async 
   expect(env.observationErrors).toEqual([]);
 });
 
+for (const entry of ['creation', 'conversion'] as const) {
+  test(`HTTP-only resource revocation clears ${entry} drafts without a watch`, async ({ page }) => {
+    await login(page);
+    const service = (await import('../../apps/db-ops-api/src/chat-database-service.js')).chatDatabaseService;
+    const session = entry === 'conversion' ? await service.createSession(env.owner, { title: 'HTTP撤权转换' }) : undefined;
+    const messageId = crypto.randomUUID();
+    if (session) await service.addMessage(env.owner, session.session_id, { messageId, role: 'user', content: '撤权前的原消息' });
+    await page.goto(`${env.url}/${session ? `chat?session=${session.session_id}` : 'investigations'}`);
+    await page.getByRole('button', { name: session ? '转为调查' : '创建手动调查', exact: true }).click();
+    for (const [name, value] of [['调查标题', 'HTTP sensitive title'], ['调查目标', 'HTTP sensitive goal'], ['资源 ID', '101']]) {
+      await page.getByRole('textbox', { name, exact: true }).fill(value);
+    }
+    await page.getByLabel('观察开始时间', { exact: true }).fill('2026-10-12T00:00');
+    await page.getByLabel('观察结束时间', { exact: true }).fill('2026-10-12T00:10');
+    await page.evaluate(() => (window as any).httpForm = document.querySelector('investigation-create'));
+    try {
+      const [before] = await env.pool.query('SELECT COUNT(*) n FROM investigations');
+      await env.pool.query('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=101');
+      const rejected = page.waitForResponse(r => r.url().endsWith('/api/investigations') && r.request().method() === 'POST');
+      await page.getByRole('button', { name: '提交调查', exact: true }).click();
+      const response = await rejected; expect(response.status()).toBe(404);
+      expect((await response.json()).error).toBe('INVESTIGATION_NOT_FOUND');
+      await expect.poll(() => page.evaluate(() => (window as any).httpForm.controller.busy)).toBe(false);
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      expect(await page.evaluate(() => {
+        const f = (window as any).httpForm;
+        return [f.open, f.investigationTitle, f.goal, f.ids, f.from, f.to, f.validation, f.controller.acceptanceUnknown];
+      })).toEqual([false, '', '', '', '', '', '', false]);
+      const [after] = await env.pool.query('SELECT COUNT(*) n FROM investigations'); expect(after).toEqual(before);
+      if (session) {
+        await expect(page).toHaveURL(new RegExp(`session=${session.session_id}`));
+        const [messages] = await env.pool.query('SELECT message_id,content FROM chat_messages WHERE session_id=?', [session.session_id]);
+        expect(messages).toEqual([{ message_id: messageId, content: '撤权前的原消息' }]);
+      } else await expect(page).toHaveURL(`${env.url}/investigations`);
+    } finally { await env.pool.query("INSERT IGNORE INTO instance_permissions (user_id,instance_id,access_level) VALUES (101,101,'read-only')"); }
+  });
+}
+
+test('Profiles settings consumes readonly facts, responds to live SQL rejection and fits all widths', async ({ page }) => {
+  await env.pool.query("INSERT IGNORE INTO role_permissions (role_id,permission_id) SELECT 101,id FROM permissions WHERE code='ai:view'");
+  const actor = await env.contexts.loadActiveActor(101);
+  await login(page);
+  await page.addInitScript(permissions => localStorage.setItem('permissions', JSON.stringify(permissions)), actor.permissions);
+  try {
+    await page.goto(`${env.url}/settings/ai/profiles`);
+    const profiles = page.locator('investigation-profiles-page');
+    await expect(profiles.getByRole('heading', { name: '调查 Profiles', exact: true })).toBeVisible();
+    const response = await page.request.get(`${env.url}/api/investigation-profiles`, { headers: { Authorization: `Bearer ${env.token(actor)}` } });
+    expect(response.status()).toBe(200); expect(response.headers()['cache-control']).toContain('no-store');
+    const facts = await response.json();
+    for (const item of facts.items) {
+      const card = profiles.locator(`[data-profile="${item.profile.id}"]`);
+      await expect(card).toContainText(item.profileHash);
+      await expect(card).toContainText(item.profile.responsibility);
+      await expect(card).toContainText(item.profile.prompt.hash);
+      for (const tool of item.profile.toolAllowlist) await expect(card).toContainText(tool);
+    }
+    await expect(profiles).toContainText('尚未评估'); await expect(profiles).toContainText('有效预算');
+    for (const width of [1600, 1024, 390]) {
+      await page.setViewportSize({ width, height: 950 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: `test-results/t06-profiles-${width}.png`, fullPage: true });
+    }
+    await env.pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=101 AND p.code='ai:view'");
+    const denied = page.waitForResponse(r => r.url().endsWith('/api/investigation-profiles'));
+    await profiles.getByRole('button', { name: '刷新 Profiles', exact: true }).click();
+    expect((await denied).status()).toBe(403);
+    await expect(profiles).toContainText('无权访问');
+    await expect(profiles.locator('[data-profile]')).toHaveCount(0);
+    expect(await profiles.evaluate((element: any) => element.facts)).toBeNull();
+    await page.reload(); await expect(page.locator('[data-profile]')).toHaveCount(0);
+  } finally { await env.pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=101 AND p.code='ai:view'"); }
+});
+
 test('no chat:view deep link performs no investigation reads', async ({ page }) => {
   await login(page);
   await page.route('**/api/auth/permissions', route => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));

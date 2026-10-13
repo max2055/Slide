@@ -13,6 +13,7 @@ import { registerChatRoutes } from '../../../apps/db-ops-api/src/chat-routes.js'
 import { InvestigationAuthorization } from '../../../apps/db-ops-api/src/investigations/authorization.js';
 import { InvestigationSessionBridge, investigationBudgetConfiguration } from '../../../apps/db-ops-api/src/investigations/session-bridge.js';
 import { registerInvestigationRoutes } from '../../../apps/db-ops-api/src/investigations/routes.js';
+import { registerInvestigationProfileRoutes } from '../../../apps/db-ops-api/src/investigations/profile-routes.js';
 import { InvestigationStreamStore, InvestigationWatchService } from '../../../apps/db-ops-api/src/investigations/stream.js';
 import { InvestigationExecutor } from '../../../apps/db-ops-api/src/investigations/executor.js';
 import { DirectAdapter } from '../../../apps/db-ops-api/src/adapter/direct-adapter.js';
@@ -134,6 +135,7 @@ export async function startInvestigationServer() {
     if (!wsServer.address()) await new Promise<void>(r => wsServer.once('listening', r));
     const verify = createVerifyToken(secret, contexts);
     await registerInvestigationRoutes(app, verify, bridge);
+    await registerInvestigationProfileRoutes(app, verify);
     await registerChatRoutes(app, { verifyToken: verify, service: chatDatabaseService, handleChatSend: async () => { throw new Error('USE_REAL_WS_CHAT'); } });
     app.get('/api/auth/permissions', { preHandler: verify }, async (request: any) => request.user.permissions);
     app.get('/api/agents', { preHandler: verify }, async () => ({ defaultId: 'main', agents: [{ id: 'main', name: 'Fixture' }] }));

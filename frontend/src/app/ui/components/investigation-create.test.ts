@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { InvestigationCreate } from './investigation-create.ts';
-import { investigationApi } from '../controllers/investigation-api.ts';
+import { investigationApi, InvestigationApiError } from '../controllers/investigation-api.ts';
 vi.mock('../controllers/investigation-api.ts', async importOriginal => ({ ...await importOriginal<object>(), investigationApi: vi.fn() }));
 afterEach(() => { document.body.replaceChildren(); vi.clearAllMocks(); });
 async function form() {
@@ -30,4 +30,28 @@ it('authority withdrawal ignores a late accepted create instead of navigating to
   window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: [] } }));
   release({ id: 'sensitive' }); await pending; await view.updateComplete;
   expect(created).not.toHaveBeenCalled(); expect(view.open).toBe(false);
+});
+it.each([401, 403, 404])('HTTP %s reading authority rejection erases the independent form draft', async status => {
+  vi.mocked(investigationApi).mockRejectedValue(new InvestigationApiError(status, 'INVESTIGATION_NOT_FOUND'));
+  const view = await form(), created = vi.fn(); view.addEventListener('investigation-created', created);
+  await (view as any).submit(); await view.updateComplete;
+  expect(view.open).toBe(false);
+  for (const input of view.querySelectorAll('input,textarea')) expect((input as HTMLInputElement).value).toBe('');
+  expect(created).not.toHaveBeenCalled();
+});
+it('operator-only rejection keeps readable drafts and does not navigate', async () => {
+  vi.mocked(investigationApi).mockRejectedValue(new InvestigationApiError(403, 'INVESTIGATION_OPERATION_FORBIDDEN'));
+  const view = await form(); await (view as any).submit(); await view.updateComplete;
+  expect(view.open).toBe(true);
+  expect((view.querySelector('[aria-label="调查目标"]') as HTMLInputElement).value).toBe('sensitive goal');
+  expect(view.querySelector('[role="alert"]')?.textContent).toContain('操作权限');
+});
+it('unknown acceptance retries the same body and idempotency key', async () => {
+  vi.mocked(investigationApi).mockRejectedValueOnce(new InvestigationApiError(503, 'INVESTIGATION_QUEUE_UNAVAILABLE')).mockResolvedValueOnce({ id: 'accepted' });
+  const view = await form(); await (view as any).submit(); await view.updateComplete;
+  expect(view.open).toBe(true);
+  expect((view.querySelector('[aria-label="调查目标"]') as HTMLInputElement).value).toBe('sensitive goal');
+  await (view as any).submit();
+  const [first, retry] = vi.mocked(investigationApi).mock.calls;
+  expect(retry).toEqual(first);
 });
