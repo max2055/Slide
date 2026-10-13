@@ -7,6 +7,7 @@ import { InvestigationHttpSchemas } from '../investigations/http-contracts.js';
 import { InvestigationSchemas } from '../investigations/contracts.js';
 import { InvestigationObservationSchemas } from '../investigations/observation-contracts.js';
 import { InvestigationProfileSchemas } from '../investigations/profile-contracts.js';
+import { InvestigationGovernanceSchemas } from '../investigations/governance-contracts.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const openApiPath = resolve(root, 'docs/slide/openapi.json');
@@ -39,6 +40,18 @@ export function buildOpenApiDocument() {
     openapi: '3.1.0',
     info: { title: 'Slide Public API', version: '0.10' },
     paths: {
+      ...Object.fromEntries(['policies', 'budget', 'usage'].map(kind => {
+        const name = kind === 'policies' ? 'InvestigationPoliciesResponse' : kind === 'budget' ? 'InvestigationBudgetResponse' : 'InvestigationUsageResponse';
+        return [`/api/investigation-${kind}`, { get: {
+          operationId: `getInvestigation${kind[0].toUpperCase()}${kind.slice(1)}`, security: [{ bearerAuth: [] }],
+          description: `Readonly governance facts. Requires live ai:view${kind === 'policies' ? '' : ' AND config:manage (global configuration management, not resource-scoped access)'}. Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. ${kind === 'policies' ? 'No production registry: not_configured/not_connected with empty items; investigation_engine persists only.' : kind === 'budget' ? 'Current investigationBudgetConfiguration plus persisted policy matching/conflict; does not initialize domains. Profile ceilings are at /api/investigation-profiles; automatic trigger not connected.' : 'All-history persisted ledger AGGREGATES ONLY, grouped by currency/state/mode; no individual ledger or resource identifiers. Offset pagination of groups after authorization, total counts reservations and groupCount counts groups; concurrent writes can shift pages. Counts cover every state. Costs grouped by currency, rate estimates only, never provider invoices. Input includes cached input; unknown or missing rates retain allowance, not zero.'}`,
+          ...(kind === 'usage' ? { parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50, default: 20 } },
+            { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, maximum: 200000, default: 0 } }] } : {}),
+          responses: { '200': { description: 'Actual configuration or durable facts; no read-side writes', content: { 'application/json': { schema: refSchema(InvestigationGovernanceSchemas[name]) } } },
+            '400': { description: 'Invalid or unsupported query' }, '401': { description: 'Invalid or revoked identity' },
+            '403': { description: 'Missing live governance authorization' }, '503': { description: 'Facts unavailable; no fabricated zero usage' } },
+        } }];
+      })),
       '/api/investigation-profiles': { get: {
         operationId: 'listInvestigationProfiles', security: [{ bearerAuth: [] }],
         description: 'Repository-versioned System/Ops presets for AI settings. Requires live ai:view; private, no-store on success and rejection. Prompt version/hash only, no credentials or principal data. Allowlist is an authority ceiling, not tool availability or execution permission. No query parameters or editing. Output schema is InvestigationResult at the profile outputSchemaVersion.',
@@ -477,6 +490,7 @@ export interface CollectServerDiagnosticsResponse { success: true; diagnostics: 
 // New contracts are rendered from the backend schemas, not hand-maintained
 // string copies. Fail closed if the baseline starts using an unsupported kind.
 function schemaType(schema: TSchema): string {
+  if (schema[Kind] === 'Never') return 'never';
   if (schema['x-typescript-type'] === 'ProjectionFrame') return 'ProjectionFrame';
   if (schema[Kind] === 'Unknown') return 'unknown';
   if ('const' in schema) return JSON.stringify(schema.const);
@@ -501,7 +515,7 @@ function schemaType(schema: TSchema): string {
 function buildInvestigationClientTypes(): string {
   return '// Generated investigation contract baseline; routes are not implemented by these types.\n'
     + "import type { ProjectionFrame } from '../../../../packages/agent-core/src/message-projection.ts';\n\n"
-    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas, ...InvestigationObservationSchemas, ...InvestigationProfileSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
+    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas, ...InvestigationObservationSchemas, ...InvestigationProfileSchemas, ...InvestigationGovernanceSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
 }
 
 export function buildClientTypes(): string {

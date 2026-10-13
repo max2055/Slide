@@ -5090,6 +5090,182 @@
         ],
         "type": "object"
       },
+      "InvestigationBudgetResponse": {
+        "$id": "InvestigationBudgetResponse",
+        "additionalProperties": false,
+        "properties": {
+          "admissionStatus": {
+            "anyOf": [
+              {
+                "const": "uninitialized",
+                "type": "string"
+              },
+              {
+                "const": "matching",
+                "type": "string"
+              },
+              {
+                "const": "conflict",
+                "type": "string"
+              }
+            ]
+          },
+          "automaticTriggerStatus": {
+            "const": "not_connected",
+            "type": "string"
+          },
+          "persistedPolicy": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "currency": {
+                    "pattern": "^[A-Z]{3}$",
+                    "type": "string"
+                  },
+                  "manualReserved": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxAutomaticRequestsPerHour": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxAutomaticTokensPerDay": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxConcurrent": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxCostMicrosPerDay": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxPerResourceConcurrent": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxTotalTokensPerDay": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "currency",
+                  "maxConcurrent",
+                  "manualReserved",
+                  "maxPerResourceConcurrent",
+                  "maxAutomaticRequestsPerHour",
+                  "maxAutomaticTokensPerDay",
+                  "maxTotalTokensPerDay",
+                  "maxCostMicrosPerDay"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy": {
+            "additionalProperties": false,
+            "properties": {
+              "currency": {
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              "manualReserved": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxAutomaticRequestsPerHour": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxAutomaticTokensPerDay": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxConcurrent": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxCostMicrosPerDay": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxPerResourceConcurrent": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxTotalTokensPerDay": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "currency",
+              "maxConcurrent",
+              "manualReserved",
+              "maxPerResourceConcurrent",
+              "maxAutomaticRequestsPerHour",
+              "maxAutomaticTokensPerDay",
+              "maxTotalTokensPerDay",
+              "maxCostMicrosPerDay"
+            ],
+            "type": "object"
+          },
+          "profileLimitsSource": {
+            "const": "/api/investigation-profiles",
+            "type": "string"
+          },
+          "reserveCostMicros": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "source": {
+            "const": "investigationBudgetConfiguration",
+            "type": "string"
+          },
+          "window": {
+            "const": "UTC_admission_day_and_hour",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "source",
+          "policy",
+          "reserveCostMicros",
+          "persistedPolicy",
+          "admissionStatus",
+          "automaticTriggerStatus",
+          "window",
+          "profileLimitsSource"
+        ],
+        "type": "object"
+      },
       "InvestigationClosure": {
         "$id": "InvestigationClosure",
         "additionalProperties": false,
@@ -5651,6 +5827,48 @@
         },
         "required": [
           "expectedVersion"
+        ],
+        "type": "object"
+      },
+      "InvestigationPoliciesResponse": {
+        "$id": "InvestigationPoliciesResponse",
+        "additionalProperties": false,
+        "properties": {
+          "configurationStatus": {
+            "const": "not_configured",
+            "type": "string"
+          },
+          "integrationStatus": {
+            "const": "not_connected",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "not": {}
+            },
+            "maxItems": 0,
+            "type": "array"
+          },
+          "originBoundary": {
+            "const": "investigation_engine_persist_only",
+            "type": "string"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "source": {
+            "const": "production_composition",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "configurationStatus",
+          "integrationStatus",
+          "source",
+          "items",
+          "originBoundary"
         ],
         "type": "object"
       },
@@ -9421,6 +9639,315 @@
         },
         "required": [
           "type"
+        ],
+        "type": "object"
+      },
+      "InvestigationUsageResponse": {
+        "$id": "InvestigationUsageResponse",
+        "additionalProperties": false,
+        "properties": {
+          "accessScope": {
+            "const": "global_config_management",
+            "type": "string"
+          },
+          "costs": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "currency": {
+                  "pattern": "^[A-Z]{3}$",
+                  "type": "string"
+                },
+                "estimatedSettledCostMicros": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "outstandingCostMicros": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "reservedCostMicros": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "currency",
+                "reservedCostMicros",
+                "outstandingCostMicros",
+                "estimatedSettledCostMicros"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "costSemantics": {
+            "const": "rate_estimate_not_provider_invoice",
+            "type": "string"
+          },
+          "counts": {
+            "additionalProperties": false,
+            "properties": {
+              "cancelled": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "reserved": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sent": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "settled": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "unknown": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "reserved",
+              "sent",
+              "settled",
+              "unknown",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "groupCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "currency": {
+                  "pattern": "^[A-Z]{3}$",
+                  "type": "string"
+                },
+                "estimatedSettledCostMicros": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "knownCachedInputTokens": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "knownInputTokens": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "knownOutputTokens": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "knownUsageCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "mode": {
+                  "anyOf": [
+                    {
+                      "const": "automatic",
+                      "type": "string"
+                    },
+                    {
+                      "const": "manual",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "outstandingCostMicros": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "outstandingTokens": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "pendingUsageCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "reservedCostMicros": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "reservedTokens": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "settledTokens": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "state": {
+                  "anyOf": [
+                    {
+                      "const": "reserved",
+                      "type": "string"
+                    },
+                    {
+                      "const": "sent",
+                      "type": "string"
+                    },
+                    {
+                      "const": "settled",
+                      "type": "string"
+                    },
+                    {
+                      "const": "unknown",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelled",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "unknownCostCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "unknownUsageCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "state",
+                "mode",
+                "currency",
+                "count",
+                "knownUsageCount",
+                "unknownUsageCount",
+                "pendingUsageCount",
+                "knownInputTokens",
+                "knownCachedInputTokens",
+                "knownOutputTokens",
+                "reservedTokens",
+                "outstandingTokens",
+                "settledTokens",
+                "reservedCostMicros",
+                "outstandingCostMicros",
+                "estimatedSettledCostMicros",
+                "unknownCostCount"
+              ],
+              "type": "object"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "knownUsageCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "nextOffset": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outstandingTokens": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pendingUsageCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reservedTokens": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "settledTokens": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tokenSemantics": {
+            "const": "input_includes_cached_input",
+            "type": "string"
+          },
+          "total": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknownUsageCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "window": {
+            "const": "all_history",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "accessScope",
+          "window",
+          "costSemantics",
+          "tokenSemantics",
+          "total",
+          "counts",
+          "knownUsageCount",
+          "unknownUsageCount",
+          "pendingUsageCount",
+          "reservedTokens",
+          "outstandingTokens",
+          "settledTokens",
+          "costs",
+          "groupCount",
+          "items",
+          "nextOffset"
         ],
         "type": "object"
       },
@@ -16627,6 +17154,76 @@
         "security": []
       }
     },
+    "/api/investigation-budget": {
+      "get": {
+        "description": "Readonly governance facts. Requires live ai:view AND config:manage (global configuration management, not resource-scoped access). Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. Current investigationBudgetConfiguration plus persisted policy matching/conflict; does not initialize domains. Profile ceilings are at /api/investigation-profiles; automatic trigger not connected.",
+        "operationId": "getInvestigationBudget",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationBudgetResponse"
+                }
+              }
+            },
+            "description": "Actual configuration or durable facts; no read-side writes"
+          },
+          "400": {
+            "description": "Invalid or unsupported query"
+          },
+          "401": {
+            "description": "Invalid or revoked identity"
+          },
+          "403": {
+            "description": "Missing live governance authorization"
+          },
+          "503": {
+            "description": "Facts unavailable; no fabricated zero usage"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/investigation-policies": {
+      "get": {
+        "description": "Readonly governance facts. Requires live ai:view. Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. No production registry: not_configured/not_connected with empty items; investigation_engine persists only.",
+        "operationId": "getInvestigationPolicies",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationPoliciesResponse"
+                }
+              }
+            },
+            "description": "Actual configuration or durable facts; no read-side writes"
+          },
+          "400": {
+            "description": "Invalid or unsupported query"
+          },
+          "401": {
+            "description": "Invalid or revoked identity"
+          },
+          "403": {
+            "description": "Missing live governance authorization"
+          },
+          "503": {
+            "description": "Facts unavailable; no fabricated zero usage"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/investigation-profiles": {
       "get": {
         "description": "Repository-versioned System/Ops presets for AI settings. Requires live ai:view; private, no-store on success and rejection. Prompt version/hash only, no credentials or principal data. Allowlist is an authority ceiling, not tool availability or execution permission. No query parameters or editing. Output schema is InvestigationResult at the profile outputSchemaVersion.",
@@ -16650,6 +17247,63 @@
           },
           "403": {
             "description": "Live AI settings read permission absent"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/investigation-usage": {
+      "get": {
+        "description": "Readonly governance facts. Requires live ai:view AND config:manage (global configuration management, not resource-scoped access). Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. All-history persisted ledger AGGREGATES ONLY, grouped by currency/state/mode; no individual ledger or resource identifiers. Offset pagination of groups after authorization, total counts reservations and groupCount counts groups; concurrent writes can shift pages. Counts cover every state. Costs grouped by currency, rate estimates only, never provider invoices. Input includes cached input; unknown or missing rates retain allowance, not zero.",
+        "operationId": "getInvestigationUsage",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "default": 0,
+              "maximum": 200000,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationUsageResponse"
+                }
+              }
+            },
+            "description": "Actual configuration or durable facts; no read-side writes"
+          },
+          "400": {
+            "description": "Invalid or unsupported query"
+          },
+          "401": {
+            "description": "Invalid or revoked identity"
+          },
+          "403": {
+            "description": "Missing live governance authorization"
+          },
+          "503": {
+            "description": "Facts unavailable; no fabricated zero usage"
           }
         },
         "security": [
