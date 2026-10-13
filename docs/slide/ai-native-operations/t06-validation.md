@@ -37,10 +37,10 @@
 调用链：`InvestigationWatchService.tick` → `stream.replay/capture` → `captureCanonicalDocument` → `captureObservation` → `appendObservation`。
 
 - `apps/db-ops-api/src/investigations/observation-db.ts:30` 比较重捕获事件，仅将事件外层 sequence 归零。
-- 同文件 `:38` 对入库 Parts payload 内层 sequence 设置实际持久序号；重捕获输入的内层 sequence 为 0（`stream.ts:74`）。
+- 同文件 `:36` 对入库 Parts payload 内层 sequence 设置实际持久序号；重捕获输入的内层 sequence 为 0（`stream.ts:74`）。
 - source checkpoint 被另一次内容捕获推进后再次遇到已有 payload hash，append 路径比较同 source key，因内层序号差异拒绝。实际事件诊断显示 source 后缀哈希等于将内部序号归零后的输入哈希，与原存储 payload 哈希不同。
 - 独立真实 MySQL 探针：在授权 transaction 内，同一 canonical document 以 A 时间、B 时间、A 时间依次捕获，第三次稳定抛出上述错误；transaction rollback。没有模型调用，没有更改后端源码。
-- `stream.ts:241` 的 tick catch 将这类存储错误关闭为撤权 4001，错误语义也需要后端所有者复核。
+- `stream.ts:249` 的 tick catch 将这类存储错误关闭为撤权 4001，错误语义也需要后端所有者复核。
 
 请父任务协调具备后端所有权的修复：幂等比较的规范化/检查点重捕获，及非授权存储失败的 WS 处理。随后以当前 PR 源码重跑完整 T06 浏览器验收。不得通过降低观察频率、吞错、跳过探针或把 4001 当网络重连掩盖。
 
