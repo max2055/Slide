@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify';
+import type { FastifyInstance, FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify';
 import type { ActorContext } from '../auth/actor-context.js';
 import { InvestigationFeedbackStore } from './feedback.js';
 import { InvestigationStoreError } from './store.js';
@@ -13,7 +13,7 @@ export async function registerInvestigationFeedbackRoutes(app: FastifyInstance, 
     app.route({ method, url: '/api/investigations/:id/feedback', preHandler: verifyToken, bodyLimit: 64 * 1024,
       schema: { response: { 200: method === 'GET' ? InvestigationFeedbackPageSchema : InvestigationFeedbackRecordSchema } },
       onRequest: async (_request, reply) => { reply.header('Cache-Control', 'private, no-store'); },
-      handler: async (request, reply) => {
+      handler: async (request: FastifyRequest, reply: FastifyReply) => {
         try {
           const id = (request.params as { id: string }).id;
           const actor = (request as FastifyRequest & { user: ActorContext }).user;
