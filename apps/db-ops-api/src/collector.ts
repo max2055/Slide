@@ -15,6 +15,7 @@ import type { DatabaseConnection } from './database-service.js';
 import type { DatabaseInstance } from './instance-database-service.js';
 import { dbConnection } from './db-connection.js';
 import { legacyMetricSourceActive } from './metrics-v2/rollout/legacy-write-fence.js';
+import { publishCollectorFailure } from './platform/system-failure-publisher.js';
 
 // Fixed-column metrics — these have dedicated columns in metrics_history table
 const FIXED_COLUMN_METRICS = new Set([
@@ -71,6 +72,7 @@ class UnifiedCollector {
           }
         } catch (e: any) {
           providerFailed = true;
+          publishCollectorFailure(typeof e?.code === 'string' && /^[A-Z][A-Z0-9_]{0,127}$/.test(e.code) ? e.code : 'COLLECTOR_PROVIDER_FAILED', 'collector:provider.collect');
           console.error(`[Collector] ${provider.name} ${def.id} 采集异常:`, e.message);
         }
       }
