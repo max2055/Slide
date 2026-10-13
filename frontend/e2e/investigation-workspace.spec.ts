@@ -155,8 +155,9 @@ test('viewer cannot append; same-JWT live resource revocation hides content and 
   await expect(page.locator('.investigation-messages')).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => {
     const c = (document.querySelector('investigations-page') as any)?.controller;
-    return c ? { history: c.history.length, results: c.results.items.length, evidence: c.evidence.length } : { history: 0, results: 0, evidence: 0 };
-  })).toEqual({ history: 0, results: 0, evidence: 0 });
+    const view = document.querySelector('investigations-page') as any;
+    return { history: c?.history.length ?? 0, results: c?.results.items.length ?? 0, evidence: c?.evidence.length ?? 0, draft: view?.draft ?? '', evidenceOpen: view?.evidenceOpen ?? false };
+  })).toEqual({ history: 0, results: 0, evidence: 0, draft: '', evidenceOpen: false });
   await page.reload(); await expect(page.getByText('调查不存在或已无访问权限。', { exact: false })).toBeVisible();
 });
 

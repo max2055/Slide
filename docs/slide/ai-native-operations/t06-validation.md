@@ -8,7 +8,7 @@
 - 关注事项读取现有聚合事件接口的最近 20 项活动事件，按严重度、更新时间、ID 确定排序，复用共享表格；可切换原资源概览、进入事件中心。未重写原告警业务页。
 - 调查列表分页和 query/state/Profile/resource 筛选；创建、详情、三层状态、共享 Message Parts renderer、继续/取消、历史分页、结果版本和证据引用。取消仅标记等待后端确认；结果、Run 终态和业务恢复均由后端决定。
 - 普通 Chat 保持直接输入，转换关联原 Session，不复制消息。使用现用 grouped renderer，不引入无生产引用的旧 chat-message-list。
-- 真实 WS 观察使用 DirectGatewayClient 独立订阅；序号去重、缺口重新 snapshot、终态后帧不覆盖事实。断线/撤权清空内容；切换调查及撤权使旧响应失效；未知接受结果保留原 body/幂等键核对，不自动另建 Run。operator 拒绝不会删除仍有权限读取的内容。
+- 真实 WS 观察使用 DirectGatewayClient 独立订阅；序号去重、缺口重新 snapshot、终态后帧不覆盖事实。断线/撤权清空内容；撤权同时清除协作草稿并关闭证据/创建弹窗；切换调查及撤权使旧响应失效；未知接受结果保留原 body/幂等键核对，不自动另建 Run。operator 拒绝不会删除仍有权限读取的内容。
 - 读取恢复重新获取授权 facts/游标；重叠 history/snapshot 保持 canonical 顺序；重复分页不回退游标/复制版本；切换调查期间提交完成不会锁死 busy。
 - 有界 Review 修复并发 FileReader 附件覆盖/串 Session、旧身份 greeting 响应、退出/权限更新的 Chat view 缓存；附件回调捕获稳定 Session receiver。
 - 1600 三列，1024 证据弹窗，390 单栏；共享 dialog 的 Escape/焦点恢复通过。截图发现移动端既有固定导航遮盖，本次仅在工作空间 shell 为导航栏预留空间，并加入实际边界断言。

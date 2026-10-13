@@ -34,7 +34,11 @@ export class InvestigationsPage extends LitElement {
   @state() private profile = '';
   @state() private resource = '';
   @state() private draft = '';
-  controller = new InvestigationsController(() => this.requestUpdate(), null);
+  controller = new InvestigationsController(() => this.refreshControllerView(), null);
+  private refreshControllerView() {
+    if (this.controller.forbidden) { this.draft = ''; this.evidenceOpen = false; this.createOpen = false; }
+    this.requestUpdate();
+  }
   private popState = () => { const id = new URL(location.href).searchParams.get('investigation'); if (id) void this.openInvestigation(id, false); };
   private permissionsChanged = (e: Event) => {
     this.permissions = new Set((e as CustomEvent<{ permissions: string[] }>).detail.permissions);
@@ -59,7 +63,7 @@ export class InvestigationsPage extends LitElement {
   }
   protected updated(changed: Map<string, unknown>) {
     if (changed.has('client')) {
-      this.controller.dispose(); this.controller = new InvestigationsController(() => this.requestUpdate(), this.client);
+      this.controller.dispose(); this.controller = new InvestigationsController(() => this.refreshControllerView(), this.client);
       if (this.canView) this.reload();
     } else if (changed.has('permissions')) {
       if (!this.canView) this.sessionExpired();

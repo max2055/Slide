@@ -1,6 +1,6 @@
 {
   "frontend/e2e/fixtures/investigation-server.ts": "1cae92e2c8ca3800121d408c63409fddc7bfd642c77fd6bfa81b61ced7bb1424",
-  "frontend/e2e/investigation-workspace.spec.ts": "6c74b9a14ddc557b0b002bcb7ed53aac38b472e097dde94983dafe36ed29bb0f",
+  "frontend/e2e/investigation-workspace.spec.ts": "eba56466219f2b5fd2c85276a65cb494314a7b251b73283680b7701dcad0f9ed",
   "frontend/src/app/i18n/locales/en.ts": "3759aeb95962a0628361654b1c156c76f715435cebd570bbbbe5ce842e1481e0",
   "frontend/src/app/i18n/locales/zh-CN.ts": "87710d9af5be658c03ad6da7777dbcd36b046d6687a94340df76f55b38884bc0",
   "frontend/src/app/ui/app-navigation.integration.test.ts": "0224f14e32ca6b93ec248e8919e3861272de3924dba93f91f73d081241431e22",
@@ -23,5 +23,5 @@
   "frontend/src/app/ui/views/chat-greeting.test.ts": "40055cde494a83998654b0e8bf41ef491b8e1da761823ea80aa044208fac8f59",
   "frontend/src/app/ui/views/chat.ts": "49e33b55274da1ef7a40c0d371a3bc409062813a1b5156ffe5101f348897a138",
   "frontend/src/app/ui/views/investigation-detail.ts": "ced7883c7c67c2dd28c1135262ce3d326e1b558d1dc548ce0891c6fe240e62c1",
-  "frontend/src/app/ui/views/investigations.ts": "d3f9017fbb50ba4d27370612514a5d8ef305296deb5627e55768ec70049a8dcf"
+  "frontend/src/app/ui/views/investigations.ts": "2cf3779eea6e9edcb4851fefc2f280a204910dc3f3db6038cd9a6f0a9e348e72"
 }
